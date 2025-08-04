@@ -298,6 +298,25 @@ export class SceneManager {
   }
 
   /**
+   * Update HDR multiplier for all point materials in the scene
+   * 
+   * @param multiplier - New HDR multiplier value (1.0 to 20.0)
+   */
+  updateHDRMultiplier(multiplier: number): void {
+    // Update all point cloud materials in the scene
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Points) {
+        const material = object.material as THREE.ShaderMaterial;
+        if (material.uniforms && material.uniforms.hdrMultiplier) {
+          material.uniforms.hdrMultiplier.value = multiplier;
+        }
+      }
+    });
+    
+    console.log(`✓ HDR multiplier updated for all point materials: ${multiplier}`);
+  }
+
+  /**
    * Clean up all Three.js resources to prevent memory leaks
    * 
    * WebGL resources (textures, buffers, shaders) are not automatically

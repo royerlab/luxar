@@ -34,6 +34,9 @@ describe('shader-manager', () => {
       
       expect(THREE.ShaderMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
+          uniforms: expect.objectContaining({
+            hdrMultiplier: expect.objectContaining({ value: 13.0 }),
+          }),
           transparent: true,
           depthWrite: false,
           blending: 'AdditiveBlending',
@@ -70,11 +73,12 @@ describe('shader-manager', () => {
       expect(vertexShader).toContain('gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation');
     });
 
-    it('should use HDR multiplier in fragment shader', () => {
+    it('should use HDR multiplier uniform in fragment shader', () => {
       createGaussianPointMaterial();
       
       const fragmentShader = (THREE.ShaderMaterial as any).mock.calls[0][0].fragmentShader;
-      expect(fragmentShader).toContain('vec3 hdr = vColor * 13.0');
+      expect(fragmentShader).toContain('uniform float hdrMultiplier');
+      expect(fragmentShader).toContain('vec3 hdr = vColor * hdrMultiplier');
     });
   });
 
