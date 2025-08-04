@@ -212,22 +212,46 @@ scene.finalize()
 
 ### Transforms and Coordinate Systems
 
+Luxar provides comprehensive transform utilities for 3D scene manipulation:
+
 ```python
-# Apply transforms to organize spatial data
-scene = Scene("multi_coordinate.zarr")
+from luxar import Scene, transforms
 
-# Create transformed coordinate systems
-world = scene.add_group("world")
-robot = scene.add_group("robot", parent=world)
-sensor = scene.add_group("sensor", parent=robot)
+scene = Scene("transformed_scene.zarr")
 
-# Set transforms (4x4 matrices)
-robot.transform = compute_robot_to_world_transform()
-sensor.transform = compute_sensor_to_robot_transform()
+# Basic transforms
+translation = transforms.translate(10, 5, 0)      # Move 10 units in X, 5 in Y
+rotation = transforms.rotate(45, 'z')             # Rotate 45° around Z axis
+scaling = transforms.scale(2, 2, 2)               # Scale 2x in all dimensions
+uniform_scale = transforms.scale(uniform=0.5)     # Scale uniformly by 0.5
 
-# Data is stored in local coordinates
-# Transforms are applied during rendering
-scene.add_points("lidar_scan", lidar_points, parent=sensor)
+# Compose multiple transforms (applied left-to-right)
+combined = transforms.compose(translation, rotation, scaling)
+
+# Apply transforms to groups
+group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
+
+# Or use the transform property
+group.transform = transforms.rotate_x(30)  # Rotate 30° around X
+
+# Hierarchical transforms (child inherits parent transform)
+parent = scene.add_group("Robot")
+parent.transform = transforms.translate(100, 0, 0)
+
+child = parent.add_group("Sensor")  
+child.transform = transforms.rotate_y(90)  # Relative to parent
+
+# Advanced transforms
+look_at = transforms.look_at(
+    eye=(10, 10, 10),     # Camera position
+    target=(0, 0, 0),     # Look at origin
+    up=(0, 1, 0)          # Y-up
+)
+
+# Inverse transforms
+t = transforms.translate(5, 0, 0)
+t_inv = transforms.inverse(t)  # Translates -5, 0, 0
+
 scene.finalize()
 ```
 
