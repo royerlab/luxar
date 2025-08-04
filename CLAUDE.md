@@ -31,6 +31,13 @@
 - Always run tests before committing
 - Use descriptive commit messages
 - Do not include the robot emoji and Claude Code attribution in commits
+- **Pre-commit Checklist**: Before committing, ensure overall consistency:
+  - Run all tests (`make test-all`) and ensure they pass
+  - Update README.md files if functionality changed
+  - Update examples if APIs changed
+  - Check that documentation reflects the current state
+  - Verify that new features have appropriate tests
+  - Run linting and type checking (`make check`)
 
 ### Project Structure
 - `/packages/luxar/` - Main Python package
