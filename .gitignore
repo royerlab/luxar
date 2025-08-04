@@ -125,8 +125,9 @@ hatch-build/
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Data files (optional - uncomment if you don't want to track demo data)
-# *.zarr/
+# Data files
+*.zarr/
+*.zarr
 
 # Benchmarking
 .benchmarks/
