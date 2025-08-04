@@ -108,7 +108,7 @@ def create_compensation_demo():
     aprint("\nExpected result:")
     aprint("- All point clusters should appear roughly the same size")
     aprint("- Colors: Blue (soft, left) → Red (sharp, right)")
-    aprint("\nTo view: luxar serve sharpness_compensation_test.zarr")
+    aprint("\nTo view: luxar serve sharpness_compensation_example.zarr")
     return output_path
 
 if __name__ == "__main__":
