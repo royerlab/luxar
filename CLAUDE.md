@@ -1,5 +1,9 @@
 # Claude Code Instructions for the Luxar Project
 
+> **Important**: This file contains essential information for Claude Code instances working on the Luxar project. 
+> Keep this file updated with new learnings, conventions, and important project details while maintaining clarity and conciseness.
+> If you discover something that would be useful for future Claude instances, add it here.
+
 ## Project-Specific Tools and Preferences
 
 ### Python Development
@@ -39,6 +43,12 @@
 - Point attributes: positions (required), colors, radii, sharpness (all optional)
 - Default values: radius=0.1, sharpness=2.0
 - Zarr chunks: Use appropriate chunk sizes for data patterns
+- **Transform System**: 
+  - All transforms are 4x4 matrices (float32)
+  - Transforms are automatically validated in Node.__init__
+  - Use `luxar.transforms` module for creating transforms (translate, rotate, scale, compose, etc.)
+  - Node class has a `transform` property for easy access/modification
+  - Transforms are stored as 16-element lists in zarr attributes
 
 ### TypeScript/JavaScript
 - Use pnpm for the luxar-player package (NOT npm)
@@ -46,6 +56,14 @@
 - Build: `pnpm build`
 - Tests: `pnpm test --run` (use --run for non-interactive mode)
 - Coverage: `pnpm run test:coverage`
+- **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
+  - All config in `config/index.ts` with types in `config/types.ts`
+  - Use camelCase consistently (not UPPER_SNAKE_CASE)
+  - Advanced rendering controls panel should be on the left side
+  - Trigger animation when rendering parameters change
+- **Quality Checks**: After making changes, run:
+  - `pnpm run lint` - Check code style
+  - `pnpm run typecheck` - Check TypeScript types
 
 ## Quick Commands Reference
 ```bash
@@ -62,6 +80,7 @@ luxar build <scene.py>           # Build a scene
 cd packages/luxar-player && pnpm dev         # Start viewer dev server
 make viewer-test                             # Run TypeScript tests
 make test-all                                # Run all tests (Python + TypeScript)
+make clean                                   # Clean all artifacts (including TypeScript dist/, node_modules/)
 ```
 
 ## Important Reminders
