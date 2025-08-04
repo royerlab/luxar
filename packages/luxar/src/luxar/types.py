@@ -46,7 +46,7 @@ CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
 LuxarVersion = Literal["0.1", "0.2", "0.3"]
 
 # Physical units
-PhysicalUnit = Literal["metre", "meter", "mm", "cm", "km", "inch", "foot"]
+PhysicalUnit = Literal["nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inch", "foot", "px", "au"]
 
 # =============================================================================
 # Type Aliases
@@ -261,6 +261,70 @@ def validate_colors(colors: Any, n_points: int) -> ColorArray:
     return colors.astype(np.uint8, copy=False)
 
 
+def validate_radii(radii: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
+    """
+    Validate and convert radii array to correct type.
+    Args:
+        radii: Input array to validate
+        n_points: Expected number of points
+    Returns:
+        Validated radii array
+    Raises:
+        ValueError: If radii are invalid shape or type
+    """
+    if not isinstance(radii, np.ndarray):
+        raise ValueError("Radii must be a numpy array")
+    if radii.ndim != 1:
+        raise ValueError("Radii must have shape (N,)")
+    if radii.shape[0] != n_points:
+        raise ValueError(f"Radii shape {radii.shape} doesn't match positions")
+    # Ensure all radii are positive
+    if np.any(radii <= 0):
+        raise ValueError("All radii must be positive values")
+    return radii.astype(np.float32, copy=False)
+
+
+def validate_sharpness(sharpness: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
+    """
+    Validate and convert sharpness array to correct type.
+
+    Sharpness controls the falloff profile of points, from soft (low values) to sharp (high values).
+    Must be positive float32 values with shape (N,) where N is the number of points.
+    Typical range is 0.5 to 10.0.
+
+    Args:
+        sharpness: Input sharpness array to validate
+        n_points: Expected number of points
+
+    Returns:
+        Validated sharpness array as float32
+
+    Raises:
+        ValueError: If sharpness values are invalid
+    """
+    if not isinstance(sharpness, np.ndarray):
+        raise ValueError("Sharpness must be a numpy array")
+
+    if sharpness.ndim != 1:
+        raise ValueError("Sharpness must have shape (N,)")
+
+    if sharpness.shape[0] != n_points:
+        raise ValueError(f"Sharpness shape {sharpness.shape} doesn't match positions")
+
+    if np.any(sharpness <= 0):
+        raise ValueError("All sharpness values must be positive")
+
+    # Warn if values are outside typical range
+    if np.any(sharpness < 0.5) or np.any(sharpness > 10.0):
+        import warnings
+        warnings.warn(
+            "Sharpness values outside typical range [0.5, 10.0] detected. "
+            "Very low values (<0.5) create uniform disks, very high values (>10) create hard edges."
+        )
+
+    return sharpness.astype(np.float32, copy=False)
+
+
 def validate_transform(transform: Any) -> TransformMatrix:
     """
     Validate and convert transform matrix to correct type.
@@ -321,13 +385,18 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
         ValueError: If unit is invalid
     """
     valid_units: Tuple[PhysicalUnit, ...] = (
-        "metre",
-        "meter",
-        "mm",
-        "cm",
-        "km",
-        "inch",
-        "foot",
+        "nm",      # nanometer
+        "um",      # micrometer
+        "mm",      # millimeter
+        "cm",      # centimeter
+        "m",       # meter (short form)
+        "metre",   # meter (British spelling)
+        "meter",   # meter (American spelling)
+        "km",      # kilometer
+        "inch",    # inch
+        "foot",    # foot
+        "px",      # pixel
+        "au",      # arbitrary units
     )
     if unit not in valid_units:
         raise ValueError(f"Invalid unit '{unit}'. Must be one of {valid_units}")

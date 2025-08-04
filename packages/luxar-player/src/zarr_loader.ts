@@ -32,8 +32,8 @@ export async function loadScene(src: string): Promise<THREE.Group> {
   const lookup    = new Map<string, ObjRecord>([["/", { obj: rootThree, path: "/" }]]);
 
   /* 3. create Three.js objects in path-depth order */
-  const groups = listing.filter(e => e.kind === "group" && e.path !== "/")
-                        .sort((a, b) => a.path.split("/").length - b.path.split("/").length);
+  const groups = listing.filter((e: { kind: string; path: string }) => e.kind === "group" && e.path !== "/")
+                        .sort((a: { path: string }, b: { path: string }) => a.path.split("/").length - b.path.split("/").length);
 
   for (const entry of groups) {
     const loc   = rootLoc.resolve(entry.path.slice(1));   // drop leading "/"
@@ -62,7 +62,7 @@ export async function loadScene(src: string): Promise<THREE.Group> {
 }
 
 /* ---------------------------------------------------------------- geometry */
-async function buildPoints(loc: zarr.Location): Promise<THREE.Points> {
+async function buildPoints(loc: zarr.Location<zarr.Readable>): Promise<THREE.Points> {
   const posArr = await zarr.open(loc.resolve("positions"), { kind: "array" });
   const pos    = (await get(posArr)).data as Float32Array;
 
@@ -70,6 +70,18 @@ async function buildPoints(loc: zarr.Location): Promise<THREE.Points> {
   try {
     const colArr = await zarr.open(loc.resolve("colors"), { kind: "array" });
     col = (await get(colArr)).data as Uint8Array;
+  } catch {/* optional */}
+
+  let radii: Float32Array | undefined;
+  try {
+    const radiiArr = await zarr.open(loc.resolve("radii"), { kind: "array" });
+    radii = (await get(radiiArr)).data as Float32Array;
+  } catch {/* optional */}
+
+  let sharpness: Float32Array | undefined;
+  try {
+    const sharpnessArr = await zarr.open(loc.resolve("sharpness"), { kind: "array" });
+    sharpness = (await get(sharpnessArr)).data as Float32Array;
   } catch {/* optional */}
 
   const geom = new THREE.BufferGeometry();
@@ -89,6 +101,28 @@ async function buildPoints(loc: zarr.Location): Promise<THREE.Points> {
     const defaultColors = new Float32Array(numVertices * 3);
     defaultColors.fill(1.0); // All white (RGB = 1.0, 1.0, 1.0)
     geom.setAttribute("color", new THREE.BufferAttribute(defaultColors, 3));
+  }
+
+  if (radii) {
+    // Add radius attribute for custom shaders
+    geom.setAttribute("radius", new THREE.BufferAttribute(radii, 1));
+  } else {
+    // Provide default radii if not specified
+    const numVertices = pos.length / 3;
+    const defaultRadii = new Float32Array(numVertices);
+    defaultRadii.fill(0.1); // Default radius
+    geom.setAttribute("radius", new THREE.BufferAttribute(defaultRadii, 1));
+  }
+
+  if (sharpness) {
+    // Add sharpness attribute for custom shaders
+    geom.setAttribute("sharpness", new THREE.BufferAttribute(sharpness, 1));
+  } else {
+    // Provide default sharpness if not specified
+    const numVertices = pos.length / 3;
+    const defaultSharpness = new Float32Array(numVertices);
+    defaultSharpness.fill(2.0); // Default sharpness (quadratic falloff)
+    geom.setAttribute("sharpness", new THREE.BufferAttribute(defaultSharpness, 1));
   }
 
   // Create advanced Gaussian point material with HDR output and bloom effects

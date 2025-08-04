@@ -36,21 +36,39 @@ export const SHADER_CONFIG = {
  * 
  * This shader:
  * - Passes through vertex colors for per-point coloring
- * - Sets point size for sprite rendering
+ * - Sets point size based on per-vertex radius attribute
  * - Transforms vertices to screen space
  */
 const GAUSSIAN_VERTEX_SHADER = /* glsl */`
+  attribute float radius;
+  attribute float sharpness;
   varying vec3 vColor;
+  varying float vSharpness;
   
   void main() {
     // Pass vertex color to fragment shader for per-point coloring
     vColor = color;
     
-    // Transform vertex position from world space to screen space
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    // Pass sharpness to fragment shader for per-point falloff control
+    vSharpness = sharpness;
     
-    // Set point size in screen pixels for sprite rendering
-    gl_PointSize = ${SHADER_CONFIG.POINTS.SIZE.toFixed(1)};
+    // Transform vertex position from world space to screen space
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    
+    // Calculate point size based on radius and distance from camera
+    // This ensures points scale appropriately with perspective
+    float baseSize = ${SHADER_CONFIG.POINTS.SIZE.toFixed(1)};
+    float perspectiveScale = baseSize / -mvPosition.z;
+    
+    // Compensate for sharpness effect on apparent size
+    // As sharpness increases, points appear smaller due to steeper falloff
+    // This compensation maintains consistent visual size
+    float sizeCompensation = sqrt(vSharpness / 2.0);
+    
+    // Use the per-point radius attribute to scale the point size
+    // Multiply by a factor to convert from world units to screen pixels
+    gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation;
   }
 `;
 
@@ -64,16 +82,27 @@ const GAUSSIAN_VERTEX_SHADER = /* glsl */`
  */
 const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
   varying vec3 vColor;
+  varying float vSharpness;
   
   void main() {
-    // Calculate distance from center of point sprite (0.0 to ~0.707)
+    // Calculate distance from center of point sprite (0.0 to 0.5)
     float r = length(gl_PointCoord - 0.5);
     
-    // Gaussian falloff using rational approximation for better performance
-    // Formula: alpha = base_alpha / (1.0 + steepness * r^2)
-    // This creates smooth, natural-looking circular points
-    float alpha = ${SHADER_CONFIG.POINTS.BASE_ALPHA.toFixed(3)} / 
-                  (1.0 + ${SHADER_CONFIG.POINTS.FALLOFF_STEEPNESS.toFixed(1)} * r * r);
+    // Discard pixels outside the circular area
+    // This prevents the square footprint from being visible
+    if (r > 0.5) {
+      discard;
+    }
+    
+    // Normalize radius to 0-1 range for the visible circle
+    float normalizedR = r * 2.0;  // Now 0.0 at center, 1.0 at edge
+    
+    // Variable falloff controlled by per-point sharpness
+    // Higher sharpness values create sharper edges
+    float falloff = pow(1.0 - normalizedR, vSharpness);
+    
+    // Apply base alpha
+    float alpha = ${SHADER_CONFIG.POINTS.BASE_ALPHA.toFixed(3)} * falloff;
     
     // Multiply color by HDR multiplier to drive bloom effects
     // Values > 1.0 will bloom in post-processing pipeline
