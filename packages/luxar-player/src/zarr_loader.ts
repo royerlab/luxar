@@ -2,6 +2,8 @@ import * as zarr from "zarrita";
 import { get } from "zarrita";
 import * as THREE from "three";
 import { createGaussianPointMaterial } from "./shader-manager";
+import { SimpleDims, DimensionMetadata, initializeDims } from "./types/dims";
+import { slicePoints, extractDisplayDimensions, sliceColors, sliceScalarAttribute, getDimsLabel } from "./utils/slicing";
 
 /* ------------------------------------------------------------------ utils */
 function toURL(path: string) {
@@ -16,6 +18,8 @@ type ObjRecord = { obj: THREE.Object3D; path: string };
 interface ZarrGroupAttrs {
   type?: string;
   transform?: number[];
+  dimension_metadata?: DimensionMetadata[];
+  num_points?: number;
 }
 
 /* ------------------------------------------------------------------ main */
@@ -43,7 +47,7 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     /* build renderable */
     let obj: THREE.Object3D;
     if (attrs?.type === "points") {
-      obj = await buildPoints(loc);
+      obj = await buildPoints(loc, attrs);
     } else {
       obj = new THREE.Group();
     }
@@ -62,26 +66,61 @@ export async function loadScene(src: string): Promise<THREE.Group> {
 }
 
 /* ---------------------------------------------------------------- geometry */
-async function buildPoints(loc: zarr.Location<zarr.Readable>): Promise<THREE.Points> {
+async function buildPoints(loc: zarr.Location<zarr.Readable>, attrs: ZarrGroupAttrs): Promise<THREE.Points> {
   const posArr = await zarr.open(loc.resolve("positions"), { kind: "array" });
-  const pos    = (await get(posArr)).data as Float32Array;
+  const posData = (await get(posArr)).data as Float32Array;
+  
+  // Get number of points - either from attributes or calculate from 3D assumption
+  const numPoints = attrs.num_points || (posData.length / 3);
+  
+  // Initialize dims state
+  const dims: SimpleDims = initializeDims(numPoints, posData.length, attrs.dimension_metadata);
+  
+  // Check if we need to slice (nD data where n > 3)
+  let pos: Float32Array;
+  let visibleIndices: Uint32Array | null = null;
+  
+  if (dims.ndim > 3) {
+    // Slice nD data to get visible points
+    // Use larger tolerance for initial implementation
+    visibleIndices = slicePoints(posData, dims, numPoints, 1.0);
+    pos = extractDisplayDimensions(posData, visibleIndices, dims);
+    
+    // Log slicing info
+    console.log(`Slicing ${dims.ndim}D data: ${getDimsLabel(dims)}`);
+    console.log(`Showing ${visibleIndices.length} of ${numPoints} points`);
+    
+    // If no points visible, show a warning
+    if (visibleIndices.length === 0) {
+      console.warn("No points visible at current slice position!");
+      // Create dummy point at origin to avoid NaN errors
+      pos = new Float32Array([0, 0, 0]);
+      visibleIndices = new Uint32Array([0]);
+    }
+  } else {
+    // Use positions as-is for 3D or lower
+    pos = posData;
+  }
 
   let col: Uint8Array | undefined;
   try {
     const colArr = await zarr.open(loc.resolve("colors"), { kind: "array" });
-    col = (await get(colArr)).data as Uint8Array;
+    const colData = (await get(colArr)).data as Uint8Array;
+    col = visibleIndices ? sliceColors(colData, visibleIndices) || undefined : colData;
   } catch {/* optional */}
 
   let radii: Float32Array | undefined;
   try {
     const radiiArr = await zarr.open(loc.resolve("radii"), { kind: "array" });
-    radii = (await get(radiiArr)).data as Float32Array;
+    const radiiData = (await get(radiiArr)).data as Float32Array;
+    radii = visibleIndices ? sliceScalarAttribute(radiiData, visibleIndices) || undefined : radiiData;
   } catch {/* optional */}
 
   let sharpness: Float32Array | undefined;
   try {
     const sharpnessArr = await zarr.open(loc.resolve("sharpness"), { kind: "array" });
-    sharpness = (await get(sharpnessArr)).data as Float32Array;
+    const sharpnessData = (await get(sharpnessArr)).data as Float32Array;
+    sharpness = visibleIndices ? sliceScalarAttribute(sharpnessData, visibleIndices) || undefined : sharpnessData;
   } catch {/* optional */}
 
   const geom = new THREE.BufferGeometry();
@@ -129,5 +168,13 @@ async function buildPoints(loc: zarr.Location<zarr.Readable>): Promise<THREE.Poi
   // This replaces the basic PointsMaterial with custom shaders for smooth, natural-looking points
   const material = createGaussianPointMaterial();
   
-  return new THREE.Points(geom, material);
+  const points = new THREE.Points(geom, material);
+  
+  // Store dims state in userData for later access
+  if (dims.ndim > 3) {
+    points.userData.dims = dims;
+    points.userData.originalNumPoints = numPoints;
+  }
+  
+  return points;
 }

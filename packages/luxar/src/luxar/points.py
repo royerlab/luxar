@@ -81,7 +81,7 @@ class Points(Node):
 
     Args:
         name (str): Name of the point cloud node.
-        positions (NDArray[np.float32]): Array of shape (N, 3) for point positions.
+        positions (NDArray[np.float32]): Array of shape (N, D) for point positions where D is dimensionality.
         colors (NDArray[np.uint8], optional): Array of shape (N, 3) for point colors.
         radii (NDArray[np.float32], optional): Array of shape (N,) for point radii.
         sharpness (NDArray[np.float32], optional): Array of shape (N,) for point edge sharpness.
@@ -111,7 +111,7 @@ class Points(Node):
 
         Args:
             name: Name of the point cloud node
-            positions: Array of shape (N, 3) for point positions
+            positions: Array of shape (N, D) for point positions where D is dimensionality
             colors: Optional array of shape (N, 3) for point colors
             radii: Optional array of shape (N,) for point radii
             sharpness: Optional array of shape (N,) for point edge sharpness
