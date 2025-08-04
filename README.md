@@ -63,17 +63,29 @@ make serve-data DATASET=my_scene.zarr  # Serves your data
 
 ```python
 import numpy as np
-from luxar import Scene
+from luxar import Scene, transforms
 
 # Create and populate a scene
 scene = Scene("output.zarr")
-scene.add_points(
-    "MyData",
-    positions=np.random.randn(1_000_000, 3).astype(np.float32),
-    colors=np.random.randint(0, 255, (1_000_000, 3), dtype=np.uint8),
-    radii=np.random.uniform(0.05, 0.2, 1_000_000).astype(np.float32),  # Optional per-point radii
-    sharpness=np.random.uniform(0.5, 10.0, 1_000_000).astype(np.float32)  # Optional edge sharpness
+
+# Add points at origin
+positions = np.random.randn(100_000, 3).astype(np.float32)
+colors = np.random.randint(0, 255, (100_000, 3), dtype=np.uint8)
+scene.add_points("PointsAtOrigin", positions, colors=colors)
+
+# Add transformed point groups
+transform = transforms.compose(
+    transforms.translate(5, 0, 0),  # Move 5 units along X
+    transforms.rotate(45, 'z'),      # Rotate 45° around Z
+    transforms.scale(uniform=0.5)    # Scale down by half
 )
+group = scene.add_group("TransformedData", transform=transforms.to_list(transform))
+scene.add_points("Points", positions, colors=colors, parent=group)
+
+# Or use the transform property
+another_group = scene.add_group("AnotherGroup")
+another_group.transform = transforms.translate(0, 5, 0)  # Move up
+
 scene.finalize()
 
 # View: luxar serve output.zarr

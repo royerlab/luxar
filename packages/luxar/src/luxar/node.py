@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Union
 
+import numpy as np
 import zarr
 from arbol import aprint
 
-from .types import GroupAttrs, SceneHierarchy, ZarrGroupProtocol
+from .types import GroupAttrs, SceneHierarchy, ZarrGroupProtocol, TransformMatrix, validate_transform
 
 
 class Node:
@@ -54,6 +55,21 @@ class Node:
 
         # Initialize or merge attributes
         if attrs:
+            # Validate transform if present
+            if 'transform' in attrs:
+                try:
+                    # Convert to numpy array and validate
+                    transform_array = np.array(attrs['transform'], dtype=np.float32)
+                    if transform_array.size == 16:
+                        transform_matrix = transform_array.reshape(4, 4)
+                        validated = validate_transform(transform_matrix)
+                        attrs['transform'] = validated.ravel().tolist()
+                    else:
+                        raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
+                except Exception as e:
+                    aprint(f"Invalid transform for node '{name}': {e}")
+                    raise ValueError(f"Invalid transform: {e}") from e
+            
             self._group.attrs.update(attrs)
 
     # --------------------------------------------------------------------- attrs
@@ -123,6 +139,45 @@ class Node:
             ) from e
 
     # --------------------------------------------------------------- properties
+    @property
+    def transform(self) -> Optional[TransformMatrix]:
+        """
+        Get the transformation matrix for this node.
+        
+        Returns:
+            4x4 transformation matrix if set, None otherwise
+        """
+        if 'transform' in self.attrs:
+            transform_list = self.attrs['transform']
+            return np.array(transform_list, dtype=np.float32).reshape(4, 4)
+        return None
+    
+    @transform.setter
+    def transform(self, matrix: Optional[Union[TransformMatrix, np.ndarray, list]]) -> None:
+        """
+        Set the transformation matrix for this node.
+        
+        Args:
+            matrix: 4x4 transformation matrix, flat list of 16 values, or None to remove
+            
+        Raises:
+            ValueError: If transform is invalid
+        """
+        if matrix is None:
+            # Remove transform if it exists
+            if 'transform' in self.attrs:
+                del self.attrs['transform']
+        else:
+            # Convert and validate
+            if isinstance(matrix, list):
+                matrix = np.array(matrix, dtype=np.float32)
+            
+            if matrix.size == 16:
+                matrix = matrix.reshape(4, 4)
+            
+            validated = validate_transform(matrix)
+            self.attrs['transform'] = validated.ravel().tolist()
+    
     @property
     def num_children(self) -> int:
         """Get the number of direct children of this node."""
