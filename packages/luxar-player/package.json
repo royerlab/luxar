@@ -7,9 +7,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
-    "format": "prettier --write src"
+    "format": "prettier --write src",
+    "check": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
     "three": "^0.163.0",
@@ -18,8 +23,12 @@
   "devDependencies": {
     "@types/stats.js": "^0.17.4",
     "@types/three": "^0.178.1",
+    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/ui": "^2.0.0",
+    "jsdom": "^24.0.0",
     "stats.js": "^0.17.0",
     "typescript": "^5.7",
-    "vite": "^5.2.0"
+    "vite": "^5.2.0",
+    "vitest": "^2.0.0"
   }
 }
