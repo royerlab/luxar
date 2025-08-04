@@ -21,13 +21,15 @@ from .types import (
     ZarrGroupProtocol,
     validate_colors,
     validate_positions,
+    validate_radii,
+    validate_sharpness,
 )
 
 
 def _create_array(
     group: Union[zarr.Group, ZarrGroupProtocol],
     name: str,
-    data: Union[PositionArray, ColorArray],
+    data: Union[PositionArray, ColorArray, np.ndarray[Any, np.dtype[np.float32]]],
     chunk_size: int,
     compressor: Optional[CompressorProtocol],
     dtype: Union[type[np.float32], type[np.uint8]],
@@ -81,12 +83,14 @@ class Points(Node):
         name (str): Name of the point cloud node.
         positions (NDArray[np.float32]): Array of shape (N, 3) for point positions.
         colors (NDArray[np.uint8], optional): Array of shape (N, 3) for point colors.
+        radii (NDArray[np.float32], optional): Array of shape (N,) for point radii.
+        sharpness (NDArray[np.float32], optional): Array of shape (N,) for point edge sharpness.
         parent (Node, optional): Parent node. Defaults to None.
         chunk_size (int, optional): Chunk size for Zarr dataset. Defaults to 32,768.
         compressor: Compressor for Zarr dataset. Defaults to DEFAULT_COMP.
         **attrs: Additional attributes for the node.
     Raises:
-        ValueError: If positions or colors are not valid shapes or types.
+        ValueError: If positions, colors, radii, or sharpness are not valid shapes or types.
     """
 
     def __init__(
@@ -94,6 +98,8 @@ class Points(Node):
         name: str,
         positions: Union[PositionArray, np.ndarray[Any, Any]],
         colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        radii: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
+        sharpness: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
         parent: Optional[Node] = None,
         *,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -101,19 +107,21 @@ class Points(Node):
         **attrs: Any,
     ) -> None:
         """
-        Initialize a Points node with position and color data.
+        Initialize a Points node with position, color, radius, and sharpness data.
 
         Args:
             name: Name of the point cloud node
             positions: Array of shape (N, 3) for point positions
             colors: Optional array of shape (N, 3) for point colors
+            radii: Optional array of shape (N,) for point radii
+            sharpness: Optional array of shape (N,) for point edge sharpness
             parent: Parent node in the scene graph
             chunk_size: Chunk size for Zarr dataset storage
             compressor: Compressor for Zarr dataset
             **attrs: Additional attributes for the node
 
         Raises:
-            ValueError: If positions or colors have invalid shapes or types
+            ValueError: If positions, colors, radii, or sharpness have invalid shapes or types
         """
         try:
             # Validate and convert positions
@@ -129,6 +137,16 @@ class Points(Node):
             validated_colors: Optional[ColorArray] = None
             if colors is not None:
                 validated_colors = validate_colors(colors, n_points)
+
+            # Validate and convert radii if provided
+            validated_radii: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
+            if radii is not None:
+                validated_radii = validate_radii(radii, n_points)
+
+            # Validate and convert sharpness if provided
+            validated_sharpness: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
+            if sharpness is not None:
+                validated_sharpness = validate_sharpness(sharpness, n_points)
 
             # Create or get Zarr group
             if parent is not None:
@@ -156,6 +174,14 @@ class Points(Node):
             if validated_colors is not None:
                 _create_array(
                     grp, "colors", validated_colors, chunk_size, compressor, np.uint8
+                )
+            if validated_radii is not None:
+                _create_array(
+                    grp, "radii", validated_radii, chunk_size, compressor, np.float32
+                )
+            if validated_sharpness is not None:
+                _create_array(
+                    grp, "sharpness", validated_sharpness, chunk_size, compressor, np.float32
                 )
 
             aprint(f"✓ Points node '{name}' created with {n_points:,} points.")

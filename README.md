@@ -70,7 +70,9 @@ scene = Scene("output.zarr")
 scene.add_points(
     "MyData",
     positions=np.random.randn(1_000_000, 3).astype(np.float32),
-    colors=np.random.randint(0, 255, (1_000_000, 3), dtype=np.uint8)
+    colors=np.random.randint(0, 255, (1_000_000, 3), dtype=np.uint8),
+    radii=np.random.uniform(0.05, 0.2, 1_000_000).astype(np.float32),  # Optional per-point radii
+    sharpness=np.random.uniform(0.5, 10.0, 1_000_000).astype(np.float32)  # Optional edge sharpness
 )
 scene.finalize()
 
@@ -179,13 +181,20 @@ dataset.zarr/
 ├── positions/              # 3D coordinates (Float32, shape: [N, 3])
 │   ├── .zarray
 │   └── [chunks...]
-├── colors/                 # RGB colors (Uint8, shape: [N, 3])
+├── colors/                 # RGB colors (Uint8, shape: [N, 3]) - optional
+│   ├── .zarray
+│   └── [chunks...]
+├── radii/                  # Point radii (Float32, shape: [N]) - optional
+│   ├── .zarray
+│   └── [chunks...]
+├── sharpness/              # Point edge sharpness (Float32, shape: [N]) - optional
 │   ├── .zarray
 │   └── [chunks...]
 └── subgroup_name/          # Nested scene nodes
     ├── .zattrs
     ├── positions/
-    └── colors/
+    ├── colors/
+    └── radii/
 ```
 
 ### Attributes Schema

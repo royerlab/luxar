@@ -128,6 +128,8 @@ class Scene(Node):
         name: str,
         positions: Union[PositionArray, np.ndarray[Any, Any]],
         colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        radii: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
+        sharpness: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
         parent: Optional[Node] = None,
         **attrs: Any,
     ) -> Points:
@@ -138,6 +140,8 @@ class Scene(Node):
             name: Name of the point cloud node
             positions: Array of shape (N, 3) for point positions
             colors: Optional array of shape (N, 3) for point colors
+            radii: Optional array of shape (N,) for point radii
+            sharpness: Optional array of shape (N,) for point edge sharpness
             parent: Parent node, defaults to scene root
             **attrs: Additional attributes for the node
 
@@ -158,6 +162,8 @@ class Scene(Node):
                 name,
                 positions,
                 colors,
+                radii,
+                sharpness,
                 parent=parent_node,
                 compressor=self._compressor,
                 **attrs,
@@ -283,9 +289,13 @@ class Scene(Node):
 
                 colors[i] = ((r + m) * 255, (g + m) * 255, (b + m) * 255)
 
+            # Generate radii based on position in the trajectory (growing over time)
+            # This creates a visual effect of the attractor "growing" as it evolves
+            radii = np.linspace(0.05, 0.2, n).astype(np.float32)
+            
             # Create scene and add data
             scene = cls(store)
-            scene.add_points("LorenzAttractor", positions, colors)
+            scene.add_points("LorenzAttractor", positions, colors, radii=radii)
             scene.finalize()
 
             aprint(
