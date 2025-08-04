@@ -11,6 +11,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { config } from './config';
 
 /**
  * Configuration for HDR post-processing effects
@@ -19,43 +20,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
  * of the post-processing pipeline, allowing fine-tuning of
  * bloom effects and tone mapping behavior.
  */
-export const POST_PROCESSING_CONFIG = {
-  /** HDR render target configuration */
-  HDR: {
-    /** Use 16-bit floating point for HDR precision without banding */
-    RENDER_TARGET_TYPE: THREE.HalfFloatType,
-  },
-  
-  /** Bloom effect configuration */
-  BLOOM: {
-    /** Bloom threshold - 0.0 means everything blooms, higher = only bright areas */
-    THRESHOLD: 0.0,
-    
-    /** Bloom strength - controls intensity of glow effect */
-    STRENGTH: 0.1,
-    
-    /** Bloom radius - controls how far the glow spreads */
-    RADIUS: 0.5,
-    
-    /** Resolution divisor for bloom pass - higher = faster but lower quality */
-    RESOLUTION_SCALE: 4,
-  },
-  
-  /** Tone mapping configuration */
-  TONE_MAPPING: {
-    /** Initial renderer settings for linear HDR pipeline */
-    INITIAL: {
-      OUTPUT_COLOR_SPACE: THREE.LinearSRGBColorSpace,
-      TONE_MAPPING: THREE.NoToneMapping,
-    },
-    
-    /** Final settings applied after post-processing setup */
-    FINAL: {
-      OUTPUT_COLOR_SPACE: THREE.SRGBColorSpace,
-      TONE_MAPPING: THREE.ACESFilmicToneMapping,
-    },
-  },
-} as const;
+export const POST_PROCESSING_CONFIG = config.postProcessing;
 
 /**
  * HDR Post-Processing Pipeline Manager
@@ -103,8 +68,8 @@ export class PostProcessingManager {
    */
   private setupHDRRenderer(): void {
     // Start in linear space so bloom sees unclamped HDR values
-    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.TONE_MAPPING.INITIAL.OUTPUT_COLOR_SPACE;
-    this.renderer.toneMapping = POST_PROCESSING_CONFIG.TONE_MAPPING.INITIAL.TONE_MAPPING;
+    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.initial.outputColorSpace;
+    this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.initial.toneMapping;
     
     console.log('✓ HDR renderer configured for linear pipeline');
   }
@@ -118,7 +83,7 @@ export class PostProcessingManager {
   private createHDRRenderTarget(width: number, height: number): void {
     this.hdrRenderTarget = new THREE.WebGLRenderTarget(width, height, {
       // Use 16-bit float for HDR precision without color banding
-      type: POST_PROCESSING_CONFIG.HDR.RENDER_TARGET_TYPE,
+      type: POST_PROCESSING_CONFIG.hdr.renderTargetType,
       
       // Standard render target settings
       format: THREE.RGBAFormat,
@@ -167,20 +132,20 @@ export class PostProcessingManager {
   private setupBloomPass(): void {
     const canvas = this.renderer.domElement;
     const bloomResolution = new THREE.Vector2(
-      Math.floor((canvas.clientWidth || window.innerWidth) / POST_PROCESSING_CONFIG.BLOOM.RESOLUTION_SCALE),
-      Math.floor((canvas.clientHeight || window.innerHeight) / POST_PROCESSING_CONFIG.BLOOM.RESOLUTION_SCALE)
+      Math.floor((canvas.clientWidth || window.innerWidth) / POST_PROCESSING_CONFIG.bloom.resolutionScale),
+      Math.floor((canvas.clientHeight || window.innerHeight) / POST_PROCESSING_CONFIG.bloom.resolutionScale)
     );
 
     this.bloomPass = new UnrealBloomPass(
       bloomResolution,
-      POST_PROCESSING_CONFIG.BLOOM.STRENGTH,
-      POST_PROCESSING_CONFIG.BLOOM.RADIUS,
-      POST_PROCESSING_CONFIG.BLOOM.THRESHOLD
+      POST_PROCESSING_CONFIG.bloom.strength,
+      POST_PROCESSING_CONFIG.bloom.radius,
+      POST_PROCESSING_CONFIG.bloom.threshold
     );
     
     console.log(`✓ Bloom pass configured: ${bloomResolution.x}x${bloomResolution.y} ` +
-                `(strength: ${POST_PROCESSING_CONFIG.BLOOM.STRENGTH}, ` +
-                `radius: ${POST_PROCESSING_CONFIG.BLOOM.RADIUS})`);
+                `(strength: ${POST_PROCESSING_CONFIG.bloom.strength}, ` +
+                `radius: ${POST_PROCESSING_CONFIG.bloom.radius})`);
   }
 
   /**
@@ -191,8 +156,8 @@ export class PostProcessingManager {
    * knows what transformations to apply.
    */
   private finalizeToneMapping(): void {
-    this.renderer.toneMapping = POST_PROCESSING_CONFIG.TONE_MAPPING.FINAL.TONE_MAPPING;
-    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.TONE_MAPPING.FINAL.OUTPUT_COLOR_SPACE;
+    this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.final.toneMapping;
+    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.final.outputColorSpace;
     
     console.log('✓ ACES filmic tone mapping and sRGB color space enabled');
   }

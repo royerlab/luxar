@@ -5,29 +5,8 @@ import GUI from 'lil-gui';
 import { PostProcessingManager } from './post-processing';
 import { SceneManager } from './scene-manager';
 import { AnimationController } from './animation-controller';
+import { config, type RenderingSettings } from './config';
 import { SHADER_CONFIG } from './shader-manager';
-
-/**
- * Interface for rendering settings that can be persisted
- */
-interface RenderingSettings {
-  bloomThreshold: number;
-  bloomStrength: number;
-  bloomRadius: number;
-  exposure: number;
-  hdrMultiplier: number;
-}
-
-/**
- * Default rendering settings
- */
-const DEFAULT_SETTINGS: RenderingSettings = {
-  bloomThreshold: 0.0,
-  bloomStrength: 0.1,
-  bloomRadius: 0.5,
-  exposure: 1.0,
-  hdrMultiplier: 13.0,
-};
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI
@@ -63,7 +42,7 @@ export class RenderingControls {
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
-    this.settings = { ...DEFAULT_SETTINGS };
+    this.settings = { ...config.renderingControls.defaults };
     
     // Initialize GUI
     this.gui = new GUI({ 
@@ -132,7 +111,7 @@ export class RenderingControls {
       .name('HDR Intensity')
       .onChange((value: number) => {
         // Update shader config and trigger material updates
-        (SHADER_CONFIG.POINTS as any).HDR_MULTIPLIER = value;
+        (SHADER_CONFIG.POINTS as any).hdrMultiplier = value;
         this.sceneManager.updateHDRMultiplier(value);
         this.saveSettings();
         this.triggerAnimation();
@@ -193,7 +172,7 @@ export class RenderingControls {
         const loadedSettings = JSON.parse(stored) as Partial<RenderingSettings>;
         
         // Merge with defaults to handle missing properties
-        this.settings = { ...DEFAULT_SETTINGS, ...loadedSettings };
+        this.settings = { ...config.renderingControls.defaults, ...loadedSettings };
         
         // Apply loaded settings
         this.applySettings();
@@ -225,7 +204,7 @@ export class RenderingControls {
     this.postProcessing.updateExposure(this.settings.exposure);
     
     // Apply HDR multiplier
-    (SHADER_CONFIG.POINTS as any).HDR_MULTIPLIER = this.settings.hdrMultiplier;
+    (SHADER_CONFIG.POINTS as any).hdrMultiplier = this.settings.hdrMultiplier;
     this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
   }
   

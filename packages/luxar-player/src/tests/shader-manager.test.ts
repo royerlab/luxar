@@ -21,10 +21,10 @@ describe('shader-manager', () => {
   describe('SHADER_CONFIG', () => {
     it('should have valid point configuration', () => {
       expect(SHADER_CONFIG.POINTS).toBeDefined();
-      expect(SHADER_CONFIG.POINTS.SIZE).toBe(8.0);
-      expect(SHADER_CONFIG.POINTS.HDR_MULTIPLIER).toBe(13.0);
-      expect(SHADER_CONFIG.POINTS.BASE_ALPHA).toBe(0.01);
-      expect(SHADER_CONFIG.POINTS.FALLOFF_STEEPNESS).toBe(20.0);
+      expect(SHADER_CONFIG.POINTS.size).toBe(8.0);
+      expect(SHADER_CONFIG.POINTS.hdrMultiplier).toBe(13.0);
+      expect(SHADER_CONFIG.POINTS.baseAlpha).toBe(0.01);
+      expect(SHADER_CONFIG.POINTS.falloffSteepness).toBe(20.0);
     });
   });
 

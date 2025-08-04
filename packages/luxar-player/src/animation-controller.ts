@@ -8,7 +8,7 @@
 
 import * as THREE from "three";
 import { ArcballControls } from "three/examples/jsm/controls/ArcballControls";
-import { CONFIG } from "./config";
+import { config } from "./config";
 import { PerformanceMonitor } from "./performance-monitor";
 import { PostProcessingManager } from "./post-processing";
 
@@ -124,7 +124,7 @@ export class AnimationController {
     
     // Set new timeout to auto-pause after configured idle period (2 seconds)
     // This is the key power-saving optimization for static scenes
-    this.idleTimeout = setTimeout(this.stopAnimation, CONFIG.ANIMATION.IDLE_TIMEOUT_MS);
+    this.idleTimeout = setTimeout(this.stopAnimation, config.animation.idleTimeoutMs);
   };
 
   /**
