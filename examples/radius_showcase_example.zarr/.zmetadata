@@ -1,0 +1,297 @@
+{
+    "metadata": {
+        ".zattrs": {
+            "luxar_version": "0.2",
+            "type": "scene",
+            "units": "metre"
+        },
+        ".zgroup": {
+            "zarr_format": 2
+        },
+        "DistanceBasedSphere/.zattrs": {
+            "num_points": 5000,
+            "type": "points"
+        },
+        "DistanceBasedSphere/.zgroup": {
+            "zarr_format": 2
+        },
+        "DistanceBasedSphere/colors/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "|u1",
+            "fill_value": 0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "DistanceBasedSphere/positions/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "DistanceBasedSphere/radii/.zarray": {
+            "chunks": [
+                32768
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000
+            ],
+            "zarr_format": 2
+        },
+        "LayeredSpheres/.zattrs": {
+            "num_points": 5000,
+            "type": "points"
+        },
+        "LayeredSpheres/.zgroup": {
+            "zarr_format": 2
+        },
+        "LayeredSpheres/colors/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "|u1",
+            "fill_value": 0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "LayeredSpheres/positions/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "LayeredSpheres/radii/.zarray": {
+            "chunks": [
+                32768
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                5000
+            ],
+            "zarr_format": 2
+        },
+        "RandomSizedCube/.zattrs": {
+            "num_points": 8000,
+            "type": "points"
+        },
+        "RandomSizedCube/.zgroup": {
+            "zarr_format": 2
+        },
+        "RandomSizedCube/colors/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "|u1",
+            "fill_value": 0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "RandomSizedCube/positions/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "RandomSizedCube/radii/.zarray": {
+            "chunks": [
+                32768
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                8000
+            ],
+            "zarr_format": 2
+        },
+        "SizeGradientSpiral/.zattrs": {
+            "num_points": 10000,
+            "type": "points"
+        },
+        "SizeGradientSpiral/.zgroup": {
+            "zarr_format": 2
+        },
+        "SizeGradientSpiral/colors/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "|u1",
+            "fill_value": 0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                10000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "SizeGradientSpiral/positions/.zarray": {
+            "chunks": [
+                32768,
+                3
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                10000,
+                3
+            ],
+            "zarr_format": 2
+        },
+        "SizeGradientSpiral/radii/.zarray": {
+            "chunks": [
+                32768
+            ],
+            "compressor": {
+                "blocksize": 0,
+                "clevel": 3,
+                "cname": "zstd",
+                "id": "blosc",
+                "shuffle": 2
+            },
+            "dtype": "<f4",
+            "fill_value": 0.0,
+            "filters": null,
+            "order": "C",
+            "shape": [
+                10000
+            ],
+            "zarr_format": 2
+        }
+    },
+    "zarr_consolidated_format": 1
+}
