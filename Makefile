@@ -2,8 +2,9 @@
 # Uses Hatch for on-demand environment management
 .PHONY: help install install-dev format lint type-check security test test-cov test-all \
         clean pre-commit-install pre-commit-run check dev-setup demo serve-data \
-        viewer-install viewer viewer-build demo-and-serve docs-build docs-serve \
-        env-show env-prune shell build publish-test publish
+        viewer-install viewer viewer-build viewer-test viewer-test-cov viewer-check \
+        demo-and-serve docs-build docs-serve env-show env-prune shell build \
+        publish-test publish
 
 # Default target
 help:  ## Show this help message
@@ -39,8 +40,11 @@ test:  ## Run tests
 test-cov:  ## Run tests with coverage report
 	hatch run test-cov
 
-test-all:  ## Run tests on all Python versions
-	hatch run test:run
+test-all:  ## Run all tests (Python and TypeScript)
+	@echo "🐍 Running Python tests..."
+	hatch run test
+	@echo "📘 Running TypeScript tests..."
+	cd packages/luxar-player && pnpm test --run
 
 # Pre-commit
 pre-commit-install:  ## Install pre-commit hooks
@@ -50,8 +54,11 @@ pre-commit-run:  ## Run pre-commit on all files
 	hatch run pre-commit run --all-files
 
 # Quality checks (run all using Hatch)
-check:  ## Run all quality checks (format, lint, type-check, test)
+check:  ## Run all quality checks (Python and TypeScript)
+	@echo "🐍 Running Python checks..."
 	hatch run check
+	@echo "📘 Running TypeScript checks..."
+	cd packages/luxar-player && pnpm run typecheck && pnpm run lint && pnpm test --run
 
 # Clean up
 clean:  ## Clean up temporary files and caches
@@ -102,6 +109,15 @@ viewer:  ## Start the web viewer development server
 
 viewer-build:  ## Build the viewer for production
 	cd packages/luxar-player && pnpm build
+
+viewer-test:  ## Run TypeScript tests
+	cd packages/luxar-player && pnpm test --run
+
+viewer-test-cov:  ## Run TypeScript tests with coverage
+	cd packages/luxar-player && pnpm run test:coverage
+
+viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
+	cd packages/luxar-player && pnpm run check
 
 # Combined workflows
 demo-and-serve: demo  ## Create demo and start both servers
