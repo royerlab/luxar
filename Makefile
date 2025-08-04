@@ -72,6 +72,16 @@ clean:  ## Clean up temporary files and caches
 	rm -rf dist/
 	rm -rf htmlcov/
 	rm -rf .coverage*
+	# Clean TypeScript/Node.js artifacts
+	rm -rf packages/luxar-player/dist/
+	rm -rf packages/luxar-player/node_modules/
+	rm -rf packages/luxar-player/.vite/
+	rm -rf packages/luxar-player/coverage/
+	rm -rf packages/luxar-player/.parcel-cache/
+	rm -f packages/luxar-player/*.tsbuildinfo
+	rm -f packages/luxar-player/vite.config.*.timestamp-*
+	# Clean pnpm store links (optional, uncomment if needed)
+	# rm -rf packages/luxar-player/.pnpm-store/
 
 # Development setup
 dev-setup:  ## Complete development setup with Hatch
