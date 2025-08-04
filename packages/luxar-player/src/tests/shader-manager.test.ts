@@ -3,15 +3,17 @@ import { createGaussianPointMaterial, ShaderValidator, SHADER_CONFIG } from '../
 import * as THREE from 'three';
 
 // Mock Three.js
-vi.mock('three', () => ({
-  ShaderMaterial: vi.fn().mockImplementation((params) => ({
-    ...params,
-    isShaderMaterial: true,
-    dispose: vi.fn(),
-  })),
-  AdditiveBlending: 'AdditiveBlending',
-  DoubleSide: 'DoubleSide',
-}));
+vi.mock('three', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('three')>();
+  return {
+    ...actual,
+    ShaderMaterial: vi.fn().mockImplementation((params) => ({
+      ...params,
+      isShaderMaterial: true,
+      dispose: vi.fn(),
+    })),
+  };
+});
 
 describe('shader-manager', () => {
   beforeEach(() => {
@@ -39,7 +41,7 @@ describe('shader-manager', () => {
           }),
           transparent: true,
           depthWrite: false,
-          blending: 'AdditiveBlending',
+          blending: THREE.AdditiveBlending,
           vertexColors: true,
           toneMapped: false,
         })
