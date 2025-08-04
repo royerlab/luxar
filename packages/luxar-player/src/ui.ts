@@ -1,21 +1,9 @@
 // UI utility functions for the scene player
 
+import { config } from './config';
+
 // UI Configuration constants
-const UI_CONFIG = {
-  Z_INDEX: {
-    LOADING: 1000,
-    ERROR: 1000,
-    HELP: 1001,
-  },
-  TIMINGS: {
-    ERROR_AUTODISMISS_MS: 10000,
-    HELP_CLICK_DELAY_MS: 100,
-  },
-  SPINNER: {
-    SIZE: 24,
-    BORDER_WIDTH: 3,
-  },
-} as const;
+const UI_CONFIG = config.ui;
 
 // Common style objects to reduce duplication
 const COMMON_STYLES = {
@@ -72,7 +60,7 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.borderRadius = '8px';
   loadingDiv.style.fontFamily = 'Arial, sans-serif';
   loadingDiv.style.fontSize = '16px';
-  loadingDiv.style.zIndex = '1000';
+  loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
   loadingDiv.style.textAlign = 'center';
   
   const spinner = document.createElement('div');
@@ -128,7 +116,7 @@ export function showError(message: string) {
   errorDiv.style.borderRadius = '8px';
   errorDiv.style.fontFamily = 'Arial, sans-serif';
   errorDiv.style.fontSize = '16px';
-  errorDiv.style.zIndex = '1000';
+  errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
   errorDiv.style.maxWidth = '400px';
   errorDiv.style.textAlign = 'center';
   errorDiv.style.cursor = 'pointer';
@@ -163,7 +151,7 @@ export function showError(message: string) {
     if (errorDiv.parentNode) {
       errorDiv.remove();
     }
-  }, UI_CONFIG.TIMINGS.ERROR_AUTODISMISS_MS);
+  }, UI_CONFIG.timings.errorAutoDismissMs);
 
   document.body.appendChild(errorDiv);
   
@@ -290,7 +278,7 @@ export function showHelpOverlay() {
   // Add global click listener after a short delay to prevent immediate closure
   setTimeout(() => {
     document.addEventListener('click', handleDocumentClick);
-  }, UI_CONFIG.TIMINGS.HELP_CLICK_DELAY_MS);
+  }, UI_CONFIG.timings.helpClickDelayMs);
   
   // Focus the help overlay for accessibility
   helpDiv.focus();

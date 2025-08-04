@@ -7,6 +7,7 @@
 // - Configurable point sizes and falloff parameters
 
 import * as THREE from 'three';
+import { config } from './config';
 
 /**
  * Configuration for shader-based point rendering
@@ -16,19 +17,7 @@ import * as THREE from 'three';
  */
 export const SHADER_CONFIG = {
   /** Point rendering parameters */
-  POINTS: {
-    /** Base point size in screen pixels - adjust based on point density */
-    SIZE: 8.0,
-    
-    /** HDR color multiplier for bloom effects - higher values = more bloom */
-    HDR_MULTIPLIER: 13.0,
-    
-    /** Base alpha intensity - controls point visibility */
-    BASE_ALPHA: 0.01,
-    
-    /** Gaussian falloff steepness - higher values = sharper edges */
-    FALLOFF_STEEPNESS: 20.0,
-  },
+  POINTS: config.shader.points,
 } as const;
 
 /**
@@ -58,7 +47,7 @@ const GAUSSIAN_VERTEX_SHADER = /* glsl */`
     
     // Calculate point size based on radius and distance from camera
     // This ensures points scale appropriately with perspective
-    float baseSize = ${SHADER_CONFIG.POINTS.SIZE.toFixed(1)};
+    float baseSize = ${SHADER_CONFIG.POINTS.size.toFixed(1)};
     float perspectiveScale = baseSize / -mvPosition.z;
     
     // Compensate for sharpness effect on apparent size
@@ -103,7 +92,7 @@ const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
     float falloff = pow(1.0 - normalizedR, vSharpness);
     
     // Apply base alpha
-    float alpha = ${SHADER_CONFIG.POINTS.BASE_ALPHA.toFixed(3)} * falloff;
+    float alpha = ${SHADER_CONFIG.POINTS.baseAlpha.toFixed(3)} * falloff;
     
     // Multiply color by HDR multiplier to drive bloom effects
     // Values > 1.0 will bloom in post-processing pipeline
@@ -125,7 +114,7 @@ const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
 export function createGaussianPointMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
-      hdrMultiplier: { value: SHADER_CONFIG.POINTS.HDR_MULTIPLIER },
+      hdrMultiplier: { value: SHADER_CONFIG.POINTS.hdrMultiplier },
     },
     vertexShader: GAUSSIAN_VERTEX_SHADER,
     fragmentShader: GAUSSIAN_FRAGMENT_SHADER,
@@ -178,10 +167,10 @@ export class ShaderValidator {
    */
   static logShaderConfig(): void {
     console.log('Gaussian Point Shader Configuration:', {
-      pointSize: SHADER_CONFIG.POINTS.SIZE,
-      hdrMultiplier: SHADER_CONFIG.POINTS.HDR_MULTIPLIER,
-      baseAlpha: SHADER_CONFIG.POINTS.BASE_ALPHA,
-      falloffSteepness: SHADER_CONFIG.POINTS.FALLOFF_STEEPNESS,
+      pointSize: SHADER_CONFIG.POINTS.size,
+      hdrMultiplier: SHADER_CONFIG.POINTS.hdrMultiplier,
+      baseAlpha: SHADER_CONFIG.POINTS.baseAlpha,
+      falloffSteepness: SHADER_CONFIG.POINTS.falloffSteepness,
     });
   }
 }

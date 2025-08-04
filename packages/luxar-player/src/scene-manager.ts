@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { ArcballControls } from "three/examples/jsm/controls/ArcballControls";
 import { loadScene } from "./zarr_loader";
 import { showLoadingIndicator, hideLoadingIndicator, showError } from "./ui";
-import { CONFIG, CANVAS_ID, ACCESSIBILITY } from "./config";
+import { config } from "./config";
 import { PostProcessingManager } from "./post-processing";
 import { createGaussianPointMaterial, ShaderValidator } from "./shader-manager";
 
@@ -70,9 +70,9 @@ export class SceneManager {
    * Get and validate the canvas element
    */
   private setupCanvas(): void {
-    const element = document.getElementById(CANVAS_ID) as HTMLCanvasElement;
+    const element = document.getElementById(config.canvasId) as HTMLCanvasElement;
     if (!element) {
-      showError(`Canvas element with id '${CANVAS_ID}' not found. Please check the HTML structure.`);
+      showError(`Canvas element with id '${config.canvasId}' not found. Please check the HTML structure.`);
       throw new Error("Required canvas element not found");
     }
     this.canvasElement = element;
@@ -106,7 +106,7 @@ export class SceneManager {
     this.renderer.domElement.setAttribute('role', 'img');
     
     // Descriptive label for screen readers explaining the 3D controls
-    this.renderer.domElement.setAttribute('aria-label', ACCESSIBILITY.CANVAS_ARIA_LABEL);
+    this.renderer.domElement.setAttribute('aria-label', config.accessibility.canvasAriaLabel);
     
     // Remove browser default focus outline since we handle focus visually
     this.renderer.domElement.style.outline = 'none';
@@ -130,7 +130,7 @@ export class SceneManager {
    */
   private setupScene(): void {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(CONFIG.SCENE.BACKGROUND_COLOR);
+    this.scene.background = new THREE.Color(config.scene.backgroundColor);
   }
 
   /**
@@ -152,19 +152,19 @@ export class SceneManager {
     // Create perspective camera with realistic 3D projection
     // FOV of 60° provides natural human-like viewing angle
     this.camera = new THREE.PerspectiveCamera(
-      CONFIG.CAMERA.FOV,                              // Field of view (60 degrees)
+      config.camera.fov,                              // Field of view (60 degrees)
       width / height,                                 // Aspect ratio (canvas width/height)
-      CONFIG.CAMERA.NEAR,                             // Near clipping plane (0.1 units)
-      CONFIG.CAMERA.FAR                               // Far clipping plane (1000 units)
+      config.camera.near,                             // Near clipping plane (0.1 units)
+      config.camera.far                               // Far clipping plane (1000 units)
     );
     
     // Position camera at initial viewing location
     // Z=8 provides good overview of typical point cloud scenes
     // X=0, Y=0 centers the view on the origin
     this.camera.position.set(
-      CONFIG.CAMERA.INITIAL_POSITION.x,  // X position (0 = centered)
-      CONFIG.CAMERA.INITIAL_POSITION.y,  // Y position (0 = centered) 
-      CONFIG.CAMERA.INITIAL_POSITION.z   // Z position (8 = pulled back for overview)
+      config.camera.initialPosition.x,  // X position (0 = centered)
+      config.camera.initialPosition.y,  // Y position (0 = centered) 
+      config.camera.initialPosition.z   // Z position (8 = pulled back for overview)
     );
   }
 
@@ -288,11 +288,11 @@ export class SceneManager {
    * Update camera FOV with bounds checking
    */
   updateFOV(deltaY: number): void {
-    const fovChange = deltaY * CONFIG.CAMERA.FOV_SENSITIVITY;
+    const fovChange = deltaY * config.camera.fovSensitivity;
     this.camera.fov = THREE.MathUtils.clamp(
       this.camera.fov + fovChange,
-      CONFIG.CAMERA.FOV_MIN,
-      CONFIG.CAMERA.FOV_MAX
+      config.camera.fovMin,
+      config.camera.fovMax
     );
     this.camera.updateProjectionMatrix();
   }

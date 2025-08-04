@@ -2,12 +2,12 @@
 // Copyright (c) 2024 The Luxar Authors
 
 import { LuxarApp } from "./app";
-import { CONFIG } from "./config";
+import { config } from "./config";
 import { showError } from "./ui";
 
 // Parse URL parameters for scene source
 const params = new URLSearchParams(window.location.search);
-const src = params.get("src") ?? CONFIG.DEFAULT_ZARR_PATH;
+const src = params.get("src") ?? config.defaultZarrPath;
 
 // Initialize and start the application
 const app = new LuxarApp();

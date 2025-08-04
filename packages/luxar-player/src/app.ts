@@ -5,7 +5,7 @@ import { AnimationController } from "./animation-controller";
 import { InputHandler } from "./input-handler";
 import { RenderingControls } from "./rendering-controls";
 import { cleanupUI } from "./ui";
-import { CONFIG } from "./config";
+import { config } from "./config";
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -20,7 +20,7 @@ export class LuxarApp {
   async init(src?: string): Promise<void> {
     try {
       // Use provided source or default
-      const sceneSrc = src ?? CONFIG.DEFAULT_ZARR_PATH;
+      const sceneSrc = src ?? config.defaultZarrPath;
 
       // Initialize scene manager first
       this.sceneManager = new SceneManager();
