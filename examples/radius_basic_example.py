@@ -47,7 +47,7 @@ def main():
     aprint("- Top row: Large blue points (radius=0.5)")
     aprint("- Middle row: Medium green points (radius=0.2)")
     aprint("- Bottom row: Small red points (radius=0.05)")
-    aprint("\nTo view: luxar serve {output_path}")
+    aprint(f"\nTo view: luxar serve {output_path}")
 
 
 if __name__ == "__main__":

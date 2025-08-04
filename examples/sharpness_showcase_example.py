@@ -3,7 +3,7 @@
 Comprehensive example showcasing the point sharpness feature in Luxar.
 
 This script generates several point cloud examples with varying sharpness values
-to examplenstrate how the sharpness parameter controls the edge falloff of points.
+to demonstrate how the sharpness parameter controls the edge falloff of points.
 Low sharpness values create soft, glowing points while high values create sharp edges.
 """
 
@@ -138,7 +138,7 @@ def create_mixed_sharpness_example(scene: Scene, n_points: int = 3000) -> None:
 
 def create_sharpness_wave_example(scene: Scene, n_points: int = 4000) -> None:
     """Create a wave pattern where sharpness varies sinusoidally."""
-    aprint("Creating animated sharpness wave example...")
+    aprint("Creating sharpness wave example...")
     
     # Create a wave grid
     grid_size = int(np.sqrt(n_points))
@@ -179,7 +179,7 @@ def create_sharpness_wave_example(scene: Scene, n_points: int = 4000) -> None:
 
 def main():
     """Run the sharpness feature example."""
-    output_path = Path("sharpness_example.zarr")
+    output_path = Path("sharpness_showcase_example.zarr")
     
     aprint(f"Creating sharpness example scene at {output_path}")
     aprint("\nThis example showcases the per-point sharpness feature:")
@@ -187,7 +187,6 @@ def main():
     aprint("- Comparison: Fixed sharpness values side by side")
     aprint("- Mixed cloud: Sphere with varying sharpness values")
     aprint("- Wave: Sinusoidal sharpness variation")
-    aprint()
     
     # Create scene
     scene = Scene(output_path)
@@ -195,8 +194,8 @@ def main():
     # Add all examples
     create_sharpness_gradient_example(scene)
     create_sharpness_comparison_example(scene)
-    create_mixed_sharpness_cloud(scene)
-    create_animated_sharpness_wave(scene)
+    create_mixed_sharpness_example(scene)
+    create_sharpness_wave_example(scene)
     
     # Finalize
     scene.finalize()
