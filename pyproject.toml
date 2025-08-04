@@ -1,0 +1,295 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "luxar"
+dynamic = ["version"]
+description = "High-performance nD scene compiler for arbitrary-sized scientific visualization with points, lines, surfaces, volumes and more."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Loic Royer", email = "loic.royer@czbiohub.org" }
+]
+maintainers = [
+    { name = "Loic Royer", email = "loic.royer@czbiohub.org" }
+]
+keywords = [
+    "3d",
+    "nd-visualization",
+    "point-cloud",
+    "surfaces",
+    "volumes", 
+    "visualization",
+    "zarr",
+    "scientific-computing",
+    "data-visualization",
+    "gpu-accelerated",
+    "webgl"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed"
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "zarr>=2.16,<3.0",
+    "typer>=0.12,<1.0",
+    "fastapi>=0.111,<1.0",
+    "uvicorn[standard]>=0.27,<1.0",
+    "arbol>=0.3.5"
+]
+
+[project.urls]
+Homepage = "https://github.com/royerlab/luxar"
+Documentation = "https://luxar.readthedocs.io/"
+Repository = "https://github.com/royerlab/luxar.git"
+"Bug Tracker" = "https://github.com/royerlab/luxar/issues"
+Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.0",
+    "flake8>=6.0.0",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.3.0",
+    "ruff>=0.1.0",
+    "bandit[toml]>=1.7.5"
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0"
+]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "myst-parser>=2.0.0"
+]
+
+# CLI entry point
+[project.scripts]
+luxar = "luxar.cli:app"
+
+# ---------------------------------------------
+# Hatch Configuration
+# ---------------------------------------------
+
+# Version management
+[tool.hatch.version]
+path = "packages/luxar/src/luxar/__init__.py"
+
+# Build configuration
+[tool.hatch.build.targets.wheel]
+packages = ["packages/luxar/src/luxar"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["packages/luxar/src/luxar"]
+include = [
+    "/packages/luxar/src/luxar",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md"
+]
+exclude = [
+    "*.pyc",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "htmlcov"
+]
+
+# Development environments
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.0",
+    "flake8>=6.0.0",
+    "pre-commit>=3.3.0",
+    "ruff>=0.1.0",
+    "bandit[toml]>=1.7.5"
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:packages/luxar/src/luxar/tests}"
+test-cov = "pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar/tests}"
+format = [
+    "black packages/luxar/src",
+    "isort packages/luxar/src"
+]
+lint = [
+    "flake8 packages/luxar/src",
+    "mypy packages/luxar/src/luxar"
+]
+check = [
+    "format",
+    "lint", 
+    "test-cov"
+]
+
+# Documentation environment
+[tool.hatch.envs.docs]
+dependencies = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "myst-parser>=2.0.0"
+]
+
+[tool.hatch.envs.docs.scripts]
+build = "sphinx-build -b html docs docs/_build/html"
+serve = "python -m http.server 8000 --directory docs/_build/html"
+
+# Test matrix for multiple Python versions
+[tool.hatch.envs.test]
+dependencies = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0"
+]
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12"]
+
+[tool.hatch.envs.test.scripts]
+run = "pytest {args:packages/luxar/src/luxar/tests}"
+cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar/tests}"
+
+# Publishing configuration
+[tool.hatch.publish.index]
+disable = false  # Enable publishing to PyPI
+
+# ---------------------------------------------
+# Development tool configurations
+# ---------------------------------------------
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["luxar"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.mypy]
+python_version = "3.9"
+
+# Strict mode settings
+strict = true
+
+# Additional strict checks beyond basic strict mode
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+extra_checks = true
+
+# Error reporting
+show_error_codes = true
+show_error_context = true
+pretty = true
+color_output = true
+
+# Paths
+mypy_path = "packages/luxar/src"
+packages = ["luxar"]
+
+# Additional type checking features
+check_untyped_defs = true
+disallow_any_generics = false  # Too strict for numpy/zarr usage
+disallow_any_unimported = false  # Too strict for external libraries
+disallow_any_expr = false  # Too strict for numpy usage
+disallow_any_decorated = false  # Too strict for decorators
+disallow_any_explicit = false  # Allow explicit Any when needed
+disallow_subclassing_any = false  # Too strict for external libraries
+
+# Function signature checks
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+
+# None/Optional handling
+no_implicit_optional = true
+strict_optional = true
+
+# Per-module options for external dependencies
+[[tool.mypy.overrides]]
+module = [
+    "zarr.*",
+    "arbol.*",
+    "numcodecs.*",
+    "typer.*",
+    "fastapi.*",
+    "uvicorn.*",
+    "numpy.*",
+]
+ignore_missing_imports = true
+
+# Relax strict rules for test files
+[[tool.mypy.overrides]]
+module = "luxar.tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+
+# Flake8 configuration moved to .flake8 file since flake8 doesn't support pyproject.toml
+
+[tool.pytest.ini_options]
+testpaths = ["packages/luxar/src/luxar/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--cov=luxar",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80"
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "test_*.py"]
+skips = ["B101"]  # Skip assert_used test

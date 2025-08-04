@@ -1,0 +1,25 @@
+{
+  "name": "luxar-player",
+  "version": "0.0.1",
+  "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write src"
+  },
+  "dependencies": {
+    "three": "^0.163.0",
+    "zarrita": "^0.5.2"
+  },
+  "devDependencies": {
+    "@types/stats.js": "^0.17.4",
+    "@types/three": "^0.178.1",
+    "stats.js": "^0.17.0",
+    "typescript": "^5.7",
+    "vite": "^5.2.0"
+  }
+}

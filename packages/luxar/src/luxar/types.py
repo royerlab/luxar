@@ -1,0 +1,369 @@
+"""
+luxar.types – Type definitions, protocols, and type aliases for enhanced type safety.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    Tuple,
+    TypeVar,
+    Union,
+)
+
+import numpy as np
+from numpy.typing import NDArray
+
+# Python 3.10+ compatibility
+if sys.version_info >= (3, 10):
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
+
+
+# =============================================================================
+# Literal Types for Constants
+# =============================================================================
+
+# Node types in the scene graph
+NodeType = Literal["points", "group", "scene"]
+
+# Supported data types for Zarr arrays
+DataType = Literal["float32", "uint8", "int32", "int64", "float64"]
+
+# Compression algorithms
+CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
+
+# Luxar version strings
+LuxarVersion = Literal["0.1", "0.2", "0.3"]
+
+# Physical units
+PhysicalUnit = Literal["metre", "meter", "mm", "cm", "km", "inch", "foot"]
+
+# =============================================================================
+# Type Aliases
+# =============================================================================
+
+# Path-like types
+PathLike: TypeAlias = Union[str, Path]
+
+# Numpy array types for point cloud data
+PositionArray: TypeAlias = NDArray[np.float32]  # Shape: (N, 3)
+ColorArray: TypeAlias = NDArray[np.uint8]  # Shape: (N, 3)
+TransformMatrix: TypeAlias = NDArray[np.float32]  # Shape: (4, 4)
+
+# Zarr group attributes
+GroupAttrs: TypeAlias = Dict[str, Any]
+
+# Scene hierarchy types
+SceneHierarchy: TypeAlias = Generator[Tuple[int, "NodeProtocol"], None, None]
+
+# =============================================================================
+# Protocol Definitions
+# =============================================================================
+
+
+class CompressorProtocol(Protocol):
+    """Protocol for Zarr compressor objects."""
+
+    def encode(self, buf: Any) -> bytes:
+        """Encode data buffer."""
+        ...
+
+    def decode(self, buf: bytes, out: Optional[Any] = None) -> Any:
+        """Decode data buffer."""
+        ...
+
+
+class ZarrGroupProtocol(Protocol):
+    """Protocol for Zarr group objects."""
+
+    @property
+    def attrs(self) -> GroupAttrs:
+        """Group attributes."""
+        ...
+
+    @property
+    def basename(self) -> Optional[str]:
+        """Base name of the group."""
+        ...
+
+    @property
+    def store(self) -> Any:
+        """Zarr store backing this group."""
+        ...
+
+    def require_group(self, name: str) -> ZarrGroupProtocol:
+        """Require a subgroup."""
+        ...
+
+    def create_dataset(
+        self,
+        name: str,
+        *,
+        data: Optional[NDArray[Any]] = None,
+        chunks: Optional[Union[int, Tuple[int, ...]]] = None,
+        compressor: Optional[CompressorProtocol] = None,
+        dtype: Optional[Any] = None,
+        overwrite: bool = False,
+    ) -> Any:
+        """Create a dataset in this group."""
+        ...
+
+    def group_keys(self) -> List[str]:
+        """Get list of subgroup keys."""
+        ...
+
+    def __getitem__(self, key: str) -> Union[ZarrGroupProtocol, Any]:
+        """Get subgroup or dataset by key."""
+        ...
+
+    def __contains__(self, key: str) -> bool:
+        """Check if key exists in group."""
+        ...
+
+
+class NodeProtocol(Protocol):
+    """Protocol for scene graph nodes."""
+
+    name: str
+    children: List[NodeProtocol]
+    parent: Optional[NodeProtocol]
+
+    @property
+    def attrs(self) -> GroupAttrs:
+        """Node attributes."""
+        ...
+
+    def add_group(self, name: str, **attrs: Any) -> NodeProtocol:
+        """Add a child group node."""
+        ...
+
+    def walk(self, depth: int = 0) -> SceneHierarchy:
+        """Walk the node hierarchy depth-first."""
+        ...
+
+
+class PointCloudProtocol(Protocol):
+    """Protocol for point cloud data containers."""
+
+    def __init__(
+        self,
+        name: str,
+        positions: PositionArray,
+        colors: Optional[ColorArray] = None,
+        parent: Optional[NodeProtocol] = None,
+        *,
+        chunk_size: int = 32_768,
+        compressor: Optional[CompressorProtocol] = None,
+        **attrs: Any,
+    ) -> None:
+        """Initialize point cloud."""
+        ...
+
+
+class SceneProtocol(Protocol):
+    """Protocol for scene containers."""
+
+    def add_group(self, name: str, **attrs: Any) -> NodeProtocol:
+        """Add a group to the scene."""
+        ...
+
+    def add_points(
+        self,
+        name: str,
+        positions: PositionArray,
+        colors: Optional[ColorArray] = None,
+        parent: Optional[NodeProtocol] = None,
+        **attrs: Any,
+    ) -> PointCloudProtocol:
+        """Add points to the scene."""
+        ...
+
+    def finalize(self) -> None:
+        """Finalize the scene."""
+        ...
+
+    def get_store_path(self) -> PathLike:
+        """Get the scene store path."""
+        ...
+
+
+# =============================================================================
+# Generic Type Variables and Constraints
+# =============================================================================
+
+# Generic node type
+NodeT = TypeVar("NodeT", bound=NodeProtocol)
+
+# Generic numeric array type
+NumericT = TypeVar("NumericT", bound=np.generic)
+ArrayT = TypeVar("ArrayT", bound=NDArray[Any])
+
+# Zarr-compatible data types
+ZarrDataT = TypeVar("ZarrDataT", np.float32, np.uint8, np.int32, np.int64, np.float64)
+
+# =============================================================================
+# Validation Functions
+# =============================================================================
+
+
+def validate_positions(positions: Any) -> PositionArray:
+    """
+    Validate and convert positions array to correct type.
+
+    Args:
+        positions: Input array to validate
+
+    Returns:
+        Validated positions array
+
+    Raises:
+        ValueError: If positions are invalid shape or type
+    """
+    if not isinstance(positions, np.ndarray):
+        raise ValueError("Positions must be a numpy array")
+
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("Positions must have shape (N, 3)")
+
+    return positions.astype(np.float32, copy=False)
+
+
+def validate_colors(colors: Any, n_points: int) -> ColorArray:
+    """
+    Validate and convert colors array to correct type.
+
+    Args:
+        colors: Input array to validate
+        n_points: Expected number of points
+
+    Returns:
+        Validated colors array
+
+    Raises:
+        ValueError: If colors are invalid shape or type
+    """
+    if not isinstance(colors, np.ndarray):
+        raise ValueError("Colors must be a numpy array")
+
+    if colors.shape != (n_points, 3):
+        raise ValueError(f"Colors must have shape ({n_points}, 3)")
+
+    return colors.astype(np.uint8, copy=False)
+
+
+def validate_transform(transform: Any) -> TransformMatrix:
+    """
+    Validate and convert transform matrix to correct type.
+
+    Args:
+        transform: Input transform matrix
+
+    Returns:
+        Validated 4x4 transform matrix
+
+    Raises:
+        ValueError: If transform is invalid shape or type
+    """
+    if not isinstance(transform, np.ndarray):
+        raise ValueError("Transform must be a numpy array")
+
+    if transform.shape != (4, 4):
+        raise ValueError("Transform must be a 4x4 matrix")
+
+    return transform.astype(np.float32, copy=False)
+
+
+def validate_node_type(node_type: str) -> NodeType:
+    """
+    Validate node type string.
+
+    Args:
+        node_type: Input node type string
+
+    Returns:
+        Validated node type
+
+    Raises:
+        ValueError: If node type is invalid
+    """
+    valid_types: Tuple[NodeType, ...] = ("points", "group", "scene")
+    if node_type not in valid_types:
+        raise ValueError(
+            f"Invalid node type '{node_type}'. Must be one of {valid_types}"
+        )
+    # Cast is safe after validation
+    from typing import cast
+
+    return cast(NodeType, node_type)
+
+
+def validate_physical_unit(unit: str) -> PhysicalUnit:
+    """
+    Validate physical unit string.
+
+    Args:
+        unit: Input unit string
+
+    Returns:
+        Validated physical unit
+
+    Raises:
+        ValueError: If unit is invalid
+    """
+    valid_units: Tuple[PhysicalUnit, ...] = (
+        "metre",
+        "meter",
+        "mm",
+        "cm",
+        "km",
+        "inch",
+        "foot",
+    )
+    if unit not in valid_units:
+        raise ValueError(f"Invalid unit '{unit}'. Must be one of {valid_units}")
+    # Cast is safe after validation
+    from typing import cast
+
+    return cast(PhysicalUnit, unit)
+
+
+# =============================================================================
+# Type Guards
+# =============================================================================
+
+
+def is_position_array(obj: Any) -> bool:
+    """Check if object is a valid position array."""
+    try:
+        validate_positions(obj)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def is_color_array(obj: Any, n_points: int) -> bool:
+    """Check if object is a valid color array."""
+    try:
+        validate_colors(obj, n_points)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def is_transform_matrix(obj: Any) -> bool:
+    """Check if object is a valid transform matrix."""
+    try:
+        validate_transform(obj)
+        return True
+    except (ValueError, TypeError):
+        return False

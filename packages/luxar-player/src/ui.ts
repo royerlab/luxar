@@ -1,0 +1,304 @@
+// UI utility functions for the scene player
+
+// UI Configuration constants
+const UI_CONFIG = {
+  Z_INDEX: {
+    LOADING: 1000,
+    ERROR: 1000,
+    HELP: 1001,
+  },
+  TIMINGS: {
+    ERROR_AUTODISMISS_MS: 10000,
+    HELP_CLICK_DELAY_MS: 100,
+  },
+  SPINNER: {
+    SIZE: 24,
+    BORDER_WIDTH: 3,
+  },
+} as const;
+
+// Common style objects to reduce duplication
+const COMMON_STYLES = {
+  overlay: {
+    position: 'fixed' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    color: 'white',
+    padding: '20px',
+    borderRadius: '8px',
+    fontFamily: 'Arial, sans-serif',
+    textAlign: 'center' as const,
+  },
+  typography: {
+    fontSize: '16px',
+    lineHeight: '1.4',
+  },
+} as const;
+
+// Helper function to apply styles to an element
+function applyStyles(element: HTMLElement, styles: Record<string, string | number>): void {
+  Object.entries(styles).forEach(([property, value]) => {
+    element.style.setProperty(property, String(value));
+  });
+}
+
+// Ensure spinner CSS is only injected once
+function ensureSpinnerCSS() {
+  if (!document.getElementById('spinner-styles')) {
+    const style = document.createElement('style');
+    style.id = 'spinner-styles';
+    style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
+  }
+}
+
+// Function to create and show loading indicator
+export function showLoadingIndicator(): HTMLElement {
+  ensureSpinnerCSS();
+  
+  const loadingDiv = document.createElement('div');
+  loadingDiv.id = 'loading-indicator';
+  loadingDiv.setAttribute('role', 'status');
+  loadingDiv.setAttribute('aria-live', 'polite');
+  loadingDiv.setAttribute('aria-label', 'Loading 3D scene');
+  loadingDiv.style.position = 'fixed';
+  loadingDiv.style.top = '50%';
+  loadingDiv.style.left = '50%';
+  loadingDiv.style.transform = 'translate(-50%, -50%)';
+  loadingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+  loadingDiv.style.color = 'white';
+  loadingDiv.style.padding = '20px';
+  loadingDiv.style.borderRadius = '8px';
+  loadingDiv.style.fontFamily = 'Arial, sans-serif';
+  loadingDiv.style.fontSize = '16px';
+  loadingDiv.style.zIndex = '1000';
+  loadingDiv.style.textAlign = 'center';
+  
+  const spinner = document.createElement('div');
+  spinner.setAttribute('aria-hidden', 'true');
+  spinner.style.border = '3px solid rgba(255, 255, 255, 0.3)';
+  spinner.style.borderTop = '3px solid white';
+  spinner.style.borderRadius = '50%';
+  spinner.style.width = '24px';
+  spinner.style.height = '24px';
+  spinner.style.animation = 'spin 1s linear infinite';
+  spinner.style.margin = '0 auto 10px auto';
+  
+  const text = document.createElement('div');
+  text.textContent = 'Loading scene...';
+  text.id = 'loading-text';
+  
+  loadingDiv.appendChild(spinner);
+  loadingDiv.appendChild(text);
+  document.body.appendChild(loadingDiv);
+  
+  return loadingDiv;
+}
+
+// Function to hide loading indicator
+export function hideLoadingIndicator() {
+  const loadingDiv = document.getElementById('loading-indicator');
+  if (loadingDiv) {
+    loadingDiv.remove();
+  }
+}
+
+// Function to display error message to user with dismiss functionality
+export function showError(message: string) {
+  // Remove any existing error messages first
+  const existingError = document.getElementById('error-message');
+  if (existingError) {
+    existingError.remove();
+  }
+
+  const errorDiv = document.createElement('div');
+  errorDiv.id = 'error-message';
+  errorDiv.setAttribute('role', 'alert');
+  errorDiv.setAttribute('aria-live', 'assertive');
+  errorDiv.setAttribute('aria-label', 'Error message');
+  errorDiv.setAttribute('tabindex', '0');
+  errorDiv.style.position = 'fixed';
+  errorDiv.style.top = '50%';
+  errorDiv.style.left = '50%';
+  errorDiv.style.transform = 'translate(-50%, -50%)';
+  errorDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
+  errorDiv.style.color = 'white';
+  errorDiv.style.padding = '20px';
+  errorDiv.style.borderRadius = '8px';
+  errorDiv.style.fontFamily = 'Arial, sans-serif';
+  errorDiv.style.fontSize = '16px';
+  errorDiv.style.zIndex = '1000';
+  errorDiv.style.maxWidth = '400px';
+  errorDiv.style.textAlign = 'center';
+  errorDiv.style.cursor = 'pointer';
+
+  const messageText = document.createElement('div');
+  messageText.textContent = message;
+  messageText.style.marginBottom = '10px';
+
+  const dismissText = document.createElement('div');
+  dismissText.textContent = 'Click to dismiss';
+  dismissText.style.fontSize = '12px';
+  dismissText.style.opacity = '0.8';
+
+  errorDiv.appendChild(messageText);
+  errorDiv.appendChild(dismissText);
+
+  // Add click handler to dismiss
+  errorDiv.addEventListener('click', () => {
+    errorDiv.remove();
+  });
+
+  // Add keyboard navigation support
+  errorDiv.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+      event.preventDefault();
+      errorDiv.remove();
+    }
+  });
+
+  // Auto-dismiss after configured timeout
+  setTimeout(() => {
+    if (errorDiv.parentNode) {
+      errorDiv.remove();
+    }
+  }, UI_CONFIG.TIMINGS.ERROR_AUTODISMISS_MS);
+
+  document.body.appendChild(errorDiv);
+  
+  // Focus the error for screen readers
+  errorDiv.focus();
+}
+
+// Function to clean up UI resources
+export function cleanupUI() {
+  // Remove spinner CSS styles
+  const spinnerStyles = document.getElementById('spinner-styles');
+  if (spinnerStyles) {
+    spinnerStyles.remove();
+  }
+  
+  // Remove any lingering loading indicators
+  const loadingDiv = document.getElementById('loading-indicator');
+  if (loadingDiv) {
+    loadingDiv.remove();
+  }
+  
+  // Remove any lingering error messages
+  const errorDiv = document.getElementById('error-message');
+  if (errorDiv) {
+    errorDiv.remove();
+  }
+  
+  // Remove any lingering help overlays
+  const helpDiv = document.getElementById('help-overlay');
+  if (helpDiv) {
+    helpDiv.remove();
+  }
+}
+
+// Function to create and show help overlay
+export function showHelpOverlay() {
+  // Remove any existing help overlay first
+  const existingHelp = document.getElementById('help-overlay');
+  if (existingHelp) {
+    existingHelp.remove();
+  }
+
+  const helpDiv = document.createElement('div');
+  helpDiv.id = 'help-overlay';
+  helpDiv.setAttribute('role', 'dialog');
+  helpDiv.setAttribute('aria-label', 'Controls help');
+  helpDiv.setAttribute('tabindex', '0');
+  helpDiv.style.position = 'fixed';
+  helpDiv.style.top = '20px';
+  helpDiv.style.right = '20px';
+  helpDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+  helpDiv.style.color = 'white';
+  helpDiv.style.padding = '20px';
+  helpDiv.style.borderRadius = '8px';
+  helpDiv.style.fontFamily = 'Arial, sans-serif';
+  helpDiv.style.fontSize = '14px';
+  helpDiv.style.zIndex = '1001';
+  helpDiv.style.maxWidth = '300px';
+  helpDiv.style.cursor = 'pointer';
+  helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+
+  const title = document.createElement('div');
+  title.textContent = '3D Scene Controls';
+  title.style.fontSize = '16px';
+  title.style.fontWeight = 'bold';
+  title.style.marginBottom = '15px';
+  title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.3)';
+  title.style.paddingBottom = '10px';
+
+  const controls = [
+    '🖱️ Mouse drag: Rotate camera',
+    '🖱️ Mouse wheel: Zoom in/out',
+    '⇧ + Mouse wheel: Change FOV',
+    '🖱️ Right drag: Pan camera',
+    '⎵ Press Space: Toggle fullscreen',
+    '❓ Press H: Toggle this help',
+    '📊 Press Shift+P: Toggle performance stats',
+    '⚠️ Click anywhere to close'
+  ];
+
+  const controlsList = document.createElement('div');
+  controls.forEach(control => {
+    const controlItem = document.createElement('div');
+    controlItem.textContent = control;
+    controlItem.style.marginBottom = '8px';
+    controlItem.style.lineHeight = '1.4';
+    controlsList.appendChild(controlItem);
+  });
+
+  helpDiv.appendChild(title);
+  helpDiv.appendChild(controlsList);
+
+  // Function to close help overlay
+  const closeHelp = () => {
+    const help = document.getElementById('help-overlay');
+    if (help) {
+      help.remove();
+      document.removeEventListener('click', handleDocumentClick);
+    }
+  };
+
+  // Global click handler to close help when clicking outside
+  const handleDocumentClick = (event: MouseEvent) => {
+    const target = event.target as Element;
+    if (!helpDiv.contains(target)) {
+      closeHelp();
+    }
+  };
+
+  // Add click handler within help panel to close
+  helpDiv.addEventListener('click', closeHelp);
+
+  // Add keyboard navigation support
+  helpDiv.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+      event.preventDefault();
+      closeHelp();
+    }
+  });
+
+  document.body.appendChild(helpDiv);
+  
+  // Add global click listener after a short delay to prevent immediate closure
+  setTimeout(() => {
+    document.addEventListener('click', handleDocumentClick);
+  }, UI_CONFIG.TIMINGS.HELP_CLICK_DELAY_MS);
+  
+  // Focus the help overlay for accessibility
+  helpDiv.focus();
+}
+
+// Function to hide help overlay
+export function hideHelpOverlay() {
+  const helpDiv = document.getElementById('help-overlay');
+  if (helpDiv) {
+    helpDiv.remove();
+  }
+}
