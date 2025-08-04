@@ -1,0 +1,93 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createGaussianPointMaterial, ShaderValidator, SHADER_CONFIG } from '../shader-manager';
+import * as THREE from 'three';
+
+// Mock Three.js
+vi.mock('three', () => ({
+  ShaderMaterial: vi.fn().mockImplementation((params) => ({
+    ...params,
+    isShaderMaterial: true,
+    dispose: vi.fn(),
+  })),
+  AdditiveBlending: 'AdditiveBlending',
+  DoubleSide: 'DoubleSide',
+}));
+
+describe('shader-manager', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('SHADER_CONFIG', () => {
+    it('should have valid point configuration', () => {
+      expect(SHADER_CONFIG.POINTS).toBeDefined();
+      expect(SHADER_CONFIG.POINTS.SIZE).toBe(8.0);
+      expect(SHADER_CONFIG.POINTS.HDR_MULTIPLIER).toBe(13.0);
+      expect(SHADER_CONFIG.POINTS.BASE_ALPHA).toBe(0.01);
+      expect(SHADER_CONFIG.POINTS.FALLOFF_STEEPNESS).toBe(20.0);
+    });
+  });
+
+  describe('createGaussianPointMaterial', () => {
+    it('should create a shader material with correct properties', () => {
+      createGaussianPointMaterial();
+      
+      expect(THREE.ShaderMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transparent: true,
+          depthWrite: false,
+          blending: 'AdditiveBlending',
+          vertexColors: true,
+          toneMapped: false,
+        })
+      );
+    });
+
+    it('should include vertex shader with radius and sharpness attributes', () => {
+      createGaussianPointMaterial();
+      
+      const vertexShader = (THREE.ShaderMaterial as any).mock.calls[0][0].vertexShader;
+      expect(vertexShader).toContain('attribute float radius');
+      expect(vertexShader).toContain('attribute float sharpness');
+      expect(vertexShader).toContain('varying float vSharpness');
+      expect(vertexShader).toContain('gl_PointSize');
+    });
+
+    it('should include fragment shader with power-based falloff', () => {
+      createGaussianPointMaterial();
+      
+      const fragmentShader = (THREE.ShaderMaterial as any).mock.calls[0][0].fragmentShader;
+      expect(fragmentShader).toContain('varying float vSharpness');
+      expect(fragmentShader).toContain('float falloff = pow(1.0 - normalizedR, vSharpness)');
+      expect(fragmentShader).toContain('gl_FragColor');
+    });
+
+    it('should include size compensation in vertex shader', () => {
+      createGaussianPointMaterial();
+      
+      const vertexShader = (THREE.ShaderMaterial as any).mock.calls[0][0].vertexShader;
+      expect(vertexShader).toContain('float sizeCompensation = sqrt(vSharpness / 2.0)');
+      expect(vertexShader).toContain('gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation');
+    });
+
+    it('should use HDR multiplier in fragment shader', () => {
+      createGaussianPointMaterial();
+      
+      const fragmentShader = (THREE.ShaderMaterial as any).mock.calls[0][0].fragmentShader;
+      expect(fragmentShader).toContain('vec3 hdr = vColor * 13.0');
+    });
+  });
+
+  describe('ShaderValidator', () => {
+    let validator: ShaderValidator;
+
+    beforeEach(() => {
+      validator = new ShaderValidator();
+    });
+
+    it('should be instantiable', () => {
+      expect(validator).toBeDefined();
+      expect(validator).toBeInstanceOf(ShaderValidator);
+    });
+  });
+});
