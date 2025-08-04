@@ -2,15 +2,24 @@
 
 import { SceneManager } from "./scene-manager";
 import { AnimationController } from "./animation-controller";
+import { RenderingControls } from "./rendering-controls";
 import { showHelpOverlay, hideHelpOverlay } from "./ui";
 
 export class InputHandler {
   private eventListeners: (() => void)[] = [];
+  private renderingControls?: RenderingControls;
 
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController
   ) {}
+
+  /**
+   * Set the rendering controls instance
+   */
+  setRenderingControls(controls: RenderingControls): void {
+    this.renderingControls = controls;
+  }
 
   /**
    * Initialize all event listeners
@@ -148,10 +157,19 @@ export class InputHandler {
         
       case 'p':
       case 'P':
-        // Shift+P to toggle performance metrics
-        if (event.shiftKey) {
+        // Ctrl+P to toggle performance metrics
+        if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
           this.togglePerformanceStats();
+        }
+        break;
+        
+      case 'a':
+      case 'A':
+        // Ctrl+A to toggle advanced rendering controls
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          this.toggleRenderingControls();
         }
         break;
         
@@ -212,6 +230,13 @@ export class InputHandler {
         console.error('Error attempting to exit fullscreen:', err);
       });
     }
+  }
+
+  /**
+   * Toggle advanced rendering controls
+   */
+  private toggleRenderingControls(): void {
+    this.renderingControls?.toggle();
   }
 
   /**

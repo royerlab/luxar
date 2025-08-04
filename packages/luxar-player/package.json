@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
+    "lil-gui": "^0.20.0",
     "three": "^0.163.0",
     "zarrita": "^0.5.2"
   },

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      lil-gui:
+        specifier: ^0.20.0
+        version: 0.20.0
       three:
         specifier: ^0.163.0
         version: 0.163.0
@@ -691,6 +694,9 @@ packages:
     peerDependenciesMeta:
       canvas:
         optional: true
+
+  lil-gui@0.20.0:
+    resolution: {integrity: sha512-k7Ipr0ztqslMA2XvM5z5ZaWhxQtnEOwJBfI/hmSuRh6q4iMG9L0boqqrnZSzBR1jzyJ28OMl47l65ILzRe1TdA==}
 
   loupe@3.2.0:
     resolution: {integrity: sha512-2NCfZcT5VGVNX9mSZIxLRkEAegDGBpuQZBy13desuHeVORmBDyAET4TkJr4SjqQy3A8JDofMN6LpkK8Xcm/dlw==}
@@ -1650,6 +1656,8 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  lil-gui@0.20.0: {}
 
   loupe@3.2.0: {}
 
