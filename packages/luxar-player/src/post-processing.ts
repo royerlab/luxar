@@ -255,4 +255,14 @@ export class PostProcessingManager {
     console.log(`✓ Bloom settings updated: strength=${this.bloomPass.strength}, ` +
                 `radius=${this.bloomPass.radius}, threshold=${this.bloomPass.threshold}`);
   }
+
+  /**
+   * Updates the tone mapping exposure value
+   * 
+   * @param exposure - New exposure value (0.1 to 3.0)
+   */
+  updateExposure(exposure: number): void {
+    this.renderer.toneMappingExposure = exposure;
+    console.log(`✓ Tone mapping exposure updated: ${exposure}`);
+  }
 }

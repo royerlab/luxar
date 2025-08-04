@@ -81,6 +81,7 @@ const GAUSSIAN_VERTEX_SHADER = /* glsl */`
  * - Proper alpha blending for transparent overlapping points
  */
 const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
+  uniform float hdrMultiplier;
   varying vec3 vColor;
   varying float vSharpness;
   
@@ -106,7 +107,7 @@ const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
     
     // Multiply color by HDR multiplier to drive bloom effects
     // Values > 1.0 will bloom in post-processing pipeline
-    vec3 hdr = vColor * ${SHADER_CONFIG.POINTS.HDR_MULTIPLIER.toFixed(1)};
+    vec3 hdr = vColor * hdrMultiplier;
     
     // Output HDR color with computed alpha
     gl_FragColor = vec4(hdr, alpha);
@@ -123,6 +124,9 @@ const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
  */
 export function createGaussianPointMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
+    uniforms: {
+      hdrMultiplier: { value: SHADER_CONFIG.POINTS.HDR_MULTIPLIER },
+    },
     vertexShader: GAUSSIAN_VERTEX_SHADER,
     fragmentShader: GAUSSIAN_FRAGMENT_SHADER,
     

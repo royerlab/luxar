@@ -240,7 +240,8 @@ export function showHelpOverlay() {
     '🖱️ Right drag: Pan camera',
     '⎵ Press Space: Toggle fullscreen',
     '❓ Press H: Toggle this help',
-    '📊 Press Shift+P: Toggle performance stats',
+    '📊 Press Ctrl+P: Toggle performance stats',
+    '🎨 Press Ctrl+A: Advanced rendering controls',
     '⚠️ Click anywhere to close'
   ];
 
