@@ -1,6 +1,4 @@
-"""
-luxar.points – Defines the Points node for point cloud data in Luxar scenes.
-"""
+"""luxar.points – Defines the Points node for point cloud data in Luxar scenes."""
 
 from __future__ import annotations
 
@@ -34,8 +32,7 @@ def _create_array(
     compressor: Optional[CompressorProtocol],
     dtype: Union[type[np.float32], type[np.uint8]],
 ) -> None:
-    """
-    Write data into ``group/<name>`` with sensible defaults.
+    """Write data into ``group/<name>`` with sensible defaults.
 
     Args:
         group: Zarr group to write to
@@ -75,13 +72,12 @@ def _create_array(
 
 
 class Points(Node):
-    """
-    Point-cloud node (writes immediately to the backing store).
+    """Point-cloud node (writes immediately to the backing store).
     This class is intended for internal use via Scene.add_points().
 
     Args:
         name (str): Name of the point cloud node.
-        positions (NDArray[np.float32]): Array of shape (N, 3) for point positions.
+        positions (NDArray[np.float32]): Array of shape (N, D) for point positions where D is dimensionality.
         colors (NDArray[np.uint8], optional): Array of shape (N, 3) for point colors.
         radii (NDArray[np.float32], optional): Array of shape (N,) for point radii.
         sharpness (NDArray[np.float32], optional): Array of shape (N,) for point edge sharpness.
@@ -89,6 +85,7 @@ class Points(Node):
         chunk_size (int, optional): Chunk size for Zarr dataset. Defaults to 32,768.
         compressor: Compressor for Zarr dataset. Defaults to DEFAULT_COMP.
         **attrs: Additional attributes for the node.
+
     Raises:
         ValueError: If positions, colors, radii, or sharpness are not valid shapes or types.
     """
@@ -98,20 +95,23 @@ class Points(Node):
         name: str,
         positions: Union[PositionArray, np.ndarray[Any, Any]],
         colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
-        radii: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
-        sharpness: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
+        radii: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
+        sharpness: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
         parent: Optional[Node] = None,
         *,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
         **attrs: Any,
     ) -> None:
-        """
-        Initialize a Points node with position, color, radius, and sharpness data.
+        """Initialize a Points node with position, color, radius, and sharpness data.
 
         Args:
             name: Name of the point cloud node
-            positions: Array of shape (N, 3) for point positions
+            positions: Array of shape (N, D) for point positions where D is dimensionality
             colors: Optional array of shape (N, 3) for point colors
             radii: Optional array of shape (N,) for point radii
             sharpness: Optional array of shape (N,) for point edge sharpness
@@ -181,7 +181,12 @@ class Points(Node):
                 )
             if validated_sharpness is not None:
                 _create_array(
-                    grp, "sharpness", validated_sharpness, chunk_size, compressor, np.float32
+                    grp,
+                    "sharpness",
+                    validated_sharpness,
+                    chunk_size,
+                    compressor,
+                    np.float32,
                 )
 
             aprint(f"✓ Points node '{name}' created with {n_points:,} points.")

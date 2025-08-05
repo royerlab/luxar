@@ -63,15 +63,22 @@ make serve-data DATASET=my_scene.zarr  # Serves your data
 
 ```python
 import numpy as np
-from luxar import Scene, transforms
+from luxar import Scene, Dimensions, Dimension, transforms
 
-# Create and populate a scene
-scene = Scene("output.zarr")
+# Create scene with explicit dimensions
+dims = Dimensions([
+    Dimension("time", unit="s", range=(0, 10), step=0.5, display=False),
+    Dimension("x", unit="um", range=(-100, 100), display=True),
+    Dimension("y", unit="um", range=(-100, 100), display=True),
+    Dimension("z", unit="um", range=(-50, 50), display=True),
+])
+scene = Scene("output.zarr", dimensions=dims)
 
-# Add points at origin
-positions = np.random.randn(100_000, 3).astype(np.float32)
+# Add 4D point cloud (time + xyz)
+positions = np.random.randn(100_000, 4).astype(np.float32)
 colors = np.random.randint(0, 255, (100_000, 3), dtype=np.uint8)
-scene.add_points("PointsAtOrigin", positions, colors=colors)
+radii = np.random.uniform(0.1, 0.5, 100_000).astype(np.float32)
+scene.add_points("TimeSeriesPoints", positions, colors=colors, radii=radii)
 
 # Add transformed point groups
 transform = transforms.compose(
@@ -80,15 +87,11 @@ transform = transforms.compose(
     transforms.scale(uniform=0.5)    # Scale down by half
 )
 group = scene.add_group("TransformedData", transform=transforms.to_list(transform))
-scene.add_points("Points", positions, colors=colors, parent=group)
-
-# Or use the transform property
-another_group = scene.add_group("AnotherGroup")
-another_group.transform = transforms.translate(0, 5, 0)  # Move up
 
 scene.finalize()
 
-# View: luxar serve output.zarr
+# View with nD navigation: luxar serve output.zarr
+# Use keyboard: Press '1' to select time dimension, '[' and ']' to navigate
 ```
 
 📚 **For detailed usage, see package-specific documentation:**
@@ -135,6 +138,7 @@ luxar/
 
 ### 🐍 Luxar Core
 - **Universal Scene Graph** - Supports points, lines, surfaces, volumes, and nD data
+- **Scene-Level Dimensions** - Define coordinate systems with units, ranges, and navigation steps
 - **Zarr Backend** - Chunked storage for streaming massive datasets
 - **Python Native** - Integrates with NumPy, Pandas, and scientific Python
 - **CLI Tools** - Command-line interface for quick operations
@@ -143,11 +147,22 @@ luxar/
 
 ### 🌐 Luxar Player
 - **GPU Acceleration** - WebGL 2.0 with custom shaders
+- **nD Navigation** - Browse through multiple dimensions with keyboard controls
+- **Radius-Based Slicing** - Natural point visibility based on hypersphere intersections
 - **HDR Rendering** - 16-bit precision with bloom effects
 - **Streaming Ready** - Progressive loading of large datasets
 - **Cross-Platform** - Runs in any modern web browser
 
 📚 [Full Viewer Documentation →](packages/luxar-player/README.md)
+
+### 🆕 New in Latest Version
+- **Scene-Level Dimensions**: Define coordinate systems once, validate all objects
+- **nD Point Cloud Support**: Visualize time series, multi-channel, and high-dimensional data
+- **Smart Slicing**: Points visible based on their radius in nD space
+- **Keyboard Navigation**: 
+  - Press `1-9` to select dimension to control
+  - Use `[` and `]` to navigate through selected dimension
+  - Custom step sizes per dimension for precise control
 
 ## 🔧 Development
 

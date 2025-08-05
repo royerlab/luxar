@@ -1,11 +1,10 @@
-"""
-luxar.cli – Command-line interface for building, serving, and inspecting Luxar Zarr scenes.
-"""
+"""luxar.cli – Command-line interface for building, serving, and inspecting Luxar Zarr scenes."""
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Callable, Generator, Tuple
+from typing import Tuple
 
 import typer
 import uvicorn
@@ -27,8 +26,7 @@ def random(
     n: int = typer.Option(100_000, "--n", "-n", help="Number of points"),
     seed: int | None = typer.Option(None, help="Random seed"),
 ) -> None:
-    """
-    Generate a random point cloud scene and write it to a Zarr store.
+    """Generate a random point cloud scene and write it to a Zarr store.
 
     Args:
         out (Path): Output directory for Zarr store.
@@ -57,8 +55,7 @@ def serve(
     ),
     port: int = typer.Option(8000, "--port", "-p"),
 ) -> None:
-    """
-    Serve a Zarr scene using FastAPI and Uvicorn.
+    """Serve a Zarr scene using FastAPI and Uvicorn.
 
     Args:
         store (Path): Path to the Zarr store to serve.
@@ -98,8 +95,7 @@ def serve(
 # ────────────────────────────── info ─────────────────────────────────────────
 @app.command()
 def info(path: Path) -> None:
-    """
-    Show root attributes, group hierarchy, and point-cloud stats for a Zarr scene.
+    """Show root attributes, group hierarchy, and point-cloud stats for a Zarr scene.
 
     Args:
         path (Path): Path to the Zarr store.
@@ -110,9 +106,10 @@ def info(path: Path) -> None:
             typer.secho("Path does not exist.", fg=typer.colors.RED, err=True)
             raise typer.Exit(1)
         root = zarr.open_group(path, mode="r")
-        hdr: Callable[[str], None] = lambda s: typer.secho(
-            s, bold=True, fg=typer.colors.BLUE
-        )
+
+        def hdr(s: str) -> None:
+            typer.secho(s, bold=True, fg=typer.colors.BLUE)
+
         hdr("Root attributes")
         for k, v in root.attrs.items():
             typer.echo(f"  {k}: {v}")
@@ -138,12 +135,12 @@ def info(path: Path) -> None:
 def _dfs(
     group: zarr.Group, depth: int = 0
 ) -> Generator[Tuple[int, zarr.Group], None, None]:
-    """
-    Depth-first walk that yields (depth, group) for every subgroup.
+    """Depth-first walk that yields (depth, group) for every subgroup.
 
     Args:
         group (zarr.Group): Zarr group to traverse.
         depth (int, optional): Current depth. Defaults to 0.
+
     Yields:
         Tuple[int, zarr.Group]: (depth, group) for each subgroup.
     """

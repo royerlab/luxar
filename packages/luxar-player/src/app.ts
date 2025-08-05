@@ -1,11 +1,11 @@
 // Main application class for the Luxar scene player
 
-import { SceneManager } from "./scene-manager";
-import { AnimationController } from "./animation-controller";
-import { InputHandler } from "./input-handler";
-import { RenderingControls } from "./rendering-controls";
-import { cleanupUI } from "./ui";
-import { config } from "./config";
+import { SceneManager } from './scene-manager';
+import { AnimationController } from './animation-controller';
+import { InputHandler } from './input-handler';
+import { RenderingControls } from './rendering-controls';
+import { cleanupUI } from './ui';
+import { config } from './config';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -36,10 +36,7 @@ export class LuxarApp {
       );
 
       // Initialize input handler
-      this.inputHandler = new InputHandler(
-        this.sceneManager,
-        this.animationController
-      );
+      this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
       this.inputHandler.init();
 
       // Initialize rendering controls
@@ -47,10 +44,10 @@ export class LuxarApp {
         this.sceneManager.postProcessing,
         this.sceneManager
       );
-      
+
       // Connect rendering controls to animation controller
       this.renderingControls.setAnimationController(this.animationController);
-      
+
       // Connect rendering controls to input handler
       this.inputHandler.setRenderingControls(this.renderingControls);
 
@@ -59,7 +56,7 @@ export class LuxarApp {
 
       // Load scene data (animation loop will continue even if this fails)
       await this.sceneManager.loadSceneData(sceneSrc);
-      
+
       // Set scene ID for rendering controls persistence
       this.renderingControls.setSceneId(sceneSrc);
 
@@ -67,7 +64,6 @@ export class LuxarApp {
       this.setupCleanup();
 
       this.isInitialized = true;
-      
     } catch (error) {
       console.error('Failed to initialize Luxar app:', error);
       // Don't call cleanup() here as it removes error messages that were just displayed
@@ -116,7 +112,7 @@ export class LuxarApp {
       if (this.inputHandler) {
         this.inputHandler.dispose();
       }
-      
+
       // Clean up rendering controls
       if (this.renderingControls) {
         this.renderingControls.dispose();
@@ -134,7 +130,6 @@ export class LuxarApp {
       window.removeEventListener('beforeunload', this.cleanup.bind(this));
 
       this.isInitialized = false;
-
     } catch (error) {
       console.error('Error during cleanup:', error);
     }

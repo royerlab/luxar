@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import zarr
@@ -14,22 +14,24 @@ from .config import (
     DEFAULT_VERSION,
     check_dataset_size_warning,
 )
+from .dimensions import Dimensions
 from .node import Node
 from .points import Points
 from .types import (
     ColorArray,
     CompressorProtocol,
+    DimensionMetadata,
     LuxarVersion,
     PathLike,
     PhysicalUnit,
     PositionArray,
+    validate_dimension_metadata,
     validate_physical_unit,
 )
 
 
 class Scene(Node):
-    """
-    Scene root – opens a Zarr store and exposes builder helpers.
+    """Scene root – opens a Zarr store and exposes builder helpers.
 
     The Scene class represents the root of a Luxar scene hierarchy. It manages
     a Zarr store containing all scene data and provides high-level methods for
@@ -46,16 +48,17 @@ class Scene(Node):
         self,
         store_path: Optional[PathLike] = None,
         *,
+        dimensions: Optional[Dimensions] = None,
         units: Union[PhysicalUnit, str] = DEFAULT_UNITS,
         version: Union[LuxarVersion, str] = DEFAULT_VERSION,
         compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
     ) -> None:
-        """
-        Initialize a new Luxar scene.
+        """Initialize a new Luxar scene.
 
         Args:
             store_path: Path to Zarr store, or None for temporary store
-            units: Physical units for scene coordinates
+            dimensions: Scene-level dimension definitions
+            units: Physical units for scene coordinates (deprecated, use dimensions)
             version: Luxar scene format version
             compressor: Compressor for Zarr datasets
 
@@ -94,6 +97,12 @@ class Scene(Node):
             # Store configuration
             self._compressor: Optional[CompressorProtocol] = compressor
             self._store_path: PathLike = resolved_store_path
+            self._dimensions: Optional[Dimensions] = dimensions
+            self._dimension_metadata: Optional[list[DimensionMetadata]] = None
+
+            # Store dimensions in zarr attributes if provided
+            if dimensions is not None:
+                self.attrs["scene_dimensions"] = dimensions.to_dict()
 
             aprint(f"✓ Scene initialized successfully at {resolved_store_path}")
 
@@ -103,8 +112,7 @@ class Scene(Node):
 
     # ---------------------------------------------------------- builder helpers
     def add_group(self, name: str, **attrs: Any) -> Node:
-        """
-        Create and add a child group node to the scene.
+        """Create and add a child group node to the scene.
 
         Args:
             name: Name of the group
@@ -128,21 +136,26 @@ class Scene(Node):
         name: str,
         positions: Union[PositionArray, np.ndarray[Any, Any]],
         colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
-        radii: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
-        sharpness: Optional[Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]] = None,
+        radii: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
+        sharpness: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
         parent: Optional[Node] = None,
+        dimension_metadata: Optional[list[DimensionMetadata]] = None,
         **attrs: Any,
     ) -> Points:
-        """
-        Add a point cloud node to the scene.
+        """Add a point cloud node to the scene.
 
         Args:
             name: Name of the point cloud node
-            positions: Array of shape (N, 3) for point positions
+            positions: Array of shape (N, D) for point positions where D is dimensionality
             colors: Optional array of shape (N, 3) for point colors
             radii: Optional array of shape (N,) for point radii
             sharpness: Optional array of shape (N,) for point edge sharpness
             parent: Parent node, defaults to scene root
+            dimension_metadata: Optional list of DimensionMetadata for each dimension
             **attrs: Additional attributes for the node
 
         Returns:
@@ -152,10 +165,25 @@ class Scene(Node):
             ValueError: If point cloud creation fails
         """
         try:
-            n_points = (
-                positions.shape[0] if hasattr(positions, "shape") else len(positions)
-            )
-            aprint(f"Adding points node '{name}' with {n_points:,} points.")
+            # Ensure positions is array-like
+            if not hasattr(positions, "shape"):
+                positions = np.asarray(positions)
+
+            # Check shape
+            if positions.ndim != 2:
+                raise ValueError(
+                    f"Positions must have shape (N, D), got shape {positions.shape}"
+                )
+
+            n_points = positions.shape[0]
+            ndim = positions.shape[1]
+            aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
+
+            # Validate against scene dimensions if defined
+            self._validate_or_infer_dimensions(positions, dimension_metadata)
+
+            # Handle dimension metadata for the node
+            self._apply_dimension_metadata(attrs, dimension_metadata, ndim)
 
             parent_node = parent or self
             return Points(
@@ -172,9 +200,62 @@ class Scene(Node):
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
 
+    def _validate_or_infer_dimensions(
+        self,
+        positions: np.ndarray,
+        dimension_metadata: Optional[list[DimensionMetadata]],
+    ) -> None:
+        """Validate positions against scene dimensions or infer them if not set."""
+        if self._dimensions is not None:
+            self._dimensions.validate_positions(positions, "Points")
+        else:
+            # Infer dimensions from first point cloud if not set
+            if dimension_metadata is None and not hasattr(self, "_inferred_dimensions"):
+                aprint("No scene dimensions defined, inferring from first point cloud")
+                self._dimensions = Dimensions.from_positions(positions)
+                self._inferred_dimensions = True
+                self.attrs["scene_dimensions"] = self._dimensions.to_dict()
+
+    def _apply_dimension_metadata(
+        self,
+        attrs: Dict[str, Any],
+        dimension_metadata: Optional[list[DimensionMetadata]],
+        ndim: int,
+    ) -> None:
+        """Apply dimension metadata to node attributes."""
+        if dimension_metadata is not None:
+            aprint(
+                "Warning: dimension_metadata parameter is deprecated, use scene-level dimensions"
+            )
+            # Validate dimension metadata matches dimensionality
+            validated_metadata = validate_dimension_metadata(dimension_metadata, ndim)
+            # Set scene-wide dimension metadata if not already set
+            if self.dimension_metadata is None:
+                self.dimension_metadata = validated_metadata
+            # Store in node attributes
+            attrs["dimension_metadata"] = [m.to_dict() for m in validated_metadata]
+        elif self.dimension_metadata is not None:
+            # Use scene's dimension metadata if available
+            if len(self.dimension_metadata) == ndim:
+                attrs["dimension_metadata"] = [
+                    m.to_dict() for m in self.dimension_metadata
+                ]
+        elif self._dimensions is not None:
+            # Convert new Dimensions to legacy format for compatibility
+            legacy_metadata = []
+            for dim in self._dimensions.dimensions:
+                legacy_metadata.append(
+                    DimensionMetadata(
+                        name=dim.name,
+                        unit=dim.unit,
+                        scale=dim.scale,
+                        range=dim.range,
+                    )
+                )
+            attrs["dimension_metadata"] = [m.to_dict() for m in legacy_metadata]
+
     def finalize(self) -> None:
-        """
-        Finalize the scene by consolidating Zarr metadata.
+        """Finalize the scene by consolidating Zarr metadata.
 
         This operation optimizes the Zarr store for reading by consolidating
         all metadata into a single file, improving load performance.
@@ -195,8 +276,7 @@ class Scene(Node):
     def random_demo(
         cls, store: PathLike, n: int = 10_000, seed: Optional[int] = None
     ) -> Scene:
-        """
-        Create a demo scene with a Lorenz attractor visualization.
+        """Create a demo scene with a Lorenz attractor visualization.
 
         This creates a beautiful butterfly-shaped 3D structure with colors
         that transition smoothly over time, demonstrating the Luxar scene format
@@ -292,7 +372,7 @@ class Scene(Node):
             # Generate radii based on position in the trajectory (growing over time)
             # This creates a visual effect of the attractor "growing" as it evolves
             radii = np.linspace(0.05, 0.2, n).astype(np.float32)
-            
+
             # Create scene and add data
             scene = cls(store)
             scene.add_points("LorenzAttractor", positions, colors, radii=radii)
@@ -308,17 +388,79 @@ class Scene(Node):
             raise ValueError(f"Could not create demo scene: {e}") from e
 
     def get_store_path(self) -> PathLike:
-        """
-        Get the path to the backing Zarr store.
+        """Get the path to the backing Zarr store.
 
         Returns:
             Path to the Zarr store backing this scene
         """
         return self._store_path
 
-    def to_zarr(self, path: PathLike) -> None:
+    @property
+    def dimension_metadata(self) -> Optional[list[DimensionMetadata]]:
+        """Get dimension metadata for the scene.
+
+        Returns:
+            List of DimensionMetadata objects if set, None otherwise
         """
-        Export scene to a new Zarr store location.
+        # Try to load from zarr attrs if not cached
+        if self._dimension_metadata is None and "dimension_metadata" in self.attrs:
+            metadata_dicts = self.attrs["dimension_metadata"]
+            if metadata_dicts:
+                ndim = len(metadata_dicts)
+                self._dimension_metadata = validate_dimension_metadata(
+                    metadata_dicts, ndim
+                )
+        return self._dimension_metadata
+
+    @dimension_metadata.setter
+    def dimension_metadata(self, metadata: Optional[list[DimensionMetadata]]) -> None:
+        """Set dimension metadata for the scene.
+
+        Args:
+            metadata: List of DimensionMetadata objects, one per dimension
+
+        Raises:
+            ValueError: If metadata is invalid
+        """
+        if metadata is None:
+            self._dimension_metadata = None
+            if "dimension_metadata" in self.attrs:
+                del self.attrs["dimension_metadata"]
+        else:
+            # Store in attrs for serialization
+            self.attrs["dimension_metadata"] = [m.to_dict() for m in metadata]
+            self._dimension_metadata = metadata
+
+    @property
+    def dimensions(self) -> Optional[Dimensions]:
+        """Get scene-level dimensions.
+
+        Returns:
+            Dimensions object if set, None otherwise
+        """
+        # Try to load from zarr attrs if not cached
+        if self._dimensions is None and "scene_dimensions" in self.attrs:
+            dims_dict = self.attrs["scene_dimensions"]
+            self._dimensions = Dimensions.from_dict(dims_dict)
+        return self._dimensions
+
+    @dimensions.setter
+    def dimensions(self, dims: Optional[Dimensions]) -> None:
+        """Set scene-level dimensions.
+
+        Args:
+            dims: Dimensions object or None to clear
+        """
+        if dims is None:
+            self._dimensions = None
+            if "scene_dimensions" in self.attrs:
+                del self.attrs["scene_dimensions"]
+        else:
+            self.attrs["scene_dimensions"] = dims.to_dict()
+            self._dimensions = dims
+
+    def to_zarr(self, path: PathLike) -> None:
+        """Export scene to a new Zarr store location.
 
         Args:
             path: Destination path for the Zarr store

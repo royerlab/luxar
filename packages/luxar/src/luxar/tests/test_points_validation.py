@@ -25,13 +25,13 @@ def test_valid_radii(tmp_path):
     """Test that valid radii are accepted and stored correctly."""
     store = tmp_path / "radii_test.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     radii = np.random.uniform(0.1, 2.0, 100).astype(np.float32)
-    
+
     scene.add_points("test", positions, radii=radii)
     scene.finalize()
-    
+
     # Verify radii were stored
     root = zarr.open_group(store, mode="r")
     assert "test/radii" in root
@@ -43,10 +43,10 @@ def test_negative_radii(tmp_path):
     """Radii with negative values should fail."""
     store = tmp_path / "negative_radii.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     radii = np.random.uniform(-1.0, 1.0, 100).astype(np.float32)  # Some negative
-    
+
     with pytest.raises(ValueError, match="All radii must be positive"):
         scene.add_points("test", positions, radii=radii)
 
@@ -55,10 +55,10 @@ def test_mismatched_radii(tmp_path):
     """Radii with wrong number of points should fail."""
     store = tmp_path / "mismatched_radii.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     radii = np.random.uniform(0.1, 2.0, 50).astype(np.float32)  # Wrong N
-    
+
     with pytest.raises(ValueError, match="doesn't match positions"):
         scene.add_points("test", positions, radii=radii)
 
@@ -67,10 +67,10 @@ def test_wrong_shape_radii(tmp_path):
     """Radii with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_radii.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     radii = np.random.uniform(0.1, 2.0, (100, 2)).astype(np.float32)  # Wrong shape
-    
+
     with pytest.raises(ValueError, match="must have shape"):
         scene.add_points("test", positions, radii=radii)
 
@@ -79,13 +79,13 @@ def test_valid_sharpness(tmp_path):
     """Test that valid sharpness values are accepted and stored correctly."""
     store = tmp_path / "sharpness_test.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
-    
+
     scene.add_points("test", positions, sharpness=sharpness)
     scene.finalize()
-    
+
     # Verify sharpness was stored
     root = zarr.open_group(store, mode="r")
     assert "test/sharpness" in root
@@ -97,10 +97,10 @@ def test_negative_sharpness(tmp_path):
     """Sharpness with negative values should fail."""
     store = tmp_path / "negative_sharpness.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     sharpness = np.random.uniform(-1.0, 1.0, 100).astype(np.float32)  # Some negative
-    
+
     with pytest.raises(ValueError, match="All sharpness values must be positive"):
         scene.add_points("test", positions, sharpness=sharpness)
 
@@ -109,10 +109,10 @@ def test_mismatched_sharpness(tmp_path):
     """Sharpness with wrong number of points should fail."""
     store = tmp_path / "mismatched_sharpness.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     sharpness = np.random.uniform(0.5, 10.0, 50).astype(np.float32)  # Wrong N
-    
+
     with pytest.raises(ValueError, match="doesn't match positions"):
         scene.add_points("test", positions, sharpness=sharpness)
 
@@ -121,10 +121,10 @@ def test_wrong_shape_sharpness(tmp_path):
     """Sharpness with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_sharpness.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     sharpness = np.random.uniform(0.5, 10.0, (100, 2)).astype(np.float32)  # Wrong shape
-    
+
     with pytest.raises(ValueError, match="must have shape"):
         scene.add_points("test", positions, sharpness=sharpness)
 
@@ -133,11 +133,11 @@ def test_sharpness_warning(tmp_path):
     """Test that out-of-range sharpness values trigger a warning."""
     store = tmp_path / "sharpness_warning.zarr"
     scene = Scene(store)
-    
+
     positions = np.random.randn(100, 3).astype(np.float32)
     # Mix of values including out-of-range
     sharpness = np.array([0.3, 2.0, 15.0] * 33 + [5.0]).astype(np.float32)  # 100 values
-    
+
     with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
         scene.add_points("test", positions, sharpness=sharpness)
         scene.finalize()
