@@ -1,7 +1,13 @@
 // Type definitions for all configuration interfaces
 // This file defines the structure of the application configuration
 
-import type { HalfFloatType, LinearSRGBColorSpace, SRGBColorSpace, NoToneMapping, ACESFilmicToneMapping } from 'three';
+import type {
+  HalfFloatType,
+  LinearSRGBColorSpace,
+  SRGBColorSpace,
+  NoToneMapping,
+  ACESFilmicToneMapping,
+} from 'three';
 
 /**
  * Camera configuration for 3D perspective and navigation

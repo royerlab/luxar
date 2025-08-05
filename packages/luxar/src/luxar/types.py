@@ -1,16 +1,14 @@
-"""
-luxar.types – Type definitions, protocols, and type aliases for enhanced type safety.
-"""
+"""luxar.types – Type definitions, protocols, and type aliases for enhanced type safety."""
 
 from __future__ import annotations
 
 import sys
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
     Dict,
-    Generator,
     List,
     Literal,
     Optional,
@@ -47,7 +45,9 @@ CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
 LuxarVersion = Literal["0.1", "0.2", "0.3"]
 
 # Physical units
-PhysicalUnit = Literal["nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inch", "foot", "px", "au"]
+PhysicalUnit = Literal[
+    "nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inch", "foot", "px", "au"
+]
 
 # =============================================================================
 # Type Aliases
@@ -57,7 +57,9 @@ PhysicalUnit = Literal["nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inc
 PathLike: TypeAlias = Union[str, Path]
 
 # Numpy array types for point cloud data
-PositionArray: TypeAlias = NDArray[np.float32]  # Shape: (N, D) where D is dimensionality
+PositionArray: TypeAlias = NDArray[
+    np.float32
+]  # Shape: (N, D) where D is dimensionality
 ColorArray: TypeAlias = NDArray[np.uint8]  # Shape: (N, 3)
 TransformMatrix: TypeAlias = NDArray[np.float32]  # Shape: (4, 4)
 
@@ -74,27 +76,27 @@ SceneHierarchy: TypeAlias = Generator[Tuple[int, "NodeProtocol"], None, None]
 
 @dataclass
 class DimensionMetadata:
-    """
-    Metadata for a single dimension in nD data.
-    
+    """Metadata for a single dimension in nD data.
+
     Attributes:
         name: Name of the dimension (e.g., "x", "y", "z", "time", "channel")
         unit: Physical unit of the dimension (e.g., "um", "ms", "nm")
         scale: Scale factor for the dimension (default: 1.0)
         range: Optional (min, max) bounds for this dimension
     """
+
     name: str = ""
     unit: str = ""
     scale: float = 1.0
     range: Optional[Tuple[float, float]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         data = {"name": self.name, "unit": self.unit, "scale": self.scale}
         if self.range is not None:
             data["range"] = list(self.range)
         return data
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> DimensionMetadata:
         """Create from dictionary."""
@@ -105,7 +107,7 @@ class DimensionMetadata:
             name=data.get("name", ""),
             unit=data.get("unit", ""),
             scale=data.get("scale", 1.0),
-            range=range_val
+            range=range_val,
         )
 
 
@@ -260,8 +262,7 @@ ZarrDataT = TypeVar("ZarrDataT", np.float32, np.uint8, np.int32, np.int64, np.fl
 
 
 def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionArray:
-    """
-    Validate and convert positions array to correct type.
+    """Validate and convert positions array to correct type.
 
     Args:
         positions: Input array to validate
@@ -277,11 +278,15 @@ def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionAr
         raise ValueError("Positions must be a numpy array")
 
     if positions.ndim != 2:
-        raise ValueError(f"Positions must have shape (N, D), got shape {positions.shape}")
-    
+        raise ValueError(
+            f"Positions must have shape (N, D), got shape {positions.shape}"
+        )
+
     if positions.shape[1] < 1:
-        raise ValueError(f"Positions must have at least 1 dimension, got {positions.shape[1]}")
-    
+        raise ValueError(
+            f"Positions must have at least 1 dimension, got {positions.shape[1]}"
+        )
+
     if ndim is not None and positions.shape[1] != ndim:
         raise ValueError(f"Expected {ndim} dimensions, got {positions.shape[1]}")
 
@@ -289,8 +294,7 @@ def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionAr
 
 
 def validate_colors(colors: Any, n_points: int) -> ColorArray:
-    """
-    Validate and convert colors array to correct type.
+    """Validate and convert colors array to correct type.
 
     Args:
         colors: Input array to validate
@@ -312,8 +316,8 @@ def validate_colors(colors: Any, n_points: int) -> ColorArray:
 
 
 def validate_radii(radii: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
-    """
-    Validate and convert radii array to correct type.
+    """Validate and convert radii array to correct type.
+
     Args:
         radii: Input array to validate
         n_points: Expected number of points
@@ -334,9 +338,10 @@ def validate_radii(radii: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.flo
     return radii.astype(np.float32, copy=False)
 
 
-def validate_sharpness(sharpness: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
-    """
-    Validate and convert sharpness array to correct type.
+def validate_sharpness(
+    sharpness: Any, n_points: int
+) -> np.ndarray[Any, np.dtype[np.float32]]:
+    """Validate and convert sharpness array to correct type.
 
     Sharpness controls the falloff profile of points, from soft (low values) to sharp (high values).
     Must be positive float32 values with shape (N,) where N is the number of points.
@@ -367,6 +372,7 @@ def validate_sharpness(sharpness: Any, n_points: int) -> np.ndarray[Any, np.dtyp
     # Warn if values are outside typical range
     if np.any(sharpness < 0.5) or np.any(sharpness > 10.0):
         import warnings
+
         warnings.warn(
             "Sharpness values outside typical range [0.5, 10.0] detected. "
             "Very low values (<0.5) create uniform disks, very high values (>10) create hard edges."
@@ -376,8 +382,7 @@ def validate_sharpness(sharpness: Any, n_points: int) -> np.ndarray[Any, np.dtyp
 
 
 def validate_transform(transform: Any) -> TransformMatrix:
-    """
-    Validate and convert transform matrix to correct type.
+    """Validate and convert transform matrix to correct type.
 
     Args:
         transform: Input transform matrix
@@ -398,8 +403,7 @@ def validate_transform(transform: Any) -> TransformMatrix:
 
 
 def validate_node_type(node_type: str) -> NodeType:
-    """
-    Validate node type string.
+    """Validate node type string.
 
     Args:
         node_type: Input node type string
@@ -422,8 +426,7 @@ def validate_node_type(node_type: str) -> NodeType:
 
 
 def validate_physical_unit(unit: str) -> PhysicalUnit:
-    """
-    Validate physical unit string.
+    """Validate physical unit string.
 
     Args:
         unit: Input unit string
@@ -435,18 +438,18 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
         ValueError: If unit is invalid
     """
     valid_units: Tuple[PhysicalUnit, ...] = (
-        "nm",      # nanometer
-        "um",      # micrometer
-        "mm",      # millimeter
-        "cm",      # centimeter
-        "m",       # meter (short form)
-        "metre",   # meter (British spelling)
-        "meter",   # meter (American spelling)
-        "km",      # kilometer
-        "inch",    # inch
-        "foot",    # foot
-        "px",      # pixel
-        "au",      # arbitrary units
+        "nm",  # nanometer
+        "um",  # micrometer
+        "mm",  # millimeter
+        "cm",  # centimeter
+        "m",  # meter (short form)
+        "metre",  # meter (British spelling)
+        "meter",  # meter (American spelling)
+        "km",  # kilometer
+        "inch",  # inch
+        "foot",  # foot
+        "px",  # pixel
+        "au",  # arbitrary units
     )
     if unit not in valid_units:
         raise ValueError(f"Invalid unit '{unit}'. Must be one of {valid_units}")
@@ -459,8 +462,7 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
 def validate_dimension_metadata(
     metadata: List[Any], ndim: int
 ) -> List[DimensionMetadata]:
-    """
-    Validate dimension metadata list.
+    """Validate dimension metadata list.
 
     Args:
         metadata: List of dimension metadata (dicts or DimensionMetadata objects)
@@ -474,10 +476,12 @@ def validate_dimension_metadata(
     """
     if not isinstance(metadata, list):
         raise ValueError("Dimension metadata must be a list")
-    
+
     if len(metadata) != ndim:
-        raise ValueError(f"Expected {ndim} dimension metadata entries, got {len(metadata)}")
-    
+        raise ValueError(
+            f"Expected {ndim} dimension metadata entries, got {len(metadata)}"
+        )
+
     validated = []
     for i, item in enumerate(metadata):
         if isinstance(item, DimensionMetadata):
@@ -485,8 +489,10 @@ def validate_dimension_metadata(
         elif isinstance(item, dict):
             validated.append(DimensionMetadata.from_dict(item))
         else:
-            raise ValueError(f"Dimension metadata entry {i} must be dict or DimensionMetadata")
-    
+            raise ValueError(
+                f"Dimension metadata entry {i} must be dict or DimensionMetadata"
+            )
+
     return validated
 
 

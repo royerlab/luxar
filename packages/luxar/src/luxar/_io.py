@@ -1,6 +1,4 @@
-"""
-luxar._io – Provides default compressor for Zarr datasets in Luxar scenes.
-"""
+"""luxar._io – Provides default compressor for Zarr datasets in Luxar scenes."""
 
 from numcodecs import Blosc
 

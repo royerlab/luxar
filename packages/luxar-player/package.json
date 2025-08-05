@@ -24,9 +24,13 @@
   "devDependencies": {
     "@types/stats.js": "^0.17.4",
     "@types/three": "^0.178.1",
+    "@typescript-eslint/eslint-plugin": "^8.39.0",
+    "@typescript-eslint/parser": "^8.39.0",
     "@vitest/coverage-v8": "^2.0.0",
     "@vitest/ui": "^2.0.0",
+    "eslint": "^9.32.0",
     "jsdom": "^24.0.0",
+    "prettier": "^3.6.2",
     "stats.js": "^0.17.0",
     "typescript": "^5.7",
     "vite": "^5.2.0",

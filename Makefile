@@ -1,15 +1,20 @@
 # Makefile for Luxar development tasks
 # Uses Hatch for on-demand environment management
-.PHONY: help install install-dev format lint type-check security test test-cov test-all \
-        clean pre-commit-install pre-commit-run check dev-setup demo serve-data \
-        viewer-install viewer viewer-build viewer-test viewer-test-cov viewer-check \
-        demo-and-serve docs-build docs-serve env-show env-prune shell build \
-        publish-test publish
+.PHONY: help install install-dev format format-all lint type-check security test test-python \
+        test-cov test-all clean pre-commit-install pre-commit-run check dev-setup demo \
+        serve-data viewer-install viewer viewer-build viewer-test viewer-test-cov viewer-lint \
+        viewer-typecheck viewer-format viewer-check demo-and-serve docs-build docs-serve \
+        env-show env-prune shell build publish-test publish
 
 # Default target
 help:  ## Show this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Quick start:"
+	@echo "  make dev-setup    - Set up development environment"
+	@echo "  make test-all     - Run all tests"
+	@echo "  make demo-and-serve - Create demo and start servers"
 
 # Installation
 install:  ## Install the package
@@ -20,12 +25,22 @@ install-dev:  ## Install with development dependencies (legacy - use hatch inste
 	pip install -e ".[dev]"
 
 # Code formatting (using Hatch)
-format:  ## Format code with black and isort
+format:  ## Format Python code with ruff
 	hatch run format
 
+format-all:  ## Format all code (Python and TypeScript)
+	@echo "🐍 Formatting Python code..."
+	hatch run format
+	@echo "📘 Formatting TypeScript code..."
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
+	cd packages/luxar-player && pnpm run format
+
 # Code quality checks (using Hatch)
-lint:  ## Run flake8 linting
-	hatch run lint
+lint:  ## Run ruff linting
+	hatch run python -m ruff check packages/luxar/src/luxar/
 
 type-check:  ## Run mypy type checking
 	hatch run mypy packages/luxar/src/luxar/
@@ -34,16 +49,23 @@ security:  ## Run bandit security checks
 	hatch run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
 
 # Testing (using Hatch)
-test:  ## Run tests
+test:  ## Run Python tests
 	hatch run test
 
-test-cov:  ## Run tests with coverage report
+test-python:  ## Run Python tests (alias for test)
+	hatch run test
+
+test-cov:  ## Run Python tests with coverage report
 	hatch run test-cov
 
 test-all:  ## Run all tests (Python and TypeScript)
 	@echo "🐍 Running Python tests..."
 	hatch run test
 	@echo "📘 Running TypeScript tests..."
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
 	cd packages/luxar-player && pnpm test --run
 
 # Pre-commit
@@ -58,10 +80,15 @@ check:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
 	hatch run check
 	@echo "📘 Running TypeScript checks..."
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
 	cd packages/luxar-player && pnpm run typecheck && pnpm run lint && pnpm test --run
 
 # Clean up
 clean:  ## Clean up temporary files and caches
+	@echo "🧹 Cleaning Python artifacts..."
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
@@ -72,7 +99,8 @@ clean:  ## Clean up temporary files and caches
 	rm -rf dist/
 	rm -rf htmlcov/
 	rm -rf .coverage*
-	# Clean TypeScript/Node.js artifacts
+	rm -rf packages/luxar/htmlcov/
+	@echo "🧹 Cleaning TypeScript/Node.js artifacts..."
 	rm -rf packages/luxar-player/dist/
 	rm -rf packages/luxar-player/node_modules/
 	rm -rf packages/luxar-player/.vite/
@@ -80,8 +108,10 @@ clean:  ## Clean up temporary files and caches
 	rm -rf packages/luxar-player/.parcel-cache/
 	rm -f packages/luxar-player/*.tsbuildinfo
 	rm -f packages/luxar-player/vite.config.*.timestamp-*
-	# Clean pnpm store links (optional, uncomment if needed)
-	# rm -rf packages/luxar-player/.pnpm-store/
+	@echo "🧹 Cleaning example outputs..."
+	find examples -name "*.zarr" -type d -exec rm -rf {} +
+	rm -rf *.zarr
+	@echo "✅ Clean complete!"
 
 # Development setup
 dev-setup:  ## Complete development setup with Hatch
@@ -89,6 +119,8 @@ dev-setup:  ## Complete development setup with Hatch
 	@command -v hatch >/dev/null 2>&1 || { echo "❌ Hatch not found. Please install with: pip install hatch"; exit 1; }
 	hatch env create
 	hatch run pre-commit install
+	@echo "📦 Installing TypeScript/viewer dependencies..."
+	cd packages/luxar-player && pnpm install
 	@echo "✅ Development environment setup complete!"
 	@echo "💡 Use 'hatch shell' to activate the environment"
 	@echo "💡 Run 'make check' to verify everything works"
@@ -121,12 +153,45 @@ viewer-build:  ## Build the viewer for production
 	cd packages/luxar-player && pnpm build
 
 viewer-test:  ## Run TypeScript tests
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
 	cd packages/luxar-player && pnpm test --run
 
 viewer-test-cov:  ## Run TypeScript tests with coverage
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
 	cd packages/luxar-player && pnpm run test:coverage
 
+viewer-lint:  ## Run TypeScript linting
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
+	cd packages/luxar-player && pnpm run lint
+
+viewer-typecheck:  ## Run TypeScript type checking
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
+	cd packages/luxar-player && pnpm run typecheck
+
+viewer-format:  ## Format TypeScript code
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
+	cd packages/luxar-player && pnpm run format
+
 viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
+	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-player && pnpm install; \
+	fi
 	cd packages/luxar-player && pnpm run check
 
 # Combined workflows

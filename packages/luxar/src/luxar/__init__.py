@@ -1,7 +1,8 @@
-"""
-luxar.__init__ – Package exports for Luxar core.
-"""
+"""luxar.__init__ – Package exports for Luxar core."""
 
+# Export transform utilities
+from . import transforms
+from .dimensions import Dimension, Dimensions
 from .node import Node
 from .points import Points
 from .scene import Scene
@@ -9,6 +10,7 @@ from .scene import Scene
 # Export commonly used types for external users
 from .types import (
     ColorArray,
+    DimensionMetadata,  # Keep for backward compatibility
     LuxarVersion,
     NodeType,
     PathLike,
@@ -17,9 +19,6 @@ from .types import (
     TransformMatrix,
 )
 
-# Export transform utilities
-from . import transforms
-
 __version__ = "2025.08.03"
 
 __all__: list[str] = [
@@ -27,6 +26,10 @@ __all__: list[str] = [
     "Scene",
     "Points",
     "Node",
+    # Dimension system
+    "Dimensions",
+    "Dimension",
+    "DimensionMetadata",  # Legacy support
     # Type definitions
     "PositionArray",
     "ColorArray",

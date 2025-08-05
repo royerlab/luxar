@@ -51,7 +51,7 @@ class MockWebGLRenderingContext {
   uniform4f = vi.fn();
   uniform1i = vi.fn();
   uniformMatrix4fv = vi.fn();
-  
+
   // Vertex attribute methods
   enableVertexAttribArray = vi.fn();
   disableVertexAttribArray = vi.fn();

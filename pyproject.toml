@@ -62,14 +62,11 @@ Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
-    "black>=23.0.0",
-    "isort>=5.12.0",
+    "ruff>=0.1.0",
     "mypy>=1.5.0",
-    "flake8>=6.0.0",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pre-commit>=3.3.0",
-    "ruff>=0.1.0",
     "bandit[toml]>=1.7.5"
 ]
 test = [
@@ -119,12 +116,9 @@ exclude = [
 dependencies = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "flake8>=6.0.0",
-    "pre-commit>=3.3.0",
     "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5"
 ]
 
@@ -132,11 +126,11 @@ dependencies = [
 test = "pytest {args:packages/luxar/src/luxar/tests}"
 test-cov = "pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar/tests}"
 format = [
-    "black packages/luxar/src",
-    "isort packages/luxar/src"
+    "ruff format packages/luxar/src",
+    "ruff check --fix packages/luxar/src"
 ]
 lint = [
-    "flake8 packages/luxar/src",
+    "ruff check packages/luxar/src",
     "mypy packages/luxar/src/luxar"
 ]
 check = [
@@ -179,30 +173,7 @@ disable = false  # Enable publishing to PyPI
 # Development tool configurations
 # ---------------------------------------------
 
-[tool.black]
-line-length = 88
-target-version = ['py39']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["luxar"]
-sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+# Black and isort configuration removed - using ruff instead
 
 [tool.mypy]
 python_version = "3.9"
@@ -269,7 +240,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 check_untyped_defs = false
 
-# Flake8 configuration moved to .flake8 file since flake8 doesn't support pyproject.toml
+# Linting configuration is in [tool.ruff] section above
 
 [tool.pytest.ini_options]
 testpaths = ["packages/luxar/src/luxar/tests"]
@@ -293,3 +264,49 @@ markers = [
 [tool.bandit]
 exclude_dirs = ["tests", "test_*.py"]
 skips = ["B101"]  # Skip assert_used test
+
+[tool.ruff]
+# Ruff replaces black, isort, flake8, and more
+line-length = 88
+target-version = "py39"
+
+# Exclude directories
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".eggs",
+    "*.egg",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    "htmlcov",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# Enable various rule sets - start with essential ones
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings  
+    "F",      # pyflakes
+    "I",      # isort
+]
+
+# Ignore specific rules to match previous tools' behavior
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+# Per-file ignores
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # imported but unused
+
+[tool.ruff.lint.isort]
+known-first-party = ["luxar"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10

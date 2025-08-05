@@ -11,7 +11,7 @@ import { config } from './config';
 
 /**
  * Configuration for shader-based point rendering
- * 
+ *
  * These parameters control the visual appearance and performance
  * of the Gaussian point sprites used for rendering point clouds.
  */
@@ -22,13 +22,13 @@ export const SHADER_CONFIG = {
 
 /**
  * Vertex shader for Gaussian point sprites
- * 
+ *
  * This shader:
  * - Passes through vertex colors for per-point coloring
  * - Sets point size based on per-vertex radius attribute
  * - Transforms vertices to screen space
  */
-const GAUSSIAN_VERTEX_SHADER = /* glsl */`
+const GAUSSIAN_VERTEX_SHADER = /* glsl */ `
   attribute float radius;
   attribute float sharpness;
   varying vec3 vColor;
@@ -63,13 +63,13 @@ const GAUSSIAN_VERTEX_SHADER = /* glsl */`
 
 /**
  * Fragment shader for Gaussian point sprites with HDR output
- * 
+ *
  * This shader creates smooth, natural-looking points using:
  * - Gaussian falloff based on distance from center
  * - HDR color output for bloom effects
  * - Proper alpha blending for transparent overlapping points
  */
-const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
+const GAUSSIAN_FRAGMENT_SHADER = /* glsl */ `
   uniform float hdrMultiplier;
   varying vec3 vColor;
   varying float vSharpness;
@@ -105,10 +105,10 @@ const GAUSSIAN_FRAGMENT_SHADER = /* glsl */`
 
 /**
  * Creates a shader material for advanced point cloud rendering
- * 
+ *
  * This material uses custom vertex and fragment shaders to render
  * point clouds with Gaussian falloff, HDR colors, and proper blending.
- * 
+ *
  * @returns Configured ShaderMaterial for point rendering
  */
 export function createGaussianPointMaterial(): THREE.ShaderMaterial {
@@ -118,21 +118,21 @@ export function createGaussianPointMaterial(): THREE.ShaderMaterial {
     },
     vertexShader: GAUSSIAN_VERTEX_SHADER,
     fragmentShader: GAUSSIAN_FRAGMENT_SHADER,
-    
+
     // Enable per-vertex colors from geometry
     vertexColors: true,
-    
+
     // Enable transparency for smooth point blending
     transparent: true,
-    
+
     // Disable depth writing to avoid z-buffer artifacts when blending
     // Points will still be depth-tested but won't write to depth buffer
     depthWrite: false,
-    
+
     // Don't apply tone mapping to this material - handled in post-processing
     // This allows HDR values to pass through to bloom effects
     toneMapped: false,
-    
+
     // Use normal alpha blending for better visibility
     // This ensures points render properly without being too bright
     blending: THREE.AdditiveBlending,
@@ -141,27 +141,27 @@ export function createGaussianPointMaterial(): THREE.ShaderMaterial {
 
 /**
  * Shader compilation and validation utilities
- * 
+ *
  * These functions help with shader development and debugging,
  * providing clear error messages when shaders fail to compile.
  */
 export class ShaderValidator {
   /**
    * Validates that a shader material compiled successfully
-   * 
+   *
    * @param material - The shader material to validate
    * @param name - Human-readable name for error messages
    * @throws Error if shader compilation failed
    */
-  static validateShaderMaterial(material: THREE.ShaderMaterial, name: string): void {
+  static validateShaderMaterial(_material: THREE.ShaderMaterial, name: string): void {
     // Note: Three.js compiles shaders lazily during first render
     // For development, you might want to force compilation here:
     // const renderer = new THREE.WebGLRenderer();
     // renderer.compile(new THREE.Scene(), new THREE.Camera());
-    
+
     console.log(`✓ Shader material '${name}' created successfully`);
   }
-  
+
   /**
    * Logs shader configuration for debugging
    */
