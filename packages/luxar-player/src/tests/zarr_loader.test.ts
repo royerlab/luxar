@@ -40,10 +40,10 @@ vi.mock('zarrita', async () => {
     tryWithConsolidated: vi.fn((store) => Promise.resolve(store)),
     open: vi.fn(() => Promise.resolve(mockOpenResult)),
     get: vi.fn((item) => Promise.resolve(mockGetResult(item))),
-    root: vi.fn((store) => ({ 
-      store, 
+    root: vi.fn((store) => ({
+      store,
       path: '/',
-      resolve: vi.fn((path) => ({ store, path: '/' + path }))
+      resolve: vi.fn((path) => ({ store, path: '/' + path })),
     })),
   };
 });
@@ -85,9 +85,7 @@ describe('zarr_loader', () => {
           scene_type: 'points',
           version: '1.0',
         },
-        contents: new Map([
-          ['PointCloud1', { type: 'group' }],
-        ]),
+        contents: new Map([['PointCloud1', { type: 'group' }]]),
       };
 
       const mockNodeGroup = {
@@ -163,15 +161,16 @@ describe('zarr_loader', () => {
         if (item === mockPositions) return { data: mockPositions };
         return null;
       };
-      
+
       // Update open mock to handle different paths
       (zarrita.open as any).mockImplementation((loc: any) => {
         if (loc?.path === '/TestNode') return Promise.resolve(mockNodeGroup);
-        if (loc?.path?.includes('positions')) return Promise.resolve({ 
-          data: mockPositions,
-          shape: [1, 3],
-          dtype: '<f4'
-        });
+        if (loc?.path?.includes('positions'))
+          return Promise.resolve({
+            data: mockPositions,
+            shape: [1, 3],
+            dtype: '<f4',
+          });
         return Promise.resolve(mockOpenResult);
       });
 
@@ -192,9 +191,7 @@ describe('zarr_loader', () => {
     });
 
     it('should handle empty store', async () => {
-      mockStoreContents = [
-        { path: '/', kind: 'group' },
-      ];
+      mockStoreContents = [{ path: '/', kind: 'group' }];
 
       const mockRootGroup = {
         attrs: { scene_type: 'points' },

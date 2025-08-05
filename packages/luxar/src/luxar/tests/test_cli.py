@@ -108,7 +108,7 @@ def test_info_command_complex_hierarchy(runner, tmp_path):
 
     # Create a complex hierarchy
     group1 = scene.add_group("Group1")
-    scene.add_group("Group2")  # noqa: F841
+    scene.add_group("Group2")
     subgroup = group1.add_group("SubGroup")
 
     # Add points to different levels
@@ -185,8 +185,8 @@ def test_dfs_nested_groups(tmp_path):
     scene = Scene(store_path)
 
     group1 = scene.add_group("Group1")
-    scene.add_group("Group2")  # noqa: F841
-    group1.add_group("SubGroup")  # noqa: F841
+    scene.add_group("Group2")
+    group1.add_group("SubGroup")
 
     scene.finalize()
 

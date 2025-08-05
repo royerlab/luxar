@@ -2,22 +2,22 @@
 //
 // This module handles all Three.js setup and 3D graphics configuration:
 // - WebGL renderer initialization with optimal settings
-// - Camera setup with proper projection and positioning  
+// - Camera setup with proper projection and positioning
 // - ArcballControls for intuitive 3D navigation
 // - Scene graph management and Zarr data loading
 // - Resource disposal for memory management
 
-import * as THREE from "three";
-import { ArcballControls } from "three/examples/jsm/controls/ArcballControls";
-import { loadScene } from "./zarr_loader";
-import { showLoadingIndicator, hideLoadingIndicator, showError } from "./ui";
-import { config } from "./config";
-import { PostProcessingManager } from "./post-processing";
-import { createGaussianPointMaterial, ShaderValidator } from "./shader-manager";
+import * as THREE from 'three';
+import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
+import { loadScene } from './zarr_loader';
+import { showLoadingIndicator, hideLoadingIndicator, showError } from './ui';
+import { config } from './config';
+import { PostProcessingManager } from './post-processing';
+import { ShaderValidator } from './shader-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
- * 
+ *
  * Responsibilities:
  * - WebGL renderer setup with HDR capabilities
  * - Camera configuration for optimal 3D viewing
@@ -27,7 +27,7 @@ import { createGaussianPointMaterial, ShaderValidator } from "./shader-manager";
  * - Advanced shader-based point cloud rendering
  * - Dynamic loading of point cloud data from Zarr sources
  * - Resource cleanup to prevent memory leaks
- * 
+ *
  * Technical Details:
  * - Uses perspective camera for realistic 3D projection
  * - ArcballControls provide constraint-based camera movement
@@ -38,19 +38,19 @@ import { createGaussianPointMaterial, ShaderValidator } from "./shader-manager";
 export class SceneManager {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
-  
+
   /** Three.js scene graph - container for all 3D objects and lights */
   public scene!: THREE.Scene;
-  
+
   /** Perspective camera - provides realistic 3D viewing with depth */
   public camera!: THREE.PerspectiveCamera;
-  
+
   /** ArcballControls - handles mouse/touch input for camera manipulation */
   public controls!: ArcballControls;
-  
+
   /** HDR post-processing manager for bloom and tone mapping effects */
   public postProcessing!: PostProcessingManager;
-  
+
   /** The HTML canvas element where 3D rendering occurs */
   private canvasElement!: HTMLCanvasElement;
 
@@ -72,15 +72,17 @@ export class SceneManager {
   private setupCanvas(): void {
     const element = document.getElementById(config.canvasId) as HTMLCanvasElement;
     if (!element) {
-      showError(`Canvas element with id '${config.canvasId}' not found. Please check the HTML structure.`);
-      throw new Error("Required canvas element not found");
+      showError(
+        `Canvas element with id '${config.canvasId}' not found. Please check the HTML structure.`
+      );
+      throw new Error('Required canvas element not found');
     }
     this.canvasElement = element;
   }
 
   /**
    * Initialize Three.js WebGL renderer with optimal settings
-   * 
+   *
    * This creates the WebGL rendering context that will handle all GPU operations.
    * Key configurations:
    * - Antialiasing for smooth edges (MSAA)
@@ -93,34 +95,34 @@ export class SceneManager {
     // Create WebGL renderer with antialiasing enabled
     // Antialiasing uses MSAA (Multisample Anti-Aliasing) to smooth jagged edges
     // This is especially important for point clouds and wireframe objects
-    this.renderer = new THREE.WebGLRenderer({ 
-      antialias: true,           // Enable MSAA for smoother rendering
-      canvas: this.canvasElement // Use our pre-existing canvas element
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: true, // Enable MSAA for smoother rendering
+      canvas: this.canvasElement, // Use our pre-existing canvas element
     });
 
     // Configure canvas for accessibility and keyboard interaction
     // tabindex='0' makes the canvas focusable via keyboard navigation
     this.renderer.domElement.setAttribute('tabindex', '0');
-    
+
     // role='img' tells screen readers this is an image/graphic content
     this.renderer.domElement.setAttribute('role', 'img');
-    
+
     // Descriptive label for screen readers explaining the 3D controls
     this.renderer.domElement.setAttribute('aria-label', config.accessibility.canvasAriaLabel);
-    
+
     // Remove browser default focus outline since we handle focus visually
     this.renderer.domElement.style.outline = 'none';
 
     // Configure page for immersive fullscreen 3D experience
     // Remove default margins to eliminate whitespace around canvas
-    document.body.style.margin = "0";
-    
+    document.body.style.margin = '0';
+
     // Hide scrollbars since 3D scene uses entire viewport
-    document.body.style.overflow = "hidden";
-    
+    document.body.style.overflow = 'hidden';
+
     // NOTE: We don't append renderer.domElement because we're using the existing HTML canvas
     // This allows for better integration into complex HTML pages
-    
+
     // Configure renderer dimensions and high-DPI support
     this.updateRendererSize();
   }
@@ -135,7 +137,7 @@ export class SceneManager {
 
   /**
    * Initialize perspective camera with optimal 3D viewing parameters
-   * 
+   *
    * Perspective camera provides realistic 3D projection with depth perception.
    * Key parameters:
    * - FOV: Field of view angle (wider = more visible, narrower = more focused)
@@ -148,35 +150,35 @@ export class SceneManager {
     const canvas = this.renderer.domElement;
     const width = canvas.clientWidth || window.innerWidth;
     const height = canvas.clientHeight || window.innerHeight;
-    
+
     // Create perspective camera with realistic 3D projection
     // FOV of 60° provides natural human-like viewing angle
     this.camera = new THREE.PerspectiveCamera(
-      config.camera.fov,                              // Field of view (60 degrees)
-      width / height,                                 // Aspect ratio (canvas width/height)
-      config.camera.near,                             // Near clipping plane (0.1 units)
-      config.camera.far                               // Far clipping plane (1000 units)
+      config.camera.fov, // Field of view (60 degrees)
+      width / height, // Aspect ratio (canvas width/height)
+      config.camera.near, // Near clipping plane (0.1 units)
+      config.camera.far // Far clipping plane (1000 units)
     );
-    
+
     // Position camera at initial viewing location
     // Z=8 provides good overview of typical point cloud scenes
     // X=0, Y=0 centers the view on the origin
     this.camera.position.set(
-      config.camera.initialPosition.x,  // X position (0 = centered)
-      config.camera.initialPosition.y,  // Y position (0 = centered) 
-      config.camera.initialPosition.z   // Z position (8 = pulled back for overview)
+      config.camera.initialPosition.x, // X position (0 = centered)
+      config.camera.initialPosition.y, // Y position (0 = centered)
+      config.camera.initialPosition.z // Z position (8 = pulled back for overview)
     );
   }
 
   /**
    * Initialize ArcballControls for intuitive 3D camera manipulation
-   * 
+   *
    * ArcballControls provide constraint-based camera movement that feels natural:
    * - Mouse drag: Rotate camera around target point (arcball rotation)
    * - Mouse wheel: Zoom in/out while maintaining focus point
    * - Right drag: Pan camera horizontally and vertically
    * - Automatic damping for smooth motion cessation
-   * 
+   *
    * This control scheme is ideal for examining 3D objects and point clouds
    * as it maintains spatial orientation and provides predictable movement.
    */
@@ -188,12 +190,12 @@ export class SceneManager {
 
   /**
    * Initialize HDR post-processing pipeline for advanced visual effects
-   * 
+   *
    * This creates a sophisticated rendering chain:
    * 1. Scene renders to HDR buffer (16-bit float precision)
    * 2. UnrealBloomPass creates glow effects on bright areas
    * 3. OutputPass applies ACES tone mapping and sRGB conversion
-   * 
+   *
    * The result is professional-quality rendering with realistic bloom
    * effects and proper color management for accurate display.
    */
@@ -202,7 +204,7 @@ export class SceneManager {
     const canvas = this.renderer.domElement;
     const width = canvas.clientWidth || window.innerWidth;
     const height = canvas.clientHeight || window.innerHeight;
-    
+
     // Create post-processing manager with actual canvas dimensions
     this.postProcessing = new PostProcessingManager(
       this.renderer,
@@ -211,10 +213,10 @@ export class SceneManager {
       width,
       height
     );
-    
+
     // Log shader configuration for debugging
     ShaderValidator.logShaderConfig();
-    
+
     console.log('✓ HDR post-processing pipeline initialized');
   }
 
@@ -223,7 +225,7 @@ export class SceneManager {
    */
   async loadSceneData(src: string): Promise<void> {
     showLoadingIndicator();
-    
+
     try {
       const root = await loadScene(src);
       hideLoadingIndicator();
@@ -240,13 +242,10 @@ export class SceneManager {
    * Update renderer and camera for window resize
    */
   updateSize(): void {
-    // Get actual canvas dimensions (important for fullscreen)
-    const canvas = this.renderer.domElement;
-    
     // In fullscreen, use screen dimensions; otherwise use canvas client dimensions
     let width: number;
     let height: number;
-    
+
     if (document.fullscreenElement) {
       // Force fullscreen dimensions
       width = screen.width;
@@ -258,11 +257,11 @@ export class SceneManager {
       height = window.innerHeight;
       console.log(`✓ Using windowed dimensions: ${width}x${height}`);
     }
-    
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.updateRendererSize(width, height);
-    
+
     // Update post-processing pipeline for new dimensions
     this.postProcessing.resize(width, height);
   }
@@ -275,12 +274,12 @@ export class SceneManager {
     const canvas = this.renderer.domElement;
     const w = width || canvas.clientWidth || window.innerWidth;
     const h = height || canvas.clientHeight || window.innerHeight;
-    
+
     // Let Three.js handle both WebGL buffer and canvas dimensions properly
     // This ensures coordinate system remains correct for mouse interactions
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(window.devicePixelRatio);
-    
+
     console.log(`✓ Renderer resized: ${w}x${h}`);
   }
 
@@ -299,7 +298,7 @@ export class SceneManager {
 
   /**
    * Update HDR multiplier for all point materials in the scene
-   * 
+   *
    * @param multiplier - New HDR multiplier value (1.0 to 20.0)
    */
   updateHDRMultiplier(multiplier: number): void {
@@ -312,54 +311,54 @@ export class SceneManager {
         }
       }
     });
-    
+
     console.log(`✓ HDR multiplier updated for all point materials: ${multiplier}`);
   }
 
   /**
    * Clean up all Three.js resources to prevent memory leaks
-   * 
+   *
    * WebGL resources (textures, buffers, shaders) are not automatically
    * garbage collected and must be explicitly disposed. This method ensures
    * proper cleanup of all GPU resources:
-   * 
+   *
    * 1. Post-processing: Dispose HDR render targets and effect composer
    * 2. Controls: Remove event listeners and internal references
    * 3. Renderer: Clean up WebGL context and associated resources
    * 4. Scene objects: Dispose geometry buffers and material shaders
    * 5. Materials: Free texture memory and shader programs
-   * 
+   *
    * Critical for preventing memory leaks in long-running applications.
    */
   dispose(): void {
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes
     this.postProcessing.dispose();
-    
+
     // Dispose controls - removes all event listeners and internal references
     // This prevents memory leaks from mouse/touch event handlers
     this.controls.dispose();
-    
+
     // Dispose renderer - cleans up WebGL context and associated GPU resources
     // This frees vertex buffers, textures, and shader programs
     this.renderer.dispose();
-    
+
     // Traverse scene graph and dispose all geometry and material resources
     // This is critical because WebGL resources are not garbage collected
     this.scene.traverse((object) => {
       if ('geometry' in object && 'material' in object) {
         const mesh = object as THREE.Mesh;
-        
+
         // Dispose geometry - frees vertex and index buffers on GPU
         mesh.geometry.dispose();
-        
+
         // Handle both single materials and material arrays
         if (mesh.material instanceof THREE.Material) {
           // Single material - dispose textures and shader programs
           mesh.material.dispose();
         } else if (Array.isArray(mesh.material)) {
           // Multiple materials - dispose each one individually
-          mesh.material.forEach(material => material.dispose());
+          mesh.material.forEach((material) => material.dispose());
         }
       }
     });
