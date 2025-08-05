@@ -1,6 +1,4 @@
-"""
-luxar.config – Centralized configuration and settings for Luxar core.
-"""
+"""luxar.config – Centralized configuration and settings for Luxar core."""
 
 from __future__ import annotations
 
@@ -125,8 +123,7 @@ except ImportError:
 
 
 def validate_chunk_size(chunk_size: int) -> int:
-    """
-    Validate chunk size is within acceptable bounds.
+    """Validate chunk size is within acceptable bounds.
 
     Args:
         chunk_size: Chunk size to validate
@@ -154,8 +151,7 @@ def validate_chunk_size(chunk_size: int) -> int:
 
 
 def validate_compression_level(level: int) -> int:
-    """
-    Validate compression level is within acceptable bounds.
+    """Validate compression level is within acceptable bounds.
 
     Args:
         level: Compression level to validate (typically 1-9)
@@ -176,8 +172,7 @@ def validate_compression_level(level: int) -> int:
 
 
 def estimate_memory_usage(n_points: int, has_colors: bool = True) -> int:
-    """
-    Estimate memory usage for a point cloud dataset.
+    """Estimate memory usage for a point cloud dataset.
 
     Args:
         n_points: Number of points
@@ -197,8 +192,7 @@ def estimate_memory_usage(n_points: int, has_colors: bool = True) -> int:
 
 
 def check_dataset_size_warning(n_points: int) -> Optional[str]:
-    """
-    Check if dataset size warrants a performance warning.
+    """Check if dataset size warrants a performance warning.
 
     Args:
         n_points: Number of points in dataset

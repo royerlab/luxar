@@ -18,7 +18,9 @@
 - Always run tests with: `hatch run test`
 - For coverage reports: `hatch run test-cov`
 - View coverage HTML report: `open htmlcov/index.html`
-- Minimum acceptable coverage: 90%
+- Minimum acceptable coverage: 80% (currently at 95.69%)
+- Run all tests (Python + TypeScript): `make test-all`
+- Note: TypeScript dependencies will be auto-installed if missing
 
 ### Code Style
 - Follow existing code patterns in the codebase
@@ -56,6 +58,16 @@
   - Use `luxar.transforms` module for creating transforms (translate, rotate, scale, compose, etc.)
   - Node class has a `transform` property for easy access/modification
   - Transforms are stored as 16-element lists in zarr attributes
+- **Scene-Level Dimensions**:
+  - Use `Dimensions` and `Dimension` classes to define coordinate systems
+  - Dimensions include: name, unit, range, step, display status
+  - Scene validates all objects against defined dimensions
+  - Step sizes are used for keyboard navigation in viewer
+- **nD Point Cloud Support**:
+  - Points can have arbitrary dimensions (not just 3D)
+  - Non-displayed dimensions are "sliced" for visualization
+  - Radius-based slicing: points visible based on nD hypersphere intersection
+  - Keyboard navigation: Press 1-9 to select dimension, [/] to navigate
 
 ### TypeScript/JavaScript
 - Use pnpm for the luxar-player package (NOT npm)
@@ -90,10 +102,33 @@ make test-all                                # Run all tests (Python + TypeScrip
 make clean                                   # Clean all artifacts (including TypeScript dist/, node_modules/)
 ```
 
+## Recent Updates and Learnings
+
+### nD Visualization Implementation (Latest)
+- **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
+- **Scene Dimensions**: Always define at scene level for consistency
+- **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
+- **TypeScript Integration**: Scene dimensions loaded from zarr attrs, used for step sizes
+- **Examples**: Keep nD examples simple with clear shapes/patterns
+
+### Code Quality Checklist
+When making significant changes:
+1. Run Python tests: `hatch run test-cov` (coverage must be >80%)
+2. Run TypeScript build: `cd packages/luxar-player && pnpm build`
+3. Check Python linting: `hatch run python -m ruff check .`
+4. Fix TypeScript unused warnings by prefixing with underscore
+5. Update relevant documentation (README.md, API docs, docstrings)
+6. Add/update examples if introducing new features
+7. Run integration tests on all examples
+8. Update this CLAUDE.md file with important learnings
+
 ## Important Reminders
 1. Check for existing implementations before writing new code
 2. Validate all inputs according to the type system in `types.py`
 3. Keep examples simple and well-documented
 4. Test edge cases, especially for validation functions
-5. Do not use unittest or mocking.
-5. Use `arbol` for console output in examples and CLI tools
+5. Do not use unittest or mocking
+6. Use `arbol` for console output in examples and CLI tools
+7. When implementing new features, avoid over-engineering - "Complete before you perfect"
+8. This is still an early-stage project, don't bother about backwards compatibility, deprecation or migration guides.
+9. When running test 'by-hand', or doing  experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later.

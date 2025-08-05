@@ -5,38 +5,13 @@ import { config } from './config';
 // UI Configuration constants
 const UI_CONFIG = config.ui;
 
-// Common style objects to reduce duplication
-const COMMON_STYLES = {
-  overlay: {
-    position: 'fixed' as const,
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    color: 'white',
-    padding: '20px',
-    borderRadius: '8px',
-    fontFamily: 'Arial, sans-serif',
-    textAlign: 'center' as const,
-  },
-  typography: {
-    fontSize: '16px',
-    lineHeight: '1.4',
-  },
-} as const;
-
-// Helper function to apply styles to an element
-function applyStyles(element: HTMLElement, styles: Record<string, string | number>): void {
-  Object.entries(styles).forEach(([property, value]) => {
-    element.style.setProperty(property, String(value));
-  });
-}
-
 // Ensure spinner CSS is only injected once
 function ensureSpinnerCSS() {
   if (!document.getElementById('spinner-styles')) {
     const style = document.createElement('style');
     style.id = 'spinner-styles';
-    style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+    style.textContent =
+      '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
     document.head.appendChild(style);
   }
 }
@@ -44,7 +19,7 @@ function ensureSpinnerCSS() {
 // Function to create and show loading indicator
 export function showLoadingIndicator(): HTMLElement {
   ensureSpinnerCSS();
-  
+
   const loadingDiv = document.createElement('div');
   loadingDiv.id = 'loading-indicator';
   loadingDiv.setAttribute('role', 'status');
@@ -62,7 +37,7 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.fontSize = '16px';
   loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
   loadingDiv.style.textAlign = 'center';
-  
+
   const spinner = document.createElement('div');
   spinner.setAttribute('aria-hidden', 'true');
   spinner.style.border = '3px solid rgba(255, 255, 255, 0.3)';
@@ -72,15 +47,15 @@ export function showLoadingIndicator(): HTMLElement {
   spinner.style.height = '24px';
   spinner.style.animation = 'spin 1s linear infinite';
   spinner.style.margin = '0 auto 10px auto';
-  
+
   const text = document.createElement('div');
   text.textContent = 'Loading scene...';
   text.id = 'loading-text';
-  
+
   loadingDiv.appendChild(spinner);
   loadingDiv.appendChild(text);
   document.body.appendChild(loadingDiv);
-  
+
   return loadingDiv;
 }
 
@@ -154,7 +129,7 @@ export function showError(message: string) {
   }, UI_CONFIG.timings.errorAutoDismissMs);
 
   document.body.appendChild(errorDiv);
-  
+
   // Focus the error for screen readers
   errorDiv.focus();
 }
@@ -166,19 +141,19 @@ export function cleanupUI() {
   if (spinnerStyles) {
     spinnerStyles.remove();
   }
-  
+
   // Remove any lingering loading indicators
   const loadingDiv = document.getElementById('loading-indicator');
   if (loadingDiv) {
     loadingDiv.remove();
   }
-  
+
   // Remove any lingering error messages
   const errorDiv = document.getElementById('error-message');
   if (errorDiv) {
     errorDiv.remove();
   }
-  
+
   // Remove any lingering help overlays
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
@@ -230,15 +205,30 @@ export function showHelpOverlay() {
     '❓ Press H: Toggle this help',
     '📊 Press Ctrl+P: Toggle performance stats',
     '🎨 Press Ctrl+A: Advanced rendering controls',
-    '⚠️ Click anywhere to close'
+    '',
+    '📐 nD Navigation (if applicable):',
+    '🔢 Press 1-9: Select dimension to control',
+    '⬅️➡️ Press [ / ]: Navigate selected dimension',
+    '',
+    '⚠️ Click anywhere to close',
   ];
 
   const controlsList = document.createElement('div');
-  controls.forEach(control => {
+  controls.forEach((control) => {
     const controlItem = document.createElement('div');
-    controlItem.textContent = control;
-    controlItem.style.marginBottom = '8px';
-    controlItem.style.lineHeight = '1.4';
+    if (control === '') {
+      // Empty line for spacing
+      controlItem.style.marginBottom = '4px';
+    } else {
+      controlItem.textContent = control;
+      controlItem.style.marginBottom = '8px';
+      controlItem.style.lineHeight = '1.4';
+      // Special styling for section headers
+      if (control.includes('nD Navigation')) {
+        controlItem.style.fontWeight = 'bold';
+        controlItem.style.marginTop = '8px';
+      }
+    }
     controlsList.appendChild(controlItem);
   });
 
@@ -274,12 +264,12 @@ export function showHelpOverlay() {
   });
 
   document.body.appendChild(helpDiv);
-  
+
   // Add global click listener after a short delay to prevent immediate closure
   setTimeout(() => {
     document.addEventListener('click', handleDocumentClick);
   }, UI_CONFIG.timings.helpClickDelayMs);
-  
+
   // Focus the help overlay for accessibility
   helpDiv.focus();
 }
