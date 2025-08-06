@@ -1,5 +1,7 @@
 """luxar.__init__ – Package exports for Luxar core."""
 
+from __future__ import annotations
+
 # Export transform utilities
 from . import transforms
 from .dimensions import Dimension, Dimensions

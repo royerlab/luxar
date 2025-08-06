@@ -14,6 +14,7 @@ import { showLoadingIndicator, hideLoadingIndicator, showError } from './ui';
 import { config } from './config';
 import { PostProcessingManager } from './post-processing';
 import { ShaderValidator } from './shader-manager';
+import { materialManager } from './material-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -302,11 +303,18 @@ export class SceneManager {
    * @param multiplier - New HDR multiplier value (1.0 to 20.0)
    */
   updateHDRMultiplier(multiplier: number): void {
-    // Update all point cloud materials in the scene
+    // Update all materials in the material manager
+    materialManager.updateHDRMultiplier(multiplier);
+
+    // Also update any legacy materials not managed by the material manager
     this.scene.traverse((object) => {
       if (object instanceof THREE.Points) {
         const material = object.material as THREE.ShaderMaterial;
-        if (material.uniforms && material.uniforms.hdrMultiplier) {
+        if (
+          material.uniforms &&
+          material.uniforms.hdrMultiplier &&
+          !material.userData.managedByMaterialManager
+        ) {
           material.uniforms.hdrMultiplier.value = multiplier;
         }
       }
@@ -338,6 +346,9 @@ export class SceneManager {
     // Dispose controls - removes all event listeners and internal references
     // This prevents memory leaks from mouse/touch event handlers
     this.controls.dispose();
+
+    // Dispose material manager - cleans up all cached materials
+    materialManager.dispose();
 
     // Dispose renderer - cleans up WebGL context and associated GPU resources
     // This frees vertex buffers, textures, and shader programs

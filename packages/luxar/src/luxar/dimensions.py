@@ -38,7 +38,7 @@ class Dimension:
     scale: float = 1.0
     description: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate dimension parameters."""
         if self.range is not None:
             if len(self.range) != 2:
@@ -117,7 +117,7 @@ class Dimensions:
 
     dimensions: List[Dimension] = field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate dimensions configuration."""
         # Check for duplicate names
         names = [d.name for d in self.dimensions]
@@ -169,7 +169,9 @@ class Dimensions:
                 return i
         raise ValueError(f"Dimension '{name}' not found")
 
-    def validate_positions(self, positions: np.ndarray, name: str = "positions"):
+    def validate_positions(
+        self, positions: np.ndarray, name: str = "positions"
+    ) -> None:
         """Validate that positions array matches scene dimensions.
 
         Args:

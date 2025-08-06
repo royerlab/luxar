@@ -1,12 +1,24 @@
+markdown
 # Claude Code Instructions for the Luxar Project
 
 > **Important**: This file contains essential information for Claude Code instances working on the Luxar project. 
 > Keep this file updated with new learnings, conventions, and important project details while maintaining clarity and conciseness.
 > If you discover something that would be useful for future Claude instances, add it here.
 
-## Project-Specific Tools and Preferences
+## Table of Contents
+- [Development Environment](#development-environment)
+- [Project Structure](#project-structure)
+- [Development Workflow](#development-workflow)
+- [Code Standards](#code-standards)
+- [Luxar-Specific Conventions](#luxar-specific-conventions)
+- [Quick Commands Reference](#quick-commands-reference)
+- [Quality Assurance](#quality-assurance)
+- [Important Reminders](#important-reminders)
+- [Technical Documentation](#technical-documentation)
 
-### Python Development
+## Development Environment
+
+### Python Development with Hatch
 - **ALWAYS use Hatch** for Python tasks when possible:
   - Running tests: `hatch run test` or `hatch run pytest`
   - Running tests with coverage: `hatch run test-cov`
@@ -14,7 +26,22 @@
   - Installing dependencies: Dependencies are managed in `pyproject.toml`
   - Python version management: Hatch handles this automatically
 
-### Testing
+### TypeScript/JavaScript Development
+- Use pnpm for the luxar-player package (NOT npm)
+- Development server: `pnpm dev`
+- Build: `pnpm build`
+- Tests: `pnpm test --run` (use --run for non-interactive mode)
+- Coverage: `pnpm run test:coverage`
+
+## Project Structure
+- `/packages/luxar/` - Main Python package
+- `/packages/luxar-player/` - TypeScript/WebGL viewer
+- `/examples/` - Example scripts (use `*_example.py` naming convention)
+- Python tests go in `/packages/luxar/src/luxar/tests/`
+
+## Development Workflow
+
+### Testing Strategy
 - Always run tests with: `hatch run test`
 - For coverage reports: `hatch run test-cov`
 - View coverage HTML report: `open htmlcov/index.html`
@@ -22,94 +49,89 @@
 - Run all tests (Python + TypeScript): `make test-all`
 - Note: TypeScript dependencies will be auto-installed if missing
 
-### Code Style
-- Follow existing code patterns in the codebase
-- Use type hints for all function parameters and return values
-- Use arbol's `aprint` instead of `print` for console output in examples and CLI tools
-- Keep docstrings concise but informative
-
 ### Git Workflow
 - Never commit `.zarr` directories (they're now in .gitignore)
 - Always run tests before committing
 - Use descriptive commit messages
 - Do not include the robot emoji and Claude Code attribution in commits
-- **Pre-commit Checklist**: Before committing, ensure overall consistency:
-  - Run all tests (`make test-all`) and ensure they pass
-  - Update README.md files if functionality changed
-  - Update examples if APIs changed
-  - Check that documentation reflects the current state
-  - Verify that new features have appropriate tests
-  - Run linting and type checking (`make check`)
 
-### Project Structure
-- `/packages/luxar/` - Main Python package
-- `/packages/luxar-player/` - TypeScript/WebGL viewer
-- `/examples/` - Example scripts (use `*_example.py` naming convention)
-- Python tests go in `/packages/luxar/src/luxar/tests/`
+### Pre-commit Checklist
+Before committing, ensure overall consistency:
+- Run all tests (`make test-all`) and ensure they pass
+- Update README.md files if functionality changed
+- Update examples if APIs changed
+- Check that documentation reflects the current state
+- Verify that new features have appropriate tests
+- Run linting and type checking (`make check`)
 
-### Luxar-Specific Conventions
+## Code Standards
+
+### General Code Style
+- Follow existing code patterns in the codebase
+- Use type hints for all function parameters and return values
+- Use arbol's `aprint` instead of `print` for console output in examples and CLI tools
+- Keep docstrings concise but informative
+
+### TypeScript Configuration
+- **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
+- All config in `config/index.ts` with types in `config/types.ts`
+- Use camelCase consistently (not UPPER_SNAKE_CASE)
+- Advanced rendering controls panel should be on the left side
+- Trigger animation when rendering parameters change
+
+## Luxar-Specific Conventions
+
+### Physical Units and Data
 - Physical units: Be inclusive (support nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
 - Point attributes: positions (required), colors, radii, sharpness (all optional)
 - Default values: radius=0.1, sharpness=2.0
 - Zarr chunks: Use appropriate chunk sizes for data patterns
-- **Transform System**: 
-  - All transforms are 4x4 matrices (float32)
-  - Transforms are automatically validated in Node.__init__
-  - Use `luxar.transforms` module for creating transforms (translate, rotate, scale, compose, etc.)
-  - Node class has a `transform` property for easy access/modification
-  - Transforms are stored as 16-element lists in zarr attributes
-- **Scene-Level Dimensions**:
-  - Use `Dimensions` and `Dimension` classes to define coordinate systems
-  - Dimensions include: name, unit, range, step, display status
-  - Scene validates all objects against defined dimensions
-  - Step sizes are used for keyboard navigation in viewer
-- **nD Point Cloud Support**:
-  - Points can have arbitrary dimensions (not just 3D)
-  - Non-displayed dimensions are "sliced" for visualization
-  - Radius-based slicing: points visible based on nD hypersphere intersection
-  - Keyboard navigation: Press 1-9 to select dimension, [/] to navigate
 
-### TypeScript/JavaScript
-- Use pnpm for the luxar-player package (NOT npm)
-- Development server: `pnpm dev`
-- Build: `pnpm build`
-- Tests: `pnpm test --run` (use --run for non-interactive mode)
-- Coverage: `pnpm run test:coverage`
-- **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
-  - All config in `config/index.ts` with types in `config/types.ts`
-  - Use camelCase consistently (not UPPER_SNAKE_CASE)
-  - Advanced rendering controls panel should be on the left side
-  - Trigger animation when rendering parameters change
-- **Quality Checks**: After making changes, run:
-  - `pnpm run lint` - Check code style
-  - `pnpm run typecheck` - Check TypeScript types
+### Transform System
+- All transforms are 4x4 matrices (float32)
+- Transforms are automatically validated in Node.__init__
+- Use `luxar.transforms` module for creating transforms (translate, rotate, scale, compose, etc.)
+- Node class has a `transform` property for easy access/modification
+- Transforms are stored as 16-element lists in zarr attributes
+
+### Scene-Level Dimensions
+- Use `Dimensions` and `Dimension` classes to define coordinate systems
+- Dimensions include: name, unit, range, step, display status
+- Scene validates all objects against defined dimensions
+- Step sizes are used for keyboard navigation in viewer
+
+### nD Point Cloud Support
+- Points can have arbitrary dimensions (not just 3D)
+- Non-displayed dimensions are "sliced" for visualization
+- Radius-based slicing: points visible based on nD hypersphere intersection
+- Keyboard navigation: Press 1-9 to select dimension, [/] to navigate
 
 ## Quick Commands Reference
+
+### Python/Hatch Commands
 ```bash
-# Python/Hatch
 hatch run test                    # Run tests
 hatch run test-cov               # Run tests with coverage
 hatch run python script.py       # Run a Python script in the Hatch environment
+```
 
-# Luxar CLI
+### Luxar CLI Commands
+```bash
 luxar serve <data.zarr>          # Serve zarr data
 luxar build <scene.py>           # Build a scene
+```
 
-# Development
+### Development Commands
+```bash
 cd packages/luxar-player && pnpm dev         # Start viewer dev server
 make viewer-test                             # Run TypeScript tests
 make test-all                                # Run all tests (Python + TypeScript)
 make clean                                   # Clean all artifacts (including TypeScript dist/, node_modules/)
 ```
 
-## Recent Updates and Learnings
+**Important Note**: Always ensure that you are at the root of the project directory when running these commands, especially for `make` commands.
 
-### nD Visualization Implementation (Latest)
-- **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
-- **Scene Dimensions**: Always define at scene level for consistency
-- **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
-- **TypeScript Integration**: Scene dimensions loaded from zarr attrs, used for step sizes
-- **Examples**: Keep nD examples simple with clear shapes/patterns
+## Quality Assurance
 
 ### Code Quality Checklist
 When making significant changes:
@@ -122,7 +144,14 @@ When making significant changes:
 7. Run integration tests on all examples
 8. Update this CLAUDE.md file with important learnings
 
+### TypeScript Quality Checks
+After making changes, run:
+- `pnpm run lint` - Check code style
+- `pnpm run typecheck` - Check TypeScript types
+
 ## Important Reminders
+
+### Development Best Practices
 1. Check for existing implementations before writing new code
 2. Validate all inputs according to the type system in `types.py`
 3. Keep examples simple and well-documented
@@ -130,5 +159,50 @@ When making significant changes:
 5. Do not use unittest or mocking
 6. Use `arbol` for console output in examples and CLI tools
 7. When implementing new features, avoid over-engineering - "Complete before you perfect"
-8. This is still an early-stage project, don't bother about backwards compatibility, deprecation or migration guides.
-9. When running test 'by-hand', or doing  experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later.
+8. This is still an early-stage project, don't bother about backwards compatibility, deprecation or migration guides
+9. When running test 'by-hand', or doing experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later
+
+## Technical Documentation
+
+### Recent Updates and Learnings
+
+#### nD Visualization Implementation (Latest)
+- **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
+- **Scene Dimensions**: Always define at scene level for consistency
+- **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
+- **TypeScript Integration**: Scene dimensions loaded from zarr attrs, used for step sizes
+- **Examples**: Keep nD examples simple with clear shapes/patterns
+
+### Broader Vision and Known Issues
+
+#### Future Extensions
+- **Multiple blending modes**: Support different blending modes (additive, normal, multiply) per layer/object
+- **Beyond points**: Support for meshes, lines, volumes, and other geometry types
+- **Material system**: More sophisticated materials with different shading models
+
+#### Anti-Aliasing Brightness Issues
+
+##### SSAA Brightness Issue
+**Problem**: When using SSAA (Supersampling Anti-Aliasing), the scene gets dimmer with higher multipliers. This is because:
+- Points currently use additive blending
+- Higher resolution = more pixels per point
+- Downsampling averages the contributions, reducing brightness
+
+##### MSAA Brightness Issue
+**Problem**: When using MSAA (Multisample Anti-Aliasing), the scene gets BRIGHTER with more samples. This is because:
+- Points use additive blending (THREE.AdditiveBlending)
+- Each MSAA sample accumulates the additive contribution
+- More samples = more accumulation = brighter result
+- This is a fundamental incompatibility between MSAA and additive blending
+
+**Important**: Do NOT compensate for this in individual shaders! Any solution must:
+1. Work for all blending modes (not just additive)
+2. Work for all geometry types (not just points)
+3. Not interfere with post-processing effects like bloom
+
+**Potential solutions to explore**:
+- Use normal alpha blending instead of additive (but loses HDR glow effect)
+- Custom resolve shader for MSAA that accounts for blend mode
+- Render additive objects to separate buffer without MSAA
+- Post-process brightness normalization based on MSAA sample count
+```

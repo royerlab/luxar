@@ -1,7 +1,7 @@
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
 import * as THREE from 'three';
-import { createGaussianPointMaterial } from './shader-manager';
+import { materialManager, BlendingMode } from './material-manager';
 import { SimpleDims, DimensionMetadata, initializeDims, getDimensionRanges } from './types/dims';
 import {
   slicePoints,
@@ -20,13 +20,32 @@ function toURL(path: string) {
   return abs.endsWith('/') ? abs : abs + '/';
 }
 
-type ObjRecord = { obj: THREE.Object3D; path: string };
+// Inherit rendering attributes from parent if not specified
+function inheritRenderingAttributes(
+  attrs: ZarrGroupAttrs,
+  parentAttrs?: ZarrGroupAttrs
+): ZarrGroupAttrs {
+  if (!parentAttrs) return attrs;
+
+  return {
+    ...attrs,
+    opacity: attrs.opacity ?? parentAttrs.opacity,
+    gamma: attrs.gamma ?? parentAttrs.gamma,
+    blending_mode: attrs.blending_mode ?? parentAttrs.blending_mode,
+  };
+}
+
+type ObjRecord = { obj: THREE.Object3D; path: string; attrs?: ZarrGroupAttrs };
 
 interface ZarrGroupAttrs {
   type?: string;
   transform?: number[];
   dimension_metadata?: DimensionMetadata[];
   num_points?: number;
+  opacity?: number;
+  gamma?: number;
+  blending_mode?: BlendingMode;
+  scene_dimensions?: any; // Scene-level dimensions
 }
 
 /* ------------------------------------------------------------------ main */
@@ -40,11 +59,14 @@ export async function loadScene(src: string): Promise<THREE.Group> {
 
   const rootLoc = zarr.root(store);
   const rootThree = new THREE.Group();
-  const lookup = new Map<string, ObjRecord>([['/', { obj: rootThree, path: '/' }]]);
 
   /* Load scene-level attributes including dimensions */
   const rootGroup = await zarr.open(rootLoc, { kind: 'group' });
-  const sceneAttrs = rootGroup.attrs as any;
+  const sceneAttrs = rootGroup.attrs as ZarrGroupAttrs;
+
+  const lookup = new Map<string, ObjRecord>([
+    ['/', { obj: rootThree, path: '/', attrs: sceneAttrs }],
+  ]);
 
   // Store scene dimensions in userData for global access
   if (sceneAttrs?.scene_dimensions) {
@@ -63,7 +85,15 @@ export async function loadScene(src: string): Promise<THREE.Group> {
   for (const entry of groups) {
     const loc = rootLoc.resolve(entry.path.slice(1)); // drop leading "/"
     const grp = await zarr.open(loc, { kind: 'group' });
-    const attrs = grp.attrs as ZarrGroupAttrs;
+    let attrs = grp.attrs as ZarrGroupAttrs;
+
+    // Get parent attributes for inheritance
+    const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+    const parentRecord = lookup.get(parentPath);
+    const parentAttrs = parentRecord?.attrs;
+
+    // Inherit rendering attributes from parent
+    attrs = inheritRenderingAttributes(attrs, parentAttrs);
 
     /* build renderable */
     let obj: THREE.Object3D;
@@ -71,6 +101,10 @@ export async function loadScene(src: string): Promise<THREE.Group> {
       obj = await buildPoints(loc, attrs);
     } else {
       obj = new THREE.Group();
+      // Store rendering attrs on groups for child inheritance
+      obj.userData.opacity = attrs.opacity;
+      obj.userData.gamma = attrs.gamma;
+      obj.userData.blendingMode = attrs.blending_mode;
     }
 
     if (Array.isArray(attrs?.transform) && attrs.transform.length === 16) {
@@ -78,9 +112,8 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     }
 
     /* attach to parent in Three.js graph */
-    const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
     lookup.get(parentPath)!.obj.add(obj);
-    lookup.set(entry.path, { obj, path: entry.path });
+    lookup.set(entry.path, { obj, path: entry.path, attrs });
   }
 
   return rootThree;
@@ -209,11 +242,29 @@ async function buildPoints(
     geom.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
   }
 
-  // Create advanced Gaussian point material with HDR output and bloom effects
-  // This replaces the basic PointsMaterial with custom shaders for smooth, natural-looking points
-  const material = createGaussianPointMaterial();
+  // Get rendering properties from attributes, with defaults
+  const opacity = attrs.opacity ?? 1.0;
+  const gamma = attrs.gamma ?? 1.0;
+  const blendingMode = attrs.blending_mode ?? 'additive';
+
+  // Get or create material from the manager
+  const material = materialManager.getMaterial({
+    blendingMode: blendingMode as BlendingMode,
+    opacity,
+    gamma,
+  });
 
   const points = new THREE.Points(geom, material);
+
+  // Apply render order from material
+  if (material.userData.renderOrder !== undefined) {
+    points.renderOrder = material.userData.renderOrder;
+  }
+
+  // Store rendering properties in userData for runtime updates
+  points.userData.opacity = opacity;
+  points.userData.gamma = gamma;
+  points.userData.blendingMode = blendingMode;
 
   // Store dims state and original data in userData for later access
   if (dims.ndim > 3) {
