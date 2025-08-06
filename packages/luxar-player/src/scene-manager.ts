@@ -187,6 +187,11 @@ export class SceneManager {
     // ArcballControls bind to camera and DOM element for mouse/touch input
     // The renderer's canvas element captures all mouse/touch events
     this.controls = new ArcballControls(this.camera, this.renderer.domElement);
+    
+    // Set default target to origin for predictable zooming behavior
+    // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
+    (this.controls as any).target.set(0, 0, 0);
+    this.controls.update();
   }
 
   /**
@@ -231,11 +236,83 @@ export class SceneManager {
       const root = await loadScene(src);
       hideLoadingIndicator();
       this.scene.add(root);
+      
+      // Center camera on the loaded data
+      this.centerCameraOnScene();
     } catch (error) {
       hideLoadingIndicator();
       console.error('Failed to load scene:', error);
       showError(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
+    }
+  }
+  
+  /**
+   * Center camera on the bounding box of all visible objects
+   */
+  public centerCameraOnScene(): void {
+    // Create a bounding box that encompasses all visible objects
+    const box = new THREE.Box3();
+    let totalPointCount = 0;
+    
+    // Traverse the scene and expand the box to include all geometries
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Points) {
+        const geometry = object.geometry;
+        
+        // For point clouds, compute bounding box from position attribute
+        const positions = geometry.attributes.position;
+        if (positions && positions.count > 0) {
+          totalPointCount += positions.count;
+          
+          // First, compute the bounding box
+          if (!geometry.boundingBox) {
+            geometry.computeBoundingBox();
+          }
+          
+          if (geometry.boundingBox) {
+            const tempBox = geometry.boundingBox.clone();
+            
+            // Apply object's world transform
+            tempBox.applyMatrix4(object.matrixWorld);
+            
+            // Only include if box has valid size (not empty)
+            if (!tempBox.isEmpty()) {
+              box.union(tempBox);
+            }
+          }
+        }
+      }
+    });
+    
+    // Only center camera if we have a reasonable scene
+    if (!box.isEmpty()) {
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      
+      // Don't center if bounding box is too small or too few points
+      // This prevents awkward camera positioning on edge cases
+      if (maxDim < 1.0 || totalPointCount < 100) {
+        // Keep default camera position for better user experience
+        console.warn(`Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, points: ${totalPointCount})`);
+        return;
+      }
+      
+      const center = box.getCenter(new THREE.Vector3());
+      
+      // Position camera to see the entire scene
+      const distance = maxDim * 1.2; // Closer for better visibility
+      this.camera.position.set(center.x, center.y, center.z + distance);
+      
+      // Point camera at the center
+      this.camera.lookAt(center);
+      
+      // Update controls to orbit around the center
+      // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
+      (this.controls as any).target.copy(center);
+      this.controls.update();
+    } else {
+      console.warn('No visible geometry found to center camera on');
     }
   }
 

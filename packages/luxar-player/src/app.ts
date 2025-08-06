@@ -57,6 +57,9 @@ export class LuxarApp {
       // Load scene data (animation loop will continue even if this fails)
       await this.sceneManager.loadSceneData(sceneSrc);
 
+      // Initialize dimension sliders for nD data
+      this.inputHandler.initDimensionSliders();
+
       // Set scene ID for rendering controls persistence
       this.renderingControls.setSceneId(sceneSrc);
 
