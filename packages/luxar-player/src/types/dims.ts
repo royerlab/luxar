@@ -1,36 +1,92 @@
 /**
- * Simple dimension types for nD data visualization
+ * Core type definitions for nD data visualization in Luxar.
+ * 
+ * This module provides the fundamental data structures for managing
+ * high-dimensional point cloud data, including dimension metadata,
+ * slicing state, and initialization utilities.
  */
 
 /**
- * Metadata for a single dimension
+ * Metadata describing the properties and behavior of a single dimension.
+ * 
+ * Each dimension in an nD dataset can have rich metadata that controls
+ * how it's displayed, navigated, and interpreted by the visualization system.
+ * 
+ * @interface DimensionMetadata
  */
 export interface DimensionMetadata {
+  /** Human-readable name for this dimension (e.g., "Time", "X", "Channel") */
   name: string;
+  
+  /** Physical unit of measurement (e.g., "μm", "s", "nm") */
   unit: string;
+  
+  /** Scale factor for converting from array indices to real-world units */
   scale: number;
+  
+  /** Optional min/max bounds for this dimension in real-world units */
   range?: [number, number];
+  
+  /** Whether this dimension should be displayed in the 3D scene by default */
+  display?: boolean;
+  
+  /** Whether values in this dimension are discrete (integers) vs continuous */
+  discrete?: boolean;
+  
+  /** Step size for navigation in this dimension */
+  step?: number;
 }
 
 /**
- * Simple dims state for slicing nD data
+ * State object representing the current position and display configuration
+ * for navigating through nD point cloud data.
+ * 
+ * This is the core data structure that tracks where we are in the nD space
+ * and which dimensions are currently being visualized. The scene-level
+ * dimension manager maintains a single instance to ensure consistency
+ * across all point clouds in the scene.
+ * 
+ * @interface SimpleDims
  */
 export interface SimpleDims {
-  /** Total number of dimensions */
+  /** Total number of dimensions in the dataset */
   ndim: number;
 
-  /** Current position in each dimension */
+  /** 
+   * Current position/slice in each dimension.
+   * For displayed dimensions, this represents the camera center.
+   * For non-displayed dimensions, this is the slice position.
+   */
   currentStep: number[];
 
-  /** Which dimensions are displayed (indices) */
+  /** 
+   * Indices of dimensions currently displayed in the 3D scene.
+   * Maximum of 3 dimensions can be displayed simultaneously (X, Y, Z).
+   * Typically the last 3 dimensions for spatial data.
+   */
   displayed: number[];
 
-  /** Optional metadata for each dimension */
+  /** Optional metadata providing semantic information for each dimension */
   metadata?: DimensionMetadata[];
 }
 
 /**
- * Helper to initialize dims from positions array
+ * Initializes a SimpleDims object from point cloud position data.
+ * 
+ * This function creates the initial dimension state for nD visualization,
+ * inferring the number of dimensions from the data structure and setting
+ * up sensible defaults for display and navigation.
+ * 
+ * Design decisions:
+ * - Non-displayed dimensions start at position 0 (minimum) for predictable behavior
+ * - Displayed dimensions are chosen from metadata or default to last 3 (spatial)
+ * - Maximum of 3 dimensions can be displayed simultaneously
+ * 
+ * @param numPoints - Number of points in the dataset
+ * @param totalElements - Total elements in the positions array (numPoints * ndim)
+ * @param metadata - Optional metadata describing each dimension's properties
+ * @returns Initialized SimpleDims object ready for use
+ * @throws Error if the positions array structure is invalid
  */
 export function initializeDims(
   numPoints: number,
@@ -43,13 +99,33 @@ export function initializeDims(
   if (!Number.isInteger(ndim)) {
     throw new Error(`Invalid positions array: ${totalElements} elements for ${numPoints} points`);
   }
-
-  // Initialize at origin
+  
+  // Initialize all dimensions at position 0 (minimum value)
+  // This provides predictable behavior for non-displayed dimensions
   const currentStep = new Array(ndim).fill(0);
 
-  // Display last 3 dimensions (or fewer if ndim < 3)
-  const displayed =
-    ndim <= 3 ? Array.from({ length: ndim }, (_, i) => i) : [ndim - 3, ndim - 2, ndim - 1];
+  // Determine which dimensions to display in the 3D scene
+  let displayed: number[];
+  if (metadata && metadata.length > 0) {
+    // Respect explicit display preferences from metadata
+    displayed = [];
+    for (let i = 0; i < ndim && i < metadata.length; i++) {
+      const shouldDisplay = metadata[i].display === true;
+      if (shouldDisplay && displayed.length < 3) {
+        displayed.push(i);
+      }
+    }
+    // Fallback: if no dimensions marked for display, use spatial convention
+    if (displayed.length === 0) {
+      displayed =
+        ndim <= 3 ? Array.from({ length: ndim }, (_, i) => i) : [ndim - 3, ndim - 2, ndim - 1];
+    }
+  } else {
+    // Default: assume last 3 dimensions are spatial (X, Y, Z)
+    // This is the standard convention for scientific datasets
+    displayed =
+      ndim <= 3 ? Array.from({ length: ndim }, (_, i) => i) : [ndim - 3, ndim - 2, ndim - 1];
+  }
 
   return {
     ndim,
@@ -60,7 +136,20 @@ export function initializeDims(
 }
 
 /**
- * Get dimension ranges from positions data
+ * Computes the min/max bounds for each dimension from point cloud position data.
+ * 
+ * This function analyzes the actual data values to determine the natural bounds
+ * of each dimension, which is essential for:
+ * - Setting up appropriate navigation ranges for sliders
+ * - Calculating effective radii for nD hypersphere slicing
+ * - Determining camera bounds and centering
+ * 
+ * The positions array is structured as: [point0_dim0, point0_dim1, ..., point1_dim0, ...]
+ * 
+ * @param positions - Flattened array of point positions (size: numPoints * ndim)
+ * @param ndim - Number of dimensions per point
+ * @param numPoints - Total number of points in the dataset
+ * @returns Array of [min, max] tuples for each dimension
  */
 export function getDimensionRanges(
   positions: Float32Array,
@@ -69,12 +158,12 @@ export function getDimensionRanges(
 ): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
 
-  // Initialize ranges
+  // Initialize ranges with extreme values for proper min/max calculation
   for (let d = 0; d < ndim; d++) {
     ranges.push([Infinity, -Infinity]);
   }
 
-  // Find min/max for each dimension
+  // Scan through all points to find actual min/max bounds
   for (let i = 0; i < numPoints; i++) {
     for (let d = 0; d < ndim; d++) {
       const value = positions[i * ndim + d];

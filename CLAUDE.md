@@ -161,6 +161,9 @@ After making changes, run:
 7. When implementing new features, avoid over-engineering - "Complete before you perfect"
 8. This is still an early-stage project, don't bother about backwards compatibility, deprecation or migration guides
 9. When running test 'by-hand', or doing experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later
+10. Example/test datasets should always be named: 'something_something_example' (e.g., 'test_4d_rainbow_sphere_example.zarr')
+11. Resulting zarr datasets from examples can be left in the examples folder - no need to copy them elsewhere
+12. Do not try to run the viewer yourself - ask the user to run it and request console output if needed
 
 ## Technical Documentation
 
