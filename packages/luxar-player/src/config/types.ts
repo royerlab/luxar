@@ -101,6 +101,14 @@ export interface RenderingSettings {
   bloomRadius: number;
   exposure: number;
   hdrMultiplier: number;
+  fxaaEnabled: boolean;
+  msaaEnabled: boolean;
+  msaaSamples: number;
+  smaaEnabled: boolean;
+  smaaThreshold: number;
+  smaaSearchSteps: number;
+  ssaaEnabled: boolean;
+  ssaaMultiplier: number;
 }
 
 /**

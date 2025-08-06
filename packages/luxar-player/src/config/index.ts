@@ -115,6 +115,14 @@ export const config: AppConfig = {
       bloomRadius: 0.5, // Bloom radius for rendering controls
       exposure: 1.0, // Tone mapping exposure value
       hdrMultiplier: 13.0, // HDR intensity multiplier
+      fxaaEnabled: true, // FXAA enabled by default (works well with additive blending)
+      msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
+      msaaSamples: 4, // MSAA sample count (2, 4, 8)
+      smaaEnabled: false, // SMAA disabled by default
+      smaaThreshold: 0.1, // SMAA edge detection threshold (0.05-0.2)
+      smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
+      ssaaEnabled: false, // SSAA disabled by default (has brightness issues with additive blending)
+      ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
     },
   },
 

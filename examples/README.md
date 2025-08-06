@@ -154,6 +154,18 @@ python radius_slicing_example.py
 luxar serve radius_slicing_example.zarr
 ```
 
+#### 11. **rainbow_sphere_spiral_example.py** - Beautiful Visualization
+Creates an aesthetically pleasing sphere with rainbow colors:
+- Points arranged in a spherical spiral (Fibonacci-like distribution)
+- Smooth rainbow gradient flowing along the spiral
+- Varying point sizes creating a wave pattern
+- Larger accent points as visual landmarks
+
+```bash
+python rainbow_sphere_spiral_example.py
+luxar serve rainbow_sphere_spiral_example.zarr
+```
+
 ## Keyboard Navigation Controls
 
 When viewing nD data (>3D), use these controls:
