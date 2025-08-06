@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from luxar.types import (
+    validate_blending_mode,
+    validate_gamma,
     validate_node_type,
+    validate_opacity,
     validate_physical_unit,
     validate_transform,
 )
@@ -113,3 +116,98 @@ class TestPhysicalUnitValidation:
 
         with pytest.raises(ValueError, match="Invalid unit 'yards'"):
             validate_physical_unit("yards")
+
+
+class TestOpacityValidation:
+    """Test validate_opacity function."""
+
+    def test_valid_opacity(self):
+        """Test that valid opacity values are accepted."""
+        assert validate_opacity(0.0) == 0.0
+        assert validate_opacity(0.5) == 0.5
+        assert validate_opacity(1.0) == 1.0
+        assert validate_opacity(0.25) == 0.25
+        assert validate_opacity(0.99) == 0.99
+
+    def test_opacity_type_conversion(self):
+        """Test that opacity values are converted to float."""
+        assert validate_opacity(1) == 1.0
+        assert validate_opacity(0) == 0.0
+        assert validate_opacity("0.5") == 0.5
+        assert validate_opacity(np.float32(0.7)) == pytest.approx(0.7)
+
+    def test_invalid_opacity(self):
+        """Test that invalid opacity values raise ValueError."""
+        with pytest.raises(ValueError, match="Opacity must be between 0.0 and 1.0"):
+            validate_opacity(-0.1)
+
+        with pytest.raises(ValueError, match="Opacity must be between 0.0 and 1.0"):
+            validate_opacity(1.1)
+
+        with pytest.raises(ValueError, match="Opacity must be between 0.0 and 1.0"):
+            validate_opacity(2.0)
+
+        with pytest.raises(TypeError, match="Opacity must be convertible to float"):
+            validate_opacity("invalid")
+
+
+class TestGammaValidation:
+    """Test validate_gamma function."""
+
+    def test_valid_gamma(self):
+        """Test that valid gamma values are accepted."""
+        assert validate_gamma(0.2) == 0.2
+        assert validate_gamma(1.0) == 1.0
+        assert validate_gamma(2.0) == 2.0
+        assert validate_gamma(0.5) == 0.5
+        assert validate_gamma(1.5) == 1.5
+
+    def test_gamma_type_conversion(self):
+        """Test that gamma values are converted to float."""
+        assert validate_gamma(1) == 1.0
+        assert validate_gamma(2) == 2.0
+        assert validate_gamma("1.5") == 1.5
+        assert validate_gamma(np.float32(1.8)) == pytest.approx(1.8)
+
+    def test_invalid_gamma(self):
+        """Test that invalid gamma values raise ValueError."""
+        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
+            validate_gamma(0.0)
+
+        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
+            validate_gamma(0.1)
+
+        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
+            validate_gamma(2.5)
+
+        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
+            validate_gamma(3.0)
+
+        with pytest.raises(TypeError, match="Gamma must be convertible to float"):
+            validate_gamma("not_a_number")
+
+
+class TestBlendingModeValidation:
+    """Test validate_blending_mode function."""
+
+    def test_valid_blending_modes(self):
+        """Test that valid blending modes are accepted."""
+        assert validate_blending_mode("normal") == "normal"
+        assert validate_blending_mode("additive") == "additive"
+        assert validate_blending_mode("multiply") == "multiply"
+        assert validate_blending_mode("minimum") == "minimum"
+        assert validate_blending_mode("maximum") == "maximum"
+
+    def test_invalid_blending_mode(self):
+        """Test that invalid blending modes raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid blending mode 'overlay'"):
+            validate_blending_mode("overlay")
+
+        with pytest.raises(ValueError, match="Invalid blending mode 'screen'"):
+            validate_blending_mode("screen")
+
+        with pytest.raises(ValueError, match="Invalid blending mode ''"):
+            validate_blending_mode("")
+
+        with pytest.raises(ValueError, match="Invalid blending mode 'NORMAL'"):
+            validate_blending_mode("NORMAL")  # Case sensitive

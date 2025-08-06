@@ -74,6 +74,22 @@ class Node:
                     aprint(f"Invalid transform for node '{name}': {e}")
                     raise ValueError(f"Invalid transform: {e}") from e
 
+            # Validate rendering attributes if present
+            if "opacity" in attrs:
+                from .types import validate_opacity
+
+                attrs["opacity"] = validate_opacity(attrs["opacity"])
+
+            if "gamma" in attrs:
+                from .types import validate_gamma
+
+                attrs["gamma"] = validate_gamma(attrs["gamma"])
+
+            if "blending_mode" in attrs:
+                from .types import validate_blending_mode
+
+                attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
+
             self._group.attrs.update(attrs)
 
     # --------------------------------------------------------------------- attrs
@@ -193,6 +209,115 @@ class Node:
     def is_root(self) -> bool:
         """Check if this node is the root (has no parent)."""
         return self.parent is None
+
+    # --------------------------------------------------------------- rendering
+    @property
+    def opacity(self) -> float:
+        """Get the opacity value for this node.
+
+        Returns:
+            Opacity value (0.0 to 1.0), defaults to 1.0 if not set
+        """
+        return float(self.attrs.get("opacity", 1.0))
+
+    @opacity.setter
+    def opacity(self, value: Any) -> None:
+        """Set the opacity value for this node.
+
+        Args:
+            value: Opacity value (0.0 to 1.0)
+
+        Raises:
+            ValueError: If opacity is not in valid range
+            TypeError: If opacity cannot be converted to float
+        """
+        from .types import validate_opacity
+
+        self.attrs["opacity"] = validate_opacity(value)
+
+    @property
+    def gamma(self) -> float:
+        """Get the gamma value for this node.
+
+        Returns:
+            Gamma value (0.2 to 2.0), defaults to 1.0 if not set
+        """
+        return float(self.attrs.get("gamma", 1.0))
+
+    @gamma.setter
+    def gamma(self, value: Any) -> None:
+        """Set the gamma value for this node.
+
+        Args:
+            value: Gamma value (0.2 to 2.0)
+
+        Raises:
+            ValueError: If gamma is not in valid range
+            TypeError: If gamma cannot be converted to float
+        """
+        from .types import validate_gamma
+
+        self.attrs["gamma"] = validate_gamma(value)
+
+    @property
+    def blending_mode(self) -> str:
+        """Get the blending mode for this node.
+
+        Returns:
+            Blending mode string, defaults to "additive" if not set
+        """
+        return str(self.attrs.get("blending_mode", "additive"))
+
+    @blending_mode.setter
+    def blending_mode(self, value: Any) -> None:
+        """Set the blending mode for this node.
+
+        Args:
+            value: Blending mode ("normal", "additive", "multiply", "minimum", "maximum")
+
+        Raises:
+            ValueError: If blending mode is not valid
+            TypeError: If blending mode is not a string
+        """
+        from .types import validate_blending_mode
+
+        self.attrs["blending_mode"] = validate_blending_mode(value)
+
+    def set_opacity(self, value: Any) -> "Node":
+        """Set opacity and return self for chaining.
+
+        Args:
+            value: Opacity value (0.0 to 1.0)
+
+        Returns:
+            Self for method chaining
+        """
+        self.opacity = value
+        return self
+
+    def set_gamma(self, value: Any) -> "Node":
+        """Set gamma and return self for chaining.
+
+        Args:
+            value: Gamma value (0.2 to 2.0)
+
+        Returns:
+            Self for method chaining
+        """
+        self.gamma = value
+        return self
+
+    def set_blending_mode(self, value: Any) -> "Node":
+        """Set blending mode and return self for chaining.
+
+        Args:
+            value: Blending mode string
+
+        Returns:
+            Self for method chaining
+        """
+        self.blending_mode = value
+        return self
 
     # --------------------------------------------------------------- repr
     def __repr__(self) -> str:  # pragma: no cover

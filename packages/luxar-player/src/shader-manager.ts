@@ -133,8 +133,8 @@ export function createGaussianPointMaterial(): THREE.ShaderMaterial {
     // This allows HDR values to pass through to bloom effects
     toneMapped: false,
 
-    // Use normal alpha blending for better visibility
-    // This ensures points render properly without being too bright
+    // Use additive blending for HDR glow effects
+    // NOTE: This causes brightness increase with MSAA due to sample accumulation
     blending: THREE.AdditiveBlending,
   });
 }

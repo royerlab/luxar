@@ -116,13 +116,17 @@ class Scene(Node):
 
         Args:
             name: Name of the group
-            **attrs: Additional attributes for the group
+            **attrs: Additional attributes for the group. Supports:
+                opacity: float (0.0-1.0, default 1.0) - Node opacity
+                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum",
+                               default "additive") - Blending mode for rendering
 
         Returns:
             The created group node
 
         Raises:
-            ValueError: If group creation fails
+            ValueError: If group creation fails or rendering attributes are invalid
         """
         try:
             aprint(f"Adding group node '{name}'.")
@@ -156,13 +160,17 @@ class Scene(Node):
             sharpness: Optional array of shape (N,) for point edge sharpness
             parent: Parent node, defaults to scene root
             dimension_metadata: Optional list of DimensionMetadata for each dimension
-            **attrs: Additional attributes for the node
+            **attrs: Additional attributes for the node. Supports:
+                opacity: float (0.0-1.0, default 1.0) - Node opacity
+                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum",
+                               default "additive") - Blending mode for rendering
 
         Returns:
             The created Points node
 
         Raises:
-            ValueError: If point cloud creation fails
+            ValueError: If point cloud creation fails or rendering attributes are invalid
         """
         try:
             # Ensure positions is array-like

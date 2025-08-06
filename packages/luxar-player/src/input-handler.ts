@@ -1,37 +1,183 @@
-// Input event handling for the Luxar scene player
+/**
+ * Comprehensive input handling system for nD navigation and scene interaction.
+ * 
+ * This class provides the complete user interface layer for Luxar, handling:
+ * - Keyboard navigation through nD dimensions
+ * - Mouse and touch interaction coordination
+ * - Fullscreen and FOV control
+ * - UI element state management
+ * - Dimension slider integration
+ * - Performance monitoring controls
+ * 
+ * The input handler bridges user interactions with the underlying nD visualization
+ * system, translating keyboard/mouse events into dimension changes that trigger
+ * coordinated updates across all scene objects.
+ * 
+ * Key interaction patterns:
+ * - [ ] keys navigate through dimensions with adaptive step sizes
+ * - Number keys (1-9) select which dimension to control
+ * - Space bar toggles fullscreen mode
+ * - Shift+wheel adjusts field of view
+ * - Ctrl+P toggles performance statistics
+ * - Ctrl+A toggles advanced rendering controls
+ * - H key shows/hides help overlay
+ * 
+ * The system maintains careful separation between:
+ * - Camera controls (handled by THREE.js OrbitControls)
+ * - Dimension navigation (handled by scene dimension manager)
+ * - UI state management (handled by various UI components)
+ * 
+ * All navigation events are coordinated through the scene dimension manager
+ * to ensure consistent state across all nD objects in the scene.
+ */
 
 import * as THREE from 'three';
 import { SceneManager } from './scene-manager';
 import { AnimationController } from './animation-controller';
 import { RenderingControls } from './rendering-controls';
 import { showHelpOverlay, hideHelpOverlay } from './ui';
-import { stepDimension, updatePointCloudSlice } from './utils/dims-navigation';
+import { updatePointCloudSlice } from './utils/dims-navigation';
 import { SimpleDims } from './types/dims';
+import { DimensionSliders } from './dimension-sliders';
+import { sceneDimsManager } from './scene-dims-manager';
 
+/**
+ * Central coordinator for all user input events and nD navigation.
+ * 
+ * @class InputHandler
+ */
 export class InputHandler {
+  /** Cleanup functions for all registered event listeners */
   private eventListeners: (() => void)[] = [];
+  
+  /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
-  private selectedDimension: number = 0; // Currently selected non-displayed dimension
+  
+  /** Index of currently selected dimension for keyboard navigation */
+  private selectedDimension: number = 0;
+  
+  /** UI component for interactive dimension sliders */
+  private dimensionSliders?: DimensionSliders;
 
+  /**
+   * Constructs the input handler with required system dependencies.
+   * 
+   * @param sceneManager - Scene management system
+   * @param animationController - Animation and rendering coordination
+   */
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController
   ) {}
 
   /**
-   * Set the rendering controls instance
+   * Associates rendering controls for advanced UI interactions.
+   * 
+   * @param controls - Rendering controls interface
    */
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
   }
 
   /**
-   * Initialize all event listeners
+   * Initializes all event listeners for user interaction.
+   * 
+   * This sets up the complete input handling system including keyboard,
+   * mouse, touch, and window events. Should be called once during
+   * application initialization.
    */
   init(): void {
     this.setupWindowEvents();
     this.setupControlEvents();
     this.setupUserInteractionEvents();
+  }
+
+  /**
+   * Initializes dimension navigation UI after scene loading completes.
+   * 
+   * This method is called after the scene is fully loaded and dimension
+   * metadata is available. It sets up:
+   * - Scene dimension manager integration
+   * - Interactive dimension sliders
+   * - Reactive updates for all nD objects
+   * - Keyboard navigation targets
+   * 
+   * The initialization process ensures all nD objects share the same
+   * dimensional coordinate system and respond consistently to navigation.
+   */
+  initDimensionSliders(): void {
+    // Initialize scene dims manager
+    if (!sceneDimsManager.initFromScene(this.sceneManager.scene)) {
+      return; // No nD objects found
+    }
+
+    const dims = sceneDimsManager.getDims();
+    const dimensionRanges = sceneDimsManager.getDimensionRanges();
+
+    if (!dims || !dimensionRanges) {
+      return;
+    }
+
+    // Clean up existing sliders if any
+    if (this.dimensionSliders) {
+      this.dimensionSliders.dispose();
+    }
+
+    // Create new dimension sliders
+    const dimensionNames = sceneDimsManager.getDimensionNames();
+    const dimensionUnits = sceneDimsManager.getDimensionUnits();
+    
+    this.dimensionSliders = new DimensionSliders({
+      container: document.body,
+      dims,
+      dimensionRanges,
+      dimensionNames,
+      dimensionUnits,
+    });
+
+    // Show sliders only if we have non-displayed dimensions
+    this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
+
+    // Listen for dimension changes
+    sceneDimsManager.addListener(() => {
+      this.updateAllNDPointClouds();
+      if (this.dimensionSliders) {
+        this.dimensionSliders.update();
+      }
+      // Trigger animation to render the changes
+      this.animationController.startAnimation();
+    });
+  }
+
+
+  /**
+   * Update all nD point clouds with current dimension values
+   */
+  private updateAllNDPointClouds(): void {
+    const dims = sceneDimsManager.getDims();
+    if (!dims) return;
+
+    const nDPointClouds = this.findNDPointClouds();
+
+    nDPointClouds.forEach((points: THREE.Points) => {
+      const {
+        originalNumPoints,
+        originalPositions,
+        originalColors,
+        originalRadii,
+        originalSharpness,
+      } = points.userData;
+
+      updatePointCloudSlice(
+        points,
+        originalPositions,
+        originalColors,
+        originalRadii,
+        originalSharpness,
+        dims, // Use shared dims from manager
+        originalNumPoints
+      );
+    });
   }
 
   /**
@@ -278,85 +424,81 @@ export class InputHandler {
   }
 
   /**
-   * Handle dimension navigation with [ and ] keys
+   * Handles keyboard navigation through nD dimensions using [ and ] keys.
+   * 
+   * This implements intelligent dimension navigation with adaptive step sizes:
+   * - Discrete dimensions step by their defined increment
+   * - Continuous dimensions step by 1% of their total range
+   * - Steps are clamped to dimension bounds
+   * - Only updates if the value actually changes
+   * 
+   * The navigation respects the currently selected dimension (set by number keys)
+   * and provides smooth, predictable movement through nD space.
+   * 
+   * @param direction - Direction to navigate: -1 for backward, 1 for forward
+   * @private
    */
   private handleDimensionNavigation(direction: -1 | 1): void {
-    // Find all nD point clouds in the scene
-    const nDPointClouds = this.findNDPointClouds();
-    if (nDPointClouds.length === 0) return;
+    const dims = sceneDimsManager.getDims();
+    const dimensionRanges = sceneDimsManager.getDimensionRanges();
+    if (!dims || !dimensionRanges) return;
 
-    // Get scene dimensions if available
-    const sceneDimensions = this.sceneManager.scene.userData.sceneDimensions;
+    const navigableDims = this.getNavigableDimensionsList(dims);
+    if (navigableDims.length === 0) return;
 
-    // Update each nD point cloud
-    nDPointClouds.forEach((points) => {
-      const { dims, dimensionRanges, originalNumPoints } = points.userData;
-      const navigableDims = this.getNavigableDimensionsList(dims);
+    // Target the currently selected dimension (bounded by available dimensions)
+    const dimIndex = Math.min(this.selectedDimension, navigableDims.length - 1);
+    const targetDim = navigableDims[dimIndex];
 
-      // Check if we have any non-displayed dimensions
-      if (navigableDims.length === 0) return;
+    // Gather dimension properties for step calculation
+    const currentValue = dims.currentStep[targetDim];
+    const dimMeta = dims.metadata?.[targetDim];
+    const [min, max] = dimensionRanges[targetDim];
 
-      // Use the selected dimension, bounded by available dimensions
-      const dimIndex = Math.min(this.selectedDimension, navigableDims.length - 1);
-      const targetDim = navigableDims[dimIndex];
+    let newValue: number;
+    if (dimMeta?.discrete) {
+      // Discrete dimensions: step by defined increment (e.g., time frames)
+      const step = dimMeta.step || 1.0;
+      newValue = currentValue + direction * step;
+      newValue = Math.round(newValue / step) * step; // Ensure step boundary alignment
+    } else {
+      // Continuous dimensions: step by 1% of range for smooth navigation
+      const range = max - min;
+      const step = range * 0.01;
+      newValue = currentValue + direction * step;
+    }
 
-      // Get step size from scene dimensions if available
-      let navigationOptions: any = {};
-      if (sceneDimensions?.dimensions?.[targetDim]) {
-        const dimDef = sceneDimensions.dimensions[targetDim];
-        if (dimDef.step !== null && dimDef.step !== undefined) {
-          navigationOptions.absoluteStep = dimDef.step;
-          console.log(`Using scene-defined step size: ${dimDef.step} for ${dimDef.name}`);
-        }
-      }
+    // Apply bounds constraints
+    newValue = Math.max(min, Math.min(max, newValue));
 
-      // Step through the dimension
-      const changed = stepDimension(dims, targetDim, direction, dimensionRanges, navigationOptions);
-
-      if (changed) {
-        // Update the geometry
-        updatePointCloudSlice(
-          points,
-          points.userData.originalPositions,
-          points.userData.originalColors,
-          points.userData.originalRadii,
-          points.userData.originalSharpness,
-          dims,
-          originalNumPoints
-        );
-
-        // Show feedback about which dimension is being navigated
-        const dimName = dims.metadata?.[targetDim]?.name || `Dimension ${targetDim}`;
-        console.log(
-          `Navigating ${dimName} (dim ${targetDim}): ${dims.currentStep[targetDim].toFixed(2)}`
-        );
-
-        // Trigger animation
-        this.animationController.startAnimation();
-      }
-    });
+    // Update dimension state if value actually changed
+    if (Math.abs(newValue - currentValue) > 1e-6) {
+      sceneDimsManager.setDimensionValue(targetDim, newValue);
+      
+      // Trigger visual update
+      this.animationController.startAnimation();
+    }
   }
 
   /**
-   * Select which dimension to control with number keys
+   * Selects which dimension to control with keyboard navigation.
+   * 
+   * Number keys (1-9) map to navigable dimensions, allowing users to
+   * switch between controlling different non-displayed dimensions with
+   * the [ and ] navigation keys.
+   * 
+   * @param index - Zero-based dimension index to select
+   * @private
    */
   private selectDimension(index: number): void {
-    // Find nD point clouds to validate dimension exists
-    const nDPointClouds = this.findNDPointClouds();
-    if (nDPointClouds.length === 0) return;
+    const dims = sceneDimsManager.getDims();
+    if (!dims) return;
 
-    // Check if this dimension index is valid
-    const firstCloud = nDPointClouds[0];
-    const { dims } = firstCloud.userData;
     const navigableDims = this.getNavigableDimensionsList(dims);
 
     if (index < navigableDims.length) {
       this.selectedDimension = index;
-      const targetDim = navigableDims[index];
-      const dimName = dims.metadata?.[targetDim]?.name || `Dimension ${targetDim}`;
-      console.log(
-        `Selected ${dimName} (dim ${targetDim}) for navigation. Current value: ${dims.currentStep[targetDim].toFixed(2)}`
-      );
+      // Dimension is now selected for [ ] navigation
     } else {
       console.log(
         `Dimension ${index + 1} not available (only ${navigableDims.length} non-displayed dimensions)`
@@ -384,7 +526,7 @@ export class InputHandler {
     const nDPoints: THREE.Points[] = [];
 
     this.sceneManager.scene.traverse((object) => {
-      if (object instanceof THREE.Points && object.userData.dims) {
+      if (object instanceof THREE.Points && object.userData.originalPositions) {
         nDPoints.push(object);
       }
     });
@@ -396,6 +538,13 @@ export class InputHandler {
    * Clean up all event listeners
    */
   dispose(): void {
+    // Dispose dimension sliders
+    if (this.dimensionSliders) {
+      this.dimensionSliders.dispose();
+      this.dimensionSliders = undefined;
+    }
+
+    // Clean up event listeners
     this.eventListeners.forEach((cleanup) => cleanup());
     this.eventListeners = [];
   }

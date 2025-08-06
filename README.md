@@ -156,6 +156,7 @@ luxar/
 📚 [Full Viewer Documentation →](packages/luxar-player/README.md)
 
 ### 🆕 New in Latest Version
+- **Dimension Sliders UI**: Beautiful napari-inspired sliders for navigating nD data
 - **Scene-Level Dimensions**: Define coordinate systems once, validate all objects
 - **nD Point Cloud Support**: Visualize time series, multi-channel, and high-dimensional data
 - **Smart Slicing**: Points visible based on their radius in nD space
@@ -163,6 +164,8 @@ luxar/
   - Press `1-9` to select dimension to control
   - Use `[` and `]` to navigate through selected dimension
   - Custom step sizes per dimension for precise control
+- **4D Hypersphere Example**: Educational example showing true 4D spatial geometry
+- **Enhanced Camera Controls**: Smart centering with edge case handling
 
 ## 🔧 Development
 

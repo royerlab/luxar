@@ -16,6 +16,7 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -48,6 +49,9 @@ LuxarVersion = Literal["0.1", "0.2", "0.3"]
 PhysicalUnit = Literal[
     "nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inch", "foot", "px", "au"
 ]
+
+# Blending modes for rendering
+BlendingMode = Literal["normal", "additive", "multiply", "minimum", "maximum"]
 
 # =============================================================================
 # Type Aliases
@@ -457,6 +461,83 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
     from typing import cast
 
     return cast(PhysicalUnit, unit)
+
+
+def validate_opacity(opacity: Any) -> float:
+    """Validate and convert opacity value.
+
+    Args:
+        opacity: Value to validate as opacity (0.0 to 1.0)
+
+    Returns:
+        Valid opacity as float
+
+    Raises:
+        ValueError: If opacity is not a valid float between 0 and 1
+        TypeError: If opacity cannot be converted to float
+    """
+    try:
+        opacity_float = float(opacity)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"Opacity must be convertible to float, got {type(opacity).__name__}"
+        ) from e
+
+    if not 0.0 <= opacity_float <= 1.0:
+        raise ValueError(f"Opacity must be between 0.0 and 1.0, got {opacity_float}")
+
+    return opacity_float
+
+
+def validate_gamma(gamma: Any) -> float:
+    """Validate and convert gamma value.
+
+    Args:
+        gamma: Value to validate as gamma (0.2 to 2.0)
+
+    Returns:
+        Valid gamma as float
+
+    Raises:
+        ValueError: If gamma is not within valid range
+        TypeError: If gamma cannot be converted to float
+    """
+    try:
+        gamma_float = float(gamma)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            f"Gamma must be convertible to float, got {type(gamma).__name__}"
+        ) from e
+
+    if not 0.2 <= gamma_float <= 2.0:
+        raise ValueError(f"Gamma must be between 0.2 and 2.0, got {gamma_float}")
+
+    return gamma_float
+
+
+def validate_blending_mode(mode: Any) -> BlendingMode:
+    """Validate blending mode string.
+
+    Args:
+        mode: Blending mode to validate
+
+    Returns:
+        Valid blending mode
+
+    Raises:
+        ValueError: If mode is not a valid blending mode
+        TypeError: If mode is not a string
+    """
+    if not isinstance(mode, str):
+        raise TypeError(f"Blending mode must be a string, got {type(mode).__name__}")
+
+    valid_modes = {"normal", "additive", "multiply", "minimum", "maximum"}
+    if mode not in valid_modes:
+        raise ValueError(
+            f"Invalid blending mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}"
+        )
+
+    return cast(BlendingMode, mode)
 
 
 def validate_dimension_metadata(

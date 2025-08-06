@@ -6,7 +6,9 @@ All matrices are 4x4 homogeneous transformation matrices suitable for use
 with the Luxar scene graph.
 """
 
-from typing import Literal, Tuple, Union
+from __future__ import annotations
+
+from typing import Any, Literal, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -304,25 +306,25 @@ def look_at(
     Example:
         >>> t = look_at((10, 5, 10), (0, 0, 0))  # Look at origin from position (10, 5, 10)
     """
-    eye = np.array(eye, dtype=np.float32)
-    target = np.array(target, dtype=np.float32)
-    up = np.array(up, dtype=np.float32)
+    eye_arr = np.array(eye, dtype=np.float32)
+    target_arr = np.array(target, dtype=np.float32)
+    up_arr = np.array(up, dtype=np.float32)
 
     # Calculate basis vectors
-    forward = target - eye
+    forward = target_arr - eye_arr
     forward = forward / np.linalg.norm(forward)
 
-    right = np.cross(forward, up)
+    right = np.cross(forward, up_arr)
     right = right / np.linalg.norm(right)
 
-    up = np.cross(right, forward)
+    up_final = np.cross(right, forward)
 
     # Build matrix
     matrix = identity()
     matrix[0, :3] = right
-    matrix[1, :3] = up
+    matrix[1, :3] = up_final
     matrix[2, :3] = -forward  # Negative because we look down -Z in standard OpenGL
-    matrix[:3, 3] = eye
+    matrix[:3, 3] = eye_arr
 
     return matrix
 
@@ -340,7 +342,7 @@ def to_list(transform: TransformMatrix) -> list[float]:
         >>> t = translate(1, 2, 3)
         >>> values = to_list(t)  # Returns [1, 0, 0, 1, 0, 1, 0, 2, ...]
     """
-    return transform.ravel().tolist()
+    return list(transform.ravel().tolist())
 
 
 def from_list(values: list[float]) -> TransformMatrix:
@@ -367,16 +369,16 @@ def from_list(values: list[float]) -> TransformMatrix:
 
 
 # Convenience function aliases
-def translation(*args, **kwargs) -> TransformMatrix:
+def translation(*args: Any, **kwargs: Any) -> TransformMatrix:
     """Alias for translate()."""
     return translate(*args, **kwargs)
 
 
-def scaling(*args, **kwargs) -> TransformMatrix:
+def scaling(*args: Any, **kwargs: Any) -> TransformMatrix:
     """Alias for scale()."""
     return scale(*args, **kwargs)
 
 
-def rotation(*args, **kwargs) -> TransformMatrix:
+def rotation(*args: Any, **kwargs: Any) -> TransformMatrix:
     """Alias for rotate()."""
     return rotate(*args, **kwargs)
