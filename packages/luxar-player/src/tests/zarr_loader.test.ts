@@ -8,17 +8,24 @@ vi.mock('three', () => ({
   Group: vi.fn().mockImplementation(() => ({
     add: vi.fn(),
     name: '',
+    userData: {},
   })),
   BufferGeometry: vi.fn().mockImplementation(() => ({
     setAttribute: vi.fn(),
     computeBoundingSphere: vi.fn(),
   })),
+  BufferAttribute: vi.fn(),
   Float32BufferAttribute: vi.fn(),
   Uint8BufferAttribute: vi.fn(),
   Points: vi.fn().mockImplementation(() => ({
     name: '',
+    userData: {},
+    renderOrder: 0,
   })),
   Color: vi.fn(),
+  Matrix4: vi.fn().mockImplementation(() => ({
+    fromArray: vi.fn().mockReturnThis(),
+  })),
 }));
 
 // Store mock setup
@@ -53,6 +60,28 @@ vi.mock('../shader-manager', () => ({
   createGaussianPointMaterial: vi.fn().mockReturnValue({
     uniforms: {},
   }),
+  SHADER_CONFIG: {
+    POINTS: {
+      size: 1.0,
+      baseAlpha: 0.9,
+      hdrMultiplier: 1.0,
+    },
+  },
+}));
+
+// Mock material manager
+vi.mock('../material-manager', () => ({
+  materialManager: {
+    getMaterial: vi.fn().mockReturnValue({
+      uniforms: {
+        hdrMultiplier: { value: 1.0 },
+        opacity: { value: 1.0 },
+        gamma: { value: 1.0 },
+      },
+      userData: { renderOrder: 0 },
+    }),
+  },
+  BlendingMode: {},
 }));
 
 // Mock implementations

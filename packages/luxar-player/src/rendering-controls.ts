@@ -121,6 +121,132 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+
+    // Anti-aliasing folder
+    const aaFolder = this.gui.addFolder('Anti-Aliasing');
+    aaFolder.open();
+
+    // SSAA settings (collapsible) - First because it's the highest quality
+    const ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
+
+    aaFolder
+      .add(this.settings, 'ssaaEnabled')
+      .name('SSAA Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setSSAAEnabled(value);
+        this.saveSettings();
+        this.triggerAnimation();
+        // Show/hide SSAA settings folder
+        if (value) {
+          ssaaFolder.show();
+          ssaaFolder.open();
+        } else {
+          ssaaFolder.close();
+          ssaaFolder.hide();
+        }
+      });
+
+    ssaaFolder
+      .add(this.settings, 'ssaaMultiplier', [1.5, 2.0, 3.0, 4.0])
+      .name('Resolution Multiplier')
+      .onChange((value: number) => {
+        this.postProcessing.setSSAAMultiplier(value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // FXAA toggle
+    aaFolder
+      .add(this.settings, 'fxaaEnabled')
+      .name('FXAA Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setFXAAEnabled(value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // MSAA settings (collapsible)
+    const msaaFolder = aaFolder.addFolder('MSAA Settings ⚠️');
+
+    aaFolder
+      .add(this.settings, 'msaaEnabled')
+      .name('MSAA Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setMSAAEnabled(value);
+        this.saveSettings();
+        this.triggerAnimation();
+        // Show/hide MSAA settings folder
+        if (value) {
+          msaaFolder.show();
+          msaaFolder.open();
+        } else {
+          msaaFolder.close();
+          msaaFolder.hide();
+        }
+      });
+
+    msaaFolder
+      .add(this.settings, 'msaaSamples', [2, 4, 8])
+      .name('Sample Count')
+      .onChange((value: number) => {
+        this.postProcessing.setMSAASamples(value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // SMAA settings (collapsible)
+    const smaaFolder = aaFolder.addFolder('SMAA Settings');
+
+    aaFolder
+      .add(this.settings, 'smaaEnabled')
+      .name('SMAA Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setSMAAEnabled(value);
+        this.saveSettings();
+        this.triggerAnimation();
+        // Show/hide SMAA settings folder
+        if (value) {
+          smaaFolder.show();
+          smaaFolder.open();
+        } else {
+          smaaFolder.close();
+          smaaFolder.hide();
+        }
+      });
+
+    smaaFolder
+      .add(this.settings, 'smaaThreshold', 0.05, 0.2, 0.01)
+      .name('Edge Threshold')
+      .onChange((value: number) => {
+        this.postProcessing.updateSMAASettings(value, undefined);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    smaaFolder
+      .add(this.settings, 'smaaSearchSteps', [4, 8, 16, 32])
+      .name('Search Steps')
+      .onChange((value: number) => {
+        this.postProcessing.updateSMAASettings(undefined, value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Initially show/hide folders based on settings
+    if (this.settings.ssaaEnabled) {
+      ssaaFolder.show();
+      ssaaFolder.open();
+    } else {
+      ssaaFolder.hide();
+    }
+
+    if (!this.settings.msaaEnabled) {
+      msaaFolder.hide();
+    }
+
+    if (!this.settings.smaaEnabled) {
+      smaaFolder.hide();
+    }
   }
 
   /**
@@ -211,6 +337,26 @@ export class RenderingControls {
     // Apply HDR multiplier
     (SHADER_CONFIG.POINTS as any).hdrMultiplier = this.settings.hdrMultiplier;
     this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
+
+    // Apply SSAA settings
+    this.postProcessing.setSSAAEnabled(this.settings.ssaaEnabled);
+    this.postProcessing.setSSAAMultiplier(this.settings.ssaaMultiplier);
+
+    // Apply FXAA setting
+    this.postProcessing.setFXAAEnabled(this.settings.fxaaEnabled);
+
+    // Apply MSAA settings
+    this.postProcessing.setMSAAEnabled(this.settings.msaaEnabled);
+    this.postProcessing.setMSAASamples(this.settings.msaaSamples);
+
+    // Apply SMAA settings
+    this.postProcessing.setSMAAEnabled(this.settings.smaaEnabled);
+    if (this.settings.smaaEnabled) {
+      this.postProcessing.updateSMAASettings(
+        this.settings.smaaThreshold,
+        this.settings.smaaSearchSteps
+      );
+    }
   }
 
   /**

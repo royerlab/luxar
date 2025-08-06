@@ -27,15 +27,22 @@ pip install -e ".[dev]"
 
 ```python
 import numpy as np
-from luxar import Scene
+from luxar import Scene, Dimensions, Dimension
 
-# Create a scene
-scene = Scene("my_dataset.zarr")
+# Create a scene with dimensions for nD visualization
+dimensions = Dimensions([
+    Dimension("x", unit="μm", range=(-100, 100), display=True),
+    Dimension("y", unit="μm", range=(-100, 100), display=True),  
+    Dimension("z", unit="μm", range=(-50, 50), display=True),
+    Dimension("time", unit="s", range=(0, 10), step=0.1, display=False)
+])
+scene = Scene("my_dataset.zarr", dimensions=dimensions)
 
-# Add point cloud data
-positions = np.random.randn(1_000_000, 3).astype(np.float32)
+# Add 4D point cloud data (time + xyz)
+positions = np.random.randn(1_000_000, 4).astype(np.float32)
 colors = (np.random.rand(1_000_000, 3) * 255).astype(np.uint8)
-scene.add_points("PointCloud", positions, colors)
+radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
+scene.add_points("TimeSeriesData", positions, colors=colors, radii=radii)
 
 # Add hierarchical organization
 group = scene.add_group("Experiment1")
@@ -96,6 +103,67 @@ dataset.zarr/
 └── .zmetadata                # Consolidated metadata
 ```
 
+## 🌟 nD Visualization Features
+
+### Scene-Level Dimensions
+
+Luxar uses scene-level dimension definitions to ensure consistency across all objects:
+
+```python
+from luxar import Scene, Dimensions, Dimension
+
+# Define your nD coordinate system
+dimensions = Dimensions([
+    # Spatial dimensions (displayed in 3D viewer)
+    Dimension("x", unit="μm", range=(-100, 100), display=True),
+    Dimension("y", unit="μm", range=(-100, 100), display=True),
+    Dimension("z", unit="μm", range=(-50, 50), display=True),
+    
+    # Non-displayed dimensions (navigated via sliders)
+    Dimension("time", unit="s", range=(0, 60), step=0.5, display=False),
+    Dimension("channel", unit="", range=(0, 3), discrete=True, display=False),
+    Dimension("depth", unit="μm", range=(-20, 20), display=False)
+])
+
+scene = Scene("multidimensional.zarr", dimensions=dimensions)
+```
+
+### Dimension Types
+
+- **Displayed Dimensions**: The 3D subset shown in the viewer (max 3)
+- **Non-Displayed Dimensions**: Additional dimensions navigated via UI sliders
+- **Discrete Dimensions**: Integer steps for frame-based data
+- **Continuous Dimensions**: Smooth navigation for continuous variables
+
+### Point Attributes
+
+Enhanced point cloud visualization with per-point attributes:
+
+```python
+# Generate 6D data (x, y, z, time, channel, depth)
+positions = np.random.randn(100_000, 6).astype(np.float32)
+
+# Per-point attributes
+colors = np.random.randint(0, 255, (100_000, 3), dtype=np.uint8)
+radii = np.random.uniform(0.1, 2.0, 100_000).astype(np.float32)
+sharpness = np.random.uniform(0.5, 10.0, 100_000).astype(np.float32)
+
+scene.add_points(
+    "PointCloud6D",
+    positions,
+    colors=colors,
+    radii=radii,
+    sharpness=sharpness
+)
+```
+
+### Radius-Based Slicing
+
+Points in nD space are treated as hyperspheres. When viewing a 3D slice:
+- Point visibility depends on hypersphere intersection with viewing hyperplane
+- Larger radius = visible across more dimension slices
+- Natural representation of uncertainty or spread in higher dimensions
+
 ## 📖 API Reference
 
 ### Scene Class
@@ -109,7 +177,8 @@ class Scene:
         store_path: Optional[PathLike] = None,
         units: str = "metre",
         version: str = "0.2",
-        compressor: Optional[Compressor] = DEFAULT_COMP
+        compressor: Optional[Compressor] = DEFAULT_COMP,
+        dimensions: Optional[Dimensions] = None
     ) -> None:
         """
         Create a new scene.
@@ -119,6 +188,7 @@ class Scene:
             units: Physical units for coordinates
             version: Luxar format version
             compressor: Zarr compressor for datasets
+            dimensions: Scene-level dimension definitions for nD data
         """
     
     def add_group(self, name: str, **attrs) -> Node:
@@ -127,12 +197,24 @@ class Scene:
     def add_points(
         self, 
         name: str,
-        positions: np.ndarray,  # shape: (N, 3), dtype: float32
+        positions: np.ndarray,  # shape: (N, D), dtype: float32
         colors: Optional[np.ndarray] = None,  # shape: (N, 3), dtype: uint8
+        radii: Optional[np.ndarray] = None,  # shape: (N,), dtype: float32
+        sharpness: Optional[np.ndarray] = None,  # shape: (N,), dtype: float32
         parent: Optional[Node] = None,
         **attrs
     ) -> Points:
-        """Add a point cloud to the scene."""
+        """Add a point cloud to the scene.
+        
+        Args:
+            name: Node name
+            positions: nD coordinates where D matches scene dimensions
+            colors: RGB colors (0-255)
+            radii: Per-point radii for size control
+            sharpness: Edge falloff (0.5-10.0)
+            parent: Parent node in hierarchy
+            **attrs: Additional attributes
+        """
     
     def finalize(self) -> None:
         """Consolidate metadata for optimal loading performance."""
@@ -159,7 +241,50 @@ class Points(Node):
     """Point cloud geometry node."""
     
     # Created automatically via Scene.add_points()
-    # Manages positions and colors datasets in Zarr
+    # Manages positions, colors, radii, and sharpness datasets in Zarr
+```
+
+### Dimensions Class
+
+```python
+class Dimensions:
+    """Container for scene-level dimension definitions."""
+    
+    def __init__(self, dimensions: List[Dimension]) -> None:
+        """Create dimensions from list of Dimension objects."""
+    
+    def validate_positions(self, positions: np.ndarray) -> None:
+        """Validate that positions match dimension count."""
+```
+
+### Dimension Class
+
+```python
+class Dimension:
+    """Single dimension definition with metadata."""
+    
+    def __init__(
+        self,
+        name: str,
+        unit: str = "",
+        scale: float = 1.0,
+        range: Optional[Tuple[float, float]] = None,
+        display: bool = False,
+        discrete: bool = False,
+        step: float = 1.0
+    ) -> None:
+        """
+        Define a dimension.
+        
+        Args:
+            name: Dimension name (e.g., "x", "time", "channel")
+            unit: Physical unit (e.g., "μm", "s", "nm")
+            scale: Scale factor for unit conversion
+            range: Min/max values as (min, max)
+            display: Whether shown in 3D viewer (max 3)
+            discrete: Whether dimension has discrete steps
+            step: Step size for navigation
+        """
 ```
 
 ## 🔬 Advanced Usage
