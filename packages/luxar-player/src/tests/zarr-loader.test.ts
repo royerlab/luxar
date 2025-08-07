@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loadScene } from '../zarr_loader';
+import { loadScene } from '../data/zarr-loader';
 import * as zarrita from 'zarrita';
 import * as THREE from 'three';
 
@@ -26,6 +26,11 @@ vi.mock('three', () => ({
   Matrix4: vi.fn().mockImplementation(() => ({
     fromArray: vi.fn().mockReturnThis(),
   })),
+  HalfFloatType: 'HalfFloatType',
+  LinearSRGBColorSpace: 'LinearSRGBColorSpace',
+  NoToneMapping: 'NoToneMapping',
+  SRGBColorSpace: 'SRGBColorSpace',
+  ACESFilmicToneMapping: 'ACESFilmicToneMapping',
 }));
 
 // Store mock setup

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createGaussianPointMaterial, ShaderValidator, SHADER_CONFIG } from '../shader-manager';
+import { createGaussianPointMaterial, ShaderValidator, SHADER_CONFIG } from '../rendering/shader-manager';
 import * as THREE from 'three';
 
 // Mock Three.js

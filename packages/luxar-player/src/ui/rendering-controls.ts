@@ -2,11 +2,11 @@
 // Provides real-time control over post-processing and rendering parameters
 
 import GUI from 'lil-gui';
-import { PostProcessingManager } from './post-processing';
-import { SceneManager } from './scene-manager';
-import { AnimationController } from './animation-controller';
-import { config, type RenderingSettings } from './config';
-import { SHADER_CONFIG } from './shader-manager';
+import { PostProcessingManager } from '../rendering/post-processing';
+import { SceneManager } from '../scene/scene-manager';
+import { AnimationController } from '../scene/animation-controller';
+import { config, type RenderingSettings } from '../config';
+import { SHADER_CONFIG } from '../rendering/shader-manager';
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI

@@ -2,8 +2,8 @@
 // Copyright (c) 2024 The Luxar Authors
 
 import { LuxarApp } from './app';
-import { config } from './config';
-import { showError } from './ui';
+import { config } from '../config';
+import { showError } from '../ui/helpers';
 
 // Parse URL parameters for scene source
 const params = new URLSearchParams(window.location.search);
