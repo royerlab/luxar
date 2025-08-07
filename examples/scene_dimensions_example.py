@@ -15,7 +15,7 @@ from luxar import Dimension, Dimensions, Scene
 
 def main():
     """Create a scene with explicit dimension definitions."""
-    print("Creating scene with explicit dimensions...")
+    aprint("Creating scene with explicit dimensions...")
 
     # Define scene dimensions with custom stepping
     dims = Dimensions(
@@ -81,10 +81,10 @@ def main():
     colors = np.array(colors, dtype=np.uint8)
     radii = np.array(radii, dtype=np.float32)
 
-    print(f"Created {len(positions)} points across dimensions:")
-    print(f"  - Time: {len(time_samples)} samples at {time_samples}")
-    print(f"  - Z: {len(z_samples)} depths at {z_samples}")
-    print(f"  - Channels: {len(channels)} channels")
+    aprint(f"Created {len(positions)} points across dimensions:")
+    aprint(f"  - Time: {len(time_samples)} samples at {time_samples}")
+    aprint(f"  - Z: {len(z_samples)} depths at {z_samples}")
+    aprint(f"  - Channels: {len(channels)} channels")
 
     # Add points - dimensions are validated automatically
     scene.add_points("TestPoints", positions, colors=colors, radii=radii)
@@ -92,31 +92,31 @@ def main():
     # The scene dimensions are stored and will be used by the viewer
     scene.finalize()
 
-    print(f"\n✓ Scene created at {scene.get_store_path()}")
-    print("\n" + "=" * 70)
-    print("SCENE DIMENSIONS TEST")
-    print("=" * 70)
-    print("\nDimension Configuration:")
+    aprint(f"\n✓ Scene created at {scene.get_store_path()}")
+    aprint("\n" + "=" * 70)
+    aprint("SCENE DIMENSIONS TEST")
+    aprint("=" * 70)
+    aprint("\nDimension Configuration:")
     for i, dim in enumerate(dims.dimensions):
         status = "displayed" if dim.display else "hidden"
-        print(
+        aprint(
             f"  {i + 1}. {dim.name} ({dim.unit}): "
             f"range={dim.range}, step={dim.get_step():.2f}, {status}"
         )
 
-    print("\nNavigation Instructions:")
-    print("1. Start server: luxar serve scene_dims_test.zarr")
-    print("2. Open viewer in browser")
-    print("\nKeyboard controls:")
-    print("  - Press '1' to control time (steps of 0.5s)")
-    print("  - Press '2' to control z depth (steps of 0.1um)")
-    print("  - Use '[' and ']' to navigate")
-    print("\nExpected behavior:")
-    print("  - Time navigation jumps by 0.5s increments")
-    print("  - Z navigation moves smoothly by 0.1um")
-    print("  - Points get smaller at deeper z values")
-    print("  - Three color channels visible (R, G, B)")
-    print("=" * 70)
+    aprint("\nNavigation Instructions:")
+    aprint("1. Start server: luxar serve scene_dims_test.zarr")
+    aprint("2. Open viewer in browser")
+    aprint("\nKeyboard controls:")
+    aprint("  - Press '1' to control time (steps of 0.5s)")
+    aprint("  - Press '2' to control z depth (steps of 0.1um)")
+    aprint("  - Use '[' and ']' to navigate")
+    aprint("\nExpected behavior:")
+    aprint("  - Time navigation jumps by 0.5s increments")
+    aprint("  - Z navigation moves smoothly by 0.1um")
+    aprint("  - Points get smaller at deeper z values")
+    aprint("  - Three color channels visible (R, G, B)")
+    aprint("=" * 70)
 
 
 if __name__ == "__main__":
