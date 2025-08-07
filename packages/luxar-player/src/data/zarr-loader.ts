@@ -146,7 +146,8 @@ interface ZarrGroupAttrs {
  * @returns Promise resolving to a THREE.Group containing the complete scene
  */
 export async function loadScene(src: string): Promise<THREE.Group> {
-  // Phase 1: Initialize Zarr store with optimized metadata access
+  try {
+    // Phase 1: Initialize Zarr store with optimized metadata access
   const rawStore = new zarr.FetchStore(toURL(src));
   const store = await zarr.tryWithConsolidated(rawStore); // Use consolidated metadata when available
 
@@ -217,7 +218,8 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     );
 
   for (const entry of groups) {
-    const loc = rootLoc.resolve(entry.path.slice(1)); // drop leading "/"
+    try {
+      const loc = rootLoc.resolve(entry.path.slice(1)); // drop leading "/"
     const grp = await zarr.open(loc, { kind: 'group' });
     let attrs = grp.attrs as ZarrGroupAttrs;
 
@@ -253,9 +255,17 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     /* attach to parent in Three.js graph */
     lookup.get(parentPath)!.obj.add(obj);
     lookup.set(entry.path, { obj, path: entry.path, attrs });
+    } catch (error) {
+      console.error(`Failed to load group ${entry.path}:`, error);
+      // Continue loading other groups instead of failing completely
+    }
   }
 
   return rootThree;
+  } catch (error) {
+    console.error('Failed to load scene from Zarr store:', error);
+    throw new Error(`Unable to load scene from ${src}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -321,7 +331,8 @@ async function buildPoints(
   try {
     const radiiArr = await zarr.open(loc.resolve('radii'), { kind: 'array' });
     radiiData = (await get(radiiArr)).data as Float32Array;
-  } catch {
+  } catch (error) {
+    console.debug('No radii array found:', error);
     // Radii are optional but highly recommended for nD datasets
   }
 
@@ -353,7 +364,8 @@ async function buildPoints(
     const colArr = await zarr.open(loc.resolve('colors'), { kind: 'array' });
     colData = (await get(colArr)).data as Uint8Array;
     col = visibleIndices ? sliceColors(colData, visibleIndices) || undefined : colData;
-  } catch {
+  } catch (error) {
+    console.debug('Optional array not found:', error);
     /* optional */
   }
 
@@ -376,7 +388,8 @@ async function buildPoints(
     sharpness = visibleIndices
       ? sliceScalarAttribute(sharpnessData, visibleIndices) || undefined
       : sharpnessData;
-  } catch {
+  } catch (error) {
+    console.debug('Optional array not found:', error);
     /* optional */
   }
 
