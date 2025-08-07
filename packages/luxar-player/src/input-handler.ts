@@ -257,6 +257,11 @@ export class InputHandler {
       canvas.style.position = 'fixed';
       canvas.style.top = '0';
       canvas.style.left = '0';
+      // Ensure the canvas has full opacity and no filters
+      canvas.style.opacity = '1';
+      canvas.style.filter = 'none';
+      // Ensure document background doesn't interfere
+      document.documentElement.style.backgroundColor = '#111111';
       console.log('✓ Entering fullscreen mode');
     } else {
       // Exiting fullscreen - restore normal canvas styling
@@ -265,6 +270,9 @@ export class InputHandler {
       canvas.style.position = '';
       canvas.style.top = '';
       canvas.style.left = '';
+      canvas.style.opacity = '';
+      canvas.style.filter = '';
+      document.documentElement.style.backgroundColor = '';
       console.log('✓ Exiting fullscreen mode');
     }
 

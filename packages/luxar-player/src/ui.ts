@@ -85,25 +85,31 @@ export function showError(message: string) {
   errorDiv.style.top = '50%';
   errorDiv.style.left = '50%';
   errorDiv.style.transform = 'translate(-50%, -50%)';
-  errorDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
+  errorDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
   errorDiv.style.color = '#e0e0e0';
-  errorDiv.style.padding = '20px';
+  errorDiv.style.padding = '15px';
   errorDiv.style.borderRadius = '8px';
   errorDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
-  errorDiv.style.fontSize = '16px';
+  errorDiv.style.fontSize = '14px';
   errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
   errorDiv.style.maxWidth = '400px';
   errorDiv.style.textAlign = 'center';
   errorDiv.style.cursor = 'pointer';
+  errorDiv.style.backdropFilter = 'blur(10px)';
+  errorDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+  errorDiv.style.border = '1px solid rgba(255, 50, 50, 0.5)';
 
   const messageText = document.createElement('div');
   messageText.textContent = message;
   messageText.style.marginBottom = '10px';
+  messageText.style.fontWeight = '500';
+  messageText.style.color = '#ff6b6b';
 
   const dismissText = document.createElement('div');
   dismissText.textContent = 'Click to dismiss';
-  dismissText.style.fontSize = '12px';
-  dismissText.style.opacity = '0.8';
+  dismissText.style.fontSize = '11px';
+  dismissText.style.opacity = '0.6';
+  dismissText.style.color = 'rgba(255, 255, 255, 0.8)';
 
   errorDiv.appendChild(messageText);
   errorDiv.appendChild(dismissText);
