@@ -62,6 +62,9 @@ export class DimensionSliders {
   /** Status bar displaying current slice position */
   private statusBar: HTMLElement;
   
+  /** Status text element in the title bar */
+  private statusText: HTMLElement | null = null;
+  
   /** Current dimension state (reference to scene manager state) */
   private dims: SimpleDims;
   
@@ -94,7 +97,8 @@ export class DimensionSliders {
     
     // Build the UI hierarchy
     this.slidersContainer = this.createSlidersContainer();
-    this.statusBar = this.createStatusBar();
+    // Status bar removed - status now shown in title
+    this.statusBar = document.createElement('div'); // Keep for compatibility but hidden
 
     // Populate with actual sliders and initialize display
     this.createSliders();
@@ -107,15 +111,17 @@ export class DimensionSliders {
     container.style.position = 'fixed';
     container.style.left = '50%';
     container.style.transform = 'translateX(-50%)';
-    container.style.bottom = '60px'; // Above status bar
+    container.style.bottom = '20px'; // Lower since no status bar
     container.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
     container.style.borderRadius = '8px';
-    container.style.padding = '20px';
+    container.style.padding = '15px'; // Reduced from 20px
     container.style.width = '80%';
     container.style.maxWidth = '800px';
     container.style.minWidth = '400px';
-    container.style.fontFamily = 'Arial, sans-serif';
-    container.style.fontSize = '13px';
+    container.style.maxHeight = '240px'; // Add max height for compression
+    container.style.overflowY = 'auto'; // Allow scrolling if needed
+    container.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+    container.style.fontSize = '12px'; // Slightly smaller
     container.style.color = '#e0e0e0';
     container.style.backdropFilter = 'blur(10px)';
     container.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
@@ -126,28 +132,7 @@ export class DimensionSliders {
     return container;
   }
 
-  private createStatusBar(): HTMLElement {
-    const statusBar = document.createElement('div');
-    statusBar.id = 'dimension-status';
-    statusBar.style.position = 'fixed';
-    statusBar.style.left = '50%';
-    statusBar.style.transform = 'translateX(-50%)';
-    statusBar.style.bottom = '20px';
-    statusBar.style.backgroundColor = 'rgba(30, 30, 30, 0.8)';
-    statusBar.style.borderRadius = '6px';
-    statusBar.style.padding = '8px 15px';
-    statusBar.style.fontFamily = 'monospace';
-    statusBar.style.fontSize = '12px';
-    statusBar.style.color = '#ffffff';
-    statusBar.style.backdropFilter = 'blur(10px)';
-    statusBar.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.2)';
-    statusBar.style.zIndex = '100';
-    statusBar.style.userSelect = 'none';
-    statusBar.style.whiteSpace = 'nowrap';
-
-    this.container.appendChild(statusBar);
-    return statusBar;
-  }
+  // Status bar method removed - status now shown in title
 
   /**
    * Creates individual slider controls for all non-displayed dimensions.
@@ -169,15 +154,28 @@ export class DimensionSliders {
     this.slidersContainer.innerHTML = '';
     this.sliders.clear();
 
-    // Add title section with styling
+    // Add title section with status text
+    const titleContainer = document.createElement('div');
+    titleContainer.style.display = 'flex';
+    titleContainer.style.justifyContent = 'space-between';
+    titleContainer.style.alignItems = 'center';
+    titleContainer.style.marginBottom = '10px'; // Reduced from 12px
+    titleContainer.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+    titleContainer.style.paddingBottom = '6px'; // Reduced from 8px
+    
     const title = document.createElement('div');
     title.textContent = 'Dimension Navigation';
-    title.style.marginBottom = '12px';
     title.style.fontWeight = 'bold';
     title.style.fontSize = '14px';
-    title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
-    title.style.paddingBottom = '8px';
-    this.slidersContainer.appendChild(title);
+    
+    this.statusText = document.createElement('div');
+    this.statusText.style.fontFamily = 'monospace';
+    this.statusText.style.fontSize = '12px';
+    this.statusText.style.color = 'rgba(255, 255, 255, 0.8)';
+    
+    titleContainer.appendChild(title);
+    titleContainer.appendChild(this.statusText);
+    this.slidersContainer.appendChild(titleContainer);
 
     // Create individual slider for each non-displayed dimension
     for (let i = 0; i < this.dims.ndim; i++) {
@@ -200,7 +198,7 @@ export class DimensionSliders {
 
   private createSlider(dimIndex: number): void {
     const sliderGroup = document.createElement('div');
-    sliderGroup.style.marginBottom = '15px';
+    sliderGroup.style.marginBottom = '12px'; // Reduced from 15px
 
     // Get dimension metadata
     const dimMeta = this.dims.metadata?.[dimIndex];
@@ -209,7 +207,7 @@ export class DimensionSliders {
 
     // Label with dimension name and current value
     const label = document.createElement('div');
-    label.style.marginBottom = '5px';
+    label.style.marginBottom = '4px'; // Reduced from 5px
     label.style.display = 'flex';
     label.style.justifyContent = 'space-between';
     label.style.alignItems = 'center';
@@ -384,6 +382,14 @@ export class DimensionSliders {
   }
 
   /**
+   * Toggle visibility of the dimension sliders
+   */
+  public toggle(): void {
+    const isVisible = this.slidersContainer.style.display !== 'none';
+    this.slidersContainer.style.display = isVisible ? 'none' : 'block';
+  }
+
+  /**
    * Updates the status bar text to reflect the current dimensional state.
    * 
    * The status bar provides a concise overview of the current navigation state,
@@ -413,7 +419,13 @@ export class DimensionSliders {
       }
     }
 
-    this.statusBar.textContent = parts.join(' | ');
+    const statusContent = parts.join(' | ');
+    this.statusBar.textContent = statusContent;
+    
+    // Also update the status text in title if it exists
+    if (this.statusText) {
+      this.statusText.textContent = statusContent;
+    }
   }
 
   /**
