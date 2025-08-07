@@ -194,36 +194,80 @@ python rainbow_sphere_spiral_example.py
 luxar serve rainbow_sphere_spiral_example.zarr
 ```
 
+### Transform and Hierarchy Examples
+
+#### 15. **transform_example.py** - Transform System Demonstration  
+Comprehensive showcase of the transform system:
+- Translation, rotation, and scaling operations
+- Transform composition and matrix multiplication
+- Coordinate system visualization with RGB axes
+- Hierarchical transform inheritance
+- Complex transform combinations
+
+```bash
+python transform_example.py
+luxar serve transform_example.zarr
+```
+
+#### 16. **hierarchy_example.py** - Scene Hierarchy and Inheritance
+Demonstrates parent-child relationships and property inheritance:
+- 4-level deep nested hierarchy
+- Property inheritance (opacity, gamma, blending modes)
+- Transform propagation through hierarchy
+- Space-themed visualization (solar system, space station, galaxy)
+- Clear demonstration of scene graph benefits
+
+```bash
+python hierarchy_example.py
+luxar serve hierarchy_example.zarr
+```
+
+#### 17. **multiple_objects_example.py** - Multiple Point Clouds
+Showcases complex scenes with multiple distinct objects:
+- Six different point cloud objects (spiral galaxy, clusters, nebula, rings, stars, particles)
+- Varied rendering properties per object
+- Visual composition techniques
+- ~31,000 total points across objects
+- Color harmony and visual hierarchy
+
+```bash
+python multiple_objects_example.py
+luxar serve multiple_objects_example.zarr
+```
+
 ### Rendering and Performance Examples
 
-#### 15. **rendering_modes_example.py** - Blending and Rendering Modes
-Comprehensive test of different rendering configurations:
-- Multiple blending modes (additive, normal, multiply)
-- Opacity and gamma adjustments
-- HDR effects demonstration
-- Side-by-side comparisons
+#### 18. **rendering_modes_example.py** - Blending Modes Comparison
+Educational demonstration of different blending modes:
+- Normal, additive, and multiply blending modes
+- Side-by-side comparison of effects
+- Parent-child property inheritance
+- Visual understanding of compositing techniques
 
 ```bash
 python rendering_modes_example.py
 luxar serve rendering_modes_example.zarr
 ```
 
-#### 16. **rendering_attributes_example.py** - Rendering Attributes Inheritance
-Shows how rendering attributes propagate through scene hierarchy:
-- Group-level attribute settings
-- Inheritance patterns
-- Override behaviors
+#### 19. **rendering_attributes_example.py** - Rendering Attributes API
+Comprehensive demonstration of rendering attributes:
+- Setting and modifying opacity, gamma, and blending modes
+- Method chaining API usage
+- Error handling and validation
+- Visual layout for easy comparison of effects
 
 ```bash
 python rendering_attributes_example.py
 luxar serve rendering_attributes_example.zarr
 ```
 
-#### 17. **performance_benchmark_example.py** - Performance Testing
-Benchmarks viewer performance with varying point counts:
-- Multiple scenes with increasing complexity
-- Performance metrics guidance
-- Optimization strategies
+#### 20. **performance_benchmark_example.py** - Performance Testing
+Educational benchmark demonstrating performance analysis:
+- Scene creation with 100 nodes and varying materials
+- Systematic testing of material combinations
+- Detailed timing and performance metrics
+- Performance analysis and optimization insights
+- Progress tracking with educational output
 
 ```bash
 python performance_benchmark_example.py
