@@ -148,120 +148,120 @@ interface ZarrGroupAttrs {
 export async function loadScene(src: string): Promise<THREE.Group> {
   try {
     // Phase 1: Initialize Zarr store with optimized metadata access
-  const rawStore = new zarr.FetchStore(toURL(src));
-  const store = await zarr.tryWithConsolidated(rawStore); // Use consolidated metadata when available
+    const rawStore = new zarr.FetchStore(toURL(src));
+    const store = await zarr.tryWithConsolidated(rawStore); // Use consolidated metadata when available
 
-  // Phase 2: Discover scene structure
-  const listing = await store.contents(); // Enumerate all groups and arrays
+    // Phase 2: Discover scene structure
+    const listing = await store.contents(); // Enumerate all groups and arrays
 
-  const rootLoc = zarr.root(store);
-  const rootThree = new THREE.Group();
+    const rootLoc = zarr.root(store);
+    const rootThree = new THREE.Group();
 
-  // Phase 3: Load scene-level configuration and dimension metadata
-  const rootGroup = await zarr.open(rootLoc, { kind: 'group' });
-  const sceneAttrs = rootGroup.attrs as ZarrGroupAttrs;
+    // Phase 3: Load scene-level configuration and dimension metadata
+    const rootGroup = await zarr.open(rootLoc, { kind: 'group' });
+    const sceneAttrs = rootGroup.attrs as ZarrGroupAttrs;
   
-  const lookup = new Map<string, ObjRecord>([
-    ['/', { obj: rootThree, path: '/', attrs: sceneAttrs }],
-  ]);
+    const lookup = new Map<string, ObjRecord>([
+      ['/', { obj: rootThree, path: '/', attrs: sceneAttrs }],
+    ]);
 
-  // Phase 4: Initialize scene-level dimension system
-  let sceneDims: SimpleDims | undefined;
-  if (sceneAttrs?.scene_dimensions) {
+    // Phase 4: Initialize scene-level dimension system
+    let sceneDims: SimpleDims | undefined;
+    if (sceneAttrs?.scene_dimensions) {
     // Store raw metadata in THREE.js userData for scene manager access
-    rootThree.userData.sceneDimensions = sceneAttrs.scene_dimensions;
+      rootThree.userData.sceneDimensions = sceneAttrs.scene_dimensions;
     
-    // Parse and normalize dimension metadata
-    const metadata = sceneAttrs.scene_dimensions.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
-      scale: dim.scale || 1.0,
-      range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
-      display: dim.display,
-      discrete: dim.discrete || false,
-      step: dim.step || 1.0,
-    }));
+      // Parse and normalize dimension metadata
+      const metadata = sceneAttrs.scene_dimensions.dimensions.map((dim: any) => ({
+        name: dim.name,
+        unit: dim.unit,
+        scale: dim.scale || 1.0,
+        range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
+        display: dim.display,
+        discrete: dim.discrete || false,
+        step: dim.step || 1.0,
+      }));
     
-    const ndim = metadata.length;
-    const displayed: number[] = [];
+      const ndim = metadata.length;
+      const displayed: number[] = [];
     
-    // Identify which dimensions should be displayed in 3D
-    for (let i = 0; i < ndim; i++) {
-      if (metadata[i].display === true && displayed.length < 3) {
-        displayed.push(i);
+      // Identify which dimensions should be displayed in 3D
+      for (let i = 0; i < ndim; i++) {
+        if (metadata[i].display === true && displayed.length < 3) {
+          displayed.push(i);
+        }
       }
-    }
     
-    // Initialize positions: non-displayed dims start at minimum for predictable slicing
-    const currentStep = new Array(ndim).fill(0);
-    for (let i = 0; i < ndim; i++) {
-      if (!displayed.includes(i) && metadata[i].range) {
-        currentStep[i] = metadata[i].range[0];
+      // Initialize positions: non-displayed dims start at minimum for predictable slicing
+      const currentStep = new Array(ndim).fill(0);
+      for (let i = 0; i < ndim; i++) {
+        if (!displayed.includes(i) && metadata[i].range) {
+          currentStep[i] = metadata[i].range[0];
+        }
       }
-    }
     
-    // Create dimension state object for initial slicing
-    sceneDims = {
-      ndim,
-      currentStep,
-      displayed,
-      metadata
-    };
-  }
-
-  /* 3. create Three.js objects in path-depth order */
-  const groups = listing
-    .filter((e: { kind: string; path: string }) => e.kind === 'group' && e.path !== '/')
-    .sort(
-      (a: { path: string }, b: { path: string }) =>
-        a.path.split('/').length - b.path.split('/').length
-    );
-
-  for (const entry of groups) {
-    try {
-      const loc = rootLoc.resolve(entry.path.slice(1)); // drop leading "/"
-    const grp = await zarr.open(loc, { kind: 'group' });
-    let attrs = grp.attrs as ZarrGroupAttrs;
-
-    // Get parent attributes for inheritance
-    const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
-    const parentRecord = lookup.get(parentPath);
-    const parentAttrs = parentRecord?.attrs;
-
-    // Inherit rendering attributes from parent
-    attrs = inheritRenderingAttributes(attrs, parentAttrs);
-
-    // Pass scene dimensions down through attrs
-    if (rootThree.userData.sceneDimensions && !attrs.scene_dimensions) {
-      attrs.scene_dimensions = rootThree.userData.sceneDimensions;
+      // Create dimension state object for initial slicing
+      sceneDims = {
+        ndim,
+        currentStep,
+        displayed,
+        metadata
+      };
     }
 
-    /* build renderable */
-    let obj: THREE.Object3D;
-    if (attrs?.type === 'points') {
-      obj = await buildPoints(loc, attrs, sceneDims);
-    } else {
-      obj = new THREE.Group();
-      // Store rendering attrs on groups for child inheritance
-      obj.userData.opacity = attrs.opacity;
-      obj.userData.gamma = attrs.gamma;
-      obj.userData.blendingMode = attrs.blending_mode;
-    }
+    /* 3. create Three.js objects in path-depth order */
+    const groups = listing
+      .filter((e: { kind: string; path: string }) => e.kind === 'group' && e.path !== '/')
+      .sort(
+        (a: { path: string }, b: { path: string }) =>
+          a.path.split('/').length - b.path.split('/').length
+      );
 
-    if (Array.isArray(attrs?.transform) && attrs.transform.length === 16) {
-      obj.applyMatrix4(new THREE.Matrix4().fromArray(attrs.transform));
-    }
+    for (const entry of groups) {
+      try {
+        const loc = rootLoc.resolve(entry.path.slice(1)); // drop leading "/"
+        const grp = await zarr.open(loc, { kind: 'group' });
+        let attrs = grp.attrs as ZarrGroupAttrs;
+
+        // Get parent attributes for inheritance
+        const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+        const parentRecord = lookup.get(parentPath);
+        const parentAttrs = parentRecord?.attrs;
+
+        // Inherit rendering attributes from parent
+        attrs = inheritRenderingAttributes(attrs, parentAttrs);
+
+        // Pass scene dimensions down through attrs
+        if (rootThree.userData.sceneDimensions && !attrs.scene_dimensions) {
+          attrs.scene_dimensions = rootThree.userData.sceneDimensions;
+        }
+
+        /* build renderable */
+        let obj: THREE.Object3D;
+        if (attrs?.type === 'points') {
+          obj = await buildPoints(loc, attrs, sceneDims);
+        } else {
+          obj = new THREE.Group();
+          // Store rendering attrs on groups for child inheritance
+          obj.userData.opacity = attrs.opacity;
+          obj.userData.gamma = attrs.gamma;
+          obj.userData.blendingMode = attrs.blending_mode;
+        }
+
+        if (Array.isArray(attrs?.transform) && attrs.transform.length === 16) {
+          obj.applyMatrix4(new THREE.Matrix4().fromArray(attrs.transform));
+        }
 
     /* attach to parent in Three.js graph */
     lookup.get(parentPath)!.obj.add(obj);
     lookup.set(entry.path, { obj, path: entry.path, attrs });
-    } catch (error) {
-      console.error(`Failed to load group ${entry.path}:`, error);
+      } catch (error) {
+        console.error(`Failed to load group ${entry.path}:`, error);
       // Continue loading other groups instead of failing completely
+      }
     }
-  }
 
-  return rootThree;
+    return rootThree;
   } catch (error) {
     console.error('Failed to load scene from Zarr store:', error);
     throw new Error(`Unable to load scene from ${src}: ${error instanceof Error ? error.message : String(error)}`);

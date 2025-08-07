@@ -30,18 +30,18 @@ def create_grid_positions(n_points: int, spacing: float = 1.0) -> np.ndarray:
     grid_size = int(np.sqrt(n_points))
     x = np.linspace(0, (grid_size - 1) * spacing, grid_size)
     y = np.linspace(0, (grid_size - 1) * spacing, grid_size)
-    
+
     xx, yy = np.meshgrid(x, y)
     zz = np.zeros_like(xx)
-    
+
     positions = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
     return positions[:n_points].astype(np.float32)
 
 
 def main():
     """Create a scene demonstrating rendering attributes and their modifications."""
-    output_path = Path("rendering_attributes_example.zarr")
-    
+    output_path = Path(__file__).parent / "rendering_attributes_example.zarr"
+
     aprint(f"Creating rendering attributes demonstration at {output_path}")
     aprint("This educational example shows:")
     aprint("- Default rendering properties")
@@ -49,21 +49,21 @@ def main():
     aprint("- Runtime property modification")
     aprint("- Method chaining for fluent API")
     aprint("- Validation and error handling")
-    
+
     # Create scene
     scene = Scene(output_path)
-    
+
     # Parameters
     n_points = 100
     base_positions = create_grid_positions(n_points, spacing=0.5)
     point_radius = 0.08
-    
+
     aprint(f"\nCreating {n_points} points in organized grid layout...")
-    
+
     # 1. Default rendering properties
     aprint("Creating points with default rendering attributes...")
     points1 = scene.add_points(
-        "DefaultAttributes", 
+        "DefaultAttributes",
         base_positions + np.array([0, 0, 0]),
         colors=[255, 100, 100],  # Red
         radii=point_radius
@@ -73,7 +73,7 @@ def main():
     # 2. Custom opacity (transparency)
     aprint("Creating semi-transparent points...")
     points2 = scene.add_points(
-        "TransparentPoints", 
+        "TransparentPoints",
         base_positions + np.array([0, 3, 0]),
         colors=[100, 255, 100],  # Green
         radii=point_radius,
@@ -84,7 +84,7 @@ def main():
     # 3. Custom gamma (brightness)
     aprint("Creating bright points with high gamma...")
     points3 = scene.add_points(
-        "BrightPoints", 
+        "BrightPoints",
         base_positions + np.array([6, 0, 0]),
         colors=[100, 100, 255],  # Blue
         radii=point_radius,
@@ -95,7 +95,7 @@ def main():
     # 4. Normal blending mode with custom opacity
     aprint("Creating normal blending points...")
     points4 = scene.add_points(
-        "NormalBlending", 
+        "NormalBlending",
         base_positions + np.array([6, 3, 0]),
         colors=[255, 255, 100],  # Yellow
         radii=point_radius,
@@ -110,7 +110,7 @@ def main():
     original_opacity = points1.opacity
     original_gamma = points1.gamma
     original_blending = points1.blending_mode
-    
+
     points1.opacity = 0.7
     points1.gamma = 0.8
     points1.blending_mode = "multiply"
@@ -126,7 +126,7 @@ def main():
 
     # 7. Demonstrate validation and error handling
     aprint("\nDemonstrating validation and error handling...")
-    
+
     # Test opacity validation
     try:
         points1.opacity = 1.5  # Should fail - opacity must be 0.0 to 1.0
@@ -134,7 +134,7 @@ def main():
     except ValueError as e:
         aprint(f"  ✓ Opacity validation working: {e}")
 
-    # Test gamma validation  
+    # Test gamma validation
     try:
         points1.gamma = 0.1  # Should fail - gamma must be >= 0.2
         aprint("  ERROR: Gamma validation failed!")
@@ -159,21 +159,21 @@ def main():
     aprint("  Top-left: Green points with 60% opacity")
     aprint("  Bottom-right: Blue points with gamma=1.8 (bright)")
     aprint("  Top-right: Yellow points with normal blending")
-    
+
     aprint("\nRuntime Modifications:")
-    aprint("- Red points: Modified to multiply blending, 70% opacity, gamma=0.8")  
+    aprint("- Red points: Modified to multiply blending, 70% opacity, gamma=0.8")
     aprint("- Green points: Chained to additive blending, 40% opacity, gamma=1.3")
-    
+
     aprint("\nRendering Properties:")
     aprint("- Opacity: Controls transparency (0.0 = transparent, 1.0 = opaque)")
     aprint("- Gamma: Brightness correction (0.2 to 5.0, 1.0 = neutral)")
     aprint("- Blending: How colors combine (normal, additive, multiply, etc.)")
-    
+
     aprint("\nValidation Rules:")
     aprint("- Opacity: Must be between 0.0 and 1.0")
     aprint("- Gamma: Must be between 0.2 and 5.0")
     aprint("- Blending: Must be valid mode (normal, additive, multiply, etc.)")
-    
+
     aprint(f"\nTo view: luxar serve {output_path}")
     aprint("Python-side attribute handling working correctly!")
     aprint("=" * 60)

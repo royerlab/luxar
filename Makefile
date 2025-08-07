@@ -1,10 +1,10 @@
 # Makefile for Luxar development tasks
 # Uses Hatch for on-demand environment management
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
-        test-cov test-all clean pre-commit-install pre-commit-run check dev-setup demo \
-        serve-data viewer-install viewer viewer-build viewer-test viewer-test-cov viewer-lint \
-        viewer-typecheck viewer-format viewer-check demo-and-serve docs-build docs-serve \
-        env-show env-prune shell build publish-test publish
+        test-cov test-all clean clean-examples pre-commit-install pre-commit-run check dev-setup \
+        demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-test \
+        viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check demo-and-serve \
+        docs-build docs-serve env-show env-prune shell build publish-test publish
 
 # Default target
 help:  ## Show this help message
@@ -12,8 +12,10 @@ help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Quick start:"
-	@echo "  make dev-setup    - Set up development environment"
-	@echo "  make test-all     - Run all tests"
+	@echo "  make dev-setup      - Set up development environment"
+	@echo "  make test-all       - Run all tests"
+	@echo "  make run-examples   - Generate all example datasets"
+	@echo "  make serve-examples - Browse generated examples"
 	@echo "  make demo-and-serve - Create demo and start servers"
 
 # Installation
@@ -111,7 +113,18 @@ clean:  ## Clean up temporary files and caches
 	@echo "🧹 Cleaning example outputs..."
 	find examples -name "*.zarr" -type d -exec rm -rf {} +
 	rm -rf *.zarr
+	rm -rf zarr_scenes/  # Remove deprecated directory
 	@echo "✅ Clean complete!"
+
+clean-examples:  ## Clean up only example zarr files
+	@echo "🧹 Cleaning example zarr files..."
+	@cd examples && for zarr in *.zarr; do \
+		if [ -d "$$zarr" ]; then \
+			echo "   Removing $$zarr..."; \
+			rm -rf "$$zarr"; \
+		fi; \
+	done
+	@echo "✅ Example zarr files cleaned!"
 
 # Development setup
 dev-setup:  ## Complete development setup with Hatch
@@ -130,6 +143,46 @@ demo:  ## Generate a demo dataset (dist/demo.zarr with 100k points)
 	@mkdir -p dist
 	hatch run luxar random --out dist/demo.zarr --n 100000
 	@echo "✅ Demo dataset created at dist/demo.zarr"
+
+run-examples:  ## Run all examples to generate zarr files
+	@echo "🚀 Running all examples to generate zarr files..."
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@total=$$(ls -1 examples/*_example.py 2>/dev/null | wc -l); \
+	count=0; \
+	for script in examples/*_example.py; do \
+		count=$$((count + 1)); \
+		name=$$(basename $$script); \
+		echo ""; \
+		echo "[$${count}/$${total}] 📊 Running $${name}..."; \
+		echo "────────────────────────────────────────────────"; \
+		if hatch run python $$script; then \
+			echo "✅ Success: $${name}"; \
+		else \
+			echo "❌ Failed: $${name}"; \
+		fi; \
+	done
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ All examples completed!"
+	@echo ""
+	@echo "📁 Generated zarr files in examples/:"
+	@for zarr in examples/*.zarr; do \
+		if [ -d "$$zarr" ]; then \
+			size=$$(du -sh "$$zarr" | cut -f1); \
+			name=$$(basename "$$zarr"); \
+			echo "   • $$name ($${size})"; \
+		fi; \
+	done 2>/dev/null || echo "   No .zarr files found"
+	@echo ""
+	@echo "💡 To browse the generated datasets, run:"
+	@echo "   make serve-examples"
+
+serve-examples:  ## Serve the examples directory for browsing datasets
+	@echo "🌐 Serving examples directory at http://localhost:8000/"
+	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000/"
+	@echo "💡 Press 'O' in the viewer to browse available datasets"
+	@echo ""
+	hatch run luxar serve examples/
 
 serve-data:  ## Serve a dataset (default: dist/demo.zarr, port: 8000)
 	@if [ ! -d "dist/demo.zarr" ]; then \
@@ -197,8 +250,9 @@ viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
 # Combined workflows
 demo-and-serve: demo  ## Create demo and start both servers
 	@echo "Starting data server and viewer..."
-	@echo "Data will be served at: http://localhost:$(PORT)/data/demo.zarr/"
-	@echo "Viewer will be at: http://localhost:5173/?src=http://localhost:$(PORT)/data/demo.zarr/"
+	@echo "Data will be served at: http://localhost:$(PORT)/"
+	@echo "Viewer will be at: http://localhost:5173/?src=http://localhost:$(PORT)/"
+	@echo "💡 Press 'O' in the viewer to browse datasets"
 	@$(MAKE) -j2 serve-data viewer
 
 # Documentation

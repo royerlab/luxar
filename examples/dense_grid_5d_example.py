@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Test dimension sliders with dense 5D data grid."""
 
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+
 import luxar
 from luxar import Scene, transforms
 
-# Create output directory
-output_dir = Path("zarr_scenes")
-output_dir.mkdir(exist_ok=True)
-
 # Create a 5D scene (X, Y, Z, Time, Channel)
-scene_path = output_dir / "test_5d_dense_grid.zarr"
+scene_path = Path(__file__).parent / "test_5d_dense_grid_example.zarr"
 scene = Scene(
     scene_path,
     dimensions=luxar.Dimensions([
@@ -35,7 +33,7 @@ n_channels = 3      # 0, 1, 2
 # Channel colors
 channel_colors = [
     [1.0, 0.3, 0.3],  # Red
-    [0.3, 1.0, 0.3],  # Green  
+    [0.3, 1.0, 0.3],  # Green
     [0.3, 0.3, 1.0],  # Blue
 ]
 
@@ -50,31 +48,31 @@ for t in range(n_time_points):
         x = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
         y = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
         z = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
-        
+
         # Create meshgrid
         xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
-        
+
         # Flatten to get point positions
         x_flat = xx.flatten()
         y_flat = yy.flatten()
         z_flat = zz.flatten()
-        
+
         # Apply time-based transformation
         # Rotate around center based on time
         angle = t * 10  # degrees
         angle_rad = np.radians(angle)
         cos_a = np.cos(angle_rad)
         sin_a = np.sin(angle_rad)
-        
+
         # Rotate around Z axis
         x_rot = x_flat * cos_a - y_flat * sin_a
         y_rot = x_flat * sin_a + y_flat * cos_a
         z_rot = z_flat
-        
+
         # Apply channel-based offset
         channel_offset = (c - 1) * 1.0  # Shift channels slightly in Z
         z_rot += channel_offset
-        
+
         # Create 5D positions
         n_points = len(x_flat)
         positions = np.zeros((n_points, 5), dtype=np.float32)
@@ -83,16 +81,16 @@ for t in range(n_time_points):
         positions[:, 2] = z_rot
         positions[:, 3] = t  # Time coordinate
         positions[:, 4] = c  # Channel coordinate
-        
+
         all_positions.append(positions)
-        
+
         # Colors based on channel with gradient based on position
         colors = np.tile(channel_colors[c], (n_points, 1))
         # Add gradient based on height (z position)
         brightness = (z_flat - z_flat.min()) / (z_flat.max() - z_flat.min() + 1e-6)
         colors = colors * brightness[:, np.newaxis]
         all_colors.append(colors)
-        
+
         # Radii - vary by time (growing/shrinking)
         base_radius = 2.5  # Increased from 1.5
         time_factor = 1.0 + 0.3 * np.sin(t * np.pi / 5)  # Oscillate
@@ -114,10 +112,10 @@ for t in range(n_time_points):
         # Add a larger central marker
         marker_pos = np.array([[0, 0, (c-1)*1.0, t, c]], dtype=np.float32)
         marker_positions.append(marker_pos)
-        
+
         # Make markers bright white
         marker_colors.append([[1.0, 1.0, 1.0]])
-        
+
         # Larger radius for markers
         marker_radii.append([3.0])
 
@@ -168,10 +166,12 @@ scene.attrs["info"] = info_text
 # Finalize
 scene.finalize()
 
-print(f"Created dense 5D test scene: {scene_path}")
-print(f"Total points: {len(positions)}")
-print("\nDimensions:")
+from arbol import aprint
+
+aprint(f"Created dense 5D test scene: {scene_path}")
+aprint(f"Total points: {len(positions)}")
+aprint("\nDimensions:")
 for i, dim in enumerate(scene.dimensions.dimensions):
     displayed = "displayed" if dim.display else "slider"
-    print(f"  {i}: {dim.name} ({dim.unit}) - {displayed}")
-print(f"\nOpen in viewer with proper zarr path")
+    aprint(f"  {i}: {dim.name} ({dim.unit}) - {displayed}")
+aprint("\nOpen in viewer with proper zarr path")

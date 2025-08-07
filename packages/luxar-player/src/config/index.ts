@@ -132,10 +132,6 @@ export const config: AppConfig = {
   // HTML element ID for the canvas where 3D rendering occurs
   canvasId: 'app',
 
-  // Accessibility configuration for screen readers and assistive technology
-  accessibility: {
-    canvasAriaLabel: '3D scene viewer - Use mouse to navigate, Shift+wheel to zoom',
-  },
 } as const;
 
 // Export types

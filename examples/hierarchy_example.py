@@ -32,12 +32,12 @@ def create_constellation_points(n_points: int, radius: float) -> np.ndarray:
     indices = np.arange(0, n_points, dtype=float) + 0.5
     theta = np.arccos(1 - 2 * indices / n_points)  # Polar angle
     phi = np.pi * (1 + 5**0.5) * indices  # Azimuthal angle (golden ratio)
-    
+
     # Convert to Cartesian coordinates
     x = radius * np.sin(theta) * np.cos(phi)
     y = radius * np.sin(theta) * np.sin(phi)
     z = radius * np.cos(theta)
-    
+
     return np.column_stack([x, y, z]).astype(np.float32)
 
 
@@ -56,14 +56,14 @@ def create_ring_points(n_points: int, radius: float, height: float = 0.0) -> np.
     x = radius * np.cos(angles)
     y = radius * np.sin(angles)
     z = np.full(n_points, height)
-    
+
     return np.column_stack([x, y, z]).astype(np.float32)
 
 
 def main():
     """Create a scene demonstrating hierarchical relationships."""
-    output_path = Path("hierarchy_example.zarr")
-    
+    output_path = Path(__file__).parent / "hierarchy_example.zarr"
+
     aprint(f"Creating hierarchy demonstration at {output_path}")
     aprint("This example shows:")
     aprint("- Parent-child node relationships")
@@ -71,13 +71,13 @@ def main():
     aprint("- Transform inheritance and composition")
     aprint("- Nested group hierarchies")
     aprint("- Visual organization of complex scenes")
-    
+
     # Create scene
     scene = Scene(output_path)
-    
+
     # 1. Root level objects (no parent)
     aprint("\nCreating root-level reference objects...")
-    
+
     # Central reference constellation
     central_positions = create_constellation_points(100, 1.0)
     scene.add_points(
@@ -89,10 +89,10 @@ def main():
         opacity=1.0,
         gamma=1.0
     )
-    
+
     # 2. First level hierarchy - Solar System analogy
     aprint("Creating solar system hierarchy...")
-    
+
     # Sun (parent group)
     sun_transform = transforms.translate([0, 0, 0])  # At origin
     sun_group = scene.add_group(
@@ -102,7 +102,7 @@ def main():
         gamma=1.2,            # Slightly brighter
         blending_mode="additive"  # Glowing effect
     )
-    
+
     # Sun object (child of sun_group)
     sun_positions = create_constellation_points(50, 0.3)
     scene.add_points(
@@ -113,10 +113,10 @@ def main():
         parent=sun_group
         # Inherits: opacity=0.9, gamma=1.2, blending_mode="additive"
     )
-    
+
     # 3. Second level hierarchy - Planets
     aprint("Creating planetary systems...")
-    
+
     # Earth system (child of solar system)
     earth_transform = transforms.translate([4, 0, 0])  # Orbit position
     earth_group = scene.add_group(
@@ -126,7 +126,7 @@ def main():
         opacity=0.8  # Override parent's opacity
         # Inherits: gamma=1.2, blending_mode="additive" from sun_group
     )
-    
+
     # Earth (child of earth system)
     earth_positions = create_constellation_points(30, 0.2)
     scene.add_points(
@@ -137,7 +137,7 @@ def main():
         parent=earth_group
         # Inherits: opacity=0.8, gamma=1.2, blending_mode="additive"
     )
-    
+
     # Moon (child of earth system, sibling of Earth)
     moon_transform = transforms.translate([0.5, 0, 0])  # Relative to Earth system
     moon_positions = create_constellation_points(15, 0.08)
@@ -150,17 +150,17 @@ def main():
         parent=earth_group
         # Inherits: opacity=0.8, gamma=1.2, blending_mode="additive"
     )
-    
+
     # Mars system (another child of solar system)
     mars_transform = transforms.translate([6, 0, 0])
     mars_group = scene.add_group(
-        "MarsSystem", 
+        "MarsSystem",
         transform=mars_transform,
         parent=sun_group,
         gamma=1.0  # Override parent's gamma
         # Inherits: opacity=0.9, blending_mode="additive" from sun_group
     )
-    
+
     # Mars (child of mars system)
     mars_positions = create_constellation_points(20, 0.15)
     scene.add_points(
@@ -171,10 +171,10 @@ def main():
         parent=mars_group
         # Inherits: opacity=0.9, gamma=1.0, blending_mode="additive"
     )
-    
+
     # 4. Separate hierarchy - Space Station Complex
     aprint("Creating space station hierarchy...")
-    
+
     # Space station group (separate from solar system)
     station_transform = transforms.compose([
         transforms.translate([0, 0, 5]),
@@ -187,7 +187,7 @@ def main():
         gamma=1.1,
         blending_mode="normal"  # Different from solar system
     )
-    
+
     # Central hub
     hub_positions = create_ring_points(20, 0.3)
     scene.add_points(
@@ -197,7 +197,7 @@ def main():
         radii=0.07,
         parent=station_group
     )
-    
+
     # Docking rings (children of station)
     for i in range(3):
         angle = i * 2 * np.pi / 3
@@ -205,7 +205,7 @@ def main():
             transforms.rotate_z(angle),
             transforms.translate([0.8, 0, 0])
         ])
-        
+
         ring_positions = create_ring_points(12, 0.15)
         scene.add_points(
             f"DockingRing{i+1}",
@@ -216,10 +216,10 @@ def main():
             parent=station_group
             # Inherits: opacity=0.7, gamma=1.1, blending_mode="normal"
         )
-    
+
     # 5. Deep hierarchy example
     aprint("Creating deep nested hierarchy...")
-    
+
     # Level 1: Galaxy
     galaxy_transform = transforms.translate([0, 8, 0])
     galaxy_group = scene.add_group(
@@ -227,14 +227,14 @@ def main():
         transform=galaxy_transform,
         opacity=0.6
     )
-    
+
     # Level 2: Star cluster
     cluster_group = scene.add_group(
         "StarCluster",
         parent=galaxy_group,
         gamma=1.3
     )
-    
+
     # Level 3: Binary star system
     binary_transform = transforms.translate([1, 0, 0])
     binary_group = scene.add_group(
@@ -243,7 +243,7 @@ def main():
         parent=cluster_group,
         blending_mode="additive"
     )
-    
+
     # Level 4: Individual stars
     star1_positions = create_constellation_points(15, 0.1)
     scene.add_points(
@@ -254,19 +254,19 @@ def main():
         transform=transforms.translate([-0.2, 0, 0]),
         parent=binary_group
     )
-    
+
     star2_positions = create_constellation_points(12, 0.08)
     scene.add_points(
-        "Star2", 
+        "Star2",
         star2_positions,
         colors=[255, 150, 150],  # Light red
         radii=0.035,
         transform=transforms.translate([0.2, 0, 0]),
         parent=binary_group
     )
-    
+
     scene.finalize()
-    
+
     # Print educational summary
     aprint("\n" + "=" * 60)
     aprint("HIERARCHY DEMONSTRATION")
@@ -286,25 +286,25 @@ def main():
     aprint("  Galaxy → Star Cluster → Binary System:")
     aprint("    ├─ Star 1 (bright yellow)")
     aprint("    └─ Star 2 (light red)")
-    
+
     aprint("\nProperty Inheritance:")
     aprint("- Solar System: opacity=0.9, gamma=1.2, additive blending")
     aprint("- Earth System: overrides opacity=0.8, inherits rest")
-    aprint("- Mars System: overrides gamma=1.0, inherits rest") 
+    aprint("- Mars System: overrides gamma=1.0, inherits rest")
     aprint("- Space Station: opacity=0.7, gamma=1.1, normal blending")
     aprint("- Galaxy hierarchy: 4 levels deep with accumulated properties")
-    
+
     aprint("\nTransform Inheritance:")
     aprint("- Child transforms are relative to parent coordinate systems")
     aprint("- Final position = parent_transform * child_transform")
     aprint("- Deep hierarchies accumulate all ancestor transforms")
-    
+
     aprint("\nScene Organization Benefits:")
     aprint("- Logical grouping of related objects")
     aprint("- Consistent styling through inheritance")
     aprint("- Easy manipulation of object groups")
     aprint("- Scalable scene management")
-    
+
     aprint(f"\nTo view: luxar serve {output_path}")
     aprint("Notice how properties flow down the hierarchy!")
     aprint("=" * 60)

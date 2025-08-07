@@ -138,7 +138,7 @@ def create_cross(size: float = 10, n_points: int = 100) -> np.ndarray:
 
 def main():
     """Create an interactive dimension navigation example."""
-    output_path = Path("dimension_navigation_example.zarr")
+    output_path = Path(__file__).parent / "dimension_navigation_example.zarr"
     aprint(f"Creating dimension navigation example at {output_path}")
 
     # Define shapes and their properties

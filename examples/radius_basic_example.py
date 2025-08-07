@@ -16,7 +16,7 @@ from luxar import Scene
 
 def main():
     """Create a simple test scene with three groups of different-sized points."""
-    output_path = Path("radius_basic_example.zarr")
+    output_path = Path(__file__).parent / "radius_basic_example.zarr"
 
     aprint(f"Creating radius test scene at {output_path}")
 

@@ -30,12 +30,12 @@ def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]
     positions = np.array([
         # X-axis points (red)
         [0, 0, 0], [length, 0, 0],
-        # Y-axis points (green)  
+        # Y-axis points (green)
         [0, 0, 0], [0, length, 0],
         # Z-axis points (blue)
         [0, 0, 0], [0, 0, length],
     ], dtype=np.float32)
-    
+
     colors = np.array([
         # X-axis (red)
         [255, 100, 100], [255, 100, 100],
@@ -44,7 +44,7 @@ def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]
         # Z-axis (blue)
         [100, 100, 255], [100, 100, 255],
     ], dtype=np.uint8)
-    
+
     return positions, colors
 
 
@@ -61,7 +61,7 @@ def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
     # Create grid of points
     coords = np.linspace(-size/2, size/2, density)
     positions = []
-    
+
     # Add points on each face of the cube
     for i in range(density):
         for j in range(density):
@@ -74,24 +74,24 @@ def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
             # Top and bottom faces
             positions.append([coords[i], coords[j], -size/2])
             positions.append([coords[i], coords[j], size/2])
-    
+
     return np.array(positions, dtype=np.float32)
 
 
 def main():
     """Create a scene demonstrating various transformations."""
-    output_path = Path("transform_example.zarr")
-    
+    output_path = Path(__file__).parent / "transform_example.zarr"
+
     aprint(f"Creating transform system demonstration at {output_path}")
     aprint("This example shows:")
     aprint("- Basic transformations: translate, rotate, scale")
     aprint("- Transform composition and chaining")
     aprint("- Coordinate system visualization")
     aprint("- Transform inheritance in hierarchies")
-    
+
     # Create scene
     scene = Scene(output_path)
-    
+
     # 1. Origin coordinate system (reference)
     aprint("\nCreating reference coordinate system at origin...")
     origin_pos, origin_colors = create_coordinate_axes(2.0)
@@ -102,12 +102,12 @@ def main():
         radii=0.1,
         sharpness=4.0
     )
-    
+
     # 2. Basic translation
     aprint("Demonstrating translation transform...")
     cube_positions = create_cube_points(1.0, 4)
-    translation = transforms.translate([3, 0, 0])
-    
+    translation = transforms.translate(3, 0, 0)
+
     scene.add_points(
         "TranslatedCube",
         cube_positions,
@@ -115,7 +115,7 @@ def main():
         radii=0.08,
         transform=translation
     )
-    
+
     # Add coordinate system for translated object
     translated_axes_pos, translated_axes_colors = create_coordinate_axes(1.5)
     scene.add_points(
@@ -126,13 +126,13 @@ def main():
         transform=translation,
         sharpness=4.0
     )
-    
+
     # 3. Basic rotation
     aprint("Demonstrating rotation transform...")
     rotation = transforms.rotate_z(np.pi / 4)  # 45 degrees around Z
-    rotated_translation = transforms.translate([0, 3, 0])
-    rotated_transform = transforms.compose([rotation, rotated_translation])
-    
+    rotated_translation = transforms.translate(0, 3, 0)
+    rotated_transform = transforms.compose(rotation, rotated_translation)
+
     scene.add_points(
         "RotatedCube",
         cube_positions,
@@ -140,7 +140,7 @@ def main():
         radii=0.08,
         transform=rotated_transform
     )
-    
+
     # Add coordinate system for rotated object
     scene.add_points(
         "RotatedAxes",
@@ -150,13 +150,13 @@ def main():
         transform=rotated_transform,
         sharpness=4.0
     )
-    
+
     # 4. Scaling
     aprint("Demonstrating scaling transform...")
-    scale = transforms.scale([0.5, 0.5, 2.0])  # Thin and tall
-    scaled_translation = transforms.translate([-3, 0, 0])
-    scaled_transform = transforms.compose([scale, scaled_translation])
-    
+    scale = transforms.scale(0.5, 0.5, 2.0)  # Thin and tall
+    scaled_translation = transforms.translate(-3, 0, 0)
+    scaled_transform = transforms.compose(scale, scaled_translation)
+
     scene.add_points(
         "ScaledCube",
         cube_positions,
@@ -164,7 +164,7 @@ def main():
         radii=0.08,
         transform=scaled_transform
     )
-    
+
     # Add coordinate system for scaled object
     scene.add_points(
         "ScaledAxes",
@@ -174,16 +174,16 @@ def main():
         transform=scaled_transform,
         sharpness=4.0
     )
-    
+
     # 5. Complex composition
     aprint("Demonstrating complex transform composition...")
     # Rotate around Y, then scale, then translate
-    complex_transform = transforms.compose([
+    complex_transform = transforms.compose(
         transforms.rotate_y(np.pi / 6),      # 30 degrees
-        transforms.scale([1.5, 0.8, 1.2]),  # Non-uniform scale
-        transforms.translate([0, -3, 0])     # Move down
-    ])
-    
+        transforms.scale(1.5, 0.8, 1.2),  # Non-uniform scale
+        transforms.translate(0, -3, 0)     # Move down
+    )
+
     scene.add_points(
         "ComplexTransformCube",
         cube_positions,
@@ -191,7 +191,7 @@ def main():
         radii=0.08,
         transform=complex_transform
     )
-    
+
     scene.add_points(
         "ComplexAxes",
         translated_axes_pos,
@@ -200,25 +200,25 @@ def main():
         transform=complex_transform,
         sharpness=4.0
     )
-    
+
     # 6. Hierarchical transforms (parent-child)
     aprint("Demonstrating hierarchical transforms...")
-    
+
     # Create parent group with transform
-    parent_transform = transforms.compose([
-        transforms.translate([0, 0, 3]),
+    parent_transform = transforms.compose(
+        transforms.translate(0, 0, 3),
         transforms.rotate_z(np.pi / 8)
-    ])
+    )
     parent_group = scene.add_group(
         "ParentGroup",
         transform=parent_transform
     )
-    
+
     # Child objects inherit parent's transform
     small_cube_positions = create_cube_points(0.5, 3)
-    
+
     # Child 1: Only has local translation
-    child1_transform = transforms.translate([1, 1, 0])
+    child1_transform = transforms.translate(1, 1, 0)
     scene.add_points(
         "Child1",
         small_cube_positions,
@@ -227,12 +227,12 @@ def main():
         transform=child1_transform,
         parent=parent_group
     )
-    
+
     # Child 2: Local rotation and translation
-    child2_transform = transforms.compose([
+    child2_transform = transforms.compose(
         transforms.rotate_x(np.pi / 4),
-        transforms.translate([-1, 1, 0])
-    ])
+        transforms.translate(-1, 1, 0)
+    )
     scene.add_points(
         "Child2",
         small_cube_positions,
@@ -241,7 +241,7 @@ def main():
         transform=child2_transform,
         parent=parent_group
     )
-    
+
     # Parent coordinate system
     scene.add_points(
         "ParentAxes",
@@ -252,9 +252,9 @@ def main():
         parent=parent_group,
         sharpness=4.0
     )
-    
+
     scene.finalize()
-    
+
     # Print educational summary
     aprint("\n" + "=" * 60)
     aprint("TRANSFORM SYSTEM DEMONSTRATION")
@@ -263,30 +263,30 @@ def main():
     aprint("  Center: Reference coordinate system (origin)")
     aprint("  Right: Translated cube (orange) + axes")
     aprint("  Top: Rotated cube (cyan) + axes")
-    aprint("  Left: Scaled cube (magenta) + axes")  
+    aprint("  Left: Scaled cube (magenta) + axes")
     aprint("  Bottom: Complex transform (purple) + axes")
     aprint("  Back: Hierarchical group (yellow/blue children)")
-    
+
     aprint("\nTransformation Types:")
     aprint("- Translation: Moves objects in space")
     aprint("- Rotation: Rotates around axes (X, Y, Z)")
     aprint("- Scaling: Changes size (uniform or non-uniform)")
     aprint("- Composition: Combines multiple transforms")
     aprint("- Hierarchical: Child objects inherit parent transforms")
-    
+
     aprint("\nTransform Functions Used:")
-    aprint("- transforms.translate([x, y, z])")
+    aprint("- transforms.translate(x, y, z)")
     aprint("- transforms.rotate_x/y/z(angle_radians)")
-    aprint("- transforms.scale([sx, sy, sz])")
-    aprint("- transforms.compose([transform1, transform2, ...])")
+    aprint("- transforms.scale(sx, sy, sz)")
+    aprint("- transforms.compose(transform1, transform2, ...)")
     aprint("- transforms.identity() - no transformation")
-    
+
     aprint("\nCoordinate Systems:")
     aprint("- Red axis: X direction")
-    aprint("- Green axis: Y direction") 
+    aprint("- Green axis: Y direction")
     aprint("- Blue axis: Z direction")
     aprint("- Each transformed object shows its local coordinate system")
-    
+
     aprint(f"\nTo view: luxar serve {output_path}")
     aprint("Rotate the view to see all transformations clearly!")
     aprint("=" * 60)
