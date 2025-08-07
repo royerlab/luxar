@@ -8,9 +8,9 @@
 
 import * as THREE from 'three';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
-import { config } from './config';
-import { PerformanceMonitor } from './performance-monitor';
-import { PostProcessingManager } from './post-processing';
+import { config } from '../config';
+import { PerformanceMonitor } from '../ui/performance-monitor';
+import { PostProcessingManager } from '../rendering/post-processing';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization

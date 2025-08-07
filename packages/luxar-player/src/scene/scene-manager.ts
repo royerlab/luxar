@@ -9,12 +9,12 @@
 
 import * as THREE from 'three';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
-import { loadScene } from './zarr_loader';
-import { showLoadingIndicator, hideLoadingIndicator, showError } from './ui';
-import { config } from './config';
-import { PostProcessingManager } from './post-processing';
-import { ShaderValidator } from './shader-manager';
-import { materialManager } from './material-manager';
+import { loadScene } from '../data/zarr-loader';
+import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
+import { config } from '../config';
+import { PostProcessingManager } from '../rendering/post-processing';
+import { ShaderValidator } from '../rendering/shader-manager';
+import { materialManager } from '../rendering/material-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering

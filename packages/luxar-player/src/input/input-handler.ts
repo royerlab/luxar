@@ -32,14 +32,14 @@
  */
 
 import * as THREE from 'three';
-import { SceneManager } from './scene-manager';
-import { AnimationController } from './animation-controller';
-import { RenderingControls } from './rendering-controls';
-import { showHelpOverlay, hideHelpOverlay } from './ui';
-import { updatePointCloudSlice } from './utils/dims-navigation';
-import { SimpleDims } from './types/dims';
-import { DimensionSliders } from './dimension-sliders';
-import { sceneDimsManager } from './scene-dims-manager';
+import { SceneManager } from '../scene/scene-manager';
+import { AnimationController } from '../scene/animation-controller';
+import { RenderingControls } from '../ui/rendering-controls';
+import { showHelpOverlay, hideHelpOverlay } from '../ui/helpers';
+import { updatePointCloudSlice } from '../utils/dims-navigation';
+import { SimpleDims } from '../types/dims';
+import { DimensionSliders } from '../ui/dimension-sliders';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 /**
  * Central coordinator for all user input events and nD navigation.
