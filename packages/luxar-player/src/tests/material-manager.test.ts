@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MaterialManager, BlendingMode } from '../material-manager';
+import { MaterialManager, BlendingMode } from '../rendering/material-manager';
 import * as THREE from 'three';
-import { SHADER_CONFIG } from '../shader-manager';
+import { SHADER_CONFIG } from '../rendering/shader-manager';
 
 // Mock Three.js
 vi.mock('three', () => ({
@@ -14,10 +14,15 @@ vi.mock('three', () => ({
   AdditiveBlending: 'AdditiveBlending',
   MultiplyBlending: 'MultiplyBlending',
   SubtractiveBlending: 'SubtractiveBlending',
+  HalfFloatType: 'HalfFloatType',
+  LinearSRGBColorSpace: 'LinearSRGBColorSpace',
+  NoToneMapping: 'NoToneMapping',
+  SRGBColorSpace: 'SRGBColorSpace',
+  ACESFilmicToneMapping: 'ACESFilmicToneMapping',
 }));
 
 // Mock shader manager
-vi.mock('../shader-manager', () => ({
+vi.mock('../rendering/shader-manager', () => ({
   SHADER_CONFIG: {
     POINTS: {
       size: 1.0,

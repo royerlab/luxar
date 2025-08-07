@@ -1,4 +1,4 @@
-import { SimpleDims, DimensionMetadata } from './types/dims';
+import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
 
 /**

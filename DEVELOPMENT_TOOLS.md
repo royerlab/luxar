@@ -36,6 +36,10 @@ This document outlines the development tools used in the Luxar project for code 
 - **Tool**: `hatch`
 - **Purpose**: Manages virtual environments and dependencies
 - **Configuration**: `pyproject.toml` under `[tool.hatch.*]`
+- **Commands**:
+  - Enter shell: `hatch shell`
+  - Show environments: `hatch env show`
+  - Clean environments: `hatch env prune`
 
 ## TypeScript Development Tools
 
@@ -72,6 +76,15 @@ This document outlines the development tools used in the Luxar project for code 
 - **Commands**:
   - Development: `pnpm dev`
   - Build: `pnpm build`
+  - Preview build: `pnpm preview`
+
+### Package Manager
+- **Tool**: `pnpm` (v8.0.0+)
+- **Purpose**: Fast, disk space efficient package manager
+- **Commands**:
+  - Install dependencies: `pnpm install`
+  - Add dependency: `pnpm add <package>`
+  - Remove dependency: `pnpm remove <package>`
 
 ## Makefile Commands
 
@@ -129,4 +142,13 @@ The project uses `pre-commit` for automated checks before commits:
 
 4. **Vitest**: Fast test runner that integrates well with Vite and provides excellent TypeScript support.
 
-5. **Unified configuration**: Most tools are configured in `pyproject.toml` (Python) or `package.json` (TypeScript) to reduce configuration file sprawl.
+5. **pnpm**: Efficient package manager that saves disk space through hard linking and provides strict dependency resolution.
+
+6. **Unified configuration**: Most tools are configured in `pyproject.toml` (Python) or `package.json` (TypeScript) to reduce configuration file sprawl.
+
+## Important Notes
+
+- Always use `hatch run` prefix for Python commands to ensure correct environment
+- Always use `pnpm` (not npm or yarn) for TypeScript/Node.js package management
+- Run `make check` before committing to catch issues early
+- Keep LUXAR_ZARR_FORMAT.md updated when making changes to the data format

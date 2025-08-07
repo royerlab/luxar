@@ -32,15 +32,15 @@
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
 import * as THREE from 'three';
-import { materialManager, BlendingMode } from './material-manager';
-import { SimpleDims, DimensionMetadata } from './types/dims';
+import { materialManager, BlendingMode } from '../rendering/material-manager';
+import { SimpleDims, DimensionMetadata } from '../types/dims';
 import {
   slicePoints,
   extractDisplayDimensions,
   sliceColors,
   sliceScalarAttribute,
   computeEffectiveRadii,
-} from './utils/slicing';
+} from '../utils/slicing';
 
 /* ------------------------------------------------------------------ utils */
 
