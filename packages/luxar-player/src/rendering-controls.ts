@@ -51,14 +51,17 @@ export class RenderingControls {
       closeFolders: false,
     });
 
-    // Position on the left side, below performance monitor
+    // Position on the left side with standard margins
     this.gui.domElement.style.position = 'fixed';
-    this.gui.domElement.style.top = '100px';
-    this.gui.domElement.style.left = '10px';
+    this.gui.domElement.style.top = '20px';  // Standard 20px margin
+    this.gui.domElement.style.left = '20px'; // Standard 20px margin
     this.gui.domElement.style.zIndex = '1999'; // Below performance monitor (2000)
 
     // Start hidden
     this.gui.hide();
+
+    // Apply custom styling to match other panels
+    this.applyCustomStyling();
 
     this.setupControls();
   }
@@ -124,7 +127,7 @@ export class RenderingControls {
 
     // Anti-aliasing folder
     const aaFolder = this.gui.addFolder('Anti-Aliasing');
-    aaFolder.open();
+    aaFolder.close(); // Collapsed by default
 
     // SSAA settings (collapsible) - First because it's the highest quality
     const ssaaFolder = aaFolder.addFolder('SSAA Settings (Supersampling)');
@@ -246,6 +249,146 @@ export class RenderingControls {
 
     if (!this.settings.smaaEnabled) {
       smaaFolder.hide();
+    }
+  }
+
+  /**
+   * Apply custom styling to match dimension sliders and help panel
+   */
+  private applyCustomStyling(): void {
+    const root = this.gui.domElement;
+    
+    // Style the main container
+    root.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+    root.style.borderRadius = '8px';
+    root.style.backdropFilter = 'blur(10px)';
+    root.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+    root.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+    root.style.fontSize = '12px';
+    
+    // Style the title
+    const title = root.querySelector('.title') as HTMLElement;
+    if (title) {
+      title.style.backgroundColor = 'transparent';
+      title.style.color = '#e0e0e0';
+      title.style.fontSize = '14px';
+      title.style.fontWeight = 'bold';
+      title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+      title.style.paddingBottom = '6px';
+      title.style.marginBottom = '10px';
+    }
+    
+    // Override lil-gui's default styles with CSS
+    const style = document.createElement('style');
+    style.textContent = `
+      .lil-gui {
+        --background-color: rgba(30, 30, 30, 0.9) !important;
+        --title-background-color: transparent !important;
+        --title-text-color: #e0e0e0 !important;
+        --widget-color: rgba(255, 255, 255, 0.1) !important;
+        --hover-color: rgba(255, 255, 255, 0.15) !important;
+        --focus-color: #4CAF50 !important;
+        --number-color: #4CAF50 !important;
+        --string-color: #4CAF50 !important;
+        --font-size: 12px !important;
+        --input-font-size: 12px !important;
+        --folder-border-color: rgba(255, 255, 255, 0.2) !important;
+        --checkbox-border-radius: 4px !important;
+        color: #e0e0e0 !important;
+      }
+      
+      .lil-gui .controller {
+        border-radius: 4px !important;
+        margin: 2px 0 !important;
+      }
+      
+      .lil-gui .controller:hover {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+      }
+      
+      .lil-gui .title {
+        padding: 5px !important;
+        border-radius: 4px 4px 0 0 !important;
+      }
+      
+      .lil-gui button {
+        border-radius: 4px !important;
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      }
+      
+      .lil-gui button:hover {
+        background-color: rgba(255, 255, 255, 0.15) !important;
+      }
+      
+      .lil-gui input[type="number"],
+      .lil-gui input[type="text"] {
+        background-color: rgba(0, 0, 0, 0.2) !important;
+        border: none !important;
+        border-radius: 4px !important;
+        color: #4CAF50 !important;
+        padding: 2px 6px !important;
+      }
+      
+      .lil-gui select {
+        background-color: rgba(0, 0, 0, 0.2) !important;
+        border: none !important;
+        border-radius: 4px !important;
+        color: #e0e0e0 !important;
+        padding: 2px 6px !important;
+      }
+      
+      /* Remove borders from sliders too */
+      .lil-gui .widget {
+        border: none !important;
+      }
+      
+      .lil-gui .controller.number .slider {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+      }
+      
+      /* Remove all controller borders and outlines */
+      .lil-gui .controller {
+        border: none !important;
+        outline: none !important;
+      }
+      
+      .lil-gui .controller.number {
+        border: none !important;
+      }
+      
+      /* Clean folder styling */
+      .lil-gui .children {
+        border: none !important;
+        margin-left: 20px !important;
+      }
+      
+      .lil-gui .folder {
+        border: none !important;
+        margin-bottom: 2px !important;
+      }
+      
+      /* Remove all borders from folder titles */
+      .lil-gui .title {
+        border: none !important;
+        background-color: rgba(255, 255, 255, 0.05) !important;
+      }
+      
+      .lil-gui > .title {
+        background-color: transparent !important;
+        border: none !important;
+      }
+      
+      .lil-gui .folder > .title {
+        border: none !important;
+        background-color: rgba(255, 255, 255, 0.05) !important;
+      }
+    `;
+    
+    // Only add style once
+    if (!document.getElementById('lil-gui-custom-styles')) {
+      style.id = 'lil-gui-custom-styles';
+      document.head.appendChild(style);
     }
   }
 
