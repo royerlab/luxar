@@ -107,7 +107,7 @@ export class RenderingControls {
 
     hdrFolder
       .add(this.settings, 'exposure', 0.1, 3, 0.01)
-      .name('Tone Mapping Exposure')
+      .name('Exposure')
       .onChange((value: number) => {
         this.postProcessing.updateExposure(value);
         this.saveSettings();
