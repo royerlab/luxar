@@ -63,10 +63,6 @@ def serve(
         port (int, optional): Port number. Defaults to 8000.
     """
     try:
-        if store.suffix == ".zip":
-            aprint("ZipStore not yet supported.")
-            typer.secho("ZipStore not yet supported.", fg=typer.colors.RED, err=True)
-            raise typer.Exit(1)
         aprint(f"Serving {store} at http://{host}:{port}/data/{store.name}/")
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
 

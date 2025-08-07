@@ -78,9 +78,12 @@ class Points(Node):
     Args:
         name (str): Name of the point cloud node.
         positions (NDArray[np.float32]): Array of shape (N, D) for point positions where D is dimensionality.
-        colors (NDArray[np.uint8], optional): Array of shape (N, 3) for point colors.
-        radii (NDArray[np.float32], optional): Array of shape (N,) for point radii.
-        sharpness (NDArray[np.float32], optional): Array of shape (N,) for point edge sharpness.
+        colors (NDArray[np.uint8] | tuple | list, optional): Array of shape (N, 3) for point colors,
+            or single RGB color as (R, G, B) tuple/list to apply to all points.
+        radii (NDArray[np.float32] | float, optional): Array of shape (N,) for point radii,
+            or single radius value to apply to all points.
+        sharpness (NDArray[np.float32] | float, optional): Array of shape (N,) for point edge sharpness,
+            or single sharpness value to apply to all points.
         parent (Node, optional): Parent node. Defaults to None.
         chunk_size (int, optional): Chunk size for Zarr dataset. Defaults to 32,768.
         compressor: Compressor for Zarr dataset. Defaults to DEFAULT_COMP.
@@ -112,9 +115,12 @@ class Points(Node):
         Args:
             name: Name of the point cloud node
             positions: Array of shape (N, D) for point positions where D is dimensionality
-            colors: Optional array of shape (N, 3) for point colors
-            radii: Optional array of shape (N,) for point radii
-            sharpness: Optional array of shape (N,) for point edge sharpness
+            colors: Optional array of shape (N, 3) for point colors, or single RGB color
+                as (R, G, B) tuple/list to apply to all points
+            radii: Optional array of shape (N,) for point radii, or single radius value
+                to apply to all points
+            sharpness: Optional array of shape (N,) for point edge sharpness, or single
+                sharpness value to apply to all points
             parent: Parent node in the scene graph
             chunk_size: Chunk size for Zarr dataset storage
             compressor: Compressor for Zarr dataset
@@ -136,17 +142,45 @@ class Points(Node):
             # Validate and convert colors if provided
             validated_colors: Optional[ColorArray] = None
             if colors is not None:
-                validated_colors = validate_colors(colors, n_points)
+                # Handle single color value (broadcast to all points)
+                if isinstance(colors, (list, tuple)) and len(colors) == 3:
+                    # Single RGB color as list/tuple
+                    color_array = np.array(colors, dtype=np.uint8)
+                    validated_colors = np.tile(color_array, (n_points, 1))
+                elif isinstance(colors, np.ndarray) and colors.shape == (3,):
+                    # Single RGB color as numpy array
+                    validated_colors = np.tile(colors.astype(np.uint8), (n_points, 1))
+                else:
+                    # Full color array
+                    validated_colors = validate_colors(colors, n_points)
 
             # Validate and convert radii if provided
             validated_radii: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
             if radii is not None:
-                validated_radii = validate_radii(radii, n_points)
+                # Handle single radius value (broadcast to all points)
+                if np.isscalar(radii) or (isinstance(radii, np.ndarray) and radii.shape == ()):
+                    # Single radius value
+                    radius_value = float(radii)
+                    if radius_value <= 0:
+                        raise ValueError("Radius must be positive")
+                    validated_radii = np.full(n_points, radius_value, dtype=np.float32)
+                else:
+                    # Full radius array
+                    validated_radii = validate_radii(radii, n_points)
 
             # Validate and convert sharpness if provided
             validated_sharpness: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
             if sharpness is not None:
-                validated_sharpness = validate_sharpness(sharpness, n_points)
+                # Handle single sharpness value (broadcast to all points)
+                if np.isscalar(sharpness) or (isinstance(sharpness, np.ndarray) and sharpness.shape == ()):
+                    # Single sharpness value
+                    sharpness_value = float(sharpness)
+                    if sharpness_value <= 0:
+                        raise ValueError("Sharpness must be positive")
+                    validated_sharpness = np.full(n_points, sharpness_value, dtype=np.float32)
+                else:
+                    # Full sharpness array
+                    validated_sharpness = validate_sharpness(sharpness, n_points)
 
             # Create or get Zarr group
             if parent is not None:

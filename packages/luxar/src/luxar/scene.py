@@ -155,9 +155,12 @@ class Scene(Node):
         Args:
             name: Name of the point cloud node
             positions: Array of shape (N, D) for point positions where D is dimensionality
-            colors: Optional array of shape (N, 3) for point colors
-            radii: Optional array of shape (N,) for point radii
-            sharpness: Optional array of shape (N,) for point edge sharpness
+            colors: Optional array of shape (N, 3) for point colors, or single RGB color
+                as (R, G, B) tuple/list to apply to all points
+            radii: Optional array of shape (N,) for point radii, or single radius value
+                to apply to all points  
+            sharpness: Optional array of shape (N,) for point edge sharpness, or single
+                sharpness value to apply to all points
             parent: Parent node, defaults to scene root
             dimension_metadata: Optional list of DimensionMetadata for each dimension
             **attrs: Additional attributes for the node. Supports:
