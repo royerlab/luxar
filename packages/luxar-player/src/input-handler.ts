@@ -305,6 +305,12 @@ export class InputHandler {
         this.toggleHelp();
         break;
 
+      case 'd':
+      case 'D':
+        event.preventDefault();
+        this.toggleDimensionSliders();
+        break;
+
       case 'p':
       case 'P':
         // Ctrl+P to toggle performance metrics
@@ -375,6 +381,15 @@ export class InputHandler {
       hideHelpOverlay();
     } else {
       showHelpOverlay();
+    }
+  }
+
+  /**
+   * Toggle dimension sliders visibility
+   */
+  private toggleDimensionSliders(): void {
+    if (this.dimensionSliders) {
+      this.dimensionSliders.toggle();
     }
   }
 

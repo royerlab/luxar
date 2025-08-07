@@ -34,7 +34,7 @@ export class PerformanceMonitor {
    * Setup the stats panel with custom styling and accessibility features
    *
    * This configures the stats.js panel for optimal visibility and usability:
-   * - Positions it in a non-intrusive location (top-left corner)
+   * - Positions it in a non-intrusive location (bottom-left corner)
    * - Sets appropriate z-index to appear above other UI elements
    * - Adds WCAG-compliant accessibility attributes
    * - Hides by default to avoid visual clutter
@@ -47,11 +47,15 @@ export class PerformanceMonitor {
     // Get the DOM element that stats.js creates internally
     const statsElement = this.stats.dom;
 
-    // Position the panel in top-left corner with fixed positioning
+    // Position the panel in bottom-left corner with fixed positioning
     // This ensures it stays visible during camera movements and zoom
     statsElement.style.position = 'fixed';
-    statsElement.style.top = '10px';
-    statsElement.style.left = '10px';
+    statsElement.style.bottom = '20px'; // Match dimension slider bottom margin
+    statsElement.style.left = '20px';   // Standard margin from edge
+    statsElement.style.top = 'auto';    // Ensure no top positioning
+    statsElement.style.right = 'auto';  // Ensure no right positioning
+    statsElement.style.width = 'auto';  // Use natural width
+    statsElement.style.height = 'auto'; // Use natural height
 
     // Set z-index higher than all other UI elements to ensure visibility
     // Help overlay uses 1001, so we use 2000 for performance stats
@@ -63,6 +67,28 @@ export class PerformanceMonitor {
     // Hidden by default - only shown when user explicitly requests it
     statsElement.style.display = 'none';
 
+    // Remove focus outlines to prevent blue selection box
+    statsElement.style.outline = 'none';
+    
+    // Add CSS to prevent blue selection on all child elements
+    const style = document.createElement('style');
+    style.textContent = `
+      #stats {
+        outline: none !important;
+      }
+      #stats * {
+        outline: none !important;
+        user-select: none !important;
+      }
+      #stats canvas {
+        outline: none !important;
+      }
+    `;
+    if (!document.getElementById('stats-custom-styles')) {
+      style.id = 'stats-custom-styles';
+      document.head.appendChild(style);
+    }
+
     // Add WCAG 2.1 accessibility attributes for screen readers
     // 'status' role indicates this contains status information that updates
     statsElement.setAttribute('role', 'status');
@@ -71,8 +97,8 @@ export class PerformanceMonitor {
       'Performance metrics: FPS, frame time, and memory usage'
     );
 
-    // Make focusable for keyboard navigation
-    statsElement.setAttribute('tabindex', '0');
+    // Remove tabindex to prevent focus and blue outline
+    // statsElement.setAttribute('tabindex', '0');
 
     // Inject into DOM - stats.js needs this to be in the document to function
     document.body.appendChild(statsElement);
@@ -122,10 +148,10 @@ export class PerformanceMonitor {
     this.isVisible = !this.isVisible;
     this.stats.dom.style.display = this.isVisible ? 'block' : 'none';
 
-    if (this.isVisible) {
-      // Focus for accessibility when shown
-      this.stats.dom.focus();
-    }
+    // Don't focus to avoid blue outline
+    // if (this.isVisible) {
+    //   this.stats.dom.focus();
+    // }
   }
 
   /**
