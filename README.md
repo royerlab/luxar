@@ -200,48 +200,68 @@ make help
 
 ## 📋 Data Format
 
-Luxar uses Zarr for efficient, chunked storage of large point cloud datasets.
+Luxar uses Zarr for efficient, chunked storage of large point cloud datasets with support for arbitrary dimensionality.
 
 ### Zarr Structure
 
 ```
-dataset.zarr/
-├── .zmetadata              # Consolidated metadata (optional)
-├── .zattrs                 # Root attributes
-├── positions/              # 3D coordinates (Float32, shape: [N, 3])
-│   ├── .zarray
-│   └── [chunks...]
-├── colors/                 # RGB colors (Uint8, shape: [N, 3]) - optional
-│   ├── .zarray
-│   └── [chunks...]
-├── radii/                  # Point radii (Float32, shape: [N]) - optional
-│   ├── .zarray
-│   └── [chunks...]
-├── sharpness/              # Point edge sharpness (Float32, shape: [N]) - optional
-│   ├── .zarray
-│   └── [chunks...]
-└── subgroup_name/          # Nested scene nodes
-    ├── .zattrs
-    ├── positions/
-    ├── colors/
-    └── radii/
+scene.zarr/
+├── .zattrs                 # Scene-level metadata (version, dimensions, units)
+├── .zgroup                 # Zarr group marker
+├── .zmetadata             # Consolidated metadata (created by finalize())
+└── <node_name>/           # Scene nodes (groups or point clouds)
+    ├── .zattrs            # Node metadata (type, transform, rendering)
+    ├── .zgroup            # Zarr group marker
+    ├── positions/         # nD coordinates (Float32, shape: [N, D])
+    │   ├── .zarray
+    │   └── [chunks...]
+    ├── colors/            # RGB colors (Uint8, shape: [N, 3]) - optional
+    │   ├── .zarray
+    │   └── [chunks...]
+    ├── radii/             # Point radii (Float32, shape: [N]) - optional
+    │   ├── .zarray
+    │   └── [chunks...]
+    ├── sharpness/         # Point edge sharpness (Float32, shape: [N]) - optional
+    │   ├── .zarray
+    │   └── [chunks...]
+    └── <child_nodes>/     # Nested child nodes (recursive structure)
 ```
 
 ### Attributes Schema
 
 ```json
 {
-  "type": "points",
-  "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]  // Optional 4x4 matrix
+  "luxar_version": "0.3",
+  "type": "scene|group|points",
+  "units": "um",  // Physical units
+  "scene_dimensions": {  // Scene-level coordinate system
+    "dimensions": [
+      {
+        "name": "x",
+        "unit": "um",
+        "range": [-100.0, 100.0],
+        "step": 1.0,
+        "display": true
+      }
+      // ... more dimensions
+    ]
+  },
+  "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix
+  "opacity": 1.0,  // 0.0-1.0
+  "gamma": 1.0,    // 0.2-2.0
+  "blending_mode": "additive"  // normal|additive|multiply|minimum|maximum
 }
 ```
 
+📚 **For complete format specification, see [LUXAR_ZARR_FORMAT.md](LUXAR_ZARR_FORMAT.md)**
+
 ### Performance Recommendations
 
-- **Chunk Size**: 64KB-1MB per chunk for optimal I/O
-- **Compression**: Use blosc compression for network efficiency
+- **Chunk Size**: Default 32KB elements, optimal range 64KB-1MB per chunk
+- **Compression**: Blosc with zstd level 3 and bit-shuffle for scientific data
 - **Point Count**: 100K-10M points per scene for smooth interaction
-- **Data Types**: Float32 for positions, Uint8 for colors
+- **Data Types**: Float32 for positions/radii/sharpness, Uint8 for colors
+- **Dimensionality**: Supports arbitrary nD points, viewer displays 3D slices
 
 ## 🎯 Use Cases
 
@@ -402,8 +422,8 @@ For detailed contributing guidelines, development setup, coding standards, and m
 
 ### Getting Started
 1. Run the basic demo: `luxar random --out demo.zarr --n 50000`
-2. Start the viewer: `cd packages/luxar-player && npm run dev`
-3. Load your data: `http://localhost:5173/?src=/path/to/demo.zarr`
+2. Start the viewer: `cd packages/luxar-player && pnpm dev`
+3. Load your data: `http://localhost:5173/?src=http://localhost:8000/data/demo.zarr/`
 
 ### Advanced Topics
 - Custom shader development for specialized rendering
