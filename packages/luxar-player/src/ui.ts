@@ -30,10 +30,10 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.left = '50%';
   loadingDiv.style.transform = 'translate(-50%, -50%)';
   loadingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-  loadingDiv.style.color = 'white';
+  loadingDiv.style.color = '#e0e0e0';
   loadingDiv.style.padding = '20px';
   loadingDiv.style.borderRadius = '8px';
-  loadingDiv.style.fontFamily = 'Arial, sans-serif';
+  loadingDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   loadingDiv.style.fontSize = '16px';
   loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
   loadingDiv.style.textAlign = 'center';
@@ -86,10 +86,10 @@ export function showError(message: string) {
   errorDiv.style.left = '50%';
   errorDiv.style.transform = 'translate(-50%, -50%)';
   errorDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
-  errorDiv.style.color = 'white';
+  errorDiv.style.color = '#e0e0e0';
   errorDiv.style.padding = '20px';
   errorDiv.style.borderRadius = '8px';
-  errorDiv.style.fontFamily = 'Arial, sans-serif';
+  errorDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   errorDiv.style.fontSize = '16px';
   errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
   errorDiv.style.maxWidth = '400px';
@@ -173,28 +173,29 @@ export function showHelpOverlay() {
   helpDiv.id = 'help-overlay';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-label', 'Controls help');
-  helpDiv.setAttribute('tabindex', '0');
   helpDiv.style.position = 'fixed';
   helpDiv.style.top = '20px';
   helpDiv.style.right = '20px';
-  helpDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
-  helpDiv.style.color = 'white';
-  helpDiv.style.padding = '20px';
+  helpDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+  helpDiv.style.color = '#e0e0e0';
+  helpDiv.style.padding = '15px';
   helpDiv.style.borderRadius = '8px';
-  helpDiv.style.fontFamily = 'Arial, sans-serif';
-  helpDiv.style.fontSize = '14px';
+  helpDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+  helpDiv.style.fontSize = '12px';
   helpDiv.style.zIndex = '1001';
-  helpDiv.style.maxWidth = '300px';
+  helpDiv.style.width = '300px';
   helpDiv.style.cursor = 'pointer';
+  helpDiv.style.backdropFilter = 'blur(10px)';
   helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+  helpDiv.style.outline = 'none'; // Remove focus outline
 
   const title = document.createElement('div');
   title.textContent = '3D Scene Controls';
-  title.style.fontSize = '16px';
+  title.style.fontSize = '14px';
   title.style.fontWeight = 'bold';
-  title.style.marginBottom = '15px';
-  title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.3)';
-  title.style.paddingBottom = '10px';
+  title.style.marginBottom = '10px';
+  title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+  title.style.paddingBottom = '6px';
 
   const controls = [
     '🖱️ Mouse drag: Rotate camera',
@@ -207,6 +208,7 @@ export function showHelpOverlay() {
     '🎨 Press Ctrl+A: Advanced rendering controls',
     '',
     '📐 nD Navigation (if applicable):',
+    '🎛️ Press D: Toggle dimension sliders',
     '🔢 Press 1-9: Select dimension to control',
     '⬅️➡️ Press [ / ]: Navigate selected dimension',
     '',
