@@ -242,7 +242,7 @@ export class DimensionSliders {
     progressBar.style.top = '0';
     progressBar.style.height = '100%';
     progressBar.style.backgroundColor = 'rgba(76, 175, 80, 0.3)';
-    progressBar.style.transition = 'width 0.1s ease-out';
+    progressBar.style.transition = 'width 0.003s ease-out';
     progressBar.style.pointerEvents = 'none';
 
     // Create range input
@@ -286,7 +286,7 @@ export class DimensionSliders {
     thumb.style.transform = 'translateY(-50%)';
     thumb.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)';
     thumb.style.pointerEvents = 'none';
-    thumb.style.transition = 'left 0.1s ease-out';
+    thumb.style.transition = 'left 0.003s ease-out';
 
     // Set initial value
     const currentValue = this.dims.currentStep[dimIndex];
