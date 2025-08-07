@@ -59,7 +59,7 @@ def create_test_points(time_positions: list, n_points_per_time: int = 30) -> tup
 
 def main():
     """Create a demonstration of radius-based slicing behavior."""
-    output_path = Path("radius_slicing_example.zarr")
+    output_path = Path(__file__).parent / "radius_slicing_example.zarr"
     aprint(f"Creating radius slicing example at {output_path}")
 
     # Define test cases with different radii

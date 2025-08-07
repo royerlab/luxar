@@ -74,7 +74,7 @@ export class RenderingControls {
     const bloomFolder = this.gui.addFolder('Bloom Effects');
     bloomFolder.open();
 
-    bloomFolder
+    const bloomThresholdControl = bloomFolder
       .add(this.settings, 'bloomThreshold', 0, 1, 0.01)
       .name('Threshold')
       .onChange((value: number) => {
@@ -82,8 +82,15 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip on the DOM element
+    bloomThresholdControl.domElement.setAttribute('title',
+      'Bloom Threshold: Minimum brightness for bloom\n' +
+      '• Only pixels brighter than this value will bloom\n' +
+      '• 0 = everything blooms, 1 = only brightest areas bloom\n' +
+      '• Use with HDR intensity for best results');
 
-    bloomFolder
+    const bloomStrengthControl = bloomFolder
       .add(this.settings, 'bloomStrength', 0, 2, 0.01)
       .name('Strength')
       .onChange((value: number) => {
@@ -91,8 +98,14 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip on the DOM element
+    bloomStrengthControl.domElement.setAttribute('title',
+      'Bloom Strength: Intensity of the glow effect\n' +
+      '• 0 = no bloom, 1 = normal, 2 = intense glow\n' +
+      '• Creates realistic light bleeding from bright areas');
 
-    bloomFolder
+    const bloomRadiusControl = bloomFolder
       .add(this.settings, 'bloomRadius', 0, 1, 0.01)
       .name('Radius')
       .onChange((value: number) => {
@@ -100,12 +113,19 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip on the DOM element
+    bloomRadiusControl.domElement.setAttribute('title',
+      'Bloom Radius: Size of the glow spread\n' +
+      '• 0 = tight glow, 1 = wide spread\n' +
+      '• Larger radius = softer, more diffuse glow\n' +
+      '• Affects computational cost');
 
     // HDR/Exposure folder
     const hdrFolder = this.gui.addFolder('HDR & Exposure');
     hdrFolder.open();
 
-    hdrFolder
+    const exposureControl = hdrFolder
       .add(this.settings, 'exposure', 0.1, 3, 0.01)
       .name('Exposure')
       .onChange((value: number) => {
@@ -113,9 +133,17 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip on the DOM element
+    exposureControl.domElement.setAttribute('title',
+      'Exposure: Controls overall image brightness (post-process)\n' +
+      '• Acts like a camera exposure setting\n' +
+      '• Applied AFTER HDR rendering during tone mapping\n' +
+      '• 1.0 = neutral, <1.0 = darker, >1.0 = brighter\n' +
+      '• Affects the entire image uniformly');
 
-    hdrFolder
-      .add(this.settings, 'hdrMultiplier', 1, 20, 0.1)
+    const hdrControl = hdrFolder
+      .add(this.settings, 'hdrMultiplier', 1, 100, 0.1)
       .name('HDR Intensity')
       .onChange((value: number) => {
         // Update shader config and trigger material updates
@@ -124,6 +152,14 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip on the DOM element
+    hdrControl.domElement.setAttribute('title',
+      'HDR Intensity: Multiplies point light emission (pre-process)\n' +
+      '• Controls how bright points can be in HDR space\n' +
+      '• Applied DURING rendering before tone mapping\n' +
+      '• Higher values = stronger glow/bloom effects\n' +
+      '• Can create values >1.0 for realistic bright sources');
 
     // Anti-aliasing folder
     const aaFolder = this.gui.addFolder('Anti-Aliasing');

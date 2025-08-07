@@ -17,7 +17,7 @@ from luxar import Scene
 
 def create_compensation_demo():
     """Create a grid of points with same radius but different sharpness values."""
-    output_path = Path("sharpness_compensation_example.zarr")
+    output_path = Path(__file__).parent / "sharpness_compensation_example.zarr"
 
     # Create scene
     scene = Scene(output_path)

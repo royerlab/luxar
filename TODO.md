@@ -118,6 +118,16 @@ Last updated from comprehensive codebase scan.
 - nD slicing algorithm tests
 - UI component interaction tests
 
+## Recently Completed Features
+
+### ✅ Dataset Navigation System (COMPLETED)
+- **Server-side**: Modified CLI to serve entire directories with HTML listing
+- **Client-side**: Created multi-strategy directory navigator service
+- **UI**: Built interactive dataset browser panel with breadcrumb navigation
+- **Detection strategies**: WebDAV, HTML parsing, index files, manual fallback
+- **Keyboard shortcut**: Press 'O' to open dataset browser
+- **Server-agnostic**: Works with any static file server (nginx, Apache, S3, etc.)
+
 ## Future Enhancements
 
 ### Data Format Extensions

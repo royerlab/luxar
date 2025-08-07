@@ -248,6 +248,15 @@ export class SceneDimsManager {
   }
 
   /**
+   * Reset the dimension manager to initial state
+   */
+  reset(): void {
+    this.dims = null;
+    this.listeners.clear();
+    console.log('Scene dimension manager reset');
+  }
+
+  /**
    * Extracts human-readable names for all dimensions.
    * 
    * Provides fallback names when metadata doesn't specify custom names.

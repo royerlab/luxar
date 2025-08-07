@@ -47,7 +47,7 @@ def random(
 # ────────────────────────────── serve ────────────────────────────────────────
 @app.command()
 def serve(
-    store: Path = typer.Argument(..., exists=True, readable=True),
+    path: Path = typer.Argument(..., exists=True, readable=True),
     host: str = typer.Option(
         "127.0.0.1",
         "--host",
@@ -55,15 +55,103 @@ def serve(
     ),
     port: int = typer.Option(8000, "--port", "-p"),
 ) -> None:
-    """Serve a Zarr scene using FastAPI and Uvicorn.
+    """Serve a directory or Zarr dataset via HTTP with directory listing support.
 
     Args:
-        store (Path): Path to the Zarr store to serve.
+        path (Path): Path to directory or Zarr dataset to serve.
         host (str, optional): Host address. Defaults to "127.0.0.1".
         port (int, optional): Port number. Defaults to 8000.
     """
     try:
-        aprint(f"Serving {store} at http://{host}:{port}/data/{store.name}/")
+        # Determine what we're serving
+        if path.is_dir():
+            serve_path = path
+            if path.name.endswith('.zarr'):
+                aprint(f"Serving Zarr dataset: {path}")
+            else:
+                aprint(f"Serving directory: {path}")
+        else:
+            aprint(f"Error: {path} is not a directory")
+            raise typer.Exit(1)
+
+
+        from starlette.responses import (
+            FileResponse,
+            HTMLResponse,
+            JSONResponse,
+        )
+
+        # Create custom static files handler with directory listing
+        class DirectoryListingStaticFiles(StaticFiles):
+            """Static files handler with JSON directory listing support."""
+
+            async def get_response(self, path: str, scope):
+                """Override to provide directory listing."""
+                # Handle OPTIONS requests for CORS
+                if scope.get("method") == "OPTIONS":
+                    from starlette.responses import Response
+                    return Response(
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                            "Access-Control-Allow-Headers": "*",
+                        }
+                    )
+
+                full_path = self.directory / path if path else self.directory
+
+                # Handle .zgroup files for zarr directories
+                if path.endswith(".zgroup") and full_path.exists() and full_path.is_file():
+                    return FileResponse(full_path)
+
+                # If it's a directory, provide listing
+                if full_path.exists() and full_path.is_dir():
+                    # Check Accept header
+                    headers = dict(scope.get("headers", []))
+                    accept = headers.get(b"accept", b"").decode("utf-8")
+
+                    # Generate directory listing
+                    entries = []
+                    try:
+                        for item in sorted(full_path.iterdir()):
+                            # Skip hidden files except .zgroup
+                            if item.name.startswith('.') and item.name != '.zgroup':
+                                continue
+
+                            item_type = "directory" if item.is_dir() else "file"
+                            # Check if it's a zarr directory
+                            if item.is_dir() and item.name.endswith('.zarr'):
+                                item_type = "zarr"
+                            elif item.is_dir() and (item / ".zgroup").exists():
+                                item_type = "zarr"
+
+                            entries.append({
+                                "name": item.name,
+                                "type": item_type,
+                                "size": item.stat().st_size if item.is_file() else None
+                            })
+                    except PermissionError:
+                        return Response("Permission denied", status_code=403)
+
+                    # Return JSON for API requests
+                    if "application/json" in accept:
+                        return JSONResponse({"entries": entries})
+
+                    # Return HTML for browser requests
+                    html_content = "<html><body><h1>Directory Listing</h1><ul>"
+                    if path:
+                        html_content += '<li><a href="../">../</a></li>'
+                    for entry in entries:
+                        name = entry["name"]
+                        if entry["type"] in ("directory", "zarr"):
+                            name += "/"
+                        html_content += f'<li><a href="{name}">{name}</a></li>'
+                    html_content += "</ul></body></html>"
+                    return HTMLResponse(content=html_content)
+
+                # Fall back to default static file serving
+                return await super().get_response(path, scope)
+
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
 
         # Add CORS middleware to allow requests from the viewer
@@ -75,15 +163,22 @@ def serve(
             allow_headers=["*"],
         )
 
-        api.mount("/data", StaticFiles(directory=store.parent, html=False))
+        # Mount the static files handler with directory listing
+        api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
+
         typer.secho(
-            f"🛰️  Serving {store} at http://{host}:{port}/data/{store.name}/",
+            f"🛰️  Serving {serve_path} at http://{host}:{port}/",
             fg=typer.colors.CYAN,
             bold=True,
         )
+        typer.secho(
+            f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{port}/",
+            fg=typer.colors.GREEN,
+        )
+
         uvicorn.run(api, host=host, port=port, reload=False, log_level="info")
     except Exception as e:
-        aprint(f"Error serving Zarr store: {e}")
+        aprint(f"Error serving path: {e}")
         typer.secho(f"Error: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 

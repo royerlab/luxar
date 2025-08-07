@@ -151,7 +151,4 @@ export interface AppConfig {
   renderingControls: RenderingControlsConfig;
   defaultZarrPath: string;
   canvasId: string;
-  accessibility: {
-    canvasAriaLabel: string;
-  };
 }
