@@ -168,7 +168,7 @@ def create_layered_spheres_example(
 
 def main():
     """Run the radius showcase example."""
-    output_path = Path("radius_showcase_example.zarr")
+    output_path = Path(__file__).parent / "radius_showcase_example.zarr"
 
     aprint(f"Creating radius showcase example at {output_path}")
     aprint(

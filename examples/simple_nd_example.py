@@ -98,7 +98,7 @@ def create_5d_grid(
 
 def main():
     """Create a simple nD example for learning dimension navigation."""
-    output_path = Path("simple_nd_example.zarr")
+    output_path = Path(__file__).parent / "simple_nd_example.zarr"
     aprint(f"Creating simple nD example at {output_path}")
 
     # Dataset parameters

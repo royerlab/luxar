@@ -22,9 +22,6 @@ export function showLoadingIndicator(): HTMLElement {
 
   const loadingDiv = document.createElement('div');
   loadingDiv.id = 'loading-indicator';
-  loadingDiv.setAttribute('role', 'status');
-  loadingDiv.setAttribute('aria-live', 'polite');
-  loadingDiv.setAttribute('aria-label', 'Loading 3D scene');
   loadingDiv.style.position = 'fixed';
   loadingDiv.style.top = '50%';
   loadingDiv.style.left = '50%';
@@ -39,7 +36,6 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.textAlign = 'center';
 
   const spinner = document.createElement('div');
-  spinner.setAttribute('aria-hidden', 'true');
   spinner.style.border = '3px solid rgba(255, 255, 255, 0.3)';
   spinner.style.borderTop = '3px solid white';
   spinner.style.borderRadius = '50%';
@@ -77,10 +73,7 @@ export function showError(message: string) {
 
   const errorDiv = document.createElement('div');
   errorDiv.id = 'error-message';
-  errorDiv.setAttribute('role', 'alert');
-  errorDiv.setAttribute('aria-live', 'assertive');
-  errorDiv.setAttribute('aria-label', 'Error message');
-  errorDiv.setAttribute('tabindex', '0');
+  errorDiv.style.outline = 'none'; // Remove focus outline
   errorDiv.style.position = 'fixed';
   errorDiv.style.top = '50%';
   errorDiv.style.left = '50%';
@@ -135,9 +128,6 @@ export function showError(message: string) {
   }, UI_CONFIG.timings.errorAutoDismissMs);
 
   document.body.appendChild(errorDiv);
-
-  // Focus the error for screen readers
-  errorDiv.focus();
 }
 
 // Function to clean up UI resources
@@ -177,8 +167,6 @@ export function showHelpOverlay() {
 
   const helpDiv = document.createElement('div');
   helpDiv.id = 'help-overlay';
-  helpDiv.setAttribute('role', 'dialog');
-  helpDiv.setAttribute('aria-label', 'Controls help');
   helpDiv.style.position = 'fixed';
   helpDiv.style.top = '20px';
   helpDiv.style.right = '20px';
@@ -193,7 +181,7 @@ export function showHelpOverlay() {
   helpDiv.style.cursor = 'pointer';
   helpDiv.style.backdropFilter = 'blur(10px)';
   helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-  helpDiv.style.outline = 'none'; // Remove focus outline
+  helpDiv.style.outline = 'none !important'; // Remove focus outline
 
   const title = document.createElement('div');
   title.textContent = '3D Scene Controls';
@@ -210,6 +198,7 @@ export function showHelpOverlay() {
     '🖱️ Right drag: Pan camera',
     '⎵ Press Space: Toggle fullscreen',
     '❓ Press H: Toggle this help',
+    '📁 Press O: Open dataset browser',
     '📊 Press Ctrl+P: Toggle performance stats',
     '🎨 Press Ctrl+A: Advanced rendering controls',
     '',
@@ -277,9 +266,6 @@ export function showHelpOverlay() {
   setTimeout(() => {
     document.addEventListener('click', handleDocumentClick);
   }, UI_CONFIG.timings.helpClickDelayMs);
-
-  // Focus the help overlay for accessibility
-  helpDiv.focus();
 }
 
 // Function to hide help overlay
@@ -287,5 +273,13 @@ export function hideHelpOverlay() {
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
     helpDiv.remove();
+  }
+}
+
+// Function to clear any existing error messages
+export function clearError() {
+  const errorDiv = document.getElementById('error-message');
+  if (errorDiv) {
+    errorDiv.remove();
   }
 }

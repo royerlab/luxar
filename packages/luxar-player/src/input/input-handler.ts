@@ -93,6 +93,23 @@ export class InputHandler {
   }
 
   /**
+   * Clear dimension UI and reset dimension manager
+   */
+  clearDimensionUI(): void {
+    // Dispose of existing dimension sliders
+    if (this.dimensionSliders) {
+      this.dimensionSliders.dispose();
+      this.dimensionSliders = undefined;
+    }
+    
+    // Reset the scene dimension manager
+    sceneDimsManager.reset();
+    
+    // Reset selected dimension
+    this.selectedDimension = 0;
+  }
+
+  /**
    * Initializes dimension navigation UI after scene loading completes.
    * 
    * This method is called after the scene is fully loaded and dimension
@@ -317,6 +334,13 @@ export class InputHandler {
       case 'D':
         event.preventDefault();
         this.toggleDimensionSliders();
+        break;
+
+      case 'o':
+      case 'O':
+        // O key to open dataset browser
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('open-dataset-browser'));
         break;
 
       case 'p':

@@ -66,7 +66,7 @@ DEFAULT_COMPRESSION_LEVEL: Final[int] = 3
 # Supported physical units
 SUPPORTED_UNITS: Final[tuple[PhysicalUnit, ...]] = (
     "nm",    # nanometer
-    "um",    # micrometer  
+    "um",    # micrometer
     "mm",    # millimeter
     "cm",    # centimeter
     "m",     # meter (short form)

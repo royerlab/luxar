@@ -101,17 +101,7 @@ export class SceneManager {
       canvas: this.canvasElement, // Use our pre-existing canvas element
     });
 
-    // Configure canvas for accessibility and keyboard interaction
-    // tabindex='0' makes the canvas focusable via keyboard navigation
-    this.renderer.domElement.setAttribute('tabindex', '0');
-
-    // role='img' tells screen readers this is an image/graphic content
-    this.renderer.domElement.setAttribute('role', 'img');
-
-    // Descriptive label for screen readers explaining the 3D controls
-    this.renderer.domElement.setAttribute('aria-label', config.accessibility.canvasAriaLabel);
-
-    // Remove browser default focus outline since we handle focus visually
+    // Remove browser default focus outline
     this.renderer.domElement.style.outline = 'none';
 
     // Configure page for immersive fullscreen 3D experience
@@ -195,6 +185,33 @@ export class SceneManager {
   }
 
   /**
+   * Reset controls to default state
+   * This is needed when loading a new dataset to prevent accumulated transformations
+   */
+  private resetControls(): void {
+    // Reset camera to default position
+    this.camera.position.set(
+      config.camera.initialPosition.x,
+      config.camera.initialPosition.y,
+      config.camera.initialPosition.z
+    );
+    
+    // Reset camera rotation to look at origin
+    this.camera.lookAt(0, 0, 0);
+    
+    // Reset controls target to origin
+    (this.controls as any).target.set(0, 0, 0);
+    
+    // Reset any internal state of ArcballControls
+    this.controls.reset();
+    
+    // Update controls to apply changes
+    this.controls.update();
+    
+    console.log('✓ Controls reset to default state');
+  }
+
+  /**
    * Initialize HDR post-processing pipeline for advanced visual effects
    *
    * This creates a sophisticated rendering chain:
@@ -233,6 +250,12 @@ export class SceneManager {
     showLoadingIndicator();
 
     try {
+      // Clear existing scene content (keep lights and background)
+      this.clearSceneContent();
+      
+      // Reset controls to default state before loading new content
+      this.resetControls();
+      
       const root = await loadScene(src);
       hideLoadingIndicator();
       this.scene.add(root);
@@ -246,11 +269,61 @@ export class SceneManager {
       throw error;
     }
   }
+
+  /**
+   * Clear all loaded content from the scene, keeping lights and background
+   */
+  private clearSceneContent(): void {
+    // Helper function to recursively dispose of objects
+    const disposeObject = (obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(m => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      }
+      
+      // Recursively dispose children
+      while (obj.children.length > 0) {
+        disposeObject(obj.children[0]);
+        obj.remove(obj.children[0]);
+      }
+    };
+    
+    // Find all objects to remove (direct children of scene)
+    const objectsToRemove: THREE.Object3D[] = [];
+    
+    for (let i = this.scene.children.length - 1; i >= 0; i--) {
+      const child = this.scene.children[i];
+      
+      // Keep lights and any background/environment objects
+      if (child instanceof THREE.Light) continue;
+      if (child.userData?.isBackground) continue;
+      
+      // Mark everything else for removal
+      objectsToRemove.push(child);
+    }
+    
+    // Remove and dispose marked objects
+    for (const obj of objectsToRemove) {
+      disposeObject(obj);
+      this.scene.remove(obj);
+    }
+    
+    console.log(`Cleared ${objectsToRemove.length} objects from scene`);
+  }
   
   /**
    * Center camera on the bounding box of all visible objects
    */
   public centerCameraOnScene(): void {
+    // Ensure world matrices are up to date before computing bounds
+    this.scene.updateMatrixWorld(true);
+    
     // Create a bounding box that encompasses all visible objects
     const box = new THREE.Box3();
     let totalPointCount = 0;
@@ -311,6 +384,8 @@ export class SceneManager {
       // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
       (this.controls as any).target.copy(center);
       this.controls.update();
+      
+      console.log(`✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`);
     } else {
       console.warn('No visible geometry found to center camera on');
     }
