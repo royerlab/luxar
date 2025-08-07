@@ -61,6 +61,7 @@ Before committing, ensure overall consistency:
 - Update README.md files if functionality changed
 - Update examples if APIs changed
 - Check that documentation reflects the current state
+- Update LUXAR_ZARR_FORMAT.md if the data format changes
 - Verify that new features have appropriate tests
 - Run linting and type checking (`make check`)
 
@@ -140,9 +141,10 @@ When making significant changes:
 3. Check Python linting: `hatch run python -m ruff check .`
 4. Fix TypeScript unused warnings by prefixing with underscore
 5. Update relevant documentation (README.md, API docs, docstrings)
-6. Add/update examples if introducing new features
-7. Run integration tests on all examples
-8. Update this CLAUDE.md file with important learnings
+6. Update LUXAR_ZARR_FORMAT.md if adding new data fields or changing the format
+7. Add/update examples if introducing new features
+8. Run integration tests on all examples
+9. Update this CLAUDE.md file with important learnings
 
 ### TypeScript Quality Checks
 After making changes, run:

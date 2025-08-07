@@ -7,7 +7,7 @@
 // - Configurable point sizes and falloff parameters
 
 import * as THREE from 'three';
-import { config } from './config';
+import { config } from '../config';
 
 /**
  * Configuration for shader-based point rendering

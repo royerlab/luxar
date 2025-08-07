@@ -1,11 +1,11 @@
 // Main application class for the Luxar scene player
 
-import { SceneManager } from './scene-manager';
-import { AnimationController } from './animation-controller';
-import { InputHandler } from './input-handler';
-import { RenderingControls } from './rendering-controls';
-import { cleanupUI } from './ui';
-import { config } from './config';
+import { SceneManager } from '../scene/scene-manager';
+import { AnimationController } from '../scene/animation-controller';
+import { InputHandler } from '../input/input-handler';
+import { RenderingControls } from '../ui/rendering-controls';
+import { cleanupUI } from '../ui/helpers';
+import { config } from '../config';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;

@@ -1,5 +1,5 @@
-import { SimpleDims } from './types/dims';
-import { sceneDimsManager } from './scene-dims-manager';
+import { SimpleDims } from '../types/dims';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 /**
  * Configuration interface for initializing dimension sliders.

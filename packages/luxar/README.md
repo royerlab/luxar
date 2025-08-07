@@ -44,12 +44,15 @@ colors = (np.random.rand(1_000_000, 3) * 255).astype(np.uint8)
 radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
 scene.add_points("TimeSeriesData", positions, colors=colors, radii=radii)
 
-# Add hierarchical organization
+# Add hierarchical organization  
 group = scene.add_group("Experiment1")
 scene.add_points("Measurement", positions2, colors2, parent=group)
 
 # Finalize (consolidates metadata for fast loading)
 scene.finalize()
+
+# Serve for visualization
+# luxar serve my_dataset.zarr
 ```
 
 ## 🏗️ Architecture
@@ -140,16 +143,24 @@ scene = Scene("multidimensional.zarr", dimensions=dimensions)
 Enhanced point cloud visualization with per-point attributes:
 
 ```python
-# Generate 6D data (x, y, z, time, channel, depth)
-positions = np.random.randn(100_000, 6).astype(np.float32)
+# Generate 5D data (time, z, x, y, channel) 
+n_points = 50_000
+positions = np.random.randn(n_points, 5).astype(np.float32)
+
+# Scale to fit dimension ranges
+positions[:, 0] *= 5      # time: -5 to 5
+positions[:, 1] *= 25     # z: -25 to 25  
+positions[:, 2] *= 50     # x: -50 to 50
+positions[:, 3] *= 50     # y: -50 to 50
+positions[:, 4] = np.random.choice([0, 1, 2], n_points)  # discrete channels
 
 # Per-point attributes
-colors = np.random.randint(0, 255, (100_000, 3), dtype=np.uint8)
-radii = np.random.uniform(0.1, 2.0, 100_000).astype(np.float32)
-sharpness = np.random.uniform(0.5, 10.0, 100_000).astype(np.float32)
+colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
+radii = np.random.uniform(0.1, 2.0, n_points).astype(np.float32)
+sharpness = np.random.uniform(0.5, 10.0, n_points).astype(np.float32)
 
 scene.add_points(
-    "PointCloud6D",
+    "PointCloud5D",
     positions,
     colors=colors,
     radii=radii,
@@ -192,7 +203,16 @@ class Scene:
         """
     
     def add_group(self, name: str, **attrs) -> Node:
-        """Add a group node for organization."""
+        """Add a group node for organization.
+        
+        Args:
+            name: Group node name
+            **attrs: Additional attributes including:
+                opacity: float (0.0-1.0, default 1.0) - Node opacity
+                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum", default "additive")
+                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
+        """
     
     def add_points(
         self, 
@@ -213,7 +233,11 @@ class Scene:
             radii: Per-point radii for size control
             sharpness: Edge falloff (0.5-10.0)
             parent: Parent node in hierarchy
-            **attrs: Additional attributes
+            **attrs: Additional attributes including:
+                opacity: float (0.0-1.0, default 1.0) - Node opacity
+                gamma: float (0.2-2.0, default 1.0) - Gamma correction  
+                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum", default "additive")
+                transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
     
     def finalize(self) -> None:
@@ -287,6 +311,78 @@ class Dimension:
         """
 ```
 
+## 🖥️ Command Line Interface
+
+Luxar provides a CLI for common operations:
+
+```bash
+# Serve a Zarr dataset for visualization
+luxar serve dataset.zarr
+
+# Create a random demo dataset
+luxar random --out demo.zarr --n 100000
+
+# Build a scene from a Python script
+luxar build scene_script.py
+
+# Get information about a dataset
+luxar info dataset.zarr
+```
+
+**Serving datasets:**
+- `luxar serve <path.zarr>` - Start HTTP server for dataset  
+- Use `--port` to specify port (default: 8000)
+- Use `--host` to bind to specific interface
+
+**Creating demo data:**
+- `luxar random --out <path.zarr>` - Create Lorenz attractor demo
+- Use `--n` to specify number of points (default: 10,000)
+- Use `--seed` for reproducible results
+
+## 🎨 Rendering Attributes
+
+Control the visual appearance of nodes with rendering attributes:
+
+```python
+from luxar import Scene
+
+scene = Scene("styled_scene.zarr")
+
+# Add points with custom rendering
+points = scene.add_points(
+    "StyledPoints",
+    positions,
+    colors=colors,
+    opacity=0.8,           # Semi-transparent (0.0-1.0)
+    gamma=1.5,             # Brighter gamma correction (0.2-2.0)
+    blending_mode="normal" # Use normal blending instead of additive
+)
+
+# Modify rendering after creation
+points.opacity = 0.5
+points.gamma = 0.8
+points.blending_mode = "multiply"
+
+# Chain modifications
+points.set_opacity(0.7).set_gamma(1.2).set_blending_mode("additive")
+
+# Apply to groups as well
+group = scene.add_group(
+    "TransparentGroup",
+    opacity=0.6,
+    blending_mode="normal"
+)
+
+scene.finalize()
+```
+
+**Blending Modes:**
+- `"additive"` (default): HDR additive blending, good for glowing effects
+- `"normal"`: Standard alpha blending
+- `"multiply"`: Multiplicative blending, creates darkening effects
+- `"minimum"`: Takes minimum values, creates intersection effects
+- `"maximum"`: Takes maximum values, creates union effects
+
 ## 🔬 Advanced Usage
 
 ### Custom Chunking Strategy
@@ -353,7 +449,11 @@ uniform_scale = transforms.scale(uniform=0.5)     # Scale uniformly by 0.5
 # Compose multiple transforms (applied left-to-right)
 combined = transforms.compose(translation, rotation, scaling)
 
-# Apply transforms to groups
+# Apply transforms to groups (transforms must be converted to list format)
+group = scene.add_group("MyGroup")
+group.transform = combined  # Can set directly as matrix
+
+# OR during creation
 group = scene.add_group("MyGroup", transform=transforms.to_list(combined))
 
 # Or use the transform property
@@ -467,14 +567,14 @@ def process_in_chunks(scene_path: str, chunk_size: int = 1_000_000):
 ## 🧪 Testing
 
 ```bash
-# Run test suite
-pytest packages/luxar/src/luxar/tests/
+# Run test suite with Hatch
+hatch run test
 
 # With coverage
-pytest --cov=luxar --cov-report=html
+hatch run test-cov
 
-# Run specific test
-pytest -xvs tests/test_scene_structure.py::test_hierarchical_scene
+# Run specific test pattern
+hatch run test -- -k test_hierarchical_scene
 ```
 
 ## 🛠️ Development
@@ -484,18 +584,17 @@ pytest -xvs tests/test_scene_structure.py::test_hierarchical_scene
 The project enforces strict code quality standards:
 
 ```bash
-# Format code
-black packages/luxar/src/
-isort packages/luxar/src/
+# Format code (use Hatch environment)
+hatch run ruff format packages/luxar/src/
 
-# Type checking
-mypy packages/luxar/src/luxar/
+# Type checking  
+hatch run type-check
 
 # Linting
-flake8 packages/luxar/src/
+hatch run lint
 
-# All checks
-make check
+# All checks with Hatch
+hatch run lint && hatch run type-check
 ```
 
 ### Adding New Features
@@ -574,4 +673,4 @@ Luxar Core is part of the Luxar project. See the main [LICENSE](../../LICENSE) f
 - [Luxar Player README](../luxar-player/README.md) - WebGL renderer documentation
 - [Main README](../../README.md) - Ecosystem overview
 - [Zarr Documentation](https://zarr.readthedocs.io/) - Storage format details
-- [Examples](examples/) - Code examples and tutorials
+- [Examples](../../examples/) - Code examples and tutorials

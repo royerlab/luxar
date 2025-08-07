@@ -16,12 +16,15 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🎛️ nD Navigation**: Beautiful dimension sliders UI for exploring higher-dimensional data
 - **🔍 Radius-Based Slicing**: Natural visualization of nD points as hyperspheres
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
+- **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
+- **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
+- **🎯 Material Caching**: Optimized material management with intelligent caching strategy
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 18+ and pnpm (preferred package manager)
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
@@ -33,10 +36,10 @@ git clone <repository-url>
 cd luxar/packages/luxar-player
 
 # Install dependencies
-npm install
+pnpm install
 
 # Start development server
-npm run dev
+pnpm dev
 ```
 
 The viewer will be available at `http://localhost:5173`
@@ -151,66 +154,108 @@ Points in nD space are treated as hyperspheres. When viewing a 3D slice:
 // Sliders update automatically
 ```
 
+## 🎛️ Advanced Rendering Controls
+
+The advanced rendering controls panel (located on the left side) provides real-time adjustment of:
+
+### Visual Effects
+- **Bloom Settings**: Threshold, strength, radius, and resolution scale
+- **HDR Controls**: Exposure and tone mapping parameters
+- **Point Rendering**: HDR multiplier and falloff parameters
+
+### Anti-Aliasing Options
+- **FXAA**: Fast approximate anti-aliasing (recommended for additive blending)
+- **MSAA**: Multi-sample anti-aliasing with sample count selection (2x, 4x, 8x)
+- **SMAA**: Subpixel morphological anti-aliasing with threshold and search steps
+- **SSAA**: Super-sample anti-aliasing with resolution multipliers (1.5x, 2x, 4x)
+
+### Performance Features
+- **Real-time preview**: Changes are applied immediately with smooth animations
+- **Settings persistence**: User preferences are saved between sessions
+- **Performance impact indicators**: Visual feedback on rendering cost
+- **Preset management**: Quick access to optimized configurations
+
 ## 🛠️ Development
 
 ### Project Structure
 
 ```
 src/
-├── main.ts                    # Application entry point
-├── app.ts                     # Main application class
-├── scene-manager.ts           # 3D scene and renderer setup
-├── scene-dims-manager.ts      # Scene-level dimension state management
-├── post-processing.ts         # HDR pipeline and bloom effects
-├── animation-controller.ts    # Render loop and performance
-├── input-handler.ts           # User interaction handling
-├── dimension-sliders.ts       # nD navigation UI components
-├── shader-manager.ts          # Custom GLSL shaders
-├── zarr_loader.ts            # Zarr dataset loading with nD support
-├── ui.ts                     # User interface components
-├── performance-monitor.ts     # FPS and timing metrics
-├── config.ts                 # Configuration constants
-├── types/                     # TypeScript type definitions
-│   └── dims.ts               # Dimension type definitions
-└── utils/                     # Utility functions
-    ├── slicing.ts            # nD slicing algorithms
-    └── dims-navigation.ts    # Dimension navigation helpers
+├── core/
+│   ├── main.ts                    # Application entry point
+│   └── app.ts                     # Main application class
+├── config/
+│   ├── index.ts                   # Unified configuration system
+│   └── types.ts                   # Configuration type definitions
+├── scene/
+│   ├── scene-manager.ts           # 3D scene and renderer setup
+│   ├── scene-dims-manager.ts      # Scene-level dimension state management
+│   └── animation-controller.ts    # Render loop and performance
+├── rendering/
+│   ├── post-processing.ts         # HDR pipeline and bloom effects
+│   ├── shader-manager.ts          # Custom GLSL shaders
+│   └── material-manager.ts        # Material caching and optimization
+├── data/
+│   └── zarr-loader.ts            # Zarr dataset loading with nD support
+├── input/
+│   └── input-handler.ts           # User interaction handling
+├── ui/
+│   ├── dimension-sliders.ts       # nD navigation UI components
+│   ├── performance-monitor.ts     # FPS and timing metrics
+│   └── rendering-controls.ts      # Advanced rendering controls panel
+├── types/
+│   └── dims.ts                   # Dimension type definitions
+└── utils/
+    ├── slicing.ts                # nD slicing algorithms
+    └── dims-navigation.ts        # Dimension navigation helpers
 ```
 
 ### Available Scripts
 
 ```bash
 # Development
-npm run dev          # Start development server with hot reload
-npm run build        # Build for production
-npm run preview      # Preview production build
+pnpm dev             # Start development server with hot reload
+pnpm build           # Build for production
+pnpm preview         # Preview production build
 
 # Code Quality
-npm run lint         # Run ESLint
-npm run typecheck    # Run TypeScript type checking
-npm run format       # Format code with Prettier
+pnpm lint            # Run ESLint
+pnpm typecheck       # Run TypeScript type checking
+pnpm format          # Format code with Prettier
+pnpm check           # Run all quality checks (typecheck + lint + test)
 
 # Testing
-npm run test         # Run unit tests (if configured)
+pnpm test            # Run unit tests with Vitest
+pnpm test:coverage   # Run tests with coverage report
+pnpm test:ui         # Run tests with interactive UI
+pnpm test:watch      # Run tests in watch mode
 ```
 
 ### Configuration
 
-Edit `src/config.ts` to customize:
+Luxar Player uses a unified configuration system in `src/config/`. Edit `src/config/index.ts` to customize:
 
 ```typescript
-export const CONFIG = {
-  CAMERA: {
-    FOV: 60,                    // Field of view (degrees)
-    INITIAL_POSITION: { x: 0, y: 0, z: 8 },
-    FOV_MIN: 10,
-    FOV_MAX: 200,
+export const config: AppConfig = {
+  camera: {
+    fov: 60,                    // Field of view (degrees)
+    initialPosition: { x: 0, y: 0, z: 8 },
+    fovMin: 10,
+    fovMax: 200,
   },
-  SCENE: {
-    BACKGROUND_COLOR: 0x111111,  // Dark gray background
+  scene: {
+    backgroundColor: 0x111111,  // Dark gray background
   },
-  ANIMATION: {
-    IDLE_TIMEOUT_MS: 2000,      // Auto-pause after 2 seconds
+  animation: {
+    idleTimeoutMs: 2000,       // Auto-pause after 2 seconds
+  },
+  renderingControls: {
+    defaults: {
+      fxaaEnabled: true,        // FXAA anti-aliasing (recommended)
+      msaaEnabled: false,       // MSAA (has brightness issues with additive blending)
+      ssaaEnabled: false,       // SSAA (has brightness issues with additive blending)
+      // ... more rendering options
+    },
   },
   // ... more options
 };
@@ -218,21 +263,35 @@ export const CONFIG = {
 
 ## 🔧 Advanced Usage
 
-### Custom Shader Parameters
+### Material Caching System
 
-Modify `src/shader-manager.ts` to adjust point rendering:
+The material manager in `src/rendering/material-manager.ts` provides optimized material handling:
 
 ```typescript
-export const SHADER_CONFIG = {
-  POINTS: {
-    SIZE: 8.0,                  // Default point size in pixels
-    HDR_MULTIPLIER: 13.0,       // Bloom intensity
-    BASE_ALPHA: 0.01,           // Base transparency
-    FALLOFF_STEEPNESS: 20.0,    // Edge softness
-    DEFAULT_RADIUS: 1.0,        // Default point radius
-    DEFAULT_SHARPNESS: 2.0,     // Default edge falloff
+// Supported blending modes
+type BlendingMode = 'normal' | 'additive' | 'multiply' | 'minimum' | 'maximum';
+
+// Materials are automatically cached based on properties
+const material = materialManager.getMaterial({
+  blendingMode: 'additive',
+  opacity: 1.0,
+  gamma: 2.2,
+});
+```
+
+### Custom Shader Parameters
+
+Modify shader configuration in `src/config/index.ts`:
+
+```typescript
+shader: {
+  points: {
+    size: 8.0,                  // Default point size in pixels
+    hdrMultiplier: 13.0,        // Bloom intensity
+    baseAlpha: 0.01,            // Base transparency
+    falloffSteepness: 20.0,     // Edge softness
   },
-};
+},
 ```
 
 Point rendering now supports per-point attributes:
@@ -242,18 +301,45 @@ Point rendering now supports per-point attributes:
 
 ### HDR Post-Processing
 
-Customize bloom effects in `src/post-processing.ts`:
+Customize bloom effects in `src/config/index.ts`:
 
 ```typescript
-export const POST_PROCESSING_CONFIG = {
-  BLOOM: {
-    THRESHOLD: 0.0,             // Bloom threshold (0.0 = everything glows)
-    STRENGTH: 0.1,              // Bloom intensity
-    RADIUS: 0.5,                // Bloom spread
-    RESOLUTION_SCALE: 4,        // Performance vs quality
+postProcessing: {
+  bloom: {
+    threshold: 0.01,            // Bloom threshold (0.0 = everything glows)
+    strength: 0.1,              // Bloom intensity
+    radius: 0.5,                // Bloom spread
+    resolutionScale: 4,         // Performance vs quality
   },
-};
+  toneMapping: {
+    final: {
+      outputColorSpace: THREE.SRGBColorSpace,
+      toneMapping: THREE.ACESFilmicToneMapping,
+    },
+  },
+},
 ```
+
+### Anti-Aliasing Configuration
+
+Luxar Player supports multiple anti-aliasing techniques with important compatibility notes:
+
+```typescript
+renderingControls: {
+  defaults: {
+    fxaaEnabled: true,          // FXAA: Works well with additive blending
+    msaaEnabled: false,         // MSAA: Causes brightness issues with additive blending
+    ssaaEnabled: false,         // SSAA: Causes dimming with additive blending
+    smaaEnabled: false,         // SMAA: Advanced edge-detection AA
+  },
+},
+```
+
+**Anti-Aliasing Compatibility Notes:**
+- **FXAA**: Recommended for additive blending - no brightness issues
+- **MSAA**: Causes brightness increase with additive blending due to sample accumulation
+- **SSAA**: Causes dimming due to downsampling averaging bright additive contributions
+- **SMAA**: Advanced technique with configurable edge detection thresholds
 
 ### Performance Optimization
 
@@ -261,6 +347,28 @@ export const POST_PROCESSING_CONFIG = {
 - **Chunk Size**: Zarr chunk sizes of 64KB-1MB work well
 - **LOD**: Consider implementing level-of-detail for very large datasets
 - **Compression**: Use Zarr compression (e.g., blosc) to reduce network transfer
+
+### Performance Monitoring
+
+Built-in performance monitoring in `src/ui/performance-monitor.ts` provides:
+
+```typescript
+// Access performance metrics
+const monitor = new PerformanceMonitor();
+monitor.startFrame();
+// ... rendering work ...
+monitor.endFrame();
+
+// Get metrics
+const fps = monitor.getFPS();
+const frameTime = monitor.getAverageFrameTime();
+```
+
+- **Real-time FPS**: Continuously updated frame rate display
+- **Frame timing**: Average and instantaneous frame time measurements
+- **GPU performance**: WebGL timing queries when available
+- **Memory usage**: WebGL resource monitoring
+- **Automatic idle detection**: Pauses monitoring during idle periods
 
 ## 🎯 Performance Tips
 
@@ -283,11 +391,23 @@ export const POST_PROCESSING_CONFIG = {
 - Check dataset size (>10M points may be slow)
 - Reduce bloom quality in config
 - Verify GPU acceleration is enabled in browser
+- Try disabling MSAA/SSAA and using FXAA instead
 
 **Zarr loading errors**
 - Verify dataset structure matches expected format
 - Check that positions and colors arrays exist
 - Ensure proper Zarr metadata (.zarray files)
+- Verify scene dimensions are defined for nD datasets
+
+**Anti-aliasing brightness issues**
+- MSAA causes brightness increase with additive blending - disable if too bright
+- SSAA causes dimming with additive blending - adjust exposure compensation
+- Use FXAA for best compatibility with additive point rendering
+
+**nD navigation not working**
+- Verify `sceneDimensions` are defined in dataset `.zattrs`
+- Check that non-displayed dimensions have proper `range` and `step` values
+- Ensure dimension count matches position data shape
 
 ### Browser Compatibility
 
@@ -315,7 +435,8 @@ export const POST_PROCESSING_CONFIG = {
 ### Programmatic Usage
 
 ```javascript
-import { LuxarApp } from './src/app.js';
+import { LuxarApp } from './src/core/app.js';
+import { config } from './src/config/index.js';
 
 const app = new LuxarApp();
 await app.init('/path/to/dataset.zarr');
@@ -323,8 +444,18 @@ await app.init('/path/to/dataset.zarr');
 // Access components
 const { sceneManager, animationController } = app.components;
 
-// Update bloom settings
-sceneManager.postProcessing.updateBloomSettings(0.2, 0.8, 0.1);
+// Update bloom settings through configuration
+config.postProcessing.bloom.strength = 0.2;
+config.postProcessing.bloom.radius = 0.8;
+config.postProcessing.bloom.threshold = 0.1;
+
+// Update rendering controls
+const renderingControls = app.components.renderingControls;
+renderingControls.updateSettings({
+  fxaaEnabled: true,
+  bloomStrength: 0.15,
+  exposure: 1.2,
+});
 ```
 
 ## 🤝 Contributing
