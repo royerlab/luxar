@@ -49,8 +49,8 @@ make test-cov      # Run tests with coverage
 | Command | Purpose |
 |---------|---------|
 | `make dev-setup` | Complete development environment setup |
-| `make format` | Format code (black + isort) |
-| `make lint` | Run flake8 linting |
+| `make format` | Format code with ruff |
+| `make lint` | Run ruff linting |
 | `make type-check` | Run mypy type checking |
 | `make security` | Run bandit security scan |
 | `make test` | Run test suite |
@@ -64,8 +64,8 @@ make test-cov      # Run tests with coverage
 The project enforces quality standards automatically through pre-commit hooks and CI/CD:
 
 ### 🐍 Python Code Quality
-- **Formatting**: Black (88 chars) + isort (automatic via pre-commit)
-- **Linting**: Flake8 with comprehensive rules
+- **Formatting**: Ruff formatter (automatic via pre-commit)
+- **Linting**: Ruff with comprehensive rules
 - **Type Safety**: MyPy strict mode with full type annotations
 - **Security**: Bandit security vulnerability scanning
 - **Testing**: 80%+ code coverage requirement
@@ -104,18 +104,18 @@ def test_new_feature(tmp_path):
 
 ### Running Tests
 ```bash
-make test                    # Run all tests
-make test-cov               # Run with coverage report
-pytest -m "not slow"        # Skip slow tests
-pytest -k test_scene        # Run specific tests
+hatch run test              # Run all tests
+hatch run test-cov          # Run with coverage report
+hatch run pytest -m "not slow"  # Skip slow tests
+hatch run pytest -k test_scene  # Run specific tests
 ```
 
 ## 🔍 Code Review Process
 
 ### Automated Checks
 Every commit automatically runs:
-- Code formatting (black, isort)
-- Linting (flake8, eslint)
+- Code formatting (ruff, prettier)
+- Linting (ruff, eslint)
 - Type checking (mypy, tsc)
 - Security scanning (bandit)
 - Test suite with coverage
@@ -136,6 +136,8 @@ Maintainers review for:
 - ✅ All pre-commit hooks pass
 - ✅ Documentation updated for new features
 - ✅ Examples added for new functionality
+- ✅ LUXAR_ZARR_FORMAT.md updated (if data format changes)
+- ✅ CLAUDE.md updated (if significant learnings)
 - ✅ CHANGELOG.md updated (if applicable)
 
 ### PR Description Template
@@ -193,9 +195,9 @@ Closes #(issue_number)
 Create `.vscode/settings.json`:
 ```json
 {
-    "python.formatting.provider": "black",
+    "python.formatting.provider": "ruff",
     "python.linting.enabled": true,
-    "python.linting.flake8Enabled": true,
+    "python.linting.ruffEnabled": true,
     "python.linting.mypyEnabled": true,
     "python.testing.pytestEnabled": true,
     "python.testing.pytestArgs": [
@@ -210,7 +212,7 @@ Create `.vscode/settings.json`:
 ```
 
 ### PyCharm Setup
-1. Enable Black formatter in Settings → Tools → External Tools
+1. Enable Ruff formatter in Settings → Tools → External Tools
 2. Enable MyPy in Settings → Editor → Inspections → Python
 3. Configure pytest as test runner in Settings → Tools → Python Integrated Tools
 
@@ -247,7 +249,7 @@ make clean         # Remove all temporary files and caches
 ## 🎓 Learning Resources
 
 ### Python Development
-- [Black Code Style](https://black.readthedocs.io/)
+- [Ruff Documentation](https://docs.astral.sh/ruff/)
 - [MyPy Type Checking](https://mypy.readthedocs.io/)
 - [Pytest Testing](https://docs.pytest.org/)
 - [Zarr Documentation](https://zarr.readthedocs.io/)
