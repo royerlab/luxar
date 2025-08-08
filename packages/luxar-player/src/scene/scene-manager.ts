@@ -176,7 +176,9 @@ export class SceneManager {
   private setupControls(): void {
     // ArcballControls bind to camera and DOM element for mouse/touch input
     // The renderer's canvas element captures all mouse/touch events
-    this.controls = new ArcballControls(this.camera, this.renderer.domElement);
+    // IMPORTANT: Pass scene as third parameter to enable proper gizmo management
+    // Gizmos control the rotation center and prevent jumps during zoom
+    this.controls = new ArcballControls(this.camera, this.renderer.domElement, this.scene);
     
     // Set default target to origin for predictable zooming behavior
     // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
@@ -390,16 +392,22 @@ export class SceneManager {
       
       // Update controls to orbit around the center
       // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
-      (this.controls as any).target.copy(center);
+      const controlsAny = this.controls as any;
       
-      // Call update twice to ensure controls fully sync with new camera state
-      // This prevents the "jump" on first interaction
-      this.controls.update();
+      // Set the new target position
+      controlsAny.target.copy(center);
+      
+      // CRITICAL: Force the controls to recalculate internal state after target change
+      // ArcballControls maintains internal gizmos that need to be synchronized
       this.controls.update();
       
-      // Save this configuration as the new default state to prevent jumps on first interaction
-      // Must happen AFTER all updates are complete
+      // Reset the saved state to the current configuration
+      // This prevents the "jump" on first zoom interaction by ensuring
+      // the saved state matches the actual current state
+      this.controls.reset();
       this.controls.saveState();
+      
+      console.log('✓ Controls target updated and state saved');
       
       console.log(`✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`);
     } else {
