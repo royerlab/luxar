@@ -2,6 +2,7 @@
 // Provides real-time control over post-processing and rendering parameters
 
 import GUI from 'lil-gui';
+import * as THREE from 'three';
 import { PostProcessingManager } from '../rendering/post-processing';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
@@ -171,6 +172,38 @@ export class RenderingControls {
         '• Can create values >1.0 for realistic bright sources'
     );
 
+    // Tone Mapping selector - moved to HDR & Exposure folder
+    const toneMappingControl = hdrFolder
+      .add(this.settings, 'toneMapping', ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'])
+      .name('Tone Mapping')
+      .onChange((value: string) => {
+        const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
+          'None': THREE.NoToneMapping,
+          'Linear': THREE.LinearToneMapping,
+          'Reinhard': THREE.ReinhardToneMapping,
+          'Cineon': THREE.CineonToneMapping,
+          'ACES': THREE.ACESFilmicToneMapping,
+          'AgX': THREE.AgXToneMapping,
+          'Neutral': THREE.NeutralToneMapping,
+        };
+        this.postProcessing.setToneMapping(toneMappingMap[value]);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for tone mapping
+    toneMappingControl.domElement.setAttribute(
+      'title',
+      'Tone Mapping: Converts HDR colors to display range\n' +
+        '• None: No tone mapping (may clip bright values)\n' +
+        '• Linear: Simple linear mapping\n' +
+        '• Reinhard: Classic tone mapping operator\n' +
+        '• Cineon: Film-like response curve\n' +
+        '• ACES: Academy Color Encoding (film industry standard)\n' +
+        '• AgX: Modern filmic mapping with good color preservation\n' +
+        '• Neutral: Minimal color shift tone mapping'
+    );
+
     // Anti-aliasing folder
     const aaFolder = this.gui.addFolder('Anti-Aliasing');
     aaFolder.close(); // Collapsed by default
@@ -205,7 +238,7 @@ export class RenderingControls {
       });
 
     // FXAA toggle
-    aaFolder
+    const fxaaControl = aaFolder
       .add(this.settings, 'fxaaEnabled')
       .name('FXAA Enabled')
       .onChange((value: boolean) => {
@@ -213,11 +246,21 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+    
+    // Set tooltip for FXAA
+    fxaaControl.domElement.setAttribute(
+      'title',
+      'FXAA (Fast Approximate Anti-Aliasing)\n' +
+        '• Fast post-process anti-aliasing\n' +
+        '• Good performance, decent quality\n' +
+        '• May slightly blur the image\n' +
+        '• Works well with additive blending'
+    );
 
     // MSAA settings (collapsible)
     const msaaFolder = aaFolder.addFolder('MSAA Settings ⚠️');
 
-    aaFolder
+    const msaaControl = aaFolder
       .add(this.settings, 'msaaEnabled')
       .name('MSAA Enabled')
       .onChange((value: boolean) => {
@@ -233,6 +276,16 @@ export class RenderingControls {
           msaaFolder.hide();
         }
       });
+    
+    // Set tooltip for MSAA with warning
+    msaaControl.domElement.setAttribute(
+      'title',
+      'MSAA (Multisample Anti-Aliasing) ⚠️\n' +
+        '• Hardware-accelerated anti-aliasing\n' +
+        '• WARNING: Causes brightness issues with additive blending\n' +
+        '• Points will appear brighter with more samples\n' +
+        '• Consider using FXAA or SMAA instead'
+    );
 
     msaaFolder
       .add(this.settings, 'msaaSamples', [2, 4, 8])
@@ -246,7 +299,7 @@ export class RenderingControls {
     // SMAA settings (collapsible)
     const smaaFolder = aaFolder.addFolder('SMAA Settings');
 
-    aaFolder
+    const smaaControl = aaFolder
       .add(this.settings, 'smaaEnabled')
       .name('SMAA Enabled')
       .onChange((value: boolean) => {
@@ -262,6 +315,16 @@ export class RenderingControls {
           smaaFolder.hide();
         }
       });
+    
+    // Set tooltip for SMAA
+    smaaControl.domElement.setAttribute(
+      'title',
+      'SMAA (Subpixel Morphological Anti-Aliasing)\n' +
+        '• Advanced edge detection anti-aliasing\n' +
+        '• Better quality than FXAA, faster than SSAA\n' +
+        '• Preserves sharpness while smoothing edges\n' +
+        '• Good balance of quality and performance'
+    );
 
     smaaFolder
       .add(this.settings, 'smaaThreshold', 0.05, 0.2, 0.01)
@@ -296,6 +359,115 @@ export class RenderingControls {
     if (!this.settings.smaaEnabled) {
       smaaFolder.hide();
     }
+
+    // Post-Processing Effects folder
+    const effectsFolder = this.gui.addFolder('Post-Processing Effects');
+    effectsFolder.close(); // Closed by default
+
+    // Depth of Field subfolder
+    const dofFolder = effectsFolder.addFolder('Depth of Field');
+    dofFolder.close();
+
+    const dofEnabledControl = dofFolder
+      .add(this.settings, 'dofEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setDOF(value, this.settings.dofFocus, this.settings.dofStrength);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for DOF enabled
+    dofEnabledControl.domElement.setAttribute(
+      'title',
+      'Depth of Field: Simulates camera focus\n' +
+        '• Blurs objects outside the focal distance\n' +
+        '• Creates cinematic depth effect\n' +
+        '• Performance impact when enabled'
+    );
+
+    const dofFocusControl = dofFolder
+      .add(this.settings, 'dofFocus', 0.1, 100, 0.1)
+      .name('Focus Distance')
+      .onChange((value: number) => {
+        // Always update and trigger animation so user can see changes immediately
+        this.postProcessing.updateDOF({ focus: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for DOF focus
+    dofFocusControl.domElement.setAttribute(
+      'title',
+      'Focus Distance: Distance to the sharp focal plane\n' +
+        '• Objects at this distance will be sharp\n' +
+        '• Objects closer or farther will be blurred\n' +
+        '• Value in world units (adjust based on scene scale)'
+    );
+
+    const dofStrengthControl = dofFolder
+      .add(this.settings, 'dofStrength', 0, 1, 0.01)
+      .name('Blur Strength')
+      .onChange((value: number) => {
+        // Always update and trigger animation so user can see changes immediately
+        this.postProcessing.updateDOF({ strength: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for DOF strength
+    dofStrengthControl.domElement.setAttribute(
+      'title',
+      'Blur Strength: Amount of out-of-focus blur\n' +
+        '• 0 = No blur (everything in focus)\n' +
+        '• 0.5 = Moderate blur\n' +
+        '• 1.0 = Maximum blur\n' +
+        '• Higher values create stronger bokeh effect'
+    );
+
+    // Chromatic Aberration subfolder
+    const chromaticFolder = effectsFolder.addFolder('Chromatic Aberration');
+    chromaticFolder.close();
+
+    const chromaticEnabledControl = chromaticFolder
+      .add(this.settings, 'chromaticAberrationEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setChromaticAberration(value, this.settings.chromaticAberrationStrength);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for chromatic aberration enabled
+    chromaticEnabledControl.domElement.setAttribute(
+      'title',
+      'Chromatic Aberration: Simulates lens color fringing\n' +
+        '• Separates RGB channels slightly\n' +
+        '• Creates rainbow edges on high contrast areas\n' +
+        '• Adds cinematic/stylistic effect'
+    );
+
+    const chromaticStrengthControl = chromaticFolder
+      .add(this.settings, 'chromaticAberrationStrength', 0, 1, 0.01)
+      .name('Strength')
+      .onChange((value: number) => {
+        // Always update the uniform, even if disabled (so it's ready when enabled)
+        this.postProcessing.updateChromaticAberration(value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+    
+    // Set tooltip for chromatic aberration strength
+    chromaticStrengthControl.domElement.setAttribute(
+      'title',
+      'Chromatic Aberration Strength\n' +
+        '• 0 = No color separation\n' +
+        '• 0.15 = Subtle effect (default)\n' +
+        '• 0.5 = Moderate color fringing\n' +
+        '• 1.0 = Strong rainbow edges'
+    );
+
+    // Vignetting removed - effect was lame
   }
 
   /**
@@ -547,6 +719,33 @@ export class RenderingControls {
         this.settings.smaaSearchSteps
       );
     }
+
+    // Apply tone mapping
+    const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
+      'None': THREE.NoToneMapping,
+      'Linear': THREE.LinearToneMapping,
+      'Reinhard': THREE.ReinhardToneMapping,
+      'Cineon': THREE.CineonToneMapping,
+      'ACES': THREE.ACESFilmicToneMapping,
+      'AgX': THREE.AgXToneMapping,
+      'Neutral': THREE.NeutralToneMapping,
+    };
+    this.postProcessing.setToneMapping(toneMappingMap[this.settings.toneMapping]);
+
+    // Apply DOF settings
+    this.postProcessing.setDOF(
+      this.settings.dofEnabled,
+      this.settings.dofFocus,
+      this.settings.dofStrength
+    );
+
+    // Apply chromatic aberration
+    this.postProcessing.setChromaticAberration(
+      this.settings.chromaticAberrationEnabled,
+      this.settings.chromaticAberrationStrength
+    );
+
+    // Vignetting removed - effect was lame
   }
 
   /**

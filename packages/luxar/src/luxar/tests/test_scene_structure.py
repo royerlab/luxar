@@ -29,4 +29,4 @@ def test_random_demo_roundtrip(tmp_path):
 
     col = grp["colors"]
     assert col.shape == (n, 3)
-    assert col.dtype == np.uint8
+    assert col.dtype == np.float32  # HDR colors are now float32

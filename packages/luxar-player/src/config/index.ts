@@ -123,6 +123,13 @@ export const config: AppConfig = {
       smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
       ssaaEnabled: false, // SSAA disabled by default (has brightness issues with additive blending)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
+      // New post-processing effects
+      toneMapping: 'ACES' as const, // Tone mapping method
+      dofEnabled: false, // Depth of field disabled by default
+      dofFocus: 10, // DOF focus distance
+      dofStrength: 0.5, // DOF blur strength (0-1)
+      chromaticAberrationEnabled: false, // Chromatic aberration disabled by default
+      chromaticAberrationStrength: 0.15, // Chromatic aberration strength - default as shown
     },
   },
 

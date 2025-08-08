@@ -64,7 +64,7 @@ PathLike: TypeAlias = Union[str, Path]
 PositionArray: TypeAlias = NDArray[
     np.float32
 ]  # Shape: (N, D) where D is dimensionality
-ColorArray: TypeAlias = NDArray[np.uint8]  # Shape: (N, 3)
+ColorArray: TypeAlias = NDArray[np.float32]  # Shape: (N, 3) - HDR colors in float32
 TransformMatrix: TypeAlias = NDArray[np.float32]  # Shape: (4, 4)
 
 # Zarr group attributes
@@ -297,15 +297,15 @@ def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionAr
     return positions.astype(np.float32, copy=False)
 
 
-def validate_colors(colors: Any, n_points: int) -> ColorArray:
-    """Validate and convert colors array to correct type.
+def validate_colors(colors: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
+    """Validate and convert colors array to HDR float32 format.
 
     Args:
         colors: Input array to validate
         n_points: Expected number of points
 
     Returns:
-        Validated colors array
+        Validated colors array in HDR float32 format
 
     Raises:
         ValueError: If colors are invalid shape or type
@@ -316,7 +316,9 @@ def validate_colors(colors: Any, n_points: int) -> ColorArray:
     if colors.shape != (n_points, 3):
         raise ValueError(f"Colors must have shape ({n_points}, 3)")
 
-    return colors.astype(np.uint8, copy=False)
+    # Support HDR colors - use float32 for full HDR range
+    # Colors can be any positive value (0.0 to infinity) for HDR emission
+    return colors.astype(np.float32, copy=False)
 
 
 def validate_radii(radii: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
