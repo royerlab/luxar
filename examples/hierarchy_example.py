@@ -94,7 +94,7 @@ def main():
     aprint("Creating solar system hierarchy...")
 
     # Sun (parent group)
-    sun_transform = transforms.translate([0, 0, 0])  # At origin
+    sun_transform = transforms.translate(0, 0, 0)  # At origin
     sun_group = scene.add_group(
         "SolarSystem",
         transform=sun_transform,
@@ -118,11 +118,10 @@ def main():
     aprint("Creating planetary systems...")
 
     # Earth system (child of solar system)
-    earth_transform = transforms.translate([4, 0, 0])  # Orbit position
-    earth_group = scene.add_group(
+    earth_transform = transforms.translate(4, 0, 0)  # Orbit position
+    earth_group = sun_group.add_group(
         "EarthSystem",
         transform=earth_transform,
-        parent=sun_group,
         opacity=0.8  # Override parent's opacity
         # Inherits: gamma=1.2, blending_mode="additive" from sun_group
     )
@@ -139,7 +138,7 @@ def main():
     )
 
     # Moon (child of earth system, sibling of Earth)
-    moon_transform = transforms.translate([0.5, 0, 0])  # Relative to Earth system
+    moon_transform = transforms.translate(0.5, 0, 0)  # Relative to Earth system
     moon_positions = create_constellation_points(15, 0.08)
     scene.add_points(
         "Moon",
@@ -152,11 +151,10 @@ def main():
     )
 
     # Mars system (another child of solar system)
-    mars_transform = transforms.translate([6, 0, 0])
-    mars_group = scene.add_group(
+    mars_transform = transforms.translate(6, 0, 0)
+    mars_group = sun_group.add_group(
         "MarsSystem",
         transform=mars_transform,
-        parent=sun_group,
         gamma=1.0  # Override parent's gamma
         # Inherits: opacity=0.9, blending_mode="additive" from sun_group
     )
@@ -176,10 +174,10 @@ def main():
     aprint("Creating space station hierarchy...")
 
     # Space station group (separate from solar system)
-    station_transform = transforms.compose([
-        transforms.translate([0, 0, 5]),
+    station_transform = transforms.compose(
+        transforms.translate(0, 0, 5),
         transforms.rotate_z(np.pi / 6)
-    ])
+    )
     station_group = scene.add_group(
         "SpaceStationComplex",
         transform=station_transform,
@@ -201,10 +199,10 @@ def main():
     # Docking rings (children of station)
     for i in range(3):
         angle = i * 2 * np.pi / 3
-        ring_transform = transforms.compose([
+        ring_transform = transforms.compose(
             transforms.rotate_z(angle),
-            transforms.translate([0.8, 0, 0])
-        ])
+            transforms.translate(0.8, 0, 0)
+        )
 
         ring_positions = create_ring_points(12, 0.15)
         scene.add_points(
@@ -221,7 +219,7 @@ def main():
     aprint("Creating deep nested hierarchy...")
 
     # Level 1: Galaxy
-    galaxy_transform = transforms.translate([0, 8, 0])
+    galaxy_transform = transforms.translate(0, 8, 0)
     galaxy_group = scene.add_group(
         "Galaxy",
         transform=galaxy_transform,
@@ -229,18 +227,16 @@ def main():
     )
 
     # Level 2: Star cluster
-    cluster_group = scene.add_group(
+    cluster_group = galaxy_group.add_group(
         "StarCluster",
-        parent=galaxy_group,
         gamma=1.3
     )
 
     # Level 3: Binary star system
-    binary_transform = transforms.translate([1, 0, 0])
-    binary_group = scene.add_group(
+    binary_transform = transforms.translate(1, 0, 0)
+    binary_group = cluster_group.add_group(
         "BinarySystem",
         transform=binary_transform,
-        parent=cluster_group,
         blending_mode="additive"
     )
 
@@ -251,7 +247,7 @@ def main():
         star1_positions,
         colors=[255, 255, 200],  # Bright white-yellow
         radii=0.04,
-        transform=transforms.translate([-0.2, 0, 0]),
+        transform=transforms.translate(-0.2, 0, 0),
         parent=binary_group
     )
 
@@ -261,7 +257,7 @@ def main():
         star2_positions,
         colors=[255, 150, 150],  # Light red
         radii=0.035,
-        transform=transforms.translate([0.2, 0, 0]),
+        transform=transforms.translate(0.2, 0, 0),
         parent=binary_group
     )
 
