@@ -65,7 +65,8 @@ class Node:
                     if transform_array.size == 16:
                         transform_matrix = transform_array.reshape(4, 4)
                         validated = validate_transform(transform_matrix)
-                        attrs["transform"] = validated.ravel().tolist()
+                        # Transpose for THREE.js (column-major order) before flattening
+                        attrs["transform"] = validated.T.ravel().tolist()
                     else:
                         raise ValueError(
                             f"Transform must have 16 elements, got {transform_array.size}"
@@ -165,7 +166,8 @@ class Node:
         """
         if "transform" in self.attrs:
             transform_list = self.attrs["transform"]
-            return np.array(transform_list, dtype=np.float32).reshape(4, 4)
+            # Transpose back from THREE.js format (column-major) to numpy format (row-major)
+            return np.array(transform_list, dtype=np.float32).reshape(4, 4).T
         return None
 
     @transform.setter
@@ -193,7 +195,8 @@ class Node:
                 matrix = matrix.reshape(4, 4)
 
             validated = validate_transform(matrix)
-            self.attrs["transform"] = validated.ravel().tolist()
+            # Transpose for THREE.js (column-major order) before flattening
+            self.attrs["transform"] = validated.T.ravel().tolist()
 
     @property
     def num_children(self) -> int:

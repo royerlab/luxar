@@ -1,13 +1,13 @@
 /**
  * Advanced nD slicing algorithms for high-dimensional point cloud visualization.
- * 
+ *
  * This module implements sophisticated slicing techniques that allow users to
  * navigate through nD datasets by fixing positions in non-displayed dimensions
  * while visualizing the remaining 3D projection.
- * 
+ *
  * Key algorithms:
  * - Radius-based hypersphere slicing for continuous dimensions
- * - Exact matching for discrete dimensions  
+ * - Exact matching for discrete dimensions
  * - Effective radius calculation for sliced nD spheres
  * - Efficient point filtering and attribute extraction
  */
@@ -16,22 +16,22 @@ import { SimpleDims } from '../types/dims';
 
 /**
  * Performs nD slicing to determine which points are visible at the current position.
- * 
+ *
  * This is the core slicing algorithm that implements radius-based hypersphere intersection
  * for continuous dimensions and exact matching for discrete dimensions. The mathematical
  * foundation is:
- * 
+ *
  * For a point with nD position P and radius R:
  * - The point is visible if its nD hypersphere intersects the current slice hyperplane
  * - Distance from hyperplane = √(Σ(Pi - Ci)²) where C is current position in non-displayed dims
  * - Point is visible if distance ≤ radius
- * 
+ *
  * Design decisions:
  * - Discrete dimensions require exact matches (important for categorical data like time points)
  * - Continuous dimensions use radius-based inclusion (smooth navigation through space)
  * - Efficient early termination when point is clearly outside slice
- * 
- * @param positions - Flattened nD positions array (size: numPoints * ndim)  
+ *
+ * @param positions - Flattened nD positions array (size: numPoints * ndim)
  * @param dims - Current dimension state with slice positions
  * @param numPoints - Total number of points in the dataset
  * @param radii - Per-point radii for hypersphere slicing (optional)
@@ -47,7 +47,7 @@ export function slicePoints(
 ): Uint32Array {
   const { ndim, currentStep, displayed } = dims;
   const visibleIndices: number[] = [];
-  
+
   // Pre-compute displayed dimensions set for O(1) lookup
   const displayedSet = new Set(displayed);
 
@@ -96,16 +96,16 @@ export function slicePoints(
 
 /**
  * Projects nD point positions onto the currently displayed 3D coordinate system.
- * 
+ *
  * This function extracts the subset of dimensions that are being visualized
  * and creates a 3D positions array suitable for GPU rendering. The projection
  * maintains the spatial relationships within the selected dimensions.
- * 
+ *
  * Design decisions:
  * - Maximum of 3 displayed dimensions (hardware/perceptual limitation)
  * - Missing dimensions are padded with zeros for consistent GPU buffer layout
  * - Preserves point order from the slicing operation for attribute alignment
- * 
+ *
  * @param positions - Original nD positions array
  * @param indices - Indices of visible points from slicing operation
  * @param dims - Dimension state specifying which dimensions to display
@@ -144,10 +144,10 @@ export function extractDisplayDimensions(
 
 /**
  * Extracts RGB color data for points that survived the slicing operation.
- * 
+ *
  * This function maintains the color-to-point correspondence after slicing
  * by reordering the color array to match the filtered point indices.
- * 
+ *
  * @param colors - Original RGB color array (3 bytes per point) or null
  * @param indices - Indices of visible points from slicing
  * @returns Reordered color array matching visible points, or null if no colors
@@ -162,7 +162,7 @@ export function sliceColors(colors: Uint8Array | null, indices: Uint32Array): Ui
   for (let i = 0; i < numVisible; i++) {
     const srcIndex = indices[i] * 3;
     const dstIndex = i * 3;
-    colors3[dstIndex] = colors[srcIndex];         // R
+    colors3[dstIndex] = colors[srcIndex]; // R
     colors3[dstIndex + 1] = colors[srcIndex + 1]; // G
     colors3[dstIndex + 2] = colors[srcIndex + 2]; // B
   }
@@ -172,24 +172,24 @@ export function sliceColors(colors: Uint8Array | null, indices: Uint32Array): Ui
 
 /**
  * Computes the effective radii of nD hyperspheres after slicing by hyperplanes.
- * 
+ *
  * This implements a fundamental geometric principle: when an nD hypersphere of radius R
  * is intersected by a hyperplane at distance D from its center, the resulting
  * (n-1)D cross-section has radius √(R² - D²).
- * 
+ *
  * Mathematical foundation:
  * - Original nD sphere: x₁² + x₂² + ... + xₙ² ≤ R²
  * - Slice at fixed positions in non-displayed dims: xᵢ = cᵢ for i ∉ displayed
  * - Effective radius in displayed dims: R_eff = √(R² - Σ(xᵢ - cᵢ)²) for i ∉ displayed
- * 
+ *
  * This is crucial for:
  * - Accurate visual representation of point sizes after slicing
  * - Maintaining proper spatial relationships in the projected view
  * - Preventing visual artifacts when navigating through nD space
- * 
+ *
  * @param positions - Original nD positions array
  * @param indices - Indices of visible points after slicing
- * @param dims - Current dimension state with slice positions  
+ * @param dims - Current dimension state with slice positions
  * @param originalRadii - Original nD radii before slicing
  * @returns Effective radii for rendering in the displayed dimensions
  */
@@ -235,11 +235,11 @@ export function computeEffectiveRadii(
 
 /**
  * Extracts scalar attribute values for points that survived slicing.
- * 
+ *
  * This utility maintains attribute-to-point correspondence after filtering,
  * ensuring that additional per-point data (e.g., intensity, confidence, etc.)
  * remains aligned with the filtered point set.
- * 
+ *
  * @param attribute - Original scalar attribute array (one value per point) or null
  * @param indices - Indices of visible points from slicing operation
  * @returns Filtered attribute array matching visible points, or null if no attributes
@@ -263,13 +263,13 @@ export function sliceScalarAttribute(
 
 /**
  * Generates a human-readable label describing the current nD slice position.
- * 
+ *
  * This creates informative text for the UI that shows users exactly where they
  * are positioned in the non-displayed dimensions. Essential for understanding
  * context when navigating through complex nD datasets.
- * 
+ *
  * Example output: "Time=5.2s, Channel=1, Depth=12.5μm"
- * 
+ *
  * @param dims - Current dimension state
  * @returns Formatted string describing slice position in non-displayed dimensions
  */

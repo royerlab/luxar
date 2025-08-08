@@ -1,6 +1,6 @@
 /**
  * Server-agnostic directory navigation service for Luxar datasets.
- * 
+ *
  * This module provides a flexible system for navigating directories containing
  * Zarr datasets across different server types (WebDAV, S3, nginx, etc.).
  * It uses multiple detection strategies to work with any static file server.
@@ -28,20 +28,20 @@ export interface NavigationResult {
 export class DirectoryNavigator {
   private baseUrl: string;
   private currentPath: string;
-  
+
   constructor(baseUrl: string) {
     // Ensure URL ends with trailing slash
     this.baseUrl = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
     this.currentPath = '';
   }
-  
+
   /**
    * Navigate to a specific path and detect its contents.
    */
   async navigate(path: string = ''): Promise<NavigationResult> {
     this.currentPath = path;
     const fullUrl = this.baseUrl + path;
-    
+
     // Strategy 1: Check if it's a Zarr dataset
     const isZarr = await this.checkIfZarr(fullUrl);
     if (isZarr) {
@@ -50,10 +50,10 @@ export class DirectoryNavigator {
         currentPath: path,
         parentPath: this.getParentPath(path),
         strategy: 'webdav',
-        isZarr: true
+        isZarr: true,
       };
     }
-    
+
     // Strategy 2: Try WebDAV PROPFIND
     const webdavResult = await this.tryWebDAV(fullUrl);
     if (webdavResult) {
@@ -62,10 +62,10 @@ export class DirectoryNavigator {
         currentPath: path,
         parentPath: this.getParentPath(path),
         strategy: 'webdav',
-        isZarr: false
+        isZarr: false,
       };
     }
-    
+
     // Strategy 3: Try parsing HTML directory listing
     const htmlResult = await this.tryHTMLParsing(fullUrl);
     if (htmlResult) {
@@ -74,10 +74,10 @@ export class DirectoryNavigator {
         currentPath: path,
         parentPath: this.getParentPath(path),
         strategy: 'html',
-        isZarr: false
+        isZarr: false,
       };
     }
-    
+
     // Strategy 4: Look for .luxar-index.json
     const indexResult = await this.tryIndexFile(fullUrl);
     if (indexResult) {
@@ -86,20 +86,20 @@ export class DirectoryNavigator {
         currentPath: path,
         parentPath: this.getParentPath(path),
         strategy: 'index',
-        isZarr: false
+        isZarr: false,
       };
     }
-    
+
     // Strategy 5: Manual fallback
     return {
       entries: [],
       currentPath: path,
       parentPath: this.getParentPath(path),
       strategy: 'manual',
-      isZarr: false
+      isZarr: false,
     };
   }
-  
+
   /**
    * Check if a path is a Zarr dataset by looking for .zgroup file.
    */
@@ -111,7 +111,7 @@ export class DirectoryNavigator {
       return false;
     }
   }
-  
+
   /**
    * Try WebDAV PROPFIND method for directory listing.
    */
@@ -120,50 +120,50 @@ export class DirectoryNavigator {
       const response = await fetch(url, {
         method: 'PROPFIND',
         headers: {
-          'Depth': '1',
-          'Content-Type': 'application/xml'
-        }
+          Depth: '1',
+          'Content-Type': 'application/xml',
+        },
       });
-      
+
       if (!response.ok) return null;
-      
+
       const text = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(text, 'application/xml');
-      
+
       const entries: DirectoryEntry[] = [];
       const responses = doc.getElementsByTagNameNS('DAV:', 'response');
-      
+
       for (let i = 0; i < responses.length; i++) {
         const resp = responses[i];
         const href = resp.getElementsByTagNameNS('DAV:', 'href')[0]?.textContent;
         const displayName = resp.getElementsByTagNameNS('DAV:', 'displayname')[0]?.textContent;
         const collection = resp.getElementsByTagNameNS('DAV:', 'collection')[0];
-        
+
         if (href && href !== url) {
           const name = displayName || href.split('/').filter(Boolean).pop() || '';
           const isDir = !!collection;
-          
+
           // Check if it's a Zarr directory
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
           if (isDir && name.endsWith('.zarr')) {
             type = 'zarr';
           }
-          
+
           entries.push({
             name,
             path: this.currentPath ? `${this.currentPath}/${name}` : name,
-            type
+            type,
           });
         }
       }
-      
+
       return { entries };
     } catch {
       return null;
     }
   }
-  
+
   /**
    * Try parsing HTML directory listing (works with nginx, Apache, etc.).
    */
@@ -172,10 +172,10 @@ export class DirectoryNavigator {
       // First try to get JSON response
       const jsonResponse = await fetch(url, {
         headers: {
-          'Accept': 'application/json'
-        }
+          Accept: 'application/json',
+        },
       });
-      
+
       if (jsonResponse.ok) {
         const contentType = jsonResponse.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
@@ -186,51 +186,51 @@ export class DirectoryNavigator {
               name: entry.name,
               path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
               type: entry.type as 'file' | 'directory' | 'zarr',
-              size: entry.size
+              size: entry.size,
             }));
             return { entries };
           }
         }
       }
-      
+
       // Fall back to HTML parsing
       const response = await fetch(url);
       if (!response.ok) return null;
-      
+
       const html = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      
+
       const entries: DirectoryEntry[] = [];
-      
+
       // Try common patterns for directory listings
       // Pattern 1: Links in pre tags (nginx)
       const preLinks = doc.querySelectorAll('pre a');
       if (preLinks.length > 0) {
-        preLinks.forEach(link => {
+        preLinks.forEach((link) => {
           const href = link.getAttribute('href');
           const text = link.textContent;
           if (href && text && !text.startsWith('..')) {
             const isDir = href.endsWith('/');
             const name = text.replace(/\/$/, '');
-            
+
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
             if (isDir && name.endsWith('.zarr')) {
               type = 'zarr';
             }
-            
+
             entries.push({
               name,
               path: this.currentPath ? `${this.currentPath}/${name}` : name,
-              type
+              type,
             });
           }
         });
       }
-      
+
       // Pattern 2: Table rows (Apache, IIS)
       const tableRows = doc.querySelectorAll('tr');
-      tableRows.forEach(row => {
+      tableRows.forEach((row) => {
         const link = row.querySelector('a');
         if (link) {
           const href = link.getAttribute('href');
@@ -238,49 +238,49 @@ export class DirectoryNavigator {
           if (href && text && !text.startsWith('..') && !text.startsWith('Parent')) {
             const isDir = href.endsWith('/');
             const name = text.replace(/\/$/, '');
-            
+
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
             if (isDir && name.endsWith('.zarr')) {
               type = 'zarr';
             }
-            
+
             entries.push({
               name,
               path: this.currentPath ? `${this.currentPath}/${name}` : name,
-              type
+              type,
             });
           }
         }
       });
-      
+
       // Pattern 3: List items (some custom servers)
       const listItems = doc.querySelectorAll('li a');
-      listItems.forEach(link => {
+      listItems.forEach((link) => {
         const href = link.getAttribute('href');
         const text = link.textContent;
         if (href && text && !text.startsWith('..')) {
           const isDir = href.endsWith('/');
           const name = text.replace(/\/$/, '');
-          
+
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
           if (isDir && name.endsWith('.zarr')) {
             type = 'zarr';
           }
-          
+
           entries.push({
             name,
             path: this.currentPath ? `${this.currentPath}/${name}` : name,
-            type
+            type,
           });
         }
       });
-      
+
       return entries.length > 0 ? { entries } : null;
     } catch {
       return null;
     }
   }
-  
+
   /**
    * Try loading a .luxar-index.json file with directory contents.
    */
@@ -288,25 +288,26 @@ export class DirectoryNavigator {
     try {
       const response = await fetch(url + '.luxar-index.json');
       if (!response.ok) return null;
-      
+
       const index = await response.json();
       if (!index.entries || !Array.isArray(index.entries)) return null;
-      
+
       const entries: DirectoryEntry[] = index.entries.map((entry: any) => ({
         name: entry.name,
         path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
-        type: entry.type || (entry.name.endsWith('.zarr') ? 'zarr' : 
-          entry.isDirectory ? 'directory' : 'file'),
+        type:
+          entry.type ||
+          (entry.name.endsWith('.zarr') ? 'zarr' : entry.isDirectory ? 'directory' : 'file'),
         size: entry.size,
-        modified: entry.modified ? new Date(entry.modified) : undefined
+        modified: entry.modified ? new Date(entry.modified) : undefined,
       }));
-      
+
       return { entries };
     } catch {
       return null;
     }
   }
-  
+
   /**
    * Get parent path from current path.
    */
@@ -317,14 +318,14 @@ export class DirectoryNavigator {
     parts.pop();
     return parts.join('/');
   }
-  
+
   /**
    * Get the full URL for a given path.
    */
   getFullUrl(path: string): string {
     return this.baseUrl + path;
   }
-  
+
   /**
    * Check if we can list directories at all (for feature detection).
    */

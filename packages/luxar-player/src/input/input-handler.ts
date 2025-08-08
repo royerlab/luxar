@@ -1,6 +1,6 @@
 /**
  * Comprehensive input handling system for nD navigation and scene interaction.
- * 
+ *
  * This class provides the complete user interface layer for Luxar, handling:
  * - Keyboard navigation through nD dimensions
  * - Mouse and touch interaction coordination
@@ -8,11 +8,11 @@
  * - UI element state management
  * - Dimension slider integration
  * - Performance monitoring controls
- * 
+ *
  * The input handler bridges user interactions with the underlying nD visualization
  * system, translating keyboard/mouse events into dimension changes that trigger
  * coordinated updates across all scene objects.
- * 
+ *
  * Key interaction patterns:
  * - [ ] keys navigate through dimensions with adaptive step sizes
  * - Number keys (1-9) select which dimension to control
@@ -21,12 +21,12 @@
  * - Ctrl+P toggles performance statistics
  * - Ctrl+A toggles advanced rendering controls
  * - H key shows/hides help overlay
- * 
+ *
  * The system maintains careful separation between:
  * - Camera controls (handled by THREE.js OrbitControls)
  * - Dimension navigation (handled by scene dimension manager)
  * - UI state management (handled by various UI components)
- * 
+ *
  * All navigation events are coordinated through the scene dimension manager
  * to ensure consistent state across all nD objects in the scene.
  */
@@ -43,25 +43,25 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 /**
  * Central coordinator for all user input events and nD navigation.
- * 
+ *
  * @class InputHandler
  */
 export class InputHandler {
   /** Cleanup functions for all registered event listeners */
   private eventListeners: (() => void)[] = [];
-  
+
   /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
-  
+
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
-  
+
   /** UI component for interactive dimension sliders */
   private dimensionSliders?: DimensionSliders;
 
   /**
    * Constructs the input handler with required system dependencies.
-   * 
+   *
    * @param sceneManager - Scene management system
    * @param animationController - Animation and rendering coordination
    */
@@ -72,7 +72,7 @@ export class InputHandler {
 
   /**
    * Associates rendering controls for advanced UI interactions.
-   * 
+   *
    * @param controls - Rendering controls interface
    */
   setRenderingControls(controls: RenderingControls): void {
@@ -81,7 +81,7 @@ export class InputHandler {
 
   /**
    * Initializes all event listeners for user interaction.
-   * 
+   *
    * This sets up the complete input handling system including keyboard,
    * mouse, touch, and window events. Should be called once during
    * application initialization.
@@ -101,24 +101,24 @@ export class InputHandler {
       this.dimensionSliders.dispose();
       this.dimensionSliders = undefined;
     }
-    
+
     // Reset the scene dimension manager
     sceneDimsManager.reset();
-    
+
     // Reset selected dimension
     this.selectedDimension = 0;
   }
 
   /**
    * Initializes dimension navigation UI after scene loading completes.
-   * 
+   *
    * This method is called after the scene is fully loaded and dimension
    * metadata is available. It sets up:
    * - Scene dimension manager integration
    * - Interactive dimension sliders
    * - Reactive updates for all nD objects
    * - Keyboard navigation targets
-   * 
+   *
    * The initialization process ensures all nD objects share the same
    * dimensional coordinate system and respond consistently to navigation.
    */
@@ -143,7 +143,7 @@ export class InputHandler {
     // Create new dimension sliders
     const dimensionNames = sceneDimsManager.getDimensionNames();
     const dimensionUnits = sceneDimsManager.getDimensionUnits();
-    
+
     this.dimensionSliders = new DimensionSliders({
       container: document.body,
       dims,
@@ -165,7 +165,6 @@ export class InputHandler {
       this.animationController.startAnimation();
     });
   }
-
 
   /**
    * Update all nD point clouds with current dimension values
@@ -356,7 +355,7 @@ export class InputHandler {
         event.preventDefault();
         this.toggleRenderingControls();
         break;
-        
+
       case 'c':
       case 'C':
         // C key to toggle between native center and bounding box center
@@ -475,16 +474,16 @@ export class InputHandler {
 
   /**
    * Handles keyboard navigation through nD dimensions using [ and ] keys.
-   * 
+   *
    * This implements intelligent dimension navigation with adaptive step sizes:
    * - Discrete dimensions step by their defined increment
    * - Continuous dimensions step by 1% of their total range
    * - Steps are clamped to dimension bounds
    * - Only updates if the value actually changes
-   * 
+   *
    * The navigation respects the currently selected dimension (set by number keys)
    * and provides smooth, predictable movement through nD space.
-   * 
+   *
    * @param direction - Direction to navigate: -1 for backward, 1 for forward
    * @private
    */
@@ -524,7 +523,7 @@ export class InputHandler {
     // Update dimension state if value actually changed
     if (Math.abs(newValue - currentValue) > 1e-6) {
       sceneDimsManager.setDimensionValue(targetDim, newValue);
-      
+
       // Trigger visual update
       this.animationController.startAnimation();
     }
@@ -532,11 +531,11 @@ export class InputHandler {
 
   /**
    * Selects which dimension to control with keyboard navigation.
-   * 
+   *
    * Number keys (1-9) map to navigable dimensions, allowing users to
    * switch between controlling different non-displayed dimensions with
    * the [ and ] navigation keys.
-   * 
+   *
    * @param index - Zero-based dimension index to select
    * @private
    */

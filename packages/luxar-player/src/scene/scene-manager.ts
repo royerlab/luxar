@@ -54,7 +54,7 @@ export class SceneManager {
 
   /** The HTML canvas element where 3D rendering occurs */
   private canvasElement!: HTMLCanvasElement;
-  
+
   /** Track whether we're centered on bounding box or origin */
   private isCenteredOnBoundingBox: boolean = false;
 
@@ -182,16 +182,16 @@ export class SceneManager {
     // IMPORTANT: Pass scene as third parameter to enable proper gizmo management
     // Gizmos control the rotation center and prevent jumps during zoom
     this.controls = new ArcballControls(this.camera, this.renderer.domElement, this.scene);
-    
+
     // Hide the gizmos - we want their functionality but not their visual representation
     // The gizmos still work internally to manage the rotation center properly
     (this.controls as any).setGizmoVisible?.(false);
-    
+
     // Set default target to origin for predictable zooming behavior
     // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
     (this.controls as any).target.set(0, 0, 0);
     this.controls.update();
-    
+
     // Save initial state so reset() works properly
     this.controls.saveState();
   }
@@ -207,23 +207,23 @@ export class SceneManager {
       config.camera.initialPosition.y,
       config.camera.initialPosition.z
     );
-    
+
     // Reset camera rotation to look at origin
     this.camera.lookAt(0, 0, 0);
     this.camera.updateMatrixWorld(true);
-    
+
     // Reset controls target to origin
     (this.controls as any).target.set(0, 0, 0);
-    
+
     // Clear any internal state by calling update multiple times
     // This ensures the controls fully sync with the new camera state
     this.controls.update();
     this.controls.update();
-    
+
     // Save this configuration as the new default state
     // This is critical - it must happen AFTER all updates
     this.controls.saveState();
-    
+
     console.log('✓ Controls reset to default state');
   }
 
@@ -268,14 +268,14 @@ export class SceneManager {
     try {
       // Clear existing scene content (keep lights and background)
       this.clearSceneContent();
-      
+
       // Reset controls to default state before loading new content
       this.resetControls();
-      
+
       const root = await loadScene(src);
       hideLoadingIndicator();
       this.scene.add(root);
-      
+
       // Don't automatically center - let the scene designer's positioning take precedence
       // User can press 'C' to center on bounding box if desired
       console.log('Scene loaded. Press C to toggle centering on bounding box.');
@@ -297,75 +297,75 @@ export class SceneManager {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
           if (Array.isArray(obj.material)) {
-            obj.material.forEach(m => m.dispose());
+            obj.material.forEach((m) => m.dispose());
           } else {
             obj.material.dispose();
           }
         }
       }
-      
+
       // Recursively dispose children
       while (obj.children.length > 0) {
         disposeObject(obj.children[0]);
         obj.remove(obj.children[0]);
       }
     };
-    
+
     // Find all objects to remove (direct children of scene)
     const objectsToRemove: THREE.Object3D[] = [];
-    
+
     for (let i = this.scene.children.length - 1; i >= 0; i--) {
       const child = this.scene.children[i];
-      
+
       // Keep lights and any background/environment objects
       if (child instanceof THREE.Light) continue;
       if (child.userData?.isBackground) continue;
-      
+
       // Mark everything else for removal
       objectsToRemove.push(child);
     }
-    
+
     // Remove and dispose marked objects
     for (const obj of objectsToRemove) {
       disposeObject(obj);
       this.scene.remove(obj);
     }
-    
+
     console.log(`Cleared ${objectsToRemove.length} objects from scene`);
   }
-  
+
   /**
    * Center camera on the bounding box of all visible objects
    */
   public centerCameraOnScene(): void {
     // Ensure world matrices are up to date before computing bounds
     this.scene.updateMatrixWorld(true);
-    
+
     // Create a bounding box that encompasses all visible objects
     const box = new THREE.Box3();
     let totalPointCount = 0;
-    
+
     // Traverse the scene and expand the box to include all geometries
     this.scene.traverse((object) => {
       if (object instanceof THREE.Points) {
         const geometry = object.geometry;
-        
+
         // For point clouds, compute bounding box from position attribute
         const positions = geometry.attributes.position;
         if (positions && positions.count > 0) {
           totalPointCount += positions.count;
-          
+
           // First, compute the bounding box
           if (!geometry.boundingBox) {
             geometry.computeBoundingBox();
           }
-          
+
           if (geometry.boundingBox) {
             const tempBox = geometry.boundingBox.clone();
-            
+
             // Apply object's world transform
             tempBox.applyMatrix4(object.matrixWorld);
-            
+
             // Only include if box has valid size (not empty)
             if (!tempBox.isEmpty()) {
               box.union(tempBox);
@@ -374,50 +374,54 @@ export class SceneManager {
         }
       }
     });
-    
+
     // Only center camera if we have a reasonable scene
     if (!box.isEmpty()) {
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
-      
+
       // Don't center if bounding box is too small or too few points
       // This prevents awkward camera positioning on edge cases
       if (maxDim < 1.0 || totalPointCount < 100) {
         // Keep default camera position for better user experience
-        console.warn(`Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, points: ${totalPointCount})`);
+        console.warn(
+          `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, points: ${totalPointCount})`
+        );
         return;
       }
-      
+
       const center = box.getCenter(new THREE.Vector3());
-      
+
       // Position camera to see the entire scene
       const distance = maxDim * 1.2; // Closer for better visibility
       this.camera.position.set(center.x, center.y, center.z + distance);
-      
+
       // Point camera at the center
       this.camera.lookAt(center);
       this.camera.updateMatrixWorld(true);
-      
+
       // Update controls to orbit around the center
       // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
       const controlsAny = this.controls as any;
-      
+
       // Set the new target position
       controlsAny.target.copy(center);
-      
+
       // CRITICAL: Force the controls to recalculate internal state after target change
       // ArcballControls maintains internal gizmos that need to be synchronized
       this.controls.update();
-      
+
       // Reset the saved state to the current configuration
       // This prevents the "jump" on first zoom interaction by ensuring
       // the saved state matches the actual current state
       this.controls.reset();
       this.controls.saveState();
-      
+
       console.log('✓ Controls target updated and state saved');
-      
-      console.log(`✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`);
+
+      console.log(
+        `✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
+      );
     } else {
       console.warn('No visible geometry found to center camera on');
     }
@@ -439,30 +443,30 @@ export class SceneManager {
       console.log('✓ Centered on bounding box');
     }
   }
-  
+
   /**
    * Center camera and controls on the origin
    */
   private centerOnOrigin(): void {
     // Get current camera distance from target
     const currentDistance = this.camera.position.distanceTo((this.controls as any).target);
-    
+
     // Reset target to origin
     const origin = new THREE.Vector3(0, 0, 0);
-    
+
     // Position camera at same distance from origin
     this.camera.position.set(0, 0, currentDistance);
     this.camera.lookAt(origin);
     this.camera.updateMatrixWorld(true);
-    
+
     // Update controls target
     (this.controls as any).target.copy(origin);
     this.controls.update();
-    
+
     // Reset and save state to prevent jumps
     this.controls.reset();
     this.controls.saveState();
-    
+
     console.log(`✓ Camera reset to origin with distance: ${currentDistance.toFixed(2)}`);
   }
 

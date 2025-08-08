@@ -1,6 +1,6 @@
 /**
  * Dataset browser UI panel for navigating and selecting Zarr datasets.
- * 
+ *
  * Provides a user-friendly interface for browsing directories and loading
  * Zarr datasets from various server types.
  */
@@ -23,36 +23,36 @@ export class DatasetBrowser {
   private onDatasetSelect: (path: string) => void;
   private onClose?: () => void;
   private currentDataset?: string;
-  
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
     this.onClose = config.onClose;
-    
+
     // Parse base URL from current location
     const params = new URLSearchParams(window.location.search);
     const src = params.get('src') || '';
-    
+
     // Check if we're currently inside a zarr dataset
     let baseUrl: string;
     let initialPath: string;
-    
+
     if (src && (src.includes('.zarr/') || src.endsWith('.zarr'))) {
       // We're inside a zarr dataset - navigate to parent directory
       const parsed = new URL(src);
       const pathname = parsed.pathname;
-      
+
       // Find the .zarr part and go to parent directory
       const zarrIndex = pathname.lastIndexOf('.zarr');
       if (zarrIndex > 0) {
         const parentPath = pathname.substring(0, pathname.lastIndexOf('/', zarrIndex - 1));
         baseUrl = parsed.origin + parentPath + '/';
-        
+
         // Extract just the dataset name for highlighting
         const datasetPath = pathname.substring(parentPath.length + 1);
         const datasetName = datasetPath.split('/')[0];
-        initialPath = '';  // Start at parent directory
-        
+        initialPath = ''; // Start at parent directory
+
         // Store the current dataset for highlighting
         this.currentDataset = datasetName;
       } else {
@@ -63,20 +63,20 @@ export class DatasetBrowser {
       baseUrl = this.extractBaseUrl(src);
       initialPath = this.extractPath(src);
     }
-    
+
     this.navigator = new DirectoryNavigator(baseUrl);
     this.panel = this.createPanel();
-    
+
     // Start navigation at the determined path
     this.navigate(initialPath);
   }
-  
+
   /**
    * Extract base URL from a full URL.
    */
   private extractBaseUrl(url: string): string {
     if (!url) return window.location.origin + '/';
-    
+
     try {
       const parsed = new URL(url);
       // If it ends with .zarr, go up one level
@@ -91,32 +91,32 @@ export class DatasetBrowser {
       return url;
     }
   }
-  
+
   /**
    * Extract relative path from a full URL.
    */
   private extractPath(url: string): string {
     if (!url) return '';
-    
+
     try {
       const parsed = new URL(url);
       const pathname = parsed.pathname;
-      
+
       // Extract just the dataset name if it's a .zarr
       if (pathname.includes('.zarr')) {
         const parts = pathname.split('/').filter(Boolean);
-        const zarrIndex = parts.findIndex(p => p.endsWith('.zarr'));
+        const zarrIndex = parts.findIndex((p) => p.endsWith('.zarr'));
         if (zarrIndex >= 0) {
           return parts.slice(0, zarrIndex + 1).join('/');
         }
       }
-      
+
       return '';
     } catch {
       return '';
     }
   }
-  
+
   /**
    * Create the browser panel UI.
    */
@@ -142,7 +142,7 @@ export class DatasetBrowser {
       color: #e0e0e0;
       z-index: 1000;
     `;
-    
+
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
@@ -152,7 +152,7 @@ export class DatasetBrowser {
       justify-content: space-between;
       align-items: center;
     `;
-    
+
     const title = document.createElement('h2');
     title.textContent = 'Select Dataset';
     title.style.cssText = `
@@ -160,7 +160,7 @@ export class DatasetBrowser {
       font-size: 18px;
       font-weight: 600;
     `;
-    
+
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
     closeBtn.style.cssText = `
@@ -176,13 +176,13 @@ export class DatasetBrowser {
       align-items: center;
       justify-content: center;
     `;
-    closeBtn.onmouseover = () => closeBtn.style.color = '#fff';
-    closeBtn.onmouseout = () => closeBtn.style.color = '#999';
+    closeBtn.onmouseover = () => (closeBtn.style.color = '#fff');
+    closeBtn.onmouseout = () => (closeBtn.style.color = '#999');
     closeBtn.onclick = () => this.close();
-    
+
     header.appendChild(title);
     header.appendChild(closeBtn);
-    
+
     // Breadcrumb navigation
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'breadcrumb';
@@ -196,7 +196,7 @@ export class DatasetBrowser {
       gap: 8px;
       overflow-x: auto;
     `;
-    
+
     // Content area
     const content = document.createElement('div');
     content.id = 'browser-content';
@@ -205,7 +205,7 @@ export class DatasetBrowser {
       overflow-y: auto;
       padding: 20px;
     `;
-    
+
     // Status bar
     const statusBar = document.createElement('div');
     statusBar.id = 'browser-status';
@@ -217,57 +217,57 @@ export class DatasetBrowser {
       display: flex;
       justify-content: space-between;
     `;
-    
+
     panel.appendChild(header);
     panel.appendChild(breadcrumb);
     panel.appendChild(content);
     panel.appendChild(statusBar);
-    
+
     this.container.appendChild(panel);
     return panel;
   }
-  
+
   /**
    * Navigate to a path and update the UI.
    */
   private async navigate(path: string): Promise<void> {
     const content = this.panel.querySelector('#browser-content') as HTMLElement;
     const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
-    
+
     // Show loading state
     content.innerHTML = '<div style="text-align: center; padding: 40px;">Loading...</div>';
     statusBar.textContent = 'Fetching directory contents...';
-    
+
     try {
       const result = await this.navigator.navigate(path);
       // Store result for future use if needed
-      
+
       // Update breadcrumb
       this.updateBreadcrumb(result.currentPath);
-      
+
       // If it's a Zarr dataset, load it directly
       if (result.isZarr) {
         this.onDatasetSelect(result.currentPath);
         this.close();
         return;
       }
-      
+
       // Display directory contents
       this.displayEntries(result.entries);
-      
+
       // Update status
       const strategyText = {
-        'webdav': 'WebDAV',
-        'html': 'HTML parsing',
-        'index': 'Index file',
-        'manual': 'Manual entry'
+        webdav: 'WebDAV',
+        html: 'HTML parsing',
+        index: 'Index file',
+        manual: 'Manual entry',
       }[result.strategy];
-      
+
       statusBar.innerHTML = `
         <span>${result.entries.length} items</span>
         <span>Detection: ${strategyText}</span>
       `;
-      
+
       // Handle manual fallback
       if (result.strategy === 'manual' && result.entries.length === 0) {
         this.showManualEntry();
@@ -282,14 +282,14 @@ export class DatasetBrowser {
       statusBar.textContent = 'Error loading directory';
     }
   }
-  
+
   /**
    * Update breadcrumb navigation.
    */
   private updateBreadcrumb(currentPath: string): void {
     const breadcrumb = this.panel.querySelector('#breadcrumb') as HTMLElement;
     breadcrumb.innerHTML = '';
-    
+
     // Root link
     const rootLink = document.createElement('a');
     rootLink.textContent = 'Root';
@@ -300,22 +300,22 @@ export class DatasetBrowser {
     `;
     rootLink.onclick = () => this.navigate('');
     breadcrumb.appendChild(rootLink);
-    
+
     // Path segments
     if (currentPath) {
       const parts = currentPath.split('/').filter(Boolean);
       let accumulated = '';
-      
+
       parts.forEach((part, index) => {
         // Separator
         const sep = document.createElement('span');
         sep.textContent = '›';
         sep.style.color = '#666';
         breadcrumb.appendChild(sep);
-        
+
         accumulated += (accumulated ? '/' : '') + part;
         const pathToNavigate = accumulated;
-        
+
         if (index === parts.length - 1) {
           // Current location (not clickable)
           const current = document.createElement('span');
@@ -336,19 +336,20 @@ export class DatasetBrowser {
       });
     }
   }
-  
+
   /**
    * Display directory entries.
    */
   private displayEntries(entries: DirectoryEntry[]): void {
     const content = this.panel.querySelector('#browser-content') as HTMLElement;
     content.innerHTML = '';
-    
+
     if (entries.length === 0) {
-      content.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Empty directory</div>';
+      content.innerHTML =
+        '<div style="text-align: center; padding: 40px; color: #888;">Empty directory</div>';
       return;
     }
-    
+
     // Sort entries: directories first, then files
     const sorted = [...entries].sort((a, b) => {
       if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -358,7 +359,7 @@ export class DatasetBrowser {
       if (b.type === 'directory') return 1;
       return 0;
     });
-    
+
     // Create entry list
     const list = document.createElement('div');
     list.style.cssText = `
@@ -366,13 +367,13 @@ export class DatasetBrowser {
       flex-direction: column;
       gap: 2px;
     `;
-    
-    sorted.forEach(entry => {
+
+    sorted.forEach((entry) => {
       const item = document.createElement('div');
-      
+
       // Check if this is the currently selected dataset
       const isCurrentDataset = this.currentDataset && entry.name === this.currentDataset;
-      
+
       item.style.cssText = `
         padding: 12px 16px;
         background: ${isCurrentDataset ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)'};
@@ -384,14 +385,16 @@ export class DatasetBrowser {
         transition: background 0.2s;
         ${isCurrentDataset ? 'border: 1px solid rgba(76, 175, 80, 0.4);' : ''}
       `;
-      
+
       item.onmouseover = () => {
         item.style.background = 'rgba(76, 175, 80, 0.2)';
       };
       item.onmouseout = () => {
-        item.style.background = isCurrentDataset ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)';
+        item.style.background = isCurrentDataset
+          ? 'rgba(76, 175, 80, 0.15)'
+          : 'rgba(255, 255, 255, 0.05)';
       };
-      
+
       // Icon
       const icon = document.createElement('span');
       icon.style.fontSize = '18px';
@@ -406,12 +409,12 @@ export class DatasetBrowser {
         icon.textContent = '📄';
         icon.title = 'File';
       }
-      
+
       // Name
       const name = document.createElement('span');
       name.textContent = entry.name;
       name.style.flex = '1';
-      
+
       // Type badge and current indicator
       if (entry.type === 'zarr') {
         const badgeContainer = document.createElement('div');
@@ -420,7 +423,7 @@ export class DatasetBrowser {
           gap: 6px;
           align-items: center;
         `;
-        
+
         // ZARR badge
         const badge = document.createElement('span');
         badge.textContent = 'ZARR';
@@ -433,7 +436,7 @@ export class DatasetBrowser {
           font-weight: 600;
         `;
         badgeContainer.appendChild(badge);
-        
+
         // Current dataset indicator
         if (isCurrentDataset) {
           const currentBadge = document.createElement('span');
@@ -448,7 +451,7 @@ export class DatasetBrowser {
           `;
           badgeContainer.appendChild(currentBadge);
         }
-        
+
         item.appendChild(icon);
         item.appendChild(name);
         item.appendChild(badgeContainer);
@@ -456,7 +459,7 @@ export class DatasetBrowser {
         item.appendChild(icon);
         item.appendChild(name);
       }
-      
+
       // Click handler
       item.onclick = () => {
         if (entry.type === 'zarr') {
@@ -466,19 +469,19 @@ export class DatasetBrowser {
           this.navigate(entry.path);
         }
       };
-      
+
       list.appendChild(item);
     });
-    
+
     content.appendChild(list);
   }
-  
+
   /**
    * Show manual entry form for servers that don't support listing.
    */
   private showManualEntry(): void {
     const content = this.panel.querySelector('#browser-content') as HTMLElement;
-    
+
     content.innerHTML = `
       <div style="text-align: center; padding: 40px;">
         <p style="margin-bottom: 20px;">Directory listing not available. Enter dataset path manually:</p>
@@ -529,11 +532,11 @@ export class DatasetBrowser {
         </p>
       </div>
     `;
-    
+
     const input = content.querySelector('#manual-path') as HTMLInputElement;
     const loadBtn = content.querySelector('#manual-load') as HTMLButtonElement;
     const cancelBtn = content.querySelector('#manual-cancel') as HTMLButtonElement;
-    
+
     loadBtn.onclick = () => {
       const path = input.value.trim();
       if (path) {
@@ -541,33 +544,33 @@ export class DatasetBrowser {
         this.close();
       }
     };
-    
+
     cancelBtn.onclick = () => this.close();
-    
+
     // Enter key support
     input.onkeydown = (e) => {
       if (e.key === 'Enter') {
         loadBtn.click();
       }
     };
-    
+
     input.focus();
   }
-  
+
   /**
    * Show the browser panel.
    */
   show(): void {
     this.panel.style.display = 'flex';
   }
-  
+
   /**
    * Hide the browser panel.
    */
   hide(): void {
     this.panel.style.display = 'none';
   }
-  
+
   /**
    * Close and dispose the browser.
    */

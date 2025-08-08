@@ -51,10 +51,10 @@ export class PerformanceMonitor {
     // This ensures it stays visible during camera movements and zoom
     statsElement.style.position = 'fixed';
     statsElement.style.bottom = '20px'; // Match dimension slider bottom margin
-    statsElement.style.left = '20px';   // Standard margin from edge
-    statsElement.style.top = 'auto';    // Ensure no top positioning
-    statsElement.style.right = 'auto';  // Ensure no right positioning
-    statsElement.style.width = 'auto';  // Use natural width
+    statsElement.style.left = '20px'; // Standard margin from edge
+    statsElement.style.top = 'auto'; // Ensure no top positioning
+    statsElement.style.right = 'auto'; // Ensure no right positioning
+    statsElement.style.width = 'auto'; // Use natural width
     statsElement.style.height = 'auto'; // Use natural height
 
     // Set z-index higher than all other UI elements to ensure visibility
@@ -69,7 +69,7 @@ export class PerformanceMonitor {
 
     // Remove focus outlines to prevent blue selection box
     statsElement.style.outline = 'none';
-    
+
     // Add CSS to prevent blue selection on all child elements
     const style = document.createElement('style');
     style.textContent = `

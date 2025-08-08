@@ -3,33 +3,33 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 /**
  * Configuration interface for initializing dimension sliders.
- * 
+ *
  * @interface SliderConfig
  */
 interface SliderConfig {
   /** DOM container where slider UI will be mounted */
   container: HTMLElement;
-  
+
   /** Current dimension state from scene manager */
   dims: SimpleDims;
-  
+
   /** Navigable bounds for each dimension */
   dimensionRanges: Array<[number, number]>;
-  
+
   /** Human-readable names for each dimension */
   dimensionNames: string[];
-  
+
   /** Optional physical units for each dimension */
   dimensionUnits?: string[];
 }
 
 /**
  * Interactive UI component providing sliders for navigating through non-displayed dimensions.
- * 
+ *
  * This component creates a sophisticated slider interface that allows users to navigate
  * through nD datasets by adjusting positions in dimensions not currently displayed in 3D.
  * It provides both mouse and keyboard interaction with visual feedback and status display.
- * 
+ *
  * Key features:
  * - Custom-styled sliders with progress bars and thumb indicators
  * - Automatic handling of discrete vs continuous dimensions
@@ -37,55 +37,55 @@ interface SliderConfig {
  * - Keyboard navigation with fine/coarse stepping
  * - Status bar showing current slice position
  * - Responsive layout that adapts to available screen space
- * 
+ *
  * Design philosophy:
  * - Mimics napari-style slider aesthetics for scientific familiarity
  * - Only shows sliders for non-displayed dimensions to avoid confusion
  * - Provides immediate visual feedback during navigation
  * - Handles edge cases gracefully (empty slices, discrete quantization)
- * 
+ *
  * Slider synchronization:
  * 1. User moves slider → triggers sceneDimsManager.setDimensionValue()
  * 2. sceneDimsManager notifies all listeners → triggers update()
  * 3. update() refreshes slider visuals and status display
  * 4. Point clouds re-slice automatically via their own listeners
- * 
+ *
  * @class DimensionSliders
  */
 export class DimensionSliders {
   /** Root DOM container for the slider UI */
   private container: HTMLElement;
-  
+
   /** Container for all individual dimension sliders */
   private slidersContainer: HTMLElement;
-  
+
   /** Status bar displaying current slice position */
   private statusBar: HTMLElement;
-  
+
   /** Status text element in the title bar */
   private statusText: HTMLElement | null = null;
-  
+
   /** Current dimension state (reference to scene manager state) */
   private dims: SimpleDims;
-  
+
   /** Navigable bounds for each dimension */
   private dimensionRanges: Array<[number, number]>;
-  
+
   /** Human-readable dimension names for UI labeling */
   private dimensionNames: string[];
-  
+
   /** Physical units for each dimension */
   private dimensionUnits: string[];
-  
+
   /** Map of dimension indices to their corresponding HTML slider elements */
   private sliders: Map<number, HTMLInputElement> = new Map();
 
   /**
    * Constructs and initializes the dimension slider UI.
-   * 
+   *
    * This creates the complete UI including the styled containers, individual
    * sliders for each non-displayed dimension, and the status bar.
-   * 
+   *
    * @param config - Slider configuration with dimensions and styling options
    */
   constructor(config: SliderConfig) {
@@ -94,7 +94,7 @@ export class DimensionSliders {
     this.dimensionRanges = config.dimensionRanges;
     this.dimensionNames = config.dimensionNames;
     this.dimensionUnits = config.dimensionUnits || [];
-    
+
     // Build the UI hierarchy
     this.slidersContainer = this.createSlidersContainer();
     // Status bar removed - status now shown in title
@@ -120,7 +120,8 @@ export class DimensionSliders {
     container.style.minWidth = '400px';
     container.style.maxHeight = '240px'; // Add max height for compression
     container.style.overflowY = 'auto'; // Allow scrolling if needed
-    container.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+    container.style.fontFamily =
+      '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
     container.style.fontSize = '12px'; // Slightly smaller
     container.style.color = '#e0e0e0';
     container.style.backdropFilter = 'blur(10px)';
@@ -136,17 +137,17 @@ export class DimensionSliders {
 
   /**
    * Creates individual slider controls for all non-displayed dimensions.
-   * 
+   *
    * This method rebuilds the entire slider interface, creating a separate
    * control for each dimension that isn't currently being displayed in the 3D scene.
    * The logic ensures that users only see controls for dimensions they can
    * actually navigate through.
-   * 
+   *
    * UI structure:
    * - Title header with visual separator
    * - Individual sliders for each non-displayed dimension
    * - Fallback message if all dimensions are displayed
-   * 
+   *
    * @private
    */
   private createSliders(): void {
@@ -162,17 +163,17 @@ export class DimensionSliders {
     titleContainer.style.marginBottom = '10px'; // Reduced from 12px
     titleContainer.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
     titleContainer.style.paddingBottom = '6px'; // Reduced from 8px
-    
+
     const title = document.createElement('div');
     title.textContent = 'Dimension Navigation';
     title.style.fontWeight = 'bold';
     title.style.fontSize = '14px';
-    
+
     this.statusText = document.createElement('div');
     this.statusText.style.fontFamily = 'monospace';
     this.statusText.style.fontSize = '12px';
     this.statusText.style.color = 'rgba(255, 255, 255, 0.8)';
-    
+
     titleContainer.appendChild(title);
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
@@ -391,13 +392,13 @@ export class DimensionSliders {
 
   /**
    * Updates the status bar text to reflect the current dimensional state.
-   * 
+   *
    * The status bar provides a concise overview of the current navigation state,
    * showing both which dimensions are being displayed in 3D and the current
    * slice positions in all non-displayed dimensions.
-   * 
+   *
    * Format: "Display: X, Y, Z | Time: 5.20s | Channel: 2"
-   * 
+   *
    * @public
    */
   public updateStatusBar(): void {
@@ -421,7 +422,7 @@ export class DimensionSliders {
 
     const statusContent = parts.join(' | ');
     this.statusBar.textContent = statusContent;
-    
+
     // Also update the status text in title if it exists
     if (this.statusText) {
       this.statusText.textContent = statusContent;
@@ -430,17 +431,17 @@ export class DimensionSliders {
 
   /**
    * Synchronizes all slider visuals with the current dimension state.
-   * 
+   *
    * This method is called by the scene dimension manager's observer system
    * whenever dimensions change. It ensures the UI accurately reflects the
    * current slice positions by updating slider positions, value labels,
    * and the status bar.
-   * 
+   *
    * Critical for maintaining UI consistency during:
    * - Keyboard navigation
    * - Programmatic dimension changes
    * - Camera centering operations that adjust displayed dimension positions
-   * 
+   *
    * @public
    */
   public update(): void {
@@ -462,17 +463,17 @@ export class DimensionSliders {
       // Update visual elements (progress bar, thumb, value label)
       this.updateSliderVisuals(dimIndex, currentValue, isDiscrete);
     }
-    
+
     // Refresh the status bar to show current state
     this.updateStatusBar();
   }
 
   /**
    * Controls the visibility of the entire slider interface.
-   * 
+   *
    * Used by the main application to show/hide dimension navigation
    * controls based on user preferences or dataset characteristics.
-   * 
+   *
    * @param visible - Whether to show or hide the slider UI
    * @public
    */
@@ -483,10 +484,10 @@ export class DimensionSliders {
 
   /**
    * Cleans up the slider UI and releases resources.
-   * 
+   *
    * Important for preventing memory leaks when the visualization
    * component is destroyed or reinitialized with different data.
-   * 
+   *
    * @public
    */
   public dispose(): void {

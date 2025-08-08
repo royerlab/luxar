@@ -3,69 +3,69 @@ import * as THREE from 'three';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
- * 
+ *
  * This singleton is a critical architectural component that solves the fundamental problem
  * of keeping multiple nD point clouds synchronized when navigating through dimensional space.
  * Without it, each point cloud could have its own slice position, leading to confusing
  * and inconsistent visualizations.
- * 
+ *
  * Core responsibilities:
  * - Initialize dimension metadata from scene-level configuration
  * - Maintain a single source of truth for current dimension positions
  * - Coordinate slider updates with point cloud re-slicing
  * - Handle discrete vs continuous dimension semantics
  * - Provide change notification system for reactive updates
- * 
+ *
  * Design decisions:
  * - Singleton pattern ensures only one dimension state exists per scene
  * - Non-displayed dimensions start at minimum values for predictable behavior
  * - Discrete dimensions are quantized to specified step sizes
  * - Observable pattern allows UI components to react to dimension changes
- * 
+ *
  * Initialization flow:
  * 1. Scene loads with nD objects containing dimension metadata
  * 2. SceneDimsManager extracts metadata from first nD object found
  * 3. Establishes ranges, display preferences, and initial positions
  * 4. UI components (sliders, keyboard handlers) register for updates
  * 5. Navigation events trigger coordinated updates across all objects
- * 
+ *
  * @class SceneDimsManager
  */
 export class SceneDimsManager {
   /** The shared dimension state for the entire scene */
   private dims: SimpleDims | null = null;
-  
+
   /** Min/max bounds for each dimension derived from metadata */
   private dimensionRanges: Array<[number, number]> | null = null;
-  
+
   /** Observer callbacks that react to dimension changes */
   private listeners: Set<() => void> = new Set();
 
   /**
    * Initializes the scene-level dimension state from metadata embedded in the scene.
-   * 
+   *
    * This method searches through the THREE.js scene hierarchy to find nD objects
    * with embedded dimension metadata, then establishes the shared dimensional
    * coordinate system for the entire scene.
-   * 
+   *
    * Search strategy:
    * 1. Check scene.userData.sceneDimensions first (direct attachment)
    * 2. Recursively search scene children for embedded metadata
    * 3. Use the first valid dimension metadata found
-   * 
+   *
    * Initialization logic:
    * - Parse metadata into standardized DimensionMetadata format
    * - Establish ranges from metadata or sensible defaults
    * - Set non-displayed dimensions to their minimum values
    * - Identify which dimensions should be displayed (max 3)
-   * 
+   *
    * @param scene - THREE.js scene containing nD objects with metadata
    * @returns True if dimensions were successfully initialized, false if no metadata found
    */
   initFromScene(scene: THREE.Scene): boolean {
     // Step 1: Search for scene dimensions metadata
     let sceneDimensions = scene.userData.sceneDimensions;
-    
+
     // Step 2: If not found on scene root, search immediate children
     if (!sceneDimensions) {
       for (const child of scene.children) {
@@ -75,13 +75,13 @@ export class SceneDimsManager {
         }
       }
     }
-    
+
     // Validation: Ensure we found valid dimension metadata
     if (!sceneDimensions?.dimensions) {
       console.error('No scene dimensions found in scene or its children');
       return false;
     }
-    
+
     // Step 3: Parse and normalize dimension metadata
     const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: any) => ({
       name: dim.name,
@@ -92,9 +92,9 @@ export class SceneDimsManager {
       discrete: dim.discrete || false,
       step: dim.step || 1.0,
     }));
-    
+
     const ndim = metadata.length;
-    
+
     // Step 4: Establish dimension ranges for navigation bounds
     this.dimensionRanges = metadata.map((meta) => {
       if (meta.range) {
@@ -103,11 +103,11 @@ export class SceneDimsManager {
       // Fallback: provide unit range if no bounds specified
       return [0, 1];
     });
-    
+
     // Step 5: Initialize dimension positions
     // Critical decision: non-displayed dimensions start at minimum for predictability
     const currentStep = new Array(ndim).fill(0);
-    
+
     for (let i = 0; i < ndim; i++) {
       if (metadata[i].display !== true) {
         // Non-displayed dimensions start at minimum bound
@@ -115,7 +115,7 @@ export class SceneDimsManager {
       }
       // Displayed dimensions start at 0 (camera will determine actual position)
     }
-    
+
     // Step 6: Identify which dimensions should be displayed in 3D scene
     const displayed: number[] = [];
     for (let i = 0; i < ndim; i++) {
@@ -123,24 +123,24 @@ export class SceneDimsManager {
         displayed.push(i);
       }
     }
-    
+
     // Step 7: Create the shared dimension state object
     this.dims = {
       ndim,
       currentStep,
       displayed,
-      metadata
+      metadata,
     };
-    
+
     return true;
   }
 
   /**
    * Provides read-only access to the current dimension state.
-   * 
+   *
    * This is the primary interface for components that need to access
    * the current slice positions, displayed dimensions, and metadata.
-   * 
+   *
    * @returns Current dimension state or null if not initialized
    */
   getDims(): SimpleDims | null {
@@ -149,11 +149,11 @@ export class SceneDimsManager {
 
   /**
    * Gets the navigable bounds for each dimension.
-   * 
+   *
    * These ranges define the valid navigation space and are used by
    * UI components (sliders, keyboard handlers) to constrain user input
    * and calculate appropriate step sizes.
-   * 
+   *
    * @returns Array of [min, max] bounds for each dimension, or null if not initialized
    */
   getDimensionRanges(): Array<[number, number]> | null {
@@ -162,18 +162,18 @@ export class SceneDimsManager {
 
   /**
    * Updates the position in a specific dimension and triggers re-slicing.
-   * 
+   *
    * This is the central method for dimension navigation, handling both
    * user input validation and observer notification. It ensures all
    * dimension changes are properly constrained and communicated.
-   * 
+   *
    * Value processing:
    * 1. Validate dimension index bounds
    * 2. Clamp value to valid range for this dimension
    * 3. Quantize discrete dimensions to their step size
    * 4. Update internal state
    * 5. Notify all observers (triggers UI updates and re-slicing)
-   * 
+   *
    * @param dimIndex - Index of dimension to update
    * @param value - New position value in dimension units
    */
@@ -201,11 +201,11 @@ export class SceneDimsManager {
 
   /**
    * Registers a callback to be invoked whenever dimension state changes.
-   * 
+   *
    * This implements the observer pattern, allowing UI components and
    * visualization objects to react automatically to navigation events.
    * Typical subscribers include sliders, point clouds, and status displays.
-   * 
+   *
    * @param callback - Function to call when dimensions change
    */
   addListener(callback: () => void): void {
@@ -214,9 +214,9 @@ export class SceneDimsManager {
 
   /**
    * Unregisters a dimension change callback.
-   * 
+   *
    * Important for preventing memory leaks when components are destroyed.
-   * 
+   *
    * @param callback - Previously registered callback function
    */
   removeListener(callback: () => void): void {
@@ -225,10 +225,10 @@ export class SceneDimsManager {
 
   /**
    * Triggers all registered observer callbacks.
-   * 
+   *
    * This is called internally whenever dimension state changes,
    * propagating updates throughout the reactive system.
-   * 
+   *
    * @private
    */
   private notifyListeners(): void {
@@ -237,10 +237,10 @@ export class SceneDimsManager {
 
   /**
    * Provides access to the complete dimension metadata array.
-   * 
+   *
    * Used by UI components that need detailed information about
    * dimension properties like names, units, discreteness, etc.
-   * 
+   *
    * @returns Array of dimension metadata, empty if not initialized
    */
   getDimensionMetadata(): DimensionMetadata[] {
@@ -258,10 +258,10 @@ export class SceneDimsManager {
 
   /**
    * Extracts human-readable names for all dimensions.
-   * 
+   *
    * Provides fallback names when metadata doesn't specify custom names.
    * Used by UI components for labeling sliders and status displays.
-   * 
+   *
    * @returns Array of dimension names (e.g., ["Time", "X", "Y", "Z"])
    */
   getDimensionNames(): string[] {
@@ -278,10 +278,10 @@ export class SceneDimsManager {
 
   /**
    * Extracts physical units for all dimensions.
-   * 
+   *
    * Used by UI components to display appropriate unit labels
    * next to numeric values (e.g., "μm", "s", "nm").
-   * 
+   *
    * @returns Array of dimension units, empty strings for dimensionless quantities
    */
   getDimensionUnits(): string[] {
@@ -297,11 +297,11 @@ export class SceneDimsManager {
 
   /**
    * Determines if the dataset has navigable dimensions beyond the displayed 3D view.
-   * 
+   *
    * This is used by UI components to decide whether to show dimension navigation
    * controls (sliders, keyboard hints). If all dimensions are displayed in 3D,
    * no additional navigation UI is needed.
-   * 
+   *
    * @returns True if there are dimensions not currently displayed in 3D space
    */
   hasNonDisplayedDimensions(): boolean {
@@ -311,24 +311,24 @@ export class SceneDimsManager {
 
 /**
  * Global singleton instance of the scene dimension manager.
- * 
+ *
  * This singleton ensures that all components in the application share
  * the same dimensional coordinate system. Import and use this instance
  * rather than creating new SceneDimsManager instances.
- * 
+ *
  * @example
  * ```typescript
  * import { sceneDimsManager } from './scene-dims-manager';
- * 
+ *
  * // Initialize from loaded scene
  * sceneDimsManager.initFromScene(scene);
- * 
+ *
  * // Register for dimension changes
  * sceneDimsManager.addListener(() => {
  *   console.log('Dimensions changed!');
  *   updatePointCloudSlice();
  * });
- * 
+ *
  * // Navigate through time dimension
  * sceneDimsManager.setDimensionValue(0, 5.2);
  * ```
