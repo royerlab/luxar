@@ -89,7 +89,7 @@ def main():
     scene = Scene(output_path)
 
     # Define rendering property cycles for material variety
-    blending_modes = ["normal", "additive", "multiply"]
+    blending_modes = ["normal", "additive", "subtractive"]
     opacities = [0.3, 0.5, 0.7, 0.9, 1.0]
     gammas = [0.8, 1.0, 1.2, 1.5]
     radii_values = [0.05, 0.1, 0.15]  # Different point sizes

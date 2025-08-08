@@ -39,7 +39,7 @@ def create_rotating_spiral(
             # Create rotating spiral
             angle = i * 0.1 + t * 0.5  # Rotation over time
             radius = 5 + i * 0.05  # Expanding radius
-            height = i * 0.3 - 15  # Vertical progression
+            height = i * 0.15 - 15  # Vertical progression (scaled to fit range)
 
             positions[idx] = [
                 t,  # time coordinate
@@ -78,9 +78,9 @@ def main():
                 display=False,
                 discrete=True,
             ),
-            Dimension("x", unit="units", range=(-15, 15)),
-            Dimension("y", unit="units", range=(-15, 15)),
-            Dimension("z", unit="units", range=(-20, 10)),
+            Dimension("x", unit="units", range=(-15.0, 15.0)),
+            Dimension("y", unit="units", range=(-15.0, 15.0)),
+            Dimension("z", unit="units", range=(-20.0, 20.0)),
         ]
     )
 
