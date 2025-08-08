@@ -70,6 +70,9 @@ export class LuxarApp {
 
       // Setup dataset browser keyboard shortcut
       this.setupDatasetBrowserShortcut();
+      
+      // Setup window focus handling to trigger render on focus
+      this.setupFocusHandling();
 
       this.isInitialized = true;
     } catch (error) {
@@ -186,6 +189,28 @@ export class LuxarApp {
     window.addEventListener('open-dataset-browser', () => {
       if (!this.datasetBrowser) {
         this.showDatasetBrowser();
+      }
+    });
+  }
+  
+  /**
+   * Setup window focus handling to trigger render on focus
+   * This prevents stale renders when switching between windows/tabs
+   */
+  private setupFocusHandling(): void {
+    // Trigger a render when window gains focus
+    window.addEventListener('focus', () => {
+      // Start animation briefly to ensure fresh render
+      this.animationController.startAnimation();
+      console.log('Window focused - triggering render refresh');
+    });
+    
+    // Also handle visibility change (tab switching)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        // Document became visible, trigger render
+        this.animationController.startAnimation();
+        console.log('Document became visible - triggering render refresh');
       }
     });
   }
