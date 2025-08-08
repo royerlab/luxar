@@ -19,13 +19,13 @@ from luxar import Dimension, Dimensions, Scene
 
 def create_4d_hypersphere_points(n_points: int = 100000, radius: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
     """Create points uniformly distributed on a 4D hypersphere.
-    
+
     Uses Gaussian method to get uniform distribution on the 4D sphere surface.
-    
+
     Args:
         n_points: Number of points to generate
         radius: Radius of the hypersphere
-        
+
     Returns:
         Tuple of (positions, radii) where positions is (n_points, 4) and radii is (n_points,)
     """
@@ -52,12 +52,12 @@ def create_4d_hypersphere_points(n_points: int = 100000, radius: float = 10.0) -
 
 def create_4d_rainbow_colors(positions: np.ndarray) -> np.ndarray:
     """Create rainbow colors based on 4D position.
-    
+
     Uses a combination of angular positions in 4D space to create smooth color gradients.
-    
+
     Args:
         positions: 4D positions array (n_points, 4)
-        
+
     Returns:
         RGB color array (n_points, 3) as uint8
     """

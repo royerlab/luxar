@@ -158,7 +158,7 @@ class Scene(Node):
             colors: Optional array of shape (N, 3) for point colors, or single RGB color
                 as (R, G, B) tuple/list to apply to all points
             radii: Optional array of shape (N,) for point radii, or single radius value
-                to apply to all points  
+                to apply to all points
             sharpness: Optional array of shape (N,) for point edge sharpness, or single
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root

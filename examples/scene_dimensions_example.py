@@ -9,6 +9,7 @@ This shows how to define dimensions at the scene level with:
 """
 
 import numpy as np
+from arbol import aprint
 
 from luxar import Dimension, Dimensions, Scene
 

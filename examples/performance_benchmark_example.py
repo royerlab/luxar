@@ -21,13 +21,13 @@ from luxar import Scene
 def create_node_positions(node_index: int, points_per_node: int,
                          grid_spacing: float = 3.0, cluster_size: float = 0.5) -> np.ndarray:
     """Create positioned point cluster for a specific node in 3D grid layout.
-    
+
     Args:
         node_index: Index of the node (for grid positioning)
         points_per_node: Number of points in this cluster
         grid_spacing: Distance between node centers
         cluster_size: Standard deviation of points within cluster
-        
+
     Returns:
         Array of 3D positions for this node's points
     """
@@ -49,11 +49,11 @@ def create_node_positions(node_index: int, points_per_node: int,
 
 def generate_test_colors(points_per_node: int, color_seed: int) -> np.ndarray:
     """Generate deterministic but varied colors for consistent benchmarking.
-    
+
     Args:
         points_per_node: Number of color values needed
         color_seed: Seed for deterministic color generation
-        
+
     Returns:
         Array of RGB colors
     """

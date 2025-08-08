@@ -19,11 +19,11 @@ from luxar import Scene
 
 def create_grid_positions(n_points: int, spacing: float = 1.0) -> np.ndarray:
     """Create a grid of point positions for organized display.
-    
+
     Args:
         n_points: Number of points (will use sqrt for grid dimensions)
         spacing: Distance between points
-        
+
     Returns:
         Array of 3D positions in a grid
     """

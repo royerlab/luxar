@@ -162,7 +162,8 @@ def test_serve_command_zip_store_error(runner, tmp_path):
     result = runner.invoke(app, ["serve", str(zip_path)])
 
     assert result.exit_code == 1
-    assert "ZipStore not yet supported" in result.stdout
+    # The serve command now checks if path is a directory
+    assert "is not a directory" in result.stdout
 
 
 def test_dfs_single_group(tmp_path):

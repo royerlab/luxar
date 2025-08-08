@@ -201,14 +201,18 @@ export class SceneManager {
     
     // Reset camera rotation to look at origin
     this.camera.lookAt(0, 0, 0);
+    this.camera.updateMatrixWorld(true);
     
     // Reset controls target to origin
     (this.controls as any).target.set(0, 0, 0);
     
-    // Update controls to apply changes
+    // Clear any internal state by calling update multiple times
+    // This ensures the controls fully sync with the new camera state
+    this.controls.update();
     this.controls.update();
     
     // Save this configuration as the new default state
+    // This is critical - it must happen AFTER all updates
     this.controls.saveState();
     
     console.log('✓ Controls reset to default state');
@@ -382,13 +386,19 @@ export class SceneManager {
       
       // Point camera at the center
       this.camera.lookAt(center);
+      this.camera.updateMatrixWorld(true);
       
       // Update controls to orbit around the center
       // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
       (this.controls as any).target.copy(center);
+      
+      // Call update twice to ensure controls fully sync with new camera state
+      // This prevents the "jump" on first interaction
+      this.controls.update();
       this.controls.update();
       
       // Save this configuration as the new default state to prevent jumps on first interaction
+      // Must happen AFTER all updates are complete
       this.controls.saveState();
       
       console.log(`✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`);

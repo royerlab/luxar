@@ -19,10 +19,10 @@ from luxar import Scene, transforms
 
 def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]:
     """Create coordinate axis lines for visualization.
-    
+
     Args:
         length: Length of each axis
-        
+
     Returns:
         Tuple of (positions, colors) for axis visualization
     """
@@ -50,11 +50,11 @@ def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]
 
 def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
     """Create points arranged in a cube shape.
-    
+
     Args:
         size: Size of the cube
         density: Number of points along each edge
-        
+
     Returns:
         Array of 3D positions forming a cube
     """
