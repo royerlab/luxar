@@ -182,6 +182,9 @@ export class SceneManager {
     // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
     (this.controls as any).target.set(0, 0, 0);
     this.controls.update();
+    
+    // Save initial state so reset() works properly
+    this.controls.saveState();
   }
 
   /**
@@ -202,11 +205,11 @@ export class SceneManager {
     // Reset controls target to origin
     (this.controls as any).target.set(0, 0, 0);
     
-    // Reset any internal state of ArcballControls
-    this.controls.reset();
-    
     // Update controls to apply changes
     this.controls.update();
+    
+    // Save this configuration as the new default state
+    this.controls.saveState();
     
     console.log('✓ Controls reset to default state');
   }
@@ -384,6 +387,9 @@ export class SceneManager {
       // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
       (this.controls as any).target.copy(center);
       this.controls.update();
+      
+      // Save this configuration as the new default state to prevent jumps on first interaction
+      this.controls.saveState();
       
       console.log(`✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`);
     } else {
