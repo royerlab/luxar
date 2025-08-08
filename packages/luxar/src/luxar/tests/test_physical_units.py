@@ -1,6 +1,5 @@
 """Test physical units support in Luxar."""
 
-
 import pytest
 
 from luxar import Scene
@@ -9,20 +8,23 @@ from luxar import Scene
 class TestPhysicalUnits:
     """Test that all supported physical units work correctly."""
 
-    @pytest.mark.parametrize("unit", [
-        "nm",     # nanometer
-        "um",     # micrometer
-        "mm",     # millimeter
-        "cm",     # centimeter
-        "m",      # meter (short form)
-        "metre",  # meter (British spelling)
-        "meter",  # meter (American spelling)
-        "km",     # kilometer
-        "inch",   # inch
-        "foot",   # foot
-        "px",     # pixel
-        "au",     # arbitrary units
-    ])
+    @pytest.mark.parametrize(
+        "unit",
+        [
+            "nm",  # nanometer
+            "um",  # micrometer
+            "mm",  # millimeter
+            "cm",  # centimeter
+            "m",  # meter (short form)
+            "metre",  # meter (British spelling)
+            "meter",  # meter (American spelling)
+            "km",  # kilometer
+            "inch",  # inch
+            "foot",  # foot
+            "px",  # pixel
+            "au",  # arbitrary units
+        ],
+    )
     def test_unit_acceptance(self, unit, tmp_path):
         """Test that each physical unit is accepted by Scene."""
         scene_path = tmp_path / f"test_{unit}.zarr"

@@ -65,18 +65,18 @@ DEFAULT_COMPRESSION_LEVEL: Final[int] = 3
 
 # Supported physical units
 SUPPORTED_UNITS: Final[tuple[PhysicalUnit, ...]] = (
-    "nm",    # nanometer
-    "um",    # micrometer
-    "mm",    # millimeter
-    "cm",    # centimeter
-    "m",     # meter (short form)
+    "nm",  # nanometer
+    "um",  # micrometer
+    "mm",  # millimeter
+    "cm",  # centimeter
+    "m",  # meter (short form)
     "metre",  # meter (British spelling)
     "meter",  # meter (American spelling)
-    "km",    # kilometer
+    "km",  # kilometer
     "inch",  # inch
     "foot",  # foot
-    "px",    # pixel
-    "au",    # arbitrary units
+    "px",  # pixel
+    "au",  # arbitrary units
 )
 
 # =============================================================================

@@ -101,7 +101,7 @@ class TestNodeRenderingAttributes:
         node = scene.add_group("test_node")
 
         # Test setting valid blending modes
-        for mode in ["normal", "additive", "multiply", "minimum", "maximum"]:
+        for mode in ["normal", "additive", "subtractive", "minimum", "maximum"]:
             node.blending_mode = mode
             assert node.blending_mode == mode
             assert node.attrs["blending_mode"] == mode
@@ -132,14 +132,14 @@ class TestNodeRenderingAttributes:
         node = scene.add_group("test_node")
         node.opacity = 0.7
         node.gamma = 1.5
-        node.blending_mode = "multiply"
+        node.blending_mode = "subtractive"
 
         # Check that attributes are written to zarr
         store = zarr.open_group(store_path, mode="r")
         test_node_attrs = store["test_node"].attrs
         assert test_node_attrs.get("opacity") == 0.7
         assert test_node_attrs.get("gamma") == 1.5
-        assert test_node_attrs.get("blending_mode") == "multiply"
+        assert test_node_attrs.get("blending_mode") == "subtractive"
 
     def test_rendering_attributes_in_add_points(self, tmp_path):
         """Test setting rendering attributes when adding points."""
@@ -162,9 +162,9 @@ class TestNodeRenderingAttributes:
         scene = Scene(tmp_path / "test.zarr")
 
         # Create parent with custom attributes
-        parent = scene.add_group("parent", opacity=0.3, blending_mode="multiply")
+        parent = scene.add_group("parent", opacity=0.3, blending_mode="subtractive")
         assert parent.opacity == 0.3
-        assert parent.blending_mode == "multiply"
+        assert parent.blending_mode == "subtractive"
 
         # Create child without specifying attributes
         child = parent.add_group("child")
@@ -174,4 +174,4 @@ class TestNodeRenderingAttributes:
 
         # But parent attributes are stored for TypeScript inheritance
         assert parent.attrs["opacity"] == 0.3
-        assert parent.attrs["blending_mode"] == "multiply"
+        assert parent.attrs["blending_mode"] == "subtractive"

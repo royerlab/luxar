@@ -12,7 +12,6 @@ vi.mock('three', () => ({
   })),
   NormalBlending: 'NormalBlending',
   AdditiveBlending: 'AdditiveBlending',
-  MultiplyBlending: 'MultiplyBlending',
   SubtractiveBlending: 'SubtractiveBlending',
   HalfFloatType: 'HalfFloatType',
   LinearSRGBColorSpace: 'LinearSRGBColorSpace',
@@ -124,7 +123,7 @@ describe('MaterialManager', () => {
       const testCases: Array<{ mode: BlendingMode; expected: string }> = [
         { mode: 'normal', expected: 'NormalBlending' },
         { mode: 'additive', expected: 'AdditiveBlending' },
-        { mode: 'multiply', expected: 'MultiplyBlending' },
+        { mode: 'subtractive', expected: 'SubtractiveBlending' },
         { mode: 'minimum', expected: 'SubtractiveBlending' },
         { mode: 'maximum', expected: 'AdditiveBlending' },
       ];
@@ -153,7 +152,7 @@ describe('MaterialManager', () => {
       }> = [
         { mode: 'normal', opacity: 1.0, expectedOrder: 0 }, // opaque
         { mode: 'normal', opacity: 0.5, expectedOrder: 100 }, // transparent
-        { mode: 'multiply', opacity: 0.8, expectedOrder: 200 },
+        { mode: 'subtractive', opacity: 0.8, expectedOrder: 200 },
         { mode: 'additive', opacity: 0.7, expectedOrder: 300 },
         { mode: 'minimum', opacity: 0.9, expectedOrder: 400 },
         { mode: 'maximum', opacity: 0.6, expectedOrder: 400 },
