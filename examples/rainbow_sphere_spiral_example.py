@@ -19,13 +19,13 @@ from luxar import Scene
 
 def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0) -> np.ndarray:
     """Create points distributed in a spherical spiral pattern.
-    
+
     Uses a technique similar to Fibonacci spiral on a sphere for even distribution.
-    
+
     Args:
         n_points: Number of points to generate
         radius: Radius of the sphere
-        
+
     Returns:
         Array of 3D positions
     """
@@ -51,10 +51,10 @@ def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0) -> np.
 
 def create_rainbow_colors(n_points: int) -> np.ndarray:
     """Generate smooth rainbow colors along the spiral.
-    
+
     Args:
         n_points: Number of color values to generate
-        
+
     Returns:
         Array of RGB colors
     """
@@ -75,14 +75,14 @@ def create_rainbow_colors(n_points: int) -> np.ndarray:
 
 def calculate_point_radius(n_points: int, sphere_radius: float) -> float:
     """Calculate appropriate point radius based on sphere size and point count.
-    
+
     For evenly distributed points on a sphere, calculates radius such that
     there's approximately one radius of space between points.
-    
+
     Args:
         n_points: Number of points on the sphere
         sphere_radius: Radius of the sphere
-        
+
     Returns:
         Appropriate point radius
     """

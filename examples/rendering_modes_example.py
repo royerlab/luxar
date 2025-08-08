@@ -19,11 +19,11 @@ from luxar import Scene
 
 def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.ndarray:
     """Create evenly distributed points on a sphere surface.
-    
+
     Args:
         n_points: Number of points to generate
         radius: Radius of the sphere
-        
+
     Returns:
         Array of 3D positions
     """

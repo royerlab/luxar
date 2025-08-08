@@ -20,11 +20,11 @@ from luxar import Scene, transforms
 
 def create_constellation_points(n_points: int, radius: float) -> np.ndarray:
     """Create points arranged in a spherical constellation.
-    
+
     Args:
         n_points: Number of points to generate
         radius: Radius of the sphere
-        
+
     Returns:
         Array of 3D positions on sphere surface
     """
@@ -43,12 +43,12 @@ def create_constellation_points(n_points: int, radius: float) -> np.ndarray:
 
 def create_ring_points(n_points: int, radius: float, height: float = 0.0) -> np.ndarray:
     """Create points arranged in a ring.
-    
+
     Args:
         n_points: Number of points in the ring
         radius: Radius of the ring
         height: Z-height of the ring
-        
+
     Returns:
         Array of 3D positions forming a ring
     """

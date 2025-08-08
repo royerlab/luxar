@@ -4,6 +4,7 @@
 from pathlib import Path
 
 import numpy as np
+from arbol import aprint
 
 import luxar
 from luxar import Scene, transforms
@@ -147,7 +148,7 @@ Displayed: X, Y, Z
 Sliders: Time (0-9 frames), Channel (0-2)
 
 Grid: {grid_size}x{grid_size}x{grid_size} = {grid_size**3} points per frame
-Total points: {len(positions)} 
+Total points: {len(positions)}
 - {n_time_points} time frames
 - {n_channels} channels (R/G/B)
 - Grid rotates over time
@@ -165,8 +166,6 @@ scene.attrs["info"] = info_text
 
 # Finalize
 scene.finalize()
-
-from arbol import aprint
 
 aprint(f"Created dense 5D test scene: {scene_path}")
 aprint(f"Total points: {len(positions)}")

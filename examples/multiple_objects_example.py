@@ -20,12 +20,12 @@ from luxar import Scene
 
 def create_spiral_galaxy(n_points: int, radius: float, height: float) -> np.ndarray:
     """Create points in a spiral galaxy pattern.
-    
+
     Args:
         n_points: Number of points
         radius: Maximum radius of the spiral
         height: Thickness of the galaxy disk
-        
+
     Returns:
         Array of 3D positions forming a spiral galaxy
     """
@@ -43,12 +43,12 @@ def create_spiral_galaxy(n_points: int, radius: float, height: float) -> np.ndar
 
 def create_globular_cluster(n_points: int, center: tuple, radius: float) -> np.ndarray:
     """Create points in a dense globular cluster.
-    
+
     Args:
         n_points: Number of points
         center: Center position (x, y, z)
         radius: Radius of the cluster
-        
+
     Returns:
         Array of 3D positions forming a globular cluster
     """
@@ -71,12 +71,12 @@ def create_globular_cluster(n_points: int, center: tuple, radius: float) -> np.n
 
 def create_nebula_cloud(n_points: int, center: tuple, size: tuple) -> np.ndarray:
     """Create points in a nebula-like cloud.
-    
+
     Args:
         n_points: Number of points
         center: Center position (x, y, z)
         size: Size in each dimension (sx, sy, sz)
-        
+
     Returns:
         Array of 3D positions forming a nebula cloud
     """
@@ -95,13 +95,13 @@ def create_nebula_cloud(n_points: int, center: tuple, size: tuple) -> np.ndarray
 
 def create_ring_system(n_rings: int, center: tuple, inner_radius: float, outer_radius: float) -> np.ndarray:
     """Create points forming a ring system.
-    
+
     Args:
         n_rings: Number of concentric rings
         center: Center position
         inner_radius: Inner radius
         outer_radius: Outer radius
-        
+
     Returns:
         Array of 3D positions forming ring system
     """
