@@ -171,6 +171,31 @@ export function sliceColors(colors: Uint8Array | null, indices: Uint32Array): Ui
 }
 
 /**
+ * Slices HDR float32 color data to include only visible points.
+ * 
+ * @param colors - HDR float32 color array (values can exceed 1.0)
+ * @param indices - Indices of visible points
+ * @returns Sliced HDR color array
+ */
+export function sliceColorsFloat32(colors: Float32Array | null, indices: Uint32Array): Float32Array | null {
+  if (!colors) return null;
+
+  const numVisible = indices.length;
+  const colors3 = new Float32Array(numVisible * 3);
+
+  // Copy RGB triplets for each visible point - HDR values preserved
+  for (let i = 0; i < numVisible; i++) {
+    const srcIndex = indices[i] * 3;
+    const dstIndex = i * 3;
+    colors3[dstIndex] = colors[srcIndex]; // R (can be > 1.0 for HDR)
+    colors3[dstIndex + 1] = colors[srcIndex + 1]; // G (can be > 1.0 for HDR)
+    colors3[dstIndex + 2] = colors[srcIndex + 2]; // B (can be > 1.0 for HDR)
+  }
+
+  return colors3;
+}
+
+/**
  * Computes the effective radii of nD hyperspheres after slicing by hyperplanes.
  *
  * This implements a fundamental geometric principle: when an nD hypersphere of radius R

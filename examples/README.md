@@ -291,8 +291,11 @@ When viewing nD data (>3D), use these controls:
 - **H**: Show help overlay
 
 ### Advanced Controls
-- **Ctrl/Cmd + P**: Toggle performance stats
-- **Ctrl/Cmd + A**: Toggle advanced rendering controls
+- **P**: Toggle performance stats
+- **R**: Toggle rendering controls
+- **C**: Toggle center (origin/bounding box)
+- **D**: Toggle dimension sliders
+- **O**: Open dataset browser
 
 ## Key Concepts
 

@@ -349,9 +349,9 @@ export class InputHandler {
         this.togglePerformanceStats();
         break;
 
-      case 'a':
-      case 'A':
-        // A key to toggle advanced rendering controls
+      case 'r':
+      case 'R':
+        // R key to toggle rendering controls
         event.preventDefault();
         this.toggleRenderingControls();
         break;

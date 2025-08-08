@@ -109,10 +109,10 @@ Point cloud nodes contain the actual point data.
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
-- **Dtype:** `uint8`
+- **Dtype:** `float32` (HDR colors)
 - **Chunks:** `(min(N, 32768), 3)`
 - **Compression:** Blosc with zstd, level 3, bit-shuffle
-- **Description:** RGB colors, range 0-255
+- **Description:** HDR RGB colors, typically range 0-255 but can exceed for HDR effects
 - **Default:** White (255, 255, 255) if not provided
 
 #### radii/ (Optional)
@@ -192,7 +192,7 @@ After scene construction, call `scene.finalize()` to:
 
 ## Version History
 
-- **0.3** (Current): Added scene dimensions, improved nD support
+- **0.3** (Current): Added scene dimensions, improved nD support, HDR color support (float32)
 - **0.2**: Added sharpness attribute, rendering parameters
 - **0.1**: Initial format with positions, colors, radii
 
@@ -223,7 +223,7 @@ scene = Scene("output.zarr", dimensions=dims)
 
 # Add point cloud
 positions = np.random.randn(10000, 4).astype(np.float32)  # 4D points
-colors = np.random.randint(0, 255, (10000, 3), dtype=np.uint8)
+colors = np.random.randint(0, 255, (10000, 3), dtype=np.float32)  # HDR colors
 radii = np.ones(10000, dtype=np.float32) * 0.5
 
 scene.add_points("my_points", positions, colors, radii=radii)

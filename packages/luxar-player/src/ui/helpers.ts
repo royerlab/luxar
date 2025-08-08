@@ -203,7 +203,7 @@ export function showHelpOverlay() {
     '❓ Press H: Toggle this help',
     '📁 Press O: Open dataset browser',
     '📊 Press P: Toggle performance stats',
-    '🎨 Press A: Advanced rendering controls',
+    '🎨 Press R: Rendering controls',
     '🎯 Press C: Toggle center (origin/bounding box)',
     '',
     '📐 nD Navigation (if applicable):',

@@ -78,8 +78,9 @@ class Points(Node):
     Args:
         name (str): Name of the point cloud node.
         positions (NDArray[np.float32]): Array of shape (N, D) for point positions where D is dimensionality.
-        colors (NDArray[np.uint8] | tuple | list, optional): Array of shape (N, 3) for point colors,
+        colors (NDArray[np.float32] | tuple | list, optional): Array of shape (N, 3) for HDR point colors,
             or single RGB color as (R, G, B) tuple/list to apply to all points.
+            Values can exceed 1.0 for HDR emission (e.g., 10.0 for very bright points).
         radii (NDArray[np.float32] | float, optional): Array of shape (N,) for point radii,
             or single radius value to apply to all points.
         sharpness (NDArray[np.float32] | float, optional): Array of shape (N,) for point edge sharpness,
@@ -144,12 +145,12 @@ class Points(Node):
             if colors is not None:
                 # Handle single color value (broadcast to all points)
                 if isinstance(colors, (list, tuple)) and len(colors) == 3:  # type: ignore[unreachable]
-                    # Single RGB color as list/tuple
-                    color_array = np.array(colors, dtype=np.uint8)  # type: ignore[unreachable]
+                    # Single RGB color as list/tuple - HDR float32
+                    color_array = np.array(colors, dtype=np.float32)  # type: ignore[unreachable]
                     validated_colors = np.tile(color_array, (n_points, 1))
                 elif isinstance(colors, np.ndarray) and colors.shape == (3,):
-                    # Single RGB color as numpy array
-                    validated_colors = np.tile(colors.astype(np.uint8), (n_points, 1))
+                    # Single RGB color as numpy array - HDR float32
+                    validated_colors = np.tile(colors.astype(np.float32), (n_points, 1))
                 else:
                     # Full color array
                     validated_colors = validate_colors(colors, n_points)
@@ -213,7 +214,7 @@ class Points(Node):
             )
             if validated_colors is not None:
                 _create_array(
-                    grp, "colors", validated_colors, chunk_size, compressor, np.uint8
+                    grp, "colors", validated_colors, chunk_size, compressor, np.float32
                 )
             if validated_radii is not None:
                 _create_array(

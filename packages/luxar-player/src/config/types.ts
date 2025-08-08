@@ -109,6 +109,13 @@ export interface RenderingSettings {
   smaaSearchSteps: number;
   ssaaEnabled: boolean;
   ssaaMultiplier: number;
+  // New post-processing effects
+  toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
+  dofEnabled: boolean;
+  dofFocus: number;
+  dofStrength: number;
+  chromaticAberrationEnabled: boolean;
+  chromaticAberrationStrength: number;
 }
 
 /**

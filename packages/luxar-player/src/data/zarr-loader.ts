@@ -37,7 +37,7 @@ import { SimpleDims, DimensionMetadata } from '../types/dims';
 import {
   slicePoints,
   extractDisplayDimensions,
-  sliceColors,
+  sliceColorsFloat32,
   sliceScalarAttribute,
   computeEffectiveRadii,
 } from '../utils/slicing';
@@ -310,7 +310,7 @@ export async function loadScene(src: string): Promise<THREE.Group> {
  * 3. Perform nD slicing if data exceeds 3D
  * 4. Load and slice optional attributes (colors, sharpness)
  * 5. Compute effective radii for sliced hyperspheres
- * 6. Convert data formats for GPU (uint8→float32 for colors)
+ * 6. Handle HDR colors (float32 format, values can exceed 1.0)
  * 7. Create THREE.js geometry with all attributes
  * 8. Apply materials and store metadata for runtime updates
  *
@@ -377,13 +377,28 @@ async function buildPoints(
     pos = posData;
   }
 
-  // Load optional attributes
-  let colData: Uint8Array | undefined;
-  let col: Uint8Array | undefined;
+  // Load optional attributes - HDR colors are now float32
+  let colData: Float32Array | undefined;
+  let col: Float32Array | undefined;
   try {
     const colArr = await zarr.open(loc.resolve('colors'), { kind: 'array' });
-    colData = (await get(colArr)).data as Uint8Array;
-    col = visibleIndices ? sliceColors(colData, visibleIndices) || undefined : colData;
+    const rawData = (await get(colArr)).data;
+    
+    // Handle both legacy uint8 and new HDR float32 formats
+    if (rawData instanceof Uint8Array) {
+      // Legacy format: convert uint8 to float32
+      console.log('Converting legacy uint8 colors to HDR float32');
+      const floatData = new Float32Array(rawData.length);
+      for (let i = 0; i < rawData.length; i++) {
+        floatData[i] = rawData[i] / 255.0;
+      }
+      colData = floatData;
+    } else {
+      // New HDR format: already float32
+      colData = rawData as Float32Array;
+    }
+    
+    col = visibleIndices ? sliceColorsFloat32(colData, visibleIndices) || undefined : colData;
   } catch (error) {
     console.debug('Optional array not found:', error);
     /* optional */
@@ -417,12 +432,8 @@ async function buildPoints(
   geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
 
   if (col) {
-    // Convert Uint8Array colors (0-255) to Float32Array (0.0-1.0) for shader compatibility
-    const floatColors = new Float32Array(col.length);
-    for (let i = 0; i < col.length; i++) {
-      floatColors[i] = col[i] / 255.0;
-    }
-    geom.setAttribute('color', new THREE.BufferAttribute(floatColors, 3));
+    // Colors are already in HDR float32 format - can exceed 1.0 for bright emission
+    geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
   } else {
     // Provide default white colors if no color data is available
     // This ensures the vertex shader always has color data to work with
