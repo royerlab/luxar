@@ -70,7 +70,7 @@ export class LuxarApp {
 
       // Setup dataset browser keyboard shortcut
       this.setupDatasetBrowserShortcut();
-      
+
       // Setup window focus handling to trigger render on focus
       this.setupFocusHandling();
 
@@ -119,17 +119,17 @@ export class LuxarApp {
     if (this.datasetBrowser) {
       return; // Browser already open
     }
-    
+
     // Clear any existing error messages when opening the browser
     clearError();
-    
+
     this.datasetBrowser = new DatasetBrowser({
       container: document.body,
       onDatasetSelect: async (path: string) => {
         // Construct full URL
         const params = new URLSearchParams(window.location.search);
         const currentSrc = params.get('src') || '';
-        
+
         let baseUrl: string;
         try {
           const url = new URL(currentSrc);
@@ -137,21 +137,21 @@ export class LuxarApp {
         } catch {
           baseUrl = window.location.origin;
         }
-        
+
         // Ensure proper path joining without double slashes
         const cleanPath = path.startsWith('/') ? path : '/' + path;
         const fullUrl = baseUrl + cleanPath;
-        
+
         // Update URL parameter
         params.set('src', fullUrl);
         window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
-        
+
         // Load the dataset
         await this.loadDataset(fullUrl);
       },
       onClose: () => {
         this.datasetBrowser = undefined;
-      }
+      },
     });
   }
 
@@ -161,7 +161,7 @@ export class LuxarApp {
   private async loadDataset(src: string): Promise<void> {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
-    
+
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);
 
@@ -170,7 +170,7 @@ export class LuxarApp {
 
     // Set scene ID for rendering controls persistence
     this.renderingControls.setSceneId(src);
-    
+
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
   }
@@ -192,7 +192,7 @@ export class LuxarApp {
       }
     });
   }
-  
+
   /**
    * Setup window focus handling to trigger render on focus
    * This prevents stale renders when switching between windows/tabs
@@ -204,7 +204,7 @@ export class LuxarApp {
       this.animationController.startAnimation();
       console.log('Window focused - triggering render refresh');
     });
-    
+
     // Also handle visibility change (tab switching)
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {

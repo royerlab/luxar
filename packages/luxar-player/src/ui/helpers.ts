@@ -30,7 +30,8 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.color = '#e0e0e0';
   loadingDiv.style.padding = '20px';
   loadingDiv.style.borderRadius = '8px';
-  loadingDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+  loadingDiv.style.fontFamily =
+    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   loadingDiv.style.fontSize = '16px';
   loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
   loadingDiv.style.textAlign = 'center';
@@ -82,7 +83,8 @@ export function showError(message: string) {
   errorDiv.style.color = '#e0e0e0';
   errorDiv.style.padding = '15px';
   errorDiv.style.borderRadius = '8px';
-  errorDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+  errorDiv.style.fontFamily =
+    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   errorDiv.style.fontSize = '14px';
   errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
   errorDiv.style.maxWidth = '400px';
@@ -174,7 +176,8 @@ export function showHelpOverlay() {
   helpDiv.style.color = '#e0e0e0';
   helpDiv.style.padding = '15px';
   helpDiv.style.borderRadius = '8px';
-  helpDiv.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+  helpDiv.style.fontFamily =
+    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   helpDiv.style.fontSize = '12px';
   helpDiv.style.zIndex = '1001';
   helpDiv.style.width = '300px';

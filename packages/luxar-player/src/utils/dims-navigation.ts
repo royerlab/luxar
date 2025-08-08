@@ -1,11 +1,11 @@
 /**
  * Navigation utilities for smooth movement through nD space.
- * 
+ *
  * This module provides the core functionality for user interaction with
  * high-dimensional datasets, including keyboard navigation, boundary handling,
  * and real-time point cloud updates. It bridges user input with the underlying
  * mathematical slicing operations.
- * 
+ *
  * Key features:
  * - Adaptive step sizing based on data ranges
  * - Boundary wrapping for periodic dimensions
@@ -25,35 +25,35 @@ import * as THREE from 'three';
 
 /**
  * Configuration options for dimension navigation behavior.
- * 
+ *
  * @interface NavigationOptions
  */
 interface NavigationOptions {
   /** Fraction of dimension range to step (0.1 = 10% of range per step) */
   stepSize?: number;
-  
+
   /** Whether to wrap around at dimension boundaries (useful for periodic data) */
   wrap?: boolean;
-  
+
   /** Absolute step size in data units (overrides relative stepSize) */
   absoluteStep?: number;
 }
 
 /**
  * Steps through a non-displayed dimension by a calculated or specified amount.
- * 
+ *
  * This function implements intelligent navigation that adapts to the data's natural
  * scale while respecting dimension boundaries and navigation constraints.
- * 
+ *
  * Design decisions:
  * - Only non-displayed dimensions can be stepped (displayed dims are controlled by camera)
  * - Default step size is 10% of dimension range for intuitive navigation
  * - Boundary handling prevents navigation beyond data bounds
  * - Wrapping support enables navigation through periodic dimensions (e.g., angle, time)
- * 
+ *
  * @param dims - Current dimension state to modify
  * @param dimIndex - Index of dimension to step through
- * @param direction - Direction to step: 1 for forward, -1 for backward  
+ * @param direction - Direction to step: 1 for forward, -1 for backward
  * @param ranges - Min/max bounds for each dimension
  * @param options - Navigation behavior configuration
  * @returns True if dimension position changed, false otherwise
@@ -79,7 +79,7 @@ export function stepDimension(
 
   const [min, max] = ranges[dimIndex];
   const range = max - min;
-  
+
   // Calculate step size: absolute takes precedence over relative
   const step = absoluteStep !== undefined ? absoluteStep : range * stepSize;
 
@@ -104,10 +104,10 @@ export function stepDimension(
 
 /**
  * Directly jumps to a specific fractional position within a dimension's range.
- * 
+ *
  * This function enables precise positioning based on UI elements like sliders,
  * where the user specifies an exact location as a percentage of the total range.
- * 
+ *
  * @param dims - Dimension state to modify
  * @param dimIndex - Index of dimension to position
  * @param fraction - Position as fraction of range (0.0 = min, 1.0 = max)
@@ -139,14 +139,14 @@ export function jumpToDimension(
 
 /**
  * Identifies the first two non-displayed dimensions for keyboard navigation.
- * 
+ *
  * This function establishes a consistent mapping between keyboard inputs and
  * dimensions, typically assigning arrow keys or WASD to the first two
  * non-displayed dimensions for intuitive navigation.
- * 
+ *
  * Design rationale: Users need predictable keyboard controls that don't change
  * as they modify which dimensions are displayed.
- * 
+ *
  * @param dims - Current dimension state
  * @returns Tuple of [primary, secondary] dimension indices (-1 if not available)
  */
@@ -163,30 +163,30 @@ export function getNavigableDimensions(dims: SimpleDims): [number, number] {
 
 /**
  * Updates the GPU point cloud geometry after a dimension navigation event.
- * 
+ *
  * This function is the critical performance bottleneck that must run smoothly
  * during real-time navigation. It performs the complete pipeline from nD slicing
  * to GPU buffer updates, ensuring visual consistency and responsiveness.
- * 
+ *
  * Pipeline stages:
  * 1. Slice nD data using radius-based hypersphere intersection
- * 2. Project visible points to 3D display coordinates  
+ * 2. Project visible points to 3D display coordinates
  * 3. Compute effective radii for sliced nD spheres
  * 4. Update GPU vertex attributes (position, color, radius, sharpness)
  * 5. Trigger GPU buffer updates and bounding volume recalculation
- * 
+ *
  * Performance considerations:
  * - Minimizes GPU memory allocations by reusing buffers when possible
  * - Handles empty slices gracefully with dummy geometry
  * - Batches all GPU updates to minimize state changes
- * 
+ *
  * Edge case handling:
  * - Empty slices display a single dummy point to prevent GPU errors
  * - Missing attributes get sensible defaults
  * - Color format conversion from uint8 to float32 for GPU
- * 
+ *
  * @param points - THREE.js Points object to update
- * @param originalPositions - Full nD position data  
+ * @param originalPositions - Full nD position data
  * @param originalColors - Per-point RGB colors (optional)
  * @param originalRadii - Per-point radii for hypersphere slicing (optional)
  * @param originalSharpness - Per-point sharpness values (optional)

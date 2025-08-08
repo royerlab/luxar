@@ -169,6 +169,25 @@ After making changes, run:
 
 ## Technical Documentation
 
+### Critical Compatibility Issues
+
+#### Matrix Storage Order: Python/NumPy vs TypeScript/THREE.js
+**IMPORTANT**: Python/NumPy and TypeScript/THREE.js use different matrix storage conventions:
+
+- **Python/NumPy**: Row-major order (C-style)
+  - 4x4 matrix flattened as: `[m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33]`
+  - Translation components at indices: `[3, 7, 11]` (when flattened)
+  
+- **TypeScript/THREE.js**: Column-major order (OpenGL-style)
+  - 4x4 matrix flattened as: `[m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]`
+  - Translation components at indices: `[12, 13, 14]` (when flattened)
+
+**Solution**: When storing transforms in zarr for THREE.js consumption:
+1. Transpose the matrix before flattening: `matrix.T.ravel().tolist()`
+2. When reading back in Python, transpose again: `np.array(flat_list).reshape(4, 4).T`
+
+This issue was discovered when hierarchical transforms weren't working - all objects were at origin because THREE.js was reading translation values from the wrong array indices.
+
 ### Recent Updates and Learnings
 
 #### nD Visualization Implementation (Latest)

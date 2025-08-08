@@ -131,7 +131,6 @@ export const config: AppConfig = {
 
   // HTML element ID for the canvas where 3D rendering occurs
   canvasId: 'app',
-
 } as const;
 
 // Export types

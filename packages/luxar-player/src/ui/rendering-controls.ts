@@ -53,7 +53,7 @@ export class RenderingControls {
 
     // Position on the left side with standard margins
     this.gui.domElement.style.position = 'fixed';
-    this.gui.domElement.style.top = '20px';  // Standard 20px margin
+    this.gui.domElement.style.top = '20px'; // Standard 20px margin
     this.gui.domElement.style.left = '20px'; // Standard 20px margin
     this.gui.domElement.style.zIndex = '1999'; // Below performance monitor (2000)
 
@@ -82,13 +82,15 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip on the DOM element
-    bloomThresholdControl.domElement.setAttribute('title',
+    bloomThresholdControl.domElement.setAttribute(
+      'title',
       'Bloom Threshold: Minimum brightness for bloom\n' +
-      '• Only pixels brighter than this value will bloom\n' +
-      '• 0 = everything blooms, 1 = only brightest areas bloom\n' +
-      '• Use with HDR intensity for best results');
+        '• Only pixels brighter than this value will bloom\n' +
+        '• 0 = everything blooms, 1 = only brightest areas bloom\n' +
+        '• Use with HDR intensity for best results'
+    );
 
     const bloomStrengthControl = bloomFolder
       .add(this.settings, 'bloomStrength', 0, 2, 0.01)
@@ -98,12 +100,14 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip on the DOM element
-    bloomStrengthControl.domElement.setAttribute('title',
+    bloomStrengthControl.domElement.setAttribute(
+      'title',
       'Bloom Strength: Intensity of the glow effect\n' +
-      '• 0 = no bloom, 1 = normal, 2 = intense glow\n' +
-      '• Creates realistic light bleeding from bright areas');
+        '• 0 = no bloom, 1 = normal, 2 = intense glow\n' +
+        '• Creates realistic light bleeding from bright areas'
+    );
 
     const bloomRadiusControl = bloomFolder
       .add(this.settings, 'bloomRadius', 0, 1, 0.01)
@@ -113,13 +117,15 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip on the DOM element
-    bloomRadiusControl.domElement.setAttribute('title',
+    bloomRadiusControl.domElement.setAttribute(
+      'title',
       'Bloom Radius: Size of the glow spread\n' +
-      '• 0 = tight glow, 1 = wide spread\n' +
-      '• Larger radius = softer, more diffuse glow\n' +
-      '• Affects computational cost');
+        '• 0 = tight glow, 1 = wide spread\n' +
+        '• Larger radius = softer, more diffuse glow\n' +
+        '• Affects computational cost'
+    );
 
     // HDR/Exposure folder
     const hdrFolder = this.gui.addFolder('HDR & Exposure');
@@ -133,14 +139,16 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip on the DOM element
-    exposureControl.domElement.setAttribute('title',
+    exposureControl.domElement.setAttribute(
+      'title',
       'Exposure: Controls overall image brightness (post-process)\n' +
-      '• Acts like a camera exposure setting\n' +
-      '• Applied AFTER HDR rendering during tone mapping\n' +
-      '• 1.0 = neutral, <1.0 = darker, >1.0 = brighter\n' +
-      '• Affects the entire image uniformly');
+        '• Acts like a camera exposure setting\n' +
+        '• Applied AFTER HDR rendering during tone mapping\n' +
+        '• 1.0 = neutral, <1.0 = darker, >1.0 = brighter\n' +
+        '• Affects the entire image uniformly'
+    );
 
     const hdrControl = hdrFolder
       .add(this.settings, 'hdrMultiplier', 1, 100, 0.1)
@@ -152,14 +160,16 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip on the DOM element
-    hdrControl.domElement.setAttribute('title',
+    hdrControl.domElement.setAttribute(
+      'title',
       'HDR Intensity: Multiplies point light emission (pre-process)\n' +
-      '• Controls how bright points can be in HDR space\n' +
-      '• Applied DURING rendering before tone mapping\n' +
-      '• Higher values = stronger glow/bloom effects\n' +
-      '• Can create values >1.0 for realistic bright sources');
+        '• Controls how bright points can be in HDR space\n' +
+        '• Applied DURING rendering before tone mapping\n' +
+        '• Higher values = stronger glow/bloom effects\n' +
+        '• Can create values >1.0 for realistic bright sources'
+    );
 
     // Anti-aliasing folder
     const aaFolder = this.gui.addFolder('Anti-Aliasing');
@@ -293,15 +303,16 @@ export class RenderingControls {
    */
   private applyCustomStyling(): void {
     const root = this.gui.domElement;
-    
+
     // Style the main container
     root.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
     root.style.borderRadius = '8px';
     root.style.backdropFilter = 'blur(10px)';
     root.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-    root.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+    root.style.fontFamily =
+      '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
     root.style.fontSize = '12px';
-    
+
     // Style the title
     const title = root.querySelector('.title') as HTMLElement;
     if (title) {
@@ -313,7 +324,7 @@ export class RenderingControls {
       title.style.paddingBottom = '6px';
       title.style.marginBottom = '10px';
     }
-    
+
     // Override lil-gui's default styles with CSS
     const style = document.createElement('style');
     style.textContent = `
@@ -420,7 +431,7 @@ export class RenderingControls {
         background-color: rgba(255, 255, 255, 0.05) !important;
       }
     `;
-    
+
     // Only add style once
     if (!document.getElementById('lil-gui-custom-styles')) {
       style.id = 'lil-gui-custom-styles';

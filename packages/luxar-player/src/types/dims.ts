@@ -1,6 +1,6 @@
 /**
  * Core type definitions for nD data visualization in Luxar.
- * 
+ *
  * This module provides the fundamental data structures for managing
  * high-dimensional point cloud data, including dimension metadata,
  * slicing state, and initialization utilities.
@@ -8,31 +8,31 @@
 
 /**
  * Metadata describing the properties and behavior of a single dimension.
- * 
+ *
  * Each dimension in an nD dataset can have rich metadata that controls
  * how it's displayed, navigated, and interpreted by the visualization system.
- * 
+ *
  * @interface DimensionMetadata
  */
 export interface DimensionMetadata {
   /** Human-readable name for this dimension (e.g., "Time", "X", "Channel") */
   name: string;
-  
+
   /** Physical unit of measurement (e.g., "μm", "s", "nm") */
   unit: string;
-  
+
   /** Scale factor for converting from array indices to real-world units */
   scale: number;
-  
+
   /** Optional min/max bounds for this dimension in real-world units */
   range?: [number, number];
-  
+
   /** Whether this dimension should be displayed in the 3D scene by default */
   display?: boolean;
-  
+
   /** Whether values in this dimension are discrete (integers) vs continuous */
   discrete?: boolean;
-  
+
   /** Step size for navigation in this dimension */
   step?: number;
 }
@@ -40,26 +40,26 @@ export interface DimensionMetadata {
 /**
  * State object representing the current position and display configuration
  * for navigating through nD point cloud data.
- * 
+ *
  * This is the core data structure that tracks where we are in the nD space
  * and which dimensions are currently being visualized. The scene-level
  * dimension manager maintains a single instance to ensure consistency
  * across all point clouds in the scene.
- * 
+ *
  * @interface SimpleDims
  */
 export interface SimpleDims {
   /** Total number of dimensions in the dataset */
   ndim: number;
 
-  /** 
+  /**
    * Current position/slice in each dimension.
    * For displayed dimensions, this represents the camera center.
    * For non-displayed dimensions, this is the slice position.
    */
   currentStep: number[];
 
-  /** 
+  /**
    * Indices of dimensions currently displayed in the 3D scene.
    * Maximum of 3 dimensions can be displayed simultaneously (X, Y, Z).
    * Typically the last 3 dimensions for spatial data.
@@ -72,16 +72,16 @@ export interface SimpleDims {
 
 /**
  * Initializes a SimpleDims object from point cloud position data.
- * 
+ *
  * This function creates the initial dimension state for nD visualization,
  * inferring the number of dimensions from the data structure and setting
  * up sensible defaults for display and navigation.
- * 
+ *
  * Design decisions:
  * - Non-displayed dimensions start at position 0 (minimum) for predictable behavior
  * - Displayed dimensions are chosen from metadata or default to last 3 (spatial)
  * - Maximum of 3 dimensions can be displayed simultaneously
- * 
+ *
  * @param numPoints - Number of points in the dataset
  * @param totalElements - Total elements in the positions array (numPoints * ndim)
  * @param metadata - Optional metadata describing each dimension's properties
@@ -99,7 +99,7 @@ export function initializeDims(
   if (!Number.isInteger(ndim)) {
     throw new Error(`Invalid positions array: ${totalElements} elements for ${numPoints} points`);
   }
-  
+
   // Initialize all dimensions at position 0 (minimum value)
   // This provides predictable behavior for non-displayed dimensions
   const currentStep = new Array(ndim).fill(0);
@@ -137,15 +137,15 @@ export function initializeDims(
 
 /**
  * Computes the min/max bounds for each dimension from point cloud position data.
- * 
+ *
  * This function analyzes the actual data values to determine the natural bounds
  * of each dimension, which is essential for:
  * - Setting up appropriate navigation ranges for sliders
  * - Calculating effective radii for nD hypersphere slicing
  * - Determining camera bounds and centering
- * 
+ *
  * The positions array is structured as: [point0_dim0, point0_dim1, ..., point1_dim0, ...]
- * 
+ *
  * @param positions - Flattened array of point positions (size: numPoints * ndim)
  * @param ndim - Number of dimensions per point
  * @param numPoints - Total number of points in the dataset
