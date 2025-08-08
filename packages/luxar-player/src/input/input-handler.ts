@@ -345,20 +345,23 @@ export class InputHandler {
 
       case 'p':
       case 'P':
-        // Ctrl+P to toggle performance metrics
-        if (event.ctrlKey || event.metaKey) {
-          event.preventDefault();
-          this.togglePerformanceStats();
-        }
+        // P key to toggle performance metrics
+        event.preventDefault();
+        this.togglePerformanceStats();
         break;
 
       case 'a':
       case 'A':
-        // Ctrl+A to toggle advanced rendering controls
-        if (event.ctrlKey || event.metaKey) {
-          event.preventDefault();
-          this.toggleRenderingControls();
-        }
+        // A key to toggle advanced rendering controls
+        event.preventDefault();
+        this.toggleRenderingControls();
+        break;
+        
+      case 'c':
+      case 'C':
+        // C key to toggle between native center and bounding box center
+        event.preventDefault();
+        this.sceneManager.toggleCentering();
         break;
 
       case ' ':

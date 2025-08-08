@@ -54,6 +54,9 @@ export class SceneManager {
 
   /** The HTML canvas element where 3D rendering occurs */
   private canvasElement!: HTMLCanvasElement;
+  
+  /** Track whether we're centered on bounding box or origin */
+  private isCenteredOnBoundingBox: boolean = false;
 
   /**
    * Initialize the complete 3D scene setup
@@ -180,6 +183,10 @@ export class SceneManager {
     // Gizmos control the rotation center and prevent jumps during zoom
     this.controls = new ArcballControls(this.camera, this.renderer.domElement, this.scene);
     
+    // Hide the gizmos - we want their functionality but not their visual representation
+    // The gizmos still work internally to manage the rotation center properly
+    (this.controls as any).setGizmoVisible?.(false);
+    
     // Set default target to origin for predictable zooming behavior
     // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
     (this.controls as any).target.set(0, 0, 0);
@@ -269,8 +276,9 @@ export class SceneManager {
       hideLoadingIndicator();
       this.scene.add(root);
       
-      // Center camera on the loaded data
-      this.centerCameraOnScene();
+      // Don't automatically center - let the scene designer's positioning take precedence
+      // User can press 'C' to center on bounding box if desired
+      console.log('Scene loaded. Press C to toggle centering on bounding box.');
     } catch (error) {
       hideLoadingIndicator();
       console.error('Failed to load scene:', error);
@@ -413,6 +421,49 @@ export class SceneManager {
     } else {
       console.warn('No visible geometry found to center camera on');
     }
+  }
+
+  /**
+   * Toggle between centering on origin (native) and bounding box center
+   */
+  public toggleCentering(): void {
+    if (this.isCenteredOnBoundingBox) {
+      // Switch to origin (native center)
+      this.centerOnOrigin();
+      this.isCenteredOnBoundingBox = false;
+      console.log('✓ Centered on origin (native center)');
+    } else {
+      // Switch to bounding box center
+      this.centerCameraOnScene();
+      this.isCenteredOnBoundingBox = true;
+      console.log('✓ Centered on bounding box');
+    }
+  }
+  
+  /**
+   * Center camera and controls on the origin
+   */
+  private centerOnOrigin(): void {
+    // Get current camera distance from target
+    const currentDistance = this.camera.position.distanceTo((this.controls as any).target);
+    
+    // Reset target to origin
+    const origin = new THREE.Vector3(0, 0, 0);
+    
+    // Position camera at same distance from origin
+    this.camera.position.set(0, 0, currentDistance);
+    this.camera.lookAt(origin);
+    this.camera.updateMatrixWorld(true);
+    
+    // Update controls target
+    (this.controls as any).target.copy(origin);
+    this.controls.update();
+    
+    // Reset and save state to prevent jumps
+    this.controls.reset();
+    this.controls.saveState();
+    
+    console.log(`✓ Camera reset to origin with distance: ${currentDistance.toFixed(2)}`);
   }
 
   /**
