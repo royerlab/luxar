@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { SHADER_CONFIG } from './shader-manager';
 
 // Supported blending modes
-export type BlendingMode = 'normal' | 'additive' | 'multiply' | 'minimum' | 'maximum';
+export type BlendingMode = 'normal' | 'additive' | 'subtractive' | 'minimum' | 'maximum';
 
 // Material properties for caching
 interface MaterialProperties {
@@ -149,8 +149,8 @@ export class MaterialManager {
         return THREE.NormalBlending;
       case 'additive':
         return THREE.AdditiveBlending;
-      case 'multiply':
-        return THREE.MultiplyBlending;
+      case 'subtractive':
+        return THREE.SubtractiveBlending;
       case 'minimum':
         // Three.js doesn't have minimum blending, use subtractive as approximation
         return THREE.SubtractiveBlending;
@@ -177,8 +177,8 @@ export class MaterialManager {
     switch (mode) {
       case 'normal':
         return 100; // Transparent normal blending
-      case 'multiply':
-        return 200; // Multiply needs to see what's behind
+      case 'subtractive':
+        return 200; // Subtractive needs to see what's behind
       case 'additive':
         return 300; // Additive on top
       case 'minimum':

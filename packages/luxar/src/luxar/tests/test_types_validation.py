@@ -194,7 +194,7 @@ class TestBlendingModeValidation:
         """Test that valid blending modes are accepted."""
         assert validate_blending_mode("normal") == "normal"
         assert validate_blending_mode("additive") == "additive"
-        assert validate_blending_mode("multiply") == "multiply"
+        assert validate_blending_mode("subtractive") == "subtractive"
         assert validate_blending_mode("minimum") == "minimum"
         assert validate_blending_mode("maximum") == "maximum"
 

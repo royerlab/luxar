@@ -273,7 +273,7 @@ class Node:
         """Set the blending mode for this node.
 
         Args:
-            value: Blending mode ("normal", "additive", "multiply", "minimum", "maximum")
+            value: Blending mode ("normal", "additive", "subtractive", "minimum", "maximum")
 
         Raises:
             ValueError: If blending mode is not valid

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
-from typing import Tuple
+from typing import Any, MutableMapping, Tuple
 
 import typer
 import uvicorn
@@ -66,14 +66,13 @@ def serve(
         # Determine what we're serving
         if path.is_dir():
             serve_path = path
-            if path.name.endswith('.zarr'):
+            if path.name.endswith(".zarr"):
                 aprint(f"Serving Zarr dataset: {path}")
             else:
                 aprint(f"Serving directory: {path}")
         else:
             aprint(f"Error: {path} is not a directory")
             raise typer.Exit(1)
-
 
         from starlette.responses import (
             FileResponse,
@@ -85,11 +84,14 @@ def serve(
         class DirectoryListingStaticFiles(StaticFiles):
             """Static files handler with JSON directory listing support."""
 
-            async def get_response(self, path: str, scope):
+            async def get_response(
+                self, path: str, scope: MutableMapping[str, Any]
+            ) -> Any:
                 """Override to provide directory listing."""
                 # Handle OPTIONS requests for CORS
                 if scope.get("method") == "OPTIONS":
                     from starlette.responses import Response
+
                     return Response(
                         headers={
                             "Access-Control-Allow-Origin": "*",
@@ -98,10 +100,18 @@ def serve(
                         }
                     )
 
-                full_path = self.directory / path if path else self.directory
+                if self.directory is None:
+                    raise ValueError("Directory not set")
+                full_path = (
+                    Path(self.directory) / path if path else Path(self.directory)
+                )
 
                 # Handle .zgroup files for zarr directories
-                if path.endswith(".zgroup") and full_path.exists() and full_path.is_file():
+                if (
+                    path.endswith(".zgroup")
+                    and full_path.exists()
+                    and full_path.is_file()
+                ):
                     return FileResponse(full_path)
 
                 # If it's a directory, provide listing
@@ -115,22 +125,28 @@ def serve(
                     try:
                         for item in sorted(full_path.iterdir()):
                             # Skip hidden files except .zgroup
-                            if item.name.startswith('.') and item.name != '.zgroup':
+                            if item.name.startswith(".") and item.name != ".zgroup":
                                 continue
 
                             item_type = "directory" if item.is_dir() else "file"
                             # Check if it's a zarr directory
-                            if item.is_dir() and item.name.endswith('.zarr'):
+                            if item.is_dir() and item.name.endswith(".zarr"):
                                 item_type = "zarr"
                             elif item.is_dir() and (item / ".zgroup").exists():
                                 item_type = "zarr"
 
-                            entries.append({
-                                "name": item.name,
-                                "type": item_type,
-                                "size": item.stat().st_size if item.is_file() else None
-                            })
+                            entries.append(
+                                {
+                                    "name": item.name,
+                                    "type": item_type,
+                                    "size": item.stat().st_size
+                                    if item.is_file()
+                                    else None,
+                                }
+                            )
                     except PermissionError:
+                        from starlette.responses import Response
+
                         return Response("Permission denied", status_code=403)
 
                     # Return JSON for API requests
@@ -142,7 +158,7 @@ def serve(
                     if path:
                         html_content += '<li><a href="../">../</a></li>'
                     for entry in entries:
-                        name = entry["name"]
+                        name = str(entry["name"])
                         if entry["type"] in ("directory", "zarr"):
                             name += "/"
                         html_content += f'<li><a href="{name}">{name}</a></li>'

@@ -143,9 +143,9 @@ class Points(Node):
             validated_colors: Optional[ColorArray] = None
             if colors is not None:
                 # Handle single color value (broadcast to all points)
-                if isinstance(colors, (list, tuple)) and len(colors) == 3:
+                if isinstance(colors, (list, tuple)) and len(colors) == 3:  # type: ignore[unreachable]
                     # Single RGB color as list/tuple
-                    color_array = np.array(colors, dtype=np.uint8)
+                    color_array = np.array(colors, dtype=np.uint8)  # type: ignore[unreachable]
                     validated_colors = np.tile(color_array, (n_points, 1))
                 elif isinstance(colors, np.ndarray) and colors.shape == (3,):
                     # Single RGB color as numpy array
@@ -158,9 +158,11 @@ class Points(Node):
             validated_radii: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
             if radii is not None:
                 # Handle single radius value (broadcast to all points)
-                if np.isscalar(radii) or (isinstance(radii, np.ndarray) and radii.shape == ()):
+                if np.isscalar(radii) or (
+                    isinstance(radii, np.ndarray) and radii.shape == ()
+                ):
                     # Single radius value
-                    radius_value = float(radii)
+                    radius_value = float(radii)  # type: ignore[arg-type]
                     if radius_value <= 0:
                         raise ValueError("Radius must be positive")
                     validated_radii = np.full(n_points, radius_value, dtype=np.float32)
@@ -172,12 +174,16 @@ class Points(Node):
             validated_sharpness: Optional[np.ndarray[Any, np.dtype[np.float32]]] = None
             if sharpness is not None:
                 # Handle single sharpness value (broadcast to all points)
-                if np.isscalar(sharpness) or (isinstance(sharpness, np.ndarray) and sharpness.shape == ()):
+                if np.isscalar(sharpness) or (
+                    isinstance(sharpness, np.ndarray) and sharpness.shape == ()
+                ):
                     # Single sharpness value
-                    sharpness_value = float(sharpness)
+                    sharpness_value = float(sharpness)  # type: ignore[arg-type]
                     if sharpness_value <= 0:
                         raise ValueError("Sharpness must be positive")
-                    validated_sharpness = np.full(n_points, sharpness_value, dtype=np.float32)
+                    validated_sharpness = np.full(
+                        n_points, sharpness_value, dtype=np.float32
+                    )
                 else:
                     # Full sharpness array
                     validated_sharpness = validate_sharpness(sharpness, n_points)
