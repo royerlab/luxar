@@ -40,6 +40,7 @@ import { updatePointCloudSlice } from '../utils/dims-navigation';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { DebugConsole } from '../ui/debug-console';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -59,6 +60,9 @@ export class InputHandler {
   /** UI component for interactive dimension sliders */
   private dimensionSliders?: DimensionSliders;
 
+  /** Debug console for capturing browser console output */
+  private debugConsole: DebugConsole;
+
   /**
    * Constructs the input handler with required system dependencies.
    *
@@ -68,7 +72,10 @@ export class InputHandler {
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController
-  ) {}
+  ) {
+    // Initialize debug console
+    this.debugConsole = new DebugConsole();
+  }
 
   /**
    * Associates rendering controls for advanced UI interactions.
@@ -278,7 +285,7 @@ export class InputHandler {
       canvas.style.filter = 'none';
       // Ensure document background doesn't interfere
       document.documentElement.style.backgroundColor = '#111111';
-      console.log('✓ Entering fullscreen mode');
+      console.log('✓ [Luxar] Entering fullscreen mode');
     } else {
       // Exiting fullscreen - restore normal canvas styling
       canvas.style.width = '100%';
@@ -289,7 +296,7 @@ export class InputHandler {
       canvas.style.opacity = '';
       canvas.style.filter = '';
       document.documentElement.style.backgroundColor = '';
-      console.log('✓ Exiting fullscreen mode');
+      console.log('✓ [Luxar] Exiting fullscreen mode');
     }
 
     // Add small delay to ensure canvas dimensions are updated by browser
@@ -362,6 +369,17 @@ export class InputHandler {
         event.preventDefault();
         this.sceneManager.toggleCentering();
         break;
+
+      case 'l':
+      case 'L':
+        // Ctrl+L to toggle debug console
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          this.debugConsole.toggle();
+          console.log(`🔧 [Luxar] Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`);
+        }
+        break;
+
 
       case ' ':
         // Only toggle fullscreen if not focused on a UI element
@@ -461,6 +479,7 @@ export class InputHandler {
   private toggleRenderingControls(): void {
     this.renderingControls?.toggle();
   }
+
 
   /**
    * Check if space key should trigger fullscreen
@@ -592,6 +611,9 @@ export class InputHandler {
       this.dimensionSliders.dispose();
       this.dimensionSliders = undefined;
     }
+
+    // Dispose debug console
+    this.debugConsole.dispose();
 
     // Clean up event listeners
     this.eventListeners.forEach((cleanup) => cleanup());

@@ -15,6 +15,7 @@ import { config } from '../config';
 import { PostProcessingManager } from '../rendering/post-processing';
 import { ShaderValidator } from '../rendering/shader-manager';
 import { materialManager } from '../rendering/material-manager';
+import { detectHDRCapabilities, configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -96,12 +97,41 @@ export class SceneManager {
    * - Fullscreen immersive experience
    */
   private setupRenderer(): void {
+    // Try to get HDR canvas context first
+    let gl: WebGLRenderingContext | null = null;
+    try {
+      gl = this.canvasElement.getContext('webgl2', {
+        alpha: false,
+        antialias: true,
+        depth: true,
+        stencil: false,
+        powerPreference: 'high-performance',
+        // Request wide color gamut - critical for HDR
+        colorSpace: 'display-p3',
+        // Request high precision
+        preserveDrawingBuffer: false,
+        desynchronized: true
+      }) as WebGLRenderingContext | null;
+      
+      if (!gl) {
+        console.warn('WebGL2 context creation failed, falling back to default');
+      }
+    } catch (error) {
+      console.error('Error creating WebGL2 context:', error);
+      showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
+    }
+    
     // Create WebGL renderer with antialiasing enabled
     // Antialiasing uses MSAA (Multisample Anti-Aliasing) to smooth jagged edges
     // This is especially important for point clouds and wireframe objects
     this.renderer = new THREE.WebGLRenderer({
       antialias: true, // Enable MSAA for smoother rendering
       canvas: this.canvasElement, // Use our pre-existing canvas element
+      context: gl || undefined, // Use our HDR context if available
+      // Request high performance GPU context
+      powerPreference: 'high-performance',
+      // Preserve drawing buffer for screenshots if needed
+      preserveDrawingBuffer: false,
     });
 
     // Remove browser default focus outline
@@ -119,6 +149,11 @@ export class SceneManager {
 
     // Configure renderer dimensions and high-DPI support
     this.updateRendererSize();
+
+    // Detect and configure HDR capabilities
+    const hdrCapabilities = detectHDRCapabilities(this.renderer);
+    logHDRCapabilities(hdrCapabilities);
+    configureHDRRenderer(this.renderer, hdrCapabilities);
   }
 
   /**
@@ -224,7 +259,7 @@ export class SceneManager {
     // This is critical - it must happen AFTER all updates
     this.controls.saveState();
 
-    console.log('✓ Controls reset to default state');
+    console.log('✓ [Luxar] Controls reset to default state');
   }
 
   /**
@@ -256,7 +291,7 @@ export class SceneManager {
     // Log shader configuration for debugging
     ShaderValidator.logShaderConfig();
 
-    console.log('✓ HDR post-processing pipeline initialized');
+    console.log('✓ [Luxar] HDR post-processing pipeline initialized');
   }
 
   /**
@@ -417,10 +452,10 @@ export class SceneManager {
       this.controls.reset();
       this.controls.saveState();
 
-      console.log('✓ Controls target updated and state saved');
+      console.log('✓ [Luxar] Controls target updated and state saved');
 
       console.log(
-        `✓ Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
+        `✓ [Luxar] Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
       );
     } else {
       console.warn('No visible geometry found to center camera on');
@@ -435,12 +470,12 @@ export class SceneManager {
       // Switch to origin (native center)
       this.centerOnOrigin();
       this.isCenteredOnBoundingBox = false;
-      console.log('✓ Centered on origin (native center)');
+      console.log('✓ [Luxar] Centered on origin (native center)');
     } else {
       // Switch to bounding box center
       this.centerCameraOnScene();
       this.isCenteredOnBoundingBox = true;
-      console.log('✓ Centered on bounding box');
+      console.log('✓ [Luxar] Centered on bounding box');
     }
   }
 
@@ -467,7 +502,7 @@ export class SceneManager {
     this.controls.reset();
     this.controls.saveState();
 
-    console.log(`✓ Camera reset to origin with distance: ${currentDistance.toFixed(2)}`);
+    console.log(`✓ [Luxar] Camera reset to origin with distance: ${currentDistance.toFixed(2)}`);
   }
 
   /**
@@ -482,12 +517,12 @@ export class SceneManager {
       // Force fullscreen dimensions
       width = screen.width;
       height = screen.height;
-      console.log(`✓ Using fullscreen dimensions: ${width}x${height}`);
+      console.log(`✓ [Luxar] Using fullscreen dimensions: ${width}x${height}`);
     } else {
       // Use window dimensions for windowed mode - more reliable than canvas client dimensions
       width = window.innerWidth;
       height = window.innerHeight;
-      console.log(`✓ Using windowed dimensions: ${width}x${height}`);
+      console.log(`✓ [Luxar] Using windowed dimensions: ${width}x${height}`);
     }
 
     this.camera.aspect = width / height;
@@ -512,7 +547,7 @@ export class SceneManager {
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(window.devicePixelRatio);
 
-    console.log(`✓ Renderer resized: ${w}x${h}`);
+    console.log(`✓ [Luxar] Renderer resized: ${w}x${h}`);
   }
 
   /**
@@ -551,7 +586,7 @@ export class SceneManager {
       }
     });
 
-    console.log(`✓ HDR multiplier updated for all point materials: ${multiplier}`);
+    console.log(`✓ [Luxar] HDR multiplier updated for all point materials: ${multiplier}`);
   }
 
   /**

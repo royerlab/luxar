@@ -675,7 +675,7 @@ export class RenderingControls {
           controller.updateDisplay();
         });
 
-        console.log(`✓ Loaded rendering settings for scene: ${this.sceneId}`);
+        console.log(`Loaded rendering settings for scene: ${this.sceneId}`);
       } catch (e) {
         console.warn('Failed to load rendering settings:', e);
       }

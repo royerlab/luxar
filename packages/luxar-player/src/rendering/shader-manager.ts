@@ -159,7 +159,7 @@ export class ShaderValidator {
     // const renderer = new THREE.WebGLRenderer();
     // renderer.compile(new THREE.Scene(), new THREE.Camera());
 
-    console.log(`✓ Shader material '${name}' created successfully`);
+    console.log(`Shader material '${name}' created successfully`);
   }
 
   /**

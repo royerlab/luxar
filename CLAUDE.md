@@ -190,7 +190,21 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 
 ### Recent Updates and Learnings
 
-#### nD Visualization Implementation (Latest)
+#### Debug Console & Console Logging (January 2025)
+- **In-App Debug Console**: Press Ctrl+L to toggle debug console that captures all browser console output
+- **Ring Buffer Implementation**: Console interceptor uses 10,000 message ring buffer to prevent memory overflow  
+- **Early Message Capture**: Console messages captured from app initialization via early import of interceptor
+- **Configuration Constants**: Debug console dimensions and styling moved to `config/debug-console.ts`
+- **Standardized Logging**: All console logs use format: `[emoji] [Luxar] message` for consistency
+- **Debug Interface**: Debug tools available at `window.__luxarDebug` when `?debug` URL param is present
+
+#### HDR Color Pipeline Changes (January 2025)
+- **Float32 Colors**: Changed from Uint8Array to Float32Array for HDR color support
+- **nD Slicing Fix**: Updated `dims-navigation.ts` to use `sliceColorsFloat32()` for proper HDR colors
+- **WebGL Limitation**: Discovered WebGL canvas doesn't support true HDR output (limited to 8-bit)
+- **HDR Detection**: Added comprehensive HDR capability detection in `utils/hdr-detection.ts`
+
+#### nD Visualization Implementation
 - **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
 - **Scene Dimensions**: Always define at scene level for consistency
 - **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
