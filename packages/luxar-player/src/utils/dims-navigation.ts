@@ -17,7 +17,7 @@ import { SimpleDims } from '../types/dims';
 import {
   slicePoints,
   extractDisplayDimensions,
-  sliceColors,
+  sliceColorsFloat32,
   sliceScalarAttribute,
   computeEffectiveRadii,
 } from './slicing';
@@ -196,7 +196,7 @@ export function getNavigableDimensions(dims: SimpleDims): [number, number] {
 export function updatePointCloudSlice(
   points: THREE.Points,
   originalPositions: Float32Array,
-  originalColors: Uint8Array | undefined,
+  originalColors: Float32Array | undefined,  // Changed to Float32Array for HDR
   originalRadii: Float32Array | undefined,
   originalSharpness: Float32Array | undefined,
   dims: SimpleDims,
@@ -222,16 +222,12 @@ export function updatePointCloudSlice(
   const geom = points.geometry;
   geom.setAttribute('position', new THREE.BufferAttribute(positions3D, 3));
 
-  // Phase 3: Handle color attributes
+  // Phase 3: Handle color attributes (HDR float32 format)
   if (originalColors) {
-    const colors = sliceColors(originalColors, visibleIndices);
+    const colors = sliceColorsFloat32(originalColors, visibleIndices);
     if (colors) {
-      // Convert uint8 colors to float32 for GPU compatibility
-      const floatColors = new Float32Array(colors.length);
-      for (let i = 0; i < colors.length; i++) {
-        floatColors[i] = colors[i] / 255.0;
-      }
-      geom.setAttribute('color', new THREE.BufferAttribute(floatColors, 3));
+      // Colors are already in float32 HDR format
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
   } else {
     // Fallback: default white coloring for all points

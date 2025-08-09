@@ -201,17 +201,18 @@ export function showHelpOverlay() {
     '🖱️ Right drag: Pan camera',
     '⎵ Press Space: Toggle fullscreen',
     '❓ Press H: Toggle this help',
-    '📁 Press O: Open dataset browser',
-    '📊 Press P: Toggle performance stats',
-    '🎨 Press R: Rendering controls',
-    '🎯 Press C: Toggle center (origin/bounding box)',
+    'Press O: Open dataset browser',
+    'Press P: Toggle performance stats',
+    'Press R: Rendering controls',
+    'Press C: Toggle center (origin/bounding box)',
+    'Ctrl+L: Debug console',
     '',
     '📐 nD Navigation (if applicable):',
     '🎛️ Press D: Toggle dimension sliders',
     '🔢 Press 1-9: Select dimension to control',
     '⬅️➡️ Press [ / ]: Navigate selected dimension',
     '',
-    '⚠️ Click anywhere to close',
+    'Click anywhere to close',
   ];
 
   const controlsList = document.createElement('div');
