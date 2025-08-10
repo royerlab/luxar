@@ -26,6 +26,26 @@ vi.mock('three', () => ({
   Matrix4: vi.fn().mockImplementation(() => ({
     fromArray: vi.fn().mockReturnThis(),
   })),
+  Vector2: vi.fn().mockImplementation((x, y) => {
+    const vec = {
+      x: x || 0,
+      y: y || 0,
+      clone: vi.fn(),
+      copy: vi.fn()
+    };
+    vec.clone.mockImplementation(() => ({ 
+      x: vec.x, 
+      y: vec.y, 
+      clone: vi.fn(), 
+      copy: vi.fn() 
+    }));
+    vec.copy.mockImplementation((v: any) => {
+      vec.x = v.x;
+      vec.y = v.y;
+      return vec;
+    });
+    return vec;
+  }),
   HalfFloatType: 'HalfFloatType',
   LinearSRGBColorSpace: 'LinearSRGBColorSpace',
   NoToneMapping: 'NoToneMapping',

@@ -18,10 +18,13 @@ interface MaterialProperties {
   gamma: number;
 }
 
-// Vertex shader with support for per-vertex attributes
+// Vertex shader with world-space point sizing
 const VERTEX_SHADER = /* glsl */ `
   attribute float radius;
   attribute float sharpness;
+  uniform float fov;  // Camera FOV in radians
+  uniform vec2 resolution;  // Viewport resolution in pixels
+  
   varying vec3 vColor;
   varying float vSharpness;
   
@@ -32,19 +35,26 @@ const VERTEX_SHADER = /* glsl */ `
     // Pass sharpness to fragment shader for per-point falloff control
     vSharpness = sharpness;
     
-    // Transform vertex position from world space to screen space
+    // Transform vertex position from world space to view space
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     
-    // Calculate point size based on radius and distance from camera
-    float baseSize = ${SHADER_CONFIG.POINTS.size.toFixed(1)};
-    float perspectiveScale = baseSize / -mvPosition.z;
+    // Calculate world-space point sizing
+    // Goal: Maintain the ratio of (point size / distance between points) constant
+    // This ensures two spheres of radius r at distance 2r will always just touch
+    
+    float distance = length(mvPosition.xyz);
+    
+    // The correct formula for world-space point sizing:
+    // Points should maintain constant world size regardless of viewport
+    float pointSize = 2.0 * radius * resolution.y / (distance * tan(fov * 0.5));
     
     // Compensate for sharpness effect on apparent size
+    // With soft falloff, the visible radius is smaller than the geometric radius
     float sizeCompensation = sqrt(vSharpness / 2.0);
     
-    // Use the per-point radius attribute to scale the point size
-    gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation;
+    // Apply size with sharpness compensation
+    gl_PointSize = pointSize * sizeCompensation;
   }
 `;
 
@@ -90,6 +100,8 @@ const FRAGMENT_SHADER = /* glsl */ `
  */
 export class MaterialManager {
   private materialCache: Map<string, THREE.ShaderMaterial> = new Map();
+  private currentFov: number = 60 * Math.PI / 180;  // Current FOV in radians
+  private currentResolution: THREE.Vector2 = new THREE.Vector2(1, 1);  // Minimal default
 
   /**
    * Get or create a material with specified properties
@@ -104,12 +116,14 @@ export class MaterialManager {
       return material;
     }
 
-    // Create new material
+    // Create new material with current camera parameters
     material = new THREE.ShaderMaterial({
       uniforms: {
         hdrMultiplier: { value: SHADER_CONFIG.POINTS.hdrMultiplier },
         opacity: { value: props.opacity },
         gamma: { value: props.gamma },
+        fov: { value: this.currentFov },
+        resolution: { value: this.currentResolution.clone() }  // Clone to avoid reference issues
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -132,11 +146,13 @@ export class MaterialManager {
 
     // Store render order in userData for later application to mesh/points
     material.userData.renderOrder = this.getRenderOrder(props.blendingMode, props.opacity);
+    
+    // Mark this material as managed by MaterialManager to avoid double updates
+    material.userData.managedByMaterialManager = true;
 
     // Cache the material
     this.materialCache.set(key, material);
 
-    console.log(`Created new material: ${key}`);
     return material;
   }
 
@@ -195,6 +211,26 @@ export class MaterialManager {
   updateHDRMultiplier(multiplier: number): void {
     this.materialCache.forEach((material) => {
       material.uniforms.hdrMultiplier.value = multiplier;
+    });
+  }
+
+  /**
+   * Update camera parameters for world-space point sizing
+   */
+  updateCameraParams(fov: number, resolution: THREE.Vector2): void {
+    // Store current values for future material creation
+    this.currentFov = fov;
+    this.currentResolution.copy(resolution);
+    
+    // Update existing materials
+    this.materialCache.forEach((material) => {
+      if (material.uniforms.fov) {
+        material.uniforms.fov.value = fov;
+      }
+      if (material.uniforms.resolution) {
+        // Update the values of the existing Vector2, don't replace the reference
+        material.uniforms.resolution.value.copy(resolution);
+      }
     });
   }
 

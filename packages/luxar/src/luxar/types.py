@@ -297,7 +297,9 @@ def validate_positions(positions: Any, ndim: Optional[int] = None) -> PositionAr
     return positions.astype(np.float32, copy=False)
 
 
-def validate_colors(colors: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.float32]]:
+def validate_colors(
+    colors: Any, n_points: int
+) -> np.ndarray[Any, np.dtype[np.float32]]:
     """Validate and convert colors array to HDR float32 format.
 
     Args:

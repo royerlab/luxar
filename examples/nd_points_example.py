@@ -8,6 +8,8 @@ This example shows how to:
 3. Mix different dimensionalities in the same scene
 """
 
+from pathlib import Path
+
 import numpy as np
 from arbol import aprint
 
@@ -62,7 +64,8 @@ def main():
     aprint("Creating nD point cloud demonstration...")
 
     # Create scene
-    scene = Scene("nd_demo.zarr")
+    output_path = Path(__file__).parent / "nd_demo_example.zarr"
+    scene = Scene(output_path)
 
     # Create 5D time series data
     aprint("Generating 5D time series data...")

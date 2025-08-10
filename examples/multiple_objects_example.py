@@ -93,7 +93,9 @@ def create_nebula_cloud(n_points: int, center: tuple, size: tuple) -> np.ndarray
     return np.array(positions, dtype=np.float32)
 
 
-def create_ring_system(n_rings: int, center: tuple, inner_radius: float, outer_radius: float) -> np.ndarray:
+def create_ring_system(
+    n_rings: int, center: tuple, inner_radius: float, outer_radius: float
+) -> np.ndarray:
     """Create points forming a ring system.
 
     Args:
@@ -152,44 +154,54 @@ def main():
         sharpness=3.0,
         opacity=0.8,
         gamma=1.1,
-        blending_mode="additive"
+        blending_mode="additive",
     )
 
     # 2. Globular clusters around the galaxy
     aprint("Creating globular clusters...")
-    cluster_positions = [
-        (-12, 8, 3),
-        (10, -6, -2),
-        (-8, -10, 4),
-        (15, 5, -3)
-    ]
+    cluster_positions = [(-12, 8, 3), (10, -6, -2), (-8, -10, 4), (15, 5, -3)]
 
     cluster_colors = [
         [255, 200, 100],  # Golden
         [255, 150, 150],  # Pink-red
         [150, 255, 150],  # Light green
-        [255, 255, 150]   # Light yellow
+        [255, 255, 150],  # Light yellow
     ]
 
     for i, (pos, color) in enumerate(zip(cluster_positions, cluster_colors)):
         cluster_points = create_globular_cluster(2000, pos, 1.5)
         scene.add_points(
-            f"GlobularCluster{i+1}",
+            f"GlobularCluster{i + 1}",
             cluster_points,
             colors=color,
             radii=0.04,
             sharpness=2.0,
             opacity=0.9,
             gamma=1.2,
-            blending_mode="additive"
+            blending_mode="additive",
         )
 
     # 3. Nebula clouds
     aprint("Creating colorful nebulae...")
     nebula_data = [
-        {"center": (-20, 0, 0), "size": (3, 4, 2), "color": [255, 100, 150], "name": "RedNebula"},
-        {"center": (0, 15, 0), "size": (2, 3, 3), "color": [100, 255, 150], "name": "GreenNebula"},
-        {"center": (0, -15, 0), "size": (4, 2, 2), "color": [150, 100, 255], "name": "PurpleNebula"}
+        {
+            "center": (-20, 0, 0),
+            "size": (3, 4, 2),
+            "color": [255, 100, 150],
+            "name": "RedNebula",
+        },
+        {
+            "center": (0, 15, 0),
+            "size": (2, 3, 3),
+            "color": [100, 255, 150],
+            "name": "GreenNebula",
+        },
+        {
+            "center": (0, -15, 0),
+            "size": (4, 2, 2),
+            "color": [150, 100, 255],
+            "name": "PurpleNebula",
+        },
     ]
 
     for nebula in nebula_data:
@@ -202,27 +214,29 @@ def main():
             sharpness=1.5,
             opacity=0.6,
             gamma=1.0,
-            blending_mode="normal"
+            blending_mode="normal",
         )
 
     # 4. Planetary ring systems
     aprint("Creating planetary ring systems...")
     ring_systems = [
         {"center": (0, 0, 10), "inner": 2, "outer": 4, "color": [200, 150, 100]},
-        {"center": (0, 0, -8), "inner": 1.5, "outer": 3, "color": [150, 200, 255]}
+        {"center": (0, 0, -8), "inner": 1.5, "outer": 3, "color": [150, 200, 255]},
     ]
 
     for i, ring_data in enumerate(ring_systems):
-        ring_points = create_ring_system(8, ring_data["center"], ring_data["inner"], ring_data["outer"])
+        ring_points = create_ring_system(
+            8, ring_data["center"], ring_data["inner"], ring_data["outer"]
+        )
         scene.add_points(
-            f"RingSystem{i+1}",
+            f"RingSystem{i + 1}",
             ring_points,
             colors=ring_data["color"],
             radii=0.025,
             sharpness=4.0,
             opacity=0.7,
             gamma=0.9,
-            blending_mode="normal"
+            blending_mode="normal",
         )
 
     # 5. Scattered star field (background)
@@ -256,7 +270,7 @@ def main():
         sharpness=5.0,
         opacity=0.4,
         gamma=1.0,
-        blending_mode="normal"
+        blending_mode="normal",
     )
 
     # 6. Dense particle stream
@@ -277,7 +291,7 @@ def main():
         sharpness=6.0,
         opacity=0.8,
         gamma=1.3,
-        blending_mode="additive"
+        blending_mode="additive",
     )
 
     scene.finalize()

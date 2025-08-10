@@ -42,24 +42,22 @@ markdown
 ## Development Workflow
 
 ### Testing Strategy
-- Always run tests with: `hatch run test`
-- For coverage reports: `hatch run test-cov`
+- Always run Python tests with: `hatch run test`
+- For Python tst coverage reports: `hatch run test-cov`
 - View coverage HTML report: `open htmlcov/index.html`
-- Minimum acceptable coverage: 80% (currently at 95.69%)
-- Run all tests (Python + TypeScript): `make test-all`
-- Note: TypeScript dependencies will be auto-installed if missing
+- Minimum acceptable coverage: 80%
+- Run all tests (Python + TypeScript): `make test-all` (Note: TypeScript dependencies will be auto-installed if missing)
 
 ### Git Workflow
 - Never commit `.zarr` directories (they're now in .gitignore)
-- Always run tests before committing
-- Use descriptive commit messages
-- Do not include the robot emoji and Claude Code attribution in commits
+- Always run all tests (Python & TypeScript), run all checks (typing, linting), and format code before committing
+- Use detailed descriptive commit messages
 
 ### Pre-commit Checklist
 Before committing, ensure overall consistency:
 - Run all tests (`make test-all`) and ensure they pass
 - Update README.md files if functionality changed
-- Update examples if APIs changed
+- Update examples if APIs have changed
 - Check that documentation reflects the current state
 - Update LUXAR_ZARR_FORMAT.md if the data format changes
 - Verify that new features have appropriate tests
@@ -68,24 +66,23 @@ Before committing, ensure overall consistency:
 ## Code Standards
 
 ### General Code Style
-- Follow existing code patterns in the codebase
+- You follow the most modern and widely accepted Python and TypeScript conventions
+- If all other considerations are equal, follow existing code patterns in the codebase
 - Use type hints for all function parameters and return values
 - Use arbol's `aprint` instead of `print` for console output in examples and CLI tools
 - Keep docstrings concise but informative
+- TypeScript code comments should be in JSDoc format
 
 ### TypeScript Configuration
 - **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
 - All config in `config/index.ts` with types in `config/types.ts`
 - Use camelCase consistently (not UPPER_SNAKE_CASE)
-- Advanced rendering controls panel should be on the left side
-- Trigger animation when rendering parameters change
 
 ## Luxar-Specific Conventions
 
 ### Physical Units and Data
 - Physical units: Be inclusive (support nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
 - Point attributes: positions (required), colors, radii, sharpness (all optional)
-- Default values: radius=0.1, sharpness=2.0
 - Zarr chunks: Use appropriate chunk sizes for data patterns
 
 ### Transform System
@@ -137,7 +134,7 @@ make clean                                   # Clean all artifacts (including Ty
 ### Code Quality Checklist
 When making significant changes:
 1. Run Python tests: `hatch run test-cov` (coverage must be >80%)
-2. Run TypeScript build: `cd packages/luxar-player && pnpm build`
+2. Run TypeScript build: `cd packages/luxar-player && pnpm build` (check what is the current folder first!)
 3. Check Python linting: `hatch run python -m ruff check .`
 4. Fix TypeScript unused warnings by prefixing with underscore
 5. Update relevant documentation (README.md, API docs, docstrings)
@@ -190,6 +187,13 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 
 ### Recent Updates and Learnings
 
+#### Fullscreen Resize Bug Fix (January 2025)
+- **Issue**: Point sizes changed incorrectly on first fullscreen toggle or window resize
+- **Root Cause**: Scene initialization didn't call `updateSize()`, causing different behavior on first resize
+- **Solution**: Make initialization call `this.updateSize()` in `scene-manager.ts` init() method
+- **Lesson**: Ensure initialization and resize paths are identical to avoid first-time-only bugs
+- **Testing**: Always test both initial state AND state after first resize/fullscreen
+
 #### Debug Console & Console Logging (January 2025)
 - **In-App Debug Console**: Press Ctrl+L to toggle debug console that captures all browser console output
 - **Ring Buffer Implementation**: Console interceptor uses 10,000 message ring buffer to prevent memory overflow  
@@ -203,6 +207,14 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 - **nD Slicing Fix**: Updated `dims-navigation.ts` to use `sliceColorsFloat32()` for proper HDR colors
 - **WebGL Limitation**: Discovered WebGL canvas doesn't support true HDR output (limited to 8-bit)
 - **HDR Detection**: Added comprehensive HDR capability detection in `utils/hdr-detection.ts`
+
+#### World-Space Point Sizing (January 2025)
+- **Physical Accuracy**: Points now use world-space sizing instead of screen-space
+- **Key Property**: Two points with radius r at distance 2r will just touch
+- **FOV Independence**: Points maintain physical size regardless of field of view changes
+- **Implementation**: Uses angular size calculation in vertex shaders
+- **Formula**: `angularSize = 2 * atan(radius/distance)`, then converted to pixels
+- **Resolution Handling**: Uses actual framebuffer size (includes devicePixelRatio)
 
 #### nD Visualization Implementation
 - **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
@@ -218,29 +230,3 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 - **Beyond points**: Support for meshes, lines, volumes, and other geometry types
 - **Material system**: More sophisticated materials with different shading models
 
-#### Anti-Aliasing Brightness Issues
-
-##### SSAA Brightness Issue
-**Problem**: When using SSAA (Supersampling Anti-Aliasing), the scene gets dimmer with higher multipliers. This is because:
-- Points currently use additive blending
-- Higher resolution = more pixels per point
-- Downsampling averages the contributions, reducing brightness
-
-##### MSAA Brightness Issue
-**Problem**: When using MSAA (Multisample Anti-Aliasing), the scene gets BRIGHTER with more samples. This is because:
-- Points use additive blending (THREE.AdditiveBlending)
-- Each MSAA sample accumulates the additive contribution
-- More samples = more accumulation = brighter result
-- This is a fundamental incompatibility between MSAA and additive blending
-
-**Important**: Do NOT compensate for this in individual shaders! Any solution must:
-1. Work for all blending modes (not just additive)
-2. Work for all geometry types (not just points)
-3. Not interfere with post-processing effects like bloom
-
-**Potential solutions to explore**:
-- Use normal alpha blending instead of additive (but loses HDR glow effect)
-- Custom resolve shader for MSAA that accounts for blend mode
-- Render additive objects to separate buffer without MSAA
-- Post-process brightness normalization based on MSAA sample count
-```

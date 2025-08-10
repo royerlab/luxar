@@ -76,9 +76,8 @@ describe('shader-manager', () => {
 
       const vertexShader = (THREE.ShaderMaterial as any).mock.calls[0][0].vertexShader;
       expect(vertexShader).toContain('float sizeCompensation = sqrt(vSharpness / 2.0)');
-      expect(vertexShader).toContain(
-        'gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation'
-      );
+      // Updated to match world-space sizing implementation
+      expect(vertexShader).toContain('gl_PointSize = clamp(pointSize * sizeCompensation, 1.0, 500.0)');
     });
 
     it('should use HDR multiplier uniform in fragment shader', () => {

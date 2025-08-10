@@ -75,7 +75,7 @@ def main():
         radii=point_radius,
         blending_mode="normal",
         opacity=1.0,
-        gamma=1.0
+        gamma=1.0,
     )
 
     # 2. Normal blending - transparent green sphere
@@ -88,7 +88,7 @@ def main():
         radii=point_radius,
         blending_mode="normal",
         opacity=0.6,
-        gamma=1.0
+        gamma=1.0,
     )
 
     # 3. Additive blending - glowing blue sphere
@@ -102,7 +102,7 @@ def main():
         radii=point_radius * 1.2,  # Slightly larger for glow
         blending_mode="additive",
         opacity=0.8,
-        gamma=1.3  # Brighter
+        gamma=1.3,  # Brighter
     )
 
     # 4. Subtractive blending - darkening purple sphere
@@ -116,7 +116,7 @@ def main():
         radii=point_radius,
         blending_mode="subtractive",
         opacity=0.8,
-        gamma=0.7  # Darker
+        gamma=0.7,  # Darker
     )
 
     # 5. Demonstration of property inheritance
@@ -124,10 +124,7 @@ def main():
 
     # Create parent group with shared properties
     parent_group = scene.add_group(
-        "InheritanceGroup",
-        opacity=0.4,
-        blending_mode="additive",
-        gamma=1.1
+        "InheritanceGroup", opacity=0.4, blending_mode="additive", gamma=1.1
     )
 
     # Child 1: Inherits all parent properties
@@ -138,7 +135,7 @@ def main():
         positions5,
         colors=colors5,
         radii=point_radius,
-        parent=parent_group
+        parent=parent_group,
         # Inherits: opacity=0.4, blending_mode="additive", gamma=1.1
     )
 
@@ -151,7 +148,7 @@ def main():
         colors=colors6,
         radii=point_radius,
         parent=parent_group,
-        gamma=1.8  # Override parent's gamma
+        gamma=1.8,  # Override parent's gamma
         # Inherits: opacity=0.4, blending_mode="additive"
     )
 

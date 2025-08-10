@@ -152,7 +152,7 @@ export class RenderingControls {
     );
 
     const hdrControl = hdrFolder
-      .add(this.settings, 'hdrMultiplier', 1, 100, 0.1)
+      .add(this.settings, 'hdrMultiplier', 0.01, 100, 0.01)
       .name('HDR Intensity')
       .onChange((value: number) => {
         // Update shader config and trigger material updates

@@ -19,20 +19,20 @@ from luxar import Scene
 def main():
     """Create the simplest possible Luxar scene with a single point."""
     output_path = Path(__file__).parent / "single_point_example.zarr"
-    
+
     aprint(f"Creating single point example at {output_path}")
     aprint("This is the simplest possible Luxar scene!")
-    
+
     # Create scene
     scene = Scene(output_path)
-    
+
     # Create a single point at the origin
     position = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-    
+
     # Add the point with minimal parameters
     scene.add_points(
         "SinglePoint",
-        position
+        position,
         # Everything else uses defaults:
         # - colors: None (will be white)
         # - radii: None (will use default radius)
@@ -41,17 +41,17 @@ def main():
         # - gamma: 1.0
         # - blending_mode: "additive"
     )
-    
+
     # Alternative: Specify some properties explicitly
     scene.add_points(
         "ColoredPoint",
         np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # Position at (1, 0, 0)
         colors=[255, 0, 0],  # Red color
-        radii=0.2  # Larger radius
+        radii=0.2,  # Larger radius
     )
-    
+
     scene.finalize()
-    
+
     aprint("\n" + "=" * 60)
     aprint("SINGLE POINT EXAMPLE")
     aprint("=" * 60)

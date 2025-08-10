@@ -17,7 +17,9 @@ from arbol import aprint
 from luxar import Dimension, Dimensions, Scene
 
 
-def create_4d_hypersphere_points(n_points: int = 100000, radius: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
+def create_4d_hypersphere_points(
+    n_points: int = 100000, radius: float = 10.0
+) -> tuple[np.ndarray, np.ndarray]:
     """Create points uniformly distributed on a 4D hypersphere.
 
     Uses Gaussian method to get uniform distribution on the 4D sphere surface.
@@ -45,7 +47,9 @@ def create_4d_hypersphere_points(n_points: int = 100000, radius: float = 10.0) -
     # For a 4D hypersphere, surface area is proportional to r^3
     # So point spacing is approximately proportional to (r^3 / n_points)^(1/3)
     point_spacing = radius * (1.0 / n_points) ** (1.0 / 3.0)
-    radii = np.full(n_points, point_spacing * 2.5, dtype=np.float32)  # 2.5x for visibility
+    radii = np.full(
+        n_points, point_spacing * 2.5, dtype=np.float32
+    )  # 2.5x for visibility
 
     return points.astype(np.float32), radii
 

@@ -87,7 +87,7 @@ def main():
         radii=0.05,
         sharpness=2.0,
         opacity=1.0,
-        gamma=1.0
+        gamma=1.0,
     )
 
     # 2. First level hierarchy - Solar System analogy
@@ -98,9 +98,9 @@ def main():
     sun_group = scene.add_group(
         "SolarSystem",
         transform=sun_transform,
-        opacity=0.9,          # Inherited by all children
-        gamma=1.2,            # Slightly brighter
-        blending_mode="additive"  # Glowing effect
+        opacity=0.9,  # Inherited by all children
+        gamma=1.2,  # Slightly brighter
+        blending_mode="additive",  # Glowing effect
     )
 
     # Sun object (child of sun_group)
@@ -110,7 +110,7 @@ def main():
         sun_positions,
         colors=[255, 200, 100],  # Yellow-orange
         radii=0.08,
-        parent=sun_group
+        parent=sun_group,
         # Inherits: opacity=0.9, gamma=1.2, blending_mode="additive"
     )
 
@@ -122,7 +122,7 @@ def main():
     earth_group = sun_group.add_group(
         "EarthSystem",
         transform=earth_transform,
-        opacity=0.8  # Override parent's opacity
+        opacity=0.8,  # Override parent's opacity
         # Inherits: gamma=1.2, blending_mode="additive" from sun_group
     )
 
@@ -133,7 +133,7 @@ def main():
         earth_positions,
         colors=[100, 150, 255],  # Blue
         radii=0.06,
-        parent=earth_group
+        parent=earth_group,
         # Inherits: opacity=0.8, gamma=1.2, blending_mode="additive"
     )
 
@@ -146,7 +146,7 @@ def main():
         colors=[200, 200, 200],  # Gray
         radii=0.04,
         transform=moon_transform,
-        parent=earth_group
+        parent=earth_group,
         # Inherits: opacity=0.8, gamma=1.2, blending_mode="additive"
     )
 
@@ -155,7 +155,7 @@ def main():
     mars_group = sun_group.add_group(
         "MarsSystem",
         transform=mars_transform,
-        gamma=1.0  # Override parent's gamma
+        gamma=1.0,  # Override parent's gamma
         # Inherits: opacity=0.9, blending_mode="additive" from sun_group
     )
 
@@ -166,7 +166,7 @@ def main():
         mars_positions,
         colors=[255, 100, 100],  # Red
         radii=0.05,
-        parent=mars_group
+        parent=mars_group,
         # Inherits: opacity=0.9, gamma=1.0, blending_mode="additive"
     )
 
@@ -175,15 +175,14 @@ def main():
 
     # Space station group (separate from solar system)
     station_transform = transforms.compose(
-        transforms.translate(0, 0, 5),
-        transforms.rotate_z(np.pi / 6)
+        transforms.translate(0, 0, 5), transforms.rotate_z(np.pi / 6)
     )
     station_group = scene.add_group(
         "SpaceStationComplex",
         transform=station_transform,
         opacity=0.7,
         gamma=1.1,
-        blending_mode="normal"  # Different from solar system
+        blending_mode="normal",  # Different from solar system
     )
 
     # Central hub
@@ -193,25 +192,24 @@ def main():
         hub_positions,
         colors=[150, 255, 150],  # Light green
         radii=0.07,
-        parent=station_group
+        parent=station_group,
     )
 
     # Docking rings (children of station)
     for i in range(3):
         angle = i * 2 * np.pi / 3
         ring_transform = transforms.compose(
-            transforms.rotate_z(angle),
-            transforms.translate(0.8, 0, 0)
+            transforms.rotate_z(angle), transforms.translate(0.8, 0, 0)
         )
 
         ring_positions = create_ring_points(12, 0.15)
         scene.add_points(
-            f"DockingRing{i+1}",
+            f"DockingRing{i + 1}",
             ring_positions,
             colors=[255, 150, 255],  # Light magenta
             radii=0.05,
             transform=ring_transform,
-            parent=station_group
+            parent=station_group,
             # Inherits: opacity=0.7, gamma=1.1, blending_mode="normal"
         )
 
@@ -220,24 +218,15 @@ def main():
 
     # Level 1: Galaxy
     galaxy_transform = transforms.translate(0, 8, 0)
-    galaxy_group = scene.add_group(
-        "Galaxy",
-        transform=galaxy_transform,
-        opacity=0.6
-    )
+    galaxy_group = scene.add_group("Galaxy", transform=galaxy_transform, opacity=0.6)
 
     # Level 2: Star cluster
-    cluster_group = galaxy_group.add_group(
-        "StarCluster",
-        gamma=1.3
-    )
+    cluster_group = galaxy_group.add_group("StarCluster", gamma=1.3)
 
     # Level 3: Binary star system
     binary_transform = transforms.translate(1, 0, 0)
     binary_group = cluster_group.add_group(
-        "BinarySystem",
-        transform=binary_transform,
-        blending_mode="additive"
+        "BinarySystem", transform=binary_transform, blending_mode="additive"
     )
 
     # Level 4: Individual stars
@@ -248,7 +237,7 @@ def main():
         colors=[255, 255, 200],  # Bright white-yellow
         radii=0.04,
         transform=transforms.translate(-0.2, 0, 0),
-        parent=binary_group
+        parent=binary_group,
     )
 
     star2_positions = create_constellation_points(12, 0.08)
@@ -258,7 +247,7 @@ def main():
         colors=[255, 150, 150],  # Light red
         radii=0.035,
         transform=transforms.translate(0.2, 0, 0),
-        parent=binary_group
+        parent=binary_group,
     )
 
     scene.finalize()

@@ -31,6 +31,9 @@ export const SHADER_CONFIG = {
 const GAUSSIAN_VERTEX_SHADER = /* glsl */ `
   attribute float radius;
   attribute float sharpness;
+  uniform float fov;  // Camera FOV in radians
+  uniform vec2 resolution;  // Viewport resolution in pixels
+  
   varying vec3 vColor;
   varying float vSharpness;
   
@@ -41,23 +44,27 @@ const GAUSSIAN_VERTEX_SHADER = /* glsl */ `
     // Pass sharpness to fragment shader for per-point falloff control
     vSharpness = sharpness;
     
-    // Transform vertex position from world space to screen space
+    // Transform vertex position from world space to view space
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     
-    // Calculate point size based on radius and distance from camera
-    // This ensures points scale appropriately with perspective
-    float baseSize = ${SHADER_CONFIG.POINTS.size.toFixed(1)};
-    float perspectiveScale = baseSize / -mvPosition.z;
+    // Calculate world-space point sizing
+    // Points with radius r at distance 2r will just touch
+    float distance = length(mvPosition.xyz);
     
-    // Compensate for sharpness effect on apparent size
-    // As sharpness increases, points appear smaller due to steeper falloff
-    // This compensation maintains consistent visual size
+    // Angular size of the point in radians
+    float angularSize = 2.0 * atan(radius / distance);
+    
+    // Convert to screen pixels based on FOV and resolution
+    float pixelsPerRadian = resolution.y / (2.0 * tan(fov * 0.5));
+    float pointSize = angularSize * pixelsPerRadian;
+    
+    // Compensate for sharpness effect
+    // With soft falloff, the visible radius is smaller than the geometric radius
     float sizeCompensation = sqrt(vSharpness / 2.0);
     
-    // Use the per-point radius attribute to scale the point size
-    // Multiply by a factor to convert from world units to screen pixels
-    gl_PointSize = radius * perspectiveScale * 100.0 * sizeCompensation;
+    // Apply size with clamping for safety
+    gl_PointSize = clamp(pointSize * sizeCompensation, 1.0, 500.0);
   }
 `;
 
@@ -115,6 +122,12 @@ export function createGaussianPointMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       hdrMultiplier: { value: SHADER_CONFIG.POINTS.hdrMultiplier },
+      fov: { value: 60 * Math.PI / 180 },  // Default 60 degrees in radians
+      // Use framebuffer resolution (CSS pixels * devicePixelRatio)
+      resolution: { value: new THREE.Vector2(
+        window.innerWidth * window.devicePixelRatio,
+        window.innerHeight * window.devicePixelRatio
+      ) }
     },
     vertexShader: GAUSSIAN_VERTEX_SHADER,
     fragmentShader: GAUSSIAN_FRAGMENT_SHADER,

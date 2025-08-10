@@ -66,9 +66,11 @@ def main():
         "DefaultAttributes",
         base_positions + np.array([0, 0, 0]),
         colors=[255, 100, 100],  # Red
-        radii=point_radius
+        radii=point_radius,
     )
-    aprint(f"  Default - opacity: {points1.opacity}, gamma: {points1.gamma}, blending: {points1.blending_mode}")
+    aprint(
+        f"  Default - opacity: {points1.opacity}, gamma: {points1.gamma}, blending: {points1.blending_mode}"
+    )
 
     # 2. Custom opacity (transparency)
     aprint("Creating semi-transparent points...")
@@ -77,9 +79,11 @@ def main():
         base_positions + np.array([0, 3, 0]),
         colors=[100, 255, 100],  # Green
         radii=point_radius,
-        opacity=0.6
+        opacity=0.6,
     )
-    aprint(f"  Transparent - opacity: {points2.opacity}, gamma: {points2.gamma}, blending: {points2.blending_mode}")
+    aprint(
+        f"  Transparent - opacity: {points2.opacity}, gamma: {points2.gamma}, blending: {points2.blending_mode}"
+    )
 
     # 3. Custom gamma (brightness)
     aprint("Creating bright points with high gamma...")
@@ -88,9 +92,11 @@ def main():
         base_positions + np.array([6, 0, 0]),
         colors=[100, 100, 255],  # Blue
         radii=point_radius,
-        gamma=1.8
+        gamma=1.8,
     )
-    aprint(f"  Bright - opacity: {points3.opacity}, gamma: {points3.gamma}, blending: {points3.blending_mode}")
+    aprint(
+        f"  Bright - opacity: {points3.opacity}, gamma: {points3.gamma}, blending: {points3.blending_mode}"
+    )
 
     # 4. Normal blending mode with custom opacity
     aprint("Creating normal blending points...")
@@ -100,9 +106,11 @@ def main():
         colors=[255, 255, 100],  # Yellow
         radii=point_radius,
         blending_mode="normal",
-        opacity=0.8
+        opacity=0.8,
     )
-    aprint(f"  Normal blend - opacity: {points4.opacity}, gamma: {points4.gamma}, blending: {points4.blending_mode}")
+    aprint(
+        f"  Normal blend - opacity: {points4.opacity}, gamma: {points4.gamma}, blending: {points4.blending_mode}"
+    )
 
     # 5. Demonstrate runtime property modification
     aprint("\nDemonstrating runtime property modification...")
@@ -116,13 +124,17 @@ def main():
     points1.blending_mode = "subtractive"
     aprint(f"  Changed from opacity={original_opacity} to {points1.opacity}")
     aprint(f"  Changed from gamma={original_gamma} to {points1.gamma}")
-    aprint(f"  Changed from blending='{original_blending}' to '{points1.blending_mode}'")
+    aprint(
+        f"  Changed from blending='{original_blending}' to '{points1.blending_mode}'"
+    )
 
     # 6. Demonstrate method chaining
     aprint("\nDemonstrating method chaining API...")
     aprint("Chaining multiple attribute changes...")
     points2.set_opacity(0.4).set_gamma(1.3).set_blending_mode("additive")
-    aprint(f"  Chained result - opacity: {points2.opacity}, gamma: {points2.gamma}, blending: {points2.blending_mode}")
+    aprint(
+        f"  Chained result - opacity: {points2.opacity}, gamma: {points2.gamma}, blending: {points2.blending_mode}"
+    )
 
     # 7. Demonstrate validation and error handling
     aprint("\nDemonstrating validation and error handling...")

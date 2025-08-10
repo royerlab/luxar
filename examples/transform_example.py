@@ -27,23 +27,35 @@ def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]
         Tuple of (positions, colors) for axis visualization
     """
     # Create axis points: X (red), Y (green), Z (blue)
-    positions = np.array([
-        # X-axis points (red)
-        [0, 0, 0], [length, 0, 0],
-        # Y-axis points (green)
-        [0, 0, 0], [0, length, 0],
-        # Z-axis points (blue)
-        [0, 0, 0], [0, 0, length],
-    ], dtype=np.float32)
+    positions = np.array(
+        [
+            # X-axis points (red)
+            [0, 0, 0],
+            [length, 0, 0],
+            # Y-axis points (green)
+            [0, 0, 0],
+            [0, length, 0],
+            # Z-axis points (blue)
+            [0, 0, 0],
+            [0, 0, length],
+        ],
+        dtype=np.float32,
+    )
 
-    colors = np.array([
-        # X-axis (red)
-        [255, 100, 100], [255, 100, 100],
-        # Y-axis (green)
-        [100, 255, 100], [100, 255, 100],
-        # Z-axis (blue)
-        [100, 100, 255], [100, 100, 255],
-    ], dtype=np.uint8)
+    colors = np.array(
+        [
+            # X-axis (red)
+            [255, 100, 100],
+            [255, 100, 100],
+            # Y-axis (green)
+            [100, 255, 100],
+            [100, 255, 100],
+            # Z-axis (blue)
+            [100, 100, 255],
+            [100, 100, 255],
+        ],
+        dtype=np.uint8,
+    )
 
     return positions, colors
 
@@ -59,21 +71,21 @@ def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
         Array of 3D positions forming a cube
     """
     # Create grid of points
-    coords = np.linspace(-size/2, size/2, density)
+    coords = np.linspace(-size / 2, size / 2, density)
     positions = []
 
     # Add points on each face of the cube
     for i in range(density):
         for j in range(density):
             # Front and back faces
-            positions.append([-size/2, coords[i], coords[j]])
-            positions.append([size/2, coords[i], coords[j]])
+            positions.append([-size / 2, coords[i], coords[j]])
+            positions.append([size / 2, coords[i], coords[j]])
             # Left and right faces
-            positions.append([coords[i], -size/2, coords[j]])
-            positions.append([coords[i], size/2, coords[j]])
+            positions.append([coords[i], -size / 2, coords[j]])
+            positions.append([coords[i], size / 2, coords[j]])
             # Top and bottom faces
-            positions.append([coords[i], coords[j], -size/2])
-            positions.append([coords[i], coords[j], size/2])
+            positions.append([coords[i], coords[j], -size / 2])
+            positions.append([coords[i], coords[j], size / 2])
 
     return np.array(positions, dtype=np.float32)
 
@@ -96,11 +108,7 @@ def main():
     aprint("\nCreating reference coordinate system at origin...")
     origin_pos, origin_colors = create_coordinate_axes(2.0)
     scene.add_points(
-        "OriginAxes",
-        origin_pos,
-        colors=origin_colors,
-        radii=0.1,
-        sharpness=4.0
+        "OriginAxes", origin_pos, colors=origin_colors, radii=0.1, sharpness=4.0
     )
 
     # 2. Basic translation
@@ -113,7 +121,7 @@ def main():
         cube_positions,
         colors=[255, 200, 100],  # Orange
         radii=0.08,
-        transform=translation
+        transform=translation,
     )
 
     # Add coordinate system for translated object
@@ -124,7 +132,7 @@ def main():
         colors=translated_axes_colors,
         radii=0.08,
         transform=translation,
-        sharpness=4.0
+        sharpness=4.0,
     )
 
     # 3. Basic rotation
@@ -138,7 +146,7 @@ def main():
         cube_positions,
         colors=[100, 255, 200],  # Cyan
         radii=0.08,
-        transform=rotated_transform
+        transform=rotated_transform,
     )
 
     # Add coordinate system for rotated object
@@ -148,7 +156,7 @@ def main():
         colors=translated_axes_colors,
         radii=0.08,
         transform=rotated_transform,
-        sharpness=4.0
+        sharpness=4.0,
     )
 
     # 4. Scaling
@@ -162,7 +170,7 @@ def main():
         cube_positions,
         colors=[255, 100, 200],  # Magenta
         radii=0.08,
-        transform=scaled_transform
+        transform=scaled_transform,
     )
 
     # Add coordinate system for scaled object
@@ -172,16 +180,16 @@ def main():
         colors=translated_axes_colors,
         radii=0.08,
         transform=scaled_transform,
-        sharpness=4.0
+        sharpness=4.0,
     )
 
     # 5. Complex composition
     aprint("Demonstrating complex transform composition...")
     # Rotate around Y, then scale, then translate
     complex_transform = transforms.compose(
-        transforms.rotate_y(np.pi / 6),      # 30 degrees
+        transforms.rotate_y(np.pi / 6),  # 30 degrees
         transforms.scale(1.5, 0.8, 1.2),  # Non-uniform scale
-        transforms.translate(0, -3, 0)     # Move down
+        transforms.translate(0, -3, 0),  # Move down
     )
 
     scene.add_points(
@@ -189,7 +197,7 @@ def main():
         cube_positions,
         colors=[200, 100, 255],  # Purple
         radii=0.08,
-        transform=complex_transform
+        transform=complex_transform,
     )
 
     scene.add_points(
@@ -198,7 +206,7 @@ def main():
         colors=translated_axes_colors,
         radii=0.08,
         transform=complex_transform,
-        sharpness=4.0
+        sharpness=4.0,
     )
 
     # 6. Hierarchical transforms (parent-child)
@@ -206,13 +214,9 @@ def main():
 
     # Create parent group with transform
     parent_transform = transforms.compose(
-        transforms.translate(0, 0, 3),
-        transforms.rotate_z(np.pi / 8)
+        transforms.translate(0, 0, 3), transforms.rotate_z(np.pi / 8)
     )
-    parent_group = scene.add_group(
-        "ParentGroup",
-        transform=parent_transform
-    )
+    parent_group = scene.add_group("ParentGroup", transform=parent_transform)
 
     # Child objects inherit parent's transform
     small_cube_positions = create_cube_points(0.5, 3)
@@ -225,13 +229,12 @@ def main():
         colors=[255, 255, 100],  # Yellow
         radii=0.06,
         transform=child1_transform,
-        parent=parent_group
+        parent=parent_group,
     )
 
     # Child 2: Local rotation and translation
     child2_transform = transforms.compose(
-        transforms.rotate_x(np.pi / 4),
-        transforms.translate(-1, 1, 0)
+        transforms.rotate_x(np.pi / 4), transforms.translate(-1, 1, 0)
     )
     scene.add_points(
         "Child2",
@@ -239,7 +242,7 @@ def main():
         colors=[100, 255, 255],  # Light blue
         radii=0.06,
         transform=child2_transform,
-        parent=parent_group
+        parent=parent_group,
     )
 
     # Parent coordinate system
@@ -250,7 +253,7 @@ def main():
         radii=0.06,
         transform=transforms.identity(),  # No additional transform
         parent=parent_group,
-        sharpness=4.0
+        sharpness=4.0,
     )
 
     scene.finalize()
