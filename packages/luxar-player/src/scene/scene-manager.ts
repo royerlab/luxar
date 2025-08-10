@@ -69,6 +69,10 @@ export class SceneManager {
     this.setupCamera();
     this.setupControls();
     this.setupPostProcessing();
+    
+    // Call updateSize() during initialization to ensure consistent behavior
+    // This makes initialization go through the same path as resize events
+    this.updateSize();
   }
 
   /**
@@ -134,9 +138,6 @@ export class SceneManager {
       preserveDrawingBuffer: false,
     });
 
-    // Remove browser default focus outline
-    this.renderer.domElement.style.outline = 'none';
-
     // Configure page for immersive fullscreen 3D experience
     // Remove default margins to eliminate whitespace around canvas
     document.body.style.margin = '0';
@@ -145,6 +146,14 @@ export class SceneManager {
     document.body.style.overflow = 'hidden';
 
     // NOTE: We don't append renderer.domElement because we're using the existing HTML canvas
+    
+    // Report hardware point size limits in debug mode
+    const debugParams = new URLSearchParams(window.location.search);
+    if (debugParams.has('debug')) {
+      const glContext = this.renderer.getContext();
+      const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
+      console.log(`🔍 [Luxar] Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`);
+    }
     // This allows for better integration into complex HTML pages
 
     // Configure renderer dimensions and high-DPI support
@@ -307,9 +316,23 @@ export class SceneManager {
       // Reset controls to default state before loading new content
       this.resetControls();
 
+      // Update material manager BEFORE loading scene so materials are created with correct params
+      if (this.camera && this.renderer) {
+        const fovRadians = this.camera.fov * Math.PI / 180;
+        const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+        materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+      }
+
       const root = await loadScene(src);
       hideLoadingIndicator();
       this.scene.add(root);
+
+      // Update legacy materials that might have been created during loading
+      if (this.camera && this.renderer) {
+        const fovRadians = this.camera.fov * Math.PI / 180;
+        const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+        this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
+      }
 
       // Don't automatically center - let the scene designer's positioning take precedence
       // User can press 'C' to center on bounding box if desired
@@ -509,45 +532,54 @@ export class SceneManager {
    * Update renderer and camera for window resize
    */
   updateSize(): void {
-    // In fullscreen, use screen dimensions; otherwise use canvas client dimensions
-    let width: number;
-    let height: number;
+    // Always use window dimensions for consistency
+    // Canvas dimensions can become stale after fullscreen transitions
+    const width = window.innerWidth;
+    const height = window.innerHeight;
 
     if (document.fullscreenElement) {
-      // Force fullscreen dimensions
-      width = screen.width;
-      height = screen.height;
       console.log(`✓ [Luxar] Using fullscreen dimensions: ${width}x${height}`);
     } else {
-      // Use window dimensions for windowed mode - more reliable than canvas client dimensions
-      width = window.innerWidth;
-      height = window.innerHeight;
       console.log(`✓ [Luxar] Using windowed dimensions: ${width}x${height}`);
     }
 
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    // Only update camera if it exists (might be called during init)
+    if (this.camera) {
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+    }
+    
     this.updateRendererSize(width, height);
 
     // Update post-processing pipeline for new dimensions
-    this.postProcessing.resize(width, height);
+    if (this.postProcessing) {
+      this.postProcessing.resize(width, height);
+    }
   }
 
   /**
    * Update renderer size and pixel ratio
    */
   private updateRendererSize(width?: number, height?: number): void {
-    // Use provided dimensions or fall back to canvas client dimensions
-    const canvas = this.renderer.domElement;
-    const w = width || canvas.clientWidth || window.innerWidth;
-    const h = height || canvas.clientHeight || window.innerHeight;
+    // Use provided dimensions or fall back to window dimensions
+    const w = width || window.innerWidth;
+    const h = height || window.innerHeight;
 
-    // Let Three.js handle both WebGL buffer and canvas dimensions properly
-    // This ensures coordinate system remains correct for mouse interactions
-    this.renderer.setSize(w, h);
+    // Set pixel ratio BEFORE size for correct buffer calculations
     this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Let Three.js handle CSS sizing normally
+    this.renderer.setSize(w, h);  // Allow Three.js to set CSS size
 
-    console.log(`✓ [Luxar] Renderer resized: ${w}x${h}`);
+    
+    // Update material uniforms for world-space point sizing (only if camera exists)
+    if (this.camera) {
+      const fovRadians = this.camera.fov * Math.PI / 180;
+      const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+      
+      // Also update legacy materials
+      this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
+    }
   }
 
   /**
@@ -561,6 +593,34 @@ export class SceneManager {
       config.camera.fovMax
     );
     this.camera.updateProjectionMatrix();
+    
+    // Update material uniforms for world-space point sizing
+    const fovRadians = this.camera.fov * Math.PI / 180;
+    const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+    
+    // Also update legacy materials
+    this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
+  }
+
+  /**
+   * Update legacy material camera parameters
+   */
+  private updateLegacyMaterialCameraParams(fovRadians: number, resolution: THREE.Vector2): void {
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Points) {
+        const material = object.material as THREE.ShaderMaterial;
+        if (material.uniforms && !material.userData.managedByMaterialManager) {
+          if (material.uniforms.fov) {
+            material.uniforms.fov.value = fovRadians;
+          }
+          if (material.uniforms.resolution) {
+            // Update the values of the existing Vector2, don't replace the reference
+            material.uniforms.resolution.value.copy(resolution);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -588,6 +648,7 @@ export class SceneManager {
 
     console.log(`✓ [Luxar] HDR multiplier updated for all point materials: ${multiplier}`);
   }
+
 
   /**
    * Clean up all Three.js resources to prevent memory leaks

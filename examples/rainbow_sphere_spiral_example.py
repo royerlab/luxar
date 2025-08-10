@@ -96,7 +96,7 @@ def calculate_point_radius(n_points: int, sphere_radius: float) -> float:
     # Point radius should be about half the distance for spacing
     point_radius = avg_distance / 2
 
-    return point_radius * 2  # Scale for better visibility in rendering
+    return point_radius * 0.66
 
 
 def main():

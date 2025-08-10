@@ -18,8 +18,12 @@ from arbol import aprint
 from luxar import Scene
 
 
-def create_node_positions(node_index: int, points_per_node: int,
-                         grid_spacing: float = 3.0, cluster_size: float = 0.5) -> np.ndarray:
+def create_node_positions(
+    node_index: int,
+    points_per_node: int,
+    grid_spacing: float = 3.0,
+    cluster_size: float = 0.5,
+) -> np.ndarray:
     """Create positioned point cluster for a specific node in 3D grid layout.
 
     Args:
@@ -83,7 +87,9 @@ def main():
     aprint(f"- Nodes: {num_nodes}")
     aprint(f"- Points per node: {points_per_node:,}")
     aprint(f"- Total points: {total_points:,}")
-    aprint(f"- Expected file size: ~{(total_points * 20) // 1024 // 1024}MB")  # Rough estimate
+    aprint(
+        f"- Expected file size: ~{(total_points * 20) // 1024 // 1024}MB"
+    )  # Rough estimate
 
     # Create scene
     scene = Scene(output_path)
@@ -106,7 +112,7 @@ def main():
     for i in range(num_nodes):
         # Show progress
         if i % progress_interval == 0:
-            aprint(f"  Progress: {i}/{num_nodes} nodes ({i/num_nodes*100:.1f}%)")
+            aprint(f"  Progress: {i}/{num_nodes} nodes ({i / num_nodes * 100:.1f}%)")
 
         # Generate deterministic positions for this node
         positions = create_node_positions(i, points_per_node)
@@ -132,7 +138,7 @@ def main():
             radii=radius,
             blending_mode=blending,
             opacity=opacity,
-            gamma=gamma
+            gamma=gamma,
         )
 
     creation_time = time.time() - start_time
@@ -152,13 +158,17 @@ def main():
     aprint(f"- Node creation time: {creation_time:.2f} seconds")
     aprint(f"- Scene finalization time: {finalize_time:.2f} seconds")
     aprint(f"- Total time: {total_time:.2f} seconds")
-    aprint(f"- Points per second: {total_points/creation_time:,.0f}")
-    aprint(f"- Nodes per second: {num_nodes/creation_time:.1f}")
+    aprint(f"- Points per second: {total_points / creation_time:,.0f}")
+    aprint(f"- Nodes per second: {num_nodes / creation_time:.1f}")
 
     aprint("\nMaterial Combination Analysis:")
     aprint(f"- Unique material combinations: {len(material_combinations)}")
-    aprint(f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}")
-    aprint(f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used")
+    aprint(
+        f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}"
+    )
+    aprint(
+        f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used"
+    )
 
     aprint("\nScene Statistics:")
     aprint(f"- Total nodes: {num_nodes}")

@@ -287,26 +287,26 @@ export class InputHandler {
       document.documentElement.style.backgroundColor = '#111111';
       console.log('✓ [Luxar] Entering fullscreen mode');
     } else {
-      // Exiting fullscreen - restore normal canvas styling
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.position = '';
-      canvas.style.top = '';
-      canvas.style.left = '';
-      canvas.style.opacity = '';
-      canvas.style.filter = '';
+      // Exiting fullscreen - completely clear all inline styles
+      canvas.removeAttribute('style');
       document.documentElement.style.backgroundColor = '';
       console.log('✓ [Luxar] Exiting fullscreen mode');
     }
 
-    // Add small delay to ensure canvas dimensions are updated by browser
+    // Wait for fullscreen transition to complete before updating
+    // This prevents intermediate size updates that can confuse the renderer
     setTimeout(() => {
-      // Update canvas size when entering/exiting fullscreen
+      // Update canvas size after fullscreen transition
       this.sceneManager.updateSize();
 
       // Restart animation to ensure smooth transition
       this.animationController.startAnimation();
-    }, 100); // 100ms delay to avoid race conditions
+      
+      // One more update to catch any final adjustments
+      setTimeout(() => {
+        this.sceneManager.updateSize();
+      }, 100);
+    }, 200); // Wait 200ms for transition to complete
   }
 
   /**
@@ -358,9 +358,12 @@ export class InputHandler {
 
       case 'r':
       case 'R':
-        // R key to toggle rendering controls
-        event.preventDefault();
-        this.toggleRenderingControls();
+        // R key to toggle rendering controls (only when pressed alone)
+        // Ignore if Cmd/Ctrl or Shift are held to avoid conflicts with browser shortcuts
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+          event.preventDefault();
+          this.toggleRenderingControls();
+        }
         break;
 
       case 'c':
@@ -379,6 +382,7 @@ export class InputHandler {
           console.log(`🔧 [Luxar] Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`);
         }
         break;
+
 
 
       case ' ':

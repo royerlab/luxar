@@ -8,6 +8,8 @@ This shows how to define dimensions at the scene level with:
 - Display configuration
 """
 
+from pathlib import Path
+
 import numpy as np
 from arbol import aprint
 
@@ -41,7 +43,8 @@ def main():
     )
 
     # Create scene with dimensions
-    scene = Scene("scene_dims_test.zarr", dimensions=dims)
+    output_path = Path(__file__).parent / "scene_dims_example.zarr"
+    scene = Scene(output_path, dimensions=dims)
 
     # Create test data that spans the dimension ranges
     n_points_per_combo = 50

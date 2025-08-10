@@ -13,23 +13,39 @@ from luxar import Scene, transforms
 scene_path = Path(__file__).parent / "test_5d_dense_grid_example.zarr"
 scene = Scene(
     scene_path,
-    dimensions=luxar.Dimensions([
-        luxar.Dimension(name="X", unit="μm", range=(-30, 30), display=True),
-        luxar.Dimension(name="Y", unit="μm", range=(-30, 30), display=True),
-        luxar.Dimension(name="Z", unit="μm", range=(-30, 30), display=True),
-        luxar.Dimension(name="Time", unit="frame", range=(0, 9), display=False, step=1.0, discrete=True),
-        luxar.Dimension(name="Channel", unit="", range=(0, 2), display=False, discrete=True, step=1.0),
-    ])
+    dimensions=luxar.Dimensions(
+        [
+            luxar.Dimension(name="X", unit="μm", range=(-30, 30), display=True),
+            luxar.Dimension(name="Y", unit="μm", range=(-30, 30), display=True),
+            luxar.Dimension(name="Z", unit="μm", range=(-30, 30), display=True),
+            luxar.Dimension(
+                name="Time",
+                unit="frame",
+                range=(0, 9),
+                display=False,
+                step=1.0,
+                discrete=True,
+            ),
+            luxar.Dimension(
+                name="Channel",
+                unit="",
+                range=(0, 2),
+                display=False,
+                discrete=True,
+                step=1.0,
+            ),
+        ]
+    ),
 )
 
 # Create a dense 3D grid that changes over time and channels
 # Grid spacing
 grid_size = 10  # 10x10x10 grid
-spacing = 4.0   # 4 μm between points
+spacing = 4.0  # 4 μm between points
 
 # Time and channel parameters
 n_time_points = 10  # 0 to 9
-n_channels = 3      # 0, 1, 2
+n_channels = 3  # 0, 1, 2
 
 # Channel colors
 channel_colors = [
@@ -46,12 +62,18 @@ all_radii = []
 for t in range(n_time_points):
     for c in range(n_channels):
         # Create 3D grid
-        x = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
-        y = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
-        z = np.linspace(-spacing * (grid_size-1)/2, spacing * (grid_size-1)/2, grid_size)
+        x = np.linspace(
+            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+        )
+        y = np.linspace(
+            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+        )
+        z = np.linspace(
+            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+        )
 
         # Create meshgrid
-        xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
+        xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
 
         # Flatten to get point positions
         x_flat = xx.flatten()
@@ -111,7 +133,7 @@ marker_radii = []
 for t in range(n_time_points):
     for c in range(n_channels):
         # Add a larger central marker
-        marker_pos = np.array([[0, 0, (c-1)*1.0, t, c]], dtype=np.float32)
+        marker_pos = np.array([[0, 0, (c - 1) * 1.0, t, c]], dtype=np.float32)
         marker_positions.append(marker_pos)
 
         # Make markers bright white
@@ -136,7 +158,7 @@ points = scene.add_points(
     transform=transforms.identity(),
     opacity=1.0,
     gamma=1.0,
-    blending_mode="additive"
+    blending_mode="additive",
 )
 
 # Add info text
