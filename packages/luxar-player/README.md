@@ -56,17 +56,47 @@ http://localhost:5173
 
 ## 🎮 Controls
 
-### Camera Controls
+### Control Modes
+Luxar Player supports two navigation modes:
+- **Orbit Mode** (default): Traditional 3D viewer controls - rotate around a target point
+- **Fly Mode**: First-person navigation with WASD movement and inertial physics
+
+| Key | Action |
+|-----|--------|
+| **V** | Toggle between Orbit and Fly control modes |
+| **I** | Toggle inertial mode (Fly mode only) |
+| **F** | Recenter camera on scene |
+| **C** | Toggle between native center and bounding box center |
+
+### Orbit Mode Controls
 | Input | Action |
 |-------|--------|
 | **Mouse Drag** | Rotate camera around scene |
 | **Mouse Wheel** | Zoom in/out |
 | **Right Click + Drag** | Pan camera |
 | **Shift + Mouse Wheel** | Change field of view |
+
+### Fly Mode Controls
+| Input | Action |
+|-------|--------|
+| **W/S** | Move forward/backward |
+| **A/D** | Strafe left/right |
+| **Alt+W / Alt+S** | Move up/down |
+| **Arrow Keys** | Look up/down/left/right |
+| **Mouse Drag** | Free look (rotate camera) |
+| **I** | Toggle inertial physics (drift/momentum) |
+
+### General Controls
+| Input | Action |
+|-------|--------|
 | **Space** | Toggle fullscreen mode |
 | **H** | Show/hide help overlay |
-| **Shift + P** | Toggle performance statistics |
-| **Esc** | Exit fullscreen / Dismiss overlays |
+| **R** | Toggle advanced rendering controls panel |
+| **P** | Toggle performance statistics |
+| **N** | Toggle nD dimension panel |
+| **O** | Open dataset browser |
+| **Ctrl+L** | Toggle debug console |
+| **Esc** | Exit fullscreen / Close panels |
 
 ### nD Navigation (for datasets with >3 dimensions)
 | Input | Action |
@@ -187,6 +217,11 @@ src/
 ├── config/
 │   ├── index.ts                   # Unified configuration system
 │   └── types.ts                   # Configuration type definitions
+├── controls/
+│   ├── controls-manager.ts        # Control mode switching and management
+│   ├── luxar-fly-controls.ts      # Custom fly controls with inertial physics
+│   ├── control-config.ts          # Control system configuration
+│   └── types.ts                   # Control system type definitions
 ├── scene/
 │   ├── scene-manager.ts           # 3D scene and renderer setup
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
@@ -198,11 +233,17 @@ src/
 ├── data/
 │   └── zarr-loader.ts            # Zarr dataset loading with nD support
 ├── input/
-│   └── input-handler.ts           # User interaction handling
+│   ├── input-handler.ts           # User interaction handling
+│   └── input-context-manager.ts   # Keyboard conflict resolution
 ├── ui/
 │   ├── dimension-sliders.ts       # nD navigation UI components
 │   ├── performance-monitor.ts     # FPS and timing metrics
-│   └── rendering-controls.ts      # Advanced rendering controls panel
+│   ├── rendering-controls.ts      # Advanced rendering controls panel
+│   └── debug-console.ts           # In-app debug console (Ctrl+L)
+├── tests/
+│   ├── controls-manager.test.ts   # Control system unit tests
+│   ├── luxar-fly-controls.test.ts # Fly controls unit tests
+│   └── input-context-manager.test.ts # Input context tests
 ├── types/
 │   └── dims.ts                   # Dimension type definitions
 └── utils/

@@ -18,7 +18,7 @@ from luxar import Dimension, Dimensions, Scene
 
 
 def create_4d_hypersphere_points(
-    n_points: int = 100000, radius: float = 10.0
+    n_points: int = 500000, radius: float = 5.0
 ) -> tuple[np.ndarray, np.ndarray]:
     """Create points uniformly distributed on a 4D hypersphere.
 
@@ -63,7 +63,7 @@ def create_4d_rainbow_colors(positions: np.ndarray) -> np.ndarray:
         positions: 4D positions array (n_points, 4)
 
     Returns:
-        RGB color array (n_points, 3) as uint8
+        RGB color array (n_points, 3) as float32
     """
     n_points = len(positions)
 
@@ -120,13 +120,13 @@ def create_4d_rainbow_colors(positions: np.ndarray) -> np.ndarray:
     # Add minimum value and combine
     colors = np.stack([r + m, g + m, b + m], axis=1)
 
-    # Convert to uint8
-    return (colors * 255).astype(np.uint8)
+    # Return as float32
+    return colors.astype(np.float32)
 
 
 def main():
     """Create and save a 4D spatial rainbow sphere."""
-    output_path = Path(__file__).parent / "test_4d_rainbow_sphere_example.zarr"
+    output_path = Path(__file__).parent / "rainbow_sphere_4d_example.zarr"
 
     aprint(f"├ Creating 4D spatial rainbow sphere at {output_path}")
     aprint("├ This example creates a true 4D hypersphere where:")

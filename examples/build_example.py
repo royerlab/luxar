@@ -33,7 +33,7 @@ def add_coordinate_axes(scene: Scene, length: float = 5.0, n_points: int = 50):
     scene.add_points(
         "X_Axis",
         x_positions,
-        colors=[255, 0, 0],  # Red
+        colors=[1.0, 0.0, 0.0],  # Red
         radii=0.05,
         opacity=0.8,
     )
@@ -46,7 +46,7 @@ def add_coordinate_axes(scene: Scene, length: float = 5.0, n_points: int = 50):
     scene.add_points(
         "Y_Axis",
         y_positions,
-        colors=[0, 255, 0],  # Green
+        colors=[0.0, 1.0, 0.0],  # Green
         radii=0.05,
         opacity=0.8,
     )
@@ -59,7 +59,7 @@ def add_coordinate_axes(scene: Scene, length: float = 5.0, n_points: int = 50):
     scene.add_points(
         "Z_Axis",
         z_positions,
-        colors=[0, 0, 255],  # Blue
+        colors=[0.0, 0.0, 1.0],  # Blue
         radii=0.05,
         opacity=0.8,
     )
@@ -89,7 +89,7 @@ def add_data_cloud(scene: Scene, name: str, center: list, n_points: int = 500):
     positions = np.column_stack([x, y, z]).astype(np.float32)
 
     # Random colors with theme
-    colors = np.random.randint(100, 255, (n_points, 3), dtype=np.uint8)
+    colors = np.random.uniform(0.4, 1.0, (n_points, 3)).astype(np.float32)
 
     # Create transform to position the cloud
     transform = transforms.translate(center[0], center[1], center[2])
@@ -165,7 +165,7 @@ def build_scene_with_structure(output_path: Path):
             scene.add_points(
                 f"CentralPoint_{int(angle * 180 / np.pi)}",
                 positions,
-                colors=[255, 200, 100],
+                colors=[1.0, 0.78, 0.39],
                 radii=0.04,
                 parent=center_group,
             )
@@ -193,11 +193,11 @@ def main():
     aprint("- Modular scene construction patterns")
 
     # Example 1: Manual scene management
-    manual_path = base_path / "build_manual_example.zarr"
+    manual_path = base_path / "build_example_manual.zarr"
     build_scene_manually(manual_path)
 
     # Example 2: Structured approach
-    structured_path = base_path / "build_structured_example.zarr"
+    structured_path = base_path / "build_example_structured.zarr"
     build_scene_with_structure(structured_path)
 
     aprint("\n" + "=" * 60)

@@ -52,7 +52,7 @@ def create_test_points(time_positions: list, n_points_per_time: int = 30) -> tup
 
     return (
         np.array(positions, dtype=np.float32),
-        np.array(colors, dtype=np.uint8),
+        np.array(colors, dtype=np.float32),
         np.array(radii, dtype=np.float32),
     )
 
@@ -65,10 +65,10 @@ def main():
     # Define test cases with different radii
     test_cases = [
         # (time, radius, color, label)
-        (0.0, 0.1, [255, 100, 100], "Small red points (r=0.1)"),
-        (1.0, 0.3, [100, 255, 100], "Medium green points (r=0.3)"),
-        (2.0, 0.6, [100, 150, 255], "Large blue points (r=0.6)"),
-        (3.0, 1.0, [255, 200, 100], "Extra large orange points (r=1.0)"),
+        (0.0, 0.1, [1.0, 0.39, 0.39], "Small red points (r=0.1)"),
+        (1.0, 0.3, [0.39, 1.0, 0.39], "Medium green points (r=0.3)"),
+        (2.0, 0.6, [0.39, 0.59, 1.0], "Large blue points (r=0.6)"),
+        (3.0, 1.0, [1.0, 0.78, 0.39], "Extra large orange points (r=1.0)"),
     ]
 
     # Also add a continuous line of points with gradually changing radius
@@ -87,9 +87,9 @@ def main():
 
         # Color gradient from purple to yellow
         color = [
-            int(200 + 55 * (i / n_gradient)),
-            int(100 + 100 * (i / n_gradient)),
-            int(255 - 155 * (i / n_gradient)),
+            0.78 + 0.22 * (i / n_gradient),  # Red: 0.78 to 1.0
+            0.39 + 0.39 * (i / n_gradient),  # Green: 0.39 to 0.78
+            1.0 - 0.61 * (i / n_gradient),   # Blue: 1.0 to 0.39
         ]
         gradient_colors.append(color)
         gradient_radii.append(radius)

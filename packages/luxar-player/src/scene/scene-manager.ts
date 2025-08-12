@@ -8,14 +8,18 @@
 // - Resource disposal for memory management
 
 import * as THREE from 'three';
-import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
+import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data/zarr-loader';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
 import { PostProcessingManager } from '../rendering/post-processing';
 import { ShaderValidator } from '../rendering/shader-manager';
 import { materialManager } from '../rendering/material-manager';
-import { detectHDRCapabilities, configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
+import {
+  detectHDRCapabilities,
+  configureHDRRenderer,
+  logHDRCapabilities,
+} from '../utils/hdr-detection';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -37,7 +41,9 @@ import { detectHDRCapabilities, configureHDRRenderer, logHDRCapabilities } from 
  * - Custom Gaussian point shaders for enhanced visual quality
  * - Automatic canvas resizing for responsive design
  */
-export class SceneManager {
+export class SceneManager extends THREE.EventDispatcher<{
+  change: {};
+}> {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
 
@@ -47,8 +53,8 @@ export class SceneManager {
   /** Perspective camera - provides realistic 3D viewing with depth */
   public camera!: THREE.PerspectiveCamera;
 
-  /** ArcballControls - handles mouse/touch input for camera manipulation */
-  public controls!: ArcballControls;
+  /** ControlsManager - manages different camera control types (orbit, fly) */
+  public controls!: ControlsManager;
 
   /** HDR post-processing manager for bloom and tone mapping effects */
   public postProcessing!: PostProcessingManager;
@@ -59,9 +65,16 @@ export class SceneManager {
   /** Track whether we're centered on bounding box or origin */
   private isCenteredOnBoundingBox: boolean = false;
 
+  /** Store the last calculated bounding box center */
+  private lastBoundingBoxCenter: THREE.Vector3 = new THREE.Vector3();
+
   /**
    * Initialize the complete 3D scene setup
    */
+  constructor() {
+    super();
+  }
+
   async init(): Promise<void> {
     this.setupCanvas();
     this.setupRenderer();
@@ -69,7 +82,7 @@ export class SceneManager {
     this.setupCamera();
     this.setupControls();
     this.setupPostProcessing();
-    
+
     // Call updateSize() during initialization to ensure consistent behavior
     // This makes initialization go through the same path as resize events
     this.updateSize();
@@ -114,9 +127,9 @@ export class SceneManager {
         colorSpace: 'display-p3',
         // Request high precision
         preserveDrawingBuffer: false,
-        desynchronized: true
+        desynchronized: true,
       }) as WebGLRenderingContext | null;
-      
+
       if (!gl) {
         console.warn('WebGL2 context creation failed, falling back to default');
       }
@@ -124,7 +137,7 @@ export class SceneManager {
       console.error('Error creating WebGL2 context:', error);
       showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
-    
+
     // Create WebGL renderer with antialiasing enabled
     // Antialiasing uses MSAA (Multisample Anti-Aliasing) to smooth jagged edges
     // This is especially important for point clouds and wireframe objects
@@ -146,13 +159,15 @@ export class SceneManager {
     document.body.style.overflow = 'hidden';
 
     // NOTE: We don't append renderer.domElement because we're using the existing HTML canvas
-    
+
     // Report hardware point size limits in debug mode
     const debugParams = new URLSearchParams(window.location.search);
     if (debugParams.has('debug')) {
       const glContext = this.renderer.getContext();
       const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
-      console.log(`🔍 [Luxar] Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`);
+      console.log(
+        `🔍 [Luxar] Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`
+      );
     }
     // This allows for better integration into complex HTML pages
 
@@ -209,32 +224,29 @@ export class SceneManager {
   }
 
   /**
-   * Initialize ArcballControls for intuitive 3D camera manipulation
+   * Initialize ControlsManager for flexible camera control
    *
-   * ArcballControls provide constraint-based camera movement that feels natural:
-   * - Mouse drag: Rotate camera around target point (arcball rotation)
-   * - Mouse wheel: Zoom in/out while maintaining focus point
-   * - Right drag: Pan camera horizontally and vertically
-   * - Automatic damping for smooth motion cessation
+   * ControlsManager supports multiple control types:
+   * - Orbit: Traditional orbital camera with auto-rotation
+   * - Fly: First-person flying controls with inertia
    *
-   * This control scheme is ideal for examining 3D objects and point clouds
-   * as it maintains spatial orientation and provides predictable movement.
+   * Features:
+   * - Hot-swapping between control types
+   * - Auto-rotation for presentations
+   * - Inertial and non-inertial movement modes
+   * - Smooth transitions and state preservation
    */
   private setupControls(): void {
-    // ArcballControls bind to camera and DOM element for mouse/touch input
-    // The renderer's canvas element captures all mouse/touch events
-    // IMPORTANT: Pass scene as third parameter to enable proper gizmo management
-    // Gizmos control the rotation center and prevent jumps during zoom
-    this.controls = new ArcballControls(this.camera, this.renderer.domElement, this.scene);
+    // Create controls manager with camera and DOM element
+    this.controls = new ControlsManager(this.camera, this.renderer.domElement, this.scene);
 
-    // Hide the gizmos - we want their functionality but not their visual representation
-    // The gizmos still work internally to manage the rotation center properly
-    (this.controls as any).setGizmoVisible?.(false);
+    // Set default control type (orbit)
+    this.controls.setControlType('orbit');
 
-    // Set default target to origin for predictable zooming behavior
-    // Note: ArcballControls doesn't have full TypeScript definitions, so we use type assertion
-    (this.controls as any).target.set(0, 0, 0);
-    this.controls.update();
+    // Listen for control changes to trigger renders
+    this.controls.addEventListener('change', () => {
+      this.dispatchEvent({ type: 'change' });
+    });
 
     // Save initial state so reset() works properly
     this.controls.saveState();
@@ -256,16 +268,13 @@ export class SceneManager {
     this.camera.lookAt(0, 0, 0);
     this.camera.updateMatrixWorld(true);
 
-    // Reset controls target to origin
-    (this.controls as any).target.set(0, 0, 0);
+    // Reset controls to default state
+    this.controls.reset();
 
-    // Clear any internal state by calling update multiple times
-    // This ensures the controls fully sync with the new camera state
-    this.controls.update();
+    // Update controls to sync with camera
     this.controls.update();
 
     // Save this configuration as the new default state
-    // This is critical - it must happen AFTER all updates
     this.controls.saveState();
 
     console.log('✓ [Luxar] Controls reset to default state');
@@ -318,7 +327,7 @@ export class SceneManager {
 
       // Update material manager BEFORE loading scene so materials are created with correct params
       if (this.camera && this.renderer) {
-        const fovRadians = this.camera.fov * Math.PI / 180;
+        const fovRadians = (this.camera.fov * Math.PI) / 180;
         const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         materialManager.updateCameraParams(fovRadians, drawingBufferSize);
       }
@@ -329,7 +338,7 @@ export class SceneManager {
 
       // Update legacy materials that might have been created during loading
       if (this.camera && this.renderer) {
-        const fovRadians = this.camera.fov * Math.PI / 180;
+        const fovRadians = (this.camera.fov * Math.PI) / 180;
         const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
       }
@@ -450,6 +459,9 @@ export class SceneManager {
 
       const center = box.getCenter(new THREE.Vector3());
 
+      // Store the center for later use
+      this.lastBoundingBoxCenter.copy(center);
+
       // Position camera to see the entire scene
       const distance = maxDim * 1.2; // Closer for better visibility
       this.camera.position.set(center.x, center.y, center.z + distance);
@@ -483,6 +495,25 @@ export class SceneManager {
     } else {
       console.warn('No visible geometry found to center camera on');
     }
+  }
+
+  /**
+   * Get the current center point (either origin or bounding box center)
+   * @returns The current center as a Vector3
+   */
+  public getCurrentCenter(): THREE.Vector3 {
+    if (this.isCenteredOnBoundingBox) {
+      return this.lastBoundingBoxCenter.clone();
+    }
+    return new THREE.Vector3(0, 0, 0); // Origin
+  }
+
+  /**
+   * Get the controls manager instance
+   * @returns The ControlsManager instance
+   */
+  public getControlsManager(): ControlsManager {
+    return this.controls;
   }
 
   /**
@@ -548,7 +579,7 @@ export class SceneManager {
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
     }
-    
+
     this.updateRendererSize(width, height);
 
     // Update post-processing pipeline for new dimensions
@@ -568,15 +599,14 @@ export class SceneManager {
     // Set pixel ratio BEFORE size for correct buffer calculations
     this.renderer.setPixelRatio(window.devicePixelRatio);
     // Let Three.js handle CSS sizing normally
-    this.renderer.setSize(w, h);  // Allow Three.js to set CSS size
+    this.renderer.setSize(w, h); // Allow Three.js to set CSS size
 
-    
     // Update material uniforms for world-space point sizing (only if camera exists)
     if (this.camera) {
-      const fovRadians = this.camera.fov * Math.PI / 180;
+      const fovRadians = (this.camera.fov * Math.PI) / 180;
       const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-      
+
       // Also update legacy materials
       this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
     }
@@ -593,12 +623,12 @@ export class SceneManager {
       config.camera.fovMax
     );
     this.camera.updateProjectionMatrix();
-    
+
     // Update material uniforms for world-space point sizing
-    const fovRadians = this.camera.fov * Math.PI / 180;
+    const fovRadians = (this.camera.fov * Math.PI) / 180;
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-    
+
     // Also update legacy materials
     this.updateLegacyMaterialCameraParams(fovRadians, drawingBufferSize);
   }
@@ -648,7 +678,6 @@ export class SceneManager {
 
     console.log(`✓ [Luxar] HDR multiplier updated for all point materials: ${multiplier}`);
   }
-
 
   /**
    * Clean up all Three.js resources to prevent memory leaks
@@ -700,5 +729,65 @@ export class SceneManager {
         }
       }
     });
+  }
+
+  /**
+   * Enable or disable automatic camera rotation
+   * @param enabled - Whether to enable auto-rotation
+   */
+  setAutoRotate(enabled: boolean): void {
+    this.controls.setAutoRotate(enabled);
+    console.log(`🎬 [Luxar] Auto-rotation ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Set the speed of automatic rotation
+   * @param speed - Rotation speed (default 2.0 = 30 seconds per orbit at 60fps)
+   */
+  setAutoRotateSpeed(speed: number): void {
+    this.controls.setAutoRotateSpeed(speed);
+  }
+
+  /**
+   * Get current auto-rotation state
+   */
+  getAutoRotate(): boolean {
+    return this.controls.getAutoRotate();
+  }
+
+  /**
+   * Switch camera control type
+   * @param type - Control type ('orbit' or 'fly')
+   */
+  setControlType(type: 'orbit' | 'fly'): void {
+    this.controls.setControlType(type);
+  }
+
+  /**
+   * Get current control type
+   */
+  getControlType(): 'orbit' | 'fly' {
+    return this.controls.getControlType();
+  }
+
+  /**
+   * Set fly controls movement speed
+   */
+  setFlyMovementSpeed(speed: number): void {
+    this.controls.setFlyMovementSpeed(speed);
+  }
+
+  /**
+   * Set fly controls inertial mode
+   */
+  setFlyInertialMode(inertial: boolean): void {
+    this.controls.setFlyInertialMode(inertial);
+  }
+
+  /**
+   * Set fly controls damping
+   */
+  setFlyDamping(damping: number): void {
+    this.controls.setFlyDamping(damping);
   }
 }

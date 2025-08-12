@@ -41,6 +41,8 @@ import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
+import { InputContextManager, InputContext } from './input-context-manager';
+import { INPUT_CONFIG } from '../controls/control-config';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -63,6 +65,9 @@ export class InputHandler {
   /** Debug console for capturing browser console output */
   private debugConsole: DebugConsole;
 
+  /** Input context manager for handling keyboard conflicts */
+  private contextManager: InputContextManager;
+
   /**
    * Constructs the input handler with required system dependencies.
    *
@@ -75,6 +80,9 @@ export class InputHandler {
   ) {
     // Initialize debug console
     this.debugConsole = new DebugConsole();
+
+    // Initialize input context manager
+    this.contextManager = new InputContextManager();
   }
 
   /**
@@ -219,6 +227,9 @@ export class InputHandler {
     window.addEventListener('keyup', onKeyUp);
     document.addEventListener('fullscreenchange', onFullscreenChange);
 
+    // Register context-specific key bindings
+    this.registerKeyBindings();
+
     // Store cleanup functions
     this.eventListeners.push(
       () => window.removeEventListener('resize', onResize),
@@ -301,7 +312,7 @@ export class InputHandler {
 
       // Restart animation to ensure smooth transition
       this.animationController.startAnimation();
-      
+
       // One more update to catch any final adjustments
       setTimeout(() => {
         this.sceneManager.updateSize();
@@ -322,12 +333,46 @@ export class InputHandler {
   }
 
   /**
+   * Register all key bindings with the context manager
+   */
+  private registerKeyBindings(): void {
+    // No need to register fly control bindings here
+    // They will be handled directly when fly mode is active
+  }
+
+  /**
    * Handle key down events
    */
   private onKeyDown(event: KeyboardEvent): void {
+    // Check if fly controls are active and should handle this key
+    const flyControls = this.sceneManager.controls.getFlyControls();
+    if (flyControls && flyControls.enabled) {
+      const flyKeys = [
+        ...INPUT_CONFIG.keyboard.flyModeKeys,
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+      ];
+      const keyLower = event.key.toLowerCase();
+
+      // Check if this is a fly control key (including Alt/Option modifier for W/S)
+      const isFlyKey =
+        flyKeys.some((k) => k.toLowerCase() === keyLower) || event.key.startsWith('Arrow');
+
+      if (isFlyKey) {
+        // Don't prevent default if typing in input
+        if (!this.isTypingInInput()) {
+          flyControls.handleKeyDown(event);
+          return;
+        }
+      }
+    }
+
+    // Handle remaining keys that aren't context-specific
     switch (event.key) {
       case 'Shift':
-        this.sceneManager.controls.enableZoom = false;
+        this.sceneManager.controls.setEnableZoom(false);
         break;
 
       case 'h':
@@ -336,8 +381,9 @@ export class InputHandler {
         this.toggleHelp();
         break;
 
-      case 'd':
-      case 'D':
+      case 'n':
+      case 'N':
+        // N key for nD dimension sliders
         event.preventDefault();
         this.toggleDimensionSliders();
         break;
@@ -360,7 +406,8 @@ export class InputHandler {
       case 'R':
         // R key to toggle rendering controls (only when pressed alone)
         // Ignore if Cmd/Ctrl or Shift are held to avoid conflicts with browser shortcuts
-        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+        // Also check if we're not typing in an input field
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !this.isTypingInInput()) {
           event.preventDefault();
           this.toggleRenderingControls();
         }
@@ -379,11 +426,38 @@ export class InputHandler {
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
           this.debugConsole.toggle();
-          console.log(`🔧 [Luxar] Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`);
+          console.log(
+            `🔧 [Luxar] Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
+          );
         }
         break;
 
+      case 'f':
+      case 'F':
+        // F key to recenter camera on scene
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+          event.preventDefault();
+          this.recenterCamera();
+        }
+        break;
 
+      case 'v':
+      case 'V':
+        // V key to toggle between Orbit and Fly control modes
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+          event.preventDefault();
+          this.toggleControlMode();
+        }
+        break;
+
+      case 'i':
+      case 'I':
+        // I key to toggle inertial mode (when in fly mode)
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+          event.preventDefault();
+          this.toggleInertialMode();
+        }
+        break;
 
       case ' ':
         // Only toggle fullscreen if not focused on a UI element
@@ -423,8 +497,30 @@ export class InputHandler {
    * Handle key up events
    */
   private onKeyUp(event: KeyboardEvent): void {
+    // Check fly controls first
+    const flyControls = this.sceneManager.controls.getFlyControls();
+    if (flyControls && flyControls.enabled) {
+      const flyKeys = [
+        ...INPUT_CONFIG.keyboard.flyModeKeys,
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+      ];
+      const keyLower = event.key.toLowerCase();
+
+      // Check if this is a fly control key
+      const isFlyKey =
+        flyKeys.some((k) => k.toLowerCase() === keyLower) || event.key.startsWith('Arrow');
+
+      if (isFlyKey) {
+        flyControls.handleKeyUp(event);
+        return;
+      }
+    }
+
     if (event.key === 'Shift') {
-      this.sceneManager.controls.enableZoom = true;
+      this.sceneManager.controls.setEnableZoom(true);
     }
   }
 
@@ -484,6 +580,51 @@ export class InputHandler {
     this.renderingControls?.toggle();
   }
 
+  /**
+   * Toggle between Orbit and Fly control modes
+   */
+  private toggleControlMode(): void {
+    const currentType = this.sceneManager.controls.getControlType();
+    const newType = currentType === 'orbit' ? 'fly' : 'orbit';
+    this.sceneManager.controls.setControlType(newType);
+
+    // Update input context based on control mode
+    if (newType === 'fly') {
+      this.contextManager.setContext(InputContext.FLY_CONTROLS);
+    } else {
+      this.contextManager.setContext(InputContext.NAVIGATION);
+    }
+
+    // Sync rendering controls if they exist
+    if (this.renderingControls) {
+      this.renderingControls.syncCurrentState();
+    }
+
+    console.log(`🎮 [Luxar] Switched to ${newType} controls (press V to toggle)`);
+  }
+
+  /**
+   * Toggle inertial mode for fly controls
+   */
+  private toggleInertialMode(): void {
+    const controls = this.sceneManager.controls.getControls();
+    if (controls && 'setInertialMode' in controls) {
+      const flyControls = controls as any; // Type assertion for fly controls
+      const currentInertial = flyControls.inertialMode;
+      flyControls.setInertialMode(!currentInertial);
+
+      // Sync rendering controls if they exist
+      if (this.renderingControls) {
+        this.renderingControls.syncCurrentState();
+      }
+
+      console.log(`🚀 [Luxar] Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`);
+    } else {
+      console.log(
+        'ℹ️ [Luxar] Inertial mode is only available in fly control mode (press V to switch)'
+      );
+    }
+  }
 
   /**
    * Check if space key should trigger fullscreen
@@ -492,6 +633,23 @@ export class InputHandler {
     const activeElement = document.activeElement;
     return (
       activeElement === document.body || activeElement === this.sceneManager.renderer.domElement
+    );
+  }
+
+  /**
+   * Check if user is typing in an input field
+   */
+  private isTypingInInput(): boolean {
+    const activeElement = document.activeElement;
+    if (!activeElement) return false;
+
+    const tagName = activeElement.tagName.toLowerCase();
+    // Check if it's an input field or contenteditable element
+    return (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      tagName === 'select' ||
+      activeElement.getAttribute('contenteditable') === 'true'
     );
   }
 
@@ -604,6 +762,44 @@ export class InputHandler {
     });
 
     return nDPoints;
+  }
+
+  /**
+   * Recenter camera on the scene's center point
+   * Uses smooth animation for fly controls, immediate for orbit controls
+   */
+  private recenterCamera(): void {
+    // Get the current center point (either native or bounding box center)
+    const center = this.sceneManager.getCurrentCenter();
+
+    // Get the controls manager if it exists
+    const controlsManager = this.sceneManager.getControlsManager();
+
+    if (controlsManager) {
+      // Start animation for smooth transition
+      this.animationController.startAnimation();
+
+      // For fly controls, we need to call this repeatedly for smooth animation
+      if (controlsManager.getControlType() === 'fly') {
+        let iterations = 0;
+        const maxIterations = 60; // About 1 second at 60fps
+
+        const smoothRecenter = () => {
+          if (iterations < maxIterations) {
+            controlsManager.lookAt(center, true);
+            iterations++;
+            requestAnimationFrame(smoothRecenter);
+          }
+        };
+
+        smoothRecenter();
+        console.log('🎯 [Luxar] Recentering camera on scene (smooth)');
+      } else {
+        // For orbit controls, just update the target
+        controlsManager.lookAt(center, false);
+        console.log('🎯 [Luxar] Recentered camera on scene');
+      }
+    }
   }
 
   /**

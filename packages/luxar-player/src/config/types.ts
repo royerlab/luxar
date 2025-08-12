@@ -116,6 +116,14 @@ export interface RenderingSettings {
   dofStrength: number;
   chromaticAberrationEnabled: boolean;
   chromaticAberrationStrength: number;
+  // Navigation controls
+  controlType: 'orbit' | 'fly';
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+  // Fly controls
+  flyMovementSpeed: number;
+  flyInertialMode: boolean;
+  flyDamping: number;
 }
 
 /**

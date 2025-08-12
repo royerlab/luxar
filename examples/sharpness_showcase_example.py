@@ -38,9 +38,9 @@ def create_sharpness_gradient_example(scene: Scene, n_points: int = 5000) -> Non
     radii = np.full(positions.shape[0], 0.3, dtype=np.float32)
 
     # Color gradient to visualize sharpness
-    colors = np.zeros((positions.shape[0], 3), dtype=np.uint8)
-    colors[:, 0] = (normalized_x * 255).astype(np.uint8)  # Red increases
-    colors[:, 2] = ((1 - normalized_x) * 255).astype(np.uint8)  # Blue decreases
+    colors = np.zeros((positions.shape[0], 3), dtype=np.float32)
+    colors[:, 0] = normalized_x  # Red increases
+    colors[:, 2] = 1 - normalized_x  # Blue decreases
 
     # Offset vertically
     positions[:, 1] += 10
@@ -79,17 +79,17 @@ def create_sharpness_comparison_example(scene: Scene) -> None:
         # Different color for each row
         hue = i / len(sharpness_values)
         if hue < 1 / 6:
-            r, g, b = 255, int(hue * 6 * 255), 0
+            r, g, b = 1.0, hue * 6, 0
         elif hue < 2 / 6:
-            r, g, b = int((2 - hue * 6) * 255), 255, 0
+            r, g, b = 2 - hue * 6, 1.0, 0
         elif hue < 3 / 6:
-            r, g, b = 0, 255, int((hue * 6 - 2) * 255)
+            r, g, b = 0, 1.0, hue * 6 - 2
         elif hue < 4 / 6:
-            r, g, b = 0, int((4 - hue * 6) * 255), 255
+            r, g, b = 0, 4 - hue * 6, 1.0
         else:
-            r, g, b = int((hue * 6 - 4) * 255), 0, 255
+            r, g, b = hue * 6 - 4, 0, 1.0
 
-        colors = np.tile([r, g, b], (n_points_per_row, 1)).astype(np.uint8)
+        colors = np.tile([r, g, b], (n_points_per_row, 1)).astype(np.float32)
 
         # Offset to the right
         positions[:, 0] += 15
@@ -136,12 +136,10 @@ def create_mixed_sharpness_example(scene: Scene, n_points: int = 3000) -> None:
 
     # Color based on sharpness
     normalized_sharp = (sharpness - 0.5) / 9.5
-    colors = np.zeros((n_points, 3), dtype=np.uint8)
-    colors[:, 0] = (normalized_sharp * 255).astype(np.uint8)  # Red for sharp
-    colors[:, 1] = (128 * (1 - np.abs(normalized_sharp - 0.5) * 2)).astype(
-        np.uint8
-    )  # Green for medium
-    colors[:, 2] = ((1 - normalized_sharp) * 255).astype(np.uint8)  # Blue for soft
+    colors = np.zeros((n_points, 3), dtype=np.float32)
+    colors[:, 0] = normalized_sharp  # Red for sharp
+    colors[:, 1] = 0.5 * (1 - np.abs(normalized_sharp - 0.5) * 2)  # Green for medium
+    colors[:, 2] = 1 - normalized_sharp  # Blue for soft
 
     # Offset down and left
     positions[:, 1] -= 10
@@ -180,10 +178,10 @@ def create_sharpness_wave_example(scene: Scene, n_points: int = 4000) -> None:
 
     # Colors based on height
     normalized_y = (y.flatten() + 2) / 4
-    colors = np.zeros((positions.shape[0], 3), dtype=np.uint8)
-    colors[:, 0] = (normalized_y * 255).astype(np.uint8)
-    colors[:, 1] = ((1 - np.abs(normalized_y - 0.5) * 2) * 255).astype(np.uint8)
-    colors[:, 2] = ((1 - normalized_y) * 255).astype(np.uint8)
+    colors = np.zeros((positions.shape[0], 3), dtype=np.float32)
+    colors[:, 0] = normalized_y
+    colors[:, 1] = 1 - np.abs(normalized_y - 0.5) * 2
+    colors[:, 2] = 1 - normalized_y
 
     # Offset down
     positions[:, 1] -= 20

@@ -172,12 +172,15 @@ export function sliceColors(colors: Uint8Array | null, indices: Uint32Array): Ui
 
 /**
  * Slices HDR float32 color data to include only visible points.
- * 
+ *
  * @param colors - HDR float32 color array (values can exceed 1.0)
  * @param indices - Indices of visible points
  * @returns Sliced HDR color array
  */
-export function sliceColorsFloat32(colors: Float32Array | null, indices: Uint32Array): Float32Array | null {
+export function sliceColorsFloat32(
+  colors: Float32Array | null,
+  indices: Uint32Array
+): Float32Array | null {
   if (!colors) return null;
 
   const numVisible = indices.length;

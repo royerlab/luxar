@@ -43,7 +43,7 @@ def main():
     )
 
     # Create scene with dimensions
-    output_path = Path(__file__).parent / "scene_dims_example.zarr"
+    output_path = Path(__file__).parent / "scene_dimensions_example.zarr"
     scene = Scene(output_path, dimensions=dims)
 
     # Create test data that spans the dimension ranges
@@ -70,7 +70,7 @@ def main():
 
                     # Color based on channel
                     if ch == 0:
-                        colors.append([255, 50, 50])  # Red
+                        colors.append([1.0, 0.2, 0.2])  # Red
                     elif ch == 1:
                         colors.append([50, 255, 50])  # Green
                     else:
@@ -82,7 +82,7 @@ def main():
 
     # Convert to arrays
     positions = np.array(positions, dtype=np.float32)
-    colors = np.array(colors, dtype=np.uint8)
+    colors = np.array(colors, dtype=np.float32)
     radii = np.array(radii, dtype=np.float32)
 
     aprint(f"Created {len(positions)} points across dimensions:")
@@ -109,7 +109,7 @@ def main():
         )
 
     aprint("\nNavigation Instructions:")
-    aprint("1. Start server: luxar serve scene_dims_test.zarr")
+    aprint("1. Start server: luxar serve scene_dimensions_example.zarr")
     aprint("2. Open viewer in browser")
     aprint("\nKeyboard controls:")
     aprint("  - Press '1' to control time (steps of 0.5s)")

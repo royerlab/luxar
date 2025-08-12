@@ -53,9 +53,7 @@ def create_compensation_demo():
             # Color: gradient from blue (low sharpness) to red (high sharpness)
             # Reduced brightness by factor of 4
             t = col / (cols - 1)
-            color = (
-                np.array([t, 0.2, 1 - t]) * 255 / 4
-            )  # Divide by 4 for 1/4 brightness
+            color = np.array([t, 0.2, 1 - t]) / 4  # Divide by 4 for 1/4 brightness
             colors = np.tile(color, (n_points, 1))
 
             # All points have the same radius (reduced by factor of 2)
@@ -71,7 +69,7 @@ def create_compensation_demo():
 
     # Combine all arrays
     positions = np.vstack(all_positions).astype(np.float32)
-    colors = np.vstack(all_colors).astype(np.uint8)
+    colors = np.vstack(all_colors).astype(np.float32)
     radii = np.hstack(all_radii)
     sharpness = np.hstack(all_sharpness)
 
@@ -94,14 +92,14 @@ def create_compensation_demo():
         x = (col - cols / 2) * spacing
         y = -4.0
         label_positions.append([x, y, 0])
-        label_colors.append([64, 64, 64])  # Dimmer labels (1/4 brightness)
+        label_colors.append([0.25, 0.25, 0.25])  # Dimmer labels (1/4 brightness)
         label_radii.append(0.05)  # Smaller labels (1/2 size)
         label_sharpness.append(2.0)
 
     scene.add_points(
         "Labels",
         positions=np.array(label_positions, dtype=np.float32),
-        colors=np.array(label_colors, dtype=np.uint8),
+        colors=np.array(label_colors, dtype=np.float32),
         radii=np.array(label_radii, dtype=np.float32),
         sharpness=np.array(label_sharpness, dtype=np.float32),
     )

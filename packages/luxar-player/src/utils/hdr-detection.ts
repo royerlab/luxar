@@ -1,6 +1,6 @@
 /**
  * HDR Detection and Configuration Utilities
- * 
+ *
  * Provides functions to detect HDR display capabilities and configure
  * Three.js for optimal HDR rendering including 10-bit color depth.
  */
@@ -39,35 +39,35 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
   const p3Gamut = window.matchMedia('(color-gamut: p3)').matches;
   const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches;
   const hdr = window.matchMedia('(dynamic-range: high)').matches;
-  
+
   // Check for deep color support (10-bit or higher)
   // 48-bit total = 16 bits per channel (including alpha)
   // For 10-bit RGB, we'd see at least 30 bits
-  const deepColor = window.matchMedia('(color: 48)').matches || 
-                   window.matchMedia('(color: 30)').matches;
-  
+  const deepColor =
+    window.matchMedia('(color: 48)').matches || window.matchMedia('(color: 30)').matches;
+
   // Check WebGL capabilities if renderer is provided
   let floatTextures = false;
   let colorDepth = { red: 8, green: 8, blue: 8 };
-  
+
   if (renderer) {
     const gl = renderer.getContext();
-    
+
     // Check for float texture extension (required for HDR)
     floatTextures = !!(
       gl.getExtension('EXT_color_buffer_float') ||
       gl.getExtension('EXT_color_buffer_half_float') ||
       gl.getExtension('WEBGL_color_buffer_float')
     );
-    
+
     // Get actual color buffer bit depth
     colorDepth = {
       red: gl.getParameter(gl.RED_BITS),
       green: gl.getParameter(gl.GREEN_BITS),
-      blue: gl.getParameter(gl.BLUE_BITS)
+      blue: gl.getParameter(gl.BLUE_BITS),
     };
   }
-  
+
   // Determine recommended color space
   let recommendedColorSpace: 'srgb' | 'display-p3' | 'rec2020' = 'srgb';
   if (rec2020Gamut && hdr) {
@@ -75,7 +75,7 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
   } else if (p3Gamut) {
     recommendedColorSpace = 'display-p3';
   }
-  
+
   return {
     p3Gamut,
     rec2020Gamut,
@@ -83,7 +83,7 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
     deepColor,
     floatTextures,
     colorDepth,
-    recommendedColorSpace
+    recommendedColorSpace,
   };
 }
 
@@ -99,7 +99,9 @@ export function configureHDRRenderer(
     // Full HDR with Rec2020 gamut
     // Note: Three.js doesn't have Rec2020 color space yet, using Linear as closest
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    console.log('✓ [Luxar] HDR: Configured for HDR with Linear color space (Rec2020 display detected)');
+    console.log(
+      '✓ [Luxar] HDR: Configured for HDR with Linear color space (Rec2020 display detected)'
+    );
   } else if (capabilities.p3Gamut) {
     // Wide gamut P3 (common on Apple displays)
     // Note: DisplayP3ColorSpace might not be available in all Three.js versions
@@ -111,7 +113,7 @@ export function configureHDRRenderer(
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     console.log('✓ [Luxar] HDR: Using standard sRGB color space');
   }
-  
+
   // Configure tone mapping for HDR
   if (capabilities.hdr) {
     // Use ACES for HDR displays
@@ -126,36 +128,47 @@ export function configureHDRRenderer(
   }
 }
 
-
 /**
  * Log HDR capabilities to console with color coding
  */
 export function logHDRCapabilities(capabilities: HDRCapabilities): void {
-  const style = (supported: boolean) => 
+  const style = (supported: boolean) =>
     supported ? 'color: #4CAF50; font-weight: bold' : 'color: #f44336';
-  
+
   console.group('%c🎨 HDR Display Capabilities', 'font-size: 14px; font-weight: bold');
-  
-  console.log('%c' + (capabilities.p3Gamut ? '✅' : '❌') + ' P3 Wide Gamut', 
-    style(capabilities.p3Gamut));
-  
-  console.log('%c' + (capabilities.rec2020Gamut ? '✅' : '❌') + ' Rec2020 Gamut', 
-    style(capabilities.rec2020Gamut));
-  
-  console.log('%c' + (capabilities.hdr ? '✅' : '❌') + ' High Dynamic Range', 
-    style(capabilities.hdr));
-  
-  console.log('%c' + (capabilities.deepColor ? '✅' : '❌') + ' 10-bit+ Deep Color', 
-    style(capabilities.deepColor));
-  
-  console.log('%c' + (capabilities.floatTextures ? '✅' : '❌') + ' Float Textures', 
-    style(capabilities.floatTextures));
-  
-  console.log('📊 [Luxar] Color Buffer Depth: ' +
-    `R${capabilities.colorDepth.red} G${capabilities.colorDepth.green} B${capabilities.colorDepth.blue}`);
-  
+
+  console.log(
+    '%c' + (capabilities.p3Gamut ? '✅' : '❌') + ' P3 Wide Gamut',
+    style(capabilities.p3Gamut)
+  );
+
+  console.log(
+    '%c' + (capabilities.rec2020Gamut ? '✅' : '❌') + ' Rec2020 Gamut',
+    style(capabilities.rec2020Gamut)
+  );
+
+  console.log(
+    '%c' + (capabilities.hdr ? '✅' : '❌') + ' High Dynamic Range',
+    style(capabilities.hdr)
+  );
+
+  console.log(
+    '%c' + (capabilities.deepColor ? '✅' : '❌') + ' 10-bit+ Deep Color',
+    style(capabilities.deepColor)
+  );
+
+  console.log(
+    '%c' + (capabilities.floatTextures ? '✅' : '❌') + ' Float Textures',
+    style(capabilities.floatTextures)
+  );
+
+  console.log(
+    '📊 [Luxar] Color Buffer Depth: ' +
+      `R${capabilities.colorDepth.red} G${capabilities.colorDepth.green} B${capabilities.colorDepth.blue}`
+  );
+
   console.log('🎯 [Luxar] Recommended Color Space:', capabilities.recommendedColorSpace);
-  
+
   console.groupEnd();
 }
 
@@ -163,10 +176,12 @@ export function logHDRCapabilities(capabilities: HDRCapabilities): void {
  * Check if current display supports true HDR
  */
 export function isHDRDisplay(capabilities: HDRCapabilities): boolean {
-  return capabilities.hdr && 
-         capabilities.deepColor && 
-         capabilities.floatTextures &&
-         (capabilities.p3Gamut || capabilities.rec2020Gamut);
+  return (
+    capabilities.hdr &&
+    capabilities.deepColor &&
+    capabilities.floatTextures &&
+    (capabilities.p3Gamut || capabilities.rec2020Gamut)
+  );
 }
 
 /**

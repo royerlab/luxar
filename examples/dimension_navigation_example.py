@@ -143,11 +143,11 @@ def main():
 
     # Define shapes and their properties
     shape_configs = [
-        ("Circle", create_circle(), [255, 50, 50]),  # Red
-        ("Square", create_square(), [50, 255, 50]),  # Green
-        ("Triangle", create_triangle(), [50, 100, 255]),  # Blue
-        ("Star", create_star(), [255, 200, 50]),  # Gold
-        ("Cross", create_cross(), [255, 50, 255]),  # Magenta
+        ("Circle", create_circle(), [1.0, 0.2, 0.2]),  # Red
+        ("Square", create_square(), [0.2, 1.0, 0.2]),  # Green
+        ("Triangle", create_triangle(), [0.2, 0.39, 1.0]),  # Blue
+        ("Star", create_star(), [1.0, 0.78, 0.2]),  # Gold
+        ("Cross", create_cross(), [1.0, 0.2, 1.0]),  # Magenta
     ]
 
     # Create scene with proper dimensions
@@ -197,7 +197,7 @@ def main():
 
     # Stack all arrays
     positions = np.vstack(all_positions).astype(np.float32)
-    colors = np.vstack(all_colors).astype(np.uint8)
+    colors = np.vstack(all_colors).astype(np.float32)
     radii = np.hstack(all_radii)
 
     # Add to scene

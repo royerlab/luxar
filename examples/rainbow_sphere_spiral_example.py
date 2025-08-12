@@ -67,8 +67,7 @@ def create_rainbow_colors(n_points: int) -> np.ndarray:
     g = np.sin(2 * np.pi * t + 2 * np.pi / 3) * 0.5 + 0.5
     b = np.sin(2 * np.pi * t + 4 * np.pi / 3) * 0.5 + 0.5
 
-    # Convert to uint8
-    colors = np.column_stack([r * 255, g * 255, b * 255]).astype(np.uint8)
+    colors = np.column_stack([r, g, b])
 
     return colors
 
@@ -96,7 +95,7 @@ def calculate_point_radius(n_points: int, sphere_radius: float) -> float:
     # Point radius should be about half the distance for spacing
     point_radius = avg_distance / 2
 
-    return point_radius * 0.66
+    return point_radius * 0.5
 
 
 def main():

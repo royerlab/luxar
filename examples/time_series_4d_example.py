@@ -30,7 +30,7 @@ def create_rotating_spiral(
         colors: Array of shape (n_points * n_times, 3) with RGB values
     """
     positions = np.zeros((n_times * n_points, 4), dtype=np.float32)
-    colors = np.zeros((n_times * n_points, 3), dtype=np.uint8)
+    colors = np.zeros((n_times * n_points, 3), dtype=np.float32)
 
     for t in range(n_times):
         for i in range(n_points):
@@ -50,9 +50,9 @@ def create_rotating_spiral(
 
             # Color gradient based on time (blue to red)
             colors[idx] = [
-                int(255 * t / (n_times - 1)),  # Red increases with time
-                50,  # Constant green
-                int(255 * (1 - t / (n_times - 1))),  # Blue decreases with time
+                t / (n_times - 1),  # Red increases with time
+                0.2,  # Constant green
+                1 - t / (n_times - 1),  # Blue decreases with time
             ]
 
     return positions, colors
