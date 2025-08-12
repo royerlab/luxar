@@ -172,7 +172,7 @@ export function showHelpOverlay() {
   helpDiv.style.position = 'fixed';
   helpDiv.style.top = '20px';
   helpDiv.style.right = '20px';
-  helpDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+  helpDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.95)';
   helpDiv.style.color = '#e0e0e0';
   helpDiv.style.padding = '15px';
   helpDiv.style.borderRadius = '8px';
@@ -180,62 +180,165 @@ export function showHelpOverlay() {
     '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   helpDiv.style.fontSize = '12px';
   helpDiv.style.zIndex = '1001';
-  helpDiv.style.width = '300px';
-  helpDiv.style.cursor = 'pointer';
+  helpDiv.style.width = '380px';
+  helpDiv.style.maxHeight = '80vh';
+  helpDiv.style.overflowY = 'auto';
   helpDiv.style.backdropFilter = 'blur(10px)';
   helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-  helpDiv.style.outline = 'none !important'; // Remove focus outline
+  helpDiv.style.outline = 'none !important';
 
   const title = document.createElement('div');
-  title.textContent = '3D Scene Controls';
+  title.textContent = 'Luxar Controls & Shortcuts';
   title.style.fontSize = '14px';
   title.style.fontWeight = 'bold';
   title.style.marginBottom = '10px';
   title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
   title.style.paddingBottom = '6px';
 
-  const controls = [
-    '🖱️ Mouse drag: Rotate camera',
-    '🖱️ Mouse wheel: Zoom in/out',
-    '⇧ + Mouse wheel: Change FOV',
-    '🖱️ Right drag: Pan camera',
-    '⎵ Press Space: Toggle fullscreen',
-    '❓ Press H: Toggle this help',
-    'Press O: Open dataset browser',
-    'Press P: Toggle performance stats',
-    'Press R: Rendering controls',
-    'Press C: Toggle center (origin/bounding box)',
-    'Ctrl+L: Debug console',
-    '',
-    '📐 nD Navigation (if applicable):',
-    '🎛️ Press D: Toggle dimension sliders',
-    '🔢 Press 1-9: Select dimension to control',
-    '⬅️➡️ Press [ / ]: Navigate selected dimension',
-    '',
-    'Click anywhere to close',
+  // Define help categories with expandable sections
+  const helpCategories = [
+    {
+      title: '🎮 Basic Controls',
+      expanded: true,
+      items: [
+        '🖱️ Drag: Rotate view',
+        '🖱️ Wheel: Zoom in/out',
+        '🖱️ Right drag: Pan camera',
+        '⎵ Space: Toggle fullscreen',
+        'H: Toggle this help',
+        'V: Switch view mode (Orbit/Fly)',
+        'F: Recenter camera on scene',
+        'O: Open dataset browser',
+        'Esc: Close panels',
+      ]
+    },
+    {
+      title: '🚁 Fly Mode Controls',
+      expanded: false,
+      items: [
+        'WASD: Move forward/back/left/right',
+        '⌥W/⌥S (Alt+W/S): Move up/down',
+        '↑↓←→: Look up/down/left/right',
+        '🖱️ Drag: Free look (rotate view)',
+        'I: Toggle inertial mode',
+        'Note: Press V to enter fly mode',
+      ]
+    },
+    {
+      title: '📐 nD Navigation',
+      expanded: false,
+      items: [
+        '1-9: Select dimension to control',
+        '[ / ]: Navigate selected dimension',
+        'N: Dimension sliders panel',
+      ]
+    },
+    {
+      title: '⚙️ Advanced Settings',
+      expanded: false,
+      items: [
+        'R: Rendering controls panel',
+        'P: Performance monitor',
+        'C: Toggle center (origin/bbox)',
+        '⇧ + Wheel: Adjust field of view',
+        'Ctrl+L: Debug console',
+      ]
+    },
+    {
+      title: '💡 Tips',
+      expanded: false,
+      items: [
+        '• Try fly mode (V) for exploration',
+        '• Use inertial mode (I) for smooth coasting',
+        '• Enable auto-rotation in settings',
+        '• Use WASD + arrows for precise fly control',
+      ]
+    },
   ];
 
   const controlsList = document.createElement('div');
-  controls.forEach((control) => {
-    const controlItem = document.createElement('div');
-    if (control === '') {
-      // Empty line for spacing
-      controlItem.style.marginBottom = '4px';
-    } else {
-      controlItem.textContent = control;
-      controlItem.style.marginBottom = '8px';
-      controlItem.style.lineHeight = '1.4';
-      // Special styling for section headers
-      if (control.includes('nD Navigation')) {
-        controlItem.style.fontWeight = 'bold';
-        controlItem.style.marginTop = '8px';
+  
+  // Create collapsible categories
+  helpCategories.forEach((category, categoryIndex) => {
+    // Category header (clickable)
+    const categoryHeader = document.createElement('div');
+    categoryHeader.style.fontWeight = 'bold';
+    categoryHeader.style.marginTop = categoryIndex > 0 ? '12px' : '8px';
+    categoryHeader.style.marginBottom = '8px';
+    categoryHeader.style.color = '#4CAF50';
+    categoryHeader.style.cursor = 'pointer';
+    categoryHeader.style.userSelect = 'none';
+    categoryHeader.style.display = 'flex';
+    categoryHeader.style.alignItems = 'center';
+    categoryHeader.style.justifyContent = 'space-between';
+    
+    const categoryTitle = document.createElement('span');
+    categoryTitle.textContent = category.title;
+    
+    const categoryArrow = document.createElement('span');
+    categoryArrow.textContent = category.expanded ? '▼' : '▶';
+    categoryArrow.style.fontSize = '10px';
+    categoryArrow.style.marginLeft = '10px';
+    categoryArrow.style.transition = 'transform 0.2s';
+    
+    categoryHeader.appendChild(categoryTitle);
+    categoryHeader.appendChild(categoryArrow);
+    
+    // Category content container
+    const categoryContent = document.createElement('div');
+    categoryContent.style.display = category.expanded ? 'block' : 'none';
+    categoryContent.style.marginBottom = '4px';
+    categoryContent.style.borderLeft = '2px solid rgba(76, 175, 80, 0.2)';
+    categoryContent.style.marginLeft = '8px';
+    categoryContent.style.paddingLeft = '12px';
+    
+    // Add items to category
+    category.items.forEach((item) => {
+      const itemDiv = document.createElement('div');
+      itemDiv.textContent = item;
+      itemDiv.style.marginBottom = '6px';
+      itemDiv.style.lineHeight = '1.4';
+      
+      // Special styling for certain items
+      if (item.startsWith('•')) {
+        itemDiv.style.color = '#aaa';
+        itemDiv.style.fontSize = '11px';
+      } else if (item.startsWith('Note:')) {
+        itemDiv.style.color = '#ff9800';
+        itemDiv.style.fontSize = '11px';
+        itemDiv.style.fontStyle = 'italic';
+      } else {
+        itemDiv.style.color = '#e0e0e0';
       }
-    }
-    controlsList.appendChild(controlItem);
+      
+      categoryContent.appendChild(itemDiv);
+    });
+    
+    // Toggle functionality
+    categoryHeader.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isExpanded = categoryContent.style.display !== 'none';
+      categoryContent.style.display = isExpanded ? 'none' : 'block';
+      categoryArrow.textContent = isExpanded ? '▶' : '▼';
+    });
+    
+    controlsList.appendChild(categoryHeader);
+    controlsList.appendChild(categoryContent);
   });
-
+  
+  // Add footer note
+  const footerNote = document.createElement('div');
+  footerNote.textContent = 'Click anywhere or press Esc to close';
+  footerNote.style.marginTop = '12px';
+  footerNote.style.paddingTop = '8px';
+  footerNote.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+  footerNote.style.fontSize = '11px';
+  footerNote.style.color = '#888';
+  footerNote.style.textAlign = 'center';
+  
   helpDiv.appendChild(title);
   helpDiv.appendChild(controlsList);
+  helpDiv.appendChild(footerNote);
 
   // Function to close help overlay
   const closeHelp = () => {
