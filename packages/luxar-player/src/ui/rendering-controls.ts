@@ -8,6 +8,8 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
 import { SHADER_CONFIG } from '../rendering/shader-manager';
+import type { NavigationControllers } from '../controls/types';
+import { isOrbitControls, isFlyControls } from '../controls/types';
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI
@@ -40,6 +42,13 @@ export class RenderingControls {
   /** Visibility state */
   private visible: boolean = false;
 
+  /** References to GUI controllers for updates */
+  private controllers: NavigationControllers = {};
+
+  /** Folder references for visibility control */
+  private orbitFolder?: GUI;
+  private flyFolder?: GUI;
+
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
@@ -65,12 +74,19 @@ export class RenderingControls {
     this.applyCustomStyling();
 
     this.setupControls();
+
+    // Add keyboard event listener to the GUI container to handle 'R' key
+    // This ensures the panel can be closed even when a control has focus
+    this.setupKeyboardHandling();
   }
 
   /**
    * Setup all GUI controls
    */
   private setupControls(): void {
+    // Setup auto-blur for all controls
+    this.setupAutoBlur();
+
     // Bloom folder
     const bloomFolder = this.gui.addFolder('Bloom Effects');
     bloomFolder.open();
@@ -128,6 +144,162 @@ export class RenderingControls {
         '• Affects computational cost'
     );
 
+    // Navigation folder - for camera movement and rotation controls
+    const navigationFolder = this.gui.addFolder('Navigation');
+    navigationFolder.open();
+
+    // Control type selector
+    const controlTypeControl = navigationFolder
+      .add(this.settings, 'controlType', ['orbit', 'fly'])
+      .name('Control Type')
+      .onChange((value: 'orbit' | 'fly') => {
+        this.sceneManager.setControlType(value);
+        this.saveSettings();
+        this.triggerAnimation();
+
+        // Show/hide relevant controls
+        this.updateNavigationControls(value);
+      });
+
+    // Store reference for updates
+    this.controllers.controlType = controlTypeControl;
+
+    // Set tooltip for control type
+    controlTypeControl.domElement.setAttribute(
+      'title',
+      'Camera Control Type\n' +
+        '• Orbit: Traditional 3D viewer controls (rotate, zoom, pan)\n' +
+        '• Fly: First-person flying controls (arrow keys to move)'
+    );
+
+    // Create sub-folders for each control type
+    const orbitFolder = navigationFolder.addFolder('Orbit Controls');
+    const flyFolder = navigationFolder.addFolder('Fly Controls');
+
+    // Store folder references for showing/hiding
+    this.orbitFolder = orbitFolder;
+    this.flyFolder = flyFolder;
+
+    // Auto-rotation controls (for orbit mode)
+    const autoRotateControl = orbitFolder
+      .add(this.settings, 'autoRotate')
+      .name('Auto Rotate')
+      .onChange((value: boolean) => {
+        this.sceneManager.setAutoRotate(value);
+        this.saveSettings();
+        // Need to keep animation running when auto-rotating
+        if (value) {
+          this.animationController?.startAnimation();
+        }
+      });
+
+    // Store reference
+    this.controllers.autoRotate = autoRotateControl;
+
+    // Set tooltip for auto-rotation
+    autoRotateControl.domElement.setAttribute(
+      'title',
+      'Auto Rotate: Continuously orbit camera around the scene\n' +
+        '• Creates cinematic rotating view\n' +
+        '• Useful for presentations and showcases\n' +
+        '• Click and drag to manually control camera'
+    );
+
+    const rotationSpeedControl = orbitFolder
+      .add(this.settings, 'autoRotateSpeed', 0.1, 5, 0.1)
+      .name('Rotation Speed')
+      .onChange((value: number) => {
+        this.sceneManager.setAutoRotateSpeed(value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Store reference
+    this.controllers.autoRotateSpeed = rotationSpeedControl;
+
+    // Set tooltip for rotation speed
+    rotationSpeedControl.domElement.setAttribute(
+      'title',
+      'Rotation Speed: How fast the camera orbits\n' +
+        '• 0.1 = Very slow (10 minutes per rotation)\n' +
+        '• 0.25 = Slow (4 minutes per rotation, default)\n' +
+        '• 1.0 = Medium (60 seconds per rotation)\n' +
+        '• 5.0 = Fast (12 seconds per rotation)'
+    );
+
+    // Fly controls settings
+    const flySpeedControl = flyFolder
+      .add(this.settings, 'flyMovementSpeed', 0.5, 20, 0.1)
+      .name('Movement Speed')
+      .onChange((value: number) => {
+        this.sceneManager.setFlyMovementSpeed(value);
+        this.saveSettings();
+      });
+
+    // Store reference
+    this.controllers.flyMovementSpeed = flySpeedControl;
+
+    flySpeedControl.domElement.setAttribute(
+      'title',
+      'Movement Speed: How fast you move in fly mode\n' +
+        '• Units per second\n' +
+        '• Use arrow keys to move: ↑↓←→\n' +
+        '• Shift+↑/↓ for vertical movement'
+    );
+
+    const flyInertialControl = flyFolder
+      .add(this.settings, 'flyInertialMode')
+      .name('Inertial Mode')
+      .onChange((value: boolean) => {
+        this.sceneManager.setFlyInertialMode(value);
+        this.saveSettings();
+        // Show/hide damping control
+        if (value) {
+          flyDampingControl.show();
+        } else {
+          flyDampingControl.hide();
+        }
+      });
+
+    // Store reference
+    this.controllers.flyInertialMode = flyInertialControl;
+
+    flyInertialControl.domElement.setAttribute(
+      'title',
+      'Movement Mode\n' +
+        '• Direct: Immediate velocity control (stop when key released)\n' +
+        '• Inertial: Acceleration-based with momentum (drift to stop)'
+    );
+
+    const flyDampingControl = flyFolder
+      .add(this.settings, 'flyDamping', 0.9, 0.9999, 0.0001)
+      .name('Damping')
+      .onChange((value: number) => {
+        this.sceneManager.setFlyDamping(value);
+        this.saveSettings();
+      });
+
+    // Store reference
+    this.controllers.flyDamping = flyDampingControl;
+
+    flyDampingControl.domElement.setAttribute(
+      'title',
+      'Damping Factor (Inertial Mode Only)\n' +
+        '• Controls how quickly you slow down\n' +
+        '• 0.90 = Quick stop\n' +
+        '• 0.97 = Moderate drift\n' +
+        '• 0.999 = Long drift (default)\n' +
+        '• 0.9999 = Very long drift'
+    );
+
+    // Initially show/hide based on current control type
+    this.updateNavigationControls(this.settings.controlType);
+
+    // Hide damping if not in inertial mode
+    if (!this.settings.flyInertialMode) {
+      flyDampingControl.hide();
+    }
+
     // HDR/Exposure folder
     const hdrFolder = this.gui.addFolder('HDR & Exposure');
     hdrFolder.open();
@@ -174,23 +346,31 @@ export class RenderingControls {
 
     // Tone Mapping selector - moved to HDR & Exposure folder
     const toneMappingControl = hdrFolder
-      .add(this.settings, 'toneMapping', ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'])
+      .add(this.settings, 'toneMapping', [
+        'None',
+        'Linear',
+        'Reinhard',
+        'Cineon',
+        'ACES',
+        'AgX',
+        'Neutral',
+      ])
       .name('Tone Mapping')
       .onChange((value: string) => {
         const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-          'None': THREE.NoToneMapping,
-          'Linear': THREE.LinearToneMapping,
-          'Reinhard': THREE.ReinhardToneMapping,
-          'Cineon': THREE.CineonToneMapping,
-          'ACES': THREE.ACESFilmicToneMapping,
-          'AgX': THREE.AgXToneMapping,
-          'Neutral': THREE.NeutralToneMapping,
+          None: THREE.NoToneMapping,
+          Linear: THREE.LinearToneMapping,
+          Reinhard: THREE.ReinhardToneMapping,
+          Cineon: THREE.CineonToneMapping,
+          ACES: THREE.ACESFilmicToneMapping,
+          AgX: THREE.AgXToneMapping,
+          Neutral: THREE.NeutralToneMapping,
         };
         this.postProcessing.setToneMapping(toneMappingMap[value]);
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for tone mapping
     toneMappingControl.domElement.setAttribute(
       'title',
@@ -246,7 +426,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for FXAA
     fxaaControl.domElement.setAttribute(
       'title',
@@ -276,7 +456,7 @@ export class RenderingControls {
           msaaFolder.hide();
         }
       });
-    
+
     // Set tooltip for MSAA with warning
     msaaControl.domElement.setAttribute(
       'title',
@@ -315,7 +495,7 @@ export class RenderingControls {
           smaaFolder.hide();
         }
       });
-    
+
     // Set tooltip for SMAA
     smaaControl.domElement.setAttribute(
       'title',
@@ -376,7 +556,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF enabled
     dofEnabledControl.domElement.setAttribute(
       'title',
@@ -395,7 +575,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF focus
     dofFocusControl.domElement.setAttribute(
       'title',
@@ -414,7 +594,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF strength
     dofStrengthControl.domElement.setAttribute(
       'title',
@@ -433,11 +613,14 @@ export class RenderingControls {
       .add(this.settings, 'chromaticAberrationEnabled')
       .name('Enabled')
       .onChange((value: boolean) => {
-        this.postProcessing.setChromaticAberration(value, this.settings.chromaticAberrationStrength);
+        this.postProcessing.setChromaticAberration(
+          value,
+          this.settings.chromaticAberrationStrength
+        );
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for chromatic aberration enabled
     chromaticEnabledControl.domElement.setAttribute(
       'title',
@@ -456,7 +639,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for chromatic aberration strength
     chromaticStrengthControl.domElement.setAttribute(
       'title',
@@ -642,6 +825,34 @@ export class RenderingControls {
   }
 
   /**
+   * Update navigation controls visibility based on control type
+   */
+  private updateNavigationControls(controlType: 'orbit' | 'fly'): void {
+    const orbitFolder = this.orbitFolder;
+    const flyFolder = this.flyFolder;
+
+    if (controlType === 'orbit') {
+      if (orbitFolder) {
+        orbitFolder.show();
+        orbitFolder.open();
+      }
+      if (flyFolder) {
+        flyFolder.close();
+        flyFolder.hide();
+      }
+    } else {
+      if (orbitFolder) {
+        orbitFolder.close();
+        orbitFolder.hide();
+      }
+      if (flyFolder) {
+        flyFolder.show();
+        flyFolder.open();
+      }
+    }
+  }
+
+  /**
    * Save current settings to localStorage
    */
   private saveSettings(): void {
@@ -680,6 +891,77 @@ export class RenderingControls {
         console.warn('Failed to load rendering settings:', e);
       }
     }
+  }
+
+  /**
+   * Sync current state from scene manager
+   * This ensures the GUI reflects the actual state when opened
+   */
+  public syncCurrentState(): void {
+    // Get current control type
+    const currentControlType = this.sceneManager.controls.getControlType();
+    this.settings.controlType = currentControlType;
+
+    // Get current controls instance
+    const controls = this.sceneManager.controls.getControls();
+
+    // Update fly controls state using type guard
+    if (isFlyControls(controls)) {
+      this.settings.flyInertialMode = controls.inertialMode;
+      this.settings.flyMovementSpeed = controls.movementSpeed;
+      this.settings.flyDamping = controls.damping;
+    }
+
+    // Update orbit controls state using type guard
+    if (isOrbitControls(controls)) {
+      this.settings.autoRotate = controls.autoRotate;
+      this.settings.autoRotateSpeed = controls.autoRotateSpeed;
+    }
+
+    // Update specific controllers that we have references to
+    if (this.controllers.controlType) {
+      this.controllers.controlType.setValue(currentControlType);
+      this.controllers.controlType.updateDisplay();
+    }
+
+    if (this.controllers.flyInertialMode) {
+      this.controllers.flyInertialMode.setValue(this.settings.flyInertialMode);
+      this.controllers.flyInertialMode.updateDisplay();
+    }
+
+    if (this.controllers.flyMovementSpeed) {
+      this.controllers.flyMovementSpeed.setValue(this.settings.flyMovementSpeed);
+      this.controllers.flyMovementSpeed.updateDisplay();
+    }
+
+    if (this.controllers.flyDamping) {
+      this.controllers.flyDamping.setValue(this.settings.flyDamping);
+      this.controllers.flyDamping.updateDisplay();
+      // Show/hide damping based on inertial mode
+      if (this.settings.flyInertialMode) {
+        this.controllers.flyDamping.show();
+      } else {
+        this.controllers.flyDamping.hide();
+      }
+    }
+
+    if (this.controllers.autoRotate) {
+      this.controllers.autoRotate.setValue(this.settings.autoRotate);
+      this.controllers.autoRotate.updateDisplay();
+    }
+
+    if (this.controllers.autoRotateSpeed) {
+      this.controllers.autoRotateSpeed.setValue(this.settings.autoRotateSpeed);
+      this.controllers.autoRotateSpeed.updateDisplay();
+    }
+
+    // Update all other controllers
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
+
+    // Update folder visibility based on current control type
+    this.updateNavigationControls(currentControlType);
   }
 
   /**
@@ -722,13 +1004,13 @@ export class RenderingControls {
 
     // Apply tone mapping
     const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-      'None': THREE.NoToneMapping,
-      'Linear': THREE.LinearToneMapping,
-      'Reinhard': THREE.ReinhardToneMapping,
-      'Cineon': THREE.CineonToneMapping,
-      'ACES': THREE.ACESFilmicToneMapping,
-      'AgX': THREE.AgXToneMapping,
-      'Neutral': THREE.NeutralToneMapping,
+      None: THREE.NoToneMapping,
+      Linear: THREE.LinearToneMapping,
+      Reinhard: THREE.ReinhardToneMapping,
+      Cineon: THREE.CineonToneMapping,
+      ACES: THREE.ACESFilmicToneMapping,
+      AgX: THREE.AgXToneMapping,
+      Neutral: THREE.NeutralToneMapping,
     };
     this.postProcessing.setToneMapping(toneMappingMap[this.settings.toneMapping]);
 
@@ -752,16 +1034,38 @@ export class RenderingControls {
    * Show the controls panel
    */
   show(): void {
+    // Sync current state from scene manager before showing
+    this.syncCurrentState();
+
     this.gui.show();
     this.visible = true;
+
+    // Add click handler to auto-blur inputs when clicking outside them
+    // This helps prevent focus getting stuck
+    setTimeout(() => {
+      this.addClickOutsideHandler();
+    }, 100);
   }
 
   /**
    * Hide the controls panel
    */
   hide(): void {
+    // Blur any focused element to return focus to the main document
+    // This ensures keyboard shortcuts work after closing the panel
+    const activeElement = document.activeElement as HTMLElement;
+    if (activeElement && activeElement.blur) {
+      activeElement.blur();
+    }
+
+    // Remove click outside handler
+    this.removeClickOutsideHandler();
+
     this.gui.hide();
     this.visible = false;
+
+    // Focus the canvas to ensure keyboard events work
+    this.sceneManager.renderer.domElement.focus();
   }
 
   /**
@@ -771,7 +1075,165 @@ export class RenderingControls {
     if (this.visible) {
       this.hide();
     } else {
+      // Sync state before showing
       this.show();
+    }
+  }
+
+  /**
+   * Check if controls panel is visible
+   */
+  isVisible(): boolean {
+    return this.visible;
+  }
+
+  /**
+   * Setup auto-blur for all GUI controls
+   * This prevents focus from getting stuck on checkboxes and other controls
+   */
+  private setupAutoBlur(): void {
+    // Use MutationObserver to watch for new controls being added
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) {
+            // Find all input elements (checkboxes, sliders, etc.)
+            const inputs = node.querySelectorAll('input, select');
+            inputs.forEach((input) => {
+              this.addAutoBlurToElement(input as HTMLElement);
+            });
+            // Also check if the node itself is an input
+            if (node.tagName === 'INPUT' || node.tagName === 'SELECT') {
+              this.addAutoBlurToElement(node);
+            }
+          }
+        });
+      });
+    });
+
+    // Start observing the GUI element for changes
+    observer.observe(this.gui.domElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Also handle existing inputs
+    setTimeout(() => {
+      const inputs = this.gui.domElement.querySelectorAll('input, select');
+      inputs.forEach((input) => {
+        this.addAutoBlurToElement(input as HTMLElement);
+      });
+    }, 100);
+  }
+
+  /**
+   * Add auto-blur behavior to an element
+   */
+  private addAutoBlurToElement(element: HTMLElement): void {
+    // For checkboxes and select dropdowns, blur immediately after change
+    if (element instanceof HTMLInputElement && element.type === 'checkbox') {
+      element.addEventListener('change', () => {
+        // Small delay to ensure the change is processed
+        setTimeout(() => element.blur(), 10);
+      });
+      // Also blur on click for checkboxes
+      element.addEventListener('click', () => {
+        setTimeout(() => element.blur(), 10);
+      });
+    }
+    // For select dropdowns
+    else if (element instanceof HTMLSelectElement) {
+      element.addEventListener('change', () => {
+        setTimeout(() => element.blur(), 10);
+      });
+    }
+    // For text inputs and sliders, blur on Enter key or when value is committed
+    else if (element instanceof HTMLInputElement) {
+      element.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          element.blur();
+        }
+      });
+      // For sliders, also blur when mouse is released
+      if (element.type === 'range' || element.type === 'number') {
+        element.addEventListener('mouseup', () => {
+          setTimeout(() => element.blur(), 10);
+        });
+        element.addEventListener('touchend', () => {
+          setTimeout(() => element.blur(), 10);
+        });
+      }
+    }
+  }
+
+  /**
+   * Setup keyboard handling for the GUI panel
+   */
+  private setupKeyboardHandling(): void {
+    // Add keydown listener to the GUI's DOM element
+    this.gui.domElement.addEventListener('keydown', (event: KeyboardEvent) => {
+      // Check for 'R' key without modifiers
+      if (
+        (event.key === 'r' || event.key === 'R') &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.hide();
+      }
+      // Also handle Escape key for closing
+      else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.hide();
+      }
+    });
+
+    // Also handle keyup to prevent event propagation
+    this.gui.domElement.addEventListener('keyup', (event: KeyboardEvent) => {
+      if (
+        (event.key === 'r' || event.key === 'R') &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+  }
+
+  /**
+   * Add click outside handler to blur inputs
+   */
+  private clickOutsideHandler?: (e: MouseEvent) => void;
+
+  private addClickOutsideHandler(): void {
+    if (this.clickOutsideHandler) return;
+
+    this.clickOutsideHandler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // If clicking outside the GUI panel, blur any focused element within it
+      if (!this.gui.domElement.contains(target)) {
+        const activeElement = document.activeElement as HTMLElement;
+        if (activeElement && activeElement.blur && this.gui.domElement.contains(activeElement)) {
+          activeElement.blur();
+          // Also focus the canvas for good measure
+          this.sceneManager.renderer.domElement.focus();
+        }
+      }
+    };
+
+    // Use capture phase to ensure we get the event first
+    document.addEventListener('mousedown', this.clickOutsideHandler, true);
+  }
+
+  private removeClickOutsideHandler(): void {
+    if (this.clickOutsideHandler) {
+      document.removeEventListener('mousedown', this.clickOutsideHandler, true);
+      this.clickOutsideHandler = undefined;
     }
   }
 

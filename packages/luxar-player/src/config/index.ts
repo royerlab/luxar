@@ -40,8 +40,8 @@ export const config: AppConfig = {
 
     // Bloom effect settings
     bloom: {
-      strength: 0.1, // Bloom intensity - how strong the glow effect appears
-      radius: 0.5, // Bloom radius - how far the glow spreads from bright areas
+      strength: 0.25, // Bloom intensity - how strong the glow effect appears
+      radius: 1.0, // Bloom radius - how far the glow spreads from bright areas
       threshold: 0.0, // Bloom threshold - brightness level required to trigger bloom (0.0 = everything glows)
       resolutionScale: 4, // Resolution scale for bloom pass - higher = faster but lower quality
     },
@@ -49,7 +49,7 @@ export const config: AppConfig = {
     // Advanced point rendering settings
     points: {
       size: 4.0, // Base point size in screen pixels
-      hdrMultiplier: 13.0, // HDR color multiplier for driving bloom effects
+      hdrMultiplier: 16.0, // HDR color multiplier for driving bloom effects
       baseAlpha: 0.01, // Base alpha intensity for point visibility
       falloffSteepness: 40.0, // Gaussian falloff steepness for smooth point edges
     },
@@ -59,7 +59,7 @@ export const config: AppConfig = {
   shader: {
     points: {
       size: 8.0, // Base point size in screen pixels
-      hdrMultiplier: 13.0, // HDR color multiplier for bloom effects
+      hdrMultiplier: 16.0, // HDR color multiplier for bloom effects
       baseAlpha: 0.01, // Base alpha intensity
       falloffSteepness: 20.0, // Gaussian falloff steepness
     },
@@ -73,8 +73,8 @@ export const config: AppConfig = {
 
     bloom: {
       threshold: 0.01, // Bloom threshold - 0.0 means everything blooms, higher = only bright areas
-      strength: 0.1, // Bloom strength - controls intensity of glow effect
-      radius: 0.5, // Bloom radius - controls how far the glow spreads
+      strength: 0.25, // Bloom strength - controls intensity of glow effect
+      radius: 1.0, // Bloom radius - controls how far the glow spreads
       resolutionScale: 4, // Resolution divisor for bloom pass - higher = faster but lower quality
     },
 
@@ -111,11 +111,11 @@ export const config: AppConfig = {
   renderingControls: {
     defaults: {
       bloomThreshold: 0.01, // Bloom threshold for rendering controls
-      bloomStrength: 0.1, // Bloom strength for rendering controls
-      bloomRadius: 0.5, // Bloom radius for rendering controls
+      bloomStrength: 0.25, // Bloom strength for rendering controls
+      bloomRadius: 1.0, // Bloom radius for rendering controls
       exposure: 1.0, // Tone mapping exposure value
-      hdrMultiplier: 13.0, // HDR intensity multiplier
-      fxaaEnabled: true, // FXAA enabled by default (works well with additive blending)
+      hdrMultiplier: 16.0, // HDR intensity multiplier
+      fxaaEnabled: false, // FXAA disabled by default
       msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
       msaaSamples: 4, // MSAA sample count (2, 4, 8)
       smaaEnabled: false, // SMAA disabled by default
@@ -130,6 +130,14 @@ export const config: AppConfig = {
       dofStrength: 0.5, // DOF blur strength (0-1)
       chromaticAberrationEnabled: false, // Chromatic aberration disabled by default
       chromaticAberrationStrength: 0.15, // Chromatic aberration strength - default as shown
+      // Navigation controls
+      controlType: 'orbit' as const, // Default to orbit controls
+      autoRotate: false, // Auto-rotation disabled by default
+      autoRotateSpeed: 0.25, // Slow rotation speed for presentations
+      // Fly controls
+      flyMovementSpeed: 5.0, // Movement speed in units per second
+      flyInertialMode: false, // Direct velocity mode by default
+      flyDamping: 0.999, // Damping for inertial mode
     },
   },
 

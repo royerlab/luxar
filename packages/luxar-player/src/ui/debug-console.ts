@@ -1,6 +1,6 @@
 /**
  * Debug Console Panel
- * 
+ *
  * Displays browser console output in an in-app panel.
  * Uses the global console interceptor to ensure all messages are captured
  * from the very beginning of the application lifecycle.
@@ -29,7 +29,7 @@ export class DebugConsole {
     // Create UI
     this.panel = this.createPanel();
     this.contentArea = this.panel.querySelector('.debug-console-content') as HTMLElement;
-    
+
     // Set up listener for new messages from the global interceptor
     this.messageListenerCallback = (message: BufferedMessage) => {
       if (this.isVisible) {
@@ -40,16 +40,16 @@ export class DebugConsole {
         }
       }
     };
-    
+
     // Register with the global interceptor
     consoleInterceptor.addListener(this.messageListenerCallback);
-    
+
     // Add to DOM
     document.body.appendChild(this.panel);
-    
+
     // Start hidden
     this.hide();
-    
+
     // Log that debug console is ready
     console.log('🔧 [Luxar] Debug console ready (Ctrl+L to open)');
   }
@@ -341,7 +341,9 @@ export class DebugConsole {
     });
 
     // Auto-scroll checkbox
-    const autoScrollCheckbox = panel.querySelector('.debug-console-autoscroll input') as HTMLInputElement;
+    const autoScrollCheckbox = panel.querySelector(
+      '.debug-console-autoscroll input'
+    ) as HTMLInputElement;
     autoScrollCheckbox?.addEventListener('change', (e) => {
       this.autoScroll = (e.target as HTMLInputElement).checked;
     });
@@ -367,25 +369,28 @@ export class DebugConsole {
     header.style.cursor = 'move';
 
     header.addEventListener('mousedown', (e) => {
-      if ((e.target as HTMLElement).tagName === 'BUTTON' || 
-          (e.target as HTMLElement).tagName === 'INPUT') return;
-      
+      if (
+        (e.target as HTMLElement).tagName === 'BUTTON' ||
+        (e.target as HTMLElement).tagName === 'INPUT'
+      )
+        return;
+
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
       const rect = panel.getBoundingClientRect();
       initialX = rect.left;
       initialY = rect.top;
-      
+
       e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
-      
+
       const deltaX = e.clientX - startX;
       const deltaY = e.clientY - startY;
-      
+
       panel.style.left = `${initialX + deltaX}px`;
       panel.style.top = `${initialY + deltaY}px`;
       panel.style.right = 'auto';
@@ -433,11 +438,17 @@ export class DebugConsole {
 
       if (resizeDirection === 'n') {
         const deltaY = startY - e.clientY;
-        const newHeight = Math.max(DEBUG_CONSOLE_CONFIG.panel.minHeight, Math.min(DEBUG_CONSOLE_CONFIG.panel.maxHeight, startHeight + deltaY));
+        const newHeight = Math.max(
+          DEBUG_CONSOLE_CONFIG.panel.minHeight,
+          Math.min(DEBUG_CONSOLE_CONFIG.panel.maxHeight, startHeight + deltaY)
+        );
         panel.style.height = `${newHeight}px`;
       } else if (resizeDirection === 'w') {
         const deltaX = startX - e.clientX;
-        const newWidth = Math.max(DEBUG_CONSOLE_CONFIG.panel.minWidth, Math.min(DEBUG_CONSOLE_CONFIG.panel.maxWidth, startWidth + deltaX));
+        const newWidth = Math.max(
+          DEBUG_CONSOLE_CONFIG.panel.minWidth,
+          Math.min(DEBUG_CONSOLE_CONFIG.panel.maxWidth, startWidth + deltaX)
+        );
         panel.style.width = `${newWidth}px`;
       }
     });
@@ -457,7 +468,7 @@ export class DebugConsole {
       timestamp: message.timestamp,
       args: message.args,
       formatted: this.formatArgs(message.args),
-      stack: message.stack
+      stack: message.stack,
     };
     this.renderMessage(consoleMessage);
   }
@@ -466,21 +477,23 @@ export class DebugConsole {
    * Format arguments for display
    */
   private formatArgs(args: any[]): string {
-    return args.map(arg => {
-      if (arg === undefined) return 'undefined';
-      if (arg === null) return 'null';
-      if (typeof arg === 'string') return arg;
-      if (typeof arg === 'number') return arg.toString();
-      if (typeof arg === 'boolean') return arg.toString();
-      if (typeof arg === 'object') {
-        try {
-          return JSON.stringify(arg, null, 2);
-        } catch {
-          return arg.toString();
+    return args
+      .map((arg) => {
+        if (arg === undefined) return 'undefined';
+        if (arg === null) return 'null';
+        if (typeof arg === 'string') return arg;
+        if (typeof arg === 'number') return arg.toString();
+        if (typeof arg === 'boolean') return arg.toString();
+        if (typeof arg === 'object') {
+          try {
+            return JSON.stringify(arg, null, 2);
+          } catch {
+            return arg.toString();
+          }
         }
-      }
-      return String(arg);
-    }).join(' ');
+        return String(arg);
+      })
+      .join(' ');
   }
 
   /**
@@ -489,19 +502,19 @@ export class DebugConsole {
   private renderMessage(message: ConsoleMessage): void {
     const messageEl = document.createElement('div');
     messageEl.className = `console-message console-message-${message.type}`;
-    
+
     // Format timestamp
     const timestamp = message.timestamp.toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      fractionalSecondDigits: 3
+      fractionalSecondDigits: 3,
     });
 
     // Build message HTML
     let html = `<span class="console-message-timestamp">${timestamp}</span>`;
-    
+
     // Format each argument with appropriate styling
     message.args.forEach((arg, index) => {
       if (index > 0) html += ' ';
@@ -588,15 +601,17 @@ export class DebugConsole {
   private updateStatus(): void {
     const countEl = this.panel.querySelector('.message-count');
     const filterEl = this.panel.querySelector('.filter-status');
-    
+
     if (countEl) {
-      const visibleCount = this.contentArea.querySelectorAll('.console-message:not([style*="display: none"])').length;
+      const visibleCount = this.contentArea.querySelectorAll(
+        '.console-message:not([style*="display: none"])'
+      ).length;
       const stats = consoleInterceptor.getStats();
-      countEl.textContent = this.filter 
+      countEl.textContent = this.filter
         ? `${visibleCount} of ${stats.total} messages`
         : `${stats.total} messages`;
     }
-    
+
     if (filterEl) {
       filterEl.textContent = this.filter ? `(filtered: "${this.filter}")` : '';
     }
@@ -627,17 +642,20 @@ export class DebugConsole {
   private copyToClipboard(): void {
     const messages = consoleInterceptor.getBufferedMessages();
     const text = messages
-      .map(m => {
+      .map((m) => {
         const formatted = this.formatArgs(m.args);
         return `[${m.timestamp.toISOString()}] [${m.type.toUpperCase()}] ${formatted}`;
       })
       .join('\n');
-    
-    navigator.clipboard.writeText(text).then(() => {
-      console.log('Console output copied to clipboard');
-    }).catch(err => {
-      console.error('Failed to copy to clipboard:', err);
-    });
+
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        console.log('Console output copied to clipboard');
+      })
+      .catch((err) => {
+        console.error('Failed to copy to clipboard:', err);
+      });
   }
 
   /**
@@ -646,24 +664,26 @@ export class DebugConsole {
   show(): void {
     this.panel.style.display = 'flex';
     this.isVisible = true;
-    
+
     // Clear and render ALL buffered messages from the global interceptor
     this.contentArea.innerHTML = '';
-    
+
     // Get ALL messages from the beginning of the app
     const allMessages = consoleInterceptor.getBufferedMessages();
-    
+
     // Log stats for debugging
     const stats = consoleInterceptor.getStats();
-    console.log(`📊 [Luxar] Loading ${stats.total} buffered messages (${stats.types.log} log, ${stats.types.warn} warn, ${stats.types.error} error)`);
-    
+    console.log(
+      `📊 [Luxar] Loading ${stats.total} buffered messages (${stats.types.log} log, ${stats.types.warn} warn, ${stats.types.error} error)`
+    );
+
     // Render each message
-    allMessages.forEach(msg => {
+    allMessages.forEach((msg) => {
       this.renderBufferedMessage(msg);
     });
-    
+
     this.updateStatus();
-    
+
     if (this.autoScroll) {
       this.scrollToBottom();
     }
@@ -703,14 +723,14 @@ export class DebugConsole {
     if (this.messageListenerCallback) {
       consoleInterceptor.removeListener(this.messageListenerCallback);
     }
-    
+
     // Remove panel from DOM
     this.panel.remove();
-    
+
     // Remove styles
     const style = document.getElementById('debug-console-styles');
     style?.remove();
-    
+
     console.log('Debug console disposed');
   }
 }

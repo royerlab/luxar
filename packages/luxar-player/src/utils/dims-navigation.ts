@@ -196,7 +196,7 @@ export function getNavigableDimensions(dims: SimpleDims): [number, number] {
 export function updatePointCloudSlice(
   points: THREE.Points,
   originalPositions: Float32Array,
-  originalColors: Float32Array | undefined,  // Changed to Float32Array for HDR
+  originalColors: Float32Array | undefined, // Changed to Float32Array for HDR
   originalRadii: Float32Array | undefined,
   originalSharpness: Float32Array | undefined,
   dims: SimpleDims,

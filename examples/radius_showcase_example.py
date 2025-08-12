@@ -34,9 +34,9 @@ def create_size_gradient_example(scene: Scene, n_points: int = 10000) -> None:
     radii = np.linspace(0.02, 0.5, n_points).astype(np.float32)
 
     # Colors transition from blue to red
-    colors = np.zeros((n_points, 3), dtype=np.uint8)
-    colors[:, 0] = np.linspace(0, 255, n_points)  # Red channel
-    colors[:, 2] = np.linspace(255, 0, n_points)  # Blue channel
+    colors = np.zeros((n_points, 3), dtype=np.float32)
+    colors[:, 0] = np.linspace(0, 1.0, n_points)  # Red channel
+    colors[:, 2] = np.linspace(1.0, 0, n_points)  # Blue channel
 
     scene.add_points("SizeGradientSpiral", positions, colors, radii=radii)
 
@@ -67,10 +67,10 @@ def create_distance_based_example(scene: Scene, n_points: int = 5000) -> None:
     radii = np.clip(radii, 0.05, 0.8)  # Clamp to reasonable range
 
     # Colors based on position (creates a rainbow effect)
-    colors = np.zeros((n_points, 3), dtype=np.uint8)
-    colors[:, 0] = ((x + r) / (2 * r) * 255).astype(np.uint8)
-    colors[:, 1] = ((y + r) / (2 * r) * 255).astype(np.uint8)
-    colors[:, 2] = ((z + r) / (2 * r) * 255).astype(np.uint8)
+    colors = np.zeros((n_points, 3), dtype=np.float32)
+    colors[:, 0] = (x + r) / (2 * r)
+    colors[:, 1] = (y + r) / (2 * r)
+    colors[:, 2] = (z + r) / (2 * r)
 
     # Offset to avoid overlap with other demos
     positions[:, 0] += 15
@@ -93,9 +93,9 @@ def create_random_sizing_example(scene: Scene, n_points: int = 8000) -> None:
 
     # Colors based on radius (heat map: small=blue, large=red)
     normalized_radii = (radii - radii.min()) / (radii.max() - radii.min())
-    colors = np.zeros((n_points, 3), dtype=np.uint8)
-    colors[:, 0] = (normalized_radii * 255).astype(np.uint8)  # Red
-    colors[:, 2] = ((1 - normalized_radii) * 255).astype(np.uint8)  # Blue
+    colors = np.zeros((n_points, 3), dtype=np.float32)
+    colors[:, 0] = normalized_radii  # Red
+    colors[:, 2] = 1 - normalized_radii  # Blue
 
     # Offset to avoid overlap
     positions[:, 0] -= 15
@@ -150,9 +150,7 @@ def create_layered_spheres_example(
         else:
             r, g, b = 1, 0, 6 - hue * 6
 
-        colors = np.tile(
-            [int(r * 255), int(g * 255), int(b * 255)], (points_per_layer, 1)
-        ).astype(np.uint8)
+        colors = np.tile([r, g, b], (points_per_layer, 1)).astype(np.float32)
 
         all_positions.append(positions)
         all_colors.append(colors)

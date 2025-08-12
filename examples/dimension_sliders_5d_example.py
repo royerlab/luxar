@@ -69,9 +69,9 @@ def main():
 
     # Channel colors
     channel_colors = [
-        [255, 100, 100],  # Red
-        [100, 255, 100],  # Green
-        [100, 100, 255],  # Blue
+        [1.0, 0.39, 0.39],  # Red
+        [0.39, 1.0, 0.39],  # Green
+        [0.39, 0.39, 1.0],  # Blue
     ]
 
     for t in range(n_time_points):
@@ -96,7 +96,7 @@ def main():
 
             # Colors based on channel
             colors = np.tile(channel_colors[c], (n_points_per_frame, 1)).astype(
-                np.uint8
+                np.float32
             )
             all_colors.append(colors)
 

@@ -26,7 +26,7 @@ def main():
     n_points = 10
     y_positions = [-2, 0, 2]
     radii_values = [0.05, 0.2, 0.5]
-    colors_rgb = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
+    colors_rgb = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]  # Red, Green, Blue
     labels = ["Small", "Medium", "Large"]
 
     for i, (y, radius, color, label) in enumerate(
@@ -39,7 +39,7 @@ def main():
 
         positions = np.column_stack([x, y, z]).astype(np.float32)
         radii = np.full(n_points, radius, dtype=np.float32)
-        colors = np.tile(color, (n_points, 1)).astype(np.uint8)
+        colors = np.tile(color, (n_points, 1)).astype(np.float32)
 
         scene.add_points(f"{label}Points", positions, colors, radii=radii)
         aprint(f"Added {label} points with radius {radius}")

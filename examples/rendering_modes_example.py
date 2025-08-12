@@ -67,7 +67,7 @@ def main():
     # 1. Normal blending - opaque red sphere (reference)
     aprint("\nCreating normal blending examples...")
     positions1 = base_positions + np.array([-3, 2, 0])
-    colors1 = [255, 80, 80]  # Red
+    colors1 = [1.0, 0.31, 0.31]  # Red
     scene.add_points(
         "NormalOpaque",
         positions1,
@@ -94,7 +94,7 @@ def main():
     # 3. Additive blending - glowing blue sphere
     aprint("Creating additive blending (glow effect)...")
     positions3 = base_positions + np.array([3, 2, 0])
-    colors3 = [100, 150, 255]  # Light blue
+    colors3 = [0.39, 0.59, 1.0]  # Light blue
     scene.add_points(
         "AdditiveGlow",
         positions3,
@@ -108,7 +108,7 @@ def main():
     # 4. Subtractive blending - darkening purple sphere
     aprint("Creating subtractive blending (darkening effect)...")
     positions4 = base_positions + np.array([-3, -2, 0])
-    colors4 = [200, 100, 255]  # Purple
+    colors4 = [0.78, 0.39, 1.0]  # Purple
     scene.add_points(
         "SubtractiveDark",
         positions4,
@@ -129,7 +129,7 @@ def main():
 
     # Child 1: Inherits all parent properties
     positions5 = base_positions + np.array([0, -2, 0])
-    colors5 = [255, 255, 100]  # Yellow
+    colors5 = [1.0, 1.0, 0.39]  # Yellow
     scene.add_points(
         "InheritedYellow",
         positions5,
@@ -141,7 +141,7 @@ def main():
 
     # Child 2: Overrides parent's gamma while inheriting other properties
     positions6 = base_positions + np.array([3, -2, 0])
-    colors6 = [100, 255, 255]  # Cyan
+    colors6 = [0.39, 1.0, 1.0]  # Cyan
     scene.add_points(
         "OverrideCyan",
         positions6,

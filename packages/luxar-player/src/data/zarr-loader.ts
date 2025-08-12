@@ -227,9 +227,11 @@ export async function loadScene(src: string): Promise<THREE.Group> {
         const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
         const parentRecord = lookup.get(parentPath);
         const parentAttrs = parentRecord?.attrs;
-        
+
         // Debug logging
-        console.log(`Loading ${entry.path}, parent: ${parentPath}, has transform: ${!!attrs?.transform}`);
+        console.log(
+          `Loading ${entry.path}, parent: ${parentPath}, has transform: ${!!attrs?.transform}`
+        );
 
         // Inherit rendering attributes from parent
         attrs = inheritRenderingAttributes(attrs, parentAttrs);
@@ -263,9 +265,11 @@ export async function loadScene(src: string): Promise<THREE.Group> {
           const quaternion = new THREE.Quaternion();
           const scale = new THREE.Vector3();
           matrix.decompose(position, quaternion, scale);
-          
-          console.log(`Setting transform for ${entry.path}: position=(${position.x}, ${position.y}, ${position.z})`);
-          
+
+          console.log(
+            `Setting transform for ${entry.path}: position=(${position.x}, ${position.y}, ${position.z})`
+          );
+
           obj.position.copy(position);
           obj.quaternion.copy(quaternion);
           obj.scale.copy(scale);
@@ -383,7 +387,7 @@ async function buildPoints(
   try {
     const colArr = await zarr.open(loc.resolve('colors'), { kind: 'array' });
     const rawData = (await get(colArr)).data;
-    
+
     // Handle both legacy uint8 and new HDR float32 formats
     if (rawData instanceof Uint8Array) {
       // Legacy format: convert uint8 to float32
@@ -397,7 +401,7 @@ async function buildPoints(
       // New HDR format: already float32
       colData = rawData as Float32Array;
     }
-    
+
     col = visibleIndices ? sliceColorsFloat32(colData, visibleIndices) || undefined : colData;
   } catch (error) {
     console.debug('Optional array not found:', error);

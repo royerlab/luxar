@@ -78,9 +78,9 @@ def create_5d_grid(
 
                         # Base color for each channel
                         base_colors = {
-                            0: [255, 50, 50],  # Red
-                            1: [50, 255, 50],  # Green
-                            2: [50, 50, 255],  # Blue
+                            0: [1.0, 0.2, 0.2],  # Red
+                            1: [0.2, 1.0, 0.2],  # Green
+                            2: [0.2, 0.2, 1.0],  # Blue
                         }
                         color = base_colors[c].copy()
 
@@ -90,10 +90,10 @@ def create_5d_grid(
                         depth_fade = 1.0 - d * 0.2
                         intensity = time_fade * depth_fade
 
-                        color = [int(c * intensity) for c in color]
+                        color = [c * intensity for c in color]
                         colors.append(color)
 
-    return np.array(positions, dtype=np.float32), np.array(colors, dtype=np.uint8)
+    return np.array(positions, dtype=np.float32), np.array(colors, dtype=np.float32)
 
 
 def main():

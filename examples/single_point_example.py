@@ -46,7 +46,7 @@ def main():
     scene.add_points(
         "ColoredPoint",
         np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # Position at (1, 0, 0)
-        colors=[255, 0, 0],  # Red color
+        colors=[1.0, 0.0, 0.0],  # Red color
         radii=0.2,  # Larger radius
     )
 

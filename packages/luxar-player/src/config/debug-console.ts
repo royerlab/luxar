@@ -14,18 +14,18 @@ export const DEBUG_CONSOLE_CONFIG = {
     bottomOffset: 20,
     rightOffset: 20,
   },
-  
+
   // Console interceptor settings
   interceptor: {
     // Ring buffer size for console messages
     maxBufferSize: 10000,
   },
-  
+
   // Resize handle dimensions
   resize: {
     borderWidth: 4,
   },
-  
+
   // Styling
   style: {
     backgroundColor: 'rgba(20, 20, 20, 0.95)',

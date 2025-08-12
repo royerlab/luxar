@@ -149,7 +149,7 @@ def main():
     scene.add_points(
         "SpiralGalaxy",
         galaxy_positions,
-        colors=[200, 200, 255],  # Light blue
+        colors=[0.78, 0.78, 1.0],  # Light blue
         radii=0.03,
         sharpness=3.0,
         opacity=0.8,
@@ -162,10 +162,10 @@ def main():
     cluster_positions = [(-12, 8, 3), (10, -6, -2), (-8, -10, 4), (15, 5, -3)]
 
     cluster_colors = [
-        [255, 200, 100],  # Golden
-        [255, 150, 150],  # Pink-red
-        [150, 255, 150],  # Light green
-        [255, 255, 150],  # Light yellow
+        [1.0, 0.78, 0.39],  # Golden
+        [1.0, 0.59, 0.59],  # Pink-red
+        [0.59, 1.0, 0.59],  # Light green
+        [1.0, 1.0, 0.59],  # Light yellow
     ]
 
     for i, (pos, color) in enumerate(zip(cluster_positions, cluster_colors)):
@@ -187,19 +187,19 @@ def main():
         {
             "center": (-20, 0, 0),
             "size": (3, 4, 2),
-            "color": [255, 100, 150],
+            "color": [1.0, 0.39, 0.59],
             "name": "RedNebula",
         },
         {
             "center": (0, 15, 0),
             "size": (2, 3, 3),
-            "color": [100, 255, 150],
+            "color": [0.39, 1.0, 0.59],
             "name": "GreenNebula",
         },
         {
             "center": (0, -15, 0),
             "size": (4, 2, 2),
-            "color": [150, 100, 255],
+            "color": [0.59, 0.39, 1.0],
             "name": "PurpleNebula",
         },
     ]
@@ -220,8 +220,8 @@ def main():
     # 4. Planetary ring systems
     aprint("Creating planetary ring systems...")
     ring_systems = [
-        {"center": (0, 0, 10), "inner": 2, "outer": 4, "color": [200, 150, 100]},
-        {"center": (0, 0, -8), "inner": 1.5, "outer": 3, "color": [150, 200, 255]},
+        {"center": (0, 0, 10), "inner": 2, "outer": 4, "color": [0.78, 0.59, 0.39]},
+        {"center": (0, 0, -8), "inner": 1.5, "outer": 3, "color": [0.59, 0.78, 1.0]},
     ]
 
     for i, ring_data in enumerate(ring_systems):
@@ -251,13 +251,13 @@ def main():
         # Random star colors (white to yellow to red)
         temp = np.random.random()
         if temp < 0.3:
-            color = [255, 255, 255]  # White
+            color = [1.0, 1.0, 1.0]  # White
         elif temp < 0.6:
-            color = [255, 255, 200]  # Yellow-white
+            color = [1.0, 1.0, 0.78]  # Yellow-white
         elif temp < 0.8:
-            color = [255, 220, 150]  # Yellow
+            color = [1.0, 0.86, 0.59]  # Yellow
         else:
-            color = [255, 180, 120]  # Orange-red
+            color = [1.0, 0.71, 0.47]  # Orange-red
 
         star_colors.append(color)
         star_radii.append(np.random.uniform(0.01, 0.02))
@@ -265,7 +265,7 @@ def main():
     scene.add_points(
         "BackgroundStars",
         star_positions,
-        colors=np.array(star_colors, dtype=np.uint8),
+        colors=np.array(star_colors, dtype=np.float32),
         radii=np.array(star_radii, dtype=np.float32),
         sharpness=5.0,
         opacity=0.4,
@@ -286,7 +286,7 @@ def main():
     scene.add_points(
         "ParticleStream",
         np.array(stream_positions, dtype=np.float32),
-        colors=[100, 255, 255],  # Cyan
+        colors=[0.39, 1.0, 1.0],  # Cyan
         radii=0.05,
         sharpness=6.0,
         opacity=0.8,
