@@ -64,7 +64,7 @@ def main():
     aprint("Creating nD point cloud demonstration...")
 
     # Create scene
-    output_path = Path(__file__).parent / "nd_demo_example.zarr"
+    output_path = Path(__file__).parent / "nd_points_example.zarr"
     scene = Scene(output_path)
 
     # Create 5D time series data
@@ -82,18 +82,18 @@ def main():
 
     # Create colors based on time and channel
     n_points_5d = positions_5d.shape[0]
-    colors_5d = np.zeros((n_points_5d, 3), dtype=np.uint8)
+    colors_5d = np.zeros((n_points_5d, 3), dtype=np.float32)
 
     # Color by channel: R, G, B for channels 0, 1, 2
     channel_indices = positions_5d[:, 4].astype(int)
-    colors_5d[channel_indices == 0, 0] = 255  # Red for channel 0
-    colors_5d[channel_indices == 1, 1] = 255  # Green for channel 1
-    colors_5d[channel_indices == 2, 2] = 255  # Blue for channel 2
+    colors_5d[channel_indices == 0, 0] = 1.0  # Red for channel 0
+    colors_5d[channel_indices == 1, 1] = 1.0  # Green for channel 1
+    colors_5d[channel_indices == 2, 2] = 1.0  # Blue for channel 2
 
     # Add intensity variation based on time
     time_norm = positions_5d[:, 0] / positions_5d[:, 0].max()
     for i in range(3):
-        colors_5d[:, i] = (colors_5d[:, i] * (0.5 + 0.5 * time_norm)).astype(np.uint8)
+        colors_5d[:, i] = colors_5d[:, i] * (0.5 + 0.5 * time_norm)
 
     # Add 5D points to scene
     aprint(f"Adding {n_points_5d:,} 5D points to scene...")
@@ -113,10 +113,10 @@ def main():
 
     # Create gradient colors for 2D data
     n_points_2d = positions_2d.shape[0]
-    colors_2d = np.zeros((n_points_2d, 3), dtype=np.uint8)
+    colors_2d = np.zeros((n_points_2d, 3), dtype=np.float32)
     gradient = np.linspace(0, 1, n_points_2d)
-    colors_2d[:, 0] = (255 * gradient).astype(np.uint8)  # Red gradient
-    colors_2d[:, 1] = (255 * (1 - gradient)).astype(np.uint8)  # Inverse green gradient
+    colors_2d[:, 0] = gradient  # Red gradient
+    colors_2d[:, 1] = 1.0 - gradient  # Inverse green gradient
     colors_2d[:, 2] = 128  # Constant blue
 
     # Add 2D points to scene
@@ -137,7 +137,7 @@ def main():
     ]
 
     # Simple white color for 3D points
-    colors_3d = np.full((n_points_3d, 3), 200, dtype=np.uint8)
+    colors_3d = np.full((n_points_3d, 3), 0.78, dtype=np.float32)
 
     scene.add_points(
         "Reference3D", positions_3d, colors=colors_3d, dimension_metadata=metadata_3d

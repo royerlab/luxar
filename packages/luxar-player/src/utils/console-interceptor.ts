@@ -1,10 +1,10 @@
 /**
  * Early Console Interceptor
- * 
+ *
  * This module intercepts console methods at the very beginning of the application
  * lifecycle to ensure no messages are missed. It maintains a global buffer that
  * the DebugConsole can later consume.
- * 
+ *
  * IMPORTANT: This must be imported before any other code that uses console methods.
  */
 
@@ -17,19 +17,19 @@ export interface BufferedMessage {
 
 class ConsoleInterceptor {
   private static instance: ConsoleInterceptor;
-  
+
   /** Ring buffer for messages - automatically handles overflow */
   private messageBuffer: BufferedMessage[] = [];
-  
+
   /** Current write position in ring buffer */
   private bufferIndex = 0;
-  
+
   /** Maximum messages to buffer (configurable) */
   private readonly maxBufferSize = 10000; // TODO: Import from config when circular dependency is resolved
-  
+
   /** Whether buffer has wrapped around */
   private hasWrapped = false;
-  
+
   /** Original console methods */
   private originalConsole: {
     log: typeof console.log;
@@ -52,7 +52,7 @@ class ConsoleInterceptor {
       warn: console.warn.bind(console),
       error: console.error.bind(console),
       info: console.info.bind(console),
-      debug: console.debug.bind(console)
+      debug: console.debug.bind(console),
     };
 
     // Start interception immediately
@@ -119,13 +119,13 @@ class ConsoleInterceptor {
     if (error?.stack) {
       return error.stack;
     }
-    
+
     // Create a stack trace if it's an error message without stack
     if (typeof error === 'string' && error.toLowerCase().includes('error')) {
       const tempError = new Error();
       return tempError.stack;
     }
-    
+
     return undefined;
   }
 
@@ -137,7 +137,7 @@ class ConsoleInterceptor {
       type,
       timestamp: new Date(),
       args: [...args], // Clone args to prevent mutation
-      stack
+      stack,
     };
 
     // Ring buffer implementation - overwrite oldest when full
@@ -153,7 +153,7 @@ class ConsoleInterceptor {
     }
 
     // Notify listeners
-    this.listeners.forEach(listener => {
+    this.listeners.forEach((listener) => {
       try {
         listener(message);
       } catch (err) {
@@ -171,7 +171,7 @@ class ConsoleInterceptor {
       // Buffer hasn't wrapped, return as-is
       return [...this.messageBuffer];
     }
-    
+
     // Buffer has wrapped, reconstruct in chronological order
     // Oldest messages are from bufferIndex to end, newest are from 0 to bufferIndex-1
     const oldestPart = this.messageBuffer.slice(this.bufferIndex);
@@ -218,10 +218,10 @@ class ConsoleInterceptor {
       warn: 0,
       error: 0,
       info: 0,
-      debug: 0
+      debug: 0,
     };
 
-    this.messageBuffer.forEach(msg => {
+    this.messageBuffer.forEach((msg) => {
       typeCounts[msg.type]++;
     });
 
@@ -230,7 +230,7 @@ class ConsoleInterceptor {
       maxSize: this.maxBufferSize,
       types: typeCounts,
       oldestMessage: this.messageBuffer[0]?.timestamp,
-      newestMessage: this.messageBuffer[this.messageBuffer.length - 1]?.timestamp
+      newestMessage: this.messageBuffer[this.messageBuffer.length - 1]?.timestamp,
     };
   }
 

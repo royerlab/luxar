@@ -15,13 +15,13 @@ vi.mock('three', () => ({
       x: x || 0,
       y: y || 0,
       clone: vi.fn(),
-      copy: vi.fn()
+      copy: vi.fn(),
     };
-    vec.clone.mockImplementation(() => ({ 
-      x: vec.x, 
-      y: vec.y, 
-      clone: vi.fn(), 
-      copy: vi.fn() 
+    vec.clone.mockImplementation(() => ({
+      x: vec.x,
+      y: vec.y,
+      clone: vi.fn(),
+      copy: vi.fn(),
     }));
     vec.copy.mockImplementation((v: any) => {
       vec.x = v.x;

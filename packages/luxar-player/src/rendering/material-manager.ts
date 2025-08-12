@@ -100,8 +100,8 @@ const FRAGMENT_SHADER = /* glsl */ `
  */
 export class MaterialManager {
   private materialCache: Map<string, THREE.ShaderMaterial> = new Map();
-  private currentFov: number = 60 * Math.PI / 180;  // Current FOV in radians
-  private currentResolution: THREE.Vector2 = new THREE.Vector2(1, 1);  // Minimal default
+  private currentFov: number = (60 * Math.PI) / 180; // Current FOV in radians
+  private currentResolution: THREE.Vector2 = new THREE.Vector2(1, 1); // Minimal default
 
   /**
    * Get or create a material with specified properties
@@ -123,7 +123,7 @@ export class MaterialManager {
         opacity: { value: props.opacity },
         gamma: { value: props.gamma },
         fov: { value: this.currentFov },
-        resolution: { value: this.currentResolution.clone() }  // Clone to avoid reference issues
+        resolution: { value: this.currentResolution.clone() }, // Clone to avoid reference issues
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -146,7 +146,7 @@ export class MaterialManager {
 
     // Store render order in userData for later application to mesh/points
     material.userData.renderOrder = this.getRenderOrder(props.blendingMode, props.opacity);
-    
+
     // Mark this material as managed by MaterialManager to avoid double updates
     material.userData.managedByMaterialManager = true;
 
@@ -221,7 +221,7 @@ export class MaterialManager {
     // Store current values for future material creation
     this.currentFov = fov;
     this.currentResolution.copy(resolution);
-    
+
     // Update existing materials
     this.materialCache.forEach((material) => {
       if (material.uniforms.fov) {

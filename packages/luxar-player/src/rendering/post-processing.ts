@@ -51,11 +51,11 @@ export class PostProcessingManager {
   private ssaaMultiplier: number = 2.0;
   private width: number;
   private height: number;
-  
+
   // New post-processing effects
   private bokehPass?: BokehPass;
   private chromaticAberrationPass?: ShaderPass;
-  
+
   // Effect parameters
   private currentToneMapping: THREE.ToneMapping = THREE.ACESFilmicToneMapping;
   private dofEnabled: boolean = false;
@@ -128,7 +128,7 @@ export class PostProcessingManager {
       magFilter: THREE.LinearFilter,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
-      
+
       // Depth buffer settings - crucial for DOF to work properly
       depthBuffer: true,
       stencilBuffer: false,
@@ -470,9 +470,7 @@ export class PostProcessingManager {
     if (this.ssaaEnabled) aaInfo.push(`SSAA ${this.ssaaMultiplier}x`);
     if (this.msaaEnabled) aaInfo.push(`MSAA ${this.msaaSamples}x`);
 
-    console.log(
-      `Render target recreated with ${aaInfo.length > 0 ? aaInfo.join(' + ') : 'no AA'}`
-    );
+    console.log(`Render target recreated with ${aaInfo.length > 0 ? aaInfo.join(' + ') : 'no AA'}`);
   }
 
   /**
@@ -593,26 +591,26 @@ export class PostProcessingManager {
       // 1. Never use aperture or maxblur values too close to 0
       // 2. Keep the values in a reasonable range
       // 3. Make sure strength > 0.01 before creating the pass (handled in setDOF)
-      
+
       // Scale parameters for more visible effect
       // Aperture controls the size of the blur kernel
       // Maxblur controls the maximum blur amount in screen space
-      const aperture = 0.0025 + this.dofStrength * 0.025;  // 0.0025 to 0.0275
-      const maxblur = 0.01 + this.dofStrength * 0.02;  // 0.01 to 0.03
-      
+      const aperture = 0.0025 + this.dofStrength * 0.025; // 0.0025 to 0.0275
+      const maxblur = 0.01 + this.dofStrength * 0.02; // 0.01 to 0.03
+
       // BokehPass focus is in depth buffer space (0-1), not world units
       // Convert world distance to normalized depth
       const normalizedFocus = this.dofFocus / 100.0; // Assuming max distance of 100 units
-      
+
       this.bokehPass = new BokehPass(this.scene, this.camera, {
         focus: normalizedFocus,
         aperture: aperture,
-        maxblur: maxblur
+        maxblur: maxblur,
       });
-      
+
       // Additional configuration to try to reduce artifacts
       const pass = this.bokehPass as any;
-      
+
       // Configure bokeh shader parameters if available
       if (pass.materialBokeh) {
         // Lower quality settings can actually reduce artifacts
@@ -620,17 +618,19 @@ export class PostProcessingManager {
         pass.materialBokeh.defines.SAMPLES = 4;
         pass.materialBokeh.needsUpdate = true;
       }
-      
+
       // Ensure uniforms are properly initialized
       if (pass.uniforms) {
         pass.uniforms.nearClip = { value: this.camera.near };
         pass.uniforms.farClip = { value: this.camera.far };
       }
-      
+
       this.bokehPass.enabled = true;
       this.composer.addPass(this.bokehPass);
-      
-      console.log(`DOF pass created - focus: ${normalizedFocus.toFixed(3)} (distance: ${this.dofFocus}), aperture: ${aperture.toFixed(4)}, maxblur: ${maxblur.toFixed(4)}`);
+
+      console.log(
+        `DOF pass created - focus: ${normalizedFocus.toFixed(3)} (distance: ${this.dofFocus}), aperture: ${aperture.toFixed(4)}, maxblur: ${maxblur.toFixed(4)}`
+      );
     }
   }
 
@@ -645,7 +645,6 @@ export class PostProcessingManager {
     // Add to composer after previous passes
     this.composer.addPass(this.chromaticAberrationPass);
   }
-
 
   /**
    * Sets the tone mapping type
@@ -669,14 +668,22 @@ export class PostProcessingManager {
    */
   private getToneMappingName(): string {
     switch (this.currentToneMapping) {
-      case THREE.NoToneMapping: return 'None';
-      case THREE.LinearToneMapping: return 'Linear';
-      case THREE.ReinhardToneMapping: return 'Reinhard';
-      case THREE.CineonToneMapping: return 'Cineon';
-      case THREE.ACESFilmicToneMapping: return 'ACES Filmic';
-      case THREE.AgXToneMapping: return 'AgX';
-      case THREE.NeutralToneMapping: return 'Neutral';
-      default: return 'Unknown';
+      case THREE.NoToneMapping:
+        return 'None';
+      case THREE.LinearToneMapping:
+        return 'Linear';
+      case THREE.ReinhardToneMapping:
+        return 'Reinhard';
+      case THREE.CineonToneMapping:
+        return 'Cineon';
+      case THREE.ACESFilmicToneMapping:
+        return 'ACES Filmic';
+      case THREE.AgXToneMapping:
+        return 'AgX';
+      case THREE.NeutralToneMapping:
+        return 'Neutral';
+      default:
+        return 'Unknown';
     }
   }
 
@@ -690,11 +697,11 @@ export class PostProcessingManager {
     // Store parameters
     this.dofFocus = focus;
     this.dofStrength = strength;
-    
+
     // Determine if DOF should actually be enabled
     // Only enable if user wants it AND strength is meaningful
     const shouldBeEnabled = enabled && strength > 0.01;
-    
+
     // Only rebuild if state actually changed
     if (this.dofEnabled !== shouldBeEnabled) {
       this.dofEnabled = shouldBeEnabled;
@@ -710,7 +717,7 @@ export class PostProcessingManager {
     if (params.focus !== undefined) this.dofFocus = params.focus;
     if (params.strength !== undefined) {
       this.dofStrength = params.strength;
-      
+
       // Check if we need to rebuild pipeline based on strength threshold
       const shouldBeEnabled = this.dofStrength > 0.01;
       if (shouldBeEnabled !== this.dofEnabled) {
@@ -720,7 +727,7 @@ export class PostProcessingManager {
         return; // Exit early since pipeline was rebuilt
       }
     }
-    
+
     // If DOF is enabled and pass exists, update uniforms directly for smooth transitions
     if (this.dofEnabled && this.bokehPass) {
       const pass = this.bokehPass as any;
@@ -734,7 +741,7 @@ export class PostProcessingManager {
           // Use same formula as in setupDOFPass
           const aperture = 0.0025 + this.dofStrength * 0.025;
           const maxblur = 0.01 + this.dofStrength * 0.02;
-          
+
           if (pass.uniforms.aperture) {
             pass.uniforms.aperture.value = aperture;
           }
@@ -755,11 +762,10 @@ export class PostProcessingManager {
     // Store parameters
     this.chromaticEnabled = enabled;
     this.chromaticStrength = strength;
-    
+
     // Rebuild pipeline if state changed
     this.rebuildPipeline();
   }
-
 
   /**
    * Updates chromatic aberration strength only
@@ -767,13 +773,12 @@ export class PostProcessingManager {
    */
   updateChromaticAberration(strength: number): void {
     this.chromaticStrength = strength;
-    
+
     // If enabled and pass exists, update uniform directly for smooth transitions
     if (this.chromaticEnabled && this.chromaticAberrationPass) {
       this.chromaticAberrationPass.uniforms['amount'].value = strength * 0.005;
     }
   }
-
 
   /**
    * Gets info about all available post-processing effects
@@ -796,10 +801,10 @@ export class PostProcessingManager {
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
       ssaa: this.ssaaEnabled,
-      toneMapping: this.getToneMappingName()
+      toneMapping: this.getToneMappingName(),
     };
   }
-  
+
   /**
    * Rebuilds the entire post-processing pipeline
    * This ensures disabled effects don't consume any resources
@@ -807,7 +812,7 @@ export class PostProcessingManager {
   private rebuildPipeline(): void {
     // Clear all passes from composer
     this.composer.passes = [];
-    
+
     // Dispose of effect passes if they exist
     if (this.bokehPass) {
       this.bokehPass = undefined;
@@ -815,10 +820,10 @@ export class PostProcessingManager {
     if (this.chromaticAberrationPass) {
       this.chromaticAberrationPass = undefined;
     }
-    
+
     // Rebuild the pipeline with only enabled effects
     this.setupRenderPasses();
-    
+
     console.log(`Pipeline rebuilt - DOF: ${this.dofEnabled}, Chromatic: ${this.chromaticEnabled}`);
   }
 }

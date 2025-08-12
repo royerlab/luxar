@@ -63,7 +63,7 @@ def generate_test_colors(points_per_node: int, color_seed: int) -> np.ndarray:
     """
     # Use seed for reproducible colors
     np.random.seed(color_seed)
-    colors = np.random.randint(50, 255, (points_per_node, 3), dtype=np.uint8)
+    colors = np.random.uniform(0.2, 1.0, (points_per_node, 3)).astype(np.float32)
     return colors
 
 

@@ -1,6 +1,6 @@
 /**
  * Type definitions for the Luxar control system
- * 
+ *
  * This file provides strong typing for all control-related interfaces,
  * eliminating the need for 'any' types throughout the codebase.
  */

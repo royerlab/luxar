@@ -210,7 +210,7 @@ export function showHelpOverlay() {
         'F: Recenter camera on scene',
         'O: Open dataset browser',
         'Esc: Close panels',
-      ]
+      ],
     },
     {
       title: '🚁 Fly Mode Controls',
@@ -222,7 +222,7 @@ export function showHelpOverlay() {
         '🖱️ Drag: Free look (rotate view)',
         'I: Toggle inertial mode',
         'Note: Press V to enter fly mode',
-      ]
+      ],
     },
     {
       title: '📐 nD Navigation',
@@ -231,7 +231,7 @@ export function showHelpOverlay() {
         '1-9: Select dimension to control',
         '[ / ]: Navigate selected dimension',
         'N: Dimension sliders panel',
-      ]
+      ],
     },
     {
       title: '⚙️ Advanced Settings',
@@ -242,7 +242,7 @@ export function showHelpOverlay() {
         'C: Toggle center (origin/bbox)',
         '⇧ + Wheel: Adjust field of view',
         'Ctrl+L: Debug console',
-      ]
+      ],
     },
     {
       title: '💡 Tips',
@@ -252,12 +252,12 @@ export function showHelpOverlay() {
         '• Use inertial mode (I) for smooth coasting',
         '• Enable auto-rotation in settings',
         '• Use WASD + arrows for precise fly control',
-      ]
+      ],
     },
   ];
 
   const controlsList = document.createElement('div');
-  
+
   // Create collapsible categories
   helpCategories.forEach((category, categoryIndex) => {
     // Category header (clickable)
@@ -271,19 +271,19 @@ export function showHelpOverlay() {
     categoryHeader.style.display = 'flex';
     categoryHeader.style.alignItems = 'center';
     categoryHeader.style.justifyContent = 'space-between';
-    
+
     const categoryTitle = document.createElement('span');
     categoryTitle.textContent = category.title;
-    
+
     const categoryArrow = document.createElement('span');
     categoryArrow.textContent = category.expanded ? '▼' : '▶';
     categoryArrow.style.fontSize = '10px';
     categoryArrow.style.marginLeft = '10px';
     categoryArrow.style.transition = 'transform 0.2s';
-    
+
     categoryHeader.appendChild(categoryTitle);
     categoryHeader.appendChild(categoryArrow);
-    
+
     // Category content container
     const categoryContent = document.createElement('div');
     categoryContent.style.display = category.expanded ? 'block' : 'none';
@@ -291,14 +291,14 @@ export function showHelpOverlay() {
     categoryContent.style.borderLeft = '2px solid rgba(76, 175, 80, 0.2)';
     categoryContent.style.marginLeft = '8px';
     categoryContent.style.paddingLeft = '12px';
-    
+
     // Add items to category
     category.items.forEach((item) => {
       const itemDiv = document.createElement('div');
       itemDiv.textContent = item;
       itemDiv.style.marginBottom = '6px';
       itemDiv.style.lineHeight = '1.4';
-      
+
       // Special styling for certain items
       if (item.startsWith('•')) {
         itemDiv.style.color = '#aaa';
@@ -310,10 +310,10 @@ export function showHelpOverlay() {
       } else {
         itemDiv.style.color = '#e0e0e0';
       }
-      
+
       categoryContent.appendChild(itemDiv);
     });
-    
+
     // Toggle functionality
     categoryHeader.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -321,11 +321,11 @@ export function showHelpOverlay() {
       categoryContent.style.display = isExpanded ? 'none' : 'block';
       categoryArrow.textContent = isExpanded ? '▶' : '▼';
     });
-    
+
     controlsList.appendChild(categoryHeader);
     controlsList.appendChild(categoryContent);
   });
-  
+
   // Add footer note
   const footerNote = document.createElement('div');
   footerNote.textContent = 'Click anywhere or press Esc to close';
@@ -335,7 +335,7 @@ export function showHelpOverlay() {
   footerNote.style.fontSize = '11px';
   footerNote.style.color = '#888';
   footerNote.style.textAlign = 'center';
-  
+
   helpDiv.appendChild(title);
   helpDiv.appendChild(controlsList);
   helpDiv.appendChild(footerNote);

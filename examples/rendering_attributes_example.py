@@ -65,7 +65,7 @@ def main():
     points1 = scene.add_points(
         "DefaultAttributes",
         base_positions + np.array([0, 0, 0]),
-        colors=[255, 100, 100],  # Red
+        colors=[1.0, 0.39, 0.39],  # Red
         radii=point_radius,
     )
     aprint(
@@ -77,7 +77,7 @@ def main():
     points2 = scene.add_points(
         "TransparentPoints",
         base_positions + np.array([0, 3, 0]),
-        colors=[100, 255, 100],  # Green
+        colors=[0.39, 1.0, 0.39],  # Green
         radii=point_radius,
         opacity=0.6,
     )
@@ -90,7 +90,7 @@ def main():
     points3 = scene.add_points(
         "BrightPoints",
         base_positions + np.array([6, 0, 0]),
-        colors=[100, 100, 255],  # Blue
+        colors=[0.39, 0.39, 1.0],  # Blue
         radii=point_radius,
         gamma=1.8,
     )
@@ -103,7 +103,7 @@ def main():
     points4 = scene.add_points(
         "NormalBlending",
         base_positions + np.array([6, 3, 0]),
-        colors=[255, 255, 100],  # Yellow
+        colors=[1.0, 1.0, 0.39],  # Yellow
         radii=point_radius,
         blending_mode="normal",
         opacity=0.8,

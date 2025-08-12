@@ -74,7 +74,7 @@ export class RenderingControls {
     this.applyCustomStyling();
 
     this.setupControls();
-    
+
     // Add keyboard event listener to the GUI container to handle 'R' key
     // This ensures the panel can be closed even when a control has focus
     this.setupKeyboardHandling();
@@ -86,7 +86,7 @@ export class RenderingControls {
   private setupControls(): void {
     // Setup auto-blur for all controls
     this.setupAutoBlur();
-    
+
     // Bloom folder
     const bloomFolder = this.gui.addFolder('Bloom Effects');
     bloomFolder.open();
@@ -156,11 +156,11 @@ export class RenderingControls {
         this.sceneManager.setControlType(value);
         this.saveSettings();
         this.triggerAnimation();
-        
+
         // Show/hide relevant controls
         this.updateNavigationControls(value);
       });
-    
+
     // Store reference for updates
     this.controllers.controlType = controlTypeControl;
 
@@ -175,7 +175,7 @@ export class RenderingControls {
     // Create sub-folders for each control type
     const orbitFolder = navigationFolder.addFolder('Orbit Controls');
     const flyFolder = navigationFolder.addFolder('Fly Controls');
-    
+
     // Store folder references for showing/hiding
     this.orbitFolder = orbitFolder;
     this.flyFolder = flyFolder;
@@ -192,7 +192,7 @@ export class RenderingControls {
           this.animationController?.startAnimation();
         }
       });
-    
+
     // Store reference
     this.controllers.autoRotate = autoRotateControl;
 
@@ -213,7 +213,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Store reference
     this.controllers.autoRotateSpeed = rotationSpeedControl;
 
@@ -235,7 +235,7 @@ export class RenderingControls {
         this.sceneManager.setFlyMovementSpeed(value);
         this.saveSettings();
       });
-    
+
     // Store reference
     this.controllers.flyMovementSpeed = flySpeedControl;
 
@@ -260,7 +260,7 @@ export class RenderingControls {
           flyDampingControl.hide();
         }
       });
-    
+
     // Store reference
     this.controllers.flyInertialMode = flyInertialControl;
 
@@ -278,7 +278,7 @@ export class RenderingControls {
         this.sceneManager.setFlyDamping(value);
         this.saveSettings();
       });
-    
+
     // Store reference
     this.controllers.flyDamping = flyDampingControl;
 
@@ -294,7 +294,7 @@ export class RenderingControls {
 
     // Initially show/hide based on current control type
     this.updateNavigationControls(this.settings.controlType);
-    
+
     // Hide damping if not in inertial mode
     if (!this.settings.flyInertialMode) {
       flyDampingControl.hide();
@@ -346,23 +346,31 @@ export class RenderingControls {
 
     // Tone Mapping selector - moved to HDR & Exposure folder
     const toneMappingControl = hdrFolder
-      .add(this.settings, 'toneMapping', ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'])
+      .add(this.settings, 'toneMapping', [
+        'None',
+        'Linear',
+        'Reinhard',
+        'Cineon',
+        'ACES',
+        'AgX',
+        'Neutral',
+      ])
       .name('Tone Mapping')
       .onChange((value: string) => {
         const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-          'None': THREE.NoToneMapping,
-          'Linear': THREE.LinearToneMapping,
-          'Reinhard': THREE.ReinhardToneMapping,
-          'Cineon': THREE.CineonToneMapping,
-          'ACES': THREE.ACESFilmicToneMapping,
-          'AgX': THREE.AgXToneMapping,
-          'Neutral': THREE.NeutralToneMapping,
+          None: THREE.NoToneMapping,
+          Linear: THREE.LinearToneMapping,
+          Reinhard: THREE.ReinhardToneMapping,
+          Cineon: THREE.CineonToneMapping,
+          ACES: THREE.ACESFilmicToneMapping,
+          AgX: THREE.AgXToneMapping,
+          Neutral: THREE.NeutralToneMapping,
         };
         this.postProcessing.setToneMapping(toneMappingMap[value]);
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for tone mapping
     toneMappingControl.domElement.setAttribute(
       'title',
@@ -418,7 +426,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for FXAA
     fxaaControl.domElement.setAttribute(
       'title',
@@ -448,7 +456,7 @@ export class RenderingControls {
           msaaFolder.hide();
         }
       });
-    
+
     // Set tooltip for MSAA with warning
     msaaControl.domElement.setAttribute(
       'title',
@@ -487,7 +495,7 @@ export class RenderingControls {
           smaaFolder.hide();
         }
       });
-    
+
     // Set tooltip for SMAA
     smaaControl.domElement.setAttribute(
       'title',
@@ -548,7 +556,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF enabled
     dofEnabledControl.domElement.setAttribute(
       'title',
@@ -567,7 +575,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF focus
     dofFocusControl.domElement.setAttribute(
       'title',
@@ -586,7 +594,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for DOF strength
     dofStrengthControl.domElement.setAttribute(
       'title',
@@ -605,11 +613,14 @@ export class RenderingControls {
       .add(this.settings, 'chromaticAberrationEnabled')
       .name('Enabled')
       .onChange((value: boolean) => {
-        this.postProcessing.setChromaticAberration(value, this.settings.chromaticAberrationStrength);
+        this.postProcessing.setChromaticAberration(
+          value,
+          this.settings.chromaticAberrationStrength
+        );
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for chromatic aberration enabled
     chromaticEnabledControl.domElement.setAttribute(
       'title',
@@ -628,7 +639,7 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
-    
+
     // Set tooltip for chromatic aberration strength
     chromaticStrengthControl.domElement.setAttribute(
       'title',
@@ -819,7 +830,7 @@ export class RenderingControls {
   private updateNavigationControls(controlType: 'orbit' | 'fly'): void {
     const orbitFolder = this.orbitFolder;
     const flyFolder = this.flyFolder;
-    
+
     if (controlType === 'orbit') {
       if (orbitFolder) {
         orbitFolder.show();
@@ -886,43 +897,43 @@ export class RenderingControls {
    * Sync current state from scene manager
    * This ensures the GUI reflects the actual state when opened
    */
-  private syncCurrentState(): void {
+  public syncCurrentState(): void {
     // Get current control type
     const currentControlType = this.sceneManager.controls.getControlType();
     this.settings.controlType = currentControlType;
-    
+
     // Get current controls instance
     const controls = this.sceneManager.controls.getControls();
-    
+
     // Update fly controls state using type guard
     if (isFlyControls(controls)) {
       this.settings.flyInertialMode = controls.inertialMode;
       this.settings.flyMovementSpeed = controls.movementSpeed;
       this.settings.flyDamping = controls.damping;
     }
-    
+
     // Update orbit controls state using type guard
     if (isOrbitControls(controls)) {
       this.settings.autoRotate = controls.autoRotate;
       this.settings.autoRotateSpeed = controls.autoRotateSpeed;
     }
-    
+
     // Update specific controllers that we have references to
     if (this.controllers.controlType) {
       this.controllers.controlType.setValue(currentControlType);
       this.controllers.controlType.updateDisplay();
     }
-    
+
     if (this.controllers.flyInertialMode) {
       this.controllers.flyInertialMode.setValue(this.settings.flyInertialMode);
       this.controllers.flyInertialMode.updateDisplay();
     }
-    
+
     if (this.controllers.flyMovementSpeed) {
       this.controllers.flyMovementSpeed.setValue(this.settings.flyMovementSpeed);
       this.controllers.flyMovementSpeed.updateDisplay();
     }
-    
+
     if (this.controllers.flyDamping) {
       this.controllers.flyDamping.setValue(this.settings.flyDamping);
       this.controllers.flyDamping.updateDisplay();
@@ -933,22 +944,22 @@ export class RenderingControls {
         this.controllers.flyDamping.hide();
       }
     }
-    
+
     if (this.controllers.autoRotate) {
       this.controllers.autoRotate.setValue(this.settings.autoRotate);
       this.controllers.autoRotate.updateDisplay();
     }
-    
+
     if (this.controllers.autoRotateSpeed) {
       this.controllers.autoRotateSpeed.setValue(this.settings.autoRotateSpeed);
       this.controllers.autoRotateSpeed.updateDisplay();
     }
-    
+
     // Update all other controllers
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
     });
-    
+
     // Update folder visibility based on current control type
     this.updateNavigationControls(currentControlType);
   }
@@ -993,13 +1004,13 @@ export class RenderingControls {
 
     // Apply tone mapping
     const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-      'None': THREE.NoToneMapping,
-      'Linear': THREE.LinearToneMapping,
-      'Reinhard': THREE.ReinhardToneMapping,
-      'Cineon': THREE.CineonToneMapping,
-      'ACES': THREE.ACESFilmicToneMapping,
-      'AgX': THREE.AgXToneMapping,
-      'Neutral': THREE.NeutralToneMapping,
+      None: THREE.NoToneMapping,
+      Linear: THREE.LinearToneMapping,
+      Reinhard: THREE.ReinhardToneMapping,
+      Cineon: THREE.CineonToneMapping,
+      ACES: THREE.ACESFilmicToneMapping,
+      AgX: THREE.AgXToneMapping,
+      Neutral: THREE.NeutralToneMapping,
     };
     this.postProcessing.setToneMapping(toneMappingMap[this.settings.toneMapping]);
 
@@ -1025,10 +1036,10 @@ export class RenderingControls {
   show(): void {
     // Sync current state from scene manager before showing
     this.syncCurrentState();
-    
+
     this.gui.show();
     this.visible = true;
-    
+
     // Add click handler to auto-blur inputs when clicking outside them
     // This helps prevent focus getting stuck
     setTimeout(() => {
@@ -1046,13 +1057,13 @@ export class RenderingControls {
     if (activeElement && activeElement.blur) {
       activeElement.blur();
     }
-    
+
     // Remove click outside handler
     this.removeClickOutsideHandler();
-    
+
     this.gui.hide();
     this.visible = false;
-    
+
     // Focus the canvas to ensure keyboard events work
     this.sceneManager.renderer.domElement.focus();
   }
@@ -1103,7 +1114,7 @@ export class RenderingControls {
     // Start observing the GUI element for changes
     observer.observe(this.gui.domElement, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
 
     // Also handle existing inputs
@@ -1162,8 +1173,12 @@ export class RenderingControls {
     // Add keydown listener to the GUI's DOM element
     this.gui.domElement.addEventListener('keydown', (event: KeyboardEvent) => {
       // Check for 'R' key without modifiers
-      if ((event.key === 'r' || event.key === 'R') && 
-          !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      if (
+        (event.key === 'r' || event.key === 'R') &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         this.hide();
@@ -1175,11 +1190,15 @@ export class RenderingControls {
         this.hide();
       }
     });
-    
+
     // Also handle keyup to prevent event propagation
     this.gui.domElement.addEventListener('keyup', (event: KeyboardEvent) => {
-      if ((event.key === 'r' || event.key === 'R') && 
-          !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      if (
+        (event.key === 'r' || event.key === 'R') &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -1190,28 +1209,27 @@ export class RenderingControls {
    * Add click outside handler to blur inputs
    */
   private clickOutsideHandler?: (e: MouseEvent) => void;
-  
+
   private addClickOutsideHandler(): void {
     if (this.clickOutsideHandler) return;
-    
+
     this.clickOutsideHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       // If clicking outside the GUI panel, blur any focused element within it
       if (!this.gui.domElement.contains(target)) {
         const activeElement = document.activeElement as HTMLElement;
-        if (activeElement && activeElement.blur && 
-            this.gui.domElement.contains(activeElement)) {
+        if (activeElement && activeElement.blur && this.gui.domElement.contains(activeElement)) {
           activeElement.blur();
           // Also focus the canvas for good measure
           this.sceneManager.renderer.domElement.focus();
         }
       }
     };
-    
+
     // Use capture phase to ensure we get the event first
     document.addEventListener('mousedown', this.clickOutsideHandler, true);
   }
-  
+
   private removeClickOutsideHandler(): void {
     if (this.clickOutsideHandler) {
       document.removeEventListener('mousedown', this.clickOutsideHandler, true);

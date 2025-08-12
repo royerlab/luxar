@@ -37,7 +37,7 @@ if (isDebugMode) {
   window.__luxarDebug = {
     app,
     consoleInterceptor,
-    version: '1.0.0'
+    version: '1.0.0',
   };
   console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
 }

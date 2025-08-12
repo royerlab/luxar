@@ -122,12 +122,14 @@ export function createGaussianPointMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       hdrMultiplier: { value: SHADER_CONFIG.POINTS.hdrMultiplier },
-      fov: { value: 60 * Math.PI / 180 },  // Default 60 degrees in radians
+      fov: { value: (60 * Math.PI) / 180 }, // Default 60 degrees in radians
       // Use framebuffer resolution (CSS pixels * devicePixelRatio)
-      resolution: { value: new THREE.Vector2(
-        window.innerWidth * window.devicePixelRatio,
-        window.innerHeight * window.devicePixelRatio
-      ) }
+      resolution: {
+        value: new THREE.Vector2(
+          window.innerWidth * window.devicePixelRatio,
+          window.innerHeight * window.devicePixelRatio
+        ),
+      },
     },
     vertexShader: GAUSSIAN_VERTEX_SHADER,
     fragmentShader: GAUSSIAN_FRAGMENT_SHADER,

@@ -66,7 +66,7 @@ def create_depth_grid(grid_size=10, layers=5, spacing=1.0):
         z = layer * spacing * 2
         # Place marker at edge of grid
         marker_positions.append([grid_size * spacing / 2 + 1, 0, z])
-        marker_colors.append([1, 1, 1])  # White markers
+        marker_colors.append([1.0, 1.0, 1.0])  # White markers
 
     return (
         np.array(positions, dtype=np.float32),
@@ -100,7 +100,7 @@ def create_depth_labels(layers=5, spacing=1.0):
         # Create a simple marker for each layer
         for i in range(layer + 1):  # Number of dots indicates layer
             positions.append([base_x - i * 0.3, base_y, z])
-            colors.append([1, 1, 0])  # Yellow for visibility
+            colors.append([1.0, 1.0, 0.0])  # Yellow for visibility
 
     return (np.array(positions, dtype=np.float32), np.array(colors, dtype=np.float32))
 

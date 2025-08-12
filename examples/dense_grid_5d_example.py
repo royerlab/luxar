@@ -10,7 +10,7 @@ import luxar
 from luxar import Scene, transforms
 
 # Create a 5D scene (X, Y, Z, Time, Channel)
-scene_path = Path(__file__).parent / "test_5d_dense_grid_example.zarr"
+scene_path = Path(__file__).parent / "dense_grid_5d_example.zarr"
 scene = Scene(
     scene_path,
     dimensions=luxar.Dimensions(

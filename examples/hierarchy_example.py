@@ -83,7 +83,7 @@ def main():
     scene.add_points(
         "CentralConstellation",
         central_positions,
-        colors=[255, 255, 255],  # White
+        colors=[1.0, 1.0, 1.0],  # White
         radii=0.05,
         sharpness=2.0,
         opacity=1.0,
@@ -108,7 +108,7 @@ def main():
     scene.add_points(
         "Sun",
         sun_positions,
-        colors=[255, 200, 100],  # Yellow-orange
+        colors=[1.0, 0.78, 0.39],  # Yellow-orange
         radii=0.08,
         parent=sun_group,
         # Inherits: opacity=0.9, gamma=1.2, blending_mode="additive"
@@ -131,7 +131,7 @@ def main():
     scene.add_points(
         "Earth",
         earth_positions,
-        colors=[100, 150, 255],  # Blue
+        colors=[0.39, 0.59, 1.0],  # Blue
         radii=0.06,
         parent=earth_group,
         # Inherits: opacity=0.8, gamma=1.2, blending_mode="additive"
@@ -143,7 +143,7 @@ def main():
     scene.add_points(
         "Moon",
         moon_positions,
-        colors=[200, 200, 200],  # Gray
+        colors=[0.78, 0.78, 0.78],  # Gray
         radii=0.04,
         transform=moon_transform,
         parent=earth_group,
@@ -164,7 +164,7 @@ def main():
     scene.add_points(
         "Mars",
         mars_positions,
-        colors=[255, 100, 100],  # Red
+        colors=[1.0, 0.39, 0.39],  # Red
         radii=0.05,
         parent=mars_group,
         # Inherits: opacity=0.9, gamma=1.0, blending_mode="additive"
@@ -190,7 +190,7 @@ def main():
     scene.add_points(
         "CentralHub",
         hub_positions,
-        colors=[150, 255, 150],  # Light green
+        colors=[0.59, 1.0, 0.59],  # Light green
         radii=0.07,
         parent=station_group,
     )
@@ -206,7 +206,7 @@ def main():
         scene.add_points(
             f"DockingRing{i + 1}",
             ring_positions,
-            colors=[255, 150, 255],  # Light magenta
+            colors=[1.0, 0.59, 1.0],  # Light magenta
             radii=0.05,
             transform=ring_transform,
             parent=station_group,
@@ -234,7 +234,7 @@ def main():
     scene.add_points(
         "Star1",
         star1_positions,
-        colors=[255, 255, 200],  # Bright white-yellow
+        colors=[1.0, 1.0, 0.78],  # Bright white-yellow
         radii=0.04,
         transform=transforms.translate(-0.2, 0, 0),
         parent=binary_group,
@@ -244,7 +244,7 @@ def main():
     scene.add_points(
         "Star2",
         star2_positions,
-        colors=[255, 150, 150],  # Light red
+        colors=[1.0, 0.59, 0.59],  # Light red
         radii=0.035,
         transform=transforms.translate(0.2, 0, 0),
         parent=binary_group,

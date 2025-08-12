@@ -7,7 +7,7 @@
 // - Proper cleanup and resource management
 
 import * as THREE from 'three';
-import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
+import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
 import { PerformanceMonitor } from '../ui/performance-monitor';
 import { PostProcessingManager } from '../rendering/post-processing';
@@ -45,7 +45,7 @@ export class AnimationController {
     _renderer: THREE.WebGLRenderer,
     _scene: THREE.Scene,
     _camera: THREE.PerspectiveCamera,
-    private controls: ArcballControls,
+    private controls: ControlsManager,
     private postProcessing: PostProcessingManager
   ) {
     // Initialize performance monitoring for frame timing analysis

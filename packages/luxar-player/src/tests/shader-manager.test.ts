@@ -28,7 +28,7 @@ describe('shader-manager', () => {
     it('should have valid point configuration', () => {
       expect(SHADER_CONFIG.POINTS).toBeDefined();
       expect(SHADER_CONFIG.POINTS.size).toBe(8.0);
-      expect(SHADER_CONFIG.POINTS.hdrMultiplier).toBe(13.0);
+      expect(SHADER_CONFIG.POINTS.hdrMultiplier).toBe(16.0);
       expect(SHADER_CONFIG.POINTS.baseAlpha).toBe(0.01);
       expect(SHADER_CONFIG.POINTS.falloffSteepness).toBe(20.0);
     });
@@ -41,7 +41,7 @@ describe('shader-manager', () => {
       expect(THREE.ShaderMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
           uniforms: expect.objectContaining({
-            hdrMultiplier: expect.objectContaining({ value: 13.0 }),
+            hdrMultiplier: expect.objectContaining({ value: 16.0 }),
           }),
           transparent: true,
           depthWrite: false,
@@ -77,7 +77,9 @@ describe('shader-manager', () => {
       const vertexShader = (THREE.ShaderMaterial as any).mock.calls[0][0].vertexShader;
       expect(vertexShader).toContain('float sizeCompensation = sqrt(vSharpness / 2.0)');
       // Updated to match world-space sizing implementation
-      expect(vertexShader).toContain('gl_PointSize = clamp(pointSize * sizeCompensation, 1.0, 500.0)');
+      expect(vertexShader).toContain(
+        'gl_PointSize = clamp(pointSize * sizeCompensation, 1.0, 500.0)'
+      );
     });
 
     it('should use HDR multiplier uniform in fragment shader', () => {

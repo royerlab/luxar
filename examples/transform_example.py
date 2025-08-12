@@ -45,16 +45,16 @@ def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]
     colors = np.array(
         [
             # X-axis (red)
-            [255, 100, 100],
-            [255, 100, 100],
+            [1.0, 0.39, 0.39],
+            [1.0, 0.39, 0.39],
             # Y-axis (green)
-            [100, 255, 100],
-            [100, 255, 100],
+            [0.39, 1.0, 0.39],
+            [0.39, 1.0, 0.39],
             # Z-axis (blue)
-            [100, 100, 255],
-            [100, 100, 255],
+            [0.39, 0.39, 1.0],
+            [0.39, 0.39, 1.0],
         ],
-        dtype=np.uint8,
+        dtype=np.float32,
     )
 
     return positions, colors
@@ -119,7 +119,7 @@ def main():
     scene.add_points(
         "TranslatedCube",
         cube_positions,
-        colors=[255, 200, 100],  # Orange
+        colors=[1.0, 0.78, 0.39],  # Orange
         radii=0.08,
         transform=translation,
     )
@@ -144,7 +144,7 @@ def main():
     scene.add_points(
         "RotatedCube",
         cube_positions,
-        colors=[100, 255, 200],  # Cyan
+        colors=[0.39, 1.0, 0.78],  # Cyan
         radii=0.08,
         transform=rotated_transform,
     )
@@ -168,7 +168,7 @@ def main():
     scene.add_points(
         "ScaledCube",
         cube_positions,
-        colors=[255, 100, 200],  # Magenta
+        colors=[1.0, 0.39, 0.78],  # Magenta
         radii=0.08,
         transform=scaled_transform,
     )
@@ -195,7 +195,7 @@ def main():
     scene.add_points(
         "ComplexTransformCube",
         cube_positions,
-        colors=[200, 100, 255],  # Purple
+        colors=[0.78, 0.39, 1.0],  # Purple
         radii=0.08,
         transform=complex_transform,
     )
@@ -226,7 +226,7 @@ def main():
     scene.add_points(
         "Child1",
         small_cube_positions,
-        colors=[255, 255, 100],  # Yellow
+        colors=[1.0, 1.0, 0.39],  # Yellow
         radii=0.06,
         transform=child1_transform,
         parent=parent_group,
@@ -239,7 +239,7 @@ def main():
     scene.add_points(
         "Child2",
         small_cube_positions,
-        colors=[100, 255, 255],  # Light blue
+        colors=[0.39, 1.0, 1.0],  # Light blue
         radii=0.06,
         transform=child2_transform,
         parent=parent_group,
