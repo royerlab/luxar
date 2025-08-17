@@ -12,7 +12,7 @@
 
 export interface MonitorEvent {
   timestamp: number;
-  type: 'load' | 'evict' | 'hit' | 'miss' | 'preload';
+  type: 'load' | 'evict' | 'hit' | 'miss' | 'preload' | 'memory' | 'clear' | 'show' | 'hide';
   message: string;
   details?: any;
 }
@@ -418,7 +418,7 @@ export class LazyLoadingMonitor {
         <span style="color: rgba(255, 255, 255, 0.6); font-size: 10px;">Chunks Cached</span><br>
         <span style="color: #4CAF50; font-weight: bold; font-size: 14px;">${stats.numChunks}</span>
       </div>
-      <div title="Memory consumed by cached chunks / Maximum allowed memory">
+      <div title="Memory consumed by cached chunks / Maximum allowed memory (auto-detected)">
         <span style="color: rgba(255, 255, 255, 0.6); font-size: 10px;">Memory Used</span><br>
         <span style="color: ${stats.utilizationPercent > 80 ? '#f44336' : '#4CAF50'}; font-weight: bold; font-size: 14px;">
           ${stats.totalSizeMB.toFixed(1)} / ${stats.maxSizeMB}MB
@@ -610,15 +610,15 @@ export class LazyLoadingMonitor {
       </div>
       
       ${
-        totalPointClouds > 0
-          ? `
+  totalPointClouds > 0
+    ? `
       <div style="margin-top: 5px;">
         <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Point Clouds:</div>
         <div style="color: #FF9800; font-size: 11px;">${totalPointClouds} object${totalPointClouds > 1 ? 's' : ''}</div>
       </div>
       `
-          : ''
-      }
+    : ''
+}
       
       ${sliceVisualization}
       
@@ -699,6 +699,14 @@ export class LazyLoadingMonitor {
           case 'preload':
             icon = '→';
             color = '#9C27B0';
+            break;
+          case 'memory':
+            icon = '💾';
+            color = '#FF9800';
+            break;
+          case 'clear':
+            icon = '🗑';
+            color = '#607D8B';
             break;
         }
 

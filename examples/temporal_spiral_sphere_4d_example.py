@@ -176,8 +176,8 @@ def main():
     aprint("=" * 50)
 
     # Parameters - increased for testing lazy loading
-    n_points_per_frame = 100000  # 100k points per frame for real testing
-    n_frames = 100  # 100 frames
+    n_points_per_frame = 200000
+    n_frames = 512
     sphere_radius = 10.0
 
     # Calculate total rotation over all frames (10 points worth)
