@@ -91,18 +91,18 @@ def main():
     scene.attrs["description"] = """
     World-Space Sizing Test
     =======================
-    
+
     This minimal scene tests world-space point sizing:
-    
+
     Main test: Red and green points
     - Both have radius 1.0
     - Centers are 2.0 units apart
     - They should just touch at the origin
-    
+
     Reference points: Yellow to blue gradient
     - Located at different depths (5, 10, 20 units)
     - Help verify perspective scaling
-    
+
     Expected behavior:
     - Red and green points should touch but not overlap
     - This relationship should be maintained at any:

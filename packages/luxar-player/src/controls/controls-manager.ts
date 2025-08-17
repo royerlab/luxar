@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { LuxarFlyControls } from './luxar-fly-controls';
+import { CONTROL_CONFIG } from './control-config';
 
 export type ControlType = 'orbit' | 'fly';
 
@@ -18,9 +19,11 @@ export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
   flyMovementSpeed?: number;
+  flyRotationSpeed?: number;
   flyLookSpeed?: number;
   flyInertialMode?: boolean;
   flyDamping?: number;
+  flyRotationDamping?: number;
   flyAcceleration?: number;
 }
 
@@ -37,15 +40,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private currentControls: OrbitControls | LuxarFlyControls | null = null;
   private currentType: ControlType = 'orbit';
 
-  // Configuration
+  // Configuration - uses defaults from CONTROL_CONFIG
   private config: ControlsManagerConfig = {
     autoRotate: false,
-    autoRotateSpeed: 0.25,
-    flyMovementSpeed: 5.0,
-    flyLookSpeed: 0.002,
-    flyInertialMode: false,
-    flyDamping: 0.999,
-    flyAcceleration: 0.5,
+    autoRotateSpeed: CONTROL_CONFIG.orbit.autoRotate.speed.default,
+    flyMovementSpeed: CONTROL_CONFIG.fly.movement.speed.default,
+    flyRotationSpeed: CONTROL_CONFIG.fly.rotation.speed.default,
+    flyLookSpeed: CONTROL_CONFIG.fly.look.mouseSpeed.default,
+    flyInertialMode: CONTROL_CONFIG.fly.inertialMode.default,
+    flyDamping: CONTROL_CONFIG.fly.movement.damping.default,
+    flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default,
+    flyAcceleration: CONTROL_CONFIG.fly.movement.acceleration.default,
   };
 
   // Saved camera state for switching
@@ -159,9 +164,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private createFlyControls(): void {
     const controls = new LuxarFlyControls(this.camera, this.domElement, {
       movementSpeed: this.config.flyMovementSpeed,
+      rotationSpeed: this.config.flyRotationSpeed,
       lookSpeed: this.config.flyLookSpeed,
       inertialMode: this.config.flyInertialMode,
       damping: this.config.flyDamping,
+      rotationDamping: this.config.flyRotationDamping,
       acceleration: this.config.flyAcceleration,
     });
 
@@ -296,6 +303,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Set fly controls rotation speed
+   */
+  public setFlyRotationSpeed(speed: number): void {
+    this.config.flyRotationSpeed = speed;
+
+    if (this.currentControls instanceof LuxarFlyControls) {
+      this.currentControls.rotationSpeed = speed;
+    }
+  }
+
+  /**
    * Set fly controls inertial mode
    */
   public setFlyInertialMode(inertial: boolean): void {
@@ -314,6 +332,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     if (this.currentControls instanceof LuxarFlyControls) {
       this.currentControls.damping = damping;
+    }
+  }
+
+  /**
+   * Set fly controls rotation damping
+   */
+  public setFlyRotationDamping(damping: number): void {
+    this.config.flyRotationDamping = damping;
+
+    if (this.currentControls instanceof LuxarFlyControls) {
+      this.currentControls.rotationDamping = damping;
     }
   }
 
@@ -394,6 +423,20 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return this.currentControls;
     }
     return null;
+  }
+
+  /**
+   * Get the fly controls configuration
+   * This returns the stored config regardless of which control type is active
+   */
+  public getFlyConfig(): { inertialMode: boolean; damping: number; rotationDamping: number; movementSpeed: number; rotationSpeed: number } {
+    return {
+      inertialMode: this.config.flyInertialMode ?? CONTROL_CONFIG.fly.inertialMode.default,
+      damping: this.config.flyDamping ?? CONTROL_CONFIG.fly.movement.damping.default,
+      rotationDamping: this.config.flyRotationDamping ?? CONTROL_CONFIG.fly.rotation.damping.default,
+      movementSpeed: this.config.flyMovementSpeed ?? CONTROL_CONFIG.fly.movement.speed.default,
+      rotationSpeed: this.config.flyRotationSpeed ?? CONTROL_CONFIG.fly.rotation.speed.default,
+    };
   }
 
   /**

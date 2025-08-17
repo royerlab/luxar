@@ -1,12 +1,13 @@
 /**
- * Custom fly controls for Luxar with inertial and non-inertial modes
+ * Custom fly controls for Luxar with quaternion-based rotation and inertial physics
  *
  * Features:
- * - Arrow keys for movement (forward/back/strafe)
- * - Shift+arrows for vertical movement
- * - Mouse drag for camera rotation
- * - Two modes: Direct (velocity) and Inertial (acceleration)
- * - Configurable damping for smooth deceleration
+ * - WASD keys for movement (forward/back/strafe)
+ * - Alt+W/S for vertical movement
+ * - Arrow keys and mouse drag for camera rotation
+ * - Quaternion-based rotation (no gimbal lock, unlimited freedom)
+ * - Unified physics model with configurable damping
+ * - Smooth inertial physics for both translation and rotation
  */
 
 import * as THREE from 'three';
@@ -14,9 +15,11 @@ import { CONTROL_CONFIG } from './control-config';
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
-  lookSpeed?: number; // Radians per pixel
-  inertialMode?: boolean; // True for acceleration, false for velocity
-  damping?: number; // 0.9-0.99 for inertial mode
+  rotationSpeed?: number; // Radians per second for arrow keys
+  lookSpeed?: number; // Radians per pixel for mouse
+  inertialMode?: boolean; // True for low damping, false for high damping
+  damping?: number; // Translation damping: 0.9-0.99 for inertial mode
+  rotationDamping?: number; // Rotation damping: 0.9-0.99 for inertial mode
   acceleration?: number; // Acceleration rate for inertial mode
 }
 
@@ -29,9 +32,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   // Configuration
   public movementSpeed: number = CONTROL_CONFIG.fly.movement.speed.default;
+  public rotationSpeed: number = CONTROL_CONFIG.fly.rotation.speed.default;
   public lookSpeed: number = CONTROL_CONFIG.fly.look.mouseSpeed.default;
-  public inertialMode: boolean = false;
+  public inertialMode: boolean = CONTROL_CONFIG.fly.inertialMode.default;
   public damping: number = CONTROL_CONFIG.fly.movement.damping.default;
+  public rotationDamping: number = CONTROL_CONFIG.fly.rotation.damping.default;
   public acceleration: number = CONTROL_CONFIG.fly.movement.acceleration.default;
 
   // Movement state
@@ -48,22 +53,23 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private lookState = {
     horizontal: 0, // -1 for left, 1 for right
     vertical: 0, // -1 for up, 1 for down
+    roll: 0, // -1 for Q (roll left), 1 for E (roll right)
   };
+  
+  // Speed boost state
+  private speedBoost: boolean = false;
 
-  // Look speed for arrow keys (radians per second)
-  public arrowLookSpeed: number = CONTROL_CONFIG.fly.look.keyboardSpeed.default;
+  // Velocity vectors for physics
+  private velocity = new THREE.Vector3(0, 0, 0); // Translational velocity in world space
+  private angularVelocity = new THREE.Vector3(0, 0, 0); // Angular velocity in world space (rad/s)
 
-  // Velocity vector for inertial mode
-  private velocity = new THREE.Vector3(0, 0, 0);
+  // Quaternion-based orientation
+  private orientation = new THREE.Quaternion();
 
   // Mouse state for looking
   private isMouseDown = false;
   private mouseX = 0;
   private mouseY = 0;
-  private lat = 0;
-  private lon = 0;
-  private phi = 0;
-  private theta = 0;
 
   // References
   private camera: THREE.PerspectiveCamera;
@@ -88,9 +94,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Apply configuration
     if (config) {
       this.movementSpeed = config.movementSpeed ?? this.movementSpeed;
+      this.rotationSpeed = config.rotationSpeed ?? this.rotationSpeed;
       this.lookSpeed = config.lookSpeed ?? this.lookSpeed;
       this.inertialMode = config.inertialMode ?? this.inertialMode;
       this.damping = config.damping ?? this.damping;
+      this.rotationDamping = config.rotationDamping ?? this.rotationDamping;
       this.acceleration = config.acceleration ?? this.acceleration;
     }
 
@@ -188,7 +196,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         activeElement.tagName === 'TEXTAREA' ||
         activeElement.getAttribute('contenteditable') === 'true');
 
-    if (!isTyping && ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(event.key)) {
+    if (!isTyping && ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E'].includes(event.key)) {
       event.preventDefault();
     }
 
@@ -214,6 +222,20 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       case 'd':
         this.moveState.right = 1; // D for strafe right
         break;
+      case 'q':
+        this.lookState.roll = -1; // Q for roll left
+        console.log('🔧 [Luxar] Q pressed - roll left', this.lookState.roll);
+        break;
+      case 'e':
+        this.lookState.roll = 1; // E for roll right
+        console.log('🔧 [Luxar] E pressed - roll right', this.lookState.roll);
+        break;
+    }
+    
+    // Speed boost with Shift key
+    if (event.key === 'Shift') {
+      this.speedBoost = true;
+      console.log('🔧 [Luxar] Shift pressed - speed boost ON');
     }
 
     // Arrow keys for camera look direction
@@ -254,6 +276,17 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       case 'd':
         this.moveState.right = 0;
         break;
+      case 'q':
+        this.lookState.roll = 0;
+        break;
+      case 'e':
+        this.lookState.roll = 0;
+        break;
+    }
+    
+    // Release speed boost
+    if (event.key === 'Shift') {
+      this.speedBoost = false;
     }
 
     // Arrow keys for camera look release
@@ -306,52 +339,32 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.mouseX = event.clientX;
     this.mouseY = event.clientY;
 
-    // Update look angles
-    this.lon -= deltaX * this.lookSpeed * 100;
-    this.lat += deltaY * this.lookSpeed * 100;
+    // Apply angular impulse based on current camera orientation
+    const torquePitch = deltaY * this.lookSpeed * 10; // Pitch (up/down)
+    const torqueYaw = -deltaX * this.lookSpeed * 10; // Yaw (left/right)
 
-    // Clamp vertical rotation
-    this.lat = Math.max(-85, Math.min(85, this.lat));
+    // Get camera's local axes for consistent airplane-like controls
+    const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
+    const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
 
-    this.updateOrientation();
+    // Add impulse to world-space angular velocity
+    this.angularVelocity.addScaledVector(cameraRight, torquePitch);
+    this.angularVelocity.addScaledVector(cameraUp, torqueYaw);
 
     this.dispatchEvent({ type: 'change' });
   }
 
   /**
-   * Initialize lat/lon from current camera orientation
+   * Initialize orientation from current camera quaternion
    */
   private initializeFromCamera(): void {
-    // Get the camera's forward direction
-    const forward = new THREE.Vector3();
-    this.camera.getWorldDirection(forward);
-    forward.normalize();
-
-    // Convert to spherical coordinates
-    // Longitude (horizontal rotation)
-    this.lon = THREE.MathUtils.radToDeg(Math.atan2(forward.z, forward.x));
-
-    // Latitude (vertical rotation)
-    const horizontalLength = Math.sqrt(forward.x * forward.x + forward.z * forward.z);
-    this.lat = THREE.MathUtils.radToDeg(Math.atan2(forward.y, horizontalLength));
-
-    // Update phi and theta
-    this.phi = THREE.MathUtils.degToRad(90 - this.lat);
-    this.theta = THREE.MathUtils.degToRad(this.lon);
+    // Copy the camera's current orientation
+    this.orientation.copy(this.camera.quaternion);
   }
 
   private updateOrientation(): void {
-    // Convert lat/lon to spherical coordinates
-    this.phi = THREE.MathUtils.degToRad(90 - this.lat);
-    this.theta = THREE.MathUtils.degToRad(this.lon);
-
-    // Calculate look direction
-    const lookAt = new THREE.Vector3();
-    lookAt.x = this.camera.position.x + Math.sin(this.phi) * Math.cos(this.theta);
-    lookAt.y = this.camera.position.y + Math.cos(this.phi);
-    lookAt.z = this.camera.position.z + Math.sin(this.phi) * Math.sin(this.theta);
-
-    this.camera.lookAt(lookAt);
+    // Apply the orientation quaternion to the camera
+    this.camera.quaternion.copy(this.orientation);
   }
 
   /**
@@ -361,88 +374,115 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   public update(delta: number): void {
     if (!this.enabled) return;
 
-    // Get movement vectors relative to camera orientation
-    const forward = new THREE.Vector3();
-    const right = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0); // World up
-
-    // Get camera's forward direction (negative Z in camera space)
-    this.camera.getWorldDirection(forward);
-    forward.normalize();
-
-    // Get camera's right direction (X axis in camera space)
-    right.setFromMatrixColumn(this.camera.matrix, 0);
-    right.normalize();
+    // Get movement vectors from orientation quaternion for consistency
+    // This ensures movement is perfectly tied to the control model
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation).normalize();
+    const up = new THREE.Vector3(0, 1, 0); // Keep world up for vertical rise/fall
 
     let isMoving = false;
 
-    if (this.inertialMode) {
-      // Inertial mode: apply acceleration
-      const accel = new THREE.Vector3();
+    // Determine effective damping based on mode
+    // Non-inertial mode uses high damping for immediate response
+    const effectiveDamping = this.inertialMode ? this.damping : 0.5;
+    const effectiveRotationDamping = this.inertialMode ? this.rotationDamping : 0.5;
 
-      // Calculate acceleration from input
-      accel.addScaledVector(
-        forward,
-        (this.moveState.forward - this.moveState.back) * this.acceleration
-      );
-      accel.addScaledVector(
-        right,
-        (this.moveState.right - this.moveState.left) * this.acceleration
-      );
-      accel.addScaledVector(up, (this.moveState.up - this.moveState.down) * this.acceleration);
+    // Apply speed boost multiplier (2x speed when Shift is held)
+    const speedMultiplier = this.speedBoost ? 2.0 : 1.0;
+    
+    // Always use physics-based movement (unified approach)
+    // Calculate acceleration from input
+    const accel = new THREE.Vector3();
+    accel.addScaledVector(
+      forward,
+      (this.moveState.forward - this.moveState.back) * this.acceleration * speedMultiplier
+    );
+    accel.addScaledVector(
+      right,
+      (this.moveState.right - this.moveState.left) * this.acceleration * speedMultiplier
+    );
+    accel.addScaledVector(up, (this.moveState.up - this.moveState.down) * this.acceleration * speedMultiplier);
 
-      // Update velocity
-      this.velocity.addScaledVector(accel, delta);
+    // Update velocity
+    this.velocity.addScaledVector(accel, delta);
 
-      // Apply damping
-      this.velocity.multiplyScalar(
-        Math.pow(this.damping, delta * CONTROL_CONFIG.fly.physics.dampingPower)
-      ); // Normalize to 60fps
+    // Apply damping
+    this.velocity.multiplyScalar(
+      Math.pow(effectiveDamping, delta * CONTROL_CONFIG.fly.physics.dampingPower)
+    );
 
-      // Apply velocity to position
-      this.camera.position.addScaledVector(this.velocity, delta);
+    // Apply velocity to position
+    this.camera.position.addScaledVector(this.velocity, delta);
 
-      // Check if we're still moving (using configured threshold)
-      const velocityMagnitude = this.velocity.length();
-      if (velocityMagnitude < CONTROL_CONFIG.fly.physics.velocityThreshold) {
-        // Stop tiny movements
-        this.velocity.set(0, 0, 0);
-      } else {
-        // We're still moving - need to keep rendering
-        isMoving = true;
-      }
+    // Check if we're still moving (using configured threshold)
+    if (this.velocity.length() < CONTROL_CONFIG.fly.physics.velocityThreshold) {
+      this.velocity.set(0, 0, 0);
     } else {
-      // Direct mode: immediate velocity control
-      const movement = new THREE.Vector3();
+      isMoving = true;
+    }
 
-      // Calculate movement from input - in camera's frame of reference
-      movement.addScaledVector(forward, this.moveState.forward - this.moveState.back);
-      movement.addScaledVector(right, this.moveState.right - this.moveState.left);
-      movement.addScaledVector(up, this.moveState.up - this.moveState.down);
-
-      // Check if there's any active movement
-      if (movement.length() > 0) {
-        isMoving = true;
+    // Handle angular velocity for rotation with arrow keys and Q/E roll
+    // True airplane-like fly controls: all rotations relative to camera's local axes
+    if (this.lookState.horizontal !== 0 || this.lookState.vertical !== 0 || this.lookState.roll !== 0) {
+      // Get camera's local axes in world space
+      // These define the rotation axes for consistent airplane-like controls
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
+      const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
+      
+      if (this.inertialMode) {
+        // Apply angular acceleration (torque) 
+        const torque = new THREE.Vector3();
+        // Pitch: rotate around camera's local right axis (negative for correct up/down)
+        torque.addScaledVector(cameraRight, -this.lookState.vertical * this.rotationSpeed);
+        // Yaw: rotate around camera's local up axis
+        torque.addScaledVector(cameraUp, -this.lookState.horizontal * this.rotationSpeed);
+        // Roll: rotate around camera's local forward axis
+        torque.addScaledVector(cameraForward, this.lookState.roll * this.rotationSpeed);
+        if (this.lookState.roll !== 0) {
+          console.log('🔧 [Luxar] Applying roll torque:', this.lookState.roll * this.rotationSpeed);
+        }
+        
+        // Add torque to world-space angular velocity
+        this.angularVelocity.addScaledVector(torque, delta);
+      } else {
+        // Non-inertial: directly set angular velocity
+        this.angularVelocity.set(0, 0, 0);
+        this.angularVelocity.addScaledVector(cameraRight, -this.lookState.vertical * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(cameraUp, -this.lookState.horizontal * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(cameraForward, this.lookState.roll * this.rotationSpeed);
       }
-
-      // Apply movement scaled by speed and delta
-      movement.multiplyScalar(this.movementSpeed * delta);
-      this.camera.position.add(movement);
+    } else if (!this.inertialMode) {
+      // In non-inertial mode, stop rotation when keys are released
+      // High damping will handle this quickly
     }
 
-    // Apply arrow key look changes
-    if (this.lookState.horizontal !== 0 || this.lookState.vertical !== 0) {
-      // Update look angles based on arrow keys
-      this.lon += this.lookState.horizontal * this.arrowLookSpeed * delta * 100;
-      this.lat -= this.lookState.vertical * this.arrowLookSpeed * delta * 100;
+    // Apply angular velocity to orientation
+    const angularSpeed = this.angularVelocity.length();
+    if (angularSpeed > CONTROL_CONFIG.fly.physics.angularVelocityThreshold) {
+      // Create rotation from angular velocity
+      const angle = angularSpeed * delta;
+      const axis = this.angularVelocity.clone().normalize();
+      const deltaRotation = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+      
+      // Apply WORLD-space delta rotation (pre-multiply)
+      this.orientation.premultiply(deltaRotation);
+      this.orientation.normalize();
 
-      // Clamp vertical rotation
-      this.lat = Math.max(-85, Math.min(85, this.lat));
-
-      isMoving = true; // Keep rendering active while looking
+      isMoving = true;
     }
 
-    // Update camera orientation for look changes
+    // Apply angular damping to world-space angular velocity
+    this.angularVelocity.multiplyScalar(
+      Math.pow(effectiveRotationDamping, delta * CONTROL_CONFIG.fly.physics.dampingPower)
+    );
+
+    // Stop tiny rotations
+    if (this.angularVelocity.length() < CONTROL_CONFIG.fly.physics.angularVelocityThreshold) {
+      this.angularVelocity.set(0, 0, 0);
+    }
+
+    // Update camera orientation
     this.updateOrientation();
 
     // Dispatch change event if we're moving to keep animation running
@@ -453,14 +493,12 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   /**
    * Set movement mode
-   * @param inertial - True for inertial (acceleration), false for direct (velocity)
+   * @param inertial - True for low damping (momentum), false for high damping (immediate)
    */
   public setInertialMode(inertial: boolean): void {
     this.inertialMode = inertial;
-    if (!inertial) {
-      // Clear velocity when switching to direct mode
-      this.velocity.set(0, 0, 0);
-    }
+    // Both modes now use physics, just with different damping
+    // No need to clear velocity as it will quickly dampen out
   }
 
   /**
@@ -492,18 +530,15 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     direction.subVectors(target, this.camera.position);
     direction.normalize();
 
-    // Convert to spherical coordinates
-    const targetLon = THREE.MathUtils.radToDeg(Math.atan2(direction.z, direction.x));
-    const horizontalLength = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
-    const targetLat = THREE.MathUtils.radToDeg(Math.atan2(direction.y, horizontalLength));
+    // Create a quaternion that looks in the target direction
+    const targetQuaternion = new THREE.Quaternion();
+    const tempMatrix = new THREE.Matrix4();
+    tempMatrix.lookAt(this.camera.position, target, new THREE.Vector3(0, 1, 0));
+    targetQuaternion.setFromRotationMatrix(tempMatrix);
 
-    // Smooth interpolation
-    this.lon = this.lon * smoothness + targetLon * (1 - smoothness);
-    this.lat = this.lat * smoothness + targetLat * (1 - smoothness);
-
-    // Clamp vertical rotation
-    this.lat = Math.max(-85, Math.min(85, this.lat));
-
+    // Smoothly interpolate to target orientation
+    this.orientation.slerp(targetQuaternion, 1 - smoothness);
+    
     this.updateOrientation();
   }
 
@@ -519,8 +554,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * Reset to saved state
    */
   public reset(): void {
-    // Reset velocity
+    // Reset velocities
     this.velocity.set(0, 0, 0);
+    this.angularVelocity.set(0, 0, 0);
 
     // Reset movement state
     this.moveState.forward = 0;
@@ -530,9 +566,16 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.moveState.up = 0;
     this.moveState.down = 0;
 
-    // Reset look angles
-    this.lat = 0;
-    this.lon = 0;
+    // Reset look state
+    this.lookState.horizontal = 0;
+    this.lookState.vertical = 0;
+    this.lookState.roll = 0;
+    
+    // Reset speed boost
+    this.speedBoost = false;
+
+    // Reset to identity quaternion (looking forward)
+    this.orientation.set(0, 0, 0, 1);
 
     this.updateOrientation();
   }

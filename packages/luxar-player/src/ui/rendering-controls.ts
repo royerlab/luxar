@@ -9,7 +9,7 @@ import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
 import { SHADER_CONFIG } from '../rendering/shader-manager';
 import type { NavigationControllers } from '../controls/types';
-import { isOrbitControls, isFlyControls } from '../controls/types';
+import { isOrbitControls } from '../controls/types';
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI
@@ -242,9 +242,28 @@ export class RenderingControls {
     flySpeedControl.domElement.setAttribute(
       'title',
       'Movement Speed: How fast you move in fly mode\n' +
-        '• Units per second\n' +
-        '• Use arrow keys to move: ↑↓←→\n' +
-        '• Shift+↑/↓ for vertical movement'
+        '• Units per second (or acceleration in inertial mode)\n' +
+        '• Use WASD keys to move\n' +
+        '• Alt+W/S for vertical movement'
+    );
+
+    const flyRotationSpeedControl = flyFolder
+      .add(this.settings, 'flyRotationSpeed', 0.1, 5.0, 0.1)
+      .name('Rotation Speed')
+      .onChange((value: number) => {
+        this.sceneManager.setFlyRotationSpeed(value);
+        this.saveSettings();
+      });
+
+    // Store reference
+    this.controllers.flyRotationSpeed = flyRotationSpeedControl;
+
+    flyRotationSpeedControl.domElement.setAttribute(
+      'title',
+      'Rotation Speed: How fast the camera rotates\n' +
+        '• Radians per second (or acceleration in inertial mode)\n' +
+        '• Use arrow keys to rotate: ↑↓←→\n' +
+        '• Mouse drag also rotates camera'
     );
 
     const flyInertialControl = flyFolder
@@ -253,11 +272,13 @@ export class RenderingControls {
       .onChange((value: boolean) => {
         this.sceneManager.setFlyInertialMode(value);
         this.saveSettings();
-        // Show/hide damping control
+        // Show/hide damping controls
         if (value) {
           flyDampingControl.show();
+          flyRotationDampingControl.show();
         } else {
           flyDampingControl.hide();
+          flyRotationDampingControl.hide();
         }
       });
 
@@ -273,7 +294,7 @@ export class RenderingControls {
 
     const flyDampingControl = flyFolder
       .add(this.settings, 'flyDamping', 0.9, 0.9999, 0.0001)
-      .name('Damping')
+      .name('Translation Damping')
       .onChange((value: number) => {
         this.sceneManager.setFlyDamping(value);
         this.saveSettings();
@@ -284,8 +305,29 @@ export class RenderingControls {
 
     flyDampingControl.domElement.setAttribute(
       'title',
-      'Damping Factor (Inertial Mode Only)\n' +
-        '• Controls how quickly you slow down\n' +
+      'Translation Damping (Inertial Mode Only)\n' +
+        '• Controls how quickly movement slows down\n' +
+        '• 0.90 = Quick stop\n' +
+        '• 0.97 = Moderate drift\n' +
+        '• 0.999 = Long drift (default)\n' +
+        '• 0.9999 = Very long drift'
+    );
+
+    const flyRotationDampingControl = flyFolder
+      .add(this.settings, 'flyRotationDamping', 0.9, 0.9999, 0.0001)
+      .name('Rotation Damping')
+      .onChange((value: number) => {
+        this.sceneManager.setFlyRotationDamping(value);
+        this.saveSettings();
+      });
+
+    // Store reference
+    this.controllers.flyRotationDamping = flyRotationDampingControl;
+
+    flyRotationDampingControl.domElement.setAttribute(
+      'title',
+      'Rotation Damping (Inertial Mode Only)\n' +
+        '• Controls how quickly rotation slows down\n' +
         '• 0.90 = Quick stop\n' +
         '• 0.97 = Moderate drift\n' +
         '• 0.999 = Long drift (default)\n' +
@@ -295,9 +337,10 @@ export class RenderingControls {
     // Initially show/hide based on current control type
     this.updateNavigationControls(this.settings.controlType);
 
-    // Hide damping if not in inertial mode
+    // Hide damping controls if not in inertial mode
     if (!this.settings.flyInertialMode) {
       flyDampingControl.hide();
+      flyRotationDampingControl.hide();
     }
 
     // HDR/Exposure folder
@@ -905,12 +948,13 @@ export class RenderingControls {
     // Get current controls instance
     const controls = this.sceneManager.controls.getControls();
 
-    // Update fly controls state using type guard
-    if (isFlyControls(controls)) {
-      this.settings.flyInertialMode = controls.inertialMode;
-      this.settings.flyMovementSpeed = controls.movementSpeed;
-      this.settings.flyDamping = controls.damping;
-    }
+    // Always get fly controls config from ControlsManager
+    // This ensures settings persist even when in orbit mode
+    const flyConfig = this.sceneManager.controls.getFlyConfig();
+    this.settings.flyInertialMode = flyConfig.inertialMode;
+    this.settings.flyMovementSpeed = flyConfig.movementSpeed;
+    this.settings.flyDamping = flyConfig.damping;
+    this.settings.flyRotationDamping = flyConfig.rotationDamping;
 
     // Update orbit controls state using type guard
     if (isOrbitControls(controls)) {
@@ -942,6 +986,17 @@ export class RenderingControls {
         this.controllers.flyDamping.show();
       } else {
         this.controllers.flyDamping.hide();
+      }
+    }
+
+    if (this.controllers.flyRotationDamping) {
+      this.controllers.flyRotationDamping.setValue(this.settings.flyRotationDamping);
+      this.controllers.flyRotationDamping.updateDisplay();
+      // Show/hide rotation damping based on inertial mode
+      if (this.settings.flyInertialMode) {
+        this.controllers.flyRotationDamping.show();
+      } else {
+        this.controllers.flyRotationDamping.hide();
       }
     }
 

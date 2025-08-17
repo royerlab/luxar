@@ -778,6 +778,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
+   * Set fly controls rotation speed
+   */
+  setFlyRotationSpeed(speed: number): void {
+    this.controls.setFlyRotationSpeed(speed);
+  }
+
+  /**
    * Set fly controls inertial mode
    */
   setFlyInertialMode(inertial: boolean): void {
@@ -789,5 +796,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   setFlyDamping(damping: number): void {
     this.controls.setFlyDamping(damping);
+  }
+
+  /**
+   * Set fly controls rotation damping
+   */
+  setFlyRotationDamping(damping: number): void {
+    this.controls.setFlyRotationDamping(damping);
   }
 }

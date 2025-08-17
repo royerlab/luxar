@@ -122,8 +122,10 @@ export interface RenderingSettings {
   autoRotateSpeed: number;
   // Fly controls
   flyMovementSpeed: number;
+  flyRotationSpeed: number;
   flyInertialMode: boolean;
   flyDamping: number;
+  flyRotationDamping: number;
 }
 
 /**

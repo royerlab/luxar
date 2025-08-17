@@ -85,13 +85,13 @@ def main():
     scene.attrs["description"] = """
     World-Space Point Sizing Test
     ==============================
-    
+
     This scene contains a 5x5x5 grid of spheres that should just touch.
     The touching relationship should be maintained regardless of:
     - Window size
-    - Fullscreen state  
+    - Fullscreen state
     - Field of view
-    
+
     If two spheres of radius r are at distance 2r, they should always
     just touch - this is the fundamental test of correct world-space sizing.
     """
