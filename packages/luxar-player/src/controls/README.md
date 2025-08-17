@@ -280,6 +280,73 @@ This ensures consistent behavior at any frame rate.
 
 ---
 
+## System Architecture
+
+### Data Flow
+
+The control system follows a clean, event-driven architecture:
+
+```
+User Input
+    ↓
+InputHandler
+    ↓
+InputContextManager (filters based on context)
+    ↓
+ControlsManager (routes to active control)
+    ↓
+Control Implementation (Orbit/Fly)
+    ↓
+Camera Updates
+    ↓
+Scene Rendering
+```
+
+### Key Architectural Features
+
+#### Seamless Mode Switching
+- Camera state preserved during transitions
+- Orbit target converted to fly look direction
+- Fly orientation converted to orbit target
+- Zero-downtime control swapping
+
+#### External Input Management
+Fly controls support external input management for better integration:
+
+```typescript
+flyControls.setExternalInputManagement(true);
+// InputHandler now manages keyboard events
+flyControls.handleKeyDown(event);  // Called by InputHandler
+```
+
+#### Continuous Rendering Optimization
+- **Orbit mode**: Renders only during interaction
+- **Fly mode (inertial)**: Continues rendering while velocity > threshold
+- **Automatic pause**: Stops rendering when stationary
+- **Event-driven**: Updates triggered by control changes
+
+### Input Conflict Resolution
+
+The system prevents keyboard conflicts through sophisticated routing:
+
+1. **Context Stack**: Manages nested input contexts
+2. **Priority System**: Higher priority contexts override lower ones
+3. **Typing Detection**: Automatically disables shortcuts when typing
+4. **Mode-Specific Keys**: WASD disabled in orbit mode, enabled in fly
+
+Example context switching:
+```typescript
+// When entering a text field
+inputContext.pushContext(InputContext.TYPING);
+
+// WASD keys now type text instead of moving camera
+
+// When leaving the text field
+inputContext.popContext();
+```
+
+---
+
 ## Usage Examples
 
 ### Basic Setup
@@ -557,6 +624,80 @@ Typical performance on modern hardware:
 
 ---
 
+## Testing Strategy
+
+### Test Coverage
+
+The control system has comprehensive test coverage:
+
+- **ControlsManager**: 30 tests covering mode switching, configuration, events
+- **LuxarFlyControls**: 27 tests for movement, physics, input handling  
+- **InputContextManager**: 29 tests for context switching, key filtering
+
+### Test Categories
+
+1. **Initialization**: Default states and configurations
+2. **Mode Switching**: State preservation and transitions
+3. **Input Handling**: Keyboard and mouse events
+4. **Physics Simulation**: Inertial movement and damping
+5. **Context Management**: Key filtering and priority
+6. **Event Propagation**: Control events and state changes
+
+### Running Tests
+
+```bash
+# Run all TypeScript tests
+pnpm test
+
+# Run with coverage
+pnpm test:coverage
+
+# Watch mode for development
+pnpm test:watch
+```
+
+---
+
+## Common Patterns
+
+### Frame-Rate Independent Physics
+
+All physics calculations are normalized to 60fps:
+
+```typescript
+// Damping that works at any frame rate
+velocity *= Math.pow(damping, delta * 60);
+
+// Capped delta to prevent instability
+const safeDelta = Math.min(delta, 1/30);
+```
+
+### Context-Aware Input Handling
+
+```typescript
+// Check if user is typing before handling shortcuts
+if (this.isTypingInInput()) {
+  return;  // Don't handle shortcuts while typing
+}
+
+// Check active control mode
+if (controlType === 'fly' && flyModeKeys.includes(key)) {
+  flyControls.handleKeyDown(event);
+}
+```
+
+### Smooth State Transitions
+
+```typescript
+// Smooth camera transitions in fly mode
+lookAtSmooth(target: Vector3, smoothness: number) {
+  const targetQuat = calculateTargetQuaternion(target);
+  this.orientation.slerp(targetQuat, 1 - smoothness);
+}
+```
+
+---
+
 ## Contributing
 
 When contributing to the controls system:
@@ -566,6 +707,8 @@ When contributing to the controls system:
 3. **Update this documentation** for API changes
 4. **Follow existing patterns** for consistency
 5. **Consider performance** - controls run every frame
+6. **Test across different frame rates**
+7. **Ensure input context compatibility**
 
 ### Code Style
 
@@ -574,6 +717,29 @@ When contributing to the controls system:
 - Document physics/math with comments
 - Add JSDoc for public APIs
 - Keep frame-rate independence in mind
+- Use type guards instead of runtime checks
+- Clean up event listeners properly
+
+---
+
+## Future Enhancements
+
+### Planned Features
+
+- **Touch/Mobile Support**: Touch gestures for fly controls
+- **Gamepad Support**: Xbox/PlayStation controller input
+- **Configurable Key Bindings**: User-customizable controls
+- **Motion Paths**: Predefined camera animations
+- **VR/AR Modes**: Immersive navigation
+- **Multi-User Sync**: Shared camera state
+
+### Architecture Improvements
+
+- **Plugin System**: Extensible control modules
+- **Record/Replay**: Camera path recording
+- **Gesture Recognition**: Complex input patterns
+- **Accessibility**: Keyboard-only navigation
+- **Performance Profiling**: Built-in metrics
 
 ---
 
@@ -585,14 +751,16 @@ Part of the Luxar project. See root LICENSE file for details.
 
 ## Changelog
 
-### v2.0.0 (2024-01)
+### v2.0.0 (2025-01)
 - Added quaternion-based fly controls
 - Implemented roll controls (Q/E)
 - Added speed boost (Shift)
 - Fixed frame of reference issues
 - Centralized configuration system
+- Added comprehensive test coverage
+- Improved documentation
 
-### v1.0.0 (2023-12)
+### v1.0.0 (2024-12)
 - Initial control system
 - Orbit controls integration
 - Basic input management
