@@ -8,6 +8,7 @@
 
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
+import { detectMemory, MemoryMonitor } from '../utils/memory-detector';
 
 /**
  * Represents a loaded chunk with metadata for cache management
@@ -46,11 +47,11 @@ export interface LazyLoadConfig {
 }
 
 /**
- * Default configuration for lazy loading
+ * Default configuration for lazy loading with automatic memory detection
  */
 const DEFAULT_CONFIG: LazyLoadConfig = {
   enabled: true,
-  maxMemoryMB: 1000, // Default to 1GB for better caching
+  maxMemoryMB: detectMemory().recommendedCacheMB, // Automatically detect optimal size
   preloadRadius: 1,
   maxChunks: 2000, // High limit - memory should be the primary constraint
   evictionStrategy: 'lru',
@@ -66,9 +67,23 @@ export class LazyDataManager {
   private config: LazyLoadConfig;
   private loadingPromises: Map<string, Promise<ChunkEntry>> = new Map();
   private eventCallback?: (type: string, message: string, details?: any) => void;
+  private memoryMonitor?: MemoryMonitor;
 
   constructor(config: Partial<LazyLoadConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Log memory detection result
+    const memInfo = detectMemory();
+    console.log(
+      `💾 [Luxar] Auto-detected cache size: ${this.config.maxMemoryMB}MB (${memInfo.confidence} confidence, source: ${memInfo.source})`
+    );
+
+    // Start memory pressure monitoring
+    this.memoryMonitor = new MemoryMonitor(this.config.maxMemoryMB, (newSizeMB) => {
+      this.config.maxMemoryMB = newSizeMB;
+      this.emitEvent('memory', `Cache limit adjusted to ${newSizeMB}MB`, { newSizeMB });
+    });
+    this.memoryMonitor.start();
 
     if (this.config.debug) {
       console.log('[🔄] [Luxar] LazyDataManager initialized with config:', this.config);
@@ -538,7 +553,7 @@ export class LazyDataManager {
     totalSizeMB: number;
     maxSizeMB: number;
     utilizationPercent: number;
-  } {
+    } {
     const totalSizeMB = this.totalCacheSize / (1024 * 1024);
     const maxSizeMB = this.config.maxMemoryMB;
 
@@ -565,5 +580,16 @@ export class LazyDataManager {
     const isHighDim = ndim > 3;
 
     return cfg.enabled && (isLarge || isHighDim);
+  }
+
+  /**
+   * Clean up resources
+   */
+  dispose(): void {
+    this.clearCache();
+    if (this.memoryMonitor) {
+      this.memoryMonitor.stop();
+      this.memoryMonitor = undefined;
+    }
   }
 }
