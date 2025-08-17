@@ -3,6 +3,7 @@
 Application initialization and lifecycle management for the Luxar player. This package contains the main application class and entry point that orchestrates all other components into a cohesive visualization system.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
@@ -39,6 +40,7 @@ core/
 ```
 
 **Component Dependency Flow**:
+
 ```
 main.ts → LuxarApp → SceneManager → AnimationController
                   → InputHandler ← RenderingControls
@@ -58,7 +60,7 @@ class LuxarApp {
     this.sceneManager = new SceneManager();
     await this.sceneManager.init();
 
-    // 2. Animation System Setup  
+    // 2. Animation System Setup
     this.animationController = new AnimationController(/*...*/);
 
     // 3. Input System Integration
@@ -91,6 +93,7 @@ class LuxarApp {
 ```
 
 **Critical Design Decisions**:
+
 - **Animation First**: Start rendering loop before loading data for immediate visual feedback
 - **Error Isolation**: Component failures don't prevent other systems from initializing
 - **Progressive Enhancement**: Core 3D functionality works even if data loading fails
@@ -129,10 +132,10 @@ await this.sceneManager.init();
 
 // Pass scene components to animation controller
 this.animationController = new AnimationController(
-  this.sceneManager.renderer,    // WebGL renderer
-  this.sceneManager.scene,       // THREE.js scene graph
-  this.sceneManager.camera,      // Perspective camera
-  this.sceneManager.controls,    // Orbit/fly controls
+  this.sceneManager.renderer, // WebGL renderer
+  this.sceneManager.scene, // THREE.js scene graph
+  this.sceneManager.camera, // Perspective camera
+  this.sceneManager.controls, // Orbit/fly controls
   this.sceneManager.postProcessing // HDR post-processing
 );
 ```
@@ -293,9 +296,9 @@ const isDebugMode = params.has('debug') || localStorage.getItem('luxar_debug') =
 
 if (isDebugMode) {
   window.__luxarDebug = {
-    app,                    // Access to main app instance
-    consoleInterceptor,     // Console message buffer
-    version: '1.0.0'        // Application version
+    app, // Access to main app instance
+    consoleInterceptor, // Console message buffer
+    version: '1.0.0', // Application version
   };
   console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
 }
@@ -366,12 +369,12 @@ try {
   console.log('Application started successfully');
 } catch (error) {
   console.error('Initialization failed:', error);
-  
+
   // App may still be partially functional
   if (app.initialized) {
     console.log('App partially initialized - some features may work');
   }
-  
+
   // Manual cleanup if needed
   app.cleanup();
 }
@@ -464,12 +467,12 @@ const src = params.get('src') ?? config.defaultZarrPath;
 cleanup(): void {
   // Stop animation first (prevents new work)
   this.animationController?.dispose();
-  
+
   // Clean up in reverse initialization order
   this.inputHandler?.dispose();
   this.renderingControls?.dispose();
   this.sceneManager?.dispose();
-  
+
   // Remove global listeners
   window.removeEventListener('beforeunload', this.cleanup);
 }
@@ -503,10 +506,10 @@ onDatasetSelect: async (path: string) => {
   const params = new URLSearchParams(window.location.search);
   params.set('src', fullURL);
   window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
-  
+
   // Load dataset
   await this.loadDataset(fullURL);
-}
+};
 
 // ✅ Good: URL parameter parsing
 const params = new URLSearchParams(window.location.search);

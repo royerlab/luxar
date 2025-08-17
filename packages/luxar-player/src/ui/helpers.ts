@@ -187,13 +187,43 @@ export function showHelpOverlay() {
   helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
   helpDiv.style.outline = 'none !important';
 
-  const title = document.createElement('div');
+  // Create header with title and close button
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.justifyContent = 'space-between';
+  header.style.alignItems = 'center';
+  header.style.marginBottom = '10px';
+  header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+  header.style.paddingBottom = '6px';
+
+  const title = document.createElement('h3');
   title.textContent = 'Luxar Controls & Shortcuts';
+  title.style.margin = '0';
   title.style.fontSize = '14px';
   title.style.fontWeight = 'bold';
-  title.style.marginBottom = '10px';
-  title.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
-  title.style.paddingBottom = '6px';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = `
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  `;
+  closeBtn.onmouseover = () => (closeBtn.style.color = '#fff');
+  closeBtn.onmouseout = () => (closeBtn.style.color = '#999');
+  closeBtn.onclick = () => hideHelpOverlay();
+  closeBtn.title = 'Close (Escape)';
+
+  header.appendChild(title);
+  header.appendChild(closeBtn);
 
   // Define help categories with expandable sections
   const helpCategories = [
@@ -209,7 +239,7 @@ export function showHelpOverlay() {
         'V: Switch view mode (Orbit/Fly)',
         'F: Recenter camera on scene',
         'O: Open dataset browser',
-        'Esc: Close panels',
+        'Esc: Exit fullscreen / Close panels',
       ],
     },
     {
@@ -272,19 +302,21 @@ export function showHelpOverlay() {
     categoryHeader.style.userSelect = 'none';
     categoryHeader.style.display = 'flex';
     categoryHeader.style.alignItems = 'center';
-    categoryHeader.style.justifyContent = 'space-between';
+
+    const categoryArrow = document.createElement('span');
+    categoryArrow.textContent = '▶';
+    categoryArrow.style.fontSize = '10px';
+    categoryArrow.style.marginRight = '5px';
+    categoryArrow.style.transition = 'transform 0.2s';
+    categoryArrow.style.display = 'inline-block';
+    categoryArrow.style.transform = category.expanded ? 'rotate(90deg)' : 'rotate(0deg)';
+    categoryArrow.style.color = 'rgba(255, 255, 255, 0.6)';
 
     const categoryTitle = document.createElement('span');
     categoryTitle.textContent = category.title;
 
-    const categoryArrow = document.createElement('span');
-    categoryArrow.textContent = category.expanded ? '▼' : '▶';
-    categoryArrow.style.fontSize = '10px';
-    categoryArrow.style.marginLeft = '10px';
-    categoryArrow.style.transition = 'transform 0.2s';
-
-    categoryHeader.appendChild(categoryTitle);
     categoryHeader.appendChild(categoryArrow);
+    categoryHeader.appendChild(categoryTitle);
 
     // Category content container
     const categoryContent = document.createElement('div');
@@ -321,7 +353,7 @@ export function showHelpOverlay() {
       e.stopPropagation();
       const isExpanded = categoryContent.style.display !== 'none';
       categoryContent.style.display = isExpanded ? 'none' : 'block';
-      categoryArrow.textContent = isExpanded ? '▶' : '▼';
+      categoryArrow.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(90deg)';
     });
 
     controlsList.appendChild(categoryHeader);
@@ -338,7 +370,7 @@ export function showHelpOverlay() {
   footerNote.style.color = '#888';
   footerNote.style.textAlign = 'center';
 
-  helpDiv.appendChild(title);
+  helpDiv.appendChild(header);
   helpDiv.appendChild(controlsList);
   helpDiv.appendChild(footerNote);
 

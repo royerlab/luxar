@@ -3,6 +3,7 @@
 TypeScript type definitions for high-dimensional data visualization in Luxar. This package provides the fundamental data structures and interfaces for managing nD point cloud data, dimension metadata, and coordinate system definitions.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [Core Types](#core-types)
@@ -38,28 +39,29 @@ Describes the semantic properties and behavior of a single dimension in an nD da
 interface DimensionMetadata {
   /** Human-readable name (e.g., "Time", "X", "Channel") */
   name: string;
-  
+
   /** Physical unit of measurement (e.g., "μm", "s", "nm") */
   unit: string;
-  
+
   /** Scale factor for converting indices to real-world units */
   scale: number;
-  
+
   /** Optional min/max bounds in real-world units */
   range?: [number, number];
-  
+
   /** Whether this dimension should be displayed by default */
   display?: boolean;
-  
+
   /** Whether values are discrete (integers) vs continuous */
   discrete?: boolean;
-  
+
   /** Step size for navigation in this dimension */
   step?: number;
 }
 ```
 
 **Use Cases**:
+
 - **Scientific Data**: Physical dimensions with units and scales
 - **Time Series**: Temporal dimensions with discrete time points
 - **Categorical Data**: Discrete dimensions like channels, conditions, or treatments
@@ -73,19 +75,20 @@ The core state object for nD visualization, tracking current position and displa
 interface SimpleDims {
   /** Total number of dimensions in the dataset */
   ndim: number;
-  
+
   /** Current position/slice in each dimension */
   currentStep: number[];
-  
+
   /** Indices of dimensions currently displayed (max 3) */
   displayed: number[];
-  
+
   /** Optional metadata for each dimension */
   metadata?: DimensionMetadata[];
 }
 ```
 
 **State Management**:
+
 - **Navigation**: `currentStep` tracks position in nD space
 - **Visualization**: `displayed` determines which dimensions are visualized
 - **Semantics**: `metadata` provides human-readable context
@@ -98,13 +101,13 @@ Dimension metadata enables proper handling of physical coordinate systems:
 
 ```typescript
 const dimensionMeta: DimensionMetadata = {
-  name: "X",
-  unit: "μm",
-  scale: 0.1,              // 0.1 μm per array index
-  range: [0, 100],         // 0-100 μm physical range
-  display: true,           // Show in 3D visualization
-  discrete: false,         // Continuous spatial dimension
-  step: 1.0                // 1 μm navigation steps
+  name: 'X',
+  unit: 'μm',
+  scale: 0.1, // 0.1 μm per array index
+  range: [0, 100], // 0-100 μm physical range
+  display: true, // Show in 3D visualization
+  discrete: false, // Continuous spatial dimension
+  step: 1.0, // 1 μm navigation steps
 };
 ```
 
@@ -115,20 +118,20 @@ The type system distinguishes between discrete and continuous dimensions for pro
 ```typescript
 // Continuous dimension (spatial coordinates)
 const spatialDim: DimensionMetadata = {
-  name: "Y",
-  unit: "nm",
+  name: 'Y',
+  unit: 'nm',
   scale: 1.0,
-  discrete: false,         // Supports interpolation and smooth navigation
-  step: 10.0              // Fine-grained steps
+  discrete: false, // Supports interpolation and smooth navigation
+  step: 10.0, // Fine-grained steps
 };
 
 // Discrete dimension (time frames)
 const timeDim: DimensionMetadata = {
-  name: "Time",
-  unit: "frame",
+  name: 'Time',
+  unit: 'frame',
   scale: 1.0,
-  discrete: true,          // Exact integer matching required
-  step: 1.0               // Integer frame steps
+  discrete: true, // Exact integer matching required
+  step: 1.0, // Integer frame steps
 };
 ```
 
@@ -139,11 +142,11 @@ Metadata controls which dimensions are visualized by default:
 ```typescript
 // Typical 5D scientific dataset (T, Z, C, Y, X)
 const metadata: DimensionMetadata[] = [
-  { name: "Time", unit: "s", scale: 0.1, discrete: true, display: false },
-  { name: "Z", unit: "μm", scale: 0.2, discrete: false, display: false },
-  { name: "Channel", unit: "", scale: 1, discrete: true, display: false },
-  { name: "Y", unit: "μm", scale: 0.1, discrete: false, display: true },  // Spatial
-  { name: "X", unit: "μm", scale: 0.1, discrete: false, display: true }   // Spatial
+  { name: 'Time', unit: 's', scale: 0.1, discrete: true, display: false },
+  { name: 'Z', unit: 'μm', scale: 0.2, discrete: false, display: false },
+  { name: 'Channel', unit: '', scale: 1, discrete: true, display: false },
+  { name: 'Y', unit: 'μm', scale: 0.1, discrete: false, display: true }, // Spatial
+  { name: 'X', unit: 'μm', scale: 0.1, discrete: false, display: true }, // Spatial
 ];
 ```
 
@@ -155,14 +158,15 @@ The `SimpleDims` interface tracks the complete state of nD navigation:
 
 ```typescript
 const dims: SimpleDims = {
-  ndim: 5,                           // 5D dataset
-  currentStep: [0, 2.5, 1, 0, 0],   // Position in each dimension
-  displayed: [3, 4],                 // Show Y and X dimensions
-  metadata: dimensionMetadata        // Semantic information
+  ndim: 5, // 5D dataset
+  currentStep: [0, 2.5, 1, 0, 0], // Position in each dimension
+  displayed: [3, 4], // Show Y and X dimensions
+  metadata: dimensionMetadata, // Semantic information
 };
 ```
 
 **State Interpretation**:
+
 - `currentStep[0] = 0`: Time frame 0
 - `currentStep[1] = 2.5`: Z-slice at 2.5 μm
 - `currentStep[2] = 1`: Channel 1
@@ -174,16 +178,17 @@ The `displayed` array determines which dimensions are visualized:
 
 ```typescript
 // 2D visualization (common for image data)
-displayed: [3, 4]        // Show Y, X
+displayed: [3, 4]; // Show Y, X
 
 // 3D visualization (common for volume data)
-displayed: [2, 3, 4]     // Show Z, Y, X
+displayed: [2, 3, 4]; // Show Z, Y, X
 
 // 1D visualization (for line plots or profiles)
-displayed: [4]           // Show only X
+displayed: [4]; // Show only X
 ```
 
 **Constraints**:
+
 - Maximum 3 displayed dimensions (hardware limitation)
 - Displayed dimensions are camera-controlled
 - Non-displayed dimensions use slice navigation
@@ -199,16 +204,18 @@ export function initializeDims(
   numPoints: number,
   totalElements: number,
   metadata?: DimensionMetadata[]
-): SimpleDims
+): SimpleDims;
 ```
 
 **Initialization Logic**:
+
 1. **Dimension Count**: Calculate `ndim` from array structure
 2. **Default Position**: Initialize all dimensions at position 0
 3. **Display Selection**: Use metadata preferences or default to last 3 dimensions
 4. **Validation**: Ensure consistent array structure
 
 **Usage Example**:
+
 ```typescript
 // Initialize from point cloud data
 const dims = initializeDims(100000, 500000, metadata);
@@ -224,15 +231,17 @@ export function getDimensionRanges(
   positions: Float32Array,
   ndim: number,
   numPoints: number
-): Array<[number, number]>
+): Array<[number, number]>;
 ```
 
 **Analysis Process**:
+
 1. **Scan Data**: Examine all point positions across all dimensions
 2. **Min/Max Calculation**: Find actual data bounds for each dimension
 3. **Return Ranges**: Array of `[min, max]` tuples for navigation setup
 
 **Usage Example**:
+
 ```typescript
 const ranges = getDimensionRanges(positions, 5, 100000);
 // Result: [[0, 10], [0, 5.2], [0, 2], [-50, 50], [-30, 30]]
@@ -249,37 +258,37 @@ import { initializeDims, DimensionMetadata } from '../types/dims';
 // 4D microscopy data: Time, Z, Y, X
 const metadata: DimensionMetadata[] = [
   {
-    name: "Time",
-    unit: "s",
-    scale: 0.5,           // 0.5 seconds per frame
-    discrete: true,       // Discrete time points
-    display: false,       // Navigate via slicing
-    step: 1
+    name: 'Time',
+    unit: 's',
+    scale: 0.5, // 0.5 seconds per frame
+    discrete: true, // Discrete time points
+    display: false, // Navigate via slicing
+    step: 1,
   },
   {
-    name: "Z",
-    unit: "μm",
-    scale: 0.2,           // 200 nm Z-steps
-    discrete: false,      // Continuous space
-    display: true,        // Show as 3D depth
-    step: 0.2
+    name: 'Z',
+    unit: 'μm',
+    scale: 0.2, // 200 nm Z-steps
+    discrete: false, // Continuous space
+    display: true, // Show as 3D depth
+    step: 0.2,
   },
   {
-    name: "Y",
-    unit: "μm", 
-    scale: 0.065,         // 65 nm pixels
+    name: 'Y',
+    unit: 'μm',
+    scale: 0.065, // 65 nm pixels
     discrete: false,
     display: true,
-    step: 0.065
+    step: 0.065,
   },
   {
-    name: "X",
-    unit: "μm",
+    name: 'X',
+    unit: 'μm',
     scale: 0.065,
     discrete: false,
     display: true,
-    step: 0.065
-  }
+    step: 0.065,
+  },
 ];
 
 // Initialize dimension state
@@ -292,28 +301,28 @@ const dims = initializeDims(numPoints, totalElements, metadata);
 // 6D dataset: Condition, Time, Channel, Z, Y, X
 const experimentMetadata: DimensionMetadata[] = [
   {
-    name: "Condition",
-    unit: "",
+    name: 'Condition',
+    unit: '',
     scale: 1,
-    discrete: true,       // Control vs Treatment
+    discrete: true, // Control vs Treatment
     display: false,
-    step: 1
+    step: 1,
   },
   {
-    name: "Timepoint",
-    unit: "h",
-    scale: 2,            // 2-hour intervals
+    name: 'Timepoint',
+    unit: 'h',
+    scale: 2, // 2-hour intervals
     discrete: true,
     display: false,
-    step: 1
+    step: 1,
   },
   {
-    name: "Channel",
-    unit: "",
-    scale: 1,            // Fluorescence channels
+    name: 'Channel',
+    unit: '',
+    scale: 1, // Fluorescence channels
     discrete: true,
     display: false,
-    step: 1
+    step: 1,
   },
   // ... spatial dimensions (Z, Y, X) with continuous navigation
 ];
@@ -327,8 +336,8 @@ import { stepDimension, jumpToDimension } from '../utils/dims-navigation';
 // Step through time dimension
 const timeIndex = 1;
 const didChange = stepDimension(dims, timeIndex, 1, ranges, {
-  stepSize: 0.1,  // 10% of time range per step
-  wrap: true      // Loop back to start
+  stepSize: 0.1, // 10% of time range per step
+  wrap: true, // Loop back to start
 });
 
 // Jump to specific Z position (50% through range)
@@ -351,13 +360,13 @@ TypeScript interfaces prevent common errors at compile time:
 const currentZ = dims.currentStep[zDimension];
 
 // ❌ Compile error: dimension index must be number
-const invalidDim = dims.currentStep["z"];
+const invalidDim = dims.currentStep['z'];
 
 // ✅ Type-safe metadata access
-const zUnit = dims.metadata?.[2]?.unit ?? "unknown";
+const zUnit = dims.metadata?.[2]?.unit ?? 'unknown';
 
 // ❌ Compile error: display property is boolean
-dims.metadata[0].display = "yes"; // Should be boolean
+dims.metadata[0].display = 'yes'; // Should be boolean
 ```
 
 ### Runtime Validation
@@ -377,13 +386,13 @@ Metadata properties are carefully designed with optional fields:
 
 ```typescript
 interface DimensionMetadata {
-  name: string;        // Required
-  unit: string;        // Required  
-  scale: number;       // Required
-  range?: [number, number];   // Optional: calculated from data if missing
-  display?: boolean;          // Optional: defaults to false
-  discrete?: boolean;         // Optional: defaults to false (continuous)
-  step?: number;             // Optional: calculated from range if missing
+  name: string; // Required
+  unit: string; // Required
+  scale: number; // Required
+  range?: [number, number]; // Optional: calculated from data if missing
+  display?: boolean; // Optional: defaults to false
+  discrete?: boolean; // Optional: defaults to false (continuous)
+  step?: number; // Optional: calculated from range if missing
 }
 ```
 
@@ -395,13 +404,13 @@ Follow consistent conventions for dimension ordering:
 
 ```typescript
 // ✅ Good: Standard scientific convention (T, Z, C, Y, X)
-const standardOrder = ["Time", "Z", "Channel", "Y", "X"];
+const standardOrder = ['Time', 'Z', 'Channel', 'Y', 'X'];
 
 // ✅ Good: Physics convention (T, X, Y, Z)
-const physicsOrder = ["Time", "X", "Y", "Z"];
+const physicsOrder = ['Time', 'X', 'Y', 'Z'];
 
 // ❌ Avoid: Inconsistent or unclear ordering
-const confusingOrder = ["X", "Time", "Y", "Channel", "Z"];
+const confusingOrder = ['X', 'Time', 'Y', 'Channel', 'Z'];
 ```
 
 ### Metadata Completeness
@@ -411,20 +420,20 @@ Provide complete metadata for better user experience:
 ```typescript
 // ✅ Good: Complete semantic information
 const completeMetadata: DimensionMetadata = {
-  name: "Time",          // Clear, descriptive name
-  unit: "min",          // Standard unit with clear meaning
-  scale: 2.5,           // Explicit conversion factor
-  discrete: true,       // Navigation behavior specification
-  display: false,       // Clear display intent
-  step: 1,             // Appropriate step size
-  range: [0, 120]      // Expected data bounds
+  name: 'Time', // Clear, descriptive name
+  unit: 'min', // Standard unit with clear meaning
+  scale: 2.5, // Explicit conversion factor
+  discrete: true, // Navigation behavior specification
+  display: false, // Clear display intent
+  step: 1, // Appropriate step size
+  range: [0, 120], // Expected data bounds
 };
 
 // ❌ Avoid: Minimal or unclear metadata
 const poorMetadata = {
-  name: "D0",           // Generic name
-  unit: "",            // Missing unit information
-  scale: 1             // No additional context
+  name: 'D0', // Generic name
+  unit: '', // Missing unit information
+  scale: 1, // No additional context
 };
 ```
 
@@ -438,16 +447,18 @@ function getDimensionName(dims: SimpleDims, index: number): string {
   if (index < 0 || index >= dims.ndim) {
     return `D${index}`;
   }
-  
+
   return dims.metadata?.[index]?.name ?? `D${index}`;
 }
 
 // ✅ Good: Validate dimension state consistency
 function validateDims(dims: SimpleDims): boolean {
   // Check displayed dimensions are within bounds
-  return dims.displayed.every(d => d >= 0 && d < dims.ndim) &&
-         dims.currentStep.length === dims.ndim &&
-         dims.displayed.length <= 3;
+  return (
+    dims.displayed.every((d) => d >= 0 && d < dims.ndim) &&
+    dims.currentStep.length === dims.ndim &&
+    dims.displayed.length <= 3
+  );
 }
 ```
 

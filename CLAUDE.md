@@ -45,9 +45,18 @@ Note: When possible, use `make` commands for convenience (see below).
   - `/packages/luxar/src/luxar/` - Source code
   - `/packages/luxar/src/luxar/tests/` - Python tests
 - `/packages/luxar-player/` - TypeScript/WebGL viewer
-  - `/packages/luxar-player/src/` - TypeScript source
-  - `/packages/luxar-player/src/config/` - Unified configuration
-  - `/packages/luxar-player/src/controls/` - Control system (orbit, fly, input management)
+  - `/packages/luxar-player/src/` - TypeScript source with per-package documentation
+  - Each TypeScript package has its own README.md that MUST be kept in sync with code:
+    - `/src/controls/README.md` - Control system (orbit, fly, input management)
+    - `/src/rendering/README.md` - HDR rendering pipeline and post-processing
+    - `/src/scene/README.md` - Scene management and animation control
+    - `/src/data/README.md` - Zarr loading and nD slicing
+    - `/src/ui/README.md` - UI components and layouts
+    - `/src/input/README.md` - Input handling and context management
+    - `/src/config/README.md` - Unified configuration system
+    - `/src/utils/README.md` - Utility functions and helpers
+    - `/src/types/README.md` - TypeScript type definitions
+    - `/src/core/README.md` - Core initialization and app lifecycle
 - `/examples/` - Example scripts (use `*_example.py` naming convention)
 - `/docs/` - **Documentation directory (IMPORTANT: Keep this up-to-date!)**
   - Contains various documentation files that were moved from root
@@ -63,10 +72,15 @@ Note: When possible, use `make` commands for convenience (see below).
   - `LUXAR_ZARR_FORMAT.md` - Data format specification
   - `CONTRIBUTING.md` - Contributing guidelines
   - `DEVELOPMENT_TOOLS.md` - Development and build tools documentation
+  - `UI_DESIGN.md` - **UI design system and guidelines (MUST READ for UI work)**
+  - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
   - Various technical guides and specifications
-  - **Controls documentation**: `luxar-fly-controls-guide.md` and package READMEs
+- **TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own comprehensive README.md
 
-**CRITICAL**: When making changes to the code, ALWAYS check if documentation in the `/docs/` folder needs updating. Keep all documentation synchronized with the implementation!
+**CRITICAL**: 
+1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
+2. When making changes to Python code, check if `/docs/` folder documentation needs updating
+3. Keep all documentation synchronized with the implementation!
 
 ## Development Workflow
 
@@ -185,10 +199,10 @@ When making significant changes:
 3. Check Python linting: `hatch run python -m ruff check .`
 4. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
 5. Fix TypeScript unused warnings by prefixing with underscore
-6. **Update documentation in `/docs/` folder** - check ALL relevant docs
-7. Update README.md files (root and package-specific)
-8. Update format specs if data structures change (e.g., LUXAR_ZARR_FORMAT.md)
-9. Update control system docs if navigation changes
+6. **Update TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own README.md that MUST be updated when code changes
+7. **Update documentation in `/docs/` folder** - check ALL relevant docs for Python changes
+8. Update root README.md if features or usage changes
+9. Update LUXAR_ZARR_FORMAT.md if data structures change
 10. Add/update examples if introducing new features
 11. Run integration tests on all examples
 12. Update this CLAUDE.md file with important learnings

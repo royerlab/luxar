@@ -102,24 +102,22 @@ export class DebugConsole {
       .debug-console-panel {
         position: fixed;
         bottom: ${DEBUG_CONSOLE_CONFIG.panel.bottomOffset}px;
-        right: ${DEBUG_CONSOLE_CONFIG.panel.rightOffset}px;
+        left: ${DEBUG_CONSOLE_CONFIG.panel.leftOffset}px;
         width: ${DEBUG_CONSOLE_CONFIG.panel.defaultWidth}px;
         height: ${DEBUG_CONSOLE_CONFIG.panel.defaultHeight}px;
         background: ${DEBUG_CONSOLE_CONFIG.style.backgroundColor};
-        border: 1px solid ${DEBUG_CONSOLE_CONFIG.style.borderColor};
         border-radius: ${DEBUG_CONSOLE_CONFIG.style.borderRadius}px;
         display: flex;
         flex-direction: column;
-        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif;
         font-size: 12px;
-        z-index: 10000;
+        z-index: 150;
         backdrop-filter: blur(${DEBUG_CONSOLE_CONFIG.style.backdropBlur}px);
         box-shadow: ${DEBUG_CONSOLE_CONFIG.style.boxShadow};
       }
 
       .debug-console-header {
-        padding: 10px;
-        background: rgba(30, 30, 30, 0.9);
+        padding: 15px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         display: flex;
         justify-content: space-between;
@@ -142,28 +140,48 @@ export class DebugConsole {
       .debug-console-filter {
         padding: 4px 8px;
         background: rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        border: none;
         border-radius: 4px;
         color: #e0e0e0;
         width: 150px;
+        font-family: inherit;
+        font-size: 11px;
       }
 
       .debug-console-clear,
-      .debug-console-copy,
-      .debug-console-close {
+      .debug-console-copy {
         padding: 4px 12px;
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: none;
+        border: none;
         border-radius: 4px;
-        color: #e0e0e0;
+        color: rgba(255, 255, 255, 0.6);
         cursor: pointer;
-        transition: background 0.2s;
+        transition: color 0.2s;
+        font-size: 11px;
+      }
+      
+      .debug-console-close {
+        background: none;
+        border: none;
+        color: #999;
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
       }
 
       .debug-console-clear:hover,
-      .debug-console-copy:hover,
+      .debug-console-copy:hover {
+        color: #e0e0e0;
+      }
+      
       .debug-console-close:hover {
-        background: rgba(255, 255, 255, 0.2);
+        color: #fff;
       }
 
       .debug-console-autoscroll {
@@ -183,17 +201,18 @@ export class DebugConsole {
         overflow-y: auto;
         overflow-x: auto;
         padding: 10px;
-        background: rgba(10, 10, 10, 0.5);
+        background: rgba(0, 0, 0, 0.3);
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 11px;
       }
 
       .debug-console-status {
-        padding: 5px 10px;
-        background: rgba(30, 30, 30, 0.9);
+        padding: 8px 15px;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         display: flex;
         justify-content: space-between;
-        color: #808080;
-        font-size: 11px;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 10px;
         border-radius: 0 0 8px 8px;
       }
 

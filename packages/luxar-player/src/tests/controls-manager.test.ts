@@ -1,6 +1,6 @@
 /**
  * Unit tests for ControlsManager
- * 
+ *
  * Tests the camera control switching system, state preservation,
  * and configuration management.
  */
@@ -21,16 +21,16 @@ describe('ControlsManager', () => {
     // Create mock camera
     camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
     camera.position.set(0, 0, 5);
-    
+
     // Create mock DOM element
     domElement = document.createElement('div');
     domElement.style.width = '800px';
     domElement.style.height = '600px';
     document.body.appendChild(domElement);
-    
+
     // Create scene
     scene = new THREE.Scene();
-    
+
     // Create controls manager
     controlsManager = new ControlsManager(camera, domElement, scene);
   });
@@ -77,22 +77,20 @@ describe('ControlsManager', () => {
     it('should dispatch change event when switching controls', () => {
       const changeHandler = vi.fn();
       controlsManager.addEventListener('change', changeHandler);
-      
+
       controlsManager.setControlType('fly');
-      
-      expect(changeHandler).toHaveBeenCalledWith(
-        expect.objectContaining({ controlType: 'fly' })
-      );
+
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'fly' }));
     });
 
     it('should preserve camera state when switching', () => {
       // Set camera to a specific position
       camera.position.set(10, 20, 30);
       camera.rotation.set(0.1, 0.2, 0.3);
-      
+
       // Switch controls
       controlsManager.setControlType('fly');
-      
+
       // Camera position should be preserved
       expect(camera.position.x).toBeCloseTo(10);
       expect(camera.position.y).toBeCloseTo(20);
@@ -104,7 +102,7 @@ describe('ControlsManager', () => {
     it('should set auto-rotation', () => {
       controlsManager.setAutoRotate(true);
       expect(controlsManager.getAutoRotate()).toBe(true);
-      
+
       controlsManager.setAutoRotate(false);
       expect(controlsManager.getAutoRotate()).toBe(false);
     });
@@ -119,7 +117,7 @@ describe('ControlsManager', () => {
       controlsManager.setEnableZoom(false);
       const controls = controlsManager.getControls() as OrbitControls;
       expect(controls.enableZoom).toBe(false);
-      
+
       controlsManager.setEnableZoom(true);
       expect(controls.enableZoom).toBe(true);
     });
@@ -140,7 +138,7 @@ describe('ControlsManager', () => {
       controlsManager.setFlyInertialMode(true);
       const controls = controlsManager.getControls() as LuxarFlyControls;
       expect(controls.inertialMode).toBe(true);
-      
+
       controlsManager.setFlyInertialMode(false);
       expect(controls.inertialMode).toBe(false);
     });
@@ -167,7 +165,7 @@ describe('ControlsManager', () => {
     it('should enable/disable controls', () => {
       controlsManager.setEnabled(false);
       expect(controlsManager.getControls()!.enabled).toBe(false);
-      
+
       controlsManager.setEnabled(true);
       expect(controlsManager.getControls()!.enabled).toBe(true);
     });
@@ -176,7 +174,7 @@ describe('ControlsManager', () => {
       const resetSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.reset = resetSpy;
-      
+
       controlsManager.reset();
       expect(resetSpy).toHaveBeenCalled();
     });
@@ -185,7 +183,7 @@ describe('ControlsManager', () => {
       const saveStateSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.saveState = saveStateSpy;
-      
+
       controlsManager.saveState();
       expect(saveStateSpy).toHaveBeenCalled();
     });
@@ -193,7 +191,7 @@ describe('ControlsManager', () => {
     it('should handle lookAt for orbit controls', () => {
       const target = new THREE.Vector3(1, 2, 3);
       controlsManager.lookAt(target);
-      
+
       const controls = controlsManager.getControls() as OrbitControls;
       expect(controls.target.x).toBe(1);
       expect(controls.target.y).toBe(2);
@@ -205,10 +203,10 @@ describe('ControlsManager', () => {
       const lookAtSmoothSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.lookAtSmooth = lookAtSmoothSpy;
-      
+
       const target = new THREE.Vector3(1, 2, 3);
       controlsManager.lookAt(target, true);
-      
+
       expect(lookAtSmoothSpy).toHaveBeenCalledWith(target, 0.9);
     });
   });
@@ -218,7 +216,7 @@ describe('ControlsManager', () => {
       const updateSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.update = updateSpy;
-      
+
       controlsManager.update();
       expect(updateSpy).toHaveBeenCalled();
     });
@@ -228,7 +226,7 @@ describe('ControlsManager', () => {
       const updateSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.update = updateSpy;
-      
+
       controlsManager.update();
       expect(updateSpy).toHaveBeenCalledWith(expect.any(Number));
     });
@@ -236,7 +234,7 @@ describe('ControlsManager', () => {
     it('should handle null controls gracefully', () => {
       // Force null controls
       (controlsManager as any).currentControls = null;
-      
+
       // Should not throw
       expect(() => controlsManager.update()).not.toThrow();
     });
@@ -246,30 +244,30 @@ describe('ControlsManager', () => {
     it('should forward change events from controls', () => {
       const changeHandler = vi.fn();
       controlsManager.addEventListener('change', changeHandler);
-      
+
       const controls = controlsManager.getControls() as any;
       controls.dispatchEvent({ type: 'change' });
-      
+
       expect(changeHandler).toHaveBeenCalled();
     });
 
     it('should forward start events from controls', () => {
       const startHandler = vi.fn();
       controlsManager.addEventListener('start', startHandler);
-      
+
       const controls = controlsManager.getControls() as any;
       controls.dispatchEvent({ type: 'start' });
-      
+
       expect(startHandler).toHaveBeenCalled();
     });
 
     it('should forward end events from controls', () => {
       const endHandler = vi.fn();
       controlsManager.addEventListener('end', endHandler);
-      
+
       const controls = controlsManager.getControls() as any;
       controls.dispatchEvent({ type: 'end' });
-      
+
       expect(endHandler).toHaveBeenCalled();
     });
   });
@@ -278,7 +276,7 @@ describe('ControlsManager', () => {
     it('should return orbit target for orbit controls', () => {
       const controls = controlsManager.getControls() as OrbitControls;
       controls.target.set(5, 10, 15);
-      
+
       const target = controlsManager.getFocusTarget();
       expect(target.x).toBe(5);
       expect(target.y).toBe(10);
@@ -288,7 +286,7 @@ describe('ControlsManager', () => {
     it('should return point in front of camera for fly controls', () => {
       controlsManager.setControlType('fly');
       camera.lookAt(0, 0, -1); // Look along -Z axis
-      
+
       const target = controlsManager.getFocusTarget();
       // Should be in front of camera
       expect(target.z).toBeLessThan(camera.position.z);
@@ -300,7 +298,7 @@ describe('ControlsManager', () => {
       const disposeSpy = vi.fn();
       const controls = controlsManager.getControls() as any;
       controls.dispose = disposeSpy;
-      
+
       controlsManager.dispose();
       expect(disposeSpy).toHaveBeenCalled();
     });
@@ -308,7 +306,7 @@ describe('ControlsManager', () => {
     it('should stop clock on dispose', () => {
       const clock = (controlsManager as any).clock;
       const stopSpy = vi.spyOn(clock, 'stop');
-      
+
       controlsManager.dispose();
       expect(stopSpy).toHaveBeenCalled();
     });

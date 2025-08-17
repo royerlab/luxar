@@ -43,6 +43,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { INPUT_CONFIG } from '../controls/control-config';
+import { LazyLoadingMonitor } from '../ui/lazy-loading-monitor';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -68,6 +69,9 @@ export class InputHandler {
   /** Input context manager for handling keyboard conflicts */
   private contextManager: InputContextManager;
 
+  /** Lazy loading monitoring panel */
+  private lazyLoadingMonitor?: LazyLoadingMonitor;
+
   /**
    * Constructs the input handler with required system dependencies.
    *
@@ -83,6 +87,11 @@ export class InputHandler {
 
     // Initialize input context manager
     this.contextManager = new InputContextManager();
+
+    // Initialize lazy loading monitor
+    this.lazyLoadingMonitor = new LazyLoadingMonitor(document.body);
+    // Expose globally for LazyDataManager to connect
+    (window as any).__luxarLazyMonitor = this.lazyLoadingMonitor;
   }
 
   /**
@@ -184,31 +193,47 @@ export class InputHandler {
   /**
    * Update all nD point clouds with current dimension values
    */
-  private updateAllNDPointClouds(): void {
+  private async updateAllNDPointClouds(): Promise<void> {
     const dims = sceneDimsManager.getDims();
-    if (!dims) return;
+    if (!dims) {
+      return;
+    }
 
     const nDPointClouds = this.findNDPointClouds();
 
-    nDPointClouds.forEach((points: THREE.Points) => {
-      const {
-        originalNumPoints,
-        originalPositions,
-        originalColors,
-        originalRadii,
-        originalSharpness,
-      } = points.userData;
+    // Process all updates, handling both sync and async cases
+    const updatePromises = nDPointClouds.map(async (points: THREE.Points) => {
+      // Check if this is a lazy-loaded point cloud
+      if (points.userData.isLazyLoaded) {
+        // Use async update for lazy-loaded data
+        const { updateLazyLoadedPointCloud } = await import('../utils/dims-navigation');
+        await updateLazyLoadedPointCloud(points, dims);
+        // Trigger re-render after update
+        this.animationController.startAnimation();
+      } else {
+        // Use traditional update for fully-loaded data
+        const {
+          originalNumPoints,
+          originalPositions,
+          originalColors,
+          originalRadii,
+          originalSharpness,
+        } = points.userData;
 
-      updatePointCloudSlice(
-        points,
-        originalPositions,
-        originalColors,
-        originalRadii,
-        originalSharpness,
-        dims, // Use shared dims from manager
-        originalNumPoints
-      );
+        updatePointCloudSlice(
+          points,
+          originalPositions,
+          originalColors,
+          originalRadii,
+          originalSharpness,
+          dims, // Use shared dims from manager
+          originalNumPoints
+        );
+      }
     });
+
+    // Wait for all updates to complete
+    await Promise.all(updatePromises);
   }
 
   /**
@@ -296,12 +321,10 @@ export class InputHandler {
       canvas.style.filter = 'none';
       // Ensure document background doesn't interfere
       document.documentElement.style.backgroundColor = '#111111';
-      console.log('✓ [Luxar] Entering fullscreen mode');
     } else {
       // Exiting fullscreen - completely clear all inline styles
       canvas.removeAttribute('style');
       document.documentElement.style.backgroundColor = '';
-      console.log('✓ [Luxar] Exiting fullscreen mode');
     }
 
     // Wait for fullscreen transition to complete before updating
@@ -432,6 +455,18 @@ export class InputHandler {
         }
         break;
 
+      case 'm':
+      case 'M':
+        // Ctrl+M to toggle lazy loading monitor
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          if (this.lazyLoadingMonitor) {
+            this.lazyLoadingMonitor.toggle();
+            console.log('📊 [Luxar] Lazy loading monitor toggled');
+          }
+        }
+        break;
+
       case 'f':
       case 'F':
         // F key to recenter camera on scene
@@ -489,6 +524,12 @@ export class InputHandler {
           event.preventDefault();
           this.selectDimension(parseInt(event.key) - 1); // Convert to 0-based index
         }
+        break;
+
+      case 'Escape':
+        // Close all open panels
+        event.preventDefault();
+        this.closeAllPanels();
         break;
     }
   }
@@ -756,12 +797,69 @@ export class InputHandler {
     const nDPoints: THREE.Points[] = [];
 
     this.sceneManager.scene.traverse((object) => {
-      if (object instanceof THREE.Points && object.userData.originalPositions) {
-        nDPoints.push(object);
+      if (object instanceof THREE.Points) {
+        // Check for either traditional nD data or lazy-loaded data
+        if (object.userData.originalPositions || object.userData.isLazyLoaded) {
+          nDPoints.push(object);
+        }
       }
     });
 
     return nDPoints;
+  }
+
+  /**
+   * Handle ESC key with priority system:
+   * 1. Exit fullscreen (if in fullscreen)
+   * 2. Close all panels (if not in fullscreen)
+   */
+  private closeAllPanels(): void {
+    // Priority 1: Exit fullscreen if active
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch((err) => {
+        console.error('Error exiting fullscreen:', err);
+      });
+      return; // Only exit fullscreen, don't close panels
+    }
+
+    // Priority 2: Close all open panels (starting with topmost)
+    // Close help overlay (usually topmost)
+    const helpOverlay = document.getElementById('help-overlay');
+    if (helpOverlay) {
+      helpOverlay.remove();
+    }
+
+    // Close dataset browser
+    const datasetBrowser = document.getElementById('dataset-browser');
+    if (datasetBrowser) {
+      datasetBrowser.remove();
+    }
+
+    // Close rendering controls
+    if (this.renderingControls?.isVisible()) {
+      this.renderingControls.hide();
+    }
+
+    // Close lazy loading monitor
+    if (this.lazyLoadingMonitor?.getIsVisible()) {
+      this.lazyLoadingMonitor.hide();
+    }
+
+    // Close dimension sliders
+    if (this.dimensionSliders?.getIsVisible()) {
+      this.dimensionSliders.hide();
+    }
+
+    // Close debug console
+    if (this.debugConsole.getIsVisible()) {
+      this.debugConsole.hide();
+    }
+
+    // Close performance stats
+    const statsElement = document.querySelector('.stats') as HTMLElement;
+    if (statsElement && statsElement.style.display !== 'none') {
+      this.animationController.performanceStats.hide();
+    }
   }
 
   /**
@@ -814,6 +912,13 @@ export class InputHandler {
 
     // Dispose debug console
     this.debugConsole.dispose();
+
+    // Dispose lazy loading monitor
+    if (this.lazyLoadingMonitor) {
+      this.lazyLoadingMonitor.dispose();
+      this.lazyLoadingMonitor = undefined;
+      delete (window as any).__luxarLazyMonitor;
+    }
 
     // Clean up event listeners
     this.eventListeners.forEach((cleanup) => cleanup());
