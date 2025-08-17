@@ -41,6 +41,7 @@ import {
   sliceScalarAttribute,
   computeEffectiveRadii,
 } from '../utils/slicing';
+import { LazyDataManager } from './lazy-data-manager';
 
 /* ------------------------------------------------------------------ utils */
 
@@ -121,6 +122,23 @@ interface ZarrGroupAttrs {
 
 /* ------------------------------------------------------------------ main */
 
+// Global lazy data manager instance (shared across all point clouds)
+let globalLazyManager: LazyDataManager | null = null;
+
+/**
+ * Get or create the global lazy data manager
+ */
+function getLazyManager(): LazyDataManager {
+  if (!globalLazyManager) {
+    globalLazyManager = new LazyDataManager({
+      maxMemoryMB: 500,
+      preloadRadius: 1,
+      debug: false, // Can be enabled via config later
+    });
+  }
+  return globalLazyManager;
+}
+
 /**
  * Loads an nD scene from a Zarr store, creating a complete THREE.js scene graph.
  *
@@ -152,7 +170,31 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     const store = await zarr.tryWithConsolidated(rawStore); // Use consolidated metadata when available
 
     // Phase 2: Discover scene structure
-    const listing = await store.contents(); // Enumerate all groups and arrays
+    // Check if store has contents method (consolidated) or use fallback
+    let listing: any[];
+    if (typeof store.contents === 'function') {
+      listing = await store.contents(); // Enumerate all groups and arrays
+    } else {
+      // Fallback: manually enumerate by walking the store
+      // For now, we'll use a simple approach that lists immediate children
+      console.warn('[⚠️] [Luxar] Store does not have contents() method, using fallback enumeration');
+      listing = [];
+      
+      // Try to list root group members
+      try {
+        const rootGroup = await zarr.open(zarr.root(store), { kind: 'group' });
+        // Get group members from attrs or by other means
+        // This is a simplified fallback - may need refinement
+        for (const key of Object.keys(rootGroup)) {
+          if (key !== 'attrs' && key !== 'zarr') {
+            listing.push({ path: `/${key}`, kind: 'group' });
+          }
+        }
+      } catch (err) {
+        console.error('[❌] [Luxar] Failed to enumerate store contents:', err);
+        listing = [];
+      }
+    }
 
     const rootLoc = zarr.root(store);
     const rootThree = new THREE.Group();
@@ -328,9 +370,48 @@ async function buildPoints(
   attrs: ZarrGroupAttrs,
   sceneDims?: SimpleDims
 ): Promise<THREE.Points> {
-  // Phase 1: Load core position data
+  // Phase 1: Open position array to check size
   const posArr = await zarr.open(loc.resolve('positions'), { kind: 'array' });
-  const posData = (await get(posArr)).data as Float32Array;
+  
+  // Determine dataset size and check if we should use lazy loading
+  const totalPoints = attrs.num_points || (posArr.shape[0] as number);
+  const dimensions = posArr.shape.length === 2 ? posArr.shape[1] : 3;
+  
+  // Check if we should use lazy loading
+  const useLazyLoading = LazyDataManager.shouldUseLazyLoading(totalPoints, dimensions) && sceneDims && dimensions > 3;
+  
+  let posData: Float32Array;
+  
+  if (useLazyLoading && sceneDims) {
+    console.log(`[🔄] [Luxar] Using lazy loading for large dataset (${totalPoints.toLocaleString()} points in ${dimensions}D)`);
+    
+    // Use lazy loading - only load data for current slice
+    const lazyManager = getLazyManager();
+    
+    // Calculate which slice to load based on current dimensions
+    const sliceSpec: (zarr.Slice | null)[] = [];
+    for (let d = 0; d < dimensions; d++) {
+      if (sceneDims.displayed.includes(d)) {
+        // Load all data for displayed dimensions
+        sliceSpec.push(null);
+      } else {
+        // Load only current slice for non-displayed dimensions
+        const currentPos = sceneDims.currentStep[d];
+        sliceSpec.push(zarr.slice(currentPos, currentPos + 1));
+      }
+    }
+    
+    // For now, fall back to full loading until lazy slice assembly is complete
+    // TODO: Implement proper slice assembly in LazyDataManager
+    console.log('[⚠️] [Luxar] Lazy loading not fully implemented yet, falling back to full load');
+    posData = (await get(posArr)).data as Float32Array;
+    
+    // Store array reference for future updates
+    if (!globalLazyManager) globalLazyManager = lazyManager;
+  } else {
+    // Use traditional full loading for small datasets
+    posData = (await get(posArr)).data as Float32Array;
+  }
 
   // Determine dataset size - explicit count takes precedence over inference
   const numPoints = attrs.num_points || posData.length / 3;
