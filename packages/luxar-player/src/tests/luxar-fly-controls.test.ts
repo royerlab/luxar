@@ -41,7 +41,7 @@ describe('LuxarFlyControls', () => {
       expect(controls.enabled).toBe(true);
       expect(controls.movementSpeed).toBe(CONTROL_CONFIG.fly.movement.speed.default);
       expect(controls.lookSpeed).toBe(CONTROL_CONFIG.fly.look.mouseSpeed.default);
-      expect(controls.inertialMode).toBe(false);
+      expect(controls.inertialMode).toBe(true);  // Default is now true
       expect(controls.damping).toBe(CONTROL_CONFIG.fly.movement.damping.default);
       expect(controls.acceleration).toBe(CONTROL_CONFIG.fly.movement.acceleration.default);
     });
@@ -162,21 +162,21 @@ describe('LuxarFlyControls', () => {
       expect((controls as any).isMouseDown).toBe(false);
     });
 
-    it('should clamp vertical rotation', () => {
-      // Clamping happens in onMouseMove, not updateOrientation
+    it('should apply angular velocity on mouse movement', () => {
+      // Set up mouse drag state
       (controls as any).isMouseDown = true;
       (controls as any).mouseX = 100;
       (controls as any).mouseY = 100;
       
-      // Move mouse to trigger lat clamping
+      // Move mouse to trigger angular velocity
       const mouseMove = new MouseEvent('mousemove', {
-        clientX: 100,
-        clientY: 2000 // Large Y movement
+        clientX: 200,
+        clientY: 200
       });
       (controls as any).onMouseMove(mouseMove);
       
-      expect((controls as any).lat).toBeLessThanOrEqual(85);
-      expect((controls as any).lat).toBeGreaterThanOrEqual(-85);
+      // Check that angular velocity was applied (not zero)
+      expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
     });
 
     it('should dispatch events for mouse interaction', () => {
@@ -219,10 +219,14 @@ describe('LuxarFlyControls', () => {
       (controls as any).moveState.forward = 0;
       const positionAfterStop = camera.position.clone();
       
+      // Update a few times - with high damping it should stop quickly
+      controls.update(0.016);
+      controls.update(0.016);
       controls.update(0.016);
       
-      // Should stop immediately
-      expect(camera.position.equals(positionAfterStop)).toBe(true);
+      // Should have stopped or nearly stopped (within threshold)
+      const movement = camera.position.distanceTo(positionAfterStop);
+      expect(movement).toBeLessThan(0.01); // Very small movement due to high damping
     });
 
     it('should handle inertial movement mode', () => {
@@ -269,11 +273,20 @@ describe('LuxarFlyControls', () => {
       // Build up some velocity
       (controls as any).velocity.set(1, 1, 1);
       
-      // Switch to direct mode
+      // Switch to direct mode (high damping)
       controls.setInertialMode(false);
       
-      // Velocity should be cleared
-      expect((controls as any).velocity.length()).toBe(0);
+      // Velocity is not cleared immediately but will dampen quickly
+      // The mode just changes the damping factor
+      expect((controls as any).inertialMode).toBe(false);
+      
+      // After several updates with high damping (0.5), velocity should be near zero
+      // High damping reduces velocity by ~50% each frame at 60fps
+      for (let i = 0; i < 10; i++) {
+        controls.update(0.016);
+      }
+      
+      expect((controls as any).velocity.length()).toBeLessThan(0.01);
     });
   });
 
@@ -390,18 +403,31 @@ describe('LuxarFlyControls', () => {
       
       // Set some state
       (controls as any).velocity.set(1, 2, 3);
+      (controls as any).angularVelocity.set(0.1, 0.2, 0.3);
       (controls as any).moveState.forward = 1;
       (controls as any).moveState.right = 1;
-      (controls as any).lat = 45;
-      (controls as any).lon = 90;
+      (controls as any).lookState.horizontal = 1;
+      (controls as any).lookState.vertical = 1;
+      
+      // Modify orientation from identity
+      const testQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5, 0.5, 0));
+      (controls as any).orientation.copy(testQuat);
       
       controls.reset();
       
+      // Check velocities are zeroed
       expect((controls as any).velocity.length()).toBe(0);
+      expect((controls as any).angularVelocity.length()).toBe(0);
+      
+      // Check movement states are zeroed
       expect((controls as any).moveState.forward).toBe(0);
       expect((controls as any).moveState.right).toBe(0);
-      expect((controls as any).lat).toBe(0);
-      expect((controls as any).lon).toBe(0);
+      expect((controls as any).lookState.horizontal).toBe(0);
+      expect((controls as any).lookState.vertical).toBe(0);
+      
+      // Check orientation is reset to identity
+      const identity = new THREE.Quaternion(0, 0, 0, 1);
+      expect((controls as any).orientation.equals(identity)).toBe(true);
     });
   });
 

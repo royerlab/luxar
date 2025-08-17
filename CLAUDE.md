@@ -47,15 +47,26 @@ Note: When possible, use `make` commands for convenience (see below).
 - `/packages/luxar-player/` - TypeScript/WebGL viewer
   - `/packages/luxar-player/src/` - TypeScript source
   - `/packages/luxar-player/src/config/` - Unified configuration
+  - `/packages/luxar-player/src/controls/` - Control system (orbit, fly, input management)
 - `/examples/` - Example scripts (use `*_example.py` naming convention)
+- `/docs/` - **Documentation directory (IMPORTANT: Keep this up-to-date!)**
+  - Contains various documentation files that were moved from root
+  - Must be maintained in sync with code changes
+  - Includes technical guides, format specs, and development docs
 
 ### Key Documentation Files
 - `README.md` - Main project documentation
-- `LUXAR_ZARR_FORMAT.md` - Data format specification
-- `CONTRIBUTING.md` - Contributing guidelines
+- `CLAUDE.md` - This file - guidance for Claude Code
 - `pyproject.toml` - Python project configuration (dependencies, tools)
 - `Makefile` - Convenient development commands
-Important Note: Keep these documentation files synced as you make changes to the code!
+- `/docs/` folder containing:
+  - `LUXAR_ZARR_FORMAT.md` - Data format specification
+  - `CONTRIBUTING.md` - Contributing guidelines
+  - `DEVELOPMENT_TOOLS.md` - Development and build tools documentation
+  - Various technical guides and specifications
+  - **Controls documentation**: `luxar-fly-controls-guide.md` and package READMEs
+
+**CRITICAL**: When making changes to the code, ALWAYS check if documentation in the `/docs/` folder needs updating. Keep all documentation synchronized with the implementation!
 
 ## Development Workflow
 
@@ -174,11 +185,13 @@ When making significant changes:
 3. Check Python linting: `hatch run python -m ruff check .`
 4. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
 5. Fix TypeScript unused warnings by prefixing with underscore
-6. Update relevant documentation (README.md, API docs, docstrings)
-7. Update LUXAR_ZARR_FORMAT.md if adding new data fields or changing the format
-8. Add/update examples if introducing new features
-9. Run integration tests on all examples
-10. Update this CLAUDE.md file with important learnings
+6. **Update documentation in `/docs/` folder** - check ALL relevant docs
+7. Update README.md files (root and package-specific)
+8. Update format specs if data structures change (e.g., LUXAR_ZARR_FORMAT.md)
+9. Update control system docs if navigation changes
+10. Add/update examples if introducing new features
+11. Run integration tests on all examples
+12. Update this CLAUDE.md file with important learnings
 
 ### TypeScript Quality Checks
 After making changes in luxar-player, run:

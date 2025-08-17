@@ -218,7 +218,9 @@ export function showHelpOverlay() {
       items: [
         'WASD: Move forward/back/left/right',
         '⌥W/⌥S (Alt+W/S): Move up/down',
+        '⇧ Shift: 2x speed boost',
         '↑↓←→: Look up/down/left/right',
+        'Q/E: Roll left/right (barrel roll)',
         '🖱️ Drag: Free look (rotate view)',
         'I: Toggle inertial mode',
         'Note: Press V to enter fly mode',

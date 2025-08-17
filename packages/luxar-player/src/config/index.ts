@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import type { AppConfig } from './types';
+import { CONTROL_CONFIG } from '../controls/control-config';
 
 /**
  * Main configuration object containing all application settings
@@ -133,11 +134,13 @@ export const config: AppConfig = {
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
-      autoRotateSpeed: 0.25, // Slow rotation speed for presentations
-      // Fly controls
-      flyMovementSpeed: 5.0, // Movement speed in units per second
-      flyInertialMode: false, // Direct velocity mode by default
-      flyDamping: 0.999, // Damping for inertial mode
+      autoRotateSpeed: CONTROL_CONFIG.orbit.autoRotate.speed.default, // Slow rotation speed for presentations
+      // Fly controls - all defaults from CONTROL_CONFIG
+      flyMovementSpeed: CONTROL_CONFIG.fly.movement.speed.default,
+      flyRotationSpeed: CONTROL_CONFIG.fly.rotation.speed.default,
+      flyInertialMode: CONTROL_CONFIG.fly.inertialMode.default,
+      flyDamping: CONTROL_CONFIG.fly.movement.damping.default,
+      flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default
     },
   },
 

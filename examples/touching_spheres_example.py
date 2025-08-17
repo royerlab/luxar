@@ -138,18 +138,18 @@ def main():
     scene.attrs["description"] = """
     Touching Spheres Visualization
     ===============================
-    
+
     This scene demonstrates the fundamental principle of world-space
     point sizing: spheres should maintain their touching relationships
     regardless of viewing conditions.
-    
+
     Test cases:
     1. Red pair - horizontal alignment
     2. Green pair - vertical alignment
     3. Blue pair - depth alignment
     4. Yellow/Magenta - different sizes
     5. Cyan/Orange grid - multiple touching pairs
-    
+
     All pairs should just touch at a single point.
     """
 

@@ -253,7 +253,7 @@ scene.zarr/
 }
 ```
 
-📚 **For complete format specification, see [LUXAR_ZARR_FORMAT.md](LUXAR_ZARR_FORMAT.md)**
+📚 **For complete format specification, see [LUXAR_ZARR_FORMAT.md](docs/LUXAR_ZARR_FORMAT.md)**
 
 ### Performance Recommendations
 

@@ -42,10 +42,11 @@ export interface OrbitState {
  */
 export interface FlyState {
   movementSpeed: number;
+  rotationSpeed: number;
   lookSpeed: number;
-  arrowLookSpeed: number;
   inertialMode: boolean;
   damping: number;
+  rotationDamping: number;
   acceleration: number;
 }
 
@@ -68,8 +69,10 @@ export interface NavigationControllers {
   autoRotateSpeed?: Controller;
   // Fly controls
   flyMovementSpeed?: Controller;
+  flyRotationSpeed?: Controller;
   flyInertialMode?: Controller;
   flyDamping?: Controller;
+  flyRotationDamping?: Controller;
 }
 
 /**
@@ -118,18 +121,25 @@ export interface ControlConfig {
 }
 
 export interface FlyConfig {
+  inertialMode: {
+    default: boolean;
+  };
   movement: {
     speed: ConfigRange;
     acceleration: ConfigRange;
     damping: ConfigRange;
   };
+  rotation: {
+    speed: ConfigRange;
+    damping: ConfigRange;
+  };
   look: {
     mouseSpeed: ConfigValue;
-    keyboardSpeed: ConfigValue;
   };
   physics: {
     velocityThreshold: number;
     dampingPower: number;
+    angularVelocityThreshold: number;
   };
 }
 

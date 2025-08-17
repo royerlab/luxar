@@ -13,6 +13,9 @@ import type { ControlConfig } from './types';
  */
 export const CONTROL_CONFIG: ControlConfig = {
   fly: {
+    inertialMode: {
+      default: true, // Inertial mode enabled by default
+    },
     movement: {
       speed: {
         min: 0.5,
@@ -28,8 +31,22 @@ export const CONTROL_CONFIG: ControlConfig = {
       },
       damping: {
         min: 0.9,
+        max: 0.99999,
+        default: 0.999,  // Excellent momentum for smooth movement
+        step: 0.0001,
+      },
+    },
+    rotation: {
+      speed: {
+        min: 0.1,
+        max: 5.0,
+        default: 1.5,
+        step: 0.1,
+      },
+      damping: {
+        min: 0.9,
         max: 0.9999,
-        default: 0.999,
+        default: 0.99,  // Rotations slow down smoothly but not too drifty
         step: 0.0001,
       },
     },
@@ -37,13 +54,11 @@ export const CONTROL_CONFIG: ControlConfig = {
       mouseSpeed: {
         default: 0.002, // Radians per pixel
       },
-      keyboardSpeed: {
-        default: 0.15, // Radians per second (1.5 / 10 for precise control)
-      },
     },
     physics: {
       velocityThreshold: 1e-4, // Below this velocity, movement stops completely
       dampingPower: 60, // Normalization factor for 60fps damping calculation
+      angularVelocityThreshold: 1e-4, // Below this angular velocity, rotation stops
     },
   },
   orbit: {
@@ -109,8 +124,11 @@ export const INPUT_CONFIG = {
       toggleControlMode: 'v', // Orbit <-> Fly
       toggleInertialMode: 'i', // Fly mode only
     },
-    // Keys used for fly mode movement (should be disabled in orbit mode)
-    flyModeKeys: ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D'],
+    // Keys used for fly mode movement and rotation (should be disabled in orbit mode)
+    flyModeKeys: [
+      'w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E', 
+      'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'
+    ],
     // Keys for dimension navigation
     dimensionKeys: ['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
   },

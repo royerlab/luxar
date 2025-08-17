@@ -125,20 +125,20 @@ def main():
     scene.attrs["description"] = """
     Depth of Field Test Grid
     ========================
-    
+
     This scene provides a reference for testing depth-based rendering:
-    
+
     - 5 distinct depth layers
     - Red-to-blue color gradient indicating depth
     - White markers showing exact depth positions
     - Yellow indicators showing layer numbers
-    
+
     Use this scene to test:
     - Depth of field blur effects
     - Fog and atmospheric effects
     - Proper occlusion and depth sorting
     - Perspective scaling with depth
-    
+
     Controls:
     - Press 'R' to toggle rendering controls
     - Adjust DOF focal distance and aperture
