@@ -38,6 +38,7 @@ ui/
 Beautiful napari-inspired sliders for navigating through nD datasets.
 
 **Features:**
+
 - Smooth slider controls for each dimension
 - Real-time value display with units
 - Color-coded dimension indicators
@@ -46,6 +47,7 @@ Beautiful napari-inspired sliders for navigating through nD datasets.
 - Step-based navigation for discrete dimensions
 
 **UI Structure:**
+
 ```typescript
 class DimensionSliders {
   // Creates slider panel with:
@@ -57,6 +59,7 @@ class DimensionSliders {
 ```
 
 **Usage:**
+
 ```typescript
 const sliders = new DimensionSliders();
 sliders.setDimensions(sceneDims);
@@ -72,6 +75,7 @@ sliders.on('dimensionChanged', (dim, value) => {
 Comprehensive controls for adjusting rendering parameters in real-time.
 
 **Control Categories:**
+
 - **Visual Effects**: Bloom, tone mapping, exposure
 - **Anti-Aliasing**: FXAA, SMAA, MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
@@ -79,6 +83,7 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 - **Materials**: Opacity, gamma, blending modes
 
 **Panel Layout:**
+
 ```
 Rendering Controls
 ├── Effects
@@ -101,6 +106,7 @@ Rendering Controls
 File browser for navigating and loading Zarr datasets from servers.
 
 **Features:**
+
 - Server-agnostic navigation (WebDAV, S3, nginx)
 - Zarr dataset detection and highlighting
 - Breadcrumb navigation
@@ -109,17 +115,18 @@ File browser for navigating and loading Zarr datasets from servers.
 - Recent datasets history
 
 **Interface:**
+
 ```typescript
 class DatasetBrowser {
   // Navigation
-  navigate(path: string): Promise<void>
-  
+  navigate(path: string): Promise<void>;
+
   // Selection
-  onSelect(callback: (dataset: string) => void)
-  
+  onSelect(callback: (dataset: string) => void);
+
   // History
-  addRecent(path: string): void
-  clearRecent(): void
+  addRecent(path: string): void;
+  clearRecent(): void;
 }
 ```
 
@@ -128,6 +135,7 @@ class DatasetBrowser {
 Real-time performance statistics overlay.
 
 **Metrics Displayed:**
+
 - FPS (current, average, min/max)
 - Frame time (ms)
 - GPU memory usage
@@ -136,6 +144,7 @@ Real-time performance statistics overlay.
 - Render resolution
 
 **Visualization:**
+
 ```
 ┌─────────────────┐
 │ FPS: 60 (58-60) │
@@ -150,6 +159,7 @@ Real-time performance statistics overlay.
 In-app console for development and debugging.
 
 **Features:**
+
 - Captures all console output
 - Syntax highlighting
 - Command history
@@ -164,6 +174,7 @@ In-app console for development and debugging.
 Context-sensitive help and keyboard shortcuts.
 
 **Components:**
+
 - Keyboard shortcut reference
 - Control mode indicators
 - Tooltip system
@@ -178,9 +189,12 @@ Context-sensitive help and keyboard shortcuts.
 
 ```css
 /* Component namespacing */
-.luxar-ui-panel { }
-.luxar-ui-slider { }
-.luxar-ui-button { }
+.luxar-ui-panel {
+}
+.luxar-ui-slider {
+}
+.luxar-ui-button {
+}
 
 /* Theme variables */
 :root {
@@ -220,14 +234,14 @@ const styles = `
 
 Global keyboard shortcuts managed by the UI system:
 
-| Key | Action | Context |
-|-----|--------|---------|
-| `H` | Toggle help | Global |
-| `P` | Toggle performance monitor | Global |
-| `R` | Toggle rendering controls | Global |
-| `D` | Toggle dimension sliders | When nD data loaded |
-| `Ctrl+L` | Toggle debug console | Development mode |
-| `Esc` | Close active panel | Any panel open |
+| Key      | Action                     | Context             |
+| -------- | -------------------------- | ------------------- |
+| `H`      | Toggle help                | Global              |
+| `P`      | Toggle performance monitor | Global              |
+| `R`      | Toggle rendering controls  | Global              |
+| `D`      | Toggle dimension sliders   | When nD data loaded |
+| `Ctrl+L` | Toggle debug console       | Development mode    |
+| `Esc`    | Close active panel         | Any panel open      |
 
 ### Mouse Interactions
 
@@ -239,6 +253,7 @@ Global keyboard shortcuts managed by the UI system:
 ### Touch Support
 
 Mobile-friendly interactions:
+
 - Touch drag for panel movement
 - Pinch to zoom in browser view
 - Tap outside to close panels
@@ -259,7 +274,7 @@ interface PanelConfig {
   collapsible: boolean;
   draggable: boolean;
   resizable: boolean;
-  persistent: boolean;  // Remember state
+  persistent: boolean; // Remember state
 }
 ```
 
@@ -274,7 +289,7 @@ Automatic layout adjustments:
 
 function adaptLayout() {
   const width = window.innerWidth;
-  
+
   if (width < 768) {
     // Mobile: full-screen panels
     setLayout('mobile');
@@ -304,7 +319,7 @@ interface UIState {
     performance: { visible: boolean };
     debug: { visible: boolean };
   };
-  
+
   settings: {
     theme: 'dark' | 'light';
     compactMode: boolean;
@@ -337,19 +352,14 @@ function restoreUIState(): UIState {
 ### Complete UI Setup
 
 ```typescript
-import { 
-  DimensionSliders,
-  RenderingControls,
-  PerformanceMonitor,
-  DatasetBrowser
-} from './ui';
+import { DimensionSliders, RenderingControls, PerformanceMonitor, DatasetBrowser } from './ui';
 
 // Initialize UI components
 const ui = {
   dimensions: new DimensionSliders(),
   rendering: new RenderingControls(postProcessing),
   performance: new PerformanceMonitor(renderer),
-  browser: new DatasetBrowser()
+  browser: new DatasetBrowser(),
 };
 
 // Connect to application
@@ -366,10 +376,10 @@ class CustomPanel extends UIPanel {
     super({
       title: 'Custom Controls',
       position: 'top-right',
-      collapsible: true
+      collapsible: true,
     });
   }
-  
+
   render() {
     return `
       <div class="custom-panel">
@@ -394,10 +404,10 @@ function updateUIForDataset(dataset) {
   } else {
     ui.dimensions.hide();
   }
-  
+
   // Update performance monitor
   ui.performance.setPointCount(dataset.pointCount);
-  
+
   // Configure rendering controls
   ui.rendering.setDefaults(dataset.renderingConfig);
 }
@@ -412,17 +422,19 @@ function updateUIForDataset(dataset) {
 All UI components include proper ARIA attributes:
 
 ```html
-<div role="slider" 
-     aria-label="Time dimension"
-     aria-valuenow="50"
-     aria-valuemin="0"
-     aria-valuemax="100">
-</div>
+<div
+  role="slider"
+  aria-label="Time dimension"
+  aria-valuenow="50"
+  aria-valuemin="0"
+  aria-valuemax="100"
+></div>
 ```
 
 ### Keyboard Navigation
 
 Full keyboard support for all controls:
+
 - Tab navigation between controls
 - Arrow keys for sliders
 - Enter/Space for buttons
@@ -457,10 +469,10 @@ class UIComponent {
   dispose() {
     // Remove event listeners
     this.removeEventListeners();
-    
+
     // Clear references
     this.elements = null;
-    
+
     // Remove from DOM
     this.container.remove();
   }
@@ -479,20 +491,20 @@ const UI_CONFIG = {
   theme: 'dark',
   fontSize: 14,
   animations: true,
-  
+
   // Layout
   panelOpacity: 0.95,
   panelBlur: 10,
   cornerRadius: 8,
-  
+
   // Behavior
   autoHideDelay: 3000,
   doubleClickReset: true,
   persistState: true,
-  
+
   // Performance
-  updateThrottle: 16,  // 60 FPS
-  debounceDelay: 100
+  updateThrottle: 16, // 60 FPS
+  debounceDelay: 100,
 };
 ```
 
@@ -515,39 +527,39 @@ Override default styles:
 
 ### DimensionSliders
 
-| Method | Description |
-|--------|-------------|
-| `setDimensions(dims)` | Configure dimension sliders |
-| `setValue(dim, value)` | Set dimension value |
-| `show()/hide()` | Toggle visibility |
-| `on(event, handler)` | Subscribe to events |
+| Method                 | Description                 |
+| ---------------------- | --------------------------- |
+| `setDimensions(dims)`  | Configure dimension sliders |
+| `setValue(dim, value)` | Set dimension value         |
+| `show()/hide()`        | Toggle visibility           |
+| `on(event, handler)`   | Subscribe to events         |
 
 ### RenderingControls
 
-| Method | Description |
-|--------|-------------|
-| `setBloom(strength, radius, threshold)` | Configure bloom |
-| `setToneMapping(type)` | Set tone mapping |
-| `setAntiAliasing(type, enabled)` | Toggle AA methods |
-| `getState()` | Get current settings |
+| Method                                  | Description          |
+| --------------------------------------- | -------------------- |
+| `setBloom(strength, radius, threshold)` | Configure bloom      |
+| `setToneMapping(type)`                  | Set tone mapping     |
+| `setAntiAliasing(type, enabled)`        | Toggle AA methods    |
+| `getState()`                            | Get current settings |
 
 ### PerformanceMonitor
 
-| Method | Description |
-|--------|-------------|
-| `begin()/end()` | Frame timing markers |
+| Method                 | Description          |
+| ---------------------- | -------------------- |
+| `begin()/end()`        | Frame timing markers |
 | `setPointCount(count)` | Update point counter |
-| `show()/hide()` | Toggle visibility |
-| `reset()` | Clear statistics |
+| `show()/hide()`        | Toggle visibility    |
+| `reset()`              | Clear statistics     |
 
 ### DatasetBrowser
 
-| Method | Description |
-|--------|-------------|
-| `navigate(path)` | Browse to path |
-| `refresh()` | Reload current directory |
-| `setServer(url)` | Change data server |
-| `getSelection()` | Get selected dataset |
+| Method           | Description              |
+| ---------------- | ------------------------ |
+| `navigate(path)` | Browse to path           |
+| `refresh()`      | Reload current directory |
+| `setServer(url)` | Change data server       |
+| `getSelection()` | Get selected dataset     |
 
 ---
 
@@ -576,16 +588,19 @@ Override default styles:
 ### Common Issues
 
 **Problem: Panels not visible**
+
 - Check z-index conflicts
 - Verify panel state in localStorage
 - Ensure container element exists
 
 **Problem: Sliders not responding**
+
 - Check input event listeners
 - Verify dimension data is valid
 - Check for JavaScript errors
 
 **Problem: Performance monitor inaccurate**
+
 - Ensure begin/end pairs match
 - Check for blocking operations
 - Verify RAF timing
@@ -598,4 +613,4 @@ Part of the Luxar project. See root LICENSE file for details.
 
 ---
 
-*For implementation details, see the source files in this directory.*
+_For implementation details, see the source files in this directory._

@@ -32,7 +32,7 @@ export const CONTROL_CONFIG: ControlConfig = {
       damping: {
         min: 0.9,
         max: 0.99999,
-        default: 0.999,  // Excellent momentum for smooth movement
+        default: 0.999, // Excellent momentum for smooth movement
         step: 0.0001,
       },
     },
@@ -46,7 +46,7 @@ export const CONTROL_CONFIG: ControlConfig = {
       damping: {
         min: 0.9,
         max: 0.9999,
-        default: 0.99,  // Rotations slow down smoothly but not too drifty
+        default: 0.99, // Rotations slow down smoothly but not too drifty
         step: 0.0001,
       },
     },
@@ -126,8 +126,23 @@ export const INPUT_CONFIG = {
     },
     // Keys used for fly mode movement and rotation (should be disabled in orbit mode)
     flyModeKeys: [
-      'w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E', 
-      'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'
+      'w',
+      'a',
+      's',
+      'd',
+      'q',
+      'e',
+      'W',
+      'A',
+      'S',
+      'D',
+      'Q',
+      'E',
+      'Shift',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
     ],
     // Keys for dimension navigation
     dimensionKeys: ['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9'],

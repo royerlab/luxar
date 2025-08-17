@@ -140,7 +140,7 @@ export const config: AppConfig = {
       flyRotationSpeed: CONTROL_CONFIG.fly.rotation.speed.default,
       flyInertialMode: CONTROL_CONFIG.fly.inertialMode.default,
       flyDamping: CONTROL_CONFIG.fly.movement.damping.default,
-      flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default
+      flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default,
     },
   },
 

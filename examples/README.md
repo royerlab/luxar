@@ -119,9 +119,22 @@ python scene_dimensions_example.py
 luxar serve scene_dimensions_example.zarr
 ```
 
+#### 9. **temporal_spiral_sphere_4d_example.py** - Animated 4D Temporal Spiral
+Advanced 4D animation with temporal dynamics:
+- Rotating spiral sphere across 100 discrete time frames
+- Undulating rainbow colors that flow over time
+- Pulsating point sizes with spatial wave patterns (±20% variation)
+- Dynamic sharpness creating moving bands (4x variation)
+- High-density visualization (10,000 points per frame for testing)
+
+```bash
+python temporal_spiral_sphere_4d_example.py
+luxar serve temporal_spiral_sphere_4d_example.zarr
+```
+
 ### Point Attribute Examples
 
-#### 9. **radius_showcase_example.py** - Comprehensive Radius Features
+#### 10. **radius_showcase_example.py** - Comprehensive Radius Features
 Full showcase of per-point radius functionality:
 - **Size Gradient Spiral**: Points that grow along a spiral path
 - **Distance-Based Sphere**: Points sized by distance from center
@@ -133,7 +146,7 @@ python radius_showcase_example.py
 luxar serve radius_showcase_example.zarr
 ```
 
-#### 10. **sharpness_showcase_example.py** - Point Edge Control
+#### 11. **sharpness_showcase_example.py** - Point Edge Control
 Demonstrates the sharpness parameter for edge falloff:
 - **Sharpness Gradient**: Smooth transition from soft to sharp
 - **Fixed Comparison**: Side-by-side sharpness values
@@ -145,7 +158,7 @@ python sharpness_showcase_example.py
 luxar serve sharpness_showcase_example.zarr
 ```
 
-#### 11. **sharpness_compensation_example.py** - Size Compensation
+#### 12. **sharpness_compensation_example.py** - Size Compensation
 Shows how sharpness affects apparent size:
 - Points with identical radii but different sharpness
 - Demonstrates shader compensation for consistent sizing
@@ -158,7 +171,7 @@ luxar serve sharpness_compensation_example.zarr
 
 ### Advanced Examples
 
-#### 12. **nd_points_example.py** - Mixed Dimensionality Scene
+#### 13. **nd_points_example.py** - Mixed Dimensionality Scene
 Complex example with multiple point clouds of different dimensions:
 - 5D time series data
 - 2D projection planes
@@ -170,7 +183,7 @@ python nd_points_example.py
 luxar serve nd_points_example.zarr
 ```
 
-#### 13. **radius_slicing_example.py** - nD Visibility Concepts
+#### 14. **radius_slicing_example.py** - nD Visibility Concepts
 Educational example about radius-based visibility:
 - Points as nD hyperspheres intersecting viewing hyperplanes
 - Larger radii visible across more dimension slices
@@ -182,7 +195,7 @@ python radius_slicing_example.py
 luxar serve radius_slicing_example.zarr
 ```
 
-#### 14. **rainbow_sphere_spiral_example.py** - Beautiful Visualization
+#### 15. **rainbow_sphere_spiral_example.py** - Beautiful Visualization
 Creates an aesthetically pleasing sphere with rainbow colors:
 - Points arranged in a spherical spiral (Fibonacci-like distribution)
 - Smooth rainbow gradient flowing along the spiral
@@ -196,7 +209,7 @@ luxar serve rainbow_sphere_spiral_example.zarr
 
 ### Transform and Hierarchy Examples
 
-#### 15. **transform_example.py** - Transform System Demonstration  
+#### 16. **transform_example.py** - Transform System Demonstration  
 Comprehensive showcase of the transform system:
 - Translation, rotation, and scaling operations
 - Transform composition and matrix multiplication
@@ -209,7 +222,7 @@ python transform_example.py
 luxar serve transform_example.zarr
 ```
 
-#### 16. **hierarchy_example.py** - Scene Hierarchy and Inheritance
+#### 17. **hierarchy_example.py** - Scene Hierarchy and Inheritance
 Demonstrates parent-child relationships and property inheritance:
 - 4-level deep nested hierarchy
 - Property inheritance (opacity, gamma, blending modes)
@@ -222,7 +235,7 @@ python hierarchy_example.py
 luxar serve hierarchy_example.zarr
 ```
 
-#### 17. **multiple_objects_example.py** - Multiple Point Clouds
+#### 18. **multiple_objects_example.py** - Multiple Point Clouds
 Showcases complex scenes with multiple distinct objects:
 - Six different point cloud objects (spiral galaxy, clusters, nebula, rings, stars, particles)
 - Varied rendering properties per object
@@ -237,7 +250,7 @@ luxar serve multiple_objects_example.zarr
 
 ### Rendering and Performance Examples
 
-#### 18. **rendering_modes_example.py** - Blending Modes Comparison
+#### 19. **rendering_modes_example.py** - Blending Modes Comparison
 Educational demonstration of different blending modes:
 - Normal, additive, and multiply blending modes
 - Side-by-side comparison of effects
@@ -249,7 +262,7 @@ python rendering_modes_example.py
 luxar serve rendering_modes_example.zarr
 ```
 
-#### 19. **rendering_attributes_example.py** - Rendering Attributes API
+#### 20. **rendering_attributes_example.py** - Rendering Attributes API
 Comprehensive demonstration of rendering attributes:
 - Setting and modifying opacity, gamma, and blending modes
 - Method chaining API usage
@@ -261,7 +274,7 @@ python rendering_attributes_example.py
 luxar serve rendering_attributes_example.zarr
 ```
 
-#### 20. **performance_benchmark_example.py** - Performance Testing
+#### 21. **performance_benchmark_example.py** - Performance Testing
 Educational benchmark demonstrating performance analysis:
 - Scene creation with 100 nodes and varying materials
 - Systematic testing of material combinations
