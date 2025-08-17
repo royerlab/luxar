@@ -175,9 +175,9 @@ def main():
     aprint("Creating 4D Temporal Spiral Sphere Example")
     aprint("=" * 50)
 
-    # Parameters - reduced for testing lazy loading
-    n_points_per_frame = 10000  # Reduced from 200k for manageable testing
-    n_frames = 100  # Reduced from 256
+    # Parameters - increased for testing lazy loading
+    n_points_per_frame = 100000  # 100k points per frame for real testing
+    n_frames = 100  # 100 frames
     sphere_radius = 10.0
 
     # Calculate total rotation over all frames (10 points worth)
@@ -207,7 +207,7 @@ def main():
                 Dimension(name="x", unit="μm", range=(-15, 15), step=0.5, display=True),
                 Dimension(name="y", unit="μm", range=(-15, 15), step=0.5, display=True),
                 Dimension(name="z", unit="μm", range=(-15, 15), step=0.5, display=True),
-                Dimension(name="t", unit="frame", range=(0, n_frames - 1), step=1, display=False),
+                Dimension(name="t", unit="frame", range=(0, n_frames - 1), step=1, display=False, discrete=True),
             ]
         )
     )

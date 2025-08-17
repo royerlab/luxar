@@ -12,7 +12,7 @@ export const DEBUG_CONSOLE_CONFIG = {
     minHeight: 200,
     maxHeight: 800,
     bottomOffset: 20,
-    rightOffset: 20,
+    leftOffset: 20, // Changed from rightOffset to avoid conflict with monitoring panel
   },
 
   // Console interceptor settings
@@ -28,10 +28,10 @@ export const DEBUG_CONSOLE_CONFIG = {
 
   // Styling
   style: {
-    backgroundColor: 'rgba(20, 20, 20, 0.95)',
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(30, 30, 30, 0.95)', // Standardized background
+    borderColor: 'rgba(255, 255, 255, 0.1)', // Lighter border for removal
     borderRadius: 8,
     backdropBlur: 10,
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)', // Standardized shadow
   },
 };

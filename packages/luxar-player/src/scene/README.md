@@ -34,6 +34,7 @@ scene/
 The `SceneManager` is the central hub for all 3D scene operations.
 
 **Responsibilities:**
+
 - THREE.js scene initialization
 - Camera and renderer setup
 - Control system integration
@@ -42,34 +43,36 @@ The `SceneManager` is the central hub for all 3D scene operations.
 - Center point management
 
 **Core Features:**
+
 ```typescript
 class SceneManager {
   // Scene setup
-  scene: THREE.Scene
-  camera: THREE.PerspectiveCamera
-  renderer: THREE.WebGLRenderer
-  controls: ControlsManager
-  
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  controls: ControlsManager;
+
   // Scene manipulation
-  addToScene(object: THREE.Object3D): void
-  clearScene(): void
-  updateBoundingBox(): void
-  
+  addToScene(object: THREE.Object3D): void;
+  clearScene(): void;
+  updateBoundingBox(): void;
+
   // Camera control
-  updateFOV(delta: number): void
-  setControlType(type: 'orbit' | 'fly'): void
-  
+  updateFOV(delta: number): void;
+  setControlType(type: 'orbit' | 'fly'): void;
+
   // Centering
-  toggleCentering(): void
-  getCurrentCenter(): THREE.Vector3
-  
+  toggleCentering(): void;
+  getCurrentCenter(): THREE.Vector3;
+
   // Lifecycle
-  updateSize(): void
-  dispose(): void
+  updateSize(): void;
+  dispose(): void;
 }
 ```
 
 **Usage Example:**
+
 ```typescript
 const sceneManager = new SceneManager('canvas-id');
 
@@ -88,6 +91,7 @@ sceneManager.toggleCentering();
 The `AnimationController` manages the render loop with intelligent idle detection.
 
 **Features:**
+
 - Automatic pause when scene is static
 - Performance monitoring integration
 - Event-driven animation triggers
@@ -95,6 +99,7 @@ The `AnimationController` manages the render loop with intelligent idle detectio
 - Frame timing management
 
 **Animation States:**
+
 ```typescript
 // Start animation (triggered by events)
 animationController.startAnimation();
@@ -108,23 +113,24 @@ animationController.resume();
 ```
 
 **Render Loop:**
+
 ```typescript
 private animate = (): void => {
   if (!this.isAnimating) return;
-  
+
   requestAnimationFrame(this.animate);
-  
+
   // Update controls
   this.sceneManager.controls.update();
-  
+
   // Update performance stats
   this.performanceStats?.begin();
-  
+
   // Render scene
   this.postProcessing.render();
-  
+
   this.performanceStats?.end();
-  
+
   // Check for idle timeout
   this.checkIdleTimeout();
 }
@@ -135,6 +141,7 @@ private animate = (): void => {
 The `SceneDimsManager` coordinates n-dimensional navigation across all scene objects.
 
 **Capabilities:**
+
 - Unified dimension system for all nD objects
 - Dimension metadata management
 - Slice position coordination
@@ -142,24 +149,26 @@ The `SceneDimsManager` coordinates n-dimensional navigation across all scene obj
 - Display status tracking
 
 **Dimension Structure:**
+
 ```typescript
 interface SimpleDims {
-  ndim: number;                    // Total dimensions
-  displayed: number[];              // Indices of displayed dims (e.g., [0,1,2])
-  currentStep: Float32Array;        // Current position in each dimension
-  metadata?: DimensionMetadata[];   // Names, units, ranges
+  ndim: number; // Total dimensions
+  displayed: number[]; // Indices of displayed dims (e.g., [0,1,2])
+  currentStep: Float32Array; // Current position in each dimension
+  metadata?: DimensionMetadata[]; // Names, units, ranges
 }
 
 interface DimensionMetadata {
-  name: string;        // e.g., "time", "x", "wavelength"
-  unit: string;        // e.g., "ms", "μm", "nm"
-  range: [number, number];  // Min and max values
-  step?: number;       // Step size for discrete dimensions
-  discrete?: boolean;  // Whether dimension is discrete
+  name: string; // e.g., "time", "x", "wavelength"
+  unit: string; // e.g., "ms", "μm", "nm"
+  range: [number, number]; // Min and max values
+  step?: number; // Step size for discrete dimensions
+  discrete?: boolean; // Whether dimension is discrete
 }
 ```
 
 **Usage:**
+
 ```typescript
 // Initialize from scene
 sceneDimsManager.initFromScene(scene);
@@ -196,6 +205,7 @@ Scene (THREE.Scene)
 ### Object Management
 
 **Adding Objects:**
+
 ```typescript
 // Add with automatic bbox update
 sceneManager.addToScene(object);
@@ -207,6 +217,7 @@ sceneManager.addToScene(group);
 ```
 
 **Clearing Scene:**
+
 ```typescript
 // Remove all objects except lights
 sceneManager.clearScene();
@@ -300,8 +311,8 @@ For data with >3 dimensions, the system provides slicing:
 // 5D data example
 const dims = {
   ndim: 5,
-  displayed: [0, 1, 2],  // Show x, y, z
-  currentStep: [0, 0, 0, 50, 100],  // Position in 5D space
+  displayed: [0, 1, 2], // Show x, y, z
+  currentStep: [0, 0, 0, 50, 100], // Position in 5D space
 };
 
 // Points visible if within radius of slice
@@ -366,10 +377,7 @@ import { sceneDimsManager } from './scene/scene-dims-manager';
 
 // Initialize scene
 const sceneManager = new SceneManager('canvas');
-const animationController = new AnimationController(
-  sceneManager,
-  postProcessing
-);
+const animationController = new AnimationController(sceneManager, postProcessing);
 
 // Setup dimensions for nD data
 sceneDimsManager.initFromScene(sceneManager.scene);
@@ -385,7 +393,7 @@ animationController.startAnimation();
 const pointClouds = await loadFromZarr(url);
 
 // Add to scene
-pointClouds.forEach(points => {
+pointClouds.forEach((points) => {
   sceneManager.addToScene(points);
 });
 
@@ -414,17 +422,17 @@ window.addEventListener('resize', () => {
 
 ```typescript
 const sceneConfig = {
-  backgroundColor: 0x111111,  // Dark gray background
+  backgroundColor: 0x111111, // Dark gray background
   ambientLight: {
     color: 0xffffff,
-    intensity: 1.0
+    intensity: 1.0,
   },
   camera: {
     fov: 60,
     near: 0.1,
     far: 1000,
-    position: { x: 0, y: 0, z: 8 }
-  }
+    position: { x: 0, y: 0, z: 8 },
+  },
 };
 ```
 
@@ -432,9 +440,9 @@ const sceneConfig = {
 
 ```typescript
 const animationConfig = {
-  idleTimeoutMs: 2000,  // Pause after 2 seconds
-  targetFPS: 60,        // Target frame rate
-  adaptiveQuality: true // Reduce quality if FPS drops
+  idleTimeoutMs: 2000, // Pause after 2 seconds
+  targetFPS: 60, // Target frame rate
+  adaptiveQuality: true, // Reduce quality if FPS drops
 };
 ```
 
@@ -469,7 +477,7 @@ function disposeObject(object: THREE.Object3D) {
       child.material?.dispose();
     }
   });
-  
+
   // Remove from parent
   object.parent?.remove(object);
 }
@@ -482,22 +490,26 @@ function disposeObject(object: THREE.Object3D) {
 ### Common Issues
 
 **Problem: Scene appears black**
+
 - Check lighting setup
 - Verify camera position
 - Ensure objects are in view frustum
 
 **Problem: Poor performance**
+
 - Enable idle detection
 - Reduce point count
 - Check for memory leaks
 - Profile with Chrome DevTools
 
 **Problem: Objects not visible**
+
 - Check bounding box
 - Verify camera near/far planes
 - Ensure materials are configured
 
 **Problem: Dimension navigation not working**
+
 - Initialize sceneDimsManager
 - Check dimension metadata
 - Verify keyboard focus
@@ -508,37 +520,37 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method | Description |
-|--------|-------------|
-| `addToScene(object)` | Add object to scene |
-| `clearScene()` | Remove all objects |
-| `updateBoundingBox()` | Recalculate bounds |
-| `toggleCentering()` | Switch center mode |
-| `getCurrentCenter()` | Get active center point |
-| `updateFOV(delta)` | Adjust field of view |
-| `setControlType(type)` | Switch control mode |
-| `updateSize()` | Handle resize |
-| `dispose()` | Clean up resources |
+| Method                 | Description             |
+| ---------------------- | ----------------------- |
+| `addToScene(object)`   | Add object to scene     |
+| `clearScene()`         | Remove all objects      |
+| `updateBoundingBox()`  | Recalculate bounds      |
+| `toggleCentering()`    | Switch center mode      |
+| `getCurrentCenter()`   | Get active center point |
+| `updateFOV(delta)`     | Adjust field of view    |
+| `setControlType(type)` | Switch control mode     |
+| `updateSize()`         | Handle resize           |
+| `dispose()`            | Clean up resources      |
 
 ### AnimationController
 
-| Method | Description |
-|--------|-------------|
-| `startAnimation()` | Begin render loop |
-| `pause()` | Pause rendering |
-| `resume()` | Resume rendering |
-| `setPerformanceStats(stats)` | Attach monitor |
-| `dispose()` | Clean up |
+| Method                       | Description       |
+| ---------------------------- | ----------------- |
+| `startAnimation()`           | Begin render loop |
+| `pause()`                    | Pause rendering   |
+| `resume()`                   | Resume rendering  |
+| `setPerformanceStats(stats)` | Attach monitor    |
+| `dispose()`                  | Clean up          |
 
 ### SceneDimsManager
 
-| Method | Description |
-|--------|-------------|
-| `initFromScene(scene)` | Initialize dimensions |
-| `getDims()` | Get dimension info |
-| `setDimensionValue(idx, val)` | Update position |
-| `addListener(callback)` | Subscribe to changes |
-| `reset()` | Clear dimensions |
+| Method                        | Description           |
+| ----------------------------- | --------------------- |
+| `initFromScene(scene)`        | Initialize dimensions |
+| `getDims()`                   | Get dimension info    |
+| `setDimensionValue(idx, val)` | Update position       |
+| `addListener(callback)`       | Subscribe to changes  |
+| `reset()`                     | Clear dimensions      |
 
 ---
 
@@ -548,4 +560,4 @@ Part of the Luxar project. See root LICENSE file for details.
 
 ---
 
-*For implementation details, see the source files in this directory.*
+_For implementation details, see the source files in this directory._

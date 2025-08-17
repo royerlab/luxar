@@ -36,6 +36,7 @@ controls/
 The **OrbitControls** provide intuitive trackball-style navigation, ideal for examining objects from the outside. Based on THREE.js OrbitControls with enhancements for the Luxar system.
 
 **Features:**
+
 - Mouse drag to rotate around target
 - Scroll wheel to zoom in/out
 - Right-click drag to pan
@@ -43,17 +44,20 @@ The **OrbitControls** provide intuitive trackball-style navigation, ideal for ex
 - Configurable zoom limits and damping
 
 **Best for:**
+
 - Examining point clouds from outside
 - Presentations and demos
 - Traditional 3D manipulation
 
 **Controls:**
+
 - 🖱️ **Left drag**: Rotate view around target
 - 🖱️ **Right drag**: Pan camera
 - 🖱️ **Scroll**: Zoom in/out
 - **Double-click**: Focus on point
 
 **Configuration:**
+
 ```typescript
 {
   autoRotate: false,        // Enable auto-rotation
@@ -70,6 +74,7 @@ The **OrbitControls** provide intuitive trackball-style navigation, ideal for ex
 The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 degrees of freedom, perfect for exploring point clouds from within.
 
 **Features:**
+
 - True 6DOF movement (forward/back, left/right, up/down, pitch, yaw, roll)
 - Quaternion-based rotation (no gimbal lock)
 - Inertial physics with configurable damping
@@ -77,11 +82,13 @@ The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 
 - Airplane-style controls (consistent at any orientation)
 
 **Best for:**
+
 - Exploring inside point clouds
 - Flying through data
 - Cinematic camera movements
 
 **Controls:**
+
 - **WASD**: Move forward/back/left/right
 - **Alt+W/S**: Move up/down (world space)
 - **Q/E**: Roll left/right (barrel roll)
@@ -101,30 +108,31 @@ The `ControlsManager` class orchestrates the entire control system:
 ```typescript
 class ControlsManager {
   // Switch between control types
-  setControlType(type: 'orbit' | 'fly'): void
-  
+  setControlType(type: 'orbit' | 'fly'): void;
+
   // Get current control type
-  getControlType(): ControlType
-  
+  getControlType(): ControlType;
+
   // Access specific controls
-  getControls(): OrbitControls | LuxarFlyControls
-  getFlyControls(): LuxarFlyControls | null
-  
+  getControls(): OrbitControls | LuxarFlyControls;
+  getFlyControls(): LuxarFlyControls | null;
+
   // Configuration
-  setAutoRotate(enabled: boolean): void
-  setFlyMovementSpeed(speed: number): void
-  setFlyInertialMode(inertial: boolean): void
-  
+  setAutoRotate(enabled: boolean): void;
+  setFlyMovementSpeed(speed: number): void;
+  setFlyInertialMode(inertial: boolean): void;
+
   // Camera control
-  lookAt(target: Vector3, smooth?: boolean): void
-  reset(): void
-  
+  lookAt(target: Vector3, smooth?: boolean): void;
+  reset(): void;
+
   // Update loop
-  update(): void
+  update(): void;
 }
 ```
 
 **Key responsibilities:**
+
 - Manages control instance lifecycle
 - Preserves camera state during switches
 - Provides unified configuration interface
@@ -137,21 +145,23 @@ The `InputContextManager` prevents input conflicts between different UI systems:
 
 ```typescript
 enum InputContext {
-  NAVIGATION,      // Default 3D navigation
-  FLY_CONTROLS,    // Fly mode active
-  TYPING,          // Text input active
-  DIMENSION_NAV,   // nD dimension navigation
-  UI_OVERLAY       // UI panels open
+  NAVIGATION, // Default 3D navigation
+  FLY_CONTROLS, // Fly mode active
+  TYPING, // Text input active
+  DIMENSION_NAV, // nD dimension navigation
+  UI_OVERLAY, // UI panels open
 }
 ```
 
 **Features:**
+
 - Context-aware key filtering
 - Context stack for nested states
 - Automatic focus management
 - Debug mode for troubleshooting
 
 **Example usage:**
+
 ```typescript
 // When entering fly mode
 contextManager.setContext(InputContext.FLY_CONTROLS);
@@ -174,25 +184,26 @@ export const CONTROL_CONFIG = {
     movement: {
       speed: { min: 0.5, max: 50.0, default: 5.0, step: 0.1 },
       damping: { min: 0.9, max: 0.99999, default: 0.999, step: 0.0001 },
-      acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 }
+      acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 },
     },
     rotation: {
       speed: { min: 0.1, max: 5.0, default: 1.5, step: 0.1 },
-      damping: { min: 0.9, max: 0.9999, default: 0.99, step: 0.0001 }
+      damping: { min: 0.9, max: 0.9999, default: 0.99, step: 0.0001 },
     },
     physics: {
       velocityThreshold: 1e-4,
-      angularVelocityThreshold: 1e-4
-    }
+      angularVelocityThreshold: 1e-4,
+    },
   },
   orbit: {
     autoRotate: { speed: { min: 0.1, max: 5.0, default: 0.25 } },
-    zoom: { minDistance: 0.1, maxDistance: 1000 }
-  }
+    zoom: { minDistance: 0.1, maxDistance: 1000 },
+  },
 };
 ```
 
 **Benefits:**
+
 - Single source of truth for defaults
 - Type-safe configuration
 - UI-ready min/max/step values
@@ -211,12 +222,13 @@ The fly controls use a quaternion-based physics simulation for smooth, gimbal-lo
 - **World frame** `W`: Global coordinates (Y-up by convention)
 - **Camera frame** `B`: Local to camera
   - `e_x = (1,0,0)` → right
-  - `e_y = (0,1,0)` → up  
+  - `e_y = (0,1,0)` → up
   - `e_z = (0,0,-1)` → forward (THREE.js convention)
 
 #### Physics Model
 
 **Translation:**
+
 ```
 v ← v + a·Δt                    // Apply acceleration
 v ← v · damping^(Δt·60)         // Frame-rate independent damping
@@ -224,6 +236,7 @@ p ← p + v·Δt                    // Update position
 ```
 
 **Rotation:**
+
 ```
 ω ← ω + τ·Δt                    // Apply torque (inertial mode)
 ω ← ω · damping^(Δt·60)         // Angular damping
@@ -239,8 +252,8 @@ The angular velocity `ω` is maintained in **world space** and integrated using 
 
 ```typescript
 // Build torque in camera space
-const cameraRight = new Vector3(1,0,0).applyQuaternion(orientation);
-const cameraUp = new Vector3(0,1,0).applyQuaternion(orientation);
+const cameraRight = new Vector3(1, 0, 0).applyQuaternion(orientation);
+const cameraUp = new Vector3(0, 1, 0).applyQuaternion(orientation);
 
 // Apply torque to world-space angular velocity
 angularVelocity.addScaledVector(cameraRight, pitch);
@@ -248,7 +261,7 @@ angularVelocity.addScaledVector(cameraUp, yaw);
 
 // Integrate with PRE-multiply
 const deltaRotation = new Quaternion().setFromAxisAngle(axis, angle);
-orientation.premultiply(deltaRotation);  // Critical: premultiply for world-space
+orientation.premultiply(deltaRotation); // Critical: premultiply for world-space
 ```
 
 This approach prevents the "yaw becomes roll at ±90° pitch" problem common in naive implementations.
@@ -256,12 +269,14 @@ This approach prevents the "yaw becomes roll at ±90° pitch" problem common in 
 #### Inertial vs Non-Inertial Modes
 
 **Inertial Mode** (default):
+
 - Low damping (0.999 for translation, 0.99 for rotation)
 - Momentum-based movement
 - Smooth, cinematic feel
 - Good for exploration
 
 **Non-Inertial Mode**:
+
 - High effective damping (~0.5)
 - Direct velocity control
 - Immediate response
@@ -305,21 +320,24 @@ Scene Rendering
 ### Key Architectural Features
 
 #### Seamless Mode Switching
+
 - Camera state preserved during transitions
 - Orbit target converted to fly look direction
 - Fly orientation converted to orbit target
 - Zero-downtime control swapping
 
 #### External Input Management
+
 Fly controls support external input management for better integration:
 
 ```typescript
 flyControls.setExternalInputManagement(true);
 // InputHandler now manages keyboard events
-flyControls.handleKeyDown(event);  // Called by InputHandler
+flyControls.handleKeyDown(event); // Called by InputHandler
 ```
 
 #### Continuous Rendering Optimization
+
 - **Orbit mode**: Renders only during interaction
 - **Fly mode (inertial)**: Continues rendering while velocity > threshold
 - **Automatic pause**: Stops rendering when stationary
@@ -335,6 +353,7 @@ The system prevents keyboard conflicts through sophisticated routing:
 4. **Mode-Specific Keys**: WASD disabled in orbit mode, enabled in fly
 
 Example context switching:
+
 ```typescript
 // When entering a text field
 inputContext.pushContext(InputContext.TYPING);
@@ -383,7 +402,7 @@ controlsManager.setControlType('orbit');
 ```typescript
 // Look at a specific point
 const target = new THREE.Vector3(10, 5, 0);
-controlsManager.lookAt(target, true);  // Smooth transition
+controlsManager.lookAt(target, true); // Smooth transition
 
 // Reset to default view
 controlsManager.reset();
@@ -391,7 +410,7 @@ controlsManager.reset();
 // Save and restore view state
 controlsManager.saveState();
 // ... user navigates ...
-controlsManager.reset();  // Return to saved state
+controlsManager.reset(); // Return to saved state
 ```
 
 ### Custom Configuration
@@ -404,7 +423,7 @@ const controls = new LuxarFlyControls(camera, canvas, {
   rotationSpeed: 2.0,
   damping: 0.95,
   rotationDamping: 0.9,
-  acceleration: 1.0
+  acceleration: 1.0,
 });
 ```
 
@@ -461,7 +480,7 @@ function animate() {
 // Animate to target over multiple frames
 function smoothLookAt(target: Vector3, duration: number) {
   const start = Date.now();
-  
+
   function update() {
     const progress = (Date.now() - start) / duration;
     if (progress < 1) {
@@ -480,18 +499,23 @@ function smoothLookAt(target: Vector3, duration: number) {
 ### Common Issues
 
 **Problem: Controls feel sluggish**
+
 - Solution: Decrease damping values (try 0.95 for movement, 0.9 for rotation)
 
 **Problem: Controls too sensitive**
+
 - Solution: Reduce speed values or increase damping
 
 **Problem: Yaw becomes roll at extreme pitch**
+
 - Solution: Ensure using premultiply() for quaternion integration
 
 **Problem: Keys not working in fly mode**
+
 - Solution: Check that keys are in `flyModeKeys` array in control-config.ts
 
 **Problem: Inertial mode not persisting**
+
 - Solution: Settings are stored in ControlsManager config, ensure using getFlyConfig()
 
 ### Debug Mode
@@ -512,6 +536,7 @@ This will log all control state changes and input events.
 ### Adding a New Control Type
 
 1. Create control class implementing base interface:
+
 ```typescript
 class CustomControls {
   enabled: boolean;
@@ -523,6 +548,7 @@ class CustomControls {
 ```
 
 2. Add to ControlsManager:
+
 ```typescript
 // In ControlsManager.setControlType()
 case 'custom':
@@ -531,6 +557,7 @@ case 'custom':
 ```
 
 3. Update configuration system:
+
 ```typescript
 // In control-config.ts
 custom: {
@@ -541,19 +568,22 @@ custom: {
 ### Adding New Input Modes
 
 1. Define new keys in control-config.ts:
+
 ```typescript
 customModeKeys: ['x', 'y', 'z'],
 ```
 
 2. Add input context:
+
 ```typescript
 enum InputContext {
   // ...
-  CUSTOM_MODE
+  CUSTOM_MODE,
 }
 ```
 
 3. Handle in input system:
+
 ```typescript
 if (customMode && customModeKeys.includes(event.key)) {
   // Handle custom input
@@ -566,41 +596,41 @@ if (customMode && customModeKeys.includes(event.key)) {
 
 ### ControlsManager
 
-| Method | Description |
-|--------|-------------|
-| `setControlType(type)` | Switch control mode |
-| `getControlType()` | Get current mode |
-| `getControls()` | Get active control instance |
-| `setAutoRotate(enabled)` | Toggle auto-rotation |
-| `setFlyMovementSpeed(speed)` | Set fly movement speed |
-| `setFlyInertialMode(inertial)` | Toggle inertial physics |
-| `setFlyDamping(damping)` | Set movement damping |
-| `lookAt(target, smooth)` | Point camera at target |
-| `reset()` | Reset to default state |
-| `update()` | Update controls (call per frame) |
-| `dispose()` | Clean up resources |
+| Method                         | Description                      |
+| ------------------------------ | -------------------------------- |
+| `setControlType(type)`         | Switch control mode              |
+| `getControlType()`             | Get current mode                 |
+| `getControls()`                | Get active control instance      |
+| `setAutoRotate(enabled)`       | Toggle auto-rotation             |
+| `setFlyMovementSpeed(speed)`   | Set fly movement speed           |
+| `setFlyInertialMode(inertial)` | Toggle inertial physics          |
+| `setFlyDamping(damping)`       | Set movement damping             |
+| `lookAt(target, smooth)`       | Point camera at target           |
+| `reset()`                      | Reset to default state           |
+| `update()`                     | Update controls (call per frame) |
+| `dispose()`                    | Clean up resources               |
 
 ### LuxarFlyControls
 
-| Method | Description |
-|--------|-------------|
-| `update(delta)` | Update physics simulation |
-| `setInertialMode(inertial)` | Toggle momentum mode |
-| `lookAtSmooth(target, smoothness)` | Smooth look-at |
-| `reset()` | Zero velocities |
-| `handleKeyDown(event)` | Process key press |
-| `handleKeyUp(event)` | Process key release |
-| `dispose()` | Remove event listeners |
+| Method                             | Description               |
+| ---------------------------------- | ------------------------- |
+| `update(delta)`                    | Update physics simulation |
+| `setInertialMode(inertial)`        | Toggle momentum mode      |
+| `lookAtSmooth(target, smoothness)` | Smooth look-at            |
+| `reset()`                          | Zero velocities           |
+| `handleKeyDown(event)`             | Process key press         |
+| `handleKeyUp(event)`               | Process key release       |
+| `dispose()`                        | Remove event listeners    |
 
 ### Events
 
 All controls dispatch these events:
 
-| Event | Description |
-|-------|-------------|
-| `start` | User started interacting |
-| `change` | Control state changed |
-| `end` | User stopped interacting |
+| Event    | Description              |
+| -------- | ------------------------ |
+| `start`  | User started interacting |
+| `change` | Control state changed    |
+| `end`    | User stopped interacting |
 
 ---
 
@@ -617,6 +647,7 @@ All controls dispatch these events:
 ### Benchmarks
 
 Typical performance on modern hardware:
+
 - Control update: < 0.1ms
 - Event processing: < 0.05ms per event
 - Mode switching: < 1ms
@@ -631,7 +662,7 @@ Typical performance on modern hardware:
 The control system has comprehensive test coverage:
 
 - **ControlsManager**: 30 tests covering mode switching, configuration, events
-- **LuxarFlyControls**: 27 tests for movement, physics, input handling  
+- **LuxarFlyControls**: 27 tests for movement, physics, input handling
 - **InputContextManager**: 29 tests for context switching, key filtering
 
 ### Test Categories
@@ -669,7 +700,7 @@ All physics calculations are normalized to 60fps:
 velocity *= Math.pow(damping, delta * 60);
 
 // Capped delta to prevent instability
-const safeDelta = Math.min(delta, 1/30);
+const safeDelta = Math.min(delta, 1 / 30);
 ```
 
 ### Context-Aware Input Handling
@@ -677,7 +708,7 @@ const safeDelta = Math.min(delta, 1/30);
 ```typescript
 // Check if user is typing before handling shortcuts
 if (this.isTypingInInput()) {
-  return;  // Don't handle shortcuts while typing
+  return; // Don't handle shortcuts while typing
 }
 
 // Check active control mode
@@ -752,6 +783,7 @@ Part of the Luxar project. See root LICENSE file for details.
 ## Changelog
 
 ### v2.0.0 (2025-01)
+
 - Added quaternion-based fly controls
 - Implemented roll controls (Q/E)
 - Added speed boost (Shift)
@@ -761,10 +793,11 @@ Part of the Luxar project. See root LICENSE file for details.
 - Improved documentation
 
 ### v1.0.0 (2024-12)
+
 - Initial control system
 - Orbit controls integration
 - Basic input management
 
 ---
 
-*For detailed implementation notes on the fly controls mathematics and physics, see the [Fly Controls Implementation Guide](./luxar-fly-controls-guide.md).*
+_For detailed implementation notes on the fly controls mathematics and physics, see the [Fly Controls Implementation Guide](./luxar-fly-controls-guide.md)._

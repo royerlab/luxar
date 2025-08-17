@@ -357,7 +357,7 @@ export class InputContextManager {
     currentContext: InputContext;
     contextStack: InputContext[];
     registeredBindings: Map<InputContext, string[]>;
-    } {
+  } {
     const registeredBindings = new Map<InputContext, string[]>();
 
     this.bindings.forEach((bindings, context) => {

@@ -3,6 +3,7 @@
 Unified configuration system for the Luxar player application. This package centralizes all configuration values to ensure consistency and make the application easy to customize.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
@@ -36,6 +37,7 @@ config/
 ```
 
 The architecture follows a separation of concerns approach:
+
 - `index.ts` contains the actual configuration values and imports
 - `types.ts` defines all TypeScript interfaces
 - `debug-console.ts` isolates debug-specific configuration
@@ -43,7 +45,9 @@ The architecture follows a separation of concerns approach:
 ## Configuration Sections
 
 ### Camera Configuration
+
 Controls 3D perspective, navigation, and viewing parameters:
+
 ```typescript
 camera: {
   fov: 60,                    // Field of view (human-like viewing)
@@ -57,7 +61,9 @@ camera: {
 ```
 
 ### Rendering Configuration
+
 HDR pipeline, bloom effects, and point rendering:
+
 ```typescript
 rendering: {
   hdrEnabled: true,
@@ -77,7 +83,9 @@ rendering: {
 ```
 
 ### Post-Processing Pipeline
+
 Advanced rendering effects configuration:
+
 ```typescript
 postProcessing: {
   hdr: {
@@ -97,7 +105,9 @@ postProcessing: {
 ```
 
 ### User Interface Configuration
+
 UI element behavior, timing, and styling:
+
 ```typescript
 ui: {
   zIndex: {
@@ -117,7 +127,9 @@ ui: {
 ```
 
 ### Rendering Controls
+
 User-adjustable settings with persistence:
+
 ```typescript
 renderingControls: {
   defaults: {
@@ -137,7 +149,9 @@ renderingControls: {
 ```
 
 ### Debug Console Configuration
+
 Development and debugging features:
+
 ```typescript
 // debug-console.ts
 DEBUG_CONSOLE_CONFIG = {
@@ -145,22 +159,23 @@ DEBUG_CONSOLE_CONFIG = {
     defaultWidth: 600,
     defaultHeight: 400,
     minWidth: 400,
-    maxWidth: 1200
+    maxWidth: 1200,
   },
   interceptor: {
-    maxBufferSize: 10000      // Ring buffer for console messages
+    maxBufferSize: 10000, // Ring buffer for console messages
   },
   style: {
     backgroundColor: 'rgba(20, 20, 20, 0.95)',
     borderRadius: 8,
-    backdropBlur: 10
-  }
-}
+    backdropBlur: 10,
+  },
+};
 ```
 
 ## Usage Examples
 
 ### Importing Configuration
+
 ```typescript
 import { config } from '../config';
 import type { AppConfig, RenderingSettings } from '../config';
@@ -171,6 +186,7 @@ const bloomSettings = config.rendering.bloom;
 ```
 
 ### Using Configuration in Components
+
 ```typescript
 // In SceneManager
 const camera = new THREE.PerspectiveCamera(
@@ -190,14 +206,15 @@ const bloomPass = new UnrealBloomPass(
 ```
 
 ### Customizing Configuration
+
 ```typescript
 // For development or testing, create modified config
 const testConfig = {
   ...config,
   rendering: {
     ...config.rendering,
-    hdrEnabled: false  // Disable HDR for testing
-  }
+    hdrEnabled: false, // Disable HDR for testing
+  },
 };
 ```
 
@@ -229,6 +246,7 @@ interface RenderingSettings {
 ```
 
 **Benefits of Strong Typing**:
+
 - Compile-time validation of configuration values
 - IntelliSense support in IDEs
 - Refactoring safety when changing configuration structure
@@ -237,12 +255,14 @@ interface RenderingSettings {
 ## Best Practices
 
 ### Configuration Organization
+
 1. **Logical Grouping**: Related settings should be grouped together
 2. **Clear Naming**: Use descriptive names that indicate purpose and units
 3. **Documentation**: Every setting should have a comment explaining its purpose
 4. **Sensible Defaults**: Defaults should provide good user experience out of the box
 
 ### Performance Considerations
+
 ```typescript
 // Use 'as const' for literal type inference
 export const config: AppConfig = {
@@ -254,6 +274,7 @@ export const config: AppConfig = {
 ```
 
 ### Accessing Configuration
+
 ```typescript
 // ✅ Good: Import specific sections when possible
 import { config } from '../config';
@@ -267,12 +288,14 @@ import type { CameraConfig } from '../config';
 ```
 
 ### Adding New Configuration
+
 1. **Add to Types**: Define the interface in `types.ts`
 2. **Add to Config**: Include the actual values in `index.ts`
 3. **Document**: Provide clear comments explaining the purpose
 4. **Test**: Ensure the configuration works in relevant components
 
 ### Debug Configuration
+
 ```typescript
 // Debug console configuration is isolated for modularity
 import { DEBUG_CONSOLE_CONFIG } from './debug-console';
@@ -283,7 +306,9 @@ const bufferSize = DEBUG_CONSOLE_CONFIG.interceptor.maxBufferSize;
 ```
 
 ### Migration and Versioning
+
 When updating configuration:
+
 1. **Backwards Compatibility**: Consider existing users
 2. **Deprecation Strategy**: Gradual migration for breaking changes
 3. **Validation**: Ensure new values are within acceptable ranges

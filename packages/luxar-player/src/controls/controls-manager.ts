@@ -429,11 +429,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    * Get the fly controls configuration
    * This returns the stored config regardless of which control type is active
    */
-  public getFlyConfig(): { inertialMode: boolean; damping: number; rotationDamping: number; movementSpeed: number; rotationSpeed: number } {
+  public getFlyConfig(): {
+    inertialMode: boolean;
+    damping: number;
+    rotationDamping: number;
+    movementSpeed: number;
+    rotationSpeed: number;
+  } {
     return {
       inertialMode: this.config.flyInertialMode ?? CONTROL_CONFIG.fly.inertialMode.default,
       damping: this.config.flyDamping ?? CONTROL_CONFIG.fly.movement.damping.default,
-      rotationDamping: this.config.flyRotationDamping ?? CONTROL_CONFIG.fly.rotation.damping.default,
+      rotationDamping:
+        this.config.flyRotationDamping ?? CONTROL_CONFIG.fly.rotation.damping.default,
       movementSpeed: this.config.flyMovementSpeed ?? CONTROL_CONFIG.fly.movement.speed.default,
       rotationSpeed: this.config.flyRotationSpeed ?? CONTROL_CONFIG.fly.rotation.speed.default,
     };

@@ -3,6 +3,7 @@
 Utility functions and helpers for advanced features in the Luxar player. This package contains specialized algorithms for nD data slicing, console debugging, HDR detection, and dimensional navigation.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
@@ -44,9 +45,11 @@ Each module is focused on a specific domain with minimal dependencies, promoting
 ## Modules
 
 ### slicing.ts - nD Slicing Algorithms
+
 Advanced mathematical algorithms for slicing high-dimensional point clouds:
 
 **Core Functions**:
+
 - `slicePoints()` - Radius-based hypersphere intersection slicing
 - `extractDisplayDimensions()` - Project nD points to 3D visualization space
 - `computeEffectiveRadii()` - Calculate cross-sectional radii of sliced nD spheres
@@ -54,27 +57,33 @@ Advanced mathematical algorithms for slicing high-dimensional point clouds:
 - `sliceScalarAttribute()` - Generic attribute slicing for point properties
 
 ### dims-navigation.ts - Dimension Navigation
+
 User interaction utilities for navigating high-dimensional space:
 
 **Core Functions**:
+
 - `stepDimension()` - Intelligent stepping with boundary handling
 - `jumpToDimension()` - Direct positioning via UI sliders
 - `updatePointCloudSlice()` - Real-time GPU geometry updates
 - `getNavigableDimensions()` - Identify keyboard-controllable dimensions
 
 ### console-interceptor.ts - Console Debugging
+
 Ring buffer system for capturing and managing console output:
 
 **Core Features**:
+
 - **Singleton Pattern**: Global console interception
 - **Ring Buffer**: Efficient 10,000 message circular buffer
 - **Early Capture**: Starts before application initialization
 - **Real-time Listeners**: Callback system for live console updates
 
 ### hdr-detection.ts - HDR Display Detection
+
 Comprehensive system for detecting and configuring HDR display capabilities:
 
 **Core Functions**:
+
 - `detectHDRCapabilities()` - Complete capability detection
 - `configureHDRRenderer()` - Optimal Three.js renderer setup
 - `logHDRCapabilities()` - Detailed capability reporting
@@ -98,10 +107,11 @@ export function slicePoints(
   numPoints: number,
   radii?: Float32Array,
   fallbackTolerance = 0.1
-): Uint32Array
+): Uint32Array;
 ```
 
 **Algorithm Details**:
+
 1. **Discrete Dimensions**: Exact matching for categorical data (time frames, channels)
 2. **Continuous Dimensions**: Radius-based inclusion for smooth navigation
 3. **Early Termination**: Efficient point rejection for performance
@@ -128,10 +138,11 @@ export function updatePointCloudSlice(
   originalSharpness: Float32Array | undefined,
   dims: SimpleDims,
   numPoints: number
-): void
+): void;
 ```
 
 **Pipeline Stages**:
+
 1. **nD Slicing**: Radius-based hypersphere intersection
 2. **3D Projection**: Extract display dimensions
 3. **Effective Radii**: Compute cross-sectional radii
@@ -152,9 +163,10 @@ class ConsoleInterceptor {
 ```
 
 **Key Features**:
+
 - **Memory Efficient**: Fixed-size circular buffer prevents memory leaks
 - **Early Capture**: Starts before any other code executes
-- **Original Preservation**: Maintains original console.* functionality
+- **Original Preservation**: Maintains original console.\* functionality
 - **Stack Traces**: Automatic stack trace extraction for errors
 
 ### Message Structure
@@ -164,7 +176,7 @@ interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
   timestamp: Date;
   args: any[];
-  stack?: string;  // For errors
+  stack?: string; // For errors
 }
 ```
 
@@ -189,12 +201,13 @@ consoleInterceptor.addListener((message) => {
 
 ```typescript
 interface HDRCapabilities {
-  p3Gamut: boolean;          // Display P3 wide color gamut
-  rec2020Gamut: boolean;     // Rec2020 gamut support
-  hdr: boolean;              // High dynamic range
-  deepColor: boolean;        // 10-bit+ color depth
-  floatTextures: boolean;    // WebGL float texture support
-  colorDepth: {              // Actual color buffer depth
+  p3Gamut: boolean; // Display P3 wide color gamut
+  rec2020Gamut: boolean; // Rec2020 gamut support
+  hdr: boolean; // High dynamic range
+  deepColor: boolean; // 10-bit+ color depth
+  floatTextures: boolean; // WebGL float texture support
+  colorDepth: {
+    // Actual color buffer depth
     red: number;
     green: number;
     blue: number;
@@ -212,15 +225,14 @@ const p3Gamut = window.matchMedia('(color-gamut: p3)').matches;
 
 // WebGL extension detection
 const floatTextures = !!(
-  gl.getExtension('EXT_color_buffer_float') ||
-  gl.getExtension('EXT_color_buffer_half_float')
+  gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float')
 );
 
 // Hardware color depth
 const colorDepth = {
   red: gl.getParameter(gl.RED_BITS),
   green: gl.getParameter(gl.GREEN_BITS),
-  blue: gl.getParameter(gl.BLUE_BITS)
+  blue: gl.getParameter(gl.BLUE_BITS),
 };
 ```
 
@@ -237,7 +249,7 @@ export function configureHDRRenderer(
   } else if (capabilities.p3Gamut) {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
   }
-  
+
   // Configure tone mapping for HDR
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = capabilities.hdr ? 1.4 : 1.0;
@@ -255,10 +267,11 @@ export function stepDimension(
   direction: 1 | -1,
   ranges: Array<[number, number]>,
   options: NavigationOptions = {}
-): boolean
+): boolean;
 ```
 
 **Features**:
+
 - **Adaptive Step Size**: 10% of dimension range by default
 - **Boundary Handling**: Wrapping or clamping at edges
 - **Absolute Steps**: Override with fixed step sizes
@@ -268,9 +281,9 @@ export function stepDimension(
 
 ```typescript
 interface NavigationOptions {
-  stepSize?: number;        // Fraction of range (0.1 = 10%)
-  wrap?: boolean;          // Wrap at boundaries (periodic data)
-  absoluteStep?: number;   // Fixed step size in data units
+  stepSize?: number; // Fraction of range (0.1 = 10%)
+  wrap?: boolean; // Wrap at boundaries (periodic data)
+  absoluteStep?: number; // Fixed step size in data units
 }
 ```
 
@@ -323,10 +336,10 @@ consoleInterceptor.addListener((message) => {
 ### HDR Display Optimization
 
 ```typescript
-import { 
-  detectHDRCapabilities, 
-  configureHDRRenderer, 
-  logHDRCapabilities 
+import {
+  detectHDRCapabilities,
+  configureHDRRenderer,
+  logHDRCapabilities,
 } from '../utils/hdr-detection';
 
 // Detect capabilities and configure renderer
@@ -344,16 +357,19 @@ if (isHDRDisplay(hdrCapabilities)) {
 ## Performance Considerations
 
 ### Slicing Optimization
+
 - **Early Termination**: Break loops as soon as point is excluded
 - **Set Lookup**: O(1) displayed dimension checks using Set
 - **Memory Reuse**: Reuse buffers when possible to minimize allocations
 
 ### Navigation Efficiency
+
 - **Minimal Updates**: Only update GPU when dimensions actually change
 - **Batch Operations**: Group multiple attribute updates together
 - **Bounds Caching**: Cache bounding sphere calculations when possible
 
 ### Console Buffer Management
+
 - **Fixed Size**: Ring buffer prevents memory growth
 - **Efficient Rotation**: Modulo arithmetic for circular indexing
 - **Listener Optimization**: Use Set for O(1) listener management
@@ -361,6 +377,7 @@ if (isHDRDisplay(hdrCapabilities)) {
 ## Best Practices
 
 ### Algorithm Design
+
 ```typescript
 // ✅ Good: Clear mathematical documentation
 // Mathematical foundation: R_effective = √(R² - D²)
@@ -371,6 +388,7 @@ const safeRadius = effectiveRadius > 0 ? effectiveRadius : 0;
 ```
 
 ### Error Handling
+
 ```typescript
 // ✅ Good: Validate inputs early
 if (dimIndex < 0 || dimIndex >= dims.ndim) {
@@ -385,6 +403,7 @@ if (!colors) {
 ```
 
 ### Memory Management
+
 ```typescript
 // ✅ Good: Reuse typed arrays when possible
 const reusableBuffer = new Float32Array(maxPoints * 3);
@@ -394,6 +413,7 @@ const indices = new Uint32Array(visibleCount); // vs Array<number>
 ```
 
 ### Performance Monitoring
+
 ```typescript
 // ✅ Good: Log performance-critical operations
 console.log(`Sliced ${numPoints} points to ${visibleCount} in ${elapsed}ms`);
