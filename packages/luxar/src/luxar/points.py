@@ -24,6 +24,64 @@ from .types import (
 )
 
 
+def _calculate_dimension_aware_chunks(
+    shape: tuple[int, ...],
+    chunk_size: int,
+    dimension_metadata: list[Any],
+) -> tuple[int, ...]:
+    """Calculate chunk shape optimized for dimension-aware loading.
+    
+    For nD data where some dimensions are not displayed,
+    we want to chunk along those dimensions to enable efficient
+    lazy loading of individual slices.
+    
+    Args:
+        shape: Data array shape (n_points, n_dims)
+        chunk_size: Target chunk size in elements
+        dimension_metadata: Metadata about each dimension (list of dicts)
+        
+    Returns:
+        Optimized chunk shape tuple
+    """
+    n_points, n_dims = shape
+
+    # Count non-displayed dimensions
+    non_displayed_count = 0
+    total_non_displayed_range = 1
+
+    for i, dim_meta in enumerate(dimension_metadata):
+        # Handle dict format from to_dict()
+        if isinstance(dim_meta, dict):
+            is_displayed = dim_meta.get('display', True)
+            dim_range = dim_meta.get('range', [0, 0])
+        elif hasattr(dim_meta, 'display'):
+            is_displayed = dim_meta.display
+            dim_range = getattr(dim_meta, 'range', [0, 0])
+        else:
+            is_displayed = True
+            dim_range = [0, 0]
+
+        if not is_displayed:
+            non_displayed_count += 1
+            # Calculate the size of this non-displayed dimension
+            dim_size = int(dim_range[1] - dim_range[0] + 1) if dim_range else 1
+            total_non_displayed_range *= dim_size
+
+    # If we have non-displayed dimensions and nD data
+    if non_displayed_count > 0 and n_dims > 3:
+        # Calculate points per slice in non-displayed dimensions
+        # This assumes data is organized with all points for one slice together
+        if total_non_displayed_range > 0:
+            points_per_slice = n_points // total_non_displayed_range
+            if points_per_slice > 0:
+                # Create chunks aligned with slices in non-displayed dimensions
+                # This allows loading individual slices efficiently
+                return (points_per_slice, n_dims)
+
+    # Default chunking for 3D data or when dimension-aware chunking isn't applicable
+    return (chunk_size, n_dims)
+
+
 def _create_array(
     group: Union[zarr.Group, ZarrGroupProtocol],
     name: str,
@@ -31,6 +89,7 @@ def _create_array(
     chunk_size: int,
     compressor: Optional[CompressorProtocol],
     dtype: Union[type[np.float32], type[np.uint8]],
+    dimension_metadata: Optional[list[Any]] = None,
 ) -> None:
     """Write data into ``group/<name>`` with sensible defaults.
 
@@ -41,6 +100,7 @@ def _create_array(
         chunk_size: Chunk size for Zarr dataset
         compressor: Compressor for Zarr dataset
         dtype: Data type for Zarr dataset
+        dimension_metadata: Optional dimension metadata for intelligent chunking
 
     Raises:
         ValueError: If data cannot be written to Zarr
@@ -51,7 +111,13 @@ def _create_array(
         # Calculate appropriate chunk shape
         chunks: Union[int, tuple[int, ...]]
         if data.ndim == 2:
-            chunks = (chunk_size, data.shape[1])
+            # For nD position data, use dimension-aware chunking
+            if name == "positions" and dimension_metadata:
+                chunks = _calculate_dimension_aware_chunks(
+                    data.shape, chunk_size, dimension_metadata
+                )
+            else:
+                chunks = (chunk_size, data.shape[1])
         else:
             chunks = chunk_size
 
@@ -203,6 +269,16 @@ class Points(Node):
             # Set node attributes
             grp.attrs.setdefault("num_points", n_points)
 
+            # Get dimension metadata from parent scene for chunking
+            dimension_metadata = None
+            if parent is not None:
+                # Try to get scene dimensions for intelligent chunking
+                scene = parent
+                while hasattr(scene, 'parent') and scene.parent is not None:
+                    scene = scene.parent
+                if hasattr(scene, '_dimensions') and scene._dimensions is not None:
+                    dimension_metadata = [d.to_dict() for d in scene._dimensions.dimensions]
+
             # Create datasets with validated data
             _create_array(
                 grp,
@@ -211,6 +287,7 @@ class Points(Node):
                 chunk_size,
                 compressor,
                 np.float32,
+                dimension_metadata,
             )
             if validated_colors is not None:
                 _create_array(
