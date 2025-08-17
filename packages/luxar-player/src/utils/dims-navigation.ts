@@ -273,3 +273,188 @@ export function updatePointCloudSlice(
   geom.attributes.sharpness.needsUpdate = true;
   geom.computeBoundingSphere(); // Critical for frustum culling and camera bounds
 }
+
+/**
+ * Updates a lazy-loaded point cloud by fetching new data from zarr.
+ * This is more efficient than the traditional approach as it only loads
+ * the data needed for the current slice.
+ */
+export async function updateLazyLoadedPointCloud(
+  points: THREE.Points,
+  dims: SimpleDims
+): Promise<void> {
+  const { lazyManager, positionsArray, zarrLocation, totalPoints } = points.userData;
+
+  if (!lazyManager || !positionsArray || !zarrLocation) {
+    console.warn('[⚠️] [Luxar] Missing lazy loading data in userData');
+    console.log('userData:', points.userData);
+    return;
+  }
+
+  // Dynamic import of zarr at runtime
+  const zarr = await import('zarrita');
+  type Slice = typeof zarr.slice extends (...args: any[]) => infer R ? R : never;
+
+  // Identify all non-displayed dimensions
+  const nonDisplayedDims: number[] = [];
+  for (let d = 0; d < dims.ndim; d++) {
+    if (!dims.displayed.includes(d)) {
+      nonDisplayedDims.push(d);
+    }
+  }
+
+  if (nonDisplayedDims.length === 0) {
+    console.warn('[⚠️] [Luxar] No non-displayed dimensions found');
+    return;
+  }
+
+  // Calculate the total number of unique combinations for non-displayed dimensions
+  let totalSlices = 1;
+  const sliceSizes: number[] = [];
+
+  for (const dimIdx of nonDisplayedDims) {
+    const dimMeta = dims.metadata?.[dimIdx];
+    if (dimMeta && dimMeta.range) {
+      const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
+      sliceSizes.push(dimSize);
+      totalSlices *= dimSize;
+    } else {
+      sliceSizes.push(1);
+    }
+  }
+
+  // Calculate the linear index for the current combination of non-displayed dimensions
+  let linearIndex = 0;
+  let multiplier = 1;
+
+  // Process dimensions in reverse order (like row-major indexing)
+  for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
+    const dimIdx = nonDisplayedDims[i];
+    const dimMeta = dims.metadata?.[dimIdx];
+    const minVal = dimMeta?.range?.[0] || 0;
+    const currentVal = Math.round(dims.currentStep[dimIdx] - minVal);
+
+    linearIndex += currentVal * multiplier;
+    multiplier *= sliceSizes[i];
+  }
+
+  // Calculate point indices for this slice
+  const pointsPerSlice = Math.round(totalPoints / totalSlices);
+  const startIdx = linearIndex * pointsPerSlice;
+  const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+
+  console.log(
+    `[🔄] [Luxar] Loading slice ${linearIndex}/${totalSlices} (points ${startIdx}-${endIdx})`
+  );
+  console.log(
+    `[📊] [Luxar] Non-displayed dims: ${nonDisplayedDims
+      .map((d) => `${dims.metadata?.[d]?.name || `dim${d}`}=${dims.currentStep[d].toFixed(1)}`)
+      .join(', ')}`
+  );
+
+  try {
+    // Load positions for the new time frame
+    const sliceSpec: (Slice | null)[] = [
+      zarr.slice(startIdx, endIdx),
+      null, // All dimensions
+    ];
+    const posData = (await lazyManager.loadSlice(
+      positionsArray,
+      'positions',
+      sliceSpec
+    )) as Float32Array;
+
+    // Extract displayed dimensions
+    const numLoadedPoints = posData.length / dims.ndim;
+    const pos = new Float32Array(numLoadedPoints * 3);
+
+    for (let i = 0; i < numLoadedPoints; i++) {
+      for (let d = 0; d < 3; d++) {
+        if (d < dims.displayed.length) {
+          const dimIdx = dims.displayed[d];
+          pos[i * 3 + d] = posData[i * dims.ndim + dimIdx];
+        } else {
+          pos[i * 3 + d] = 0;
+        }
+      }
+    }
+
+    // Load colors if available
+    let col: Float32Array | undefined;
+    try {
+      const colArr = await zarr.open(zarrLocation.resolve('colors'), { kind: 'array' });
+      const colSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx), null];
+      col = (await lazyManager.loadSlice(colArr, 'colors', colSliceSpec)) as Float32Array;
+    } catch (error) {
+      console.debug('[🎨] [Luxar] No colors array found:', error);
+      // Colors are optional
+    }
+
+    // Load radii if available
+    let radii: Float32Array | undefined;
+    try {
+      const radiiArr = await zarr.open(zarrLocation.resolve('radii'), { kind: 'array' });
+      const radiiSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx)];
+      radii = (await lazyManager.loadSlice(radiiArr, 'radii', radiiSliceSpec)) as Float32Array;
+    } catch (error) {
+      console.debug('[📏] [Luxar] No radii array found:', error);
+      // Radii are optional
+    }
+
+    // Load sharpness if available
+    let sharpness: Float32Array | undefined;
+    try {
+      const sharpnessArr = await zarr.open(zarrLocation.resolve('sharpness'), { kind: 'array' });
+      const sharpnessSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx)];
+      sharpness = (await lazyManager.loadSlice(
+        sharpnessArr,
+        'sharpness',
+        sharpnessSliceSpec
+      )) as Float32Array;
+    } catch (error) {
+      console.debug('[✨] [Luxar] No sharpness array found:', error);
+      // Sharpness is optional
+    }
+
+    // Update geometry attributes
+    const geom = points.geometry;
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+
+    if (col) {
+      geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    } else {
+      const defaultColors = new Float32Array(numLoadedPoints * 3);
+      defaultColors.fill(1.0);
+      geom.setAttribute('color', new THREE.BufferAttribute(defaultColors, 3));
+    }
+
+    if (radii) {
+      geom.setAttribute('radius', new THREE.BufferAttribute(radii, 1));
+    } else {
+      const defaultRadii = new Float32Array(numLoadedPoints);
+      defaultRadii.fill(1.0);
+      geom.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
+    }
+
+    if (sharpness) {
+      geom.setAttribute('sharpness', new THREE.BufferAttribute(sharpness, 1));
+    } else {
+      const defaultSharpness = new Float32Array(numLoadedPoints);
+      defaultSharpness.fill(2.0);
+      geom.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
+    }
+
+    // Signal that geometry has changed
+    geom.computeBoundingBox();
+    geom.computeBoundingSphere();
+
+    // Preload adjacent frames for smooth navigation
+    lazyManager
+      .preloadChunks(positionsArray, 'positions', dims.currentStep, dims.displayed)
+      .catch((error: any) => {
+        console.warn('[⚠️] [Luxar] Failed to preload chunks:', error);
+      });
+  } catch (error) {
+    console.error('[❌] [Luxar] Failed to update lazy-loaded point cloud:', error);
+  }
+}

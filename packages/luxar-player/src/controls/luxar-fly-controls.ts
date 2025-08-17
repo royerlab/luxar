@@ -55,7 +55,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     vertical: 0, // -1 for up, 1 for down
     roll: 0, // -1 for Q (roll left), 1 for E (roll right)
   };
-  
+
   // Speed boost state
   private speedBoost: boolean = false;
 
@@ -128,6 +128,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     }
 
     // Mouse events are always handled internally
+    // These are critical for fly controls' free-look feature
     this.domElement.addEventListener('mousedown', this.boundHandlers.mousedown);
     window.addEventListener('mouseup', this.boundHandlers.mouseup);
     window.addEventListener('mousemove', this.boundHandlers.mousemove);
@@ -135,11 +136,14 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   }
 
   /**
-   * Remove event listeners (used when switching to external input management)
+   * Remove event listeners
    */
   private removeEventListeners(): void {
+    // Remove keyboard listeners
     window.removeEventListener('keydown', this.boundHandlers.keydown);
     window.removeEventListener('keyup', this.boundHandlers.keyup);
+
+    // Remove mouse listeners
     this.domElement.removeEventListener('mousedown', this.boundHandlers.mousedown);
     window.removeEventListener('mouseup', this.boundHandlers.mouseup);
     window.removeEventListener('mousemove', this.boundHandlers.mousemove);
@@ -147,19 +151,22 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   }
 
   /**
-   * Set whether input is managed externally (by InputContextManager)
-   * When true, the control won't register its own event listeners
+   * Set whether keyboard input is managed externally (by InputContextManager)
+   * When true, the control won't register its own keyboard event listeners
+   * Note: Mouse events are always handled internally for free-look functionality
    */
   public setExternalInputManagement(external: boolean): void {
     if (external !== this.externalInputManagement) {
       this.externalInputManagement = external;
 
       if (external) {
-        // Remove internal event listeners
-        this.removeEventListeners();
+        // Remove only keyboard event listeners
+        window.removeEventListener('keydown', this.boundHandlers.keydown);
+        window.removeEventListener('keyup', this.boundHandlers.keyup);
       } else {
-        // Add internal event listeners
-        this.addEventListeners();
+        // Add keyboard event listeners back
+        window.addEventListener('keydown', this.boundHandlers.keydown);
+        window.addEventListener('keyup', this.boundHandlers.keyup);
       }
     }
   }
@@ -196,7 +203,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         activeElement.tagName === 'TEXTAREA' ||
         activeElement.getAttribute('contenteditable') === 'true');
 
-    if (!isTyping && ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E'].includes(event.key)) {
+    if (
+      !isTyping &&
+      ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E'].includes(event.key)
+    ) {
       event.preventDefault();
     }
 
@@ -231,7 +241,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         console.log('🔧 [Luxar] E pressed - roll right', this.lookState.roll);
         break;
     }
-    
+
     // Speed boost with Shift key
     if (event.key === 'Shift') {
       this.speedBoost = true;
@@ -283,7 +293,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         this.lookState.roll = 0;
         break;
     }
-    
+
     // Release speed boost
     if (event.key === 'Shift') {
       this.speedBoost = false;
@@ -389,7 +399,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Apply speed boost multiplier (2x speed when Shift is held)
     const speedMultiplier = this.speedBoost ? 2.0 : 1.0;
-    
+
     // Always use physics-based movement (unified approach)
     // Calculate acceleration from input
     const accel = new THREE.Vector3();
@@ -401,7 +411,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       right,
       (this.moveState.right - this.moveState.left) * this.acceleration * speedMultiplier
     );
-    accel.addScaledVector(up, (this.moveState.up - this.moveState.down) * this.acceleration * speedMultiplier);
+    accel.addScaledVector(
+      up,
+      (this.moveState.up - this.moveState.down) * this.acceleration * speedMultiplier
+    );
 
     // Update velocity
     this.velocity.addScaledVector(accel, delta);
@@ -423,15 +436,19 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Handle angular velocity for rotation with arrow keys and Q/E roll
     // True airplane-like fly controls: all rotations relative to camera's local axes
-    if (this.lookState.horizontal !== 0 || this.lookState.vertical !== 0 || this.lookState.roll !== 0) {
+    if (
+      this.lookState.horizontal !== 0 ||
+      this.lookState.vertical !== 0 ||
+      this.lookState.roll !== 0
+    ) {
       // Get camera's local axes in world space
       // These define the rotation axes for consistent airplane-like controls
       const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orientation);
       const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
       const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
-      
+
       if (this.inertialMode) {
-        // Apply angular acceleration (torque) 
+        // Apply angular acceleration (torque)
         const torque = new THREE.Vector3();
         // Pitch: rotate around camera's local right axis (negative for correct up/down)
         torque.addScaledVector(cameraRight, -this.lookState.vertical * this.rotationSpeed);
@@ -442,15 +459,24 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         if (this.lookState.roll !== 0) {
           console.log('🔧 [Luxar] Applying roll torque:', this.lookState.roll * this.rotationSpeed);
         }
-        
+
         // Add torque to world-space angular velocity
         this.angularVelocity.addScaledVector(torque, delta);
       } else {
         // Non-inertial: directly set angular velocity
         this.angularVelocity.set(0, 0, 0);
-        this.angularVelocity.addScaledVector(cameraRight, -this.lookState.vertical * this.rotationSpeed);
-        this.angularVelocity.addScaledVector(cameraUp, -this.lookState.horizontal * this.rotationSpeed);
-        this.angularVelocity.addScaledVector(cameraForward, this.lookState.roll * this.rotationSpeed);
+        this.angularVelocity.addScaledVector(
+          cameraRight,
+          -this.lookState.vertical * this.rotationSpeed
+        );
+        this.angularVelocity.addScaledVector(
+          cameraUp,
+          -this.lookState.horizontal * this.rotationSpeed
+        );
+        this.angularVelocity.addScaledVector(
+          cameraForward,
+          this.lookState.roll * this.rotationSpeed
+        );
       }
     } else if (!this.inertialMode) {
       // In non-inertial mode, stop rotation when keys are released
@@ -464,7 +490,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       const angle = angularSpeed * delta;
       const axis = this.angularVelocity.clone().normalize();
       const deltaRotation = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-      
+
       // Apply WORLD-space delta rotation (pre-multiply)
       this.orientation.premultiply(deltaRotation);
       this.orientation.normalize();
@@ -538,7 +564,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Smoothly interpolate to target orientation
     this.orientation.slerp(targetQuaternion, 1 - smoothness);
-    
+
     this.updateOrientation();
   }
 
@@ -570,7 +596,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.lookState.horizontal = 0;
     this.lookState.vertical = 0;
     this.lookState.roll = 0;
-    
+
     // Reset speed boost
     this.speedBoost = false;
 

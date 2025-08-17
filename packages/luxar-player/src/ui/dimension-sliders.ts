@@ -391,6 +391,20 @@ export class DimensionSliders {
   }
 
   /**
+   * Get current visibility state
+   */
+  public getIsVisible(): boolean {
+    return this.slidersContainer.style.display !== 'none';
+  }
+
+  /**
+   * Hide the dimension sliders
+   */
+  public hide(): void {
+    this.slidersContainer.style.display = 'none';
+  }
+
+  /**
    * Updates the status bar text to reflect the current dimensional state.
    *
    * The status bar provides a concise overview of the current navigation state,

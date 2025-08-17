@@ -57,9 +57,9 @@ export class PerformanceMonitor {
     statsElement.style.width = 'auto'; // Use natural width
     statsElement.style.height = 'auto'; // Use natural height
 
-    // Set z-index higher than all other UI elements to ensure visibility
-    // Help overlay uses 1001, so we use 2000 for performance stats
-    statsElement.style.zIndex = '2000';
+    // Set z-index appropriate for UI panels
+    // Standard UI panels use 100-200 range
+    statsElement.style.zIndex = '100';
 
     // Slightly transparent to reduce visual impact while maintaining readability
     statsElement.style.opacity = '0.9';

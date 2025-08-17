@@ -30,16 +30,16 @@ def _calculate_dimension_aware_chunks(
     dimension_metadata: list[Any],
 ) -> tuple[int, ...]:
     """Calculate chunk shape optimized for dimension-aware loading.
-    
+
     For nD data where some dimensions are not displayed,
     we want to chunk along those dimensions to enable efficient
     lazy loading of individual slices.
-    
+
     Args:
         shape: Data array shape (n_points, n_dims)
         chunk_size: Target chunk size in elements
         dimension_metadata: Metadata about each dimension (list of dicts)
-        
+
     Returns:
         Optimized chunk shape tuple
     """
@@ -52,11 +52,11 @@ def _calculate_dimension_aware_chunks(
     for i, dim_meta in enumerate(dimension_metadata):
         # Handle dict format from to_dict()
         if isinstance(dim_meta, dict):
-            is_displayed = dim_meta.get('display', True)
-            dim_range = dim_meta.get('range', [0, 0])
-        elif hasattr(dim_meta, 'display'):
+            is_displayed = dim_meta.get("display", True)
+            dim_range = dim_meta.get("range", [0, 0])
+        elif hasattr(dim_meta, "display"):
             is_displayed = dim_meta.display
-            dim_range = getattr(dim_meta, 'range', [0, 0])
+            dim_range = getattr(dim_meta, "range", [0, 0])
         else:
             is_displayed = True
             dim_range = [0, 0]
@@ -274,10 +274,12 @@ class Points(Node):
             if parent is not None:
                 # Try to get scene dimensions for intelligent chunking
                 scene = parent
-                while hasattr(scene, 'parent') and scene.parent is not None:
+                while hasattr(scene, "parent") and scene.parent is not None:
                     scene = scene.parent
-                if hasattr(scene, '_dimensions') and scene._dimensions is not None:
-                    dimension_metadata = [d.to_dict() for d in scene._dimensions.dimensions]
+                if hasattr(scene, "_dimensions") and scene._dimensions is not None:
+                    dimension_metadata = [
+                        d.to_dict() for d in scene._dimensions.dimensions
+                    ]
 
             # Create datasets with validated data
             _create_array(

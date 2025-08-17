@@ -131,10 +131,20 @@ let globalLazyManager: LazyDataManager | null = null;
 function getLazyManager(): LazyDataManager {
   if (!globalLazyManager) {
     globalLazyManager = new LazyDataManager({
-      maxMemoryMB: 500,
+      maxMemoryMB: 1000, // Increased from 500MB to 1GB for better performance
       preloadRadius: 1,
       debug: false, // Can be enabled via config later
     });
+    // Expose globally for monitoring
+    (window as any).__luxarLazyManager = globalLazyManager;
+
+    // Set up event callback for monitoring panel if it exists
+    const monitor = (window as any).__luxarLazyMonitor;
+    if (monitor) {
+      globalLazyManager.setEventCallback((type, message, details) => {
+        monitor.logEvent(type, message, details);
+      });
+    }
   }
   return globalLazyManager;
 }
@@ -177,9 +187,11 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     } else {
       // Fallback: manually enumerate by walking the store
       // For now, we'll use a simple approach that lists immediate children
-      console.warn('[⚠️] [Luxar] Store does not have contents() method, using fallback enumeration');
+      console.warn(
+        '[⚠️] [Luxar] Store does not have contents() method, using fallback enumeration'
+      );
       listing = [];
-      
+
       // Try to list root group members
       try {
         const rootGroup = await zarr.open(zarr.root(store), { kind: 'group' });
@@ -372,54 +384,142 @@ async function buildPoints(
 ): Promise<THREE.Points> {
   // Phase 1: Open position array to check size
   const posArr = await zarr.open(loc.resolve('positions'), { kind: 'array' });
-  
+
   // Determine dataset size and check if we should use lazy loading
   const totalPoints = attrs.num_points || (posArr.shape[0] as number);
   const dimensions = posArr.shape.length === 2 ? posArr.shape[1] : 3;
-  
+
   // Check if we should use lazy loading
-  const useLazyLoading = LazyDataManager.shouldUseLazyLoading(totalPoints, dimensions) && sceneDims && dimensions > 3;
-  
+  const useLazyLoading =
+    LazyDataManager.shouldUseLazyLoading(totalPoints, dimensions) && sceneDims && dimensions > 3;
+
   let posData: Float32Array;
-  
+
   if (useLazyLoading && sceneDims) {
-    console.log(`[🔄] [Luxar] Using lazy loading for large dataset (${totalPoints.toLocaleString()} points in ${dimensions}D)`);
-    
+    console.log(
+      `[🔄] [Luxar] Using lazy loading for large dataset (${totalPoints.toLocaleString()} points in ${dimensions}D)`
+    );
+
     // Use lazy loading - only load data for current slice
     const lazyManager = getLazyManager();
-    
-    // Calculate which slice to load based on current dimensions
-    const sliceSpec: (zarr.Slice | null)[] = [];
+
+    // For nD data where points are organized by non-displayed dimension values,
+    // we need to calculate which slice of points to load based on current dimension positions.
+    // The data is assumed to be organized such that all points with the same
+    // non-displayed dimension values are contiguous.
+
+    // Identify all non-displayed dimensions
+    const nonDisplayedDims: number[] = [];
     for (let d = 0; d < dimensions; d++) {
-      if (sceneDims.displayed.includes(d)) {
-        // Load all data for displayed dimensions
-        sliceSpec.push(null);
-      } else {
-        // Load only current slice for non-displayed dimensions
-        const currentPos = sceneDims.currentStep[d];
-        sliceSpec.push(zarr.slice(currentPos, currentPos + 1));
+      if (!sceneDims.displayed.includes(d)) {
+        nonDisplayedDims.push(d);
       }
     }
-    
-    // For now, fall back to full loading until lazy slice assembly is complete
-    // TODO: Implement proper slice assembly in LazyDataManager
-    console.log('[⚠️] [Luxar] Lazy loading not fully implemented yet, falling back to full load');
-    posData = (await get(posArr)).data as Float32Array;
-    
-    // Store array reference for future updates
-    if (!globalLazyManager) globalLazyManager = lazyManager;
+
+    if (nonDisplayedDims.length > 0) {
+      // Calculate the total number of unique combinations for non-displayed dimensions
+      let totalSlices = 1;
+      const sliceSizes: number[] = [];
+
+      for (const dimIdx of nonDisplayedDims) {
+        const dimMeta = sceneDims.metadata?.[dimIdx];
+        if (dimMeta && dimMeta.range) {
+          const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
+          sliceSizes.push(dimSize);
+          totalSlices *= dimSize;
+        } else {
+          // If no range info, assume dimension size of 1
+          sliceSizes.push(1);
+        }
+      }
+
+      // Calculate the linear index for the current combination of non-displayed dimensions
+      let linearIndex = 0;
+      let multiplier = 1;
+
+      // Process dimensions in reverse order (like row-major indexing)
+      for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
+        const dimIdx = nonDisplayedDims[i];
+        const dimMeta = sceneDims.metadata?.[dimIdx];
+        const minVal = dimMeta?.range?.[0] || 0;
+        const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
+
+        linearIndex += currentVal * multiplier;
+        multiplier *= sliceSizes[i];
+      }
+
+      // Calculate point indices for this slice
+      const pointsPerSlice = Math.round(totalPoints / totalSlices);
+      const startIdx = linearIndex * pointsPerSlice;
+      const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+
+      // Create slice spec for these points
+      const sliceSpec: (zarr.Slice | null)[] = [
+        zarr.slice(startIdx, endIdx), // Points for this slice
+        null, // All coordinate dimensions
+      ];
+
+      console.log(
+        `[📥] [Luxar] Loading slice ${linearIndex}/${totalSlices} (points ${startIdx}-${endIdx})`
+      );
+      console.log(
+        `[📊] [Luxar] Non-displayed dims: ${nonDisplayedDims
+          .map(
+            (d) =>
+              `${sceneDims.metadata?.[d]?.name || `dim${d}`}=${sceneDims.currentStep[d].toFixed(1)}`
+          )
+          .join(', ')}`
+      );
+
+      // Use LazyDataManager to load the slice
+      posData = (await lazyManager.loadSlice(posArr, 'positions', sliceSpec)) as Float32Array;
+
+      // Store references for future updates
+      if (!globalLazyManager) globalLazyManager = lazyManager;
+
+      // Reconnect monitoring callback if monitor exists
+      const monitor = (window as any).__luxarLazyMonitor;
+      if (monitor && lazyManager) {
+        lazyManager.setEventCallback((type, message, details) => {
+          monitor.logEvent(type, message, details);
+        });
+      }
+
+      // Store the array reference in userData for dynamic updates
+      (loc as any)._posArr = posArr;
+      (loc as any)._lazyManager = lazyManager;
+      (loc as any)._totalSlices = totalSlices;
+      (loc as any)._nonDisplayedDims = nonDisplayedDims;
+    } else {
+      // No non-displayed dimensions - load everything
+      console.log('[ℹ️] [Luxar] No non-displayed dimensions, loading full dataset');
+      posData = (await get(posArr)).data as Float32Array;
+    }
   } else {
     // Use traditional full loading for small datasets
     posData = (await get(posArr)).data as Float32Array;
   }
 
-  // Determine dataset size - explicit count takes precedence over inference
-  const numPoints = attrs.num_points || posData.length / 3;
+  // Determine dataset size and actual loaded points
+  let numPoints: number;
+  let actualLoadedPoints: number;
+
+  if (useLazyLoading && sceneDims) {
+    // When lazy loading, we load a subset of points
+    numPoints = attrs.num_points || totalPoints; // Total points in dataset
+    actualLoadedPoints = posData.length / dimensions; // Points actually loaded
+  } else {
+    // Traditional loading - all points are loaded
+    numPoints = attrs.num_points || posData.length / 3;
+    actualLoadedPoints = numPoints;
+  }
 
   // Infer dimensionality from data structure
-  const ndim = posData.length / numPoints;
+  const ndim = posData.length / actualLoadedPoints;
   if (!Number.isInteger(ndim)) {
-    throw new Error(`Invalid positions array: ${posData.length} elements for ${numPoints} points`);
+    throw new Error(
+      `Invalid positions array: ${posData.length} elements for ${actualLoadedPoints} points`
+    );
   }
 
   // Use scene-level dimensions for consistency, or create default for standalone data
@@ -435,7 +535,46 @@ async function buildPoints(
   let radiiData: Float32Array | undefined;
   try {
     const radiiArr = await zarr.open(loc.resolve('radii'), { kind: 'array' });
-    radiiData = (await get(radiiArr)).data as Float32Array;
+    if (useLazyLoading && sceneDims && (loc as any)._lazyManager) {
+      // Load same slice of radii as positions
+      // Use the same slice indices that were calculated for positions
+      const nonDisplayedDims = (loc as any)._nonDisplayedDims;
+      const totalSlices = (loc as any)._totalSlices;
+
+      if (nonDisplayedDims && totalSlices) {
+        // Reuse the same calculation from position loading
+        let linearIndex = 0;
+        let multiplier = 1;
+        const sliceSizes: number[] = [];
+
+        for (const dimIdx of nonDisplayedDims) {
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          if (dimMeta && dimMeta.range) {
+            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
+            sliceSizes.push(dimSize);
+          } else {
+            sliceSizes.push(1);
+          }
+        }
+
+        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
+          const dimIdx = nonDisplayedDims[i];
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          const minVal = dimMeta?.range?.[0] || 0;
+          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
+          linearIndex += currentVal * multiplier;
+          multiplier *= sliceSizes[i];
+        }
+
+        const pointsPerSlice = Math.round(totalPoints / totalSlices);
+        const startIdx = linearIndex * pointsPerSlice;
+        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+        const sliceSpec = [zarr.slice(startIdx, endIdx)];
+        radiiData = await (loc as any)._lazyManager.loadSlice(radiiArr, 'radii', sliceSpec);
+      }
+    } else {
+      radiiData = (await get(radiiArr)).data as Float32Array;
+    }
   } catch (error) {
     console.debug('No radii array found:', error);
     // Radii are optional but highly recommended for nD datasets
@@ -445,9 +584,10 @@ async function buildPoints(
   let pos: Float32Array;
   let visibleIndices: Uint32Array | null = null;
 
-  if (dims.ndim > 3) {
+  if (dims.ndim > 3 && !useLazyLoading) {
     // Apply radius-based hypersphere slicing for nD visualization
-    visibleIndices = slicePoints(posData, dims, numPoints, radiiData);
+    // (Only for non-lazy loading; lazy loading already provides the slice)
+    visibleIndices = slicePoints(posData, dims, actualLoadedPoints, radiiData);
     pos = extractDisplayDimensions(posData, visibleIndices, dims);
 
     // Handle edge case: empty slice (user navigated to region with no data)
@@ -456,6 +596,22 @@ async function buildPoints(
       // Provide dummy geometry to prevent GPU errors
       pos = new Float32Array([0, 0, 0]);
       visibleIndices = new Uint32Array([0]);
+    }
+  } else if (dims.ndim > 3 && useLazyLoading) {
+    // With lazy loading, we have the exact slice we need
+    // Just extract the displayed dimensions (first 3)
+    const numLoadedPoints = posData.length / dims.ndim;
+    pos = new Float32Array(numLoadedPoints * 3);
+
+    for (let i = 0; i < numLoadedPoints; i++) {
+      for (let d = 0; d < 3; d++) {
+        if (d < dims.displayed.length) {
+          const dimIdx = dims.displayed[d];
+          pos[i * 3 + d] = posData[i * dims.ndim + dimIdx];
+        } else {
+          pos[i * 3 + d] = 0; // Pad with zeros if less than 3 displayed dims
+        }
+      }
     }
   } else {
     // 3D or lower dimensional data requires no slicing
@@ -467,7 +623,49 @@ async function buildPoints(
   let col: Float32Array | undefined;
   try {
     const colArr = await zarr.open(loc.resolve('colors'), { kind: 'array' });
-    const rawData = (await get(colArr)).data;
+    let rawData: any;
+
+    if (useLazyLoading && sceneDims && (loc as any)._lazyManager) {
+      // Load same slice of colors as positions
+      const nonDisplayedDims = (loc as any)._nonDisplayedDims;
+      const totalSlices = (loc as any)._totalSlices;
+
+      if (nonDisplayedDims && totalSlices) {
+        // Reuse the same calculation from position loading
+        let linearIndex = 0;
+        let multiplier = 1;
+        const sliceSizes: number[] = [];
+
+        for (const dimIdx of nonDisplayedDims) {
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          if (dimMeta && dimMeta.range) {
+            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
+            sliceSizes.push(dimSize);
+          } else {
+            sliceSizes.push(1);
+          }
+        }
+
+        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
+          const dimIdx = nonDisplayedDims[i];
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          const minVal = dimMeta?.range?.[0] || 0;
+          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
+          linearIndex += currentVal * multiplier;
+          multiplier *= sliceSizes[i];
+        }
+
+        const pointsPerSlice = Math.round(totalPoints / totalSlices);
+        const startIdx = linearIndex * pointsPerSlice;
+        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+        const sliceSpec = [zarr.slice(startIdx, endIdx), null]; // All color channels
+        rawData = await (loc as any)._lazyManager.loadSlice(colArr, 'colors', sliceSpec);
+      } else {
+        rawData = (await get(colArr)).data;
+      }
+    } else {
+      rawData = (await get(colArr)).data;
+    }
 
     // Handle both legacy uint8 and new HDR float32 formats
     if (rawData instanceof Uint8Array) {
@@ -504,10 +702,57 @@ async function buildPoints(
   let sharpness: Float32Array | undefined;
   try {
     const sharpnessArr = await zarr.open(loc.resolve('sharpness'), { kind: 'array' });
-    sharpnessData = (await get(sharpnessArr)).data as Float32Array;
-    sharpness = visibleIndices
-      ? sliceScalarAttribute(sharpnessData, visibleIndices) || undefined
+
+    if (useLazyLoading && sceneDims && (loc as any)._lazyManager) {
+      // Load same slice of sharpness as positions
+      const nonDisplayedDims = (loc as any)._nonDisplayedDims;
+      const totalSlices = (loc as any)._totalSlices;
+
+      if (nonDisplayedDims && totalSlices) {
+        // Reuse the same calculation from position loading
+        let linearIndex = 0;
+        let multiplier = 1;
+        const sliceSizes: number[] = [];
+
+        for (const dimIdx of nonDisplayedDims) {
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          if (dimMeta && dimMeta.range) {
+            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
+            sliceSizes.push(dimSize);
+          } else {
+            sliceSizes.push(1);
+          }
+        }
+
+        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
+          const dimIdx = nonDisplayedDims[i];
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          const minVal = dimMeta?.range?.[0] || 0;
+          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
+          linearIndex += currentVal * multiplier;
+          multiplier *= sliceSizes[i];
+        }
+
+        const pointsPerSlice = Math.round(totalPoints / totalSlices);
+        const startIdx = linearIndex * pointsPerSlice;
+        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+        const sliceSpec = [zarr.slice(startIdx, endIdx)];
+        sharpnessData = await (loc as any)._lazyManager.loadSlice(
+          sharpnessArr,
+          'sharpness',
+          sliceSpec
+        );
+      } else {
+        sharpnessData = (await get(sharpnessArr)).data as Float32Array;
+      }
+    } else {
+      sharpnessData = (await get(sharpnessArr)).data as Float32Array;
+    }
+
+    const slicedSharpness = visibleIndices
+      ? sliceScalarAttribute(sharpnessData || null, visibleIndices)
       : sharpnessData;
+    sharpness = slicedSharpness || undefined;
   } catch (error) {
     console.debug('Optional array not found:', error);
     /* optional */
@@ -576,11 +821,25 @@ async function buildPoints(
 
   // Store original data in userData for later access (but NOT dims!)
   if (dims.ndim > 3) {
-    points.userData.originalNumPoints = numPoints;
-    points.userData.originalPositions = posData;
-    points.userData.originalColors = colData;
-    points.userData.originalRadii = radiiData;
-    points.userData.originalSharpness = sharpnessData;
+    if (useLazyLoading && (loc as any)._lazyManager) {
+      // For lazy loading, store references for dynamic updates
+      points.userData.isLazyLoaded = true;
+      points.userData.lazyManager = (loc as any)._lazyManager;
+      points.userData.positionsArray = (loc as any)._posArr;
+      points.userData.totalPoints = totalPoints;
+      points.userData.originalNumPoints = numPoints;
+
+      // Store array references for reloading
+      points.userData.zarrLocation = loc;
+      points.userData.sceneDims = sceneDims;
+    } else {
+      // Traditional full data storage
+      points.userData.originalNumPoints = numPoints;
+      points.userData.originalPositions = posData;
+      points.userData.originalColors = colData;
+      points.userData.originalRadii = radiiData;
+      points.userData.originalSharpness = sharpnessData;
+    }
   }
 
   return points;

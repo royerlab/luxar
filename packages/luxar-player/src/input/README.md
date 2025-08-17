@@ -34,6 +34,7 @@ input/
 The `InputHandler` class centralizes all input event processing and delegates to appropriate systems.
 
 **Responsibilities:**
+
 - Capture keyboard and mouse events
 - Detect typing in input fields
 - Route events based on context
@@ -42,6 +43,7 @@ The `InputHandler` class centralizes all input event processing and delegates to
 - Coordinate with controls system
 
 **Event Flow:**
+
 ```
 Browser Event
     ↓
@@ -59,25 +61,26 @@ Execute action
 ```
 
 **Key Methods:**
+
 ```typescript
 class InputHandler {
   constructor(
     container: HTMLElement,
     controlsManager: ControlsManager,
     contextManager: InputContextManager
-  )
-  
+  );
+
   // Event handlers
-  private handleKeyDown(event: KeyboardEvent): void
-  private handleKeyUp(event: KeyboardEvent): void
-  private handleMouseDown(event: MouseEvent): void
-  
+  private handleKeyDown(event: KeyboardEvent): void;
+  private handleKeyUp(event: KeyboardEvent): void;
+  private handleMouseDown(event: MouseEvent): void;
+
   // Context checks
-  private isTypingInInput(): boolean
-  private shouldHandleKey(key: string): boolean
-  
+  private isTypingInInput(): boolean;
+  private shouldHandleKey(key: string): boolean;
+
   // Cleanup
-  dispose(): void
+  dispose(): void;
 }
 ```
 
@@ -86,18 +89,20 @@ class InputHandler {
 The `InputContextManager` manages input contexts to prevent conflicts between different UI systems.
 
 **Context Types:**
+
 ```typescript
 enum InputContext {
-  NAVIGATION = 0,      // Default 3D navigation
-  FLY_CONTROLS = 1,    // Fly mode active
-  TYPING = 2,          // Text input active
-  DIMENSION_NAV = 3,   // nD dimension navigation
-  UI_OVERLAY = 4,      // UI panels open
-  MODAL = 5,           // Modal dialog active
+  NAVIGATION = 0, // Default 3D navigation
+  FLY_CONTROLS = 1, // Fly mode active
+  TYPING = 2, // Text input active
+  DIMENSION_NAV = 3, // nD dimension navigation
+  UI_OVERLAY = 4, // UI panels open
+  MODAL = 5, // Modal dialog active
 }
 ```
 
 **Features:**
+
 - Context priority system
 - Context stack for nested states
 - Automatic focus management
@@ -105,21 +110,22 @@ enum InputContext {
 - Debug mode for troubleshooting
 
 **Usage:**
+
 ```typescript
 class InputContextManager {
   // Context management
-  setContext(context: InputContext): void
-  pushContext(context: InputContext): void
-  popContext(): InputContext | undefined
-  clearContextStack(): void
-  
+  setContext(context: InputContext): void;
+  pushContext(context: InputContext): void;
+  popContext(): InputContext | undefined;
+  clearContextStack(): void;
+
   // State queries
-  getCurrentContext(): InputContext
-  hasContext(context: InputContext): boolean
-  shouldHandleKey(key: string): boolean
-  
+  getCurrentContext(): InputContext;
+  hasContext(context: InputContext): boolean;
+  shouldHandleKey(key: string): boolean;
+
   // Debug support
-  setDebugMode(enabled: boolean): void
+  setDebugMode(enabled: boolean): void;
 }
 ```
 
@@ -198,15 +204,15 @@ handleKeyDown(event: KeyboardEvent) {
   if (this.isTypingInInput()) {
     return; // Let browser handle it
   }
-  
+
   // 2. Get current context
   const context = contextManager.getCurrentContext();
-  
+
   // 3. Check if context handles this key
   if (!contextManager.shouldHandleKey(event.key)) {
     return;
   }
-  
+
   // 4. Route to appropriate handler
   switch (context) {
     case InputContext.FLY_CONTROLS:
@@ -232,7 +238,7 @@ handleMouseDown(event: MouseEvent) {
     contextManager.pushContext(InputContext.UI_OVERLAY);
     return;
   }
-  
+
   // Otherwise handle as navigation
   this.controlsManager.handleMouseDown(event);
 }
@@ -246,38 +252,41 @@ handleMouseDown(event: MouseEvent) {
 
 Always available regardless of context:
 
-| Key | Action | Description |
-|-----|--------|-------------|
-| `H` | Show help | Display keyboard shortcuts |
-| `F11` | Fullscreen | Toggle fullscreen mode |
-| `Ctrl+S` | Screenshot | Capture current view |
-| `Ctrl+L` | Debug console | Toggle debug console |
+| Key      | Action        | Description                |
+| -------- | ------------- | -------------------------- |
+| `H`      | Show help     | Display keyboard shortcuts |
+| `F11`    | Fullscreen    | Toggle fullscreen mode     |
+| `Ctrl+S` | Screenshot    | Capture current view       |
+| `Ctrl+L` | Debug console | Toggle debug console       |
 
 ### Mode-Specific Keys
 
 #### Orbit Mode
-| Key | Action |
-|-----|--------|
-| `←→↑↓` | Rotate camera |
-| `+/-` | Zoom in/out |
-| `C` | Toggle centering |
-| `Space` | Reset view |
+
+| Key     | Action           |
+| ------- | ---------------- |
+| `←→↑↓`  | Rotate camera    |
+| `+/-`   | Zoom in/out      |
+| `C`     | Toggle centering |
+| `Space` | Reset view       |
 
 #### Fly Mode
-| Key | Action |
-|-----|--------|
+
+| Key       | Action                       |
+| --------- | ---------------------------- |
 | `W/A/S/D` | Move forward/left/back/right |
-| `Q/E` | Roll left/right |
-| `Alt+W/S` | Move up/down |
-| `Shift` | Speed boost |
-| `I` | Toggle inertia |
+| `Q/E`     | Roll left/right              |
+| `Alt+W/S` | Move up/down                 |
+| `Shift`   | Speed boost                  |
+| `I`       | Toggle inertia               |
 
 #### Dimension Navigation
-| Key | Action |
-|-----|--------|
-| `1-9` | Select dimension |
-| `[` | Step backward |
-| `]` | Step forward |
+
+| Key         | Action            |
+| ----------- | ----------------- |
+| `1-9`       | Select dimension  |
+| `[`         | Step backward     |
+| `]`         | Step forward      |
 | `Shift+[/]` | Jump to start/end |
 
 ---
@@ -291,22 +300,22 @@ The system automatically detects when users are typing:
 ```typescript
 private isTypingInInput(): boolean {
   const activeElement = document.activeElement;
-  
+
   if (!activeElement) return false;
-  
+
   // Check if focused element accepts text input
-  const isTextInput = 
+  const isTextInput =
     activeElement.tagName === 'INPUT' ||
     activeElement.tagName === 'TEXTAREA' ||
     activeElement.contentEditable === 'true';
-  
+
   // Check for specific input types
   if (activeElement.tagName === 'INPUT') {
     const type = (activeElement as HTMLInputElement).type;
     const textTypes = ['text', 'search', 'url', 'email', 'password'];
     return textTypes.includes(type);
   }
-  
+
   return isTextInput;
 }
 ```
@@ -341,11 +350,7 @@ import { InputContextManager, InputContext } from './input/input-context-manager
 const contextManager = new InputContextManager();
 
 // Create input handler
-const inputHandler = new InputHandler(
-  document.body,
-  controlsManager,
-  contextManager
-);
+const inputHandler = new InputHandler(document.body, controlsManager, contextManager);
 
 // Set initial context
 contextManager.setContext(InputContext.NAVIGATION);
@@ -391,13 +396,13 @@ class CustomHandler {
   constructor(private contextManager: InputContextManager) {
     document.addEventListener('keydown', this.handleKey.bind(this));
   }
-  
+
   handleKey(event: KeyboardEvent) {
     // Only handle in specific context
     if (this.contextManager.getCurrentContext() !== InputContext.CUSTOM) {
       return;
     }
-    
+
     // Custom key handling
     switch (event.key) {
       case 'x':
@@ -417,19 +422,19 @@ class CustomHandler {
 ```typescript
 const INPUT_CONFIG = {
   // Key repeat
-  keyRepeatDelay: 500,      // ms before repeat starts
-  keyRepeatRate: 30,        // ms between repeats
-  
+  keyRepeatDelay: 500, // ms before repeat starts
+  keyRepeatRate: 30, // ms between repeats
+
   // Mouse
   mouseSensitivity: 1.0,
   invertMouse: false,
-  
+
   // Context switching
-  contextSwitchDelay: 0,    // ms delay when switching
-  
+  contextSwitchDelay: 0, // ms delay when switching
+
   // Debug
   logInputEvents: false,
-  showContextIndicator: false
+  showContextIndicator: false,
 };
 ```
 
@@ -442,23 +447,23 @@ const KEY_BINDINGS = {
     rotateLeft: 'ArrowLeft',
     rotateRight: 'ArrowRight',
     zoomIn: '+',
-    zoomOut: '-'
+    zoomOut: '-',
   },
-  
+
   fly: {
     forward: 'w',
     backward: 's',
     strafeLeft: 'a',
     strafeRight: 'd',
     rollLeft: 'q',
-    rollRight: 'e'
+    rollRight: 'e',
   },
-  
+
   global: {
     help: 'h',
     fullscreen: 'F11',
-    screenshot: 'F12'
-  }
+    screenshot: 'F12',
+  },
 };
 ```
 
@@ -523,11 +528,11 @@ class InputHandler {
     this.container.removeEventListener('keydown', this.handleKeyDown);
     this.container.removeEventListener('keyup', this.handleKeyUp);
     this.container.removeEventListener('mousedown', this.handleMouseDown);
-    
+
     // Clear references
     this.controlsManager = null;
     this.contextManager = null;
-    
+
     // Clear key states
     this.keysPressed.clear();
   }
@@ -561,6 +566,7 @@ class InputHandler {
 ### Common Issues
 
 **Problem: Keys not working**
+
 ```typescript
 // Check context
 console.log('Current context:', contextManager.getCurrentContext());
@@ -571,6 +577,7 @@ contextManager.setDebugMode(true);
 ```
 
 **Problem: Input conflicts**
+
 ```typescript
 // Review context stack
 console.log('Context stack:', contextManager.getContextStack());
@@ -579,6 +586,7 @@ contextManager.clearContextStack();
 ```
 
 **Problem: Keys working in wrong mode**
+
 ```typescript
 // Verify key filtering
 const shouldHandle = contextManager.shouldHandleKey('w');
@@ -591,24 +599,24 @@ console.log('Should handle W:', shouldHandle);
 
 ### InputHandler
 
-| Method | Description |
-|--------|-------------|
-| `constructor(container, controls, context)` | Initialize handler |
-| `setEnabled(enabled)` | Enable/disable input handling |
-| `dispose()` | Clean up event listeners |
+| Method                                      | Description                   |
+| ------------------------------------------- | ----------------------------- |
+| `constructor(container, controls, context)` | Initialize handler            |
+| `setEnabled(enabled)`                       | Enable/disable input handling |
+| `dispose()`                                 | Clean up event listeners      |
 
 ### InputContextManager
 
-| Method | Description |
-|--------|-------------|
-| `setContext(context)` | Set active context |
-| `pushContext(context)` | Add context to stack |
-| `popContext()` | Remove top context |
-| `getCurrentContext()` | Get active context |
-| `hasContext(context)` | Check if context active |
-| `shouldHandleKey(key)` | Check if key should be handled |
-| `clearContextStack()` | Reset context stack |
-| `setDebugMode(enabled)` | Toggle debug logging |
+| Method                  | Description                    |
+| ----------------------- | ------------------------------ |
+| `setContext(context)`   | Set active context             |
+| `pushContext(context)`  | Add context to stack           |
+| `popContext()`          | Remove top context             |
+| `getCurrentContext()`   | Get active context             |
+| `hasContext(context)`   | Check if context active        |
+| `shouldHandleKey(key)`  | Check if key should be handled |
+| `clearContextStack()`   | Reset context stack            |
+| `setDebugMode(enabled)` | Toggle debug logging           |
 
 ---
 
@@ -618,4 +626,4 @@ Part of the Luxar project. See root LICENSE file for details.
 
 ---
 
-*For implementation details, see the source files in this directory.*
+_For implementation details, see the source files in this directory._

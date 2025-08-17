@@ -121,11 +121,11 @@ luxar serve scene_dimensions_example.zarr
 
 #### 9. **temporal_spiral_sphere_4d_example.py** - Animated 4D Temporal Spiral
 Advanced 4D animation with temporal dynamics:
-- Rotating spiral sphere across 256 time frames
+- Rotating spiral sphere across 100 discrete time frames
 - Undulating rainbow colors that flow over time
 - Pulsating point sizes with spatial wave patterns (±20% variation)
 - Dynamic sharpness creating moving bands (4x variation)
-- High-density visualization (200,000 points per frame)
+- High-density visualization (10,000 points per frame for testing)
 
 ```bash
 python temporal_spiral_sphere_4d_example.py
