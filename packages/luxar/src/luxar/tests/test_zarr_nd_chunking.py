@@ -1,0 +1,210 @@
+"""Tests for nD zarr data handling and chunking optimization."""
+
+import numpy as np
+import pytest
+import zarr
+
+from luxar import Scene
+
+
+class TestZarrNDChunking:
+    """Test suite for nD zarr data chunking and loading."""
+
+    def test_4d_data_chunking_optimization(self, tmp_path):
+        """Test that 4D data is chunked appropriately for temporal slicing."""
+        store = tmp_path / "4d_chunked.zarr"
+
+        # Create 4D data: 1000 time steps, 1000 points per step
+        n_timesteps = 1000
+        n_points_per_step = 1000
+        total_points = n_timesteps * n_points_per_step
+
+        # Generate 4D positions (x, y, z, t)
+        positions = np.zeros((total_points, 4), dtype=np.float32)
+        for t in range(n_timesteps):
+            start_idx = t * n_points_per_step
+            end_idx = (t + 1) * n_points_per_step
+            # Create points in a sphere that moves over time
+            theta = np.random.uniform(0, 2 * np.pi, n_points_per_step)
+            phi = np.random.uniform(0, np.pi, n_points_per_step)
+            r = np.random.uniform(0.5, 1.0, n_points_per_step)
+
+            positions[start_idx:end_idx, 0] = r * np.sin(phi) * np.cos(theta)
+            positions[start_idx:end_idx, 1] = r * np.sin(phi) * np.sin(theta)
+            positions[start_idx:end_idx, 2] = r * np.cos(phi)
+            positions[start_idx:end_idx, 3] = t  # Time coordinate
+
+        # Create scene at the specified store location and add points
+        scene = Scene(store)
+        scene.add_points("Points4D", positions=positions)
+
+        # Verify chunking by opening the zarr store
+        root = zarr.open_group(store, "r")
+        positions_array = root["Points4D"]["positions"]
+
+        # Check that chunks are reasonable for temporal slicing
+        # First dimension (points) should have moderate chunk size
+        # Second dimension (coordinates) should be fully included in each chunk
+        assert positions_array.chunks[1] == 4  # All coordinates in one chunk
+        assert positions_array.chunks[0] <= 500000  # Reasonable chunk size for points
+
+        # Verify data integrity
+        loaded_positions = positions_array[:]
+        np.testing.assert_array_almost_equal(loaded_positions, positions)
+
+    def test_nd_generic_handling(self, tmp_path):
+        """Test that the system handles arbitrary nD data generically."""
+        store = tmp_path / "nd_generic.zarr"
+
+        # Test with 5D data (x, y, z, t, channel)
+        n_points = 10000
+        positions_5d = np.random.randn(n_points, 5).astype(np.float32)
+
+        # Create scene and add 5D points
+        scene = Scene(store)
+        scene.add_points("Points5D", positions=positions_5d)
+
+        # Verify it saved correctly
+        root = zarr.open_group(store, "r")
+        loaded_positions = root["Points5D"]["positions"][:]
+
+        assert loaded_positions.shape == (n_points, 5)
+        np.testing.assert_array_almost_equal(loaded_positions, positions_5d)
+
+    def test_chunk_boundary_alignment(self, tmp_path):
+        """Test that chunking aligns well with typical access patterns."""
+        store = tmp_path / "chunk_aligned.zarr"
+
+        # Create data that doesn't align perfectly with default chunks
+        n_points = 123456  # Not a nice round number
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+
+        scene = Scene(store)
+        scene.add_points("Points", positions=positions)
+
+        root = zarr.open_group(store, "r")
+        positions_array = root["Points"]["positions"]
+
+        # Verify chunks exist and cover all data
+        n_chunks_0 = int(np.ceil(n_points / positions_array.chunks[0]))
+        n_chunks_1 = int(np.ceil(3 / positions_array.chunks[1]))
+
+        # Check we can access boundary chunks without error
+        last_chunk_start = (n_chunks_0 - 1) * positions_array.chunks[0]
+        last_chunk_data = positions_array[last_chunk_start:]
+        assert len(last_chunk_data) == n_points - last_chunk_start
+
+    def test_memory_efficient_slicing(self, tmp_path):
+        """Test that slicing large datasets is memory efficient."""
+        store = tmp_path / "memory_efficient.zarr"
+
+        # Create large dataset
+        n_slices = 100
+        points_per_slice = 10000
+        total_points = n_slices * points_per_slice
+
+        # Generate data slice by slice to avoid memory issues
+        positions = np.zeros((total_points, 4), dtype=np.float32)
+
+        for s in range(n_slices):
+            start = s * points_per_slice
+            end = (s + 1) * points_per_slice
+            positions[start:end, 0] = np.random.randn(points_per_slice)
+            positions[start:end, 1] = np.random.randn(points_per_slice)
+            positions[start:end, 2] = np.random.randn(points_per_slice)
+            positions[start:end, 3] = s  # Slice index as 4th dimension
+
+        scene = Scene(store)
+        scene.add_points("Points", positions=positions)
+
+        # Test that we can efficiently load a single slice
+        root = zarr.open_group(store, "r")
+        positions_array = root["Points"]["positions"]
+
+        # Load just one slice
+        slice_50_start = 50 * points_per_slice
+        slice_50_end = 51 * points_per_slice
+        single_slice = positions_array[slice_50_start:slice_50_end]
+
+        assert single_slice.shape == (points_per_slice, 4)
+        assert np.all(single_slice[:, 3] == 50)  # All points have slice index 50
+
+    def test_no_hardcoded_dimensions(self, tmp_path):
+        """Ensure the system doesn't assume specific dimension meanings."""
+        store = tmp_path / "no_hardcoded.zarr"
+
+        # Create data with unusual dimension count
+        for n_dims in [2, 3, 4, 7, 10]:
+            n_points = 1000
+            positions = np.random.randn(n_points, n_dims).astype(np.float32)
+
+            # Save with unique name
+            dim_store = store / f"dims_{n_dims}.zarr"
+            scene = Scene(dim_store)
+            scene.add_points("Points", positions=positions)
+
+            # Verify it loads correctly
+            root = zarr.open_group(dim_store, "r")
+            loaded = root["Points"]["positions"][:]
+
+            assert loaded.shape == (n_points, n_dims)
+            np.testing.assert_array_almost_equal(loaded, positions)
+
+    def test_optimal_chunk_cache_interaction(self, tmp_path):
+        """Test that chunk sizes work well with typical cache sizes."""
+        store = tmp_path / "cache_optimized.zarr"
+
+        # Create dataset sized to test cache behavior
+        n_points = 1_000_000
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+
+        scene = Scene(store)
+        scene.add_points("Points", positions=positions)
+
+        root = zarr.open_group(store, "r")
+        positions_array = root["Points"]["positions"]
+
+        # Calculate chunk size in bytes
+        chunk_shape = positions_array.chunks
+        bytes_per_element = 4  # float32
+        chunk_size_bytes = chunk_shape[0] * chunk_shape[1] * bytes_per_element
+
+        # Chunk size should be reasonable for caching (between 100KB and 10MB)
+        assert 100_000 <= chunk_size_bytes <= 10_000_000
+
+        # Verify chunks are not too small (inefficient) or too large (memory issues)
+        assert chunk_shape[0] >= 1000  # At least 1000 points per chunk
+        assert chunk_shape[0] <= 1_000_000  # At most 1M points per chunk
+
+    def test_sparse_data_efficiency(self, tmp_path):
+        """Test that sparse nD data is handled efficiently."""
+        store = tmp_path / "sparse.zarr"
+
+        # Create sparse 4D data where most time slices are empty
+        n_timesteps = 1000
+        active_timesteps = [10, 50, 100, 500, 900]  # Only 5 active timesteps
+        points_per_active = 1000
+
+        positions_list = []
+        for t in active_timesteps:
+            # Create points only at specific timesteps
+            points = np.random.randn(points_per_active, 4).astype(np.float32)
+            points[:, 3] = t  # Set time coordinate
+            positions_list.append(points)
+
+        positions = np.vstack(positions_list)
+
+        scene = Scene(store)
+        scene.add_points("Points", positions=positions)
+
+        root = zarr.open_group(store, "r")
+        positions_array = root["Points"]["positions"]
+
+        # Verify sparse data is stored efficiently
+        assert positions_array.shape[0] == len(active_timesteps) * points_per_active
+
+        # Check that we can query specific timesteps efficiently
+        loaded = positions_array[:]
+        for i, t in enumerate(active_timesteps):
+            slice_data = loaded[loaded[:, 3] == t]
+            assert len(slice_data) == points_per_active

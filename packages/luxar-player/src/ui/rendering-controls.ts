@@ -1226,36 +1226,21 @@ export class RenderingControls {
    */
   private setupKeyboardHandling(): void {
     // Add keydown listener to the GUI's DOM element
+    // Note: We don't stopPropagation() for toggle keys so they can be handled globally
     this.gui.domElement.addEventListener('keydown', (event: KeyboardEvent) => {
-      // Check for 'R' key without modifiers
+      // For toggle keys (R), don't stopPropagation so main handler can process it
       if (
         (event.key === 'r' || event.key === 'R') &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.shiftKey
       ) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.hide();
+        // Don't prevent the event from bubbling up
+        // The main input handler will toggle the panel properly
       }
-      // Also handle Escape key for closing
+      // For Escape, also let it bubble up for proper priority handling
       else if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        this.hide();
-      }
-    });
-
-    // Also handle keyup to prevent event propagation
-    this.gui.domElement.addEventListener('keyup', (event: KeyboardEvent) => {
-      if (
-        (event.key === 'r' || event.key === 'R') &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.shiftKey
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
+        // Don't prevent the event from bubbling up
       }
     });
   }

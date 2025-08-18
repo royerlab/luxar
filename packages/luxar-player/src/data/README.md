@@ -21,6 +21,7 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ```
 data/
 ├── zarr-loader.ts         # Core Zarr loading and nD slicing
+├── lazy-data-manager.ts   # Intelligent chunk caching and memory management
 ├── directory-navigator.ts # Server-agnostic directory browsing
 └── README.md             # This documentation
 ```
@@ -93,7 +94,111 @@ function sliceToDisplayDimensions(
 }
 ```
 
-### 2. Directory Navigator
+### 2. Lazy Data Manager
+
+The `lazy-data-manager.ts` provides intelligent chunk-based loading and caching for massive datasets.
+
+**Core Features:**
+
+- **Memory-Aware Caching**: Automatic memory limit detection and management
+- **Smart Chunk Loading**: Only loads visible data chunks on demand
+- **Preloading Strategy**: Anticipates navigation and preloads adjacent chunks
+- **LRU Eviction**: Keeps most recently used chunks in cache
+- **Concurrent Load Protection**: Prevents duplicate requests for same chunk
+- **Dynamic Memory Adjustment**: Adapts to available system memory
+
+**Memory Management:**
+
+```typescript
+// Automatic memory detection
+const memory = detectMemory();
+// Uses 80% of available heap memory for safety
+const cacheSize = memory.recommendedCacheMB;
+
+// Cache eviction when limit reached
+if (totalCacheSize + chunkSize > maxMemory) {
+  evictOldestChunks();
+}
+```
+
+**Chunk Loading Pipeline:**
+
+```typescript
+// 1. Check if chunk is in cache
+const cached = cache.get(chunkId);
+if (cached) return cached.data;
+
+// 2. Check if chunk is currently loading
+const pending = loadingChunks.get(chunkId);
+if (pending) return pending;
+
+// 3. Load chunk from Zarr store
+const promise = loadChunkFromStore(array, indices);
+loadingChunks.set(chunkId, promise);
+
+// 4. Add to cache when loaded
+const data = await promise;
+addToCache(chunkId, data);
+
+// 5. Preload adjacent chunks
+preloadAdjacentChunks(indices);
+```
+
+**Key Functions:**
+
+```typescript
+class LazyDataManager {
+  // Load a specific chunk
+  async loadChunk(
+    array: ZarrArray,
+    arrayPath: string,
+    chunkIndices: number[]
+  ): Promise<ArrayBuffer | TypedArray>;
+
+  // Preload chunks around current position
+  async preloadChunks(
+    array: ZarrArray,
+    arrayPath: string,
+    currentPosition: number[],
+    fullyLoadedDims: number[]
+  ): Promise<void>;
+
+  // Get cache statistics
+  getCacheStats(): {
+    numChunks: number;
+    totalSizeMB: number;
+    maxSizeMB: number;
+    utilizationPercent: number;
+  };
+
+  // Clear all cached data
+  clearCache(): void;
+}
+```
+
+**Intelligent Preloading:**
+
+The system automatically determines which chunks to preload based on:
+
+1. **Current Position**: The active chunk being viewed
+2. **Array Dimensions**: Which dimensions are fully vs partially loaded
+3. **Preload Radius**: How many adjacent chunks to preload (default: 1)
+4. **Memory Constraints**: Only preloads if memory available
+
+```typescript
+// For a positions array with shape [n_points, n_coords]
+// - Dimension 0 (points): Load current chunk ± preloadRadius
+// - Dimension 1 (coords): Always fully loaded
+const requiredChunks = calculateRequiredChunks(
+  arrayShape,
+  chunkShape,
+  currentPosition,
+  fullyLoadedDimensions,
+  preloadRadius
+);
+```
+
+### 3. Directory Navigator
 
 The `DirectoryNavigator` provides flexible directory browsing across different server types.
 
@@ -255,6 +360,36 @@ interface DimensionMetadata {
 ---
 
 ## Performance Optimization
+
+### Lazy Loading for Large Datasets
+
+For datasets exceeding available memory, the lazy loading system automatically activates:
+
+```typescript
+// Automatic detection based on dataset size
+const dataSize = calculateDatasetSize(shape, dtype);
+const availableMemory = detectMemory().recommendedCacheMB;
+
+if (dataSize > availableMemory * 0.5) {
+  // Enable lazy loading
+  userData.isLazyLoaded = true;
+  userData.lazyDataManager = new LazyDataManager(config);
+}
+```
+
+**Benefits:**
+
+- Load 100GB+ datasets on systems with 8GB RAM
+- Smooth navigation through temporal/dimensional slices
+- No manual configuration required
+- Automatic memory management
+
+**How It Works:**
+
+1. **Initial Load**: Only loads the current visible slice
+2. **Navigation**: As user navigates, loads new chunks and caches them
+3. **Preloading**: Anticipates user movement and preloads adjacent slices
+4. **Eviction**: Automatically removes least-recently-used chunks when memory fills
 
 ### Chunking Strategy
 
@@ -516,6 +651,18 @@ location /data/ {
 | `loadPointCloud(store, path, attrs, dims)`  | Load individual point cloud                |
 | `sliceToDisplayDimensions(data, dims)`      | Perform nD to 3D slicing                   |
 | `inheritRenderingAttributes(attrs, parent)` | Apply attribute inheritance                |
+
+### lazy-data-manager.ts
+
+| Method                                  | Description                          |
+| --------------------------------------- | ------------------------------------ |
+| `constructor(config)`                   | Initialize with memory configuration |
+| `loadChunk(array, path, indices)`       | Load specific chunk from Zarr array  |
+| `preloadChunks(array, path, pos, dims)` | Preload chunks around position       |
+| `calculateRequiredChunks(...)`          | Determine which chunks to load       |
+| `getCacheStats()`                       | Get current cache utilization        |
+| `clearCache()`                          | Clear all cached chunks              |
+| `dispose()`                             | Clean up resources and memory        |
 
 ### directory-navigator.ts
 
