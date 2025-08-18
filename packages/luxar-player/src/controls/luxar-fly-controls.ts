@@ -350,7 +350,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.mouseY = event.clientY;
 
     // Apply angular impulse based on current camera orientation
-    const torquePitch = deltaY * this.lookSpeed * 10; // Pitch (up/down)
+    // Note: deltaY is positive when moving down, negative when moving up
+    // We want to pitch down (positive rotation) when dragging down
+    const torquePitch = -deltaY * this.lookSpeed * 10; // Pitch (up/down) - inverted for natural feel
     const torqueYaw = -deltaX * this.lookSpeed * 10; // Yaw (left/right)
 
     // Get camera's local axes for consistent airplane-like controls
