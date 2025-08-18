@@ -7,9 +7,9 @@ Last updated from comprehensive codebase scan.
 
 1- <ESC> key behavior:
 We need to change what happens when we press the <ESC> key: in fullscreen mode, it should first close all panels.
-If no panels are open, either they were never opened in the first place or we pressed already once <ESC> then pressing <ESC>
-again should kick us out of fullscreen.
-If not in fullscreen mode then pressing <ESC> should close all the panels.
+If no panels are open, either they were never opened in the first place or we pressed already once <ESC>. 
+Pressing <ESC> again should kick us out of fullscreen.
+If we are not in fullscreen mode then pressing <ESC> should close all the panels.
 --> not fixed yet!
 
 6- In 'fly control mode' there is a 'sign' problem when using mouse dragging to tilt the camera: dragging left moves the camera right, and dragging right moves the camera left.

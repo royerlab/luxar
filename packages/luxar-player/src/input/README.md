@@ -252,23 +252,32 @@ handleMouseDown(event: MouseEvent) {
 
 Always available regardless of context:
 
-| Key      | Action        | Description                |
-| -------- | ------------- | -------------------------- |
-| `H`      | Show help     | Display keyboard shortcuts |
-| `F11`    | Fullscreen    | Toggle fullscreen mode     |
-| `Ctrl+S` | Screenshot    | Capture current view       |
-| `Ctrl+L` | Debug console | Toggle debug console       |
+| Key      | Action        | Description                                     |
+| -------- | ------------- | ----------------------------------------------- |
+| `H`      | Show help     | Display keyboard shortcuts                      |
+| `Space`  | Fullscreen    | Toggle fullscreen mode                          |
+| `Escape` | Exit/Close    | Exit fullscreen OR close panels (context-aware) |
+| `Ctrl+L` | Debug console | Toggle debug console                            |
+
+**Note on ESC key behavior:**
+
+- In fullscreen mode: Exits fullscreen (handled by browser)
+- Not in fullscreen: Closes all open UI panels (help, controls, etc.)
+- ESC performs only one action at a time for predictable behavior
 
 ### Mode-Specific Keys
 
-#### Orbit Mode
+#### Navigation Keys
 
-| Key     | Action           |
-| ------- | ---------------- |
-| `←→↑↓`  | Rotate camera    |
-| `+/-`   | Zoom in/out      |
-| `C`     | Toggle centering |
-| `Space` | Reset view       |
+| Key | Action                                 |
+| --- | -------------------------------------- |
+| `C` | Toggle centering (native/bounding box) |
+| `F` | Recenter camera on scene               |
+| `V` | Toggle between Orbit/Fly modes         |
+| `N` | Toggle dimension sliders               |
+| `O` | Open dataset browser                   |
+| `P` | Toggle performance stats               |
+| `R` | Toggle rendering controls              |
 
 #### Fly Mode
 

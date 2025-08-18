@@ -526,9 +526,9 @@ export class InputHandler {
         break;
 
       case 'Escape':
-        // Close all open panels
+        // Handle ESC with priority: fullscreen first, then panels
         event.preventDefault();
-        this.closeAllPanels();
+        this.handleEscapeKey();
         break;
     }
   }
@@ -808,20 +808,23 @@ export class InputHandler {
   }
 
   /**
-   * Handle ESC key with priority system:
-   * 1. Exit fullscreen (if in fullscreen)
-   * 2. Close all panels (if not in fullscreen)
+   * Handle ESC key:
+   * - If in fullscreen: do nothing (browser handles fullscreen exit)
+   * - If not in fullscreen: close all panels
+   */
+  private handleEscapeKey(): void {
+    // Only close panels if we're NOT in fullscreen
+    // When in fullscreen, the browser handles ESC to exit fullscreen
+    if (!document.fullscreenElement) {
+      this.closeAllPanels();
+    }
+  }
+
+  /**
+   * Close all open panels (helper for ESC key handling)
    */
   private closeAllPanels(): void {
-    // Priority 1: Exit fullscreen if active
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch((err) => {
-        console.error('Error exiting fullscreen:', err);
-      });
-      return; // Only exit fullscreen, don't close panels
-    }
-
-    // Priority 2: Close all open panels (starting with topmost)
+    // Close all open panels (starting with topmost)
     // Close help overlay (usually topmost)
     const helpOverlay = document.getElementById('help-overlay');
     if (helpOverlay) {
