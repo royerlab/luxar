@@ -43,6 +43,9 @@ export class LazyLoadingMonitor {
   private isChunkMapCollapsed: boolean = true;
   private isActivityLogCollapsed: boolean = true;
 
+  // Selected object for chunk map visualization
+  private selectedObject: string = '';
+
   constructor(container: HTMLElement) {
     this.container = container;
     this.panel = this.createPanel();
@@ -83,13 +86,13 @@ export class LazyLoadingMonitor {
 
     const title = document.createElement('h3');
     title.innerHTML =
-      'Lazy Loading Monitor <span style="font-size: 10px; color: #888; font-weight: normal;">(Global)</span>';
+      'Data Loading and Caching Monitor <span style="font-size: 10px; color: #888; font-weight: normal;">(Global)</span>';
     title.style.cssText = `
       margin: 0;
       font-size: 14px;
       font-weight: bold;
     `;
-    title.title = 'Shows combined statistics for all lazy-loaded point clouds in the scene';
+    title.title = 'Shows combined statistics for all data loading and caching in the scene';
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
@@ -240,8 +243,7 @@ export class LazyLoadingMonitor {
       font-weight: 600;
       flex: 1;
     `;
-    title.title =
-      'Visual representation of loaded data slices across all point clouds in the scene';
+    title.title = 'Visual representation of loaded data slices for selected object';
 
     headerContainer.appendChild(arrow);
     headerContainer.appendChild(title);
@@ -250,12 +252,39 @@ export class LazyLoadingMonitor {
       this.isChunkMapCollapsed = !this.isChunkMapCollapsed;
       arrow.style.transform = this.isChunkMapCollapsed ? 'rotate(0deg)' : 'rotate(90deg)';
       const map = section.querySelector('#chunk-map') as HTMLElement;
+      const selectorContainer = section.querySelector('#object-selector')
+        ?.parentElement as HTMLElement;
       if (map) {
         map.style.display = this.isChunkMapCollapsed ? 'none' : 'block';
+      }
+      if (selectorContainer) {
+        selectorContainer.style.display = this.isChunkMapCollapsed ? 'none' : 'block';
       }
     };
 
     section.appendChild(headerContainer);
+
+    // Add object/array selector dropdown
+    const selectorContainer = document.createElement('div');
+    selectorContainer.style.cssText = `
+      margin-bottom: 10px;
+      display: ${this.isChunkMapCollapsed ? 'none' : 'block'};
+    `;
+
+    const selector = document.createElement('select');
+    selector.id = 'object-selector';
+    selector.style.cssText = `
+      width: 100%;
+      padding: 5px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #e0e0e0;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+      font-size: 11px;
+    `;
+
+    selectorContainer.appendChild(selector);
+    section.appendChild(selectorContainer);
 
     const map = document.createElement('div');
     map.id = 'chunk-map';
@@ -488,105 +517,157 @@ export class LazyLoadingMonitor {
     if (!this.chunkMapContainer) return;
 
     const mapDiv = this.chunkMapContainer.querySelector('#chunk-map');
+    const selector = this.chunkMapContainer.querySelector('#object-selector') as HTMLSelectElement;
     if (!mapDiv) return;
 
     // Get cache details from the manager
     const cache = lazyManager.cache;
+
+    // Get dataset metadata for full range
+    const totalSlices = lazyManager.getDatasetMetadata
+      ? lazyManager.getDatasetMetadata('totalSlices') || 1
+      : 1;
+
     if (!cache || cache.size === 0) {
-      mapDiv.innerHTML =
-        '<span style="color: rgba(255, 255, 255, 0.4); font-style: italic;">No data slices loaded yet</span>';
+      // Even with no cache, show the full range if we know it
+      if (totalSlices > 1) {
+        // When no data is cached, we use the metadata totalSlices as-is
+        mapDiv.innerHTML = this.createSliceVisualization([], totalSlices);
+      } else {
+        mapDiv.innerHTML =
+          '<span style="color: rgba(255, 255, 255, 0.4); font-style: italic;">No data slices loaded yet</span>';
+      }
+      if (selector) selector.innerHTML = '<option>No data loaded</option>';
       return;
     }
 
-    // Organize chunks by array type and slice index
-    const chunksByType: Map<string, Set<number>> = new Map();
-    const chunksByPath: Map<string, Set<string>> = new Map();
-    let currentSliceIndex = -1;
-    let totalPointClouds = 0;
+    // Organize chunks by object path
+    const objectData: Map<
+      string,
+      {
+        arrays: Set<string>;
+        slices: Set<number>;
+        currentSlice: number;
+      }
+    > = new Map();
 
     cache.forEach((_entry: any, key: string) => {
       const parts = key.split(':');
       const fullPath = parts[0];
       const pathParts = fullPath.split('/');
       const arrayName = pathParts.pop() || 'unknown';
-      const objectPath = pathParts.join('/');
+      const objectPath = pathParts.join('/') || '/';
       const indices = parts[1] || '';
 
-      // Track unique point cloud objects
-      if (!chunksByPath.has(objectPath)) {
-        chunksByPath.set(objectPath, new Set());
-        if (arrayName === 'positions') {
-          totalPointClouds++;
-        }
+      // Initialize object data if needed
+      if (!objectData.has(objectPath)) {
+        objectData.set(objectPath, {
+          arrays: new Set(),
+          slices: new Set(),
+          currentSlice: -1,
+        });
       }
-      chunksByPath.get(objectPath)!.add(arrayName);
 
-      // Extract the first index (the slice dimension)
+      const objData = objectData.get(objectPath)!;
+      objData.arrays.add(arrayName);
+
+      // Extract chunk indices - these are zarr chunk coordinates, not necessarily
+      // corresponding to dimensional slices in the visualization.
+      // The relationship between chunks and slices depends on the data organization.
       const indexMatch = indices.match(/^(\d+)/);
       if (indexMatch) {
-        const sliceIdx = parseInt(indexMatch[1]);
-
-        if (!chunksByType.has(arrayName)) {
-          chunksByType.set(arrayName, new Set());
-        }
-        chunksByType.get(arrayName)!.add(sliceIdx);
-
-        if (arrayName === 'positions') {
-          currentSliceIndex = sliceIdx;
-        }
+        // Store the first chunk index as a "slice" for visualization purposes
+        // This may not directly correspond to dimensional navigation slices
+        const chunkIdx = parseInt(indexMatch[1]);
+        objData.slices.add(chunkIdx);
       }
     });
 
-    // Create a compact visualization
-    const arrayTypes = Array.from(chunksByType.keys());
-    const positionSlices = chunksByType.get('positions') || new Set();
-    const sliceIndices = Array.from(positionSlices).sort((a, b) => a - b);
+    // Update dropdown selector
+    if (selector) {
+      const currentValue = selector.value || this.selectedObject;
+      selector.innerHTML = '';
 
-    // Create a visual timeline/slider representation
-    let sliceVisualization = '';
-    if (sliceIndices.length > 0) {
-      const min = Math.min(...sliceIndices);
-      const max = Math.max(...sliceIndices);
-      const range = max - min + 1;
+      // Add "All Objects" option
+      const allOption = document.createElement('option');
+      allOption.value = '__all__';
+      allOption.textContent = `All Objects (${objectData.size} total)`;
+      selector.appendChild(allOption);
 
-      // Create a simple text-based visualization
-      const visWidth = 40; // characters wide
-      const scale = range > visWidth ? visWidth / range : 1;
+      // Add individual object options
+      objectData.forEach((data, path) => {
+        const option = document.createElement('option');
+        option.value = path;
+        const displayPath = path === '/' ? 'Root' : path.split('/').pop() || path;
+        option.textContent = `${displayPath} (${data.arrays.size} arrays, ${data.slices.size} slices)`;
+        selector.appendChild(option);
+      });
 
-      let timeline = '';
-      for (let i = 0; i < Math.min(range * scale, visWidth); i++) {
-        const actualIdx = min + Math.floor(i / scale);
-        if (actualIdx === currentSliceIndex) {
-          timeline += '█'; // Current position
-        } else if (sliceIndices.includes(actualIdx)) {
-          timeline += '▓'; // Cached
-        } else {
-          timeline += '░'; // Not cached
-        }
+      // Restore selection or select first object
+      if (currentValue && Array.from(selector.options).some((opt) => opt.value === currentValue)) {
+        selector.value = currentValue;
+        this.selectedObject = currentValue;
+      } else if (objectData.size > 0) {
+        this.selectedObject = selector.options[1]?.value || '__all__';
+        selector.value = this.selectedObject;
       }
 
-      sliceVisualization = `
-        <div style="margin-top: 10px;">
-          <div style="color: rgba(255, 255, 255, 0.6); font-size: 10px;">Slice Cache Map (${min}-${max}):</div>
-          <div style="font-family: monospace; font-size: 14px; letter-spacing: -2px; margin: 5px 0;">
-            ${timeline}
-          </div>
-          <div style="display: flex; justify-content: space-between; font-size: 9px; color: rgba(255, 255, 255, 0.4);">
-            <span>${min}</span>
-            <span style="color: #4CAF50;">Current: ${currentSliceIndex}</span>
-            <span>${max}</span>
-          </div>
-        </div>
-      `;
+      // Add change event listener
+      selector.onchange = () => {
+        this.selectedObject = selector.value;
+        this.updateChunkMap(lazyManager);
+      };
     }
 
+    // Display data for selected object
+    let displayData: {
+      arrays: Set<string>;
+      slices: Set<number>;
+    };
+
+    if (this.selectedObject === '__all__' || !this.selectedObject) {
+      // Show summary for all objects
+      let allSlices = new Set<number>();
+      let allArrays = new Set<string>();
+
+      objectData.forEach((data) => {
+        data.slices.forEach((s) => allSlices.add(s));
+        data.arrays.forEach((a) => allArrays.add(a));
+      });
+
+      displayData = {
+        arrays: allArrays,
+        slices: allSlices,
+      };
+    } else {
+      displayData = objectData.get(this.selectedObject) || {
+        arrays: new Set<string>(),
+        slices: new Set<number>(),
+      };
+    }
+
+    const sliceIndices = Array.from(displayData.slices).sort((a, b) => a - b);
+
+    // Create a compact visualization
+    const arrayTypes = Array.from(displayData.arrays) as string[];
+
+    // Determine the actual total slices - it's either from metadata or the max slice index + 1
+    // (whichever is larger, since actual data might exceed metadata range)
+    const maxSliceIndex = sliceIndices.length > 0 ? Math.max(...sliceIndices) : -1;
+    const actualTotalSlices = Math.max(totalSlices, maxSliceIndex + 1);
+
+    // Create a visual slice map that always shows the full range
+    const sliceVisualization = this.createSliceVisualization(sliceIndices, actualTotalSlices);
+
     // Summary statistics
-    const totalChunks = cache.size;
-    const uniqueSlices = positionSlices.size;
-    const cacheSpread =
-      sliceIndices.length > 1
-        ? `${Math.min(...sliceIndices)}-${Math.max(...sliceIndices)}`
-        : currentSliceIndex.toString();
+    const totalChunks =
+      this.selectedObject === '__all__'
+        ? cache.size
+        : Array.from(cache.keys() as IterableIterator<string>).filter((k) =>
+          k.startsWith(this.selectedObject)
+        ).length;
+    const uniqueSlices = displayData.slices.size;
+    const cacheSpread = actualTotalSlices > 1 ? `0-${actualTotalSlices - 1}` : '0';
 
     mapDiv.innerHTML = `
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
@@ -610,11 +691,11 @@ export class LazyLoadingMonitor {
       </div>
       
       ${
-  totalPointClouds > 0
+  this.selectedObject === '__all__' && objectData.size > 0
     ? `
       <div style="margin-top: 5px;">
-        <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Point Clouds:</div>
-        <div style="color: #FF9800; font-size: 11px;">${totalPointClouds} object${totalPointClouds > 1 ? 's' : ''}</div>
+        <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Objects:</div>
+        <div style="color: #FF9800; font-size: 11px;">${objectData.size} object${objectData.size > 1 ? 's' : ''}</div>
       </div>
       `
     : ''
@@ -623,11 +704,117 @@ export class LazyLoadingMonitor {
       ${sliceVisualization}
       
       <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
-        <div style="font-size: 9px; color: rgba(255, 255, 255, 0.4);">
-          <span>Legend: </span>
-          <span style="color: #4CAF50;">█ Current</span>
-          <span style="margin-left: 10px; color: rgba(255, 255, 255, 0.6);">▓ Cached</span>
-          <span style="margin-left: 10px; color: rgba(255, 255, 255, 0.3);">░ Not Cached</span>
+        <div style="font-size: 9px; color: rgba(255, 255, 255, 0.4); display: flex; align-items: center; gap: 10px;">
+          <span>Legend:</span>
+          <span style="display: flex; align-items: center;">
+            <span style="display: inline-block; width: 12px; height: 12px; background: rgba(76, 175, 80, 0.6); border-radius: 2px; margin-right: 4px;"></span>
+            Cached
+          </span>
+          <span style="display: flex; align-items: center;">
+            <span style="display: inline-block; width: 12px; height: 12px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; margin-right: 4px;"></span>
+            Not Cached
+          </span>
+        </div>
+      </div>
+    `;
+  }
+
+  private createSliceVisualization(cachedSlices: number[], totalSlices: number): string {
+    if (totalSlices <= 0) return '';
+
+    const min = 0;
+    const max = totalSlices - 1;
+    const sliceIndices = cachedSlices;
+
+    // Build the visual timeline using proper HTML elements
+    let timeline = '';
+    const maxSegments = 50; // Maximum number of visual segments
+
+    if (totalSlices <= maxSegments) {
+      // If range is small enough, show each slice individually
+      for (let i = min; i <= max; i++) {
+        const isCached = sliceIndices.includes(i);
+
+        const bgColor = isCached
+          ? 'rgba(76, 175, 80, 0.6)' // Green for cached
+          : 'rgba(255, 255, 255, 0.1)'; // Dim for not cached
+
+        timeline += `<div style="
+          flex: 1;
+          height: 100%;
+          background: ${bgColor};
+          border-left: 1px solid rgba(0,0,0,0.2);
+        " title="Slice ${i}: ${isCached ? 'Cached' : 'Not cached'}"></div>`;
+      }
+    } else {
+      // For large ranges, aggregate into segments
+      const segmentSize = totalSlices / maxSegments;
+      for (let i = 0; i < maxSegments; i++) {
+        const sliceStart = Math.floor(min + i * segmentSize);
+        const sliceEnd = Math.floor(min + (i + 1) * segmentSize);
+
+        // Calculate cache density in this segment
+        let cachedInSegment = 0;
+        for (let j = sliceStart; j < sliceEnd && j <= max; j++) {
+          if (sliceIndices.includes(j)) cachedInSegment++;
+        }
+        const actualSegmentSize = sliceEnd - sliceStart;
+        const segmentCacheRatio = actualSegmentSize > 0 ? cachedInSegment / actualSegmentSize : 0;
+
+        // Gradient based on cache density
+        const opacity = 0.1 + segmentCacheRatio * 0.6;
+        const bgColor = `rgba(76, 175, 80, ${opacity})`;
+
+        timeline += `<div style="
+          flex: 1;
+          height: 100%;
+          background: ${bgColor};
+          border-left: 1px solid rgba(0,0,0,0.2);
+        " title="Slices ${sliceStart}-${sliceEnd}: ${Math.round(segmentCacheRatio * 100)}% cached"></div>`;
+      }
+    }
+
+    const cacheHitRate = sliceIndices.length / totalSlices;
+    const percentCached = (cacheHitRate * 100).toFixed(1);
+
+    return `
+      <div style="margin-top: 10px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px;">
+        <div style="color: rgba(255, 255, 255, 0.6); font-size: 10px; margin-bottom: 5px;">
+          Slice Cache Map (0-${max}):
+        </div>
+        
+        <!-- Visual timeline using flexbox -->
+        <div style="
+          display: flex;
+          height: 20px;
+          width: 100%;
+          margin: 8px 0;
+          border-radius: 2px;
+          overflow: hidden;
+          background: rgba(0, 0, 0, 0.3);
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+        ">
+          ${timeline}
+        </div>
+        
+        <div style="display: flex; justify-content: space-between; font-size: 9px; color: rgba(255, 255, 255, 0.4); margin-top: 5px;">
+          <span>0</span>
+          <span>Total: ${totalSlices} slices</span>
+          <span>${max}</span>
+        </div>
+        
+        <!-- Cache statistics -->
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div>
+              <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Cache Coverage</div>
+              <div style="color: #4CAF50; font-weight: bold; font-size: 12px;">${percentCached}%</div>
+            </div>
+            <div>
+              <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Cached Chunks</div>
+              <div style="color: #2196F3; font-weight: bold; font-size: 12px;">${sliceIndices.length}/${totalSlices}</div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -723,6 +910,22 @@ export class LazyLoadingMonitor {
     logDiv.innerHTML =
       logHtml ||
       '<span style="color: rgba(255, 255, 255, 0.4); font-style: italic; font-size: 10px;">No activity yet</span>';
+  }
+
+  public reset(): void {
+    // Clear all counters
+    this.loadCount = 0;
+    this.evictCount = 0;
+    this.hitCount = 0;
+    this.missCount = 0;
+    this.totalLoadTime = 0;
+    this.events = [];
+    this.selectedObject = '';
+
+    // Update displays if visible
+    if (this.isVisible) {
+      this.updateStats();
+    }
   }
 
   public dispose(): void {

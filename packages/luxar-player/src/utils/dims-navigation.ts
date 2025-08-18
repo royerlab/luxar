@@ -449,8 +449,28 @@ export async function updateLazyLoadedPointCloud(
     geom.computeBoundingSphere();
 
     // Preload adjacent frames for smooth navigation
+    // The positions array typically has shape (n_points, n_coords) where:
+    // - First dimension: points (sliced based on navigation)
+    // - Second dimension: coordinate values (always fully loaded)
+
+    // Calculate current chunk position in the array
+    const pointsPerChunk = positionsArray.chunks[0];
+    const currentChunkIdx = Math.floor((linearIndex * numLoadedPoints) / pointsPerChunk);
+
+    // Build array position based on array dimensions
+    const arrayNdims = positionsArray.shape.length;
+    const arrayPosition = new Array(arrayNdims).fill(0);
+    arrayPosition[0] = currentChunkIdx; // First dimension is the points dimension
+
+    // Determine which dimensions to fully load
+    // For positions arrays, all dimensions except the first (points) should be fully loaded
+    const arrayDimsToFullyLoad = [];
+    for (let d = 1; d < arrayNdims; d++) {
+      arrayDimsToFullyLoad.push(d);
+    }
+
     lazyManager
-      .preloadChunks(positionsArray, 'positions', dims.currentStep, dims.displayed)
+      .preloadChunks(positionsArray, 'positions', arrayPosition, arrayDimsToFullyLoad)
       .catch((error: any) => {
         console.warn('[⚠️] [Luxar] Failed to preload chunks:', error);
       });

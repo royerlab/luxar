@@ -196,8 +196,8 @@ def main():
     aprint(f"Point radius: {point_radius:.4f}")
     aprint(f"Total rotation: {total_rotation:.4f} radians ({10} points)")
 
-    # Output path
-    output_path = Path("temporal_spiral_sphere_4d_example.zarr")
+    # Output path - ensure it's in the examples directory
+    output_path = Path(__file__).parent / "temporal_spiral_sphere_4d_example.zarr"
 
     # Create scene with 4D dimensions (only first 3 displayed)
     scene = Scene(

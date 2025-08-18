@@ -162,6 +162,20 @@ export class LuxarApp {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
 
+    // Clear lazy loading cache when loading new scene
+    const lazyManager = (window as any).__luxarLazyManager;
+    if (lazyManager) {
+      lazyManager.clearCache();
+      console.log('🗑️ [Luxar] Cleared lazy loading cache for new scene');
+    }
+
+    // Reset lazy loading monitor if it exists
+    const lazyMonitor = (window as any).__luxarLazyMonitor;
+    if (lazyMonitor && typeof lazyMonitor.reset === 'function') {
+      lazyMonitor.reset();
+      console.log('📊 [Luxar] Reset lazy loading monitor for new scene');
+    }
+
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);
 

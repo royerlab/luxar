@@ -429,8 +429,7 @@ export class InputHandler {
       case 'R':
         // R key to toggle rendering controls (only when pressed alone)
         // Ignore if Cmd/Ctrl or Shift are held to avoid conflicts with browser shortcuts
-        // Also check if we're not typing in an input field
-        if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !this.isTypingInInput()) {
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
           event.preventDefault();
           this.toggleRenderingControls();
         }

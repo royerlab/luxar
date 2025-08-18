@@ -38,8 +38,6 @@ export interface LazyLoadConfig {
   maxMemoryMB: number;
   /** Number of slices to preload around current position (default: 1) */
   preloadRadius: number;
-  /** Maximum number of chunks to keep in cache (default: 100) */
-  maxChunks: number;
   /** Cache eviction strategy (default: 'lru') */
   evictionStrategy: 'lru' | 'lfu';
   /** Enable debug logging (default: false) */
@@ -53,13 +51,22 @@ const DEFAULT_CONFIG: LazyLoadConfig = {
   enabled: true,
   maxMemoryMB: detectMemory().recommendedCacheMB, // Automatically detect optimal size
   preloadRadius: 1,
-  maxChunks: 2000, // High limit - memory should be the primary constraint
   evictionStrategy: 'lru',
   debug: false,
 };
 
 /**
- * Manages lazy loading and caching of zarr array chunks
+ * Manages lazy loading and caching of zarr array chunks for massive datasets.
+ *
+ * This system enables loading of datasets much larger than available RAM by:
+ * - Loading only the currently visible chunks on demand
+ * - Maintaining an LRU cache of recently accessed chunks
+ * - Automatically evicting old chunks when memory limits are reached
+ * - Preloading adjacent chunks for smooth navigation
+ * - Preventing duplicate loads of the same chunk
+ *
+ * The cache size is automatically determined based on available system memory,
+ * using 80% of the heap for safety. No manual configuration is required.
  */
 export class LazyDataManager {
   public cache: Map<string, ChunkEntry> = new Map(); // Made public for monitoring
@@ -68,6 +75,7 @@ export class LazyDataManager {
   private loadingPromises: Map<string, Promise<ChunkEntry>> = new Map();
   private eventCallback?: (type: string, message: string, details?: any) => void;
   private memoryMonitor?: MemoryMonitor;
+  private datasetMetadata: Map<string, any> = new Map(); // Store metadata about datasets
 
   constructor(config: Partial<LazyLoadConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -114,7 +122,19 @@ export class LazyDataManager {
   }
 
   /**
-   * Calculate which chunks are needed for a given slice position
+   * Calculate which chunks are needed for a given slice position.
+   *
+   * This method determines the optimal set of chunks to load based on:
+   * - The current position in the nD array
+   * - Which dimensions should be fully loaded vs partially loaded
+   * - The preload radius for anticipating navigation
+   *
+   * @param arrayShape - The shape of the full array (e.g., [1000000, 4] for 1M points with 4 coords)
+   * @param chunkShape - The chunk dimensions (e.g., [200000, 4])
+   * @param slicePosition - Current position in array indices
+   * @param sliceDimensions - Dimensions that should be fully loaded (e.g., [1] to load all coordinates)
+   * @param preloadRadius - How many adjacent chunks to preload (default: 1)
+   * @returns Array of chunk indices to load
    */
   calculateRequiredChunks(
     arrayShape: number[],
@@ -129,14 +149,17 @@ export class LazyDataManager {
     // Calculate chunk grid dimensions
     const chunkGrid = arrayShape.map((size, i) => Math.ceil(size / chunkShape[i]));
 
-    // For each non-displayed dimension, determine chunk range
+    // For each dimension in the zarr array, determine chunk range
     const chunkRanges: [number, number][] = [];
     for (let d = 0; d < nDims; d++) {
+      // sliceDimensions contains indices of array dimensions that should be fully loaded
+      // Other dimensions will be partially loaded around the current position
+
       if (sliceDimensions.includes(d)) {
-        // Displayed dimension - need all chunks
+        // This dimension should be fully loaded
         chunkRanges.push([0, chunkGrid[d] - 1]);
       } else {
-        // Non-displayed dimension - need chunks around slice position
+        // This dimension should be partially loaded around current position
         const pos = slicePosition[d];
         const chunkIdx = Math.floor(pos / chunkShape[d]);
         const minChunk = Math.max(0, chunkIdx - preloadRadius);
@@ -278,12 +301,6 @@ export class LazyDataManager {
       this.evictOldest();
     }
 
-    // Also check chunk count as a safety limit (but much higher threshold)
-    if (this.cache.size >= this.config.maxChunks && this.cache.size > 0) {
-      // Only evict for chunk count if we're really over the limit
-      this.evictOldest();
-    }
-
     // Add to cache
     this.cache.set(entry.id, entry);
     this.totalCacheSize += entry.sizeBytes;
@@ -333,6 +350,11 @@ export class LazyDataManager {
     arrayPath: string,
     sliceSpec: (zarr.Slice | null)[]
   ): Promise<Float32Array | Uint8Array> {
+    // Debug log to understand what's being loaded
+    const sliceInfo = sliceSpec
+      .map((s) => (s ? `${s.start || 0}-${s.stop || 'end'}` : 'all'))
+      .join(', ');
+    console.log(`[🔍] [Luxar] Loading slice: ${arrayPath} [${sliceInfo}]`);
     const arrayShape = array.shape;
     const chunkShape = array.chunks;
 
@@ -543,6 +565,20 @@ export class LazyDataManager {
     this.emitEvent('clear', `Cache cleared (${oldSize} chunks)`, {
       clearedChunks: oldSize,
     });
+  }
+
+  /**
+   * Store metadata about a dataset (e.g., total slices)
+   */
+  public setDatasetMetadata(key: string, value: any): void {
+    this.datasetMetadata.set(key, value);
+  }
+
+  /**
+   * Get metadata about a dataset
+   */
+  public getDatasetMetadata(key: string): any {
+    return this.datasetMetadata.get(key);
   }
 
   /**
