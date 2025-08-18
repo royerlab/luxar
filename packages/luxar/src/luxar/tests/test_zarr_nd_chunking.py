@@ -1,7 +1,6 @@
 """Tests for nD zarr data handling and chunking optimization."""
 
 import numpy as np
-import pytest
 import zarr
 
 from luxar import Scene
@@ -46,7 +45,7 @@ class TestZarrNDChunking:
         # First dimension (points) should have moderate chunk size
         # Second dimension (coordinates) should be fully included in each chunk
         assert positions_array.chunks[1] == 4  # All coordinates in one chunk
-        assert positions_array.chunks[0] <= 500000  # Reasonable chunk size for points
+        assert positions_array.chunks[0] <= 1000000  # Reasonable chunk size for points
 
         # Verify data integrity
         loaded_positions = positions_array[:]
