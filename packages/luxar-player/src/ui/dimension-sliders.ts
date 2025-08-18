@@ -302,15 +302,16 @@ export class DimensionSliders {
 
     // Add event listeners
     slider.addEventListener('input', () => {
+      let value: number;
       if (isDiscrete) {
-        const value = parseFloat(slider.value);
-        sceneDimsManager.setDimensionValue(dimIndex, value);
+        value = parseFloat(slider.value);
       } else {
         const fraction = parseInt(slider.value) / 1000;
         const [min, max] = this.dimensionRanges[dimIndex];
-        const value = min + fraction * (max - min);
-        sceneDimsManager.setDimensionValue(dimIndex, value);
+        value = min + fraction * (max - min);
       }
+
+      sceneDimsManager.setDimensionValue(dimIndex, value);
       // Visual update will happen via listener callback
     });
 

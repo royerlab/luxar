@@ -18,15 +18,18 @@ export function detectMemory(): MemoryInfo {
     const heapLimitMB = mem.jsHeapSizeLimit / (1024 * 1024);
     const usedMB = mem.usedJSHeapSize / (1024 * 1024);
     const availableMB = heapLimitMB - usedMB;
-    
+
     // Use 80% of available heap memory for cache
     // Since lazy loading is the primary memory consumer, we can be aggressive
     const recommended = Math.round(availableMB * 0.8);
-    
-    // Apply reasonable bounds: min 128MB, max 4GB
-    const bounded = Math.min(4096, Math.max(128, recommended));
-    
-    console.log(`[Memory API] Heap limit: ${heapLimitMB.toFixed(0)}MB, Used: ${usedMB.toFixed(0)}MB, Available: ${availableMB.toFixed(0)}MB → Cache: ${bounded}MB`);
+
+    // Only apply minimum bound to ensure cache is useful
+    // No artificial maximum - let the browser's actual heap limit be the constraint
+    const bounded = Math.max(128, recommended);
+
+    console.log(
+      `[Memory API] Heap limit: ${heapLimitMB.toFixed(0)}MB, Used: ${usedMB.toFixed(0)}MB, Available: ${availableMB.toFixed(0)}MB → Cache: ${bounded}MB`
+    );
 
     return {
       recommendedCacheMB: bounded,
@@ -38,36 +41,32 @@ export function detectMemory(): MemoryInfo {
   // Try device memory API (gives total device RAM in GB)
   if ((navigator as any).deviceMemory) {
     const deviceGB = (navigator as any).deviceMemory;
-    
+
     // Estimate available JS heap based on device RAM
     // Browsers typically allow ~25-50% of system RAM for JS heap
     // We'll use a conservative estimate
     let estimatedHeapMB: number;
     let recommendedCacheMB: number;
-    
+
+    // Browsers typically allow 25-50% of system RAM for JS heap
+    // We'll be conservative and assume 25% for smaller devices, 50% for larger
     if (deviceGB <= 2) {
-      // Very low memory: assume 256MB heap, use 200MB cache (80%)
-      estimatedHeapMB = 256;
-      recommendedCacheMB = 200;
-    } else if (deviceGB <= 4) {
-      // Mobile/low memory: assume 512MB heap, use 400MB cache (80%)
-      estimatedHeapMB = 512;
-      recommendedCacheMB = 400;
+      estimatedHeapMB = deviceGB * 1024 * 0.25; // 25% of RAM
     } else if (deviceGB <= 8) {
-      // Mid-range: assume 2GB heap, use 1.6GB cache (80%)
-      estimatedHeapMB = 2048;
-      recommendedCacheMB = 1600;
-    } else if (deviceGB <= 16) {
-      // Good desktop: assume 4GB heap, use 3.2GB cache (80%)
-      estimatedHeapMB = 4096;
-      recommendedCacheMB = 3200;
+      estimatedHeapMB = deviceGB * 1024 * 0.35; // 35% of RAM
     } else {
-      // High-end: assume 8GB heap, use 6.4GB cache (80%)
-      estimatedHeapMB = 8192;
-      recommendedCacheMB = 6400;
+      estimatedHeapMB = deviceGB * 1024 * 0.5; // 50% of RAM for high-memory systems
     }
-    
-    console.log(`[Device Memory] RAM: ${deviceGB}GB, Estimated heap: ${estimatedHeapMB}MB → Cache: ${recommendedCacheMB}MB`);
+
+    // Use 80% of estimated heap for cache
+    recommendedCacheMB = Math.round(estimatedHeapMB * 0.8);
+
+    // Ensure minimum useful cache size
+    recommendedCacheMB = Math.max(128, recommendedCacheMB);
+
+    console.log(
+      `[Device Memory] RAM: ${deviceGB}GB, Estimated heap: ${estimatedHeapMB}MB → Cache: ${recommendedCacheMB}MB`
+    );
 
     return {
       recommendedCacheMB: recommendedCacheMB,
@@ -79,7 +78,7 @@ export function detectMemory(): MemoryInfo {
   // Fallback: use conservative defaults based on platform detection
   const isMobile =
     /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
-  
+
   const recommended = isMobile ? 256 : 1024;
   console.log(`[Fallback] Platform: ${isMobile ? 'mobile' : 'desktop'} → Cache: ${recommended}MB`);
 
