@@ -6,8 +6,8 @@ from typing import Any, Dict, Optional
 
 from arbol import aprint
 
-from .node import Node
-from .types import NodeType
+from ..core.node import Node
+from ..typing_utils.protocols import NodeType
 
 
 class Points(Node):

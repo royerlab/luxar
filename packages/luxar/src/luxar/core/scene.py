@@ -1,3 +1,9 @@
+"""Scene root node for Luxar hierarchical scene graphs.
+
+This module provides the Scene class, which serves as the root node of the
+scene hierarchy and provides convenient methods for building point cloud scenes.
+"""
+
 from __future__ import annotations
 
 from os import PathLike
@@ -6,21 +12,21 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from arbol import aprint
 
-from .array_utils import (
-    broadcast_color_to_points,
-    broadcast_radii_to_points,
-    broadcast_sharpness_to_points,
-)
-from .dimensions import Dimensions
-from .node import Node
-from .points import Points
-from .types import (
+from ..core.dimensions import Dimensions
+from ..core.node import Node
+from ..core.points import Points
+from ..io.writer import ZarrWriterProtocol
+from ..typing_utils.protocols import (
     ColorArray,
     DimensionMetadata,
     PositionArray,
     validate_dimension_metadata,
 )
-from .writer import ZarrWriterProtocol
+from ..utils.array import (
+    broadcast_color_to_points,
+    broadcast_radii_to_points,
+    broadcast_sharpness_to_points,
+)
 
 
 class Scene(Node):

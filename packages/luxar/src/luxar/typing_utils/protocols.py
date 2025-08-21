@@ -1,16 +1,25 @@
-"""luxar.types – Type definitions, protocols, and type aliases for enhanced type safety."""
+"""Protocols, dataclasses, validation functions, and type guards.
+
+This module contains:
+- Protocol definitions for type checking
+- Dataclasses for structured data
+- Validation functions for runtime type checking
+- Type guards for conditional type narrowing
+- Generic type variables
+
+For simple type aliases, see aliases.py.
+For enums and literal types, see enums.py.
+For constants, see constants.py.
+"""
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Generator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import (
     Any,
     Dict,
     List,
-    Literal,
     Optional,
     Protocol,
     Tuple,
@@ -24,60 +33,22 @@ from numpy.typing import NDArray
 
 # Python 3.10+ compatibility
 if sys.version_info >= (3, 10):
-    from typing import TypeAlias
+    pass
 else:
-    from typing_extensions import TypeAlias
+    pass
 
-from .constants import (
-    GAMMA_MAX,
-    GAMMA_MIN,
-    OPACITY_MAX,
-    OPACITY_MIN,
+from ..typing_utils.constants import GAMMA_MAX, GAMMA_MIN, OPACITY_MAX, OPACITY_MIN
+from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
+
+# Import type aliases from aliases module
+from .aliases import (
+    ColorArray,
+    GroupAttrs,
+    PathLike,
+    PositionArray,
+    SceneHierarchy,
+    TransformMatrix,
 )
-
-# =============================================================================
-# Literal Types for Constants
-# =============================================================================
-
-# Node types in the scene graph
-NodeType = Literal["points", "group", "scene"]
-
-# Supported data types for Zarr arrays
-DataType = Literal["float32", "uint8", "int32", "int64", "float64"]
-
-# Compression algorithms
-CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
-
-# Luxar version strings
-LuxarVersion = Literal["0.1", "0.2", "0.3"]
-
-# Physical units
-PhysicalUnit = Literal[
-    "nm", "um", "mm", "cm", "m", "metre", "meter", "km", "inch", "foot", "px", "au"
-]
-
-# Blending modes for rendering
-BlendingMode = Literal["normal", "additive", "subtractive", "minimum", "maximum"]
-
-# =============================================================================
-# Type Aliases
-# =============================================================================
-
-# Path-like types
-PathLike: TypeAlias = Union[str, Path]
-
-# Numpy array types for point cloud data
-PositionArray: TypeAlias = NDArray[
-    np.float32
-]  # Shape: (N, D) where D is dimensionality
-ColorArray: TypeAlias = NDArray[np.float32]  # Shape: (N, 3) - HDR colors in float32
-TransformMatrix: TypeAlias = NDArray[np.float32]  # Shape: (4, 4)
-
-# Zarr group attributes
-GroupAttrs: TypeAlias = Dict[str, Any]
-
-# Scene hierarchy types
-SceneHierarchy: TypeAlias = Generator[Tuple[int, "NodeProtocol"], None, None]
 
 # =============================================================================
 # Dataclasses

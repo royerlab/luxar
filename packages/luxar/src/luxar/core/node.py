@@ -8,7 +8,7 @@ import numpy as np
 import zarr
 from arbol import aprint
 
-from .types import (
+from ..typing_utils.protocols import (
     GroupAttrs,
     SceneHierarchy,
     TransformMatrix,
@@ -102,17 +102,17 @@ class Node:
 
             # Validate rendering attributes if present
             if "opacity" in attrs:
-                from .types import validate_opacity
+                from ..typing_utils.protocols import validate_opacity
 
                 attrs["opacity"] = validate_opacity(attrs["opacity"])
 
             if "gamma" in attrs:
-                from .types import validate_gamma
+                from ..typing_utils.protocols import validate_gamma
 
                 attrs["gamma"] = validate_gamma(attrs["gamma"])
 
             if "blending_mode" in attrs:
-                from .types import validate_blending_mode
+                from ..typing_utils.protocols import validate_blending_mode
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
@@ -214,7 +214,7 @@ class Node:
             # Cast self to NodeProtocol to satisfy type checker
             from typing import cast
 
-            from .types import NodeProtocol
+            from ..typing_utils.protocols import NodeProtocol
 
             yield depth, cast(NodeProtocol, self)
             for child in self.children:
@@ -303,7 +303,7 @@ class Node:
             ValueError: If opacity is not in valid range
             TypeError: If opacity cannot be converted to float
         """
-        from .types import validate_opacity
+        from ..typing_utils.protocols import validate_opacity
 
         self.attrs["opacity"] = validate_opacity(value)
 
@@ -327,7 +327,7 @@ class Node:
             ValueError: If gamma is not in valid range
             TypeError: If gamma cannot be converted to float
         """
-        from .types import validate_gamma
+        from ..typing_utils.protocols import validate_gamma
 
         self.attrs["gamma"] = validate_gamma(value)
 
@@ -351,7 +351,7 @@ class Node:
             ValueError: If blending mode is not valid
             TypeError: If blending mode is not a string
         """
-        from .types import validate_blending_mode
+        from ..typing_utils.protocols import validate_blending_mode
 
         self.attrs["blending_mode"] = validate_blending_mode(value)
 

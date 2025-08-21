@@ -13,7 +13,7 @@ from typing import Any, Literal, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from .types import TransformMatrix, validate_transform
+from ..typing_utils.protocols import TransformMatrix, validate_transform
 
 
 def identity() -> TransformMatrix:

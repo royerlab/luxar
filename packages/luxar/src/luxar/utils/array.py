@@ -35,8 +35,8 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from .constants import SHARPNESS_TYPICAL_MAX, SHARPNESS_TYPICAL_MIN
-from .type_aliases import ColorArray, RadiusArray, SharpnessArray
+from ..typing_utils.aliases import ColorArray, RadiusArray, SharpnessArray
+from ..typing_utils.constants import SHARPNESS_TYPICAL_MAX, SHARPNESS_TYPICAL_MIN
 
 
 def broadcast_color_to_points(
