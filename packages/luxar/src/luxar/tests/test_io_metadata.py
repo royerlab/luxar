@@ -1,12 +1,12 @@
 import zarr
 
-from luxar import Scene
 from luxar._io import DEFAULT_COMP
+from luxar.demos import create_lorenz_attractor
 
 
 def test_compressor_and_format(tmp_path):
     store = tmp_path / "meta.zarr"
-    Scene.random_demo(store, n=100)
+    create_lorenz_attractor(store, n_points=100)
 
     root = zarr.open_group(store, "r")
     assert root._version == 2

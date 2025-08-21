@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def main():
@@ -23,34 +23,33 @@ def main():
     aprint(f"Creating single point example at {output_path}")
     aprint("This is the simplest possible Luxar scene!")
 
-    # Create scene
-    scene = Scene(output_path)
+    # Create scene with progressive writer
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
 
-    # Create a single point at the origin
-    position = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        # Create a single point at the origin
+        position = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 
-    # Add the point with minimal parameters
-    scene.add_points(
-        "SinglePoint",
-        position,
-        # Everything else uses defaults:
-        # - colors: None (will be white)
-        # - radii: None (will use default radius)
-        # - sharpness: None (will use default sharpness)
-        # - opacity: 1.0
-        # - gamma: 1.0
-        # - blending_mode: "additive"
-    )
+        # Add the point with minimal parameters
+        scene.add_points(
+            "SinglePoint",
+            position,
+            # Everything else uses defaults:
+            # - colors: None (will be white)
+            # - radii: None (will use default radius)
+            # - sharpness: None (will use default sharpness)
+            # - opacity: 1.0
+            # - gamma: 1.0
+            # - blending_mode: "additive"
+        )
 
-    # Alternative: Specify some properties explicitly
-    scene.add_points(
-        "ColoredPoint",
-        np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # Position at (1, 0, 0)
-        colors=[1.0, 0.0, 0.0],  # Red color
-        radii=0.2,  # Larger radius
-    )
-
-    scene.finalize()
+        # Alternative: Specify some properties explicitly
+        scene.add_points(
+            "ColoredPoint",
+            np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # Position at (1, 0, 0)
+            colors=[1.0, 0.0, 0.0],  # Red color
+            radii=0.2,  # Larger radius
+        )
 
     aprint("\n" + "=" * 60)
     aprint("SINGLE POINT EXAMPLE")

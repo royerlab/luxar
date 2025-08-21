@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_touching_pairs():
@@ -132,55 +132,56 @@ def main():
     aprint("- Cyan/Orange grid: 3x3 grid of touching spheres")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add metadata
-    scene.attrs["description"] = """
-    Touching Spheres Visualization
-    ===============================
+        scene = compiler.create_scene()
 
-    This scene demonstrates the fundamental principle of world-space
-    point sizing: spheres should maintain their touching relationships
-    regardless of viewing conditions.
+        # Add metadata
+        scene.attrs["description"] = """
+Touching Spheres Visualization
+        ===============================
 
-    Test cases:
-    1. Red pair - horizontal alignment
-    2. Green pair - vertical alignment
-    3. Blue pair - depth alignment
-    4. Yellow/Magenta - different sizes
-    5. Cyan/Orange grid - multiple touching pairs
+        This scene demonstrates the fundamental principle of world-space
+        point sizing: spheres should maintain their touching relationships
+        regardless of viewing conditions.
 
-    All pairs should just touch at a single point.
-    """
+        Test cases:
+        1. Red pair - horizontal alignment
+        2. Green pair - vertical alignment
+        3. Blue pair - depth alignment
+        4. Yellow/Magenta - different sizes
+        5. Cyan/Orange grid - multiple touching pairs
 
-    # Create the touching spheres
-    positions, colors, radii = create_touching_pairs()
+        All pairs should just touch at a single point.
+        """
 
-    # Use high sharpness for crisp edges
-    sharpness = np.full(len(positions), 8.0, dtype=np.float32)
+        # Create the touching spheres
+        positions, colors, radii = create_touching_pairs()
 
-    # Add the spheres
-    scene.add_points(
-        "TouchingSpheresDemo",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness,
-        opacity=1.0,
-        blending_mode="additive",
-    )
+        # Use high sharpness for crisp edges
+        sharpness = np.full(len(positions), 8.0, dtype=np.float32)
 
-    scene.finalize()
+        # Add the spheres
+        scene.add_points(
+            "TouchingSpheresDemo",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            opacity=1.0,
+            blending_mode="additive",
+        )
 
-    aprint(f"\n✓ Scene created with {len(positions)} spheres")
-    aprint("\n" + "=" * 60)
-    aprint("VIEWING INSTRUCTIONS:")
-    aprint("1. Run: luxar serve touching_spheres_example.zarr")
-    aprint("2. Rotate the view to see different perspectives")
-    aprint("3. Verify all pairs are just touching")
-    aprint("4. Press SPACE for fullscreen - touching maintained")
-    aprint("5. Use Shift+Wheel to change FOV - touching maintained")
-    aprint("=" * 60)
+        aprint(f"\n✓ Scene created with {len(positions)} spheres")
+        aprint("\n" + "=" * 60)
+        aprint("VIEWING INSTRUCTIONS:")
+        aprint("1. Run: luxar serve touching_spheres_example.zarr")
+        aprint("2. Rotate the view to see different perspectives")
+        aprint("3. Verify all pairs are just touching")
+        aprint("4. Press SPACE for fullscreen - touching maintained")
+        aprint("5. Use Shift+Wheel to change FOV - touching maintained")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

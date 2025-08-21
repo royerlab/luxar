@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_4d_hypersphere_points(
@@ -145,61 +145,61 @@ def main():
         ]
     )
 
-    scene = Scene(store_path=output_path, dimensions=dimensions)
-    aprint("│")
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        aprint("│")
 
-    # Generate 4D hypersphere points
-    positions, radii = create_4d_hypersphere_points(n_points=50000, radius=10.0)
+        # Generate 4D hypersphere points
+        positions, radii = create_4d_hypersphere_points(n_points=50000, radius=10.0)
 
-    # Create rainbow colors based on 4D position
-    aprint("├ Creating 4D rainbow colors...")
-    colors = create_4d_rainbow_colors(positions)
+        # Create rainbow colors based on 4D position
+        aprint("├ Creating 4D rainbow colors...")
+        colors = create_4d_rainbow_colors(positions)
 
-    # Create sharpness array (high sharpness for crisp points)
-    sharpness = np.full(len(positions), 10.0, dtype=np.float32)
+        # Create sharpness array (high sharpness for crisp points)
+        sharpness = np.full(len(positions), 10.0, dtype=np.float32)
 
-    # Add points to scene
-    aprint(f"├ Adding points node with {len(positions)} points in 4D space")
-    scene.add_points(
+        # Add points to scene
+        aprint(f"├ Adding points node with {len(positions)} points in 4D space")
+        scene.add_points(
         "Rainbow4DHypersphere",
         positions=positions,
         colors=colors,
         radii=radii,
         sharpness=sharpness,
-    )
+        )
 
-    # Finalize scene
-    scene.finalize()
+        # Finalize scene
 
-    aprint("│")
-    aprint(f"│ ✓ Created 4D spatial rainbow sphere with {len(positions)} points")
-    aprint("├   Hypersphere radius: 10.0 units")
-    aprint(f"├   Point radii: {radii[0]:.3f} units")
-    aprint("├   Colors: 4D rainbow pattern")
-    aprint("│")
-    aprint("├" + "=" * 70)
-    aprint("├ 4D VIEWING INSTRUCTIONS")
-    aprint("├" + "=" * 70)
-    aprint("├ 1. Start the server:")
-    aprint(f"├    luxar serve {output_path}")
-    aprint("│")
-    aprint("├ 2. Navigate through the W dimension:")
-    aprint("├    - Press '1' to control the W dimension")
-    aprint("├    - Use '[' and ']' keys to slice through W")
-    aprint("├    - Watch the 3D sphere grow and shrink!")
-    aprint("│")
-    aprint("├ 3. What you'll see at different W values:")
-    aprint("├    - W = -10: No points (outside hypersphere)")
-    aprint("├    - W = -5: Small sphere (edge of hypersphere)")
-    aprint("├    - W = 0: Large sphere (center slice)")
-    aprint("├    - W = +5: Small sphere (other edge)")
-    aprint("├    - W = +10: No points (outside again)")
-    aprint("│")
-    aprint("├ 4. This demonstrates:")
-    aprint("├    - True 4D geometry (not 3D + time)")
-    aprint("├    - How 3D slices of 4D objects change shape")
-    aprint("├    - The geometry of a 4D hypersphere")
-    aprint("├" + "=" * 70)
+        aprint("│")
+        aprint(f"│ ✓ Created 4D spatial rainbow sphere with {len(positions)} points")
+        aprint("├   Hypersphere radius: 10.0 units")
+        aprint(f"├   Point radii: {radii[0]:.3f} units")
+        aprint("├   Colors: 4D rainbow pattern")
+        aprint("│")
+        aprint("├" + "=" * 70)
+        aprint("├ 4D VIEWING INSTRUCTIONS")
+        aprint("├" + "=" * 70)
+        aprint("├ 1. Start the server:")
+        aprint(f"├    luxar serve {output_path}")
+        aprint("│")
+        aprint("├ 2. Navigate through the W dimension:")
+        aprint("├    - Press '1' to control the W dimension")
+        aprint("├    - Use '[' and ']' keys to slice through W")
+        aprint("├    - Watch the 3D sphere grow and shrink!")
+        aprint("│")
+        aprint("├ 3. What you'll see at different W values:")
+        aprint("├    - W = -10: No points (outside hypersphere)")
+        aprint("├    - W = -5: Small sphere (edge of hypersphere)")
+        aprint("├    - W = 0: Large sphere (center slice)")
+        aprint("├    - W = +5: Small sphere (other edge)")
+        aprint("├    - W = +10: No points (outside again)")
+        aprint("│")
+        aprint("├ 4. This demonstrates:")
+        aprint("├    - True 4D geometry (not 3D + time)")
+        aprint("├    - How 3D slices of 4D objects change shape")
+        aprint("├    - The geometry of a 4D hypersphere")
+        aprint("├" + "=" * 70)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def main():
@@ -20,38 +20,37 @@ def main():
 
     aprint(f"Creating radius test scene at {output_path}")
 
-    scene = Scene(output_path)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
 
-    # Create three rows of points with different sizes
-    n_points = 10
-    y_positions = [-2, 0, 2]
-    radii_values = [0.05, 0.2, 0.5]
-    colors_rgb = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]  # Red, Green, Blue
-    labels = ["Small", "Medium", "Large"]
+        # Create three rows of points with different sizes
+        n_points = 10
+        y_positions = [-2, 0, 2]
+        radii_values = [0.05, 0.2, 0.5]
+        colors_rgb = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]  # Red, Green, Blue
+        labels = ["Small", "Medium", "Large"]
 
-    for i, (y, radius, color, label) in enumerate(
-        zip(y_positions, radii_values, colors_rgb, labels)
-    ):
-        # Create a line of points
-        x = np.linspace(-5, 5, n_points)
-        y = np.full(n_points, y)
-        z = np.zeros(n_points)
+        for i, (y, radius, color, label) in enumerate(
+            zip(y_positions, radii_values, colors_rgb, labels)
+        ):
+            # Create a line of points
+            x = np.linspace(-5, 5, n_points)
+            y = np.full(n_points, y)
+            z = np.zeros(n_points)
 
-        positions = np.column_stack([x, y, z]).astype(np.float32)
-        radii = np.full(n_points, radius, dtype=np.float32)
-        colors = np.tile(color, (n_points, 1)).astype(np.float32)
+            positions = np.column_stack([x, y, z]).astype(np.float32)
+            radii = np.full(n_points, radius, dtype=np.float32)
+            colors = np.tile(color, (n_points, 1)).astype(np.float32)
 
-        scene.add_points(f"{label}Points", positions, colors, radii=radii)
-        aprint(f"Added {label} points with radius {radius}")
+            scene.add_points(f"{label}Points", positions, colors, radii=radii)
+            aprint(f"Added {label} points with radius {radius}")
 
-    scene.finalize()
-
-    aprint("\n✓ Test scene created successfully!")
-    aprint("\nExpected result when viewing:")
-    aprint("- Top row: Large blue points (radius=0.5)")
-    aprint("- Middle row: Medium green points (radius=0.2)")
-    aprint("- Bottom row: Small red points (radius=0.05)")
-    aprint(f"\nTo view: luxar serve {output_path}")
+        aprint("\n✓ Test scene created successfully!")
+        aprint("\nExpected result when viewing:")
+        aprint("- Top row: Large blue points (radius=0.5)")
+        aprint("- Middle row: Medium green points (radius=0.2)")
+        aprint("- Bottom row: Small red points (radius=0.05)")
+        aprint(f"\nTo view: luxar serve {output_path}")
 
 
 if __name__ == "__main__":

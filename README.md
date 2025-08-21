@@ -63,7 +63,7 @@ make serve-data DATASET=my_scene.zarr  # Serves your data
 
 ```python
 import numpy as np
-from luxar import Scene, Dimensions, Dimension, transforms
+from luxar import LuxarZarrCompiler, Dimensions, Dimension, transforms
 
 # Create scene with explicit dimensions
 dims = Dimensions([
@@ -72,23 +72,26 @@ dims = Dimensions([
     Dimension("y", unit="um", range=(-100, 100), display=True),
     Dimension("z", unit="um", range=(-50, 50), display=True),
 ])
-scene = Scene("output.zarr", dimensions=dims)
 
-# Add 4D point cloud (time + xyz)
-positions = np.random.randn(100_000, 4).astype(np.float32)
-colors = np.random.randint(0, 255, (100_000, 3), dtype=np.uint8)
-radii = np.random.uniform(0.1, 0.5, 100_000).astype(np.float32)
-scene.add_points("TimeSeriesPoints", positions, colors=colors, radii=radii)
-
-# Add transformed point groups
-transform = transforms.compose(
-    transforms.translate(5, 0, 0),  # Move 5 units along X
-    transforms.rotate(45, 'z'),      # Rotate 45° around Z
-    transforms.scale(uniform=0.5)    # Scale down by half
-)
-group = scene.add_group("TransformedData", transform=transforms.to_list(transform))
-
-scene.finalize()
+# Use LuxarZarrCompiler for progressive writing
+with LuxarZarrCompiler("output.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    
+    # Add 4D point cloud (time + xyz)
+    positions = np.random.randn(100_000, 4).astype(np.float32)
+    colors = np.random.rand(100_000, 3).astype(np.float32)  # HDR colors supported
+    radii = np.random.uniform(0.1, 0.5, 100_000).astype(np.float32)
+    scene.add_points("TimeSeriesPoints", positions, colors=colors, radii=radii)
+    
+    # Add transformed point groups
+    transform = transforms.compose(
+        transforms.translate(5, 0, 0),  # Move 5 units along X
+        transforms.rotate_z(np.pi/4),    # Rotate 45° around Z
+        transforms.scale(0.5, 0.5, 0.5)  # Scale down by half
+    )
+    group = scene.add_group("TransformedData", transform=transform)
+    
+    # Context manager handles finalization automatically
 
 # View with nD navigation: luxar serve output.zarr
 # Use keyboard: Press '1' to select time dimension, '[' and ']' to navigate

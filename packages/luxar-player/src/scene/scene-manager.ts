@@ -53,7 +53,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Perspective camera - provides realistic 3D viewing with depth */
   public camera!: THREE.PerspectiveCamera;
 
-  /** ControlsManager - manages different camera control types (orbit, fly) */
+  /** ControlsManager - manages different camera control types (orbit, arcball, fly) */
   public controls!: ControlsManager;
 
   /** HDR post-processing manager for bloom and tone mapping effects */
@@ -757,16 +757,16 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Switch camera control type
-   * @param type - Control type ('orbit' or 'fly')
+   * @param type - Control type ('orbit', 'arcball', or 'fly')
    */
-  setControlType(type: 'orbit' | 'fly'): void {
+  setControlType(type: 'orbit' | 'arcball' | 'fly'): void {
     this.controls.setControlType(type);
   }
 
   /**
    * Get current control type
    */
-  getControlType(): 'orbit' | 'fly' {
+  getControlType(): 'orbit' | 'arcball' | 'fly' {
     return this.controls.getControlType();
   }
 

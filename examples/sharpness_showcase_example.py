@@ -12,10 +12,10 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
-def create_sharpness_gradient_example(scene: Scene, n_points: int = 5000) -> None:
+def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
     """Create a grid showing gradual sharpness transition."""
     aprint("Creating sharpness gradient example...")
 
@@ -50,7 +50,7 @@ def create_sharpness_gradient_example(scene: Scene, n_points: int = 5000) -> Non
     )
 
 
-def create_sharpness_comparison_example(scene: Scene) -> None:
+def create_sharpness_comparison_example(scene) -> None:
     """Create rows of points with different fixed sharpness values."""
     aprint("Creating sharpness comparison example...")
 
@@ -99,7 +99,7 @@ def create_sharpness_comparison_example(scene: Scene) -> None:
         )
 
 
-def create_mixed_sharpness_example(scene: Scene, n_points: int = 3000) -> None:
+def create_mixed_sharpness_example(scene, n_points: int = 60000) -> None:
     """Create a sphere with mixed sharpness values."""
     aprint("Creating mixed sharpness cloud example...")
 
@@ -108,7 +108,7 @@ def create_mixed_sharpness_example(scene: Scene, n_points: int = 3000) -> None:
     # Generate points in a sphere
     theta = rng.uniform(0, 2 * np.pi, n_points)
     phi = np.arccos(rng.uniform(-1, 1, n_points))
-    r = rng.uniform(3, 5, n_points)
+    r = rng.uniform(3, 5*7, n_points)
 
     x = r * np.sin(phi) * np.cos(theta)
     y = r * np.sin(phi) * np.sin(theta)
@@ -150,7 +150,7 @@ def create_mixed_sharpness_example(scene: Scene, n_points: int = 3000) -> None:
     )
 
 
-def create_sharpness_wave_example(scene: Scene, n_points: int = 4000) -> None:
+def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
     """Create a wave pattern where sharpness varies sinusoidally."""
     aprint("Creating sharpness wave example...")
 
@@ -203,29 +203,31 @@ def main():
     aprint("- Wave: Sinusoidal sharpness variation")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add all examples
-    create_sharpness_gradient_example(scene)
-    create_sharpness_comparison_example(scene)
-    create_mixed_sharpness_example(scene)
-    create_sharpness_wave_example(scene)
+        scene = compiler.create_scene()
 
-    # Finalize
-    scene.finalize()
+        # Add all examples
+        create_sharpness_gradient_example(scene)
+        create_sharpness_comparison_example(scene)
+        create_mixed_sharpness_example(scene)
+        create_sharpness_wave_example(scene)
 
-    aprint(f"\n✓ Demo scene created successfully at {output_path}")
-    aprint("\nTo view the example:")
-    aprint("1. Start the viewer: cd packages/luxar-player && npm run dev")
-    aprint(f"2. Serve the data: luxar serve {output_path}")
-    aprint("3. Open http://localhost:5173 in your browser")
-    aprint("\nWhat to look for:")
-    aprint("- Top: Gradient from soft glowing points (left) to sharp points (right)")
-    aprint("- Right: 5 rows showing different fixed sharpness values")
-    aprint(
-        "- Bottom left: Mixed cloud with soft blue, medium green, and sharp red points"
-    )
-    aprint("- Bottom: Wave pattern with varying sharpness creating visual depth")
+        # Finalize
+
+        aprint(f"\n✓ Demo scene created successfully at {output_path}")
+        aprint("\nTo view the example:")
+        aprint("1. Start the viewer: cd packages/luxar-player && npm run dev")
+        aprint(f"2. Serve the data: luxar serve {output_path}")
+        aprint("3. Open http://localhost:5173 in your browser")
+        aprint("\nWhat to look for:")
+        aprint("- Top: Gradient from soft glowing points (left) to sharp points (right)")
+        aprint("- Right: 5 rows showing different fixed sharpness values")
+        aprint(
+            "- Bottom left: Mixed cloud with soft blue, medium green, and sharp red points"
+        )
+        aprint("- Bottom: Wave pattern with varying sharpness creating visual depth")
 
 
 if __name__ == "__main__":

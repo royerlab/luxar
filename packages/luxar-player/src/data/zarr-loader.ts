@@ -179,32 +179,100 @@ export async function loadScene(src: string): Promise<THREE.Group> {
     const rawStore = new zarr.FetchStore(toURL(src));
     const store = await zarr.tryWithConsolidated(rawStore); // Use consolidated metadata when available
 
+    console.log('[🔍] [Luxar] Store type:', store.constructor.name);
+    console.log('[🔍] [Luxar] Has contents method:', typeof store.contents === 'function');
+
     // Phase 2: Discover scene structure
     // Check if store has contents method (consolidated) or use fallback
     let listing: any[];
     if (typeof store.contents === 'function') {
       listing = await store.contents(); // Enumerate all groups and arrays
+      console.log(`[✓] [Luxar] Using consolidated metadata, found ${listing.length} items`);
+
+      // Debug: Log first few items
+      const groups = listing.filter((e: any) => e.kind === 'group');
+      const arrays = listing.filter((e: any) => e.kind === 'array');
+      console.log(`[🔍] [Luxar] Found ${groups.length} groups and ${arrays.length} arrays`);
+      console.log(
+        '[🔍] [Luxar] Groups:',
+        groups.slice(0, 20).map((g: any) => g.path)
+      );
     } else {
-      // Fallback: manually enumerate by walking the store
-      // For now, we'll use a simple approach that lists immediate children
+      // Fallback: manually enumerate by walking the store recursively
       console.warn(
         '[⚠️] [Luxar] Store does not have contents() method, using fallback enumeration'
       );
       listing = [];
 
-      // Try to list root group members
-      try {
-        const rootGroup = await zarr.open(zarr.root(store), { kind: 'group' });
-        // Get group members from attrs or by other means
-        // This is a simplified fallback - may need refinement
-        for (const key of Object.keys(rootGroup)) {
-          if (key !== 'attrs' && key !== 'zarr') {
-            listing.push({ path: `/${key}`, kind: 'group' });
+      // Use a simpler approach: manually check known paths
+      // Since we can't reliably enumerate children, we'll probe for common patterns
+      const checkPath = async (path: string, kind: 'group' | 'array') => {
+        try {
+          const loc = path === '' ? zarr.root(store) : zarr.root(store).resolve(path);
+          await zarr.open(loc, { kind });
+          const fullPath = path === '' ? '/' : `/${path}`;
+          listing.push({ path: fullPath, kind });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      // Add root
+      await checkPath('', 'group');
+
+      // Try to enumerate root-level groups by checking for .zgroup files
+      // This is a workaround since we can't reliably list directory contents
+      const rootGroup = await zarr.open(zarr.root(store), { kind: 'group' });
+
+      // Check for common group patterns at root level
+      // We'll try to detect groups by attempting to open them
+      const potentialGroups: string[] = [];
+
+      // Try to get a listing from the store itself if possible
+      if (typeof (store as any).listDir === 'function') {
+        try {
+          const items = await (store as any).listDir('/');
+          for (const item of items) {
+            if (!item.startsWith('.') && !item.endsWith('/')) {
+              potentialGroups.push(item);
+            }
+          }
+        } catch {
+          // listDir not available or failed
+        }
+      }
+
+      // If we couldn't get a listing, try to read the root group's keys
+      // Note: This gives us the Python zarr group's dictionary keys, not child groups
+      // But we can try each key to see if it's a subgroup
+      if (potentialGroups.length === 0) {
+        // Try to access the store's keys directly
+        // Different stores may expose this differently
+        const keys = Object.keys(rootGroup);
+        for (const key of keys) {
+          if (!key.startsWith('_') && !key.startsWith('.') && key !== 'attrs' && key !== 'zarr') {
+            potentialGroups.push(key);
           }
         }
-      } catch (err) {
-        console.error('[❌] [Luxar] Failed to enumerate store contents:', err);
-        listing = [];
+      }
+
+      // Check each potential group
+      for (const name of potentialGroups) {
+        const isGroup = await checkPath(name, 'group');
+        if (isGroup) {
+          // For each group, also check for standard arrays
+          const arrays = ['positions', 'colors', 'radii', 'sharpness'];
+          for (const arrName of arrays) {
+            await checkPath(`${name}/${arrName}`, 'array');
+          }
+        }
+      }
+
+      if (listing.length === 0) {
+        console.error('[❌] [Luxar] No groups or arrays found in store');
+      } else {
+        console.log(`[✓] [Luxar] Found ${listing.length} groups/arrays in store`);
       }
     }
 
@@ -308,7 +376,17 @@ export async function loadScene(src: string): Promise<THREE.Group> {
         }
 
         /* attach to parent in Three.js graph FIRST */
-        lookup.get(parentPath)!.obj.add(obj);
+        const parent = lookup.get(parentPath);
+        if (!parent) {
+          console.error(
+            `[❌] [Luxar] Parent not found for ${entry.path}, parent path: ${parentPath}`
+          );
+          continue;
+        }
+        parent.obj.add(obj);
+        console.log(
+          `[✓] [Luxar] Added ${entry.path} to parent ${parentPath}, obj type: ${obj.type}, children count: ${obj.children.length}`
+        );
 
         // Apply transform AFTER adding to parent
         if (Array.isArray(attrs?.transform) && attrs.transform.length === 16) {
@@ -335,6 +413,21 @@ export async function loadScene(src: string): Promise<THREE.Group> {
         // Continue loading other groups instead of failing completely
       }
     }
+
+    // Debug: Check final scene structure
+    console.log('[🎯] [Luxar] Final scene structure:');
+    console.log(`  Root has ${rootThree.children.length} children`);
+    rootThree.children.forEach((child, i) => {
+      if (child instanceof THREE.Points) {
+        const points = child as THREE.Points;
+        const posCount = points.geometry.attributes.position?.count || 0;
+        console.log(`  Child ${i}: Points with ${posCount} points`);
+      } else if (child instanceof THREE.Group) {
+        console.log(`  Child ${i}: Group with ${child.children.length} children`);
+      } else {
+        console.log(`  Child ${i}: ${child.type}`);
+      }
+    });
 
     return rootThree;
   } catch (error) {
@@ -500,7 +593,9 @@ async function buildPoints(
       );
 
       // Use LazyDataManager to load the slice
-      posData = (await lazyManager.loadSlice(posArr, 'positions', sliceSpec)) as Float32Array;
+      // Include object path in array name to prevent cache collisions
+      const positionsPath = loc.path ? `${loc.path}/positions` : 'positions';
+      posData = (await lazyManager.loadSlice(posArr, positionsPath, sliceSpec)) as Float32Array;
 
       // Store references for future updates
       if (!globalLazyManager) globalLazyManager = lazyManager;
@@ -532,7 +627,9 @@ async function buildPoints(
 
       // Use lazy manager even for full dataset load - this enables monitoring
       const sliceSpec: (zarr.Slice | null)[] = [null, null]; // Load all data
-      posData = (await lazyManager.loadSlice(posArr, 'positions', sliceSpec)) as Float32Array;
+      // Include object path in array name to prevent cache collisions
+      const positionsPath = loc.path ? `${loc.path}/positions` : 'positions';
+      posData = (await lazyManager.loadSlice(posArr, positionsPath, sliceSpec)) as Float32Array;
 
       // Store references for monitoring
       if (!globalLazyManager) globalLazyManager = lazyManager;
@@ -593,14 +690,15 @@ async function buildPoints(
   let radiiData: Float32Array | undefined;
   try {
     const radiiArr = await zarr.open(loc.resolve('radii'), { kind: 'array' });
+    console.log(`[📐] [Luxar] Loading radii for ${attrs.type === 'points' ? loc.path : 'unknown'}`);
     if (useLazyLoading && (loc as any)._lazyManager) {
       // Load same slice of radii as positions
       // Use the same slice indices that were calculated for positions
       const nonDisplayedDims = (loc as any)._nonDisplayedDims;
       const totalSlices = (loc as any)._totalSlices;
 
-      if (nonDisplayedDims && totalSlices && sceneDims) {
-        // Reuse the same calculation from position loading
+      if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
+        // For nD data with non-displayed dimensions, calculate the correct slice
         let linearIndex = 0;
         let multiplier = 1;
         const sliceSizes: number[] = [];
@@ -628,7 +726,15 @@ async function buildPoints(
         const startIdx = linearIndex * pointsPerSlice;
         const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx)];
-        radiiData = await (loc as any)._lazyManager.loadSlice(radiiArr, 'radii', sliceSpec);
+        // Include object path in array name to prevent cache collisions
+        const radiiPath = loc.path ? `${loc.path}/radii` : 'radii';
+        radiiData = await (loc as any)._lazyManager.loadSlice(radiiArr, radiiPath, sliceSpec);
+      } else {
+        // For 3D data or when no slicing is needed, load all radii through lazy manager
+        const sliceSpec: (zarr.Slice | null)[] = [null];
+        // Include object path in array name to prevent cache collisions
+        const radiiPath = loc.path ? `${loc.path}/radii` : 'radii';
+        radiiData = await (loc as any)._lazyManager.loadSlice(radiiArr, radiiPath, sliceSpec);
       }
     } else {
       radiiData = (await get(radiiArr)).data as Float32Array;
@@ -688,8 +794,8 @@ async function buildPoints(
       const nonDisplayedDims = (loc as any)._nonDisplayedDims;
       const totalSlices = (loc as any)._totalSlices;
 
-      if (nonDisplayedDims && totalSlices && sceneDims) {
-        // Reuse the same calculation from position loading
+      if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
+        // For nD data with non-displayed dimensions, calculate the correct slice
         let linearIndex = 0;
         let multiplier = 1;
         const sliceSizes: number[] = [];
@@ -717,9 +823,15 @@ async function buildPoints(
         const startIdx = linearIndex * pointsPerSlice;
         const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx), null]; // All color channels
-        rawData = await (loc as any)._lazyManager.loadSlice(colArr, 'colors', sliceSpec);
+        // Include object path in array name to prevent cache collisions
+        const colorsPath = loc.path ? `${loc.path}/colors` : 'colors';
+        rawData = await (loc as any)._lazyManager.loadSlice(colArr, colorsPath, sliceSpec);
       } else {
-        rawData = (await get(colArr)).data;
+        // For 3D data or when no slicing is needed, load all colors through lazy manager
+        const sliceSpec: (zarr.Slice | null)[] = [null, null]; // All points, all channels
+        // Include object path in array name to prevent cache collisions
+        const colorsPath = loc.path ? `${loc.path}/colors` : 'colors';
+        rawData = await (loc as any)._lazyManager.loadSlice(colArr, colorsPath, sliceSpec);
       }
     } else {
       rawData = (await get(colArr)).data;
@@ -766,8 +878,8 @@ async function buildPoints(
       const nonDisplayedDims = (loc as any)._nonDisplayedDims;
       const totalSlices = (loc as any)._totalSlices;
 
-      if (nonDisplayedDims && totalSlices && sceneDims) {
-        // Reuse the same calculation from position loading
+      if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
+        // For nD data with non-displayed dimensions, calculate the correct slice
         let linearIndex = 0;
         let multiplier = 1;
         const sliceSizes: number[] = [];
@@ -795,13 +907,23 @@ async function buildPoints(
         const startIdx = linearIndex * pointsPerSlice;
         const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx)];
+        // Include object path in array name to prevent cache collisions
+        const sharpnessPath = loc.path ? `${loc.path}/sharpness` : 'sharpness';
         sharpnessData = await (loc as any)._lazyManager.loadSlice(
           sharpnessArr,
-          'sharpness',
+          sharpnessPath,
           sliceSpec
         );
       } else {
-        sharpnessData = (await get(sharpnessArr)).data as Float32Array;
+        // For 3D data or when no slicing is needed, load all sharpness through lazy manager
+        const sliceSpec: (zarr.Slice | null)[] = [null];
+        // Include object path in array name to prevent cache collisions
+        const sharpnessPath = loc.path ? `${loc.path}/sharpness` : 'sharpness';
+        sharpnessData = await (loc as any)._lazyManager.loadSlice(
+          sharpnessArr,
+          sharpnessPath,
+          sliceSpec
+        );
       }
     } else {
       sharpnessData = (await get(sharpnessArr)).data as Float32Array;
@@ -819,6 +941,31 @@ async function buildPoints(
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
 
+  // Debug: Check position data
+  const numPointsInGeom = pos.length / 3;
+  if (numPointsInGeom > 0) {
+    const xValues = Array.from({ length: Math.min(100, numPointsInGeom) }, (_, i) => pos[i * 3]);
+    const yValues = Array.from(
+      { length: Math.min(100, numPointsInGeom) },
+      (_, i) => pos[i * 3 + 1]
+    );
+    const zValues = Array.from(
+      { length: Math.min(100, numPointsInGeom) },
+      (_, i) => pos[i * 3 + 2]
+    );
+    const xMin = Math.min(...xValues);
+    const xMax = Math.max(...xValues);
+    const yMin = Math.min(...yValues);
+    const yMax = Math.max(...yValues);
+    const zMin = Math.min(...zValues);
+    const zMax = Math.max(...zValues);
+    console.log(`[📍] [Luxar] Position data for ${loc.path}:`);
+    console.log(`  - Points: ${numPointsInGeom}`);
+    console.log(`  - X range: [${xMin.toFixed(2)}, ${xMax.toFixed(2)}]`);
+    console.log(`  - Y range: [${yMin.toFixed(2)}, ${yMax.toFixed(2)}]`);
+    console.log(`  - Z range: [${zMin.toFixed(2)}, ${zMax.toFixed(2)}]`);
+  }
+
   if (col) {
     // Colors are already in HDR float32 format - can exceed 1.0 for bright emission
     geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -834,12 +981,24 @@ async function buildPoints(
   if (radii) {
     // Add radius attribute for custom shaders
     geom.setAttribute('radius', new THREE.BufferAttribute(radii, 1));
+    const avgRadius =
+      radii.slice(0, Math.min(100, radii.length)).reduce((a, b) => a + b, 0) /
+      Math.min(100, radii.length);
+    console.log(`[📏] [Luxar] Radii loaded for ${loc.path}:`);
+    console.log(`  - Count: ${radii.length}`);
+    console.log(`  - Average: ${avgRadius.toFixed(4)}`);
+    console.log(
+      `  - First 5: [${Array.from(radii.slice(0, 5))
+        .map((r) => r.toFixed(4))
+        .join(', ')}]`
+    );
   } else {
     // Provide default radii if not specified
     const numVertices = pos.length / 3;
     const defaultRadii = new Float32Array(numVertices);
     defaultRadii.fill(1.0); // Default radius - increased for better visibility
     geom.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
+    console.log(`[⚠️] [Luxar] No radii data for ${loc.path}, using default: 1.0`);
   }
 
   if (sharpness) {
@@ -867,9 +1026,19 @@ async function buildPoints(
 
   const points = new THREE.Points(geom, material);
 
+  // Debug: Check the created points object
+  console.log(`[🎯] [Luxar] Created Points for ${loc.path}:`);
+  console.log(`  - Point count: ${geom.attributes.position.count}`);
+  console.log(`  - Has colors: ${!!geom.attributes.color}`);
+  console.log(`  - Has radii: ${!!geom.attributes.radius}`);
+  console.log(`  - Material blending: ${blendingMode}`);
+  console.log(`  - Material opacity: ${opacity}`);
+  console.log(`  - Visible: ${points.visible}`);
+
   // Apply render order from material
   if (material.userData.renderOrder !== undefined) {
     points.renderOrder = material.userData.renderOrder;
+    console.log(`  - Render order: ${points.renderOrder}`);
   }
 
   // Store rendering properties in userData for runtime updates

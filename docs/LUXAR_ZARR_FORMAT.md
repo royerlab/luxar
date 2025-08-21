@@ -1,6 +1,6 @@
 # Luxar Zarr Format Specification
 
-## Version: 0.3
+## Version: 0.2
 
 This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD point cloud visualization.
 
@@ -31,7 +31,7 @@ The root `.zattrs` file contains scene-wide configuration:
 
 ```json
 {
-  "luxar_version": "0.3",
+  "luxar_version": "0.2",
   "type": "scene",
   "units": "um",  // Physical units (nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
   "scene_dimensions": {  // Optional: Scene-level dimension specification
@@ -185,20 +185,19 @@ Supported alternatives:
 
 ## Metadata Consolidation
 
-After scene construction, call `scene.finalize()` to:
+After scene construction, call `# Context manager handles finalization automatically` to:
 - Consolidate all metadata into `.zmetadata` file
 - Improve load performance by reducing metadata requests
 - Enable efficient streaming from remote stores
 
 ## Version History
 
-- **0.3** (Current): Added scene dimensions, improved nD support, HDR color support (float32)
-- **0.2**: Added sharpness attribute, rendering parameters
+- **0.2** (Current): Added scene dimensions, improved nD support, HDR color support (float32), sharpness attribute, rendering parameters
 - **0.1**: Initial format with positions, colors, radii
 
 ## Best Practices
 
-1. **Always finalize scenes** after construction for optimal performance
+1. **Use context managers** with LuxarZarrCompiler for automatic finalization
 2. **Use appropriate chunk sizes** based on expected access patterns
 3. **Store transforms at group level** for hierarchical transformations
 4. **Define scene dimensions** for consistent coordinate systems
@@ -209,7 +208,7 @@ After scene construction, call `scene.finalize()` to:
 
 ```python
 import numpy as np
-from luxar import Scene, Dimensions, Dimension
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
 # Create scene with dimensions
 dims = Dimensions([
@@ -219,17 +218,16 @@ dims = Dimensions([
     Dimension("time", unit="ms", display=False, discrete=True)
 ])
 
-scene = Scene("output.zarr", dimensions=dims)
-
-# Add point cloud
-positions = np.random.randn(10000, 4).astype(np.float32)  # 4D points
-colors = np.random.randint(0, 255, (10000, 3), dtype=np.float32)  # HDR colors
-radii = np.ones(10000, dtype=np.float32) * 0.5
-
-scene.add_points("my_points", positions, colors, radii=radii)
-
-# Finalize for optimal loading
-scene.finalize()
+with LuxarZarrCompiler("output.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+    
+    # Add point cloud
+    positions = np.random.randn(10000, 4).astype(np.float32)  # 4D points
+    colors = np.random.randint(0, 255, (10000, 3), dtype=np.float32)  # HDR colors
+    radii = np.ones(10000, dtype=np.float32) * 0.5
+    
+    scene.add_points("my_points", positions, colors, radii=radii)
+    # Context manager handles finalization automatically
 ```
 
 ## Compatibility Notes

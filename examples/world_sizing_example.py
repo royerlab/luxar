@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_touching_points():
@@ -85,111 +85,112 @@ def main():
     aprint("Two points of radius r at distance 2r should just touch")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add metadata
-    scene.attrs["description"] = """
-    World-Space Sizing Test
-    =======================
+        scene = compiler.create_scene()
 
-    This minimal scene tests world-space point sizing:
+        # Add metadata
+        scene.attrs["description"] = """
+World-Space Sizing Test
+        =======================
 
-    Main test: Red and green points
-    - Both have radius 1.0
-    - Centers are 2.0 units apart
-    - They should just touch at the origin
+        This minimal scene tests world-space point sizing:
 
-    Reference points: Yellow to blue gradient
-    - Located at different depths (5, 10, 20 units)
-    - Help verify perspective scaling
+        Main test: Red and green points
+        - Both have radius 1.0
+        - Centers are 2.0 units apart
+        - They should just touch at the origin
 
-    Expected behavior:
-    - Red and green points should touch but not overlap
-    - This relationship should be maintained at any:
-      * Window size
-      * Fullscreen state
-      * Field of view
-      * Viewing angle
-    """
+        Reference points: Yellow to blue gradient
+        - Located at different depths (5, 10, 20 units)
+        - Help verify perspective scaling
 
-    # Create main test points
-    positions, colors, radii = create_touching_points()
+        Expected behavior:
+        - Red and green points should touch but not overlap
+        - This relationship should be maintained at any:
+          * Window size
+          * Fullscreen state
+          * Field of view
+          * Viewing angle
+        """
 
-    scene.add_points(
-        "TouchingPoints",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=10.0,  # High sharpness for clear boundaries
-        opacity=1.0,
-        blending_mode="normal",
-    )
+        # Create main test points
+        positions, colors, radii = create_touching_points()
 
-    # Add reference points
-    ref_positions, ref_colors, ref_radii = create_reference_points()
+        scene.add_points(
+            "TouchingPoints",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=10.0,  # High sharpness for clear boundaries
+            opacity=1.0,
+            blending_mode="normal",
+        )
 
-    scene.add_points(
-        "ReferencePoints",
-        ref_positions,
-        colors=ref_colors,
-        radii=ref_radii,
-        sharpness=5.0,
-        opacity=0.8,
-        blending_mode="additive",
-    )
+        # Add reference points
+        ref_positions, ref_colors, ref_radii = create_reference_points()
 
-    # Add axis indicators
-    axis_positions = np.array(
-        [
-            # X axis
-            [0, 0, 0],
-            [3, 0, 0],
-            # Y axis
-            [0, 0, 0],
-            [0, 3, 0],
-            # Z axis
-            [0, 0, 0],
-            [0, 0, 3],
-        ],
-        dtype=np.float32,
-    )
+        scene.add_points(
+            "ReferencePoints",
+            ref_positions,
+            colors=ref_colors,
+            radii=ref_radii,
+            sharpness=5.0,
+            opacity=0.8,
+            blending_mode="additive",
+        )
 
-    axis_colors = np.array(
-        [
-            [0.5, 0, 0],
-            [1, 0, 0],  # Dark to bright red for X
-            [0, 0.5, 0],
-            [0, 1, 0],  # Dark to bright green for Y
-            [0, 0, 0.5],
-            [0, 0, 1],  # Dark to bright blue for Z
-        ],
-        dtype=np.float32,
-    )
+        # Add axis indicators
+        axis_positions = np.array(
+            [
+                # X axis
+                [0, 0, 0],
+                [3, 0, 0],
+                # Y axis
+                [0, 0, 0],
+                [0, 3, 0],
+                # Z axis
+                [0, 0, 0],
+                [0, 0, 3],
+            ],
+            dtype=np.float32,
+        )
 
-    scene.add_points(
-        "Axes",
-        axis_positions,
-        colors=axis_colors,
-        radii=0.05,
-        sharpness=10.0,
-        opacity=1.0,
-        blending_mode="additive",
-    )
+        axis_colors = np.array(
+            [
+                [0.5, 0, 0],
+                [1, 0, 0],  # Dark to bright red for X
+                [0, 0.5, 0],
+                [0, 1, 0],  # Dark to bright green for Y
+                [0, 0, 0.5],
+                [0, 0, 1],  # Dark to bright blue for Z
+            ],
+            dtype=np.float32,
+        )
 
-    scene.finalize()
+        scene.add_points(
+            "Axes",
+            axis_positions,
+            colors=axis_colors,
+            radii=0.05,
+            sharpness=10.0,
+            opacity=1.0,
+            blending_mode="additive",
+        )
 
-    aprint("\n✓ Scene created successfully")
-    aprint("  Main test: Red and green points (radius 1.0, separation 2.0)")
-    aprint("  Reference: 3 points at different depths")
-    aprint("  Axes: RGB indicators for orientation")
-    aprint("\n" + "=" * 60)
-    aprint("VERIFICATION STEPS:")
-    aprint("1. Run: luxar serve world_sizing_example.zarr")
-    aprint("2. Verify red and green points are just touching")
-    aprint("3. Rotate view - touching relationship maintained")
-    aprint("4. Press SPACE for fullscreen - still touching")
-    aprint("5. Use Shift+Wheel to change FOV - still touching")
-    aprint("=" * 60)
+        aprint("\n✓ Scene created successfully")
+        aprint("  Main test: Red and green points (radius 1.0, separation 2.0)")
+        aprint("  Reference: 3 points at different depths")
+        aprint("  Axes: RGB indicators for orientation")
+        aprint("\n" + "=" * 60)
+        aprint("VERIFICATION STEPS:")
+        aprint("1. Run: luxar serve world_sizing_example.zarr")
+        aprint("2. Verify red and green points are just touching")
+        aprint("3. Rotate view - touching relationship maintained")
+        aprint("4. Press SPACE for fullscreen - still touching")
+        aprint("5. Use Shift+Wheel to change FOV - still touching")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

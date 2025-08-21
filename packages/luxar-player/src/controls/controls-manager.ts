@@ -10,10 +10,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { CONTROL_CONFIG } from './control-config';
 
-export type ControlType = 'orbit' | 'fly';
+export type ControlType = 'orbit' | 'arcball' | 'fly';
 
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
@@ -36,8 +37,9 @@ interface ControlsManagerEventMap {
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: THREE.PerspectiveCamera;
   private domElement: HTMLElement;
+  private scene?: THREE.Scene;
   // Current control instance
-  private currentControls: OrbitControls | LuxarFlyControls | null = null;
+  private currentControls: OrbitControls | ArcballControls | LuxarFlyControls | null = null;
   private currentType: ControlType = 'orbit';
 
   // Configuration - uses defaults from CONTROL_CONFIG
@@ -57,15 +59,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private savedCameraPosition = new THREE.Vector3();
   private savedCameraRotation = new THREE.Euler();
   private savedTarget = new THREE.Vector3();
+  private savedCameraUp = new THREE.Vector3(0, 1, 0); // Save the original up vector
 
   // Delta time tracking for fly controls
   private clock = new THREE.Clock();
 
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, _scene?: THREE.Scene) {
+  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, scene?: THREE.Scene) {
     super();
 
     this.camera = camera;
     this.domElement = domElement;
+    this.scene = scene;
 
     // Initialize with orbit controls by default
     this.setControlType('orbit');
@@ -90,6 +94,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     switch (type) {
       case 'orbit':
         this.createOrbitControls();
+        break;
+      case 'arcball':
+        this.createArcballControls();
         break;
       case 'fly':
         this.createFlyControls();
@@ -117,7 +124,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   /**
    * Get the current controls instance
    */
-  public getControls(): OrbitControls | LuxarFlyControls | null {
+  public getControls(): OrbitControls | ArcballControls | LuxarFlyControls | null {
     return this.currentControls;
   }
 
@@ -156,6 +163,49 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     // Reset clock for proper delta time when switching back
     this.clock.getDelta();
+  }
+
+  /**
+   * Create arcball controls
+   */
+  private createArcballControls(): void {
+    const controls = new ArcballControls(this.camera, this.domElement, this.scene) as any;
+
+    // Configure arcball controls
+    // Note: ArcballControls has these properties but TypeScript definitions are incomplete
+    controls.enableDamping = true;
+    controls.dampingFactor = 25; // ArcballControls uses different damping scale
+    controls.enablePan = true;
+    controls.enableRotate = true;
+    controls.enableZoom = true;
+    controls.minDistance = 0.1;
+    controls.maxDistance = 1000;
+
+    // IMPORTANT: Disable gizmos completely - both the flag and visibility
+    controls.enableGizmos = false;
+    controls.setGizmosVisible(false); // This actually hides the gizmos
+
+    // Store auto-rotation flag for manual implementation
+    (controls as any)._autoRotate = this.config.autoRotate || false;
+    (controls as any)._autoRotateSpeed = this.config.autoRotateSpeed || 0.25;
+
+    // Listen for changes
+    controls.addEventListener('change', () => {
+      this.dispatchEvent({ type: 'change' });
+    });
+
+    controls.addEventListener('start', () => {
+      this.dispatchEvent({ type: 'start' });
+    });
+
+    controls.addEventListener('end', () => {
+      this.dispatchEvent({ type: 'end' });
+    });
+
+    this.currentControls = controls;
+
+    // Don't set target or call setCamera here - let restoreCameraState handle it
+    // to avoid double initialization
   }
 
   /**
@@ -203,10 +253,13 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private saveCameraState(): void {
     this.savedCameraPosition.copy(this.camera.position);
     this.savedCameraRotation.copy(this.camera.rotation);
+    this.savedCameraUp.copy(this.camera.up); // Save the current up vector
 
-    // Save orbit target if using orbit controls
+    // Save target if using orbit or arcball controls
     if (this.currentType === 'orbit' && this.currentControls instanceof OrbitControls) {
       this.savedTarget.copy(this.currentControls.target);
+    } else if (this.currentType === 'arcball' && this.currentControls instanceof ArcballControls) {
+      this.savedTarget.copy((this.currentControls as any).target);
     }
   }
 
@@ -215,11 +268,35 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    */
   private restoreCameraState(): void {
     // Don't restore position/rotation - keep them continuous
-    // Only restore orbit target if switching TO orbit controls
+    // Only restore target if switching TO orbit or arcball controls
     if (this.currentControls instanceof OrbitControls) {
       // For orbit controls, update the target
       this.currentControls.target.copy(this.savedTarget);
       this.currentControls.update();
+    } else if (this.currentControls instanceof ArcballControls) {
+      // For arcball controls, set target and initialize camera
+      const controls = this.currentControls as any;
+      controls.target.copy(this.savedTarget);
+
+      // CRITICAL FIX: Reset the camera's up vector to prevent jumps
+      // ArcballControls modifies the up vector during rotation, which causes issues
+      // when recreating controls if not properly reset
+      this.camera.up.set(0, 1, 0); // Reset to default up vector
+      this.camera.updateMatrixWorld();
+
+      // Initialize the control with the current camera state
+      // This must be done AFTER setting the target and resetting up vector
+      controls.setCamera(this.camera);
+
+      // IMPORTANT: Sync the internal up vector states with the camera's up vector
+      // This prevents the "jump" at the start/end of dragging
+      if (controls._up0 && controls._upState) {
+        controls._up0.copy(this.camera.up);
+        controls._upState.copy(this.camera.up);
+      }
+
+      // Update once to sync everything
+      controls.update();
     }
     // Fly controls automatically initialize from current camera state
   }
@@ -229,6 +306,12 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    */
   private disposeCurrentControls(): void {
     if (this.currentControls) {
+      // For ArcballControls, reset before disposing to prevent state issues
+      if (this.currentControls instanceof ArcballControls) {
+        // Reset the control state before disposal to prevent up vector issues
+        this.currentControls.reset();
+      }
+
       if ('dispose' in this.currentControls) {
         this.currentControls.dispose();
       }
@@ -244,6 +327,29 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.update();
+    } else if (this.currentControls instanceof ArcballControls) {
+      // First update the control
+      this.currentControls.update();
+
+      // Then apply manual auto-rotation for ArcballControls
+      const controls = this.currentControls as any;
+
+      // Check if auto-rotate is enabled
+      if (controls._autoRotate) {
+        // ArcballControls doesn't have a simple state check, so we'll just rotate continuously
+        // This matches the behavior of OrbitControls
+        const rotationSpeed = (controls._autoRotateSpeed || 0.25) * 0.005; // Reduced speed for smoother rotation
+
+        // Use the rotate method from ArcballControls itself
+        const rotationAxis = new THREE.Vector3(0, 1, 0);
+        const transformation = controls.rotate(rotationAxis, rotationSpeed);
+
+        // Apply the transformation
+        if (transformation) {
+          controls.applyTransformMatrix(transformation);
+          this.dispatchEvent({ type: 'change' });
+        }
+      }
     } else if (this.currentControls instanceof LuxarFlyControls) {
       const delta = this.clock.getDelta();
       this.currentControls.update(delta);
@@ -260,24 +366,29 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set auto-rotation (for orbit controls)
+   * Set auto-rotation (for orbit controls only - not supported in arcball)
    */
   public setAutoRotate(enabled: boolean): void {
     this.config.autoRotate = enabled;
 
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.autoRotate = enabled;
+    } else if (this.currentControls instanceof ArcballControls) {
+      // Auto-rotation not supported in arcball mode - always set to false
+      (this.currentControls as any)._autoRotate = false;
     }
   }
 
   /**
-   * Set auto-rotation speed (for orbit controls)
+   * Set auto-rotation speed (for orbit and arcball controls)
    */
   public setAutoRotateSpeed(speed: number): void {
     this.config.autoRotateSpeed = speed;
 
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.autoRotateSpeed = speed;
+    } else if (this.currentControls instanceof ArcballControls) {
+      (this.currentControls as any)._autoRotateSpeed = speed;
     }
   }
 
@@ -287,6 +398,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   public getAutoRotate(): boolean {
     if (this.currentControls instanceof OrbitControls) {
       return this.currentControls.autoRotate;
+    } else if (this.currentControls instanceof ArcballControls) {
+      // Auto-rotation not supported in arcball mode
+      return false;
     }
     return false;
   }
@@ -353,6 +467,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls) {
       if (this.currentControls instanceof OrbitControls) {
         this.currentControls.reset();
+      } else if (this.currentControls instanceof ArcballControls) {
+        this.currentControls.reset();
       } else if (this.currentControls instanceof LuxarFlyControls) {
         this.currentControls.reset();
       }
@@ -389,6 +505,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       // For orbit controls, update the target
       this.currentControls.target.copy(target);
       this.currentControls.update();
+    } else if (this.currentControls instanceof ArcballControls) {
+      // For arcball controls, update the target
+      (this.currentControls as any).target.copy(target);
+      this.currentControls.update();
     } else if (this.currentControls instanceof LuxarFlyControls) {
       // For fly controls, smoothly rotate to look at target
       if (smooth) {
@@ -407,6 +527,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   public getFocusTarget(): THREE.Vector3 {
     if (this.currentControls instanceof OrbitControls) {
       return this.currentControls.target.clone();
+    } else if (this.currentControls instanceof ArcballControls) {
+      return (this.currentControls as any).target.clone();
     } else {
       // For fly controls, return a point in front of the camera
       const forward = new THREE.Vector3();

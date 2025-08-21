@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_5d_grid(
@@ -134,58 +134,58 @@ def main():
         ]
     )
 
-    scene = Scene(output_path, dimensions=dimensions)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
 
-    # Create the 5D grid data
-    aprint("Generating 5D grid dataset...")
-    positions, colors = create_5d_grid(n_times, n_depths, n_channels, grid_size)
+        # Create the 5D grid data
+        aprint("Generating 5D grid dataset...")
+        positions, colors = create_5d_grid(n_times, n_depths, n_channels, grid_size)
 
-    # Add consistent radius for all points
-    radii = np.full(len(positions), 0.25, dtype=np.float32)
+        # Add consistent radius for all points
+        radii = np.full(len(positions), 0.25, dtype=np.float32)
 
-    # Add points to scene
-    scene.add_points(
+        # Add points to scene
+        scene.add_points(
         "Grid5D",
         positions,
         colors=colors,
         radii=radii,
         sharpness=np.full(len(positions), 2.0, dtype=np.float32),
-    )
+        )
 
-    scene.finalize()
 
-    # Print summary and instructions
-    aprint(f"\n✓ Created 5D grid with {len(positions):,} points")
-    aprint(f"  Dimensions: {n_times} times × {n_depths} depths × {n_channels} channels")
-    aprint(f"  Grid size: {grid_size}×{grid_size}")
+        # Print summary and instructions
+        aprint(f"\n✓ Created 5D grid with {len(positions):,} points")
+        aprint(f"  Dimensions: {n_times} times × {n_depths} depths × {n_channels} channels")
+        aprint(f"  Grid size: {grid_size}×{grid_size}")
 
-    aprint("\n" + "=" * 60)
-    aprint("NAVIGATION INSTRUCTIONS")
-    aprint("=" * 60)
-    aprint("1. Start the server:")
-    aprint(f"   luxar serve {output_path}")
+        aprint("\n" + "=" * 60)
+        aprint("NAVIGATION INSTRUCTIONS")
+        aprint("=" * 60)
+        aprint("1. Start the server:")
+        aprint(f"   luxar serve {output_path}")
 
-    aprint("\n2. Dimension controls:")
-    aprint("   - Press '1' to select TIME dimension")
-    aprint("   - Press '2' to select DEPTH dimension")
-    aprint("   - Press '[' to go backward, ']' to go forward")
+        aprint("\n2. Dimension controls:")
+        aprint("   - Press '1' to select TIME dimension")
+        aprint("   - Press '2' to select DEPTH dimension")
+        aprint("   - Press '[' to go backward, ']' to go forward")
 
-    aprint("\n3. Visual patterns by time:")
-    aprint("   - Time 0: Full grid (all points)")
-    aprint("   - Time 1: Checkerboard pattern")
-    aprint("   - Time 2: Diagonal lines")
-    aprint("   - Time 3: Border outline only")
-    aprint("   - Time 4: Center cross")
+        aprint("\n3. Visual patterns by time:")
+        aprint("   - Time 0: Full grid (all points)")
+        aprint("   - Time 1: Checkerboard pattern")
+        aprint("   - Time 2: Diagonal lines")
+        aprint("   - Time 3: Border outline only")
+        aprint("   - Time 4: Center cross")
 
-    aprint("\n4. Visual changes by depth:")
-    aprint("   - Depth 0: Brightest colors")
-    aprint("   - Depth 1-3: Progressively dimmer")
+        aprint("\n4. Visual changes by depth:")
+        aprint("   - Depth 0: Brightest colors")
+        aprint("   - Depth 1-3: Progressively dimmer")
 
-    aprint("\n5. Channel layout:")
-    aprint("   - Left: Red channel")
-    aprint("   - Center: Green channel")
-    aprint("   - Right: Blue channel")
-    aprint("=" * 60)
+        aprint("\n5. Channel layout:")
+        aprint("   - Left: Red channel")
+        aprint("   - Center: Green channel")
+        aprint("   - Right: Blue channel")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

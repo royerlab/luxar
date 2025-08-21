@@ -7,8 +7,8 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
+from luxar import LuxarZarrCompiler
 from luxar.cli import _dfs, app
-from luxar.scene import Scene
 
 
 @pytest.fixture
@@ -21,7 +21,8 @@ def runner():
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
     store_path = tmp_path / "test_scene.zarr"
-    Scene.random_demo(store_path, n=100, seed=42)
+    from luxar.demos import create_lorenz_attractor
+    create_lorenz_attractor(store_path, n_points=100, seed=42)
     return store_path
 
 
@@ -104,23 +105,23 @@ def test_info_command_nonexistent_path(runner, tmp_path):
 def test_info_command_complex_hierarchy(runner, tmp_path):
     """Test info command with complex scene hierarchy."""
     store_path = tmp_path / "complex_scene.zarr"
-    scene = Scene(store_path)
 
-    # Create a complex hierarchy
-    group1 = scene.add_group("Group1")
-    scene.add_group("Group2")
-    subgroup = group1.add_group("SubGroup")
+    with LuxarZarrCompiler(store_path) as compiler:
+        scene = compiler.create_scene()
 
-    # Add points to different levels
-    pos1 = np.random.rand(10, 3).astype(np.float32)
-    pos2 = np.random.rand(20, 3).astype(np.float32)
-    pos3 = np.random.rand(15, 3).astype(np.float32)
+        # Create a complex hierarchy
+        group1 = scene.add_group("Group1")
+        scene.add_group("Group2")
+        subgroup = group1.add_group("SubGroup")
 
-    scene.add_points("RootPoints", pos1)
-    scene.add_points("Group1Points", pos2, parent=group1)
-    scene.add_points("SubGroupPoints", pos3, parent=subgroup)
+        # Add points to different levels
+        pos1 = np.random.rand(10, 3).astype(np.float32)
+        pos2 = np.random.rand(20, 3).astype(np.float32)
+        pos3 = np.random.rand(15, 3).astype(np.float32)
 
-    scene.finalize()
+        compiler.write_points("RootPoints", pos1)
+        compiler.write_points("Group1/Group1Points", pos2)
+        compiler.write_points("Group1/SubGroup/SubGroupPoints", pos3)
 
     result = runner.invoke(app, ["info", str(store_path)])
 
@@ -169,8 +170,8 @@ def test_serve_command_zip_store_error(runner, tmp_path):
 def test_dfs_single_group(tmp_path):
     """Test _dfs with single group."""
     store_path = tmp_path / "single.zarr"
-    scene = Scene(store_path)
-    scene.finalize()
+    with LuxarZarrCompiler(store_path) as compiler:
+        scene = compiler.create_scene()
 
     root = zarr.open_group(store_path, mode="r")
     groups = list(_dfs(root))
@@ -183,13 +184,12 @@ def test_dfs_single_group(tmp_path):
 def test_dfs_nested_groups(tmp_path):
     """Test _dfs with nested group structure."""
     store_path = tmp_path / "nested.zarr"
-    scene = Scene(store_path)
+    with LuxarZarrCompiler(store_path) as compiler:
+        scene = compiler.create_scene()
 
-    group1 = scene.add_group("Group1")
-    scene.add_group("Group2")
-    group1.add_group("SubGroup")
-
-    scene.finalize()
+        group1 = scene.add_group("Group1")
+        scene.add_group("Group2")
+        group1.add_group("SubGroup")
 
     root = zarr.open_group(store_path, mode="r")
     groups = list(_dfs(root))

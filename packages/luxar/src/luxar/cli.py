@@ -14,8 +14,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from luxar.scene import Scene
-
 app = typer.Typer(help="luxar – build and serve Zarr-backed 3-D scenes")
 
 
@@ -35,7 +33,8 @@ def random(
     """
     try:
         aprint(f"Generating random scene with {n} points at {out}.")
-        Scene.random_demo(out, n=n, seed=seed)
+        from luxar.demos import create_lorenz_attractor
+        create_lorenz_attractor(out, n_points=n, seed=seed)
         aprint(f"✔ wrote {n:,} points → {out}")
         typer.secho(f"✔ wrote {n:,} points → {out}", fg=typer.colors.GREEN, bold=True)
     except Exception as e:

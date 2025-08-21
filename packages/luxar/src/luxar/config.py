@@ -5,6 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final, Literal, Optional
 
+from .constants import (
+    CHUNK_SIZE_DEFAULT,
+    CHUNK_SIZE_MAX,
+    CHUNK_SIZE_MIN,
+    LUXAR_VERSION_CURRENT,
+)
 from .types import (
     CompressionType,
     CompressorProtocol,
@@ -16,18 +22,18 @@ from .types import (
 # Core Configuration Constants
 # =============================================================================
 
-# Default Zarr chunk size for point clouds (32KB)
-DEFAULT_CHUNK_SIZE: Final[int] = 32_768
+# Default Zarr chunk size for point clouds
+DEFAULT_CHUNK_SIZE: Final[int] = CHUNK_SIZE_DEFAULT
 
 # Minimum and maximum chunk sizes for validation
-MIN_CHUNK_SIZE: Final[int] = 1_024  # 1KB
-MAX_CHUNK_SIZE: Final[int] = 1_048_576  # 1MB
+MIN_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MIN
+MAX_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MAX
 
 # Default units for scenes
 DEFAULT_UNITS: Final[PhysicalUnit] = "metre"
 
 # Default version for Luxar scenes
-DEFAULT_VERSION: Final[LuxarVersion] = "0.2"
+DEFAULT_VERSION: Final[LuxarVersion] = LUXAR_VERSION_CURRENT
 
 # Supported Luxar versions for backwards compatibility
 SUPPORTED_VERSIONS: Final[tuple[LuxarVersion, ...]] = ("0.1", "0.2", "0.3")

@@ -301,6 +301,8 @@ export class InputHandler {
    */
   private onWindowResize(): void {
     this.sceneManager.updateSize();
+    // Trigger animation to render the resized scene
+    this.animationController.startAnimation();
   }
 
   /**
@@ -339,6 +341,8 @@ export class InputHandler {
       // One more update to catch any final adjustments
       setTimeout(() => {
         this.sceneManager.updateSize();
+        // Ensure animation continues for the final update
+        this.animationController.startAnimation();
       }, 100);
     }, 200); // Wait 200ms for transition to complete
   }
@@ -435,12 +439,7 @@ export class InputHandler {
         }
         break;
 
-      case 'c':
-      case 'C':
-        // C key to toggle between native center and bounding box center
-        event.preventDefault();
-        this.sceneManager.toggleCentering();
-        break;
+        // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':
@@ -468,7 +467,7 @@ export class InputHandler {
 
       case 'f':
       case 'F':
-        // F key to recenter camera on scene
+        // F key to recenter/focus camera on scene bounding box center
         if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
           event.preventDefault();
           this.recenterCamera();
@@ -477,7 +476,7 @@ export class InputHandler {
 
       case 'v':
       case 'V':
-        // V key to toggle between Orbit and Fly control modes
+        // V key to cycle through Orbit, Arcball, and Fly control modes
         if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
           event.preventDefault();
           this.toggleControlMode();
@@ -621,11 +620,27 @@ export class InputHandler {
   }
 
   /**
-   * Toggle between Orbit and Fly control modes
+   * Cycle through Orbit, Arcball, and Fly control modes
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    const newType = currentType === 'orbit' ? 'fly' : 'orbit';
+    let newType: 'orbit' | 'arcball' | 'fly';
+
+    // Cycle through: orbit -> arcball -> fly -> orbit
+    switch (currentType) {
+      case 'orbit':
+        newType = 'arcball';
+        break;
+      case 'arcball':
+        newType = 'fly';
+        break;
+      case 'fly':
+        newType = 'orbit';
+        break;
+      default:
+        newType = 'orbit';
+    }
+
     this.sceneManager.controls.setControlType(newType);
 
     // Update input context based on control mode
@@ -865,12 +880,46 @@ export class InputHandler {
   }
 
   /**
-   * Recenter camera on the scene's center point
-   * Uses smooth animation for fly controls, immediate for orbit controls
+   * Recenter/focus camera on the scene's bounding box center
+   * Uses smooth animation for fly controls, immediate for orbit/arcball controls
    */
   private recenterCamera(): void {
-    // Get the current center point (either native or bounding box center)
-    const center = this.sceneManager.getCurrentCenter();
+    // Compute bounding box center of all visible objects
+    const box = new THREE.Box3();
+
+    this.sceneManager.scene.traverse((object) => {
+      if (object instanceof THREE.Points && object.visible) {
+        const geometry = object.geometry;
+
+        // For point clouds, compute bounding box from position attribute
+        const positions = geometry.attributes.position;
+        if (positions && positions.count > 0) {
+          // Compute the bounding box if needed
+          if (!geometry.boundingBox) {
+            geometry.computeBoundingBox();
+          }
+
+          if (geometry.boundingBox) {
+            const tempBox = geometry.boundingBox.clone();
+            // Apply object's world transform
+            tempBox.applyMatrix4(object.matrixWorld);
+            // Expand our overall box
+            box.expandByObject(object);
+          }
+        }
+      }
+    });
+
+    // Get the center of the bounding box
+    const center = new THREE.Vector3();
+
+    // Check if box is valid (has content)
+    if (!box.isEmpty()) {
+      box.getCenter(center);
+    } else {
+      // Fallback to origin if no objects found
+      center.set(0, 0, 0);
+    }
 
     // Get the controls manager if it exists
     const controlsManager = this.sceneManager.getControlsManager();
@@ -895,7 +944,7 @@ export class InputHandler {
         smoothRecenter();
         console.log('🎯 [Luxar] Recentering camera on scene (smooth)');
       } else {
-        // For orbit controls, just update the target
+        // For orbit/arcball controls, just update the target
         controlsManager.lookAt(center, false);
         console.log('🎯 [Luxar] Recentered camera on scene');
       }

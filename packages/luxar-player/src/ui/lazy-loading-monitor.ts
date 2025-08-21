@@ -594,12 +594,30 @@ export class LazyLoadingMonitor {
       allOption.textContent = `All Objects (${objectData.size} total)`;
       selector.appendChild(allOption);
 
-      // Add individual object options
-      objectData.forEach((data, path) => {
+      // Add individual object options (sorted alphabetically)
+      const sortedPaths = Array.from(objectData.keys()).sort();
+      sortedPaths.forEach((path) => {
+        const data = objectData.get(path)!;
         const option = document.createElement('option');
         option.value = path;
-        const displayPath = path === '/' ? 'Root' : path.split('/').pop() || path;
-        option.textContent = `${displayPath} (${data.arrays.size} arrays, ${data.slices.size} slices)`;
+
+        // Format the display name nicely
+        let displayName: string;
+        if (path === '/' || path === '') {
+          displayName = '📦 Root Dataset';
+        } else {
+          // Extract just the object name from the path
+          const objectName =
+            path
+              .split('/')
+              .filter((p) => p)
+              .pop() || path;
+          // Add appropriate icon based on content
+          const icon = data.arrays.has('positions') ? '🌟' : '📊';
+          displayName = `${icon} ${objectName}`;
+        }
+
+        option.textContent = `${displayName} (${data.arrays.size} arrays, ${data.slices.size} chunks)`;
         selector.appendChild(option);
       });
 
@@ -897,11 +915,34 @@ export class LazyLoadingMonitor {
             break;
         }
 
+        // Extract object name from the message if it contains a cache key
+        let formattedMessage = event.message;
+        let objectTag = '';
+
+        // Look for cache keys in the format "ObjectName/arrayType:indices"
+        const cacheKeyMatch = event.message.match(/([^:\s]+\/[^:\s]+)(?::\S+)?/);
+        if (cacheKeyMatch) {
+          const fullPath = cacheKeyMatch[1];
+          const pathParts = fullPath.split('/');
+          if (pathParts.length >= 2) {
+            const objectName = pathParts[pathParts.length - 2] || 'Root';
+            const arrayType = pathParts[pathParts.length - 1];
+
+            // Create a colored object tag
+            const objectColor = this.getObjectColor(objectName);
+            objectTag = `<span style="background: ${objectColor}; color: #000; padding: 1px 4px; border-radius: 2px; font-weight: bold; margin-right: 4px; font-size: 9px;">${objectName}</span>`;
+
+            // Simplify the message to just show the array type and action
+            formattedMessage = event.message.replace(cacheKeyMatch[0], arrayType);
+          }
+        }
+
         return `
         <div style="margin-bottom: 4px; color: ${color}; font-size: 10px;">
           <span>${icon}</span>
           <span style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">${time}</span>
-          <span style="color: rgba(255, 255, 255, 0.8);">${event.message}</span>
+          ${objectTag}
+          <span style="color: rgba(255, 255, 255, 0.8);">${formattedMessage}</span>
         </div>
       `;
       })
@@ -926,6 +967,39 @@ export class LazyLoadingMonitor {
     if (this.isVisible) {
       this.updateStats();
     }
+  }
+
+  /**
+   * Generate a consistent color for an object name
+   * Uses a simple hash function to ensure the same object always gets the same color
+   */
+  private getObjectColor(objectName: string): string {
+    // Predefined palette of distinguishable colors
+    const colors = [
+      '#4CAF50', // Green
+      '#2196F3', // Blue
+      '#FF9800', // Orange
+      '#9C27B0', // Purple
+      '#F44336', // Red
+      '#00BCD4', // Cyan
+      '#FFEB3B', // Yellow
+      '#795548', // Brown
+      '#607D8B', // Blue Grey
+      '#E91E63', // Pink
+      '#8BC34A', // Light Green
+      '#3F51B5', // Indigo
+    ];
+
+    // Simple hash function to get consistent index for each object name
+    let hash = 0;
+    for (let i = 0; i < objectName.length; i++) {
+      hash = (hash << 5) - hash + objectName.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+
+    // Use absolute value and modulo to get index
+    const index = Math.abs(hash) % colors.length;
+    return colors[index];
   }
 
   public dispose(): void {

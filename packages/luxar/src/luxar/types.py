@@ -28,6 +28,12 @@ if sys.version_info >= (3, 10):
 else:
     from typing_extensions import TypeAlias
 
+from .constants import (
+    GAMMA_MAX,
+    GAMMA_MIN,
+    OPACITY_MAX,
+    OPACITY_MIN,
+)
 
 # =============================================================================
 # Literal Types for Constants
@@ -487,8 +493,8 @@ def validate_opacity(opacity: Any) -> float:
             f"Opacity must be convertible to float, got {type(opacity).__name__}"
         ) from e
 
-    if not 0.0 <= opacity_float <= 1.0:
-        raise ValueError(f"Opacity must be between 0.0 and 1.0, got {opacity_float}")
+    if not OPACITY_MIN <= opacity_float <= OPACITY_MAX:
+        raise ValueError(f"Opacity must be between {OPACITY_MIN} and {OPACITY_MAX}, got {opacity_float}")
 
     return opacity_float
 
@@ -513,8 +519,8 @@ def validate_gamma(gamma: Any) -> float:
             f"Gamma must be convertible to float, got {type(gamma).__name__}"
         ) from e
 
-    if not 0.2 <= gamma_float <= 2.0:
-        raise ValueError(f"Gamma must be between 0.2 and 2.0, got {gamma_float}")
+    if not GAMMA_MIN <= gamma_float <= GAMMA_MAX:
+        raise ValueError(f"Gamma must be between {GAMMA_MIN} and {GAMMA_MAX}, got {gamma_float}")
 
     return gamma_float
 

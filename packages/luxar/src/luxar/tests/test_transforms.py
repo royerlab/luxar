@@ -5,7 +5,7 @@ Test transform utilities and functionality.
 import numpy as np
 import pytest
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 from luxar.transforms import (
     compose,
     from_list,
@@ -211,75 +211,79 @@ class TestNodeTransformIntegration:
 
     def test_node_transform_validation(self, tmp_path):
         """Test that transforms are validated when creating nodes."""
-        scene = Scene(tmp_path / "test.zarr")
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
 
-        # Valid transform
-        t = translate(5, 0, 0)
-        group = scene.add_group("ValidTransform", transform=to_list(t))
-        assert "transform" in group.attrs
+            # Valid transform
+            t = translate(5, 0, 0)
+            group = scene.add_group("ValidTransform", transform=to_list(t))
+            assert "transform" in group.attrs
 
-        # Invalid transform - wrong size
-        with pytest.raises(ValueError):
-            scene.add_group("BadSize", transform=[1, 2, 3])
+            # Invalid transform - wrong size
+            with pytest.raises(ValueError):
+                scene.add_group("BadSize", transform=[1, 2, 3])
 
-        # Invalid transform - not a list/array
-        with pytest.raises(ValueError):
-            scene.add_group("BadType", transform="not a transform")
+            # Invalid transform - not a list/array
+            with pytest.raises(ValueError):
+                scene.add_group("BadType", transform="not a transform")
 
     def test_node_transform_property(self, tmp_path):
         """Test the transform property on nodes."""
-        scene = Scene(tmp_path / "test.zarr")
-        group = scene.add_group("TestGroup")
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("TestGroup")
 
-        # No transform initially
-        assert group.transform is None
+            # No transform initially
+            assert group.transform is None
 
-        # Set transform using property
-        t = compose(translate(1, 2, 3), rotate_x(45))
-        group.transform = t
+            # Set transform using property
+            t = compose(translate(1, 2, 3), rotate_x(45))
+            group.transform = t
 
-        # Get transform
-        retrieved = group.transform
-        assert retrieved is not None
-        assert np.allclose(retrieved, t)
+            # Get transform
+            retrieved = group.transform
+            assert retrieved is not None
+            assert np.allclose(retrieved, t)
 
-        # Set from list
-        group.transform = to_list(scale(2, 2, 2))
-        assert np.allclose(group.transform, scale(2, 2, 2))
+            # Set from list
+            group.transform = to_list(scale(2, 2, 2))
+            assert np.allclose(group.transform, scale(2, 2, 2))
 
-        # Remove transform
-        group.transform = None
-        assert group.transform is None
-        assert "transform" not in group.attrs
+            # Remove transform
+            group.transform = None
+            assert group.transform is None
+            assert "transform" not in group.attrs
 
     def test_nested_transforms(self, tmp_path):
         """Test nested transform hierarchy."""
-        scene = Scene(tmp_path / "test.zarr")
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
 
-        # Create hierarchy with transforms
-        g1 = scene.add_group("Level1", transform=to_list(translate(5, 0, 0)))
-        g2 = g1.add_group("Level2", transform=to_list(rotate_z(45)))
-        g3 = g2.add_group("Level3", transform=to_list(scale(2, 2, 2)))
+            # Create hierarchy with transforms
+            g1 = scene.add_group("Level1", transform=to_list(translate(5, 0, 0)))
+            g2 = g1.add_group("Level2", transform=to_list(rotate_z(45)))
+            g3 = g2.add_group("Level3", transform=to_list(scale(2, 2, 2)))
 
-        # Verify each has its own transform
-        assert np.allclose(g1.transform, translate(5, 0, 0))
-        assert np.allclose(g2.transform, rotate_z(45))
-        assert np.allclose(g3.transform, scale(2, 2, 2))
+            # Verify each has its own transform
+            assert np.allclose(g1.transform, translate(5, 0, 0))
+            assert np.allclose(g2.transform, rotate_z(45))
+            assert np.allclose(g3.transform, scale(2, 2, 2))
 
     def test_transform_with_points(self, tmp_path):
         """Test transforms work with point clouds."""
-        scene = Scene(tmp_path / "test.zarr")
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
 
-        # Create transformed group
-        t = compose(translate(10, 0, 0), scale(uniform=0.5))
-        group = scene.add_group("TransformedPoints", transform=to_list(t))
+            # Create transformed group
+            t = compose(translate(10, 0, 0), scale(uniform=0.5))
+            group = scene.add_group("TransformedPoints", transform=to_list(t))
 
-        # Add points
-        positions = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
-        colors = np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8)
-        scene.add_points("Points", positions, colors=colors, parent=group)
+            # Add points
+            positions = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+            colors = np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8)
+            scene.add_points("Points", positions, colors=colors, parent=group)
 
-        # Verify structure
-        assert group.transform is not None
-        assert len(group.children) == 1
-        assert group.children[0].name == "Points"
+            # Verify structure
+            assert group.transform is not None
+            assert len(group.children) == 1
+            assert group.children[0].name == "Points"

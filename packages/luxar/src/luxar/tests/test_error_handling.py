@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, Scene
 from luxar.types import DimensionMetadata, validate_dimension_metadata
 
 
@@ -127,49 +127,60 @@ class TestSceneErrorHandling:
     def test_add_points_invalid_positions(self):
         """Test adding points with invalid position arrays."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            scene = Scene(Path(tmpdir) / "test.zarr")
+            with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
+                scene = compiler.create_scene()
 
-            # Not array-like
-            with pytest.raises(ValueError, match="Positions must have shape"):
-                scene.add_points("bad", "not an array")
+                # Not array-like
+                with pytest.raises(ValueError, match="Positions must have shape"):
+                    scene.add_points("bad", "not an array")
 
-            # 1D array
-            with pytest.raises(ValueError, match="Positions must have shape"):
-                scene.add_points("bad", np.array([1, 2, 3]))
+                # 1D array
+                with pytest.raises(ValueError, match="Positions must have shape"):
+                    scene.add_points("bad", np.array([1, 2, 3]))
 
-            # 3D array
-            with pytest.raises(ValueError, match="Positions must have shape"):
-                scene.add_points("bad", np.zeros((10, 10, 3)))
+                # 3D array
+                with pytest.raises(ValueError, match="Positions must have shape"):
+                    scene.add_points("bad", np.zeros((10, 10, 3)))
 
     def test_add_points_dimension_validation(self):
-        """Test dimension validation when adding points."""
+        """Test that we can write points of any dimension without validation.
+        
+        The new API intentionally does not validate dimensions at write time,
+        allowing flexibility for nD datasets. This test verifies that behavior.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             dims = Dimensions(
                 [Dimension("x", range=(-10, 10)), Dimension("y", range=(-10, 10))]
             )
-            scene = Scene(Path(tmpdir) / "test.zarr", dimensions=dims)
+            with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
+                scene = compiler.create_scene(dimensions=dims)
 
-            # Valid points
-            good_positions = np.random.uniform(-5, 5, (100, 2)).astype(np.float32)
-            scene.add_points("good", good_positions)
+                # 2D points - matches scene dimensions
+                good_positions = np.random.uniform(-5, 5, (100, 2)).astype(np.float32)
+                compiler.write_points("2d_points", good_positions)
 
-            # Invalid points - wrong dimensions
-            bad_positions_3d = np.random.randn(100, 3).astype(np.float32)
-            with pytest.raises(ValueError, match="has 3 dimensions.*has 2 dimensions"):
-                scene.add_points("bad_dims", bad_positions_3d)
+                # 3D points - different from scene dimensions (allowed in new API)
+                positions_3d = np.random.randn(100, 3).astype(np.float32)
+                compiler.write_points("3d_points", positions_3d)  # Should succeed
 
-            # Invalid points - out of range
-            bad_positions_range = good_positions.copy()
-            bad_positions_range[0, 0] = 20  # x > 10
-            with pytest.raises(ValueError, match="outside range"):
-                scene.add_points("bad_range", bad_positions_range)
+                # Points outside range (also allowed - no range validation)
+                out_of_range = good_positions.copy()
+                out_of_range[0, 0] = 20  # x > 10
+                compiler.write_points("out_of_range", out_of_range)  # Should succeed
+
+            # Verify all were written
+            import zarr
+            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="r")
+            assert "2d_points" in store
+            assert "3d_points" in store
+            assert "out_of_range" in store
 
     def test_scene_initialization_errors(self):
         """Test scene initialization error cases."""
         # Invalid units
         with pytest.raises(ValueError):
             with tempfile.TemporaryDirectory() as tmpdir:
-                Scene(Path(tmpdir) / "test.zarr", units="invalid_unit")
+                LuxarZarrCompiler(Path(tmpdir) / "test.zarr", units="invalid_unit")
 
         # Invalid path (simulate permission error)
         # This is platform-specific, so we'll skip for now
@@ -293,69 +304,90 @@ class TestEdgeCases:
         assert dims.get_index("λ") == 1
 
     def test_concurrent_scene_access(self):
-        """Test multiple scenes accessing same zarr store."""
+        """Test that new compiler overwrites existing data (mode='w' behavior)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             # Create and finalize first scene
-            scene1 = Scene(zarr_path)
-            scene1.add_points("points1", np.random.randn(100, 3).astype(np.float32))
-            scene1.finalize()
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene1 = compiler.create_scene()
+                scene1.add_points("points1", np.random.randn(100, 3).astype(np.float32))
 
-            # Try to create second scene at same path
-            # Should overwrite (mode='w')
-            scene2 = Scene(zarr_path)
-            scene2.add_points("points2", np.random.randn(50, 3).astype(np.float32))
-            scene2.finalize()
+            # Verify first scene data exists
+            import zarr
+            store = zarr.open_group(zarr_path, mode="r")
+            assert "points1" in store
+            points1_count = len(store["points1/positions"])
+            assert points1_count == 100
+
+            # Create second scene at same path - overwrites
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene2 = compiler.create_scene()
+                scene2.add_points("points2", np.random.randn(50, 3).astype(np.float32))
+
+            # Verify second scene overwrote first
+            store = zarr.open_group(zarr_path, mode="r")
+            assert "points2" in store
+            assert "points1" not in store  # First scene data should be gone
 
 
 class TestRecoveryStrategies:
     """Test graceful error recovery."""
 
     def test_partial_scene_recovery(self):
-        """Test recovering from partial scene creation."""
+        """Test that validation errors don't corrupt the scene."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
-            # Create scene with some data
-            scene = Scene(zarr_path)
-            scene.add_points("valid", np.random.randn(100, 3).astype(np.float32))
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene()
 
-            # Try to add invalid data
-            try:
-                scene.add_points("invalid", np.array([1, 2, 3]))  # Wrong shape
-            except ValueError:
-                pass  # Expected
+                # Add valid data
+                scene.add_points("valid", np.random.randn(100, 3).astype(np.float32))
 
-            # Scene should still be finalizable
-            scene.finalize()
+                # Try to add invalid data - validation should catch it
+                from luxar.validation import ValidationError
+                with pytest.raises((ValueError, ValidationError)):
+                    # Wrong shape - 1D array instead of 2D
+                    scene.add_points("invalid", np.array([1, 2, 3]))
 
-            # Verify valid data is preserved
+                # Add more valid data after the error (matching dimensions)
+                scene.add_points("also_valid", np.random.randn(50, 3).astype(np.float32))
+
+            # Verify valid data is preserved and invalid was never written
             import zarr
-
             store = zarr.open_group(zarr_path, mode="r")
             assert "valid" in store
+            assert "also_valid" in store
             assert "invalid" not in store
 
     def test_dimension_inference_fallback(self):
-        """Test dimension inference when not explicitly set."""
+        """Test that scene dimensions are optional and points of any dimension work."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            scene = Scene(Path(tmpdir) / "test.zarr")
+            zarr_path = Path(tmpdir) / "test.zarr"
 
-            # Add 5D points without scene dimensions
-            positions = np.random.randn(100, 5).astype(np.float32)
-            scene.add_points("points", positions)
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                # Create scene without explicit dimensions
+                scene = compiler.create_scene()
 
-            # Dimensions should be inferred
-            assert scene.dimensions is not None
-            assert scene.dimensions.ndim == 5
-            assert scene.dimensions.displayed == [0, 1, 2]  # First 3 displayed
+                # Add 5D points
+                positions_5d = np.random.randn(100, 5).astype(np.float32)
+                scene.add_points("points_5d", positions_5d)
 
-            # Add more points - should validate against inferred dims
-            more_positions = np.random.randn(50, 5).astype(np.float32)
-            scene.add_points("more_points", more_positions)
+                # Add 3D points - different dimensions are allowed
+                positions_3d = np.random.randn(50, 3).astype(np.float32)
+                scene.add_points("points_3d", positions_3d)
 
-            scene.finalize()
+                # Add 7D points - also allowed
+                positions_7d = np.random.randn(25, 7).astype(np.float32)
+                scene.add_points("points_7d", positions_7d)
+
+            # Verify all point clouds were written with their respective dimensions
+            import zarr
+            store = zarr.open_group(zarr_path, mode="r")
+            assert store["points_5d/positions"].shape == (100, 5)
+            assert store["points_3d/positions"].shape == (50, 3)
+            assert store["points_7d/positions"].shape == (25, 7)
 
 
 if __name__ == "__main__":

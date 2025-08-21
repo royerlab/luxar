@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test dimension sliders with dense 5D data grid."""
+"""Dense Grid 5D Example - Multi-dimensional point cloud with time and channels."""
 
 from pathlib import Path
 
@@ -7,192 +7,186 @@ import numpy as np
 from arbol import aprint
 
 import luxar
-from luxar import Scene, transforms
+from luxar import LuxarZarrCompiler, transforms
 
 # Create a 5D scene (X, Y, Z, Time, Channel)
 scene_path = Path(__file__).parent / "dense_grid_5d_example.zarr"
-scene = Scene(
-    scene_path,
-    dimensions=luxar.Dimensions(
-        [
-            luxar.Dimension(name="X", unit="μm", range=(-30, 30), display=True),
-            luxar.Dimension(name="Y", unit="μm", range=(-30, 30), display=True),
-            luxar.Dimension(name="Z", unit="μm", range=(-30, 30), display=True),
-            luxar.Dimension(
-                name="Time",
-                unit="frame",
-                range=(0, 9),
-                display=False,
-                step=1.0,
-                discrete=True,
-            ),
-            luxar.Dimension(
-                name="Channel",
-                unit="",
-                range=(0, 2),
-                display=False,
-                discrete=True,
-                step=1.0,
-            ),
-        ]
-    ),
+
+dimensions = luxar.Dimensions(
+    [
+        luxar.Dimension(name="X", unit="μm", range=(-30, 30), display=True),
+        luxar.Dimension(name="Y", unit="μm", range=(-30, 30), display=True),
+        luxar.Dimension(name="Z", unit="μm", range=(-30, 30), display=True),
+        luxar.Dimension(
+            name="Time",
+            unit="frame",
+            range=(0, 9),
+            display=False,
+            step=1.0,
+            discrete=True,
+        ),
+        luxar.Dimension(
+            name="Channel",
+            unit="",
+            range=(0, 2),
+            display=False,
+            discrete=True,
+            step=1.0,
+        ),
+    ]
 )
 
-# Create a dense 3D grid that changes over time and channels
-# Grid spacing
-grid_size = 10  # 10x10x10 grid
-spacing = 4.0  # 4 μm between points
+with LuxarZarrCompiler(scene_path) as compiler:
+    scene = compiler.create_scene(dimensions=dimensions)
 
-# Time and channel parameters
-n_time_points = 10  # 0 to 9
-n_channels = 3  # 0, 1, 2
+    # Create a dense 3D grid that changes over time and channels
+    # Grid spacing
+    grid_size = 10  # 10x10x10 grid
+    spacing = 4.0  # 4 μm between points
 
-# Channel colors
-channel_colors = [
-    [1.0, 0.3, 0.3],  # Red
-    [0.3, 1.0, 0.3],  # Green
-    [0.3, 0.3, 1.0],  # Blue
-]
+    # Time and channel parameters
+    n_time_points = 10  # 0 to 9
+    n_channels = 3  # 0, 1, 2
 
-all_positions = []
-all_colors = []
-all_radii = []
+    # Channel colors
+    channel_colors = [
+        [1.0, 0.3, 0.3],  # Red
+        [0.3, 1.0, 0.3],  # Green
+        [0.3, 0.3, 1.0],  # Blue
+    ]
 
-# Create grid for each time point and channel
-for t in range(n_time_points):
-    for c in range(n_channels):
-        # Create 3D grid
-        x = np.linspace(
-            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
-        )
-        y = np.linspace(
-            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
-        )
-        z = np.linspace(
-            -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
-        )
+    all_positions = []
+    all_colors = []
+    all_radii = []
 
-        # Create meshgrid
-        xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+    # Create grid for each time point and channel
+    for t in range(n_time_points):
+        for c in range(n_channels):
+            # Create 3D grid
+            x = np.linspace(
+                -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+            )
+            y = np.linspace(
+                -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+            )
+            z = np.linspace(
+                -spacing * (grid_size - 1) / 2, spacing * (grid_size - 1) / 2, grid_size
+            )
 
-        # Flatten to get point positions
-        x_flat = xx.flatten()
-        y_flat = yy.flatten()
-        z_flat = zz.flatten()
+            # Create meshgrid
+            xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
 
-        # Apply time-based transformation
-        # Rotate around center based on time
-        angle = t * 10  # degrees
-        angle_rad = np.radians(angle)
-        cos_a = np.cos(angle_rad)
-        sin_a = np.sin(angle_rad)
+            # Flatten to get point positions
+            x_flat = xx.flatten()
+            y_flat = yy.flatten()
+            z_flat = zz.flatten()
 
-        # Rotate around Z axis
-        x_rot = x_flat * cos_a - y_flat * sin_a
-        y_rot = x_flat * sin_a + y_flat * cos_a
-        z_rot = z_flat
+            # Apply time-based transformation
+            # Rotate around center based on time
+            angle = t * 10  # degrees
+            angle_rad = np.radians(angle)
+            cos_a = np.cos(angle_rad)
+            sin_a = np.sin(angle_rad)
 
-        # Apply channel-based offset
-        channel_offset = (c - 1) * 1.0  # Shift channels slightly in Z
-        z_rot += channel_offset
+            # Rotate around Z axis
+            x_rot = x_flat * cos_a - y_flat * sin_a
+            y_rot = x_flat * sin_a + y_flat * cos_a
+            z_rot = z_flat
 
-        # Create 5D positions
-        n_points = len(x_flat)
-        positions = np.zeros((n_points, 5), dtype=np.float32)
-        positions[:, 0] = x_rot
-        positions[:, 1] = y_rot
-        positions[:, 2] = z_rot
-        positions[:, 3] = t  # Time coordinate
-        positions[:, 4] = c  # Channel coordinate
+            # Create 5D positions (X, Y, Z, Time, Channel)
+            positions_5d = np.column_stack(
+                [
+                    x_rot,
+                    y_rot,
+                    z_rot,
+                    np.full_like(x_flat, t),  # Time coordinate
+                    np.full_like(x_flat, c),  # Channel coordinate
+                ]
+            ).astype(np.float32)
 
-        all_positions.append(positions)
+            all_positions.append(positions_5d)
 
-        # Colors based on channel with gradient based on position
-        colors = np.tile(channel_colors[c], (n_points, 1))
-        # Add gradient based on height (z position)
-        brightness = (z_flat - z_flat.min()) / (z_flat.max() - z_flat.min() + 1e-6)
-        colors = colors * brightness[:, np.newaxis]
-        all_colors.append(colors)
+            # Colors based on channel
+            n_points = len(x_flat)
+            # Apply time-based intensity modulation
+            intensity = 0.5 + 0.5 * np.sin(angle_rad)
+            modulated_color = [c * intensity for c in channel_colors[c]]
+            colors = np.tile(modulated_color, (n_points, 1)).astype(np.float32)
+            all_colors.append(colors)
 
-        # Radii - vary by time (growing/shrinking)
-        base_radius = 2.5  # Increased from 1.5
-        time_factor = 1.0 + 0.3 * np.sin(t * np.pi / 5)  # Oscillate
-        radii = np.full(n_points, base_radius * time_factor, dtype=np.float32)
-        all_radii.append(radii)
+            # Radii that vary with time
+            base_radius = 0.15
+            time_factor = 1.0 + 0.3 * np.sin(angle_rad)
+            radii = np.full(n_points, base_radius * time_factor, dtype=np.float32)
+            all_radii.append(radii)
 
-# Combine all data
-positions = np.vstack(all_positions)
-colors = np.vstack(all_colors)
-radii = np.concatenate(all_radii)
+    # Combine all data
+    all_positions = np.vstack(all_positions)
+    all_colors = np.vstack(all_colors)
+    all_radii = np.concatenate(all_radii)
 
-# Add central marker points at each time/channel to help with orientation
-marker_positions = []
-marker_colors = []
-marker_radii = []
+    # Add points to scene
+    aprint(f"Adding {len(all_positions):,} 5D points to scene...")
+    scene.add_points(
+        "DenseGrid5D",
+        all_positions,
+        colors=all_colors,
+        radii=all_radii,
+        sharpness=2.0,
+        opacity=0.8,
+        blending_mode="additive",
+    )
 
-for t in range(n_time_points):
-    for c in range(n_channels):
-        # Add a larger central marker
-        marker_pos = np.array([[0, 0, (c - 1) * 1.0, t, c]], dtype=np.float32)
-        marker_positions.append(marker_pos)
+    # Add axis markers for spatial reference
+    axis_length = 20.0
+    axis_positions = []
+    axis_colors = []
 
-        # Make markers bright white
-        marker_colors.append([[1.0, 1.0, 1.0]])
+    # X axis markers (red)
+    for i in range(5):
+        x_pos = -axis_length + (i * axis_length / 2)
+        # 5D position: (x, y, z, time=0, channel=0)
+        axis_positions.append([x_pos, 0, 0, 0, 0])
+        axis_colors.append([1.0, 0.2, 0.2])
 
-        # Larger radius for markers
-        marker_radii.append([3.0])
+    # Y axis markers (green)
+    for i in range(5):
+        y_pos = -axis_length + (i * axis_length / 2)
+        axis_positions.append([0, y_pos, 0, 0, 0])
+        axis_colors.append([0.2, 1.0, 0.2])
 
-# Add markers to main arrays
-positions = np.vstack([positions] + marker_positions)
-colors = np.vstack([colors] + marker_colors)
-radii = np.concatenate([radii] + marker_radii)
+    # Z axis markers (blue)
+    for i in range(5):
+        z_pos = -axis_length + (i * axis_length / 2)
+        axis_positions.append([0, 0, z_pos, 0, 0])
+        axis_colors.append([0.2, 0.2, 1.0])
 
-# Add points to scene
-points = scene.add_points(
-    "dense_grid",
-    positions=positions,
-    colors=colors,
-    radii=radii,
-    sharpness=np.full(len(positions), 2.0, dtype=np.float32),
-    parent=None,
-    transform=transforms.identity(),
-    opacity=1.0,
-    gamma=1.0,
-    blending_mode="additive",
-)
+    scene.add_points(
+        "AxisMarkers",
+        np.array(axis_positions, dtype=np.float32),
+        colors=np.array(axis_colors, dtype=np.float32),
+        radii=0.3,
+        sharpness=10.0,
+        opacity=1.0,
+        blending_mode="normal",
+    )
 
-# Add info text
-info_text = f"""
-5D Dense Grid Test
-==================
-Total dimensions: 5 (X, Y, Z, Time, Channel)
-Displayed: X, Y, Z
-Sliders: Time (0-9 frames), Channel (0-2)
-
-Grid: {grid_size}x{grid_size}x{grid_size} = {grid_size**3} points per frame
-Total points: {len(positions)}
-- {n_time_points} time frames
-- {n_channels} channels (R/G/B)
-- Grid rotates over time
-- Point size oscillates
-- White markers at center
-
-Controls:
-- Drag sliders to navigate Time and Channel
-- Use [ / ] keys for fine control
-- Press 1/2 to select dimension
-"""
-
-# Add metadata
-scene.attrs["info"] = info_text
-
-# Finalize
-scene.finalize()
-
-aprint(f"Created dense 5D test scene: {scene_path}")
-aprint(f"Total points: {len(positions)}")
-aprint("\nDimensions:")
-for i, dim in enumerate(scene.dimensions.dimensions):
-    displayed = "displayed" if dim.display else "slider"
-    aprint(f"  {i}: {dim.name} ({dim.unit}) - {displayed}")
-aprint("\nOpen in viewer with proper zarr path")
+aprint(f"✓ 5D scene created at {scene_path}")
+aprint("\nScene summary:")
+aprint(f"- Total points: {len(all_positions):,}")
+aprint(f"- Dimensions: X, Y, Z (displayed), Time, Channel (hidden)")
+aprint(f"- Time points: {n_time_points} (0-9)")
+aprint(f"- Channels: {n_channels} (Red, Green, Blue)")
+aprint(f"- Grid size: {grid_size}×{grid_size}×{grid_size} per time/channel")
+aprint("\nViewing instructions:")
+aprint("1. luxar serve dense_grid_5d_example.zarr")
+aprint("2. Use keyboard to navigate time dimension:")
+aprint("   - Press '4' to select Time dimension")
+aprint("   - Press '[' and ']' to navigate through time")
+aprint("3. Use keyboard to navigate channel dimension:")
+aprint("   - Press '5' to select Channel dimension")
+aprint("   - Press '[' and ']' to switch channels")
+aprint("\nExpected behavior:")
+aprint("- Grid rotates over time (10° per frame)")
+aprint("- Colors change based on channel (R/G/B)")
+aprint("- Point sizes oscillate with time")

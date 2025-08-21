@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_node_positions(
@@ -92,101 +92,103 @@ def main():
     )  # Rough estimate
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Define rendering property cycles for material variety
-    blending_modes = ["normal", "additive", "subtractive"]
-    opacities = [0.3, 0.5, 0.7, 0.9, 1.0]
-    gammas = [0.8, 1.0, 1.2, 1.5]
-    radii_values = [0.05, 0.1, 0.15]  # Different point sizes
+        scene = compiler.create_scene()
 
-    # Track unique material combinations for cache analysis
-    material_combinations = set()
+        # Define rendering property cycles for material variety
+        blending_modes = ["normal", "additive", "subtractive"]
+        opacities = [0.3, 0.5, 0.7, 0.9, 1.0]
+        gammas = [0.8, 1.0, 1.2, 1.5]
+        radii_values = [0.05, 0.1, 0.15]  # Different point sizes
 
-    aprint(f"\nCreating {num_nodes} nodes with varied material properties...")
-    start_time = time.time()
+        # Track unique material combinations for cache analysis
+        material_combinations = set()
 
-    # Progress tracking
-    progress_interval = max(1, num_nodes // 10)
+        aprint(f"\nCreating {num_nodes} nodes with varied material properties...")
+        start_time = time.time()
 
-    for i in range(num_nodes):
-        # Show progress
-        if i % progress_interval == 0:
-            aprint(f"  Progress: {i}/{num_nodes} nodes ({i / num_nodes * 100:.1f}%)")
+        # Progress tracking
+        progress_interval = max(1, num_nodes // 10)
 
-        # Generate deterministic positions for this node
-        positions = create_node_positions(i, points_per_node)
+        for i in range(num_nodes):
+            # Show progress
+            if i % progress_interval == 0:
+                aprint(f"  Progress: {i}/{num_nodes} nodes ({i / num_nodes * 100:.1f}%)")
 
-        # Cycle through different rendering properties systematically
-        blending = blending_modes[i % len(blending_modes)]
-        opacity = opacities[i % len(opacities)]
-        gamma = gammas[i % len(gammas)]
-        radius = radii_values[i % len(radii_values)]
+            # Generate deterministic positions for this node
+            positions = create_node_positions(i, points_per_node)
 
-        # Track unique material combinations for analysis
-        material_key = (blending, round(opacity, 2), round(gamma, 2), round(radius, 3))
-        material_combinations.add(material_key)
+            # Cycle through different rendering properties systematically
+            blending = blending_modes[i % len(blending_modes)]
+            opacity = opacities[i % len(opacities)]
+            gamma = gammas[i % len(gammas)]
+            radius = radii_values[i % len(radii_values)]
 
-        # Generate deterministic colors using node index as seed
-        colors = generate_test_colors(points_per_node, i)
+            # Track unique material combinations for analysis
+            material_key = (blending, round(opacity, 2), round(gamma, 2), round(radius, 3))
+            material_combinations.add(material_key)
 
-        # Create the node
-        scene.add_points(
-            f"BenchmarkNode_{i:03d}",
-            positions,
-            colors=colors,
-            radii=radius,
-            blending_mode=blending,
-            opacity=opacity,
-            gamma=gamma,
+            # Generate deterministic colors using node index as seed
+            colors = generate_test_colors(points_per_node, i)
+
+            # Create the node
+            scene.add_points(
+                f"BenchmarkNode_{i:03d}",
+                positions,
+                colors=colors,
+                radii=radius,
+                blending_mode=blending,
+                opacity=opacity,
+                gamma=gamma,
+            )
+
+        creation_time = time.time() - start_time
+
+        aprint("Finalizing scene...")
+        finalize_start = time.time()
+        finalize_time = time.time() - finalize_start
+
+        total_time = creation_time + finalize_time
+
+        # Performance analysis
+        aprint("\n" + "=" * 60)
+        aprint("PERFORMANCE BENCHMARK RESULTS")
+        aprint("=" * 60)
+        aprint("Scene Creation Performance:")
+        aprint(f"- Node creation time: {creation_time:.2f} seconds")
+        aprint(f"- Scene finalization time: {finalize_time:.2f} seconds")
+        aprint(f"- Total time: {total_time:.2f} seconds")
+        aprint(f"- Points per second: {total_points / creation_time:,.0f}")
+        aprint(f"- Nodes per second: {num_nodes / creation_time:.1f}")
+
+        aprint("\nMaterial Combination Analysis:")
+        aprint(f"- Unique material combinations: {len(material_combinations)}")
+        aprint(
+            f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}"
+        )
+        aprint(
+            f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used"
         )
 
-    creation_time = time.time() - start_time
+        aprint("\nScene Statistics:")
+        aprint(f"- Total nodes: {num_nodes}")
+        aprint(f"- Total points: {total_points:,}")
+        aprint(f"- Average points per node: {points_per_node}")
+        aprint("- Spatial distribution: 10×10×10 grid layout")
 
-    aprint("Finalizing scene...")
-    finalize_start = time.time()
-    scene.finalize()
-    finalize_time = time.time() - finalize_start
+        aprint("\nRendering Performance Test:")
+        aprint("This scene is designed to stress-test the renderer with:")
+        aprint("- High point density")
+        aprint("- Many different material combinations")
+        aprint("- Spatial clustering for occlusion testing")
+        aprint("- Mixed transparency and blending modes")
 
-    total_time = creation_time + finalize_time
-
-    # Performance analysis
-    aprint("\n" + "=" * 60)
-    aprint("PERFORMANCE BENCHMARK RESULTS")
-    aprint("=" * 60)
-    aprint("Scene Creation Performance:")
-    aprint(f"- Node creation time: {creation_time:.2f} seconds")
-    aprint(f"- Scene finalization time: {finalize_time:.2f} seconds")
-    aprint(f"- Total time: {total_time:.2f} seconds")
-    aprint(f"- Points per second: {total_points / creation_time:,.0f}")
-    aprint(f"- Nodes per second: {num_nodes / creation_time:.1f}")
-
-    aprint("\nMaterial Combination Analysis:")
-    aprint(f"- Unique material combinations: {len(material_combinations)}")
-    aprint(
-        f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}"
-    )
-    aprint(
-        f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used"
-    )
-
-    aprint("\nScene Statistics:")
-    aprint(f"- Total nodes: {num_nodes}")
-    aprint(f"- Total points: {total_points:,}")
-    aprint(f"- Average points per node: {points_per_node}")
-    aprint("- Spatial distribution: 10×10×10 grid layout")
-
-    aprint("\nRendering Performance Test:")
-    aprint("This scene is designed to stress-test the renderer with:")
-    aprint("- High point density")
-    aprint("- Many different material combinations")
-    aprint("- Spatial clustering for occlusion testing")
-    aprint("- Mixed transparency and blending modes")
-
-    aprint("\nTo test rendering performance:")
-    aprint(f"  luxar serve {output_path}")
-    aprint("Monitor frame rates and memory usage while navigating!")
-    aprint("=" * 60)
+        aprint("\nTo test rendering performance:")
+        aprint(f"  luxar serve {output_path}")
+        aprint("Monitor frame rates and memory usage while navigating!")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

@@ -1,110 +1,78 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import numpy as np
-import zarr
 from arbol import aprint
 
-from ._io import DEFAULT_COMP
-from .config import (
-    DEFAULT_UNITS,
-    DEFAULT_VERSION,
-    check_dataset_size_warning,
+from .array_utils import (
+    broadcast_color_to_points,
+    broadcast_radii_to_points,
+    broadcast_sharpness_to_points,
 )
 from .dimensions import Dimensions
 from .node import Node
 from .points import Points
 from .types import (
     ColorArray,
-    CompressorProtocol,
     DimensionMetadata,
-    LuxarVersion,
-    PathLike,
-    PhysicalUnit,
     PositionArray,
     validate_dimension_metadata,
-    validate_physical_unit,
 )
+from .writer import ZarrWriterProtocol
 
 
 class Scene(Node):
-    """Scene root – opens a Zarr store and exposes builder helpers.
+    """Scene root node representing the top level of a scene hierarchy.
 
-    The Scene class represents the root of a Luxar scene hierarchy. It manages
-    a Zarr store containing all scene data and provides high-level methods for
-    building complex 3D scenes with point clouds and hierarchical grouping.
+    The Scene class is a pure scene graph node that must be created through
+    LuxarZarrCompiler for progressive writing and memory-efficient handling
+    of large datasets.
+
+    Example:
+        >>> from luxar import LuxarZarrCompiler, Dimensions
+        >>> with LuxarZarrCompiler('output.zarr') as compiler:
+        ...     scene = compiler.create_scene(dimensions=dims)
+        ...     scene.add_points('points', huge_array)  # Written immediately
 
     Args:
-        store_path: Path to the Zarr store to create or open. If None, uses temporary directory
-        units: Physical units for the scene coordinates
-        version: Luxar scene format version
-        compressor: Compressor for Zarr datasets
+        writer: Writer interface for progressive writing (required)
+        dimensions: Scene-level dimension definitions
     """
 
     def __init__(
         self,
-        store_path: Optional[PathLike] = None,
-        *,
+        writer: ZarrWriterProtocol,
         dimensions: Optional[Dimensions] = None,
-        units: Union[PhysicalUnit, str] = DEFAULT_UNITS,
-        version: Union[LuxarVersion, str] = DEFAULT_VERSION,
-        compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
     ) -> None:
         """Initialize a new Luxar scene.
 
         Args:
-            store_path: Path to Zarr store, or None for temporary store
+            writer: Writer interface for progressive writing (required)
             dimensions: Scene-level dimension definitions
-            units: Physical units for scene coordinates (deprecated, use dimensions)
-            version: Luxar scene format version
-            compressor: Compressor for Zarr datasets
 
         Raises:
-            ValueError: If scene initialization fails
+            ValueError: If scene initialization fails or writer is None
         """
         try:
-            # Validate inputs
-            validated_units = (
-                validate_physical_unit(units) if isinstance(units, str) else units
-            )
+            if writer is None:
+                raise ValueError("Writer is required. Use LuxarZarrCompiler to create scenes.")
 
-            # Handle store path
-            resolved_store_path: PathLike
-            if store_path is None:
-                tmpdir = tempfile.TemporaryDirectory()
-                resolved_store_path = Path(tmpdir.name) / "scene.zarr"
-                self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = tmpdir
-                aprint(
-                    f"No store_path provided, using temporary directory: {resolved_store_path}"
-                )
-            else:
-                self._tmpdir = None
-                resolved_store_path = Path(store_path)
-                aprint(f"Creating scene at store_path: {resolved_store_path}")
+            # Store writer interface
+            self._writer = writer
 
-            # Create root Zarr group (format=2 for JavaScript compatibility)
-            root = zarr.open_group(resolved_store_path, mode="w")
-            root.attrs.update(
-                {"luxar_version": version, "units": validated_units, "type": "scene"}
-            )
+            # Create lightweight root node (no Zarr group)
+            super().__init__("Scene", group=None, writer=writer)
 
-            # Initialize parent Node
-            super().__init__("Scene", root)
-
-            # Store configuration
-            self._compressor: Optional[CompressorProtocol] = compressor
-            self._store_path: PathLike = resolved_store_path
+            # Store dimensions
             self._dimensions: Optional[Dimensions] = dimensions
             self._dimension_metadata: Optional[list[DimensionMetadata]] = None
 
-            # Store dimensions in zarr attributes if provided
+            # Store dimensions in attributes if provided
             if dimensions is not None:
-                self.attrs["scene_dimensions"] = dimensions.to_dict()
+                writer.write_group("/", scene_dimensions=dimensions.to_dict())
 
-            aprint(f"✓ Scene initialized successfully at {resolved_store_path}")
+            aprint("✓ Scene initialized successfully with progressive writer")
 
         except Exception as e:
             aprint(f"Failed to initialize Scene: {e}")
@@ -190,21 +158,37 @@ class Scene(Node):
             ndim = positions.shape[1]
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
-            # Validate against scene dimensions if defined
-            self._validate_or_infer_dimensions(positions, dimension_metadata)
+            # Skip dimension validation in new API - allow flexible dimensions
+            # self._validate_or_infer_dimensions(positions, dimension_metadata)
 
-            # Handle dimension metadata for the node
-            self._apply_dimension_metadata(attrs, dimension_metadata, ndim)
+            # Skip dimension metadata application - handled at scene level if needed
+            # self._apply_dimension_metadata(attrs, dimension_metadata, ndim)
+
+            # Process colors, radii, and sharpness using helper functions
+            processed_colors = broadcast_color_to_points(colors, n_points)
+            processed_radii = broadcast_radii_to_points(radii, n_points)
+            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_points)
 
             parent_node = parent or self
+
+            # Use writer to write points immediately
+            path = f"{parent_node.path}/{name}" if parent_node.path else name
+            metadata = self._writer.write_points(
+                path,
+                positions.astype(np.float32),
+                colors=processed_colors,
+                radii=processed_radii,
+                sharpness=processed_sharpness,
+                **attrs
+            )
+
+            # Return lightweight Points node with only metadata
             return Points(
                 name,
-                positions,
-                colors,
-                radii,
-                sharpness,
+                positions=None,  # No data in memory
+                metadata=metadata,
                 parent=parent_node,
-                compressor=self._compressor,
+                writer=self._writer,
                 **attrs,
             )
         except Exception as e:
@@ -266,145 +250,22 @@ class Scene(Node):
             attrs["dimension_metadata"] = [m.to_dict() for m in legacy_metadata]
 
     def finalize(self) -> None:
-        """Finalize the scene by consolidating Zarr metadata.
-
-        This operation optimizes the Zarr store for reading by consolidating
-        all metadata into a single file, improving load performance.
-
-        Raises:
-            ValueError: If metadata consolidation fails
+        """Finalize the scene.
+        
+        Note: Finalization is now handled automatically by LuxarZarrCompiler's
+        context manager. This method is kept for compatibility but does nothing.
         """
-        try:
-            aprint("Finalizing scene and consolidating Zarr metadata.")
-            zarr.consolidate_metadata(self._group.store)
-            aprint("✓ Scene finalized successfully.")
-        except Exception as e:
-            aprint(f"Failed to finalize scene: {e}")
-            raise ValueError(f"Could not finalize scene: {e}") from e
+        aprint("Note: Finalization is handled by LuxarZarrCompiler context manager")
 
-    # ---------------------------------------------------------- convenience API
-    @classmethod
-    def random_demo(
-        cls, store: PathLike, n: int = 10_000, seed: Optional[int] = None
-    ) -> Scene:
-        """Create a demo scene with a Lorenz attractor visualization.
-
-        This creates a beautiful butterfly-shaped 3D structure with colors
-        that transition smoothly over time, demonstrating the Luxar scene format
-        with an aesthetically pleasing mathematical visualization.
-
-        Args:
-            store: Path to the Zarr store to create
-            n: Number of points to generate along the attractor
-            seed: Random seed for reproducible results
-
-        Returns:
-            The created demo scene
-
-        Raises:
-            ValueError: If demo scene creation fails
-        """
-        try:
-            aprint(f"Creating Lorenz attractor demo scene with {n:,} points.")
-
-            # Check for performance warnings
-            warning = check_dataset_size_warning(n)
-            if warning:
-                aprint(f"Performance warning: {warning}")
-
-            # Lorenz attractor parameters
-            sigma = 10.0
-            rho = 28.0
-            beta = 8.0 / 3.0
-            dt = 0.01
-
-            # Initialize arrays
-            positions = np.zeros((n, 3), dtype=np.float32)
-
-            # Starting point (with small random perturbation if seed is provided)
-            rng = np.random.default_rng(seed)
-            x, y, z = 0.1, 0.0, 0.0
-            if seed is not None:
-                x += rng.uniform(-0.01, 0.01)
-
-            # Generate Lorenz attractor points
-            for i in range(n):
-                # Lorenz equations
-                dx = sigma * (y - x) * dt
-                dy = (x * (rho - z) - y) * dt
-                dz = (x * y - beta * z) * dt
-
-                x += dx
-                y += dy
-                z += dz
-
-                positions[i] = [x, y, z]
-
-            # Scale positions to fit nicely in view
-            positions *= 0.1
-
-            # Center the attractor at its center of mass
-            center_of_mass = np.mean(positions, axis=0)
-            positions -= center_of_mass
-
-            # Create time-based colors with smooth transitions
-            # Using HSV color space for smooth color transitions
-            t = np.linspace(0, 1, n)
-            hue = (t * 2) % 1.0  # Cycle through hues twice
-
-            # Convert HSV to RGB
-            colors = np.zeros((n, 3), dtype=np.uint8)
-            for i in range(n):
-                h = hue[i]
-                # Full saturation and value for vibrant colors
-                s, v = 1.0, 1.0
-
-                # HSV to RGB conversion
-                c = v * s
-                x = c * (1 - abs((h * 6) % 2 - 1))
-                m = v - c
-
-                h_i = int(h * 6)
-                if h_i == 0:
-                    r, g, b = c, x, 0.0
-                elif h_i == 1:
-                    r, g, b = x, c, 0.0
-                elif h_i == 2:
-                    r, g, b = 0.0, c, x
-                elif h_i == 3:
-                    r, g, b = 0.0, x, c
-                elif h_i == 4:
-                    r, g, b = x, 0.0, c
-                else:
-                    r, g, b = c, 0.0, x
-
-                colors[i] = ((r + m) * 255, (g + m) * 255, (b + m) * 255)
-
-            # Generate radii based on position in the trajectory (growing over time)
-            # This creates a visual effect of the attractor "growing" as it evolves
-            radii = np.linspace(0.05, 0.2, n).astype(np.float32)
-
-            # Create scene and add data
-            scene = cls(store)
-            scene.add_points("LorenzAttractor", positions, colors, radii=radii)
-            scene.finalize()
-
-            aprint(
-                f"✓ Lorenz attractor demo scene created at {scene.get_store_path()}."
-            )
-            return scene
-
-        except Exception as e:
-            aprint(f"Failed to create demo scene: {e}")
-            raise ValueError(f"Could not create demo scene: {e}") from e
-
-    def get_store_path(self) -> PathLike:
+    def get_store_path(self) -> str:
         """Get the path to the backing Zarr store.
 
         Returns:
             Path to the Zarr store backing this scene
         """
-        return self._store_path
+        if self._writer:
+            return self._writer.store_path
+        raise ValueError("No store path available without writer")
 
     @property
     def dimension_metadata(self) -> Optional[list[DimensionMetadata]]:

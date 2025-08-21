@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0, rotation: float = 0.0) -> np.ndarray:
@@ -200,71 +200,68 @@ def main():
     output_path = Path(__file__).parent / "temporal_spiral_sphere_4d_example.zarr"
 
     # Create scene with 4D dimensions (only first 3 displayed)
-    scene = Scene(
-        store_path=output_path,
-        dimensions=Dimensions(
-            [
-                Dimension(name="x", unit="μm", range=(-15, 15), step=0.5, display=True),
-                Dimension(name="y", unit="μm", range=(-15, 15), step=0.5, display=True),
-                Dimension(name="z", unit="μm", range=(-15, 15), step=0.5, display=True),
-                Dimension(name="t", unit="frame", range=(0, n_frames - 1), step=1, display=False, discrete=True),
-            ]
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension(name="x", unit="μm", range=(-15, 15), step=0.5, display=True),
+                    Dimension(name="y", unit="μm", range=(-15, 15), step=0.5, display=True),
+                    Dimension(name="z", unit="μm", range=(-15, 15), step=0.5, display=True),
+                    Dimension(name="t", unit="frame", range=(0, n_frames - 1), step=1, display=False, discrete=True),
+                ]
+            )
         )
-    )
 
-    # Prepare 4D arrays for all frames
-    all_positions = []
-    all_colors = []
-    all_radii = []
-    all_sharpness = []
+        # Prepare 4D arrays for all frames
+        all_positions = []
+        all_colors = []
+        all_radii = []
+        all_sharpness = []
 
-    aprint(f"\nGenerating {n_frames} temporal frames...")
+        aprint(f"\nGenerating {n_frames} temporal frames...")
 
-    for t in range(n_frames):
-        if t % 32 == 0:  # Progress indicator every 32 frames
-            aprint(f"  Frame {t}/{n_frames}...")
+        for t in range(n_frames):
+            if t % 32 == 0:  # Progress indicator every 32 frames
+                aprint(f"  Frame {t}/{n_frames}...")
 
-        # Calculate rotation for this frame
-        rotation = (t / n_frames) * total_rotation
+            # Calculate rotation for this frame
+            rotation = (t / n_frames) * total_rotation
 
-        # Generate 3D positions with rotation
-        positions_3d = create_spherical_spiral(n_points_per_frame, sphere_radius, rotation)
+            # Generate 3D positions with rotation
+            positions_3d = create_spherical_spiral(n_points_per_frame, sphere_radius, rotation)
 
-        # Add time dimension to create 4D positions
-        t_values = np.full((n_points_per_frame, 1), t, dtype=np.float32)
-        positions_4d = np.hstack([positions_3d, t_values])
+            # Add time dimension to create 4D positions
+            t_values = np.full((n_points_per_frame, 1), t, dtype=np.float32)
+            positions_4d = np.hstack([positions_3d, t_values])
 
-        # Generate time-varying properties
-        colors = create_undulating_rainbow_colors(n_points_per_frame, t, n_frames)
-        radii = create_pulsating_radii(positions_3d, point_radius, t, n_frames)
-        sharpness = create_dynamic_sharpness(positions_3d, t, n_frames)
+            # Generate time-varying properties
+            colors = create_undulating_rainbow_colors(n_points_per_frame, t, n_frames)
+            radii = create_pulsating_radii(positions_3d, point_radius, t, n_frames)
+            sharpness = create_dynamic_sharpness(positions_3d, t, n_frames)
 
-        all_positions.append(positions_4d)
-        all_colors.append(colors)
-        all_radii.append(radii)
-        all_sharpness.append(sharpness)
+            all_positions.append(positions_4d)
+            all_colors.append(colors)
+            all_radii.append(radii)
+            all_sharpness.append(sharpness)
 
-    # Concatenate all frames
-    aprint("\nCombining all frames...")
-    all_positions = np.vstack(all_positions)
-    all_colors = np.vstack(all_colors)
-    all_radii = np.concatenate(all_radii)
-    all_sharpness = np.concatenate(all_sharpness)
+        # Concatenate all frames
+        aprint("\nCombining all frames...")
+        all_positions = np.vstack(all_positions)
+        all_colors = np.vstack(all_colors)
+        all_radii = np.concatenate(all_radii)
+        all_sharpness = np.concatenate(all_sharpness)
 
-    # Add points to scene
-    aprint("Adding points to scene...")
-    scene.add_points(
-        "temporal_spiral_sphere",
-        positions=all_positions,
-        colors=all_colors,
-        radii=all_radii,
-        sharpness=all_sharpness,
-    )
+        # Add points to scene
+        aprint("Adding points to scene...")
+        scene.add_points(
+            "temporal_spiral_sphere",
+            positions=all_positions,
+            colors=all_colors,
+            radii=all_radii,
+            sharpness=all_sharpness,
+        )
 
-    # Finalize the scene
-    aprint(f"\nFinalizing scene at {output_path}")
-    scene.finalize()
-
+    # Context manager will call finalize automatically
     aprint("\n✅ 4D Temporal Spiral Sphere dataset created successfully!")
     aprint(f"📁 Output: {output_path}")
     aprint(f"📊 Dataset shape: {all_positions.shape}")

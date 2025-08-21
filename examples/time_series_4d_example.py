@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_rotating_spiral(
@@ -85,27 +85,27 @@ def main():
     )
 
     # Create scene with dimension definitions
-    scene = Scene(output_path, dimensions=dimensions)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
 
-    # Generate rotating spiral data
-    aprint(f"Generating {n_times} time steps with {n_points} points each...")
-    positions, colors = create_rotating_spiral(n_points, n_times)
+        # Generate rotating spiral data
+        aprint(f"Generating {n_times} time steps with {n_points} points each...")
+        positions, colors = create_rotating_spiral(n_points, n_times)
 
-    # Add point cloud
-    scene.add_points(
+        # Add point cloud
+        scene.add_points(
         "RotatingSpiral",
         positions,
         colors=colors,
         radii=np.full(len(positions), 0.15, dtype=np.float32),
-    )
+        )
 
-    scene.finalize()
 
-    aprint(f"✓ Created 4D time series with {len(positions):,} total points")
-    aprint(f"  Time steps: {n_times}")
-    aprint(f"  Points per frame: {n_points}")
-    aprint("  Navigate through time with keyboard controls")
-    aprint(f"\nTo view: luxar serve {output_path}")
+        aprint(f"✓ Created 4D time series with {len(positions):,} total points")
+        aprint(f"  Time steps: {n_times}")
+        aprint(f"  Points per frame: {n_points}")
+        aprint("  Navigate through time with keyboard controls")
+        aprint(f"\nTo view: luxar serve {output_path}")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_test_points(time_positions: list, n_points_per_time: int = 30) -> tuple:
@@ -106,63 +106,63 @@ def main():
         ]
     )
 
-    scene = Scene(output_path, dimensions=dimensions)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
 
-    # Create test points
-    aprint("\nCreating test point clusters:")
-    positions, colors, radii = create_test_points(test_cases)
+        # Create test points
+        aprint("\nCreating test point clusters:")
+        positions, colors, radii = create_test_points(test_cases)
 
-    # Combine with gradient
-    all_positions = np.vstack([positions, gradient_positions])
-    all_colors = np.vstack([colors, gradient_colors])
-    all_radii = np.hstack([radii, gradient_radii])
+        # Combine with gradient
+        all_positions = np.vstack([positions, gradient_positions])
+        all_colors = np.vstack([colors, gradient_colors])
+        all_radii = np.hstack([radii, gradient_radii])
 
-    # Add sharpness variation for additional demonstration
-    # Sharper points will have more defined boundaries
-    sharpness = np.ones(len(all_positions), dtype=np.float32) * 2.0
-    sharpness[len(positions) :] = 5.0  # Make gradient points sharper
+        # Add sharpness variation for additional demonstration
+        # Sharper points will have more defined boundaries
+        sharpness = np.ones(len(all_positions), dtype=np.float32) * 2.0
+        sharpness[len(positions) :] = 5.0  # Make gradient points sharper
 
-    # Add points to scene
-    scene.add_points(
+        # Add points to scene
+        scene.add_points(
         "RadiusSlicingDemo",
         all_positions,
         colors=all_colors,
         radii=all_radii,
         sharpness=sharpness,
-    )
+        )
 
-    scene.finalize()
 
-    # Print detailed instructions
-    aprint(f"\n✓ Created radius slicing example with {len(all_positions):,} points")
-    aprint("\n" + "=" * 70)
-    aprint("RADIUS-BASED SLICING DEMONSTRATION")
-    aprint("=" * 70)
-    aprint("\nThis example shows how point radius affects visibility in nD:")
-    aprint("\n1. Start the server:")
-    aprint(f"   luxar serve {output_path}")
+        # Print detailed instructions
+        aprint(f"\n✓ Created radius slicing example with {len(all_positions):,} points")
+        aprint("\n" + "=" * 70)
+        aprint("RADIUS-BASED SLICING DEMONSTRATION")
+        aprint("=" * 70)
+        aprint("\nThis example shows how point radius affects visibility in nD:")
+        aprint("\n1. Start the server:")
+        aprint(f"   luxar serve {output_path}")
 
-    aprint("\n2. Navigation:")
-    aprint("   - Press '1' to select time dimension")
-    aprint("   - Use '[' and ']' to step through time (0.1s increments)")
+        aprint("\n2. Navigation:")
+        aprint("   - Press '1' to select time dimension")
+        aprint("   - Use '[' and ']' to step through time (0.1s increments)")
 
-    aprint("\n3. What to observe:")
-    aprint("\n   CIRCULAR CLUSTERS (right side):")
-    aprint("   - t=0.0: Small red points (r=0.1) - visible range ±0.1")
-    aprint("   - t=1.0: Medium green points (r=0.3) - visible range ±0.3")
-    aprint("   - t=2.0: Large blue points (r=0.6) - visible range ±0.6")
-    aprint("   - t=3.0: XL orange points (r=1.0) - visible range ±1.0")
+        aprint("\n3. What to observe:")
+        aprint("\n   CIRCULAR CLUSTERS (right side):")
+        aprint("   - t=0.0: Small red points (r=0.1) - visible range ±0.1")
+        aprint("   - t=1.0: Medium green points (r=0.3) - visible range ±0.3")
+        aprint("   - t=2.0: Large blue points (r=0.6) - visible range ±0.6")
+        aprint("   - t=3.0: XL orange points (r=1.0) - visible range ±1.0")
 
-    aprint("\n   VERTICAL GRADIENT (left side):")
-    aprint("   - Bottom: Small radius points (appear/disappear quickly)")
-    aprint("   - Top: Large radius points (visible across many time slices)")
+        aprint("\n   VERTICAL GRADIENT (left side):")
+        aprint("   - Bottom: Small radius points (appear/disappear quickly)")
+        aprint("   - Top: Large radius points (visible across many time slices)")
 
-    aprint("\n4. Key concepts:")
-    aprint("   - Points are nD hyperspheres intersecting the viewing hyperplane")
-    aprint("   - Larger radius = visible across more dimension slices")
-    aprint("   - Points shrink as slice moves away from their center")
-    aprint("   - Useful for visualizing uncertainty or influence ranges")
-    aprint("=" * 70)
+        aprint("\n4. Key concepts:")
+        aprint("   - Points are nD hyperspheres intersecting the viewing hyperplane")
+        aprint("   - Larger radius = visible across more dimension slices")
+        aprint("   - Points shrink as slice moves away from their center")
+        aprint("   - Useful for visualizing uncertainty or influence ranges")
+        aprint("=" * 70)
 
 
 if __name__ == "__main__":

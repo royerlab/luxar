@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import zarr
@@ -18,59 +18,78 @@ from .types import (
 
 
 class Node:
-    """A node in the Luxar scene graph (mirrors a Zarr group).
+    """A node in the Luxar scene graph.
 
     This class represents a single node in the hierarchical scene graph structure.
-    Each node corresponds to a Zarr group and can contain child nodes, forming
-    a tree structure that mirrors the Zarr group hierarchy.
+    In progressive mode with a writer, nodes are lightweight metadata containers.
+    In legacy mode, they mirror Zarr groups directly.
 
     Args:
         name: Name of the node
-        group: Backing Zarr group
+        group: Backing Zarr group (optional in progressive mode)
         parent: Parent node in the hierarchy
+        writer: Optional writer interface for progressive writing
         **attrs: Additional attributes for the node
     """
 
     def __init__(
         self,
         name: str,
-        group: Union[zarr.Group, ZarrGroupProtocol],
+        group: Optional[Union[zarr.Group, ZarrGroupProtocol]] = None,
         parent: Optional[Node] = None,
+        writer: Optional[Any] = None,  # ZarrWriterProtocol
         **attrs: Any,
     ) -> None:
         """Initialize a scene graph node.
 
         Args:
             name: Name of the node
-            group: Zarr group backing this node
+            group: Zarr group backing this node (optional in progressive mode)
             parent: Parent node in the scene hierarchy
+            writer: Optional writer for progressive mode
             **attrs: Additional attributes to set on the node
         """
         self.name: str = name
-        self._group: Union[zarr.Group, ZarrGroupProtocol] = group
+        self._group: Optional[Union[zarr.Group, ZarrGroupProtocol]] = group
+        self._writer = writer
         self.parent: Optional[Node] = parent
         self.children: List[Node] = []
+        self._metadata: Dict[str, Any] = {}  # For progressive mode
+        self._attrs_cache: Dict[str, Any] = {}  # Attributes cache for progressive mode
 
-        # Add this node to parent's children list
+        # Determine path in hierarchy
         if parent is not None:
             parent.children.append(self)
+            self.path = f"{parent.path}/{name}" if hasattr(parent, 'path') and parent.path else name
+        else:
+            self.path = ""
 
         # Initialize or merge attributes
         if attrs:
             # Validate transform if present
             if "transform" in attrs:
                 try:
-                    # Convert to numpy array and validate
-                    transform_array = np.array(attrs["transform"], dtype=np.float32)
-                    if transform_array.size == 16:
-                        transform_matrix = transform_array.reshape(4, 4)
-                        validated = validate_transform(transform_matrix)
-                        # Transpose for THREE.js (column-major order) before flattening
+                    transform_value = attrs["transform"]
+                    # Check if it's already a list (already transposed for THREE.js)
+                    if isinstance(transform_value, list) and len(transform_value) == 16:
+                        # Already in the correct format, just validate it
+                        # Convert to matrix, validate, and store back as list
+                        matrix = np.array(transform_value, dtype=np.float32).reshape(4, 4).T
+                        validated = validate_transform(matrix)
+                        # Store back as list in THREE.js format (transpose back)
                         attrs["transform"] = validated.T.ravel().tolist()
                     else:
-                        raise ValueError(
-                            f"Transform must have 16 elements, got {transform_array.size}"
-                        )
+                        # It's a numpy array or other format, needs conversion
+                        transform_array = np.array(transform_value, dtype=np.float32)
+                        if transform_array.size == 16:
+                            transform_matrix = transform_array.reshape(4, 4)
+                            validated = validate_transform(transform_matrix)
+                            # Transpose for THREE.js (column-major order) before flattening
+                            attrs["transform"] = validated.T.ravel().tolist()
+                        else:
+                            raise ValueError(
+                                f"Transform must have 16 elements, got {transform_array.size}"
+                            )
                 except Exception as e:
                     aprint(f"Invalid transform for node '{name}': {e}")
                     raise ValueError(f"Invalid transform: {e}") from e
@@ -91,17 +110,32 @@ class Node:
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
-            self._group.attrs.update(attrs)
+            # Store attributes
+            if self._group is not None:
+                # Legacy mode: write to Zarr
+                self._group.attrs.update(attrs)
+            elif self._writer is not None:
+                # Progressive mode: write via writer and cache
+                self._writer.write_group(self.path, **attrs)
+                self._attrs_cache.update(attrs)
+            else:
+                # Metadata-only mode
+                self._attrs_cache.update(attrs)
 
     # --------------------------------------------------------------------- attrs
     @property
     def attrs(self) -> GroupAttrs:
-        """Live view of the Zarr group's attributes.
+        """Get node attributes.
 
         Returns:
-            Dictionary of Zarr group attributes that can be modified in place
+            Dictionary of node attributes (from Zarr or cache)
         """
-        return self._group.attrs
+        if self._group is not None:
+            # Legacy mode: return Zarr attrs
+            return self._group.attrs
+        else:
+            # Progressive mode: return cached attrs
+            return self._attrs_cache
 
     # --------------------------------------------------------------- hierarchy
     def add_group(self, name: str, **attrs: Any) -> Node:
@@ -119,8 +153,33 @@ class Node:
         """
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
-            grp = self._group.require_group(name)
-            child_node = Node(name, grp, parent=self, **attrs)
+
+            # Process transform if present to convert numpy array to list
+            if "transform" in attrs:
+                transform_value = attrs["transform"]
+                if not isinstance(transform_value, list):
+                    # Convert numpy array to list for JSON serialization
+                    transform_array = np.array(transform_value, dtype=np.float32)
+                    if transform_array.size == 16:
+                        transform_matrix = transform_array.reshape(4, 4)
+                        # Transpose for THREE.js (column-major order) before flattening
+                        attrs["transform"] = transform_matrix.T.ravel().tolist()
+                    else:
+                        raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
+
+            if self._writer is not None:
+                # Progressive mode: create via writer
+                child_path = f"{self.path}/{name}" if self.path else name
+                self._writer.write_group(child_path, type="group", **attrs)
+                child_node = Node(name, group=None, parent=self, writer=self._writer, **attrs)
+            elif self._group is not None:
+                # Legacy mode: create Zarr group
+                grp = self._group.require_group(name)
+                child_node = Node(name, grp, parent=self, **attrs)
+            else:
+                # Metadata-only mode
+                child_node = Node(name, group=None, parent=self, **attrs)
+
             aprint(f"✓ Child group '{name}' added successfully.")
             return child_node
         except Exception as e:

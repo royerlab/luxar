@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0) -> np.ndarray:
@@ -114,61 +114,62 @@ def main():
     sphere_radius = 10.0
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Generate the spherical spiral
-    aprint(f"\nGenerating spherical spiral with {n_points:,} points...")
-    positions = create_spherical_spiral(n_points, sphere_radius)
+        scene = compiler.create_scene()
 
-    # Generate rainbow colors
-    aprint("Creating rainbow color gradient...")
-    colors = create_rainbow_colors(n_points)
+        # Generate the spherical spiral
+        aprint(f"\nGenerating spherical spiral with {n_points:,} points...")
+        positions = create_spherical_spiral(n_points, sphere_radius)
 
-    # Calculate appropriate radius for spacing
-    point_radius = calculate_point_radius(n_points, sphere_radius)
-    aprint(f"Calculated point radius: {point_radius:.4f} units")
+        # Generate rainbow colors
+        aprint("Creating rainbow color gradient...")
+        colors = create_rainbow_colors(n_points)
 
-    # Create uniform radii array
-    radii = np.full(n_points, point_radius, dtype=np.float32)
+        # Calculate appropriate radius for spacing
+        point_radius = calculate_point_radius(n_points, sphere_radius)
+        aprint(f"Calculated point radius: {point_radius:.4f} units")
 
-    # Use high sharpness for crisp points
-    sharpness = np.full(n_points, 1.0, dtype=np.float32)
+        # Create uniform radii array
+        radii = np.full(n_points, point_radius, dtype=np.float32)
 
-    # Add points to scene
-    scene.add_points(
-        "DenseRainbowSphere",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness,
-    )
+        # Use high sharpness for crisp points
+        sharpness = np.full(n_points, 1.0, dtype=np.float32)
 
-    scene.finalize()
+        # Add points to scene
+        scene.add_points(
+            "DenseRainbowSphere",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+        )
 
-    # Print summary
-    aprint(f"\n✓ Created dense rainbow sphere with {n_points:,} points")
-    aprint(f"  Sphere radius: {sphere_radius} units")
-    aprint(f"  Point radius: {point_radius:.4f} units")
-    aprint(f"  Average spacing: ~{2 * point_radius:.4f} units")
-    aprint("  Sharpness: 8.0 (high - crisp edges)")
-    aprint("  Colors: Full rainbow spectrum")
+        # Print summary
+        aprint(f"\n✓ Created dense rainbow sphere with {n_points:,} points")
+        aprint(f"  Sphere radius: {sphere_radius} units")
+        aprint(f"  Point radius: {point_radius:.4f} units")
+        aprint(f"  Average spacing: ~{2 * point_radius:.4f} units")
+        aprint("  Sharpness: 8.0 (high - crisp edges)")
+        aprint("  Colors: Full rainbow spectrum")
 
-    aprint("\n" + "=" * 60)
-    aprint("VIEWING INSTRUCTIONS")
-    aprint("=" * 60)
-    aprint("1. Start the server:")
-    aprint(f"   luxar serve {output_path}")
-    aprint("\n2. Performance tips:")
-    aprint("   - This is a high-density dataset (200k points)")
-    aprint("   - Initial loading may take a moment")
-    aprint("   - Zoom in to see individual points")
-    aprint("   - Points are spaced ~1 radius apart")
-    aprint("\n3. Visual features:")
-    aprint("   - Spherical spiral ensures perfect distribution")
-    aprint("   - Rainbow flows continuously along the spiral")
-    aprint("   - High sharpness creates crisp, well-defined points")
-    aprint("   - No overlapping due to calculated spacing")
-    aprint("=" * 60)
+        aprint("\n" + "=" * 60)
+        aprint("VIEWING INSTRUCTIONS")
+        aprint("=" * 60)
+        aprint("1. Start the server:")
+        aprint(f"   luxar serve {output_path}")
+        aprint("\n2. Performance tips:")
+        aprint("   - This is a high-density dataset (200k points)")
+        aprint("   - Initial loading may take a moment")
+        aprint("   - Zoom in to see individual points")
+        aprint("   - Points are spaced ~1 radius apart")
+        aprint("\n3. Visual features:")
+        aprint("   - Spherical spiral ensures perfect distribution")
+        aprint("   - Rainbow flows continuously along the spiral")
+        aprint("   - High sharpness creates crisp, well-defined points")
+        aprint("   - No overlapping due to calculated spacing")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

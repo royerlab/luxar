@@ -27,7 +27,7 @@ pip install -e ".[dev]"
 
 ```python
 import numpy as np
-from luxar import Scene, Dimensions, Dimension
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
 # Create a scene with dimensions for nD visualization
 dimensions = Dimensions([
@@ -36,20 +36,22 @@ dimensions = Dimensions([
     Dimension("z", unit="μm", range=(-50, 50), display=True),
     Dimension("time", unit="s", range=(0, 10), step=0.1, display=False)
 ])
-scene = Scene("my_dataset.zarr", dimensions=dimensions)
 
-# Add 4D point cloud data (time + xyz)
-positions = np.random.randn(1_000_000, 4).astype(np.float32)
-colors = (np.random.rand(1_000_000, 3) * 255).astype(np.uint8)
-radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
-scene.add_points("TimeSeriesData", positions, colors=colors, radii=radii)
-
-# Add hierarchical organization  
-group = scene.add_group("Experiment1")
-scene.add_points("Measurement", positions2, colors2, parent=group)
+with LuxarZarrCompiler("my_dataset.zarr") as compiler:
+    scene = compiler.create_scene(dimensions=dimensions)
+    
+    # Add 4D point cloud data (time + xyz)
+    positions = np.random.randn(1_000_000, 4).astype(np.float32)
+    colors = np.random.rand(1_000_000, 3).astype(np.float32)  # HDR colors supported
+    radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
+    scene.add_points("TimeSeriesData", positions, colors=colors, radii=radii)
+    
+    # Add hierarchical organization  
+    group = scene.add_group("Experiment1")
+    scene.add_points("Measurement", positions2, colors2, parent=group)
 
 # Finalize (consolidates metadata for fast loading)
-scene.finalize()
+# Context manager handles finalization automatically
 
 # Serve for visualization
 # luxar serve my_dataset.zarr
@@ -113,7 +115,7 @@ dataset.zarr/
 Luxar uses scene-level dimension definitions to ensure consistency across all objects:
 
 ```python
-from luxar import Scene, Dimensions, Dimension
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
 
 # Define your nD coordinate system
 dimensions = Dimensions([
@@ -344,7 +346,7 @@ luxar info dataset.zarr
 Control the visual appearance of nodes with rendering attributes:
 
 ```python
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 scene = Scene("styled_scene.zarr")
 
@@ -373,7 +375,7 @@ group = scene.add_group(
     blending_mode="normal"
 )
 
-scene.finalize()
+# Context manager handles finalization automatically
 ```
 
 **Blending Modes:**
@@ -388,7 +390,7 @@ scene.finalize()
 ### Custom Chunking Strategy
 
 ```python
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 import zarr
 
 # Custom chunking for streaming large datasets
@@ -405,7 +407,7 @@ colors = np.random.rand(10_000_000, 3).astype(np.uint8)
 # Luxar automatically handles chunking, but you can tune it
 # via the underlying Zarr arrays if needed
 scene.add_points("LargeCloud", positions, colors)
-scene.finalize()
+# Context manager handles finalization automatically
 ```
 
 ### Hierarchical Data Organization
@@ -428,7 +430,7 @@ for t in range(num_timepoints):
             parent=time_group
         )
 
-scene.finalize()
+# Context manager handles finalization automatically
 ```
 
 ### Transforms and Coordinate Systems
@@ -436,7 +438,7 @@ scene.finalize()
 Luxar provides comprehensive transform utilities for 3D scene manipulation:
 
 ```python
-from luxar import Scene, transforms
+from luxar import LuxarZarrCompiler, transforms
 
 scene = Scene("transformed_scene.zarr")
 
@@ -477,7 +479,7 @@ look_at = transforms.look_at(
 t = transforms.translate(5, 0, 0)
 t_inv = transforms.inverse(t)  # Translates -5, 0, 0
 
-scene.finalize()
+# Context manager handles finalization automatically
 ```
 
 ### Extending with New Geometry Types

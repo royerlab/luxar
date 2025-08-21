@@ -3,7 +3,7 @@
 
 This example demonstrates:
 - Building complex scenes step by step
-- Using Scene.build() context manager for automatic finalization
+- Using LuxarZarrCompiler context manager for automatic finalization
 - Organizing scene construction with helper functions
 - Best practices for modular scene building
 - Proper resource management with context managers
@@ -14,10 +14,10 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene, transforms
+from luxar import LuxarZarrCompiler, transforms
 
 
-def add_coordinate_axes(scene: Scene, length: float = 5.0, n_points: int = 50):
+def add_coordinate_axes(scene, length: float = 5.0, n_points: int = 50):
     """Add coordinate axes to the scene for reference.
 
     Args:
@@ -65,7 +65,7 @@ def add_coordinate_axes(scene: Scene, length: float = 5.0, n_points: int = 50):
     )
 
 
-def add_data_cloud(scene: Scene, name: str, center: list, n_points: int = 500):
+def add_data_cloud(scene, name: str, center: list, n_points: int = 500):
     """Add a spherical point cloud at specified location.
 
     Args:
@@ -104,24 +104,24 @@ def build_scene_manually(output_path: Path):
     aprint("\nBuilding scene with manual management...")
 
     # Manual scene creation and finalization
-    scene = Scene(output_path)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
 
-    try:
-        # Add coordinate axes
-        add_coordinate_axes(scene)
+        try:
+            # Add coordinate axes
+            add_coordinate_axes(scene)
 
-        # Add data clouds
-        add_data_cloud(scene, "Cloud1", [2, 2, 2])
-        add_data_cloud(scene, "Cloud2", [-2, 2, -2])
-        add_data_cloud(scene, "Cloud3", [2, -2, -2])
+            # Add data clouds
+            add_data_cloud(scene, "Cloud1", [2, 2, 2])
+            add_data_cloud(scene, "Cloud2", [-2, 2, -2])
+            add_data_cloud(scene, "Cloud3", [2, -2, -2])
 
-        # Must remember to finalize!
-        scene.finalize()
-        aprint("✓ Scene built successfully with manual management")
+            # Context manager will handle finalization
+            aprint("✓ Scene built successfully with manual management")
 
-    except Exception as e:
-        aprint(f"Error building scene: {e}")
-        raise
+        except Exception as e:
+            aprint(f"Error building scene: {e}")
+            raise
 
 
 def build_scene_with_structure(output_path: Path):
@@ -129,54 +129,54 @@ def build_scene_with_structure(output_path: Path):
     aprint("\nBuilding scene with structured approach...")
 
     # Create scene with structured approach
-    scene = Scene(output_path)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
 
-    try:
-        # Add coordinate axes
-        add_coordinate_axes(scene, length=6.0)
+        try:
+            # Add coordinate axes
+            add_coordinate_axes(scene, length=6.0)
 
-        # Add multiple data clouds in a pattern
-        positions = [
-            [3, 0, 0],
-            [0, 3, 0],
-            [0, 0, 3],
-            [-3, 0, 0],
-            [0, -3, 0],
-            [0, 0, -3],
-        ]
+            # Add multiple data clouds in a pattern
+            positions = [
+                [3, 0, 0],
+                [0, 3, 0],
+                [0, 0, 3],
+                [-3, 0, 0],
+                [0, -3, 0],
+                [0, 0, -3],
+            ]
 
-        for i, pos in enumerate(positions):
-            add_data_cloud(scene, f"DataCloud_{i}", pos, n_points=300)
+            for i, pos in enumerate(positions):
+                add_data_cloud(scene, f"DataCloud_{i}", pos, n_points=300)
 
-        # Add a central group with children
-        center_group = scene.add_group(
-            "CentralStructure", opacity=0.7, blending_mode="normal"
-        )
-
-        # Add child points to the group
-        for angle in [0, np.pi / 2, np.pi, 3 * np.pi / 2]:
-            x = np.cos(angle) * 1.5
-            y = np.sin(angle) * 1.5
-
-            positions = np.random.randn(100, 3).astype(np.float32) * 0.2
-            positions[:, 0] += x
-            positions[:, 1] += y
-
-            scene.add_points(
-                f"CentralPoint_{int(angle * 180 / np.pi)}",
-                positions,
-                colors=[1.0, 0.78, 0.39],
-                radii=0.04,
-                parent=center_group,
+            # Add a central group with children
+            center_group = scene.add_group(
+                "CentralStructure", opacity=0.7, blending_mode="normal"
             )
 
-        # Finalize the scene
-        scene.finalize()
-        aprint("✓ Scene built successfully with structured approach")
+            # Add child points to the group
+            for angle in [0, np.pi / 2, np.pi, 3 * np.pi / 2]:
+                x = np.cos(angle) * 1.5
+                y = np.sin(angle) * 1.5
 
-    except Exception as e:
-        aprint(f"Error building scene: {e}")
-        raise
+                positions = np.random.randn(100, 3).astype(np.float32) * 0.2
+                positions[:, 0] += x
+                positions[:, 1] += y
+
+                scene.add_points(
+                    f"CentralPoint_{int(angle * 180 / np.pi)}",
+                    positions,
+                    colors=[1.0, 0.78, 0.39],
+                    radii=0.04,
+                    parent=center_group,
+                )
+
+            # Context manager will handle finalization
+            aprint("✓ Scene built successfully with structured approach")
+
+        except Exception as e:
+            aprint(f"Error building scene: {e}")
+            raise
 
 
 def main():

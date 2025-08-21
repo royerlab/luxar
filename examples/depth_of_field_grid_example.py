@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_depth_grid(grid_size=10, layers=5, spacing=1.0):
@@ -119,85 +119,86 @@ def main():
     aprint("- Yellow layer indicators on the left")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add metadata
-    scene.attrs["description"] = """
-    Depth of Field Test Grid
-    ========================
+        scene = compiler.create_scene()
 
-    This scene provides a reference for testing depth-based rendering:
+        # Add metadata
+        scene.attrs["description"] = """
+Depth of Field Test Grid
+        ========================
 
-    - 5 distinct depth layers
-    - Red-to-blue color gradient indicating depth
-    - White markers showing exact depth positions
-    - Yellow indicators showing layer numbers
+        This scene provides a reference for testing depth-based rendering:
 
-    Use this scene to test:
-    - Depth of field blur effects
-    - Fog and atmospheric effects
-    - Proper occlusion and depth sorting
-    - Perspective scaling with depth
+        - 5 distinct depth layers
+        - Red-to-blue color gradient indicating depth
+        - White markers showing exact depth positions
+        - Yellow indicators showing layer numbers
 
-    Controls:
-    - Press 'R' to toggle rendering controls
-    - Adjust DOF focal distance and aperture
-    - Test different fog densities
-    """
+        Use this scene to test:
+        - Depth of field blur effects
+        - Fog and atmospheric effects
+        - Proper occlusion and depth sorting
+        - Perspective scaling with depth
 
-    # Create the depth grid
-    positions, colors, radii, marker_pos, marker_colors = create_depth_grid(
-        grid_size=10, layers=5, spacing=1.0
-    )
+        Controls:
+        - Press 'R' to toggle rendering controls
+        - Adjust DOF focal distance and aperture
+        - Test different fog densities
+        """
 
-    # Add main grid points
-    scene.add_points(
-        "DepthGrid",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=5.0,
-        opacity=0.9,
-        blending_mode="normal",
-    )
+        # Create the depth grid
+        positions, colors, radii, marker_pos, marker_colors = create_depth_grid(
+            grid_size=10, layers=5, spacing=1.0
+        )
 
-    # Add depth markers
-    scene.add_points(
-        "DepthMarkers",
-        marker_pos,
-        colors=marker_colors,
-        radii=0.3,
-        sharpness=10.0,
-        opacity=1.0,
-        blending_mode="additive",
-    )
+        # Add main grid points
+        scene.add_points(
+            "DepthGrid",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=5.0,
+            opacity=0.9,
+            blending_mode="normal",
+        )
 
-    # Add depth labels
-    label_pos, label_colors = create_depth_labels(layers=5, spacing=1.0)
-    scene.add_points(
-        "DepthLabels",
-        label_pos,
-        colors=label_colors,
-        radii=0.08,
-        sharpness=10.0,
-        opacity=1.0,
-        blending_mode="additive",
-    )
+        # Add depth markers
+        scene.add_points(
+            "DepthMarkers",
+            marker_pos,
+            colors=marker_colors,
+            radii=0.3,
+            sharpness=10.0,
+            opacity=1.0,
+            blending_mode="additive",
+        )
 
-    scene.finalize()
+        # Add depth labels
+        label_pos, label_colors = create_depth_labels(layers=5, spacing=1.0)
+        scene.add_points(
+            "DepthLabels",
+            label_pos,
+            colors=label_colors,
+            radii=0.08,
+            sharpness=10.0,
+            opacity=1.0,
+            blending_mode="additive",
+        )
 
-    aprint(f"\n✓ Scene created with {len(positions)} grid points")
-    aprint("  Grid: 10x10 points per layer")
-    aprint("  Layers: 5 depth planes")
-    aprint("  Depth range: 0 to 8 units")
-    aprint("\n" + "=" * 60)
-    aprint("VIEWING TIPS:")
-    aprint("1. Run: luxar serve depth_of_field_grid_example.zarr")
-    aprint("2. Press 'R' to open rendering controls")
-    aprint("3. Enable DOF and adjust focal distance")
-    aprint("4. Try different aperture sizes for blur amount")
-    aprint("5. Notice color gradient from red (near) to blue (far)")
-    aprint("=" * 60)
+        aprint(f"\n✓ Scene created with {len(positions)} grid points")
+        aprint("  Grid: 10x10 points per layer")
+        aprint("  Layers: 5 depth planes")
+        aprint("  Depth range: 0 to 8 units")
+        aprint("\n" + "=" * 60)
+        aprint("VIEWING TIPS:")
+        aprint("1. Run: luxar serve depth_of_field_grid_example.zarr")
+        aprint("2. Press 'R' to open rendering controls")
+        aprint("3. Enable DOF and adjust focal distance")
+        aprint("4. Try different aperture sizes for blur amount")
+        aprint("5. Notice color gradient from red (near) to blue (far)")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":
