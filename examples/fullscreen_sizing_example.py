@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_test_grid(grid_size=5, sphere_radius=0.1):
@@ -79,83 +79,84 @@ def main():
     aprint("6. Use Shift+Wheel to change FOV - relationship maintained")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add metadata with instructions
-    scene.attrs["description"] = """
-    World-Space Point Sizing Test
-    ==============================
+        scene = compiler.create_scene()
 
-    This scene contains a 5x5x5 grid of spheres that should just touch.
-    The touching relationship should be maintained regardless of:
-    - Window size
-    - Fullscreen state
-    - Field of view
+        # Add metadata with instructions
+        scene.attrs["description"] = """
+World-Space Point Sizing Test
+        ==============================
 
-    If two spheres of radius r are at distance 2r, they should always
-    just touch - this is the fundamental test of correct world-space sizing.
-    """
+        This scene contains a 5x5x5 grid of spheres that should just touch.
+        The touching relationship should be maintained regardless of:
+        - Window size
+        - Fullscreen state
+        - Field of view
 
-    # Create test grid
-    positions, colors, radii = create_test_grid(grid_size=5, sphere_radius=0.1)
+        If two spheres of radius r are at distance 2r, they should always
+        just touch - this is the fundamental test of correct world-space sizing.
+        """
 
-    # Use high sharpness for clear sphere boundaries
-    sharpness = np.full(len(positions), 10.0, dtype=np.float32)
+        # Create test grid
+        positions, colors, radii = create_test_grid(grid_size=5, sphere_radius=0.1)
 
-    # Add the test grid
-    scene.add_points(
-        "TouchingSpheres",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness,
-        opacity=1.0,
-        blending_mode="additive",
-    )
+        # Use high sharpness for clear sphere boundaries
+        sharpness = np.full(len(positions), 10.0, dtype=np.float32)
 
-    # Add axis markers for reference
-    axis_length = 1.0
-    axis_positions = np.array(
-        [
-            [0, 0, 0],
-            [axis_length, 0, 0],  # X axis
-            [0, 0, 0],
-            [0, axis_length, 0],  # Y axis
-            [0, 0, 0],
-            [0, 0, axis_length],  # Z axis
-        ],
-        dtype=np.float32,
-    )
+        # Add the test grid
+        scene.add_points(
+            "TouchingSpheres",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+            opacity=1.0,
+            blending_mode="additive",
+        )
 
-    axis_colors = np.array(
-        [
-            [1, 0, 0],
-            [1, 0, 0],  # Red for X
-            [0, 1, 0],
-            [0, 1, 0],  # Green for Y
-            [0, 0, 1],
-            [0, 0, 1],  # Blue for Z
-        ],
-        dtype=np.float32,
-    )
+        # Add axis markers for reference
+        axis_length = 1.0
+        axis_positions = np.array(
+            [
+                [0, 0, 0],
+                [axis_length, 0, 0],  # X axis
+                [0, 0, 0],
+                [0, axis_length, 0],  # Y axis
+                [0, 0, 0],
+                [0, 0, axis_length],  # Z axis
+            ],
+            dtype=np.float32,
+        )
 
-    scene.add_points(
-        "Axes", axis_positions, colors=axis_colors, radii=0.02, sharpness=10.0
-    )
+        axis_colors = np.array(
+            [
+                [1, 0, 0],
+                [1, 0, 0],  # Red for X
+                [0, 1, 0],
+                [0, 1, 0],  # Green for Y
+                [0, 0, 1],
+                [0, 0, 1],  # Blue for Z
+            ],
+            dtype=np.float32,
+        )
 
-    scene.finalize()
+        scene.add_points(
+            "Axes", axis_positions, colors=axis_colors, radii=0.02, sharpness=10.0
+        )
 
-    aprint(f"\n✓ Test scene created with {len(positions)} spheres")
-    aprint("  Grid size: 5x5x5")
-    aprint("  Sphere radius: 0.1 units")
-    aprint("  Spacing: 0.2 units (spheres should just touch)")
-    aprint("\n" + "=" * 60)
-    aprint("EXPECTED BEHAVIOR:")
-    aprint("- Spheres should touch but not overlap")
-    aprint("- Relationship maintained in fullscreen")
-    aprint("- Relationship maintained when resizing")
-    aprint("- Relationship maintained at different FOVs")
-    aprint("=" * 60)
+        aprint(f"\n✓ Test scene created with {len(positions)} spheres")
+        aprint("  Grid size: 5x5x5")
+        aprint("  Sphere radius: 0.1 units")
+        aprint("  Spacing: 0.2 units (spheres should just touch)")
+        aprint("\n" + "=" * 60)
+        aprint("EXPECTED BEHAVIOR:")
+        aprint("- Spheres should touch but not overlap")
+        aprint("- Relationship maintained in fullscreen")
+        aprint("- Relationship maintained when resizing")
+        aprint("- Relationship maintained at different FOVs")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

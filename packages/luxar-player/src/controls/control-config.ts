@@ -118,7 +118,6 @@ export const INPUT_CONFIG = {
       toggleDatasetBrowser: 'o',
       togglePerformance: 'p',
       toggleRendering: 'r',
-      toggleCenter: 'c',
       toggleDebugConsole: 'ctrl+l',
       recenterCamera: 'f',
       toggleControlMode: 'v', // Orbit <-> Fly

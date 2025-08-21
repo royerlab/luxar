@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Dimension, Dimensions, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_circle(radius: float = 5, n_points: int = 100) -> np.ndarray:
@@ -169,39 +169,40 @@ def main():
         ]
     )
 
-    scene = Scene(output_path, dimensions=dimensions)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
 
-    # Combine all shapes with frame dimension
-    all_positions = []
-    all_colors = []
-    all_radii = []
+        # Combine all shapes with frame dimension
+        all_positions = []
+        all_colors = []
+        all_radii = []
 
-    aprint("Creating shapes:")
-    for frame_idx, (name, shape_3d, color) in enumerate(shape_configs):
-        n_points = len(shape_3d)
+        aprint("Creating shapes:")
+        for frame_idx, (name, shape_3d, color) in enumerate(shape_configs):
+            n_points = len(shape_3d)
 
-        # Add frame dimension to positions [frame, x, y, z]
-        frame_column = np.full((n_points, 1), frame_idx)
-        positions_4d = np.hstack([frame_column, shape_3d])
-        all_positions.append(positions_4d)
+            # Add frame dimension to positions [frame, x, y, z]
+            frame_column = np.full((n_points, 1), frame_idx)
+            positions_4d = np.hstack([frame_column, shape_3d])
+            all_positions.append(positions_4d)
 
-        # Set colors
-        color_array = np.tile(color, (n_points, 1))
-        all_colors.append(color_array)
+            # Set colors
+            color_array = np.tile(color, (n_points, 1))
+            all_colors.append(color_array)
 
-        # Vary radius slightly for visual interest
-        radii = np.full(n_points, 0.15 + 0.05 * np.sin(frame_idx), dtype=np.float32)
-        all_radii.append(radii)
+            # Vary radius slightly for visual interest
+            radii = np.full(n_points, 0.15 + 0.05 * np.sin(frame_idx), dtype=np.float32)
+            all_radii.append(radii)
 
-        aprint(f"  Frame {frame_idx}: {name} ({n_points} points) - RGB{color}")
+            aprint(f"  Frame {frame_idx}: {name} ({n_points} points) - RGB{color}")
 
-    # Stack all arrays
-    positions = np.vstack(all_positions).astype(np.float32)
-    colors = np.vstack(all_colors).astype(np.float32)
-    radii = np.hstack(all_radii)
+        # Stack all arrays
+        positions = np.vstack(all_positions).astype(np.float32)
+        colors = np.vstack(all_colors).astype(np.float32)
+        radii = np.hstack(all_radii)
 
-    # Add to scene
-    scene.add_points(
+        # Add to scene
+        scene.add_points(
         "ShapeSequence",
         positions,
         colors=colors,
@@ -209,30 +210,29 @@ def main():
         sharpness=np.full(
             len(positions), 3.0, dtype=np.float32
         ),  # Sharp edges for clarity
-    )
+        )
 
-    scene.finalize()
 
-    # Print instructions
-    aprint(
+        # Print instructions
+        aprint(
         f"\n✓ Created dimension navigation example with {len(positions):,} total points"
-    )
-    aprint("\n" + "=" * 60)
-    aprint("DIMENSION NAVIGATION INSTRUCTIONS")
-    aprint("=" * 60)
-    aprint("1. Start the data server:")
-    aprint(f"   luxar serve {output_path}")
-    aprint("\n2. Navigation controls:")
-    aprint("   - Press '1' to select the frame dimension")
-    aprint("   - Press '[' to go to previous shape")
-    aprint("   - Press ']' to go to next shape")
-    aprint("\n3. Expected sequence:")
-    aprint("   - Frame 0: RED CIRCLE")
-    aprint("   - Frame 1: GREEN SQUARE")
-    aprint("   - Frame 2: BLUE TRIANGLE")
-    aprint("   - Frame 3: GOLD STAR")
-    aprint("   - Frame 4: MAGENTA CROSS")
-    aprint("=" * 60)
+        )
+        aprint("\n" + "=" * 60)
+        aprint("DIMENSION NAVIGATION INSTRUCTIONS")
+        aprint("=" * 60)
+        aprint("1. Start the data server:")
+        aprint(f"   luxar serve {output_path}")
+        aprint("\n2. Navigation controls:")
+        aprint("   - Press '1' to select the frame dimension")
+        aprint("   - Press '[' to go to previous shape")
+        aprint("   - Press ']' to go to next shape")
+        aprint("\n3. Expected sequence:")
+        aprint("   - Frame 0: RED CIRCLE")
+        aprint("   - Frame 1: GREEN SQUARE")
+        aprint("   - Frame 2: BLUE TRIANGLE")
+        aprint("   - Frame 3: GOLD STAR")
+        aprint("   - Frame 4: MAGENTA CROSS")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

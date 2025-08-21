@@ -3,7 +3,7 @@
 import numpy as np
 import zarr
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 class TestZarrNDChunking:
@@ -34,8 +34,9 @@ class TestZarrNDChunking:
             positions[start_idx:end_idx, 3] = t  # Time coordinate
 
         # Create scene at the specified store location and add points
-        scene = Scene(store)
-        scene.add_points("Points4D", positions=positions)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points4D", positions)
 
         # Verify chunking by opening the zarr store
         root = zarr.open_group(store, "r")
@@ -60,8 +61,9 @@ class TestZarrNDChunking:
         positions_5d = np.random.randn(n_points, 5).astype(np.float32)
 
         # Create scene and add 5D points
-        scene = Scene(store)
-        scene.add_points("Points5D", positions=positions_5d)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points5D", positions_5d)
 
         # Verify it saved correctly
         root = zarr.open_group(store, "r")
@@ -78,15 +80,16 @@ class TestZarrNDChunking:
         n_points = 123456  # Not a nice round number
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
-        scene = Scene(store)
-        scene.add_points("Points", positions=positions)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
         positions_array = root["Points"]["positions"]
 
         # Verify chunks exist and cover all data
         n_chunks_0 = int(np.ceil(n_points / positions_array.chunks[0]))
-        n_chunks_1 = int(np.ceil(3 / positions_array.chunks[1]))
+        _ = int(np.ceil(3 / positions_array.chunks[1]))  # Verify chunk calculation
 
         # Check we can access boundary chunks without error
         last_chunk_start = (n_chunks_0 - 1) * positions_array.chunks[0]
@@ -113,8 +116,9 @@ class TestZarrNDChunking:
             positions[start:end, 2] = np.random.randn(points_per_slice)
             positions[start:end, 3] = s  # Slice index as 4th dimension
 
-        scene = Scene(store)
-        scene.add_points("Points", positions=positions)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points", positions)
 
         # Test that we can efficiently load a single slice
         root = zarr.open_group(store, "r")
@@ -139,8 +143,9 @@ class TestZarrNDChunking:
 
             # Save with unique name
             dim_store = store / f"dims_{n_dims}.zarr"
-            scene = Scene(dim_store)
-            scene.add_points("Points", positions=positions)
+            with LuxarZarrCompiler(dim_store) as compiler:
+                scene = compiler.create_scene()
+                compiler.write_points("Points", positions)
 
             # Verify it loads correctly
             root = zarr.open_group(dim_store, "r")
@@ -157,8 +162,9 @@ class TestZarrNDChunking:
         n_points = 1_000_000
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
-        scene = Scene(store)
-        scene.add_points("Points", positions=positions)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
         positions_array = root["Points"]["positions"]
@@ -180,7 +186,7 @@ class TestZarrNDChunking:
         store = tmp_path / "sparse.zarr"
 
         # Create sparse 4D data where most time slices are empty
-        n_timesteps = 1000
+        _ = 1000  # Total timesteps (most are empty)
         active_timesteps = [10, 50, 100, 500, 900]  # Only 5 active timesteps
         points_per_active = 1000
 
@@ -193,8 +199,9 @@ class TestZarrNDChunking:
 
         positions = np.vstack(positions_list)
 
-        scene = Scene(store)
-        scene.add_points("Points", positions=positions)
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene()
+            compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
         positions_array = root["Points"]["positions"]

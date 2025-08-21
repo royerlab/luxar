@@ -331,40 +331,48 @@ def look_at(
 
 def to_list(transform: TransformMatrix) -> list[float]:
     """Convert a 4x4 transformation matrix to a flat list for storage.
+    
+    Note: The matrix is transposed before flattening to match THREE.js 
+    column-major format requirements.
 
     Args:
-        transform: 4x4 transformation matrix
+        transform: 4x4 transformation matrix (row-major, NumPy format)
 
     Returns:
-        List of 16 float values in row-major order
+        List of 16 float values in column-major order (for THREE.js)
 
     Example:
         >>> t = translate(1, 2, 3)
-        >>> values = to_list(t)  # Returns [1, 0, 0, 1, 0, 1, 0, 2, ...]
+        >>> values = to_list(t)  # Returns transposed, flattened matrix
     """
-    return list(transform.ravel().tolist())
+    # Transpose for THREE.js compatibility (row-major to column-major)
+    return list(transform.T.ravel().tolist())
 
 
 def from_list(values: list[float]) -> TransformMatrix:
     """Create a 4x4 transformation matrix from a flat list.
+    
+    Note: The values are assumed to be in THREE.js column-major format
+    and are transposed back to NumPy row-major format.
 
     Args:
-        values: List of 16 float values in row-major order
+        values: List of 16 float values in column-major order (THREE.js format)
 
     Returns:
-        4x4 transformation matrix as float32 array
+        4x4 transformation matrix in row-major order (NumPy format)
 
     Raises:
         ValueError: If values is not a list of 16 numbers
 
     Example:
-        >>> values = [1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-        >>> t = from_list(values)  # Creates translation matrix
+        >>> values = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1]
+        >>> t = from_list(values)  # Creates translation matrix (5, 0, 0)
     """
     if len(values) != 16:
         raise ValueError(f"Expected 16 values, got {len(values)}")
 
-    matrix = np.array(values, dtype=np.float32).reshape(4, 4)
+    # Reshape and transpose from column-major (THREE.js) to row-major (NumPy)
+    matrix = np.array(values, dtype=np.float32).reshape(4, 4).T
     return validate_transform(matrix)
 
 

@@ -15,10 +15,10 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
-def create_size_gradient_example(scene: Scene, n_points: int = 10000) -> None:
+def create_size_gradient_example(scene, n_points: int = 10000) -> None:
     """Create a spiral with points that gradually increase in size."""
     aprint("Creating size gradient demo...")
 
@@ -41,7 +41,7 @@ def create_size_gradient_example(scene: Scene, n_points: int = 10000) -> None:
     scene.add_points("SizeGradientSpiral", positions, colors, radii=radii)
 
 
-def create_distance_based_example(scene: Scene, n_points: int = 5000) -> None:
+def create_distance_based_example(scene, n_points: int = 5000) -> None:
     """Create a sphere where point size depends on distance from center."""
     aprint("Creating distance-based sizing demo...")
 
@@ -78,7 +78,7 @@ def create_distance_based_example(scene: Scene, n_points: int = 5000) -> None:
     scene.add_points("DistanceBasedSphere", positions, colors, radii=radii)
 
 
-def create_random_sizing_example(scene: Scene, n_points: int = 8000) -> None:
+def create_random_sizing_example(scene, n_points: int = 8000) -> None:
     """Create a cube with randomly sized points."""
     aprint("Creating random sizing demo...")
 
@@ -104,7 +104,7 @@ def create_random_sizing_example(scene: Scene, n_points: int = 8000) -> None:
 
 
 def create_layered_spheres_example(
-    scene: Scene, n_layers: int = 5, points_per_layer: int = 1000
+    scene, n_layers: int = 5, points_per_layer: int = 1000
 ) -> None:
     """Create concentric spheres with different point sizes per layer."""
     aprint("Creating layered spheres demo...")
@@ -178,27 +178,29 @@ def main():
     aprint("- Layered spheres: Concentric spheres with different point sizes")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Add all examples
-    create_size_gradient_example(scene)
-    create_distance_based_example(scene)
-    create_random_sizing_example(scene)
-    create_layered_spheres_example(scene)
+        scene = compiler.create_scene()
 
-    # Finalize
-    scene.finalize()
+        # Add all examples
+        create_size_gradient_example(scene)
+        create_distance_based_example(scene)
+        create_random_sizing_example(scene)
+        create_layered_spheres_example(scene)
 
-    aprint(f"\n✓ Example scene created successfully at {output_path}")
-    aprint("\nTo view the example:")
-    aprint("1. Start the viewer: cd packages/luxar-player && npm run dev")
-    aprint(f"2. Serve the data: luxar serve {output_path}")
-    aprint("3. Open http://localhost:5173 in your browser")
-    aprint("\nLook for:")
-    aprint("- Spiral with gradually increasing point sizes")
-    aprint("- Sphere with larger points near the center")
-    aprint("- Cube with randomly sized colorful points")
-    aprint("- Nested spheres with different point sizes per layer")
+        # Finalize
+
+        aprint(f"\n✓ Example scene created successfully at {output_path}")
+        aprint("\nTo view the example:")
+        aprint("1. Start the viewer: cd packages/luxar-player && npm run dev")
+        aprint(f"2. Serve the data: luxar serve {output_path}")
+        aprint("3. Open http://localhost:5173 in your browser")
+        aprint("\nLook for:")
+        aprint("- Spiral with gradually increasing point sizes")
+        aprint("- Sphere with larger points near the center")
+        aprint("- Cube with randomly sized colorful points")
+        aprint("- Nested spheres with different point sizes per layer")
 
 
 if __name__ == "__main__":

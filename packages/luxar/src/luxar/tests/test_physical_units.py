@@ -2,7 +2,7 @@
 
 import pytest
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 class TestPhysicalUnits:
@@ -26,16 +26,21 @@ class TestPhysicalUnits:
         ],
     )
     def test_unit_acceptance(self, unit, tmp_path):
-        """Test that each physical unit is accepted by Scene."""
+        """Test that each physical unit is accepted by LuxarZarrCompiler."""
         scene_path = tmp_path / f"test_{unit}.zarr"
-        scene = Scene(scene_path, units=unit)
-        assert scene.attrs["units"] == unit
+        with LuxarZarrCompiler(scene_path, units=unit) as compiler:
+            scene = compiler.create_scene()
+
+        # Check the units were stored in the zarr store
+        import zarr
+        store = zarr.open_group(scene_path, mode='r')
+        assert store.attrs["units"] == unit
 
     def test_invalid_unit_rejection(self, tmp_path):
         """Test that invalid units are rejected."""
         scene_path = tmp_path / "test_invalid.zarr"
         with pytest.raises(ValueError, match="Invalid unit"):
-            Scene(scene_path, units="invalid_unit")
+            LuxarZarrCompiler(scene_path, units="invalid_unit")
 
     def test_units_in_config_match_types(self):
         """Test that SUPPORTED_UNITS in config matches validation in types."""

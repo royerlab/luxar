@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_compensation_demo():
@@ -20,91 +20,90 @@ def create_compensation_demo():
     output_path = Path(__file__).parent / "sharpness_compensation_example.zarr"
 
     # Create scene
-    scene = Scene(output_path)
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
 
-    # Grid parameters
-    rows = 2
-    cols = 6
-    spacing = 3.0
+            # Grid parameters
+        rows = 2
+        cols = 6
+        spacing = 3.0
 
-    # Sharpness values to test
-    sharpness_values = [0.5, 1.0, 2.0, 3.0, 5.0, 10.0]
+        # Sharpness values to test
+        sharpness_values = [0.5, 1.0, 2.0, 3.0, 5.0, 10.0]
 
-    # Create two rows: one with compensation (top), one without (if we had old shader)
-    all_positions = []
-    all_colors = []
-    all_radii = []
-    all_sharpness = []
+        # Create two rows: one with compensation (top), one without (if we had old shader)
+        all_positions = []
+        all_colors = []
+        all_radii = []
+        all_sharpness = []
 
-    for row in range(rows):
+        for row in range(rows):
+            for col, sharp in enumerate(sharpness_values):
+                # Position
+                x = (col - cols / 2) * spacing
+                y = (row - rows / 2) * spacing * 2
+                z = 0
+
+                # Generate a small cluster of points
+                n_points = 100
+                positions = np.random.randn(n_points, 3) * 0.3
+                positions[:, 0] += x
+                positions[:, 1] += y
+                positions[:, 2] += z
+
+                # Color: gradient from blue (low sharpness) to red (high sharpness)
+                # Reduced brightness by factor of 4
+                t = col / (cols - 1)
+                color = np.array([t, 0.2, 1 - t]) / 4  # Divide by 4 for 1/4 brightness
+                colors = np.tile(color, (n_points, 1))
+
+                # All points have the same radius (reduced by factor of 2)
+                radii = np.full(n_points, 0.25, dtype=np.float32)  # Was 0.5, now 0.25
+
+                # Varying sharpness
+                sharpness = np.full(n_points, sharp, dtype=np.float32)
+
+                all_positions.append(positions)
+                all_colors.append(colors)
+                all_radii.append(radii)
+                all_sharpness.append(sharpness)
+
+        # Combine all arrays
+        positions = np.vstack(all_positions).astype(np.float32)
+        colors = np.vstack(all_colors).astype(np.float32)
+        radii = np.hstack(all_radii)
+        sharpness = np.hstack(all_sharpness)
+
+        # Add to scene
+        scene.add_points(
+            "SharpnessCompensationTest",
+            positions=positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
+        )
+
+        # Add labels as single points
+        label_positions = []
+        label_colors = []
+        label_radii = []
+        label_sharpness = []
+
         for col, sharp in enumerate(sharpness_values):
-            # Position
             x = (col - cols / 2) * spacing
-            y = (row - rows / 2) * spacing * 2
-            z = 0
+            y = -4.0
+            label_positions.append([x, y, 0])
+            label_colors.append([0.25, 0.25, 0.25])  # Dimmer labels (1/4 brightness)
+            label_radii.append(0.05)  # Smaller labels (1/2 size)
+            label_sharpness.append(2.0)
 
-            # Generate a small cluster of points
-            n_points = 100
-            positions = np.random.randn(n_points, 3) * 0.3
-            positions[:, 0] += x
-            positions[:, 1] += y
-            positions[:, 2] += z
-
-            # Color: gradient from blue (low sharpness) to red (high sharpness)
-            # Reduced brightness by factor of 4
-            t = col / (cols - 1)
-            color = np.array([t, 0.2, 1 - t]) / 4  # Divide by 4 for 1/4 brightness
-            colors = np.tile(color, (n_points, 1))
-
-            # All points have the same radius (reduced by factor of 2)
-            radii = np.full(n_points, 0.25, dtype=np.float32)  # Was 0.5, now 0.25
-
-            # Varying sharpness
-            sharpness = np.full(n_points, sharp, dtype=np.float32)
-
-            all_positions.append(positions)
-            all_colors.append(colors)
-            all_radii.append(radii)
-            all_sharpness.append(sharpness)
-
-    # Combine all arrays
-    positions = np.vstack(all_positions).astype(np.float32)
-    colors = np.vstack(all_colors).astype(np.float32)
-    radii = np.hstack(all_radii)
-    sharpness = np.hstack(all_sharpness)
-
-    # Add to scene
-    scene.add_points(
-        "SharpnessCompensationTest",
-        positions=positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness,
-    )
-
-    # Add labels as single points
-    label_positions = []
-    label_colors = []
-    label_radii = []
-    label_sharpness = []
-
-    for col, sharp in enumerate(sharpness_values):
-        x = (col - cols / 2) * spacing
-        y = -4.0
-        label_positions.append([x, y, 0])
-        label_colors.append([0.25, 0.25, 0.25])  # Dimmer labels (1/4 brightness)
-        label_radii.append(0.05)  # Smaller labels (1/2 size)
-        label_sharpness.append(2.0)
-
-    scene.add_points(
-        "Labels",
-        positions=np.array(label_positions, dtype=np.float32),
-        colors=np.array(label_colors, dtype=np.float32),
-        radii=np.array(label_radii, dtype=np.float32),
-        sharpness=np.array(label_sharpness, dtype=np.float32),
-    )
-
-    scene.finalize()
+        scene.add_points(
+            "Labels",
+            positions=np.array(label_positions, dtype=np.float32),
+            colors=np.array(label_colors, dtype=np.float32),
+            radii=np.array(label_radii, dtype=np.float32),
+            sharpness=np.array(label_sharpness, dtype=np.float32),
+        )
 
     aprint(f"✓ Created sharpness compensation test at {output_path}")
     aprint("\nSharpness values (left to right):")

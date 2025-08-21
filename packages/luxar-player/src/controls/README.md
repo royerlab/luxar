@@ -8,7 +8,7 @@ The Luxar Controls package provides a sophisticated, extensible control system f
 
 ### Key Features
 
-- **Multiple Control Modes**: Orbit (trackball) and Fly (free-flight) controls
+- **Multiple Control Modes**: Orbit (trackball), Arcball (quaternion-based), and Fly (free-flight) controls
 - **Seamless Mode Switching**: Hot-swap between control types with state preservation
 - **Unified Configuration**: Single source of truth for all control parameters
 - **Input Context Management**: Intelligent key routing to prevent conflicts
@@ -42,12 +42,32 @@ The **OrbitControls** provide intuitive trackball-style navigation, ideal for ex
 - Right-click drag to pan
 - Auto-rotation for presentations
 - Configurable zoom limits and damping
+- **Limitation**: Gimbal lock at poles (cannot rotate past vertical)
 
 **Best for:**
 
 - Examining point clouds from outside
 - Presentations and demos
 - Traditional 3D manipulation
+
+### 2. Arcball Controls
+
+The **ArcballControls** provide quaternion-based rotation without gimbal lock limitations, allowing unlimited rotation in any direction. Based on THREE.js ArcballControls.
+
+**Features:**
+
+- Full quaternion-based rotation (no gimbal lock)
+- Unlimited rotation in any direction
+- Mouse drag to rotate around target
+- Scroll wheel to zoom in/out
+- Right-click drag to pan
+- Smooth damping for natural movement
+
+**Best for:**
+
+- Complex rotations without restrictions
+- Scientific visualization requiring all orientations
+- Users who need complete rotational freedom
 
 **Controls:**
 
@@ -69,7 +89,7 @@ The **OrbitControls** provide intuitive trackball-style navigation, ideal for ex
 }
 ```
 
-### 2. Fly Controls (Advanced)
+### 3. Fly Controls (Advanced)
 
 The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 degrees of freedom, perfect for exploring point clouds from within.
 

@@ -271,9 +271,8 @@ Always available regardless of context:
 
 | Key | Action                                 |
 | --- | -------------------------------------- |
-| `C` | Toggle centering (native/bounding box) |
-| `F` | Recenter camera on scene               |
-| `V` | Toggle between Orbit/Fly modes         |
+| `F` | Recenter/focus camera on scene         |
+| `V` | Toggle between Orbit/Arcball/Fly modes |
 | `N` | Toggle dimension sliders               |
 | `O` | Open dataset browser                   |
 | `P` | Toggle performance stats               |

@@ -117,7 +117,7 @@ export interface RenderingSettings {
   chromaticAberrationEnabled: boolean;
   chromaticAberrationStrength: number;
   // Navigation controls
-  controlType: 'orbit' | 'fly';
+  controlType: 'orbit' | 'arcball' | 'fly';
   autoRotate: boolean;
   autoRotateSpeed: number;
   // Fly controls

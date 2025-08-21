@@ -7,12 +7,13 @@
 
 import type { Controller } from 'lil-gui';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+// Note: ArcballControls doesn't have TypeScript definitions, so we use 'any'
 import type { LuxarFlyControls } from './luxar-fly-controls';
 
 /**
  * Available control types
  */
-export type ControlType = 'orbit' | 'fly';
+export type ControlType = 'orbit' | 'arcball' | 'fly';
 
 /**
  * Complete control state for both orbit and fly modes
@@ -96,7 +97,7 @@ export interface HDRControllers {
 /**
  * Union type for control instances
  */
-export type ControlInstance = OrbitControls | LuxarFlyControls;
+export type ControlInstance = OrbitControls | any | LuxarFlyControls; // 'any' for ArcballControls
 
 /**
  * Type guard for OrbitControls

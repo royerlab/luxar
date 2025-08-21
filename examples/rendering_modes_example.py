@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import Scene
+from luxar import LuxarZarrCompiler
 
 
 def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.ndarray:
@@ -54,134 +54,135 @@ def main():
     aprint("- Property inheritance: Parent-child relationships")
 
     # Create scene
-    scene = Scene(output_path)
+    
+    with LuxarZarrCompiler(output_path) as compiler:
 
-    # Parameters
-    n_points = 5000
-    radius = 1.0
-    point_radius = 0.05
+        scene = compiler.create_scene()
 
-    # Create base sphere positions
-    base_positions = create_sphere_positions(n_points, radius)
+        # Parameters
+        n_points = 5000
+        radius = 1.0
+        point_radius = 0.05
 
-    # 1. Normal blending - opaque red sphere (reference)
-    aprint("\nCreating normal blending examples...")
-    positions1 = base_positions + np.array([-3, 2, 0])
-    colors1 = [1.0, 0.31, 0.31]  # Red
-    scene.add_points(
-        "NormalOpaque",
-        positions1,
-        colors=colors1,
-        radii=point_radius,
-        blending_mode="normal",
-        opacity=1.0,
-        gamma=1.0,
-    )
+        # Create base sphere positions
+        base_positions = create_sphere_positions(n_points, radius)
 
-    # 2. Normal blending - transparent green sphere
-    positions2 = base_positions + np.array([0, 2, 0])
-    colors2 = [80, 255, 80]  # Green
-    scene.add_points(
-        "NormalTransparent",
-        positions2,
-        colors=colors2,
-        radii=point_radius,
-        blending_mode="normal",
-        opacity=0.6,
-        gamma=1.0,
-    )
+        # 1. Normal blending - opaque red sphere (reference)
+        aprint("\nCreating normal blending examples...")
+        positions1 = base_positions + np.array([-3, 2, 0])
+        colors1 = [1.0, 0.31, 0.31]  # Red
+        scene.add_points(
+            "NormalOpaque",
+            positions1,
+            colors=colors1,
+            radii=point_radius,
+            blending_mode="normal",
+            opacity=1.0,
+            gamma=1.0,
+        )
 
-    # 3. Additive blending - glowing blue sphere
-    aprint("Creating additive blending (glow effect)...")
-    positions3 = base_positions + np.array([3, 2, 0])
-    colors3 = [0.39, 0.59, 1.0]  # Light blue
-    scene.add_points(
-        "AdditiveGlow",
-        positions3,
-        colors=colors3,
-        radii=point_radius * 1.2,  # Slightly larger for glow
-        blending_mode="additive",
-        opacity=0.8,
-        gamma=1.3,  # Brighter
-    )
+        # 2. Normal blending - transparent green sphere
+        positions2 = base_positions + np.array([0, 2, 0])
+        colors2 = [80, 255, 80]  # Green
+        scene.add_points(
+            "NormalTransparent",
+            positions2,
+            colors=colors2,
+            radii=point_radius,
+            blending_mode="normal",
+            opacity=0.6,
+            gamma=1.0,
+        )
 
-    # 4. Subtractive blending - darkening purple sphere
-    aprint("Creating subtractive blending (darkening effect)...")
-    positions4 = base_positions + np.array([-3, -2, 0])
-    colors4 = [0.78, 0.39, 1.0]  # Purple
-    scene.add_points(
-        "SubtractiveDark",
-        positions4,
-        colors=colors4,
-        radii=point_radius,
-        blending_mode="subtractive",
-        opacity=0.8,
-        gamma=0.7,  # Darker
-    )
+        # 3. Additive blending - glowing blue sphere
+        aprint("Creating additive blending (glow effect)...")
+        positions3 = base_positions + np.array([3, 2, 0])
+        colors3 = [0.39, 0.59, 1.0]  # Light blue
+        scene.add_points(
+            "AdditiveGlow",
+            positions3,
+            colors=colors3,
+            radii=point_radius * 1.2,  # Slightly larger for glow
+            blending_mode="additive",
+            opacity=0.8,
+            gamma=1.3,  # Brighter
+        )
 
-    # 5. Demonstration of property inheritance
-    aprint("Creating parent-child inheritance examples...")
+        # 4. Subtractive blending - darkening purple sphere
+        aprint("Creating subtractive blending (darkening effect)...")
+        positions4 = base_positions + np.array([-3, -2, 0])
+        colors4 = [0.78, 0.39, 1.0]  # Purple
+        scene.add_points(
+            "SubtractiveDark",
+            positions4,
+            colors=colors4,
+            radii=point_radius,
+            blending_mode="subtractive",
+            opacity=0.8,
+            gamma=0.7,  # Darker
+        )
 
-    # Create parent group with shared properties
-    parent_group = scene.add_group(
-        "InheritanceGroup", opacity=0.4, blending_mode="additive", gamma=1.1
-    )
+        # 5. Demonstration of property inheritance
+        aprint("Creating parent-child inheritance examples...")
 
-    # Child 1: Inherits all parent properties
-    positions5 = base_positions + np.array([0, -2, 0])
-    colors5 = [1.0, 1.0, 0.39]  # Yellow
-    scene.add_points(
-        "InheritedYellow",
-        positions5,
-        colors=colors5,
-        radii=point_radius,
-        parent=parent_group,
-        # Inherits: opacity=0.4, blending_mode="additive", gamma=1.1
-    )
+        # Create parent group with shared properties
+        parent_group = scene.add_group(
+            "InheritanceGroup", opacity=0.4, blending_mode="additive", gamma=1.1
+        )
 
-    # Child 2: Overrides parent's gamma while inheriting other properties
-    positions6 = base_positions + np.array([3, -2, 0])
-    colors6 = [0.39, 1.0, 1.0]  # Cyan
-    scene.add_points(
-        "OverrideCyan",
-        positions6,
-        colors=colors6,
-        radii=point_radius,
-        parent=parent_group,
-        gamma=1.8,  # Override parent's gamma
-        # Inherits: opacity=0.4, blending_mode="additive"
-    )
+        # Child 1: Inherits all parent properties
+        positions5 = base_positions + np.array([0, -2, 0])
+        colors5 = [1.0, 1.0, 0.39]  # Yellow
+        scene.add_points(
+            "InheritedYellow",
+            positions5,
+            colors=colors5,
+            radii=point_radius,
+            parent=parent_group,
+            # Inherits: opacity=0.4, blending_mode="additive", gamma=1.1
+        )
 
-    scene.finalize()
+        # Child 2: Overrides parent's gamma while inheriting other properties
+        positions6 = base_positions + np.array([3, -2, 0])
+        colors6 = [0.39, 1.0, 1.0]  # Cyan
+        scene.add_points(
+            "OverrideCyan",
+            positions6,
+            colors=colors6,
+            radii=point_radius,
+            parent=parent_group,
+            gamma=1.8,  # Override parent's gamma
+            # Inherits: opacity=0.4, blending_mode="additive"
+        )
 
-    # Print educational summary
-    aprint("\n" + "=" * 60)
-    aprint("RENDERING MODES DEMONSTRATION")
-    aprint("=" * 60)
-    aprint("Scene Layout (viewed from front):")
-    aprint("  Top row (y=2):")
-    aprint("    Left:   Red sphere - Normal blending, opaque")
-    aprint("    Center: Green sphere - Normal blending, 60% transparent")
-    aprint("    Right:  Blue sphere - Additive blending, glowing effect")
-    aprint("  Bottom row (y=-2):")
-    aprint("    Left:   Purple sphere - Subtractive blending, darkening")
-    aprint("    Center: Yellow sphere - Inherits group properties")
-    aprint("    Right:  Cyan sphere - Inherits + overrides gamma")
+        # Print educational summary
+        aprint("\n" + "=" * 60)
+        aprint("RENDERING MODES DEMONSTRATION")
+        aprint("=" * 60)
+        aprint("Scene Layout (viewed from front):")
+        aprint("  Top row (y=2):")
+        aprint("    Left:   Red sphere - Normal blending, opaque")
+        aprint("    Center: Green sphere - Normal blending, 60% transparent")
+        aprint("    Right:  Blue sphere - Additive blending, glowing effect")
+        aprint("  Bottom row (y=-2):")
+        aprint("    Left:   Purple sphere - Subtractive blending, darkening")
+        aprint("    Center: Yellow sphere - Inherits group properties")
+        aprint("    Right:  Cyan sphere - Inherits + overrides gamma")
 
-    aprint("\nRendering Properties Explained:")
-    aprint("- Normal blending: Standard alpha compositing")
-    aprint("- Additive blending: Colors add together (HDR/glow)")
-    aprint("- Subtractive blending: Colors subtract (darkening)")
-    aprint("- Opacity: Controls transparency (0.0 to 1.0)")
-    aprint("- Gamma: Brightness correction (0.2 to 5.0)")
+        aprint("\nRendering Properties Explained:")
+        aprint("- Normal blending: Standard alpha compositing")
+        aprint("- Additive blending: Colors add together (HDR/glow)")
+        aprint("- Subtractive blending: Colors subtract (darkening)")
+        aprint("- Opacity: Controls transparency (0.0 to 1.0)")
+        aprint("- Gamma: Brightness correction (0.2 to 5.0)")
 
-    aprint("\nInheritance Example:")
-    aprint("- Group has opacity=0.4, additive blending, gamma=1.1")
-    aprint("- Yellow sphere inherits all properties")
-    aprint("- Cyan sphere inherits opacity + blending, overrides gamma=1.8")
+        aprint("\nInheritance Example:")
+        aprint("- Group has opacity=0.4, additive blending, gamma=1.1")
+        aprint("- Yellow sphere inherits all properties")
+        aprint("- Cyan sphere inherits opacity + blending, overrides gamma=1.8")
 
-    aprint(f"\nTo view: luxar serve {output_path}")
-    aprint("=" * 60)
+        aprint(f"\nTo view: luxar serve {output_path}")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

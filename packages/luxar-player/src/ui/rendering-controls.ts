@@ -150,9 +150,9 @@ export class RenderingControls {
 
     // Control type selector
     const controlTypeControl = navigationFolder
-      .add(this.settings, 'controlType', ['orbit', 'fly'])
+      .add(this.settings, 'controlType', ['orbit', 'arcball', 'fly'])
       .name('Control Type')
-      .onChange((value: 'orbit' | 'fly') => {
+      .onChange((value: 'orbit' | 'arcball' | 'fly') => {
         this.sceneManager.setControlType(value);
         this.saveSettings();
         this.triggerAnimation();
@@ -168,8 +168,9 @@ export class RenderingControls {
     controlTypeControl.domElement.setAttribute(
       'title',
       'Camera Control Type\n' +
-        '• Orbit: Traditional 3D viewer controls (rotate, zoom, pan)\n' +
-        '• Fly: First-person flying controls (arrow keys to move)'
+        '• Orbit: Traditional 3D viewer controls with gimbal lock at poles\n' +
+        '• Arcball: Quaternion-based controls with unlimited rotation freedom\n' +
+        '• Fly: First-person flying controls (WASD to move, arrows to look)'
     );
 
     // Create sub-folders for each control type
@@ -870,11 +871,12 @@ export class RenderingControls {
   /**
    * Update navigation controls visibility based on control type
    */
-  private updateNavigationControls(controlType: 'orbit' | 'fly'): void {
+  private updateNavigationControls(controlType: 'orbit' | 'arcball' | 'fly'): void {
     const orbitFolder = this.orbitFolder;
     const flyFolder = this.flyFolder;
 
-    if (controlType === 'orbit') {
+    if (controlType === 'orbit' || controlType === 'arcball') {
+      // Show orbit folder for both orbit and arcball (they share similar settings)
       if (orbitFolder) {
         orbitFolder.show();
         orbitFolder.open();
@@ -883,7 +885,36 @@ export class RenderingControls {
         flyFolder.close();
         flyFolder.hide();
       }
+
+      // Hide auto-rotate controls for arcball mode (not supported)
+      if (controlType === 'arcball') {
+        if (this.controllers.autoRotate) {
+          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.setProperty(
+            'display',
+            'none'
+          );
+        }
+        if (this.controllers.autoRotateSpeed) {
+          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.setProperty(
+            'display',
+            'none'
+          );
+        }
+      } else {
+        // Show auto-rotate controls for orbit mode
+        if (this.controllers.autoRotate) {
+          this.controllers.autoRotate.domElement.parentElement?.parentElement?.style.removeProperty(
+            'display'
+          );
+        }
+        if (this.controllers.autoRotateSpeed) {
+          this.controllers.autoRotateSpeed.domElement.parentElement?.parentElement?.style.removeProperty(
+            'display'
+          );
+        }
+      }
     } else {
+      // Show fly folder for fly controls
       if (orbitFolder) {
         orbitFolder.close();
         orbitFolder.hide();

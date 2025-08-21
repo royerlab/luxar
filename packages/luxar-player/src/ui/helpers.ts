@@ -236,7 +236,7 @@ export function showHelpOverlay() {
         '🖱️ Right drag: Pan camera',
         '⎵ Space: Toggle fullscreen',
         'H: Toggle this help',
-        'V: Switch view mode (Orbit/Fly)',
+        'V: Switch view mode (Orbit/Arcball/Fly)',
         'F: Recenter camera on scene',
         'O: Open dataset browser',
         'Esc: Exit fullscreen / Close panels',
