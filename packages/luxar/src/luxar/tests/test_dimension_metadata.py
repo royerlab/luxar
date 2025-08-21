@@ -168,11 +168,13 @@ class TestSceneDimensionMetadata:
         zarr_path = tmp_path / "persist.zarr"
 
         # Create scene with metadata using new API
-        dims = Dimensions([
-            Dimension("t", unit="ms", range=(0, 100), step=2.0),
-            Dimension("x", unit="px"),
-            Dimension("y", unit="px"),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("t", unit="ms", range=(0, 100), step=2.0),
+                Dimension("x", unit="px"),
+                Dimension("y", unit="px"),
+            ]
+        )
 
         with LuxarZarrCompiler(zarr_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)

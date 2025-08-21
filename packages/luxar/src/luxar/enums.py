@@ -9,25 +9,26 @@ from enum import Enum
 
 class BlendingMode(str, Enum):
     """Blending modes for point cloud rendering.
-    
+
     These control how overlapping points combine their colors.
     """
-    NORMAL = "normal"          # Standard alpha blending
-    ADDITIVE = "additive"       # Colors add together (glow effect)
-    SUBTRACTIVE = "subtractive" # Colors subtract (darkening)
-    MINIMUM = "minimum"         # Keep minimum color values
-    MAXIMUM = "maximum"         # Keep maximum color values
+
+    NORMAL = "normal"  # Standard alpha blending
+    ADDITIVE = "additive"  # Colors add together (glow effect)
+    SUBTRACTIVE = "subtractive"  # Colors subtract (darkening)
+    MINIMUM = "minimum"  # Keep minimum color values
+    MAXIMUM = "maximum"  # Keep maximum color values
 
     @classmethod
     def validate(cls, value: str) -> "BlendingMode":
         """Validate and convert string to BlendingMode.
-        
+
         Args:
             value: String representation of blending mode
-            
+
         Returns:
             BlendingMode enum value
-            
+
         Raises:
             ValueError: If value is not a valid blending mode
         """
@@ -42,6 +43,7 @@ class BlendingMode(str, Enum):
 
 class NodeType(str, Enum):
     """Types of nodes in the scene hierarchy."""
+
     SCENE = "scene"
     GROUP = "group"
     POINTS = "points"
@@ -49,13 +51,13 @@ class NodeType(str, Enum):
     @classmethod
     def validate(cls, value: str) -> "NodeType":
         """Validate and convert string to NodeType.
-        
+
         Args:
             value: String representation of node type
-            
+
         Returns:
             NodeType enum value
-            
+
         Raises:
             ValueError: If value is not a valid node type
         """
@@ -63,16 +65,15 @@ class NodeType(str, Enum):
             return cls(value)
         except ValueError:
             valid = ", ".join([f"'{nt.value}'" for nt in cls])
-            raise ValueError(
-                f"Invalid node type '{value}'. Must be one of: {valid}"
-            )
+            raise ValueError(f"Invalid node type '{value}'. Must be one of: {valid}")
 
 
 class PhysicalUnit(str, Enum):
     """Physical units for spatial dimensions.
-    
+
     Supports metric, imperial, and specialized units.
     """
+
     # Metric units
     NANOMETER = "nm"
     MICROMETER = "um"
@@ -93,13 +94,13 @@ class PhysicalUnit(str, Enum):
     @classmethod
     def validate(cls, value: str) -> "PhysicalUnit":
         """Validate and convert string to PhysicalUnit.
-        
+
         Args:
             value: String representation of physical unit
-            
+
         Returns:
             PhysicalUnit enum value
-            
+
         Raises:
             ValueError: If value is not a valid physical unit
         """
@@ -139,6 +140,7 @@ class PhysicalUnit(str, Enum):
 # Rendering property ranges
 class RenderingLimits:
     """Valid ranges for rendering properties."""
+
     OPACITY_MIN = 0.0
     OPACITY_MAX = 1.0
     GAMMA_MIN = 0.2
@@ -147,14 +149,15 @@ class RenderingLimits:
     SHARPNESS_MAX = 20.0
 
     # HDR color ranges
-    COLOR_SDR_MIN = 0.0   # Standard dynamic range minimum
-    COLOR_SDR_MAX = 1.0   # Standard dynamic range maximum
+    COLOR_SDR_MIN = 0.0  # Standard dynamic range minimum
+    COLOR_SDR_MAX = 1.0  # Standard dynamic range maximum
     COLOR_HDR_MAX = 10.0  # HDR maximum (can go higher but this is practical)
 
 
 # Default values
 class Defaults:
     """Default values for various properties."""
+
     OPACITY = 1.0
     GAMMA = 1.0
     SHARPNESS = 1.0

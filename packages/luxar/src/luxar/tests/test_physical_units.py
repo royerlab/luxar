@@ -29,11 +29,12 @@ class TestPhysicalUnits:
         """Test that each physical unit is accepted by LuxarZarrCompiler."""
         scene_path = tmp_path / f"test_{unit}.zarr"
         with LuxarZarrCompiler(scene_path, units=unit) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
         # Check the units were stored in the zarr store
         import zarr
-        store = zarr.open_group(scene_path, mode='r')
+
+        store = zarr.open_group(scene_path, mode="r")
         assert store.attrs["units"] == unit
 
     def test_invalid_unit_rejection(self, tmp_path):

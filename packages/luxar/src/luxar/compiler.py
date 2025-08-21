@@ -36,12 +36,12 @@ def _calculate_intelligent_chunks(
     dimension_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
-    
+
     Args:
         shape: Shape of the dataset
         target_chunk_size: Target size for chunks in elements
         dimension_metadata: Optional metadata about dimensions for optimization
-        
+
     Returns:
         Optimized chunk shape
     """
@@ -61,23 +61,23 @@ def _calculate_intelligent_chunks(
 
 class LuxarZarrCompiler(ZarrWriterProtocol):
     """Progressive Zarr compiler with context manager support.
-    
+
     This compiler writes data immediately to Zarr without keeping it in memory,
     enabling processing of datasets larger than available RAM.
-    
+
     Args:
         store_path: Path where the Zarr store will be created
         compressor: Compression configuration for datasets
         units: Physical units for the scene (deprecated, use dimensions)
         version: Luxar format version
-        
+
     Examples:
         Basic usage with context manager:
         >>> with LuxarZarrCompiler('output.zarr') as compiler:
         ...     scene = compiler.create_scene()
         ...     positions = np.random.randn(10000, 3).astype(np.float32)
         ...     scene.add_points('points', positions)
-        
+
         With HDR colors and dimensions:
         >>> dims = Dimensions([
         ...     Dimension('x', unit='um'),
@@ -89,7 +89,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     # HDR colors with values > 1.0
         ...     colors = np.random.rand(1000, 3).astype(np.float32) * 5.0
         ...     scene.add_points('bright_points', positions, colors=colors)
-        
+
         Progressive writing for huge datasets:
         >>> with LuxarZarrCompiler('huge.zarr') as compiler:
         ...     scene = compiler.create_scene()
@@ -108,7 +108,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: str = DEFAULT_VERSION,
     ) -> None:
         """Initialize the Zarr compiler.
-        
+
         Args:
             store_path: Path for the Zarr store, or None for temporary
             compressor: Compressor for datasets
@@ -130,13 +130,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             units = validate_physical_unit(units)
 
         # Create root Zarr group
-        self.store = zarr.open_group(self._store_path, mode='w')
-        self.store.attrs.update({
-            'luxar_version': version,
-            'units': units,
-            'type': 'scene',
-            'node_type': 'scene'  # Also add node_type for consistency
-        })
+        self.store = zarr.open_group(self._store_path, mode="w")
+        self.store.attrs.update(
+            {
+                "luxar_version": version,
+                "units": units,
+                "type": "scene",
+                "node_type": "scene",  # Also add node_type for consistency
+            }
+        )
 
         self.compressor = compressor
         self._metadata_cache: Dict[str, Any] = {}
@@ -159,10 +161,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     def create_scene(self, dimensions: Optional[Dimensions] = None) -> Any:
         """Create a scene with this compiler as writer.
-        
+
         Args:
             dimensions: Optional dimension specification for the scene
-            
+
         Returns:
             Scene object configured with this compiler as writer
         """
@@ -171,7 +173,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Store dimensions in root attributes if provided
         if dimensions is not None:
-            self.store.attrs['scene_dimensions'] = dimensions.to_dict()
+            self.store.attrs["scene_dimensions"] = dimensions.to_dict()
 
         # Create scene with writer injection
         scene = Scene(writer=self, dimensions=dimensions)
@@ -181,7 +183,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     def write_group(self, path: NodePath, **attrs: Any) -> None:
         """Create a group in the Zarr store.
-        
+
         Args:
             path: Path for the group within the store
             **attrs: Attributes to attach to the group
@@ -191,7 +193,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group = self.store
         else:
             # Remove leading slash if present
-            path = path.lstrip('/')
+            path = path.lstrip("/")
             group = self.store.require_group(path)
 
         # Update attributes - preserve existing ones
@@ -215,9 +217,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         **attrs: Any,
     ) -> PointsMetadata:
         """Write point cloud data progressively to Zarr.
-        
+
         Data is written immediately to disk without being kept in memory.
-        
+
         Args:
             path: Path for the point cloud within the store
             positions: Point positions of shape (N, D)
@@ -225,12 +227,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             radii: Optional radii of shape (N,)
             sharpness: Optional sharpness of shape (N,)
             **attrs: Additional attributes
-            
+
         Returns:
             Metadata dictionary about the written data
         """
         # Remove leading slash and create group
-        path = path.lstrip('/')
+        path = path.lstrip("/")
         group = self.store.require_group(path)
 
         # Validate positions and get dimensions
@@ -240,26 +242,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Write positions with intelligent chunking
         chunks = _calculate_intelligent_chunks(
-            positions.shape,
-            target_chunk_size=DEFAULT_CHUNK_SIZE
+            positions.shape, target_chunk_size=DEFAULT_CHUNK_SIZE
         )
         group.create_dataset(
-            'positions',
+            "positions",
             data=positions,
             chunks=chunks,
             compressor=self.compressor,
             dtype=np.float32,
-            overwrite=True
+            overwrite=True,
         )
 
         # Write optional arrays
         metadata = {
-            'n_points': n_points,
-            'dims': n_dims,
-            'path': path,
-            'has_colors': False,
-            'has_radii': False,
-            'has_sharpness': False,
+            "n_points": n_points,
+            "dims": n_dims,
+            "path": path,
+            "has_colors": False,
+            "has_radii": False,
+            "has_sharpness": False,
         }
 
         if colors is not None:
@@ -268,14 +269,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             color_chunks = _calculate_intelligent_chunks(colors.shape)
             group.create_dataset(
-                'colors',
+                "colors",
                 data=colors,
                 chunks=color_chunks,
                 compressor=self.compressor,
                 dtype=np.float32,
-                overwrite=True
+                overwrite=True,
             )
-            metadata['has_colors'] = True
+            metadata["has_colors"] = True
             aprint("  ✓ Wrote HDR colors")
 
         if radii is not None:
@@ -284,14 +285,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             radii_chunks = _calculate_intelligent_chunks(radii.shape)
             group.create_dataset(
-                'radii',
+                "radii",
                 data=radii,
                 chunks=radii_chunks,
                 compressor=self.compressor,
                 dtype=np.float32,
-                overwrite=True
+                overwrite=True,
             )
-            metadata['has_radii'] = True
+            metadata["has_radii"] = True
             aprint("  ✓ Wrote radii")
 
         if sharpness is not None:
@@ -300,14 +301,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
             group.create_dataset(
-                'sharpness',
+                "sharpness",
                 data=sharpness,
                 chunks=sharp_chunks,
                 compressor=self.compressor,
                 dtype=np.float32,
-                overwrite=True
+                overwrite=True,
             )
-            metadata['has_sharpness'] = True
+            metadata["has_sharpness"] = True
             aprint("  ✓ Wrote sharpness")
 
         # Process transform if present to convert numpy array to list
@@ -321,20 +322,22 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     # Transpose for THREE.js (column-major order) before flattening
                     attrs["transform"] = transform_matrix.T.ravel().tolist()
                 else:
-                    raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
+                    raise ValueError(
+                        f"Transform must have 16 elements, got {transform_array.size}"
+                    )
 
         # Set default rendering attributes if not provided
-        if 'opacity' not in attrs:
-            attrs['opacity'] = 1.0
-        if 'gamma' not in attrs:
-            attrs['gamma'] = 1.0
-        if 'blending_mode' not in attrs:
-            attrs['blending_mode'] = 'additive'
+        if "opacity" not in attrs:
+            attrs["opacity"] = 1.0
+        if "gamma" not in attrs:
+            attrs["gamma"] = 1.0
+        if "blending_mode" not in attrs:
+            attrs["blending_mode"] = "additive"
 
         # Store attributes
         group.attrs.update(attrs)
-        group.attrs['type'] = 'points'
-        group.attrs['n_points'] = n_points
+        group.attrs["type"] = "points"
+        group.attrs["n_points"] = n_points
 
         # Cache metadata
         self._metadata_cache[path] = metadata
@@ -351,21 +354,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         chunks: ChunkSpec = True,
     ) -> Any:
         """Create a resizable dataset for streaming writes.
-        
+
         Args:
             path: Path for the dataset
             dtype: Data type
             shape: Initial shape
             maxshape: Maximum shape (None for unlimited)
             chunks: Chunking configuration
-            
+
         Returns:
             Zarr dataset handle
         """
-        path = path.lstrip('/')
+        path = path.lstrip("/")
 
         # Parse parent group and dataset name
-        parts = path.rsplit('/', 1)
+        parts = path.rsplit("/", 1)
         if len(parts) == 2:
             group_path, dataset_name = parts
             group = self.store.require_group(group_path)
@@ -381,7 +384,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             dtype=dtype,
             compressor=self.compressor,
             maxshape=maxshape,
-            overwrite=True
+            overwrite=True,
         )
 
         aprint(f"📝 Created resizable dataset: {path}")
@@ -396,18 +399,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written
-            if hasattr(self.store, 'close'):
+            if hasattr(self.store, "close"):
                 self.store.close()
 
             # Re-open the store to consolidate metadata
             # This ensures all groups and datasets are properly written to disk
-            store = zarr.open_group(self._store_path, mode='r+')
+            store = zarr.open_group(self._store_path, mode="r+")
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)
 
             # Close the store again
-            if hasattr(store, 'close'):
+            if hasattr(store, "close"):
                 store.close()
 
             self._is_finalized = True

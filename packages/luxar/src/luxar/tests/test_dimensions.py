@@ -291,7 +291,7 @@ class TestSceneIntegration:
         # Create scene with dimensions
         dims = Dimensions.default_timeseries()
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            compiler.create_scene(dimensions=dims)
             # Context manager handles finalization
 
         # Load and check

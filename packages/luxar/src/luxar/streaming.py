@@ -23,16 +23,16 @@ from .writer import ZarrWriterProtocol
 
 class StreamingPoints:
     """Special node type for streaming huge point clouds.
-    
+
     This class enables appending point data in batches without loading
     existing data into memory, perfect for datasets larger than RAM.
-    
+
     Args:
         name: Name for the point cloud
         writer: Writer interface for progressive writing
         expected_dims: Expected dimensionality of points
         initial_capacity: Initial capacity (will auto-grow)
-        
+
     Examples:
         Basic streaming:
         >>> with LuxarZarrCompiler('output.zarr') as compiler:
@@ -40,7 +40,7 @@ class StreamingPoints:
         ...     for batch in data_generator():
         ...         streaming.append_batch(batch)  # Written immediately
         ...     streaming.finalize()
-        
+
         Streaming with attributes:
         >>> streaming = StreamingPoints("colored_cloud", compiler)
         >>> for i in range(1000):
@@ -49,12 +49,12 @@ class StreamingPoints:
         ...     radii = np.full(len(positions), 0.1, dtype=np.float32)
         ...     streaming.append_batch(positions, colors=colors, radii=radii)
         >>> metadata = streaming.finalize(opacity=0.8)
-        
+
         Using generator convenience method:
         >>> def batch_generator():
         ...     for i in range(100):
         ...         yield np.random.randn(1000, 3).astype(np.float32)
-        >>> 
+        >>>
         >>> streaming = StreamingPoints("generated", compiler)
         >>> total = streaming.append_from_generator(batch_generator())
         >>> print(f"Streamed {total:,} points")
@@ -68,7 +68,7 @@ class StreamingPoints:
         initial_capacity: int = 0,
     ) -> None:
         """Initialize streaming points.
-        
+
         Args:
             name: Name for this point cloud
             writer: Writer for progressive output
@@ -102,23 +102,23 @@ class StreamingPoints:
         sharpness: Optional[NDArray[np.float32]] = None,
     ) -> None:
         """Append a batch of points without loading existing data.
-        
+
         Args:
             positions: Point positions of shape (N, D)
             colors: Optional HDR colors of shape (N, 3)
             radii: Optional radii of shape (N,)
             sharpness: Optional sharpness of shape (N,)
-            
+
         Raises:
             ValueError: If batch dimensions don't match expected
         """
         # Validate batch positions
-        n_points, n_dims = validate_positions_for_writing(positions, context="batch positions")
+        n_points, n_dims = validate_positions_for_writing(
+            positions, context="batch positions"
+        )
 
         if n_dims != self.expected_dims:
-            raise ValueError(
-                f"Expected {self.expected_dims}D points, got {n_dims}D"
-            )
+            raise ValueError(f"Expected {self.expected_dims}D points, got {n_dims}D")
 
         # Create datasets on first batch
         if self.positions_dataset is None:
@@ -153,7 +153,9 @@ class StreamingPoints:
             self.has_radii = True
 
         if sharpness is not None:
-            validate_sharpness_for_writing(sharpness, n_points, context="batch sharpness")
+            validate_sharpness_for_writing(
+                sharpness, n_points, context="batch sharpness"
+            )
             if self.sharpness_dataset is None:
                 self._create_sharpness_dataset()
                 # Resize the newly created dataset to match current size
@@ -165,7 +167,9 @@ class StreamingPoints:
         self.position = new_size
         self.total_points += n_points
 
-        aprint(f"  ✓ Appended batch: {n_points:,} points (total: {self.total_points:,})")
+        aprint(
+            f"  ✓ Appended batch: {n_points:,} points (total: {self.total_points:,})"
+        )
 
     def _create_datasets(self, n_dims: int) -> None:
         """Create the initial resizable datasets."""
@@ -220,10 +224,10 @@ class StreamingPoints:
 
     def finalize(self, **attrs: Any) -> Dict[str, Any]:
         """Finalize the streaming points and write metadata.
-        
+
         Args:
             **attrs: Additional attributes to store
-            
+
         Returns:
             Metadata dictionary about the streamed points
         """
@@ -249,7 +253,9 @@ class StreamingPoints:
             "streaming": True,
         }
 
-        aprint(f"✅ Finalized streaming points '{self.name}' with {self.total_points:,} points")
+        aprint(
+            f"✅ Finalized streaming points '{self.name}' with {self.total_points:,} points"
+        )
 
         return metadata
 
@@ -260,12 +266,12 @@ class StreamingPoints:
         max_batches: Optional[int] = None,
     ) -> int:
         """Convenience method to append from a generator.
-        
+
         Args:
             generator: Generator yielding (positions, colors, radii, sharpness) tuples
             batch_size: If set, accumulate this many points before writing
             max_batches: Maximum number of batches to process
-            
+
         Returns:
             Total number of points appended
         """

@@ -16,7 +16,7 @@ from .type_aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 
 class ZarrWriterProtocol(Protocol):
     """Protocol for progressive Zarr writing.
-    
+
     This interface enables different implementations of Zarr writers
     while maintaining a consistent API for the scene graph nodes.
     Writers implementing this protocol handle immediate data persistence
@@ -25,7 +25,7 @@ class ZarrWriterProtocol(Protocol):
 
     def write_group(self, path: NodePath, **attrs: Any) -> None:
         """Create a group structure in the Zarr store.
-        
+
         Args:
             path: Path within the Zarr store for the group
             **attrs: Attributes to attach to the group
@@ -42,18 +42,18 @@ class ZarrWriterProtocol(Protocol):
         **attrs: Any,
     ) -> PointsMetadata:
         """Write point cloud data immediately to Zarr.
-        
+
         Data is written directly to disk without being kept in memory.
         Only metadata about the written data is returned.
-        
+
         Args:
             path: Path within the Zarr store for this point cloud
             positions: Point positions array of shape (N, D)
-            colors: Optional HDR colors array of shape (N, 3) 
+            colors: Optional HDR colors array of shape (N, 3)
             radii: Optional radii array of shape (N,)
             sharpness: Optional sharpness array of shape (N,)
             **attrs: Additional attributes for the point cloud
-            
+
         Returns:
             Dictionary containing only metadata about the written data:
             - n_points: Number of points written
@@ -74,16 +74,16 @@ class ZarrWriterProtocol(Protocol):
         chunks: ChunkSpec = True,
     ) -> Any:
         """Create a resizable dataset for streaming writes.
-        
+
         This enables appending data in batches without loading existing data.
-        
+
         Args:
             path: Path for the dataset within the Zarr store
             dtype: Data type for the dataset
             shape: Initial shape of the dataset
             maxshape: Maximum shape (None for unlimited dimensions)
             chunks: Chunk configuration for the dataset
-            
+
         Returns:
             Handle to the created dataset that supports resizing and slicing
         """
@@ -91,7 +91,7 @@ class ZarrWriterProtocol(Protocol):
 
     def finalize(self) -> None:
         """Finalize the Zarr store.
-        
+
         Performs any necessary cleanup, metadata consolidation,
         or optimization steps before closing the store.
         """
@@ -100,7 +100,7 @@ class ZarrWriterProtocol(Protocol):
     @property
     def store_path(self) -> str:
         """Get the path to the underlying Zarr store.
-        
+
         Returns:
             Path to the Zarr store being written to
         """

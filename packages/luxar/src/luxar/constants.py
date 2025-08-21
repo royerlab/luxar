@@ -30,7 +30,7 @@ SHARPNESS_DEFAULT: Final[float] = 2.0
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
 COLOR_SDR_MAX: Final[float] = 1.0  # Standard dynamic range maximum
 COLOR_HDR_TYPICAL_MAX: Final[float] = 10.0  # Typical HDR maximum
-COLOR_HDR_THEORETICAL_MAX: Final[float] = float('inf')  # No theoretical limit
+COLOR_HDR_THEORETICAL_MAX: Final[float] = float("inf")  # No theoretical limit
 
 # Chunk size constants
 CHUNK_SIZE_MIN: Final[int] = 1_024  # Minimum chunk size in elements (1KB)
@@ -79,5 +79,9 @@ NODE_TYPE_POINTS: Final[str] = "points"
 
 # Validation messages
 VALIDATION_POSITIVE_REQUIRED: Final[str] = "Value must be positive"
-VALIDATION_SHAPE_MISMATCH: Final[str] = "Shape mismatch: expected {expected}, got {actual}"
-VALIDATION_OUT_OF_RANGE: Final[str] = "Value {value} is outside valid range [{min}, {max}]"
+VALIDATION_SHAPE_MISMATCH: Final[str] = (
+    "Shape mismatch: expected {expected}, got {actual}"
+)
+VALIDATION_OUT_OF_RANGE: Final[str] = (
+    "Value {value} is outside valid range [{min}, {max}]"
+)

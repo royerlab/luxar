@@ -118,6 +118,9 @@ interface ZarrGroupAttrs {
 
   /** Scene-level dimension configuration */
   scene_dimensions?: any;
+
+  /** List of dimension names that should be auto-broadcasted */
+  broadcast_dims?: string[];
 }
 
 /* ------------------------------------------------------------------ main */
@@ -385,7 +388,7 @@ export async function loadScene(src: string): Promise<THREE.Group> {
         }
         parent.obj.add(obj);
         console.log(
-          `[✓] [Luxar] Added ${entry.path} to parent ${parentPath}, obj type: ${obj.type}, children count: ${obj.children.length}`
+          `[✓] [Luxar] Added ${entry.path} to parent ${parentPath}, obj type: ${obj.type}, children count: ${obj.children?.length ?? 0}`
         );
 
         // Apply transform AFTER adding to parent
@@ -416,14 +419,14 @@ export async function loadScene(src: string): Promise<THREE.Group> {
 
     // Debug: Check final scene structure
     console.log('[🎯] [Luxar] Final scene structure:');
-    console.log(`  Root has ${rootThree.children.length} children`);
-    rootThree.children.forEach((child, i) => {
+    console.log(`  Root has ${rootThree.children?.length ?? 0} children`);
+    rootThree.children?.forEach((child, i) => {
       if (child instanceof THREE.Points) {
         const points = child as THREE.Points;
         const posCount = points.geometry.attributes.position?.count || 0;
         console.log(`  Child ${i}: Points with ${posCount} points`);
       } else if (child instanceof THREE.Group) {
-        console.log(`  Child ${i}: Group with ${child.children.length} children`);
+        console.log(`  Child ${i}: Group with ${child.children?.length ?? 0} children`);
       } else {
         console.log(`  Child ${i}: ${child.type}`);
       }
@@ -482,6 +485,10 @@ async function buildPoints(
   const totalPoints = attrs.num_points || (posArr.shape[0] as number);
   const dimensions = posArr.shape.length === 2 ? posArr.shape[1] : 3;
 
+  // Check for broadcast dimensions early
+  const broadcastDims = attrs.broadcast_dims || [];
+  const hasBroadcastDims = broadcastDims.length > 0;
+
   // Always use lazy loading machinery for consistency
   // This provides a unified code path and enables monitoring for all datasets
   const useLazyLoading = true;
@@ -492,6 +499,10 @@ async function buildPoints(
     console.log(
       `[🔄] [Luxar] Using lazy loading for dataset (${totalPoints.toLocaleString()} points in ${dimensions}D)`
     );
+
+    if (hasBroadcastDims) {
+      console.log(`[📡] [Luxar] Group has broadcast dimensions: ${broadcastDims.join(', ')}`);
+    }
 
     // Use lazy loading for all datasets for consistency and monitoring
     const lazyManager = getLazyManager();
@@ -561,18 +572,42 @@ async function buildPoints(
       }
 
       // Calculate point indices for this slice
-      const pointsPerSlice = Math.round(totalPoints / totalSlices);
+      let startIdx: number;
+      let endIdx: number;
 
-      // Bounds check: ensure linearIndex is valid
-      if (linearIndex < 0 || linearIndex >= totalSlices) {
-        console.warn(
-          `[⚠️] [Luxar] Invalid linear index ${linearIndex} (total slices: ${totalSlices}). Clamping to valid range.`
-        );
-        linearIndex = Math.max(0, Math.min(totalSlices - 1, linearIndex));
+      // Check if this group should use broadcasting
+      const shouldBroadcast =
+        hasBroadcastDims &&
+        nonDisplayedDims.some((dimIdx) => {
+          const dimMeta = sceneDims.metadata?.[dimIdx];
+          return dimMeta && broadcastDims.includes(dimMeta.name || '');
+        });
+
+      if (shouldBroadcast) {
+        // For explicitly broadcast groups, always load all points
+        console.log(`[📡] [Luxar] Using broadcast mode - loading all ${totalPoints} points`);
+        startIdx = 0;
+        endIdx = totalPoints;
+      } else {
+        // For groups with full coverage, load the appropriate slice
+        const pointsPerSlice = Math.round(totalPoints / totalSlices);
+
+        // Bounds check: ensure linearIndex is valid
+        if (linearIndex < 0 || linearIndex >= totalSlices) {
+          console.warn(
+            `[⚠️] [Luxar] Invalid linear index ${linearIndex} (total slices: ${totalSlices}). Clamping to valid range.`
+          );
+          linearIndex = Math.max(0, Math.min(totalSlices - 1, linearIndex));
+        }
+
+        startIdx = linearIndex * pointsPerSlice;
+        endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
       }
 
-      const startIdx = linearIndex * pointsPerSlice;
-      const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+      // Store these for use when loading auxiliary arrays
+      (loc as any)._sliceStartIdx = startIdx;
+      (loc as any)._sliceEndIdx = endIdx;
+      (loc as any)._shouldBroadcast = shouldBroadcast;
 
       // Create slice spec for these points
       const sliceSpec: (zarr.Slice | null)[] = [
@@ -698,33 +733,17 @@ async function buildPoints(
       const totalSlices = (loc as any)._totalSlices;
 
       if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
-        // For nD data with non-displayed dimensions, calculate the correct slice
-        let linearIndex = 0;
-        let multiplier = 1;
-        const sliceSizes: number[] = [];
+        // Use the same slice indices that were calculated for positions
+        const startIdx = (loc as any)._sliceStartIdx || 0;
+        const endIdx = (loc as any)._sliceEndIdx || totalPoints;
+        const shouldBroadcast = (loc as any)._shouldBroadcast || false;
 
-        for (const dimIdx of nonDisplayedDims) {
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          if (dimMeta && dimMeta.range) {
-            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
-            sliceSizes.push(dimSize);
-          } else {
-            sliceSizes.push(1);
-          }
+        if (shouldBroadcast) {
+          console.log(
+            `[📏] [Luxar] Loading all radii for broadcast group: ${loc.path} (${startIdx}-${endIdx})`
+          );
         }
 
-        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
-          const dimIdx = nonDisplayedDims[i];
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          const minVal = dimMeta?.range?.[0] || 0;
-          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
-          linearIndex += currentVal * multiplier;
-          multiplier *= sliceSizes[i];
-        }
-
-        const pointsPerSlice = Math.round(totalPoints / totalSlices);
-        const startIdx = linearIndex * pointsPerSlice;
-        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx)];
         // Include object path in array name to prevent cache collisions
         const radiiPath = loc.path ? `${loc.path}/radii` : 'radii';
@@ -795,33 +814,17 @@ async function buildPoints(
       const totalSlices = (loc as any)._totalSlices;
 
       if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
-        // For nD data with non-displayed dimensions, calculate the correct slice
-        let linearIndex = 0;
-        let multiplier = 1;
-        const sliceSizes: number[] = [];
+        // Use the same slice indices that were calculated for positions
+        const startIdx = (loc as any)._sliceStartIdx || 0;
+        const endIdx = (loc as any)._sliceEndIdx || totalPoints;
+        const shouldBroadcast = (loc as any)._shouldBroadcast || false;
 
-        for (const dimIdx of nonDisplayedDims) {
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          if (dimMeta && dimMeta.range) {
-            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
-            sliceSizes.push(dimSize);
-          } else {
-            sliceSizes.push(1);
-          }
+        if (shouldBroadcast) {
+          console.log(
+            `[🎨] [Luxar] Loading all colors for broadcast group: ${loc.path} (${startIdx}-${endIdx})`
+          );
         }
 
-        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
-          const dimIdx = nonDisplayedDims[i];
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          const minVal = dimMeta?.range?.[0] || 0;
-          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
-          linearIndex += currentVal * multiplier;
-          multiplier *= sliceSizes[i];
-        }
-
-        const pointsPerSlice = Math.round(totalPoints / totalSlices);
-        const startIdx = linearIndex * pointsPerSlice;
-        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx), null]; // All color channels
         // Include object path in array name to prevent cache collisions
         const colorsPath = loc.path ? `${loc.path}/colors` : 'colors';
@@ -879,33 +882,17 @@ async function buildPoints(
       const totalSlices = (loc as any)._totalSlices;
 
       if (nonDisplayedDims && nonDisplayedDims.length > 0 && totalSlices && sceneDims) {
-        // For nD data with non-displayed dimensions, calculate the correct slice
-        let linearIndex = 0;
-        let multiplier = 1;
-        const sliceSizes: number[] = [];
+        // Use the same slice indices that were calculated for positions
+        const startIdx = (loc as any)._sliceStartIdx || 0;
+        const endIdx = (loc as any)._sliceEndIdx || totalPoints;
+        const shouldBroadcast = (loc as any)._shouldBroadcast || false;
 
-        for (const dimIdx of nonDisplayedDims) {
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          if (dimMeta && dimMeta.range) {
-            const dimSize = Math.round(dimMeta.range[1] - dimMeta.range[0] + 1);
-            sliceSizes.push(dimSize);
-          } else {
-            sliceSizes.push(1);
-          }
+        if (shouldBroadcast) {
+          console.log(
+            `[✨] [Luxar] Loading all sharpness for broadcast group: ${loc.path} (${startIdx}-${endIdx})`
+          );
         }
 
-        for (let i = nonDisplayedDims.length - 1; i >= 0; i--) {
-          const dimIdx = nonDisplayedDims[i];
-          const dimMeta = sceneDims.metadata?.[dimIdx];
-          const minVal = dimMeta?.range?.[0] || 0;
-          const currentVal = Math.round(sceneDims.currentStep[dimIdx] - minVal);
-          linearIndex += currentVal * multiplier;
-          multiplier *= sliceSizes[i];
-        }
-
-        const pointsPerSlice = Math.round(totalPoints / totalSlices);
-        const startIdx = linearIndex * pointsPerSlice;
-        const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
         const sliceSpec = [zarr.slice(startIdx, endIdx)];
         // Include object path in array name to prevent cache collisions
         const sharpnessPath = loc.path ? `${loc.path}/sharpness` : 'sharpness';
@@ -1058,6 +1045,11 @@ async function buildPoints(
     // Store array references for reloading
     points.userData.zarrLocation = loc;
     points.userData.sceneDims = sceneDims;
+
+    // Store broadcast_dims attribute if present
+    if (broadcastDims.length > 0) {
+      points.userData.broadcastDims = broadcastDims;
+    }
   } else if (dims.ndim > 3) {
     // Traditional full data storage for nD data without lazy loading
     points.userData.originalNumPoints = numPoints;

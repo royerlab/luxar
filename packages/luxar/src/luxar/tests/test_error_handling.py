@@ -144,7 +144,7 @@ class TestSceneErrorHandling:
 
     def test_add_points_dimension_validation(self):
         """Test that we can write points of any dimension without validation.
-        
+
         The new API intentionally does not validate dimensions at write time,
         allowing flexibility for nD datasets. This test verifies that behavior.
         """
@@ -153,7 +153,7 @@ class TestSceneErrorHandling:
                 [Dimension("x", range=(-10, 10)), Dimension("y", range=(-10, 10))]
             )
             with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+                compiler.create_scene(dimensions=dims)
 
                 # 2D points - matches scene dimensions
                 good_positions = np.random.uniform(-5, 5, (100, 2)).astype(np.float32)
@@ -170,6 +170,7 @@ class TestSceneErrorHandling:
 
             # Verify all were written
             import zarr
+
             store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="r")
             assert "2d_points" in store
             assert "3d_points" in store
@@ -315,6 +316,7 @@ class TestEdgeCases:
 
             # Verify first scene data exists
             import zarr
+
             store = zarr.open_group(zarr_path, mode="r")
             assert "points1" in store
             points1_count = len(store["points1/positions"])
@@ -347,15 +349,19 @@ class TestRecoveryStrategies:
 
                 # Try to add invalid data - validation should catch it
                 from luxar.validation import ValidationError
+
                 with pytest.raises((ValueError, ValidationError)):
                     # Wrong shape - 1D array instead of 2D
                     scene.add_points("invalid", np.array([1, 2, 3]))
 
                 # Add more valid data after the error (matching dimensions)
-                scene.add_points("also_valid", np.random.randn(50, 3).astype(np.float32))
+                scene.add_points(
+                    "also_valid", np.random.randn(50, 3).astype(np.float32)
+                )
 
             # Verify valid data is preserved and invalid was never written
             import zarr
+
             store = zarr.open_group(zarr_path, mode="r")
             assert "valid" in store
             assert "also_valid" in store
@@ -384,6 +390,7 @@ class TestRecoveryStrategies:
 
             # Verify all point clouds were written with their respective dimensions
             import zarr
+
             store = zarr.open_group(zarr_path, mode="r")
             assert store["points_5d/positions"].shape == (100, 5)
             assert store["points_3d/positions"].shape == (50, 3)

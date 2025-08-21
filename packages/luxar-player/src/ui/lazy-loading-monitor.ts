@@ -682,8 +682,8 @@ export class LazyLoadingMonitor {
       this.selectedObject === '__all__'
         ? cache.size
         : Array.from(cache.keys() as IterableIterator<string>).filter((k) =>
-          k.startsWith(this.selectedObject)
-        ).length;
+            k.startsWith(this.selectedObject)
+          ).length;
     const uniqueSlices = displayData.slices.size;
     const cacheSpread = actualTotalSlices > 1 ? `0-${actualTotalSlices - 1}` : '0';
 
@@ -709,15 +709,15 @@ export class LazyLoadingMonitor {
       </div>
       
       ${
-  this.selectedObject === '__all__' && objectData.size > 0
-    ? `
+        this.selectedObject === '__all__' && objectData.size > 0
+          ? `
       <div style="margin-top: 5px;">
         <div style="color: rgba(255, 255, 255, 0.4); font-size: 9px;">Objects:</div>
         <div style="color: #FF9800; font-size: 11px;">${objectData.size} object${objectData.size > 1 ? 's' : ''}</div>
       </div>
       `
-    : ''
-}
+          : ''
+      }
       
       ${sliceVisualization}
       

@@ -340,8 +340,37 @@ export async function updateLazyLoadedPointCloud(
 
   // Calculate point indices for this slice
   const pointsPerSlice = Math.round(totalPoints / totalSlices);
-  const startIdx = linearIndex * pointsPerSlice;
-  const endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+  let startIdx = linearIndex * pointsPerSlice;
+  let endIdx = Math.min((linearIndex + 1) * pointsPerSlice, totalPoints);
+
+  // Check if this group should be auto-broadcasted
+  const broadcastDims = points.userData.broadcastDims || [];
+  const shouldBroadcast = nonDisplayedDims.some((dimIdx) => {
+    const dimName = dims.metadata?.[dimIdx]?.name;
+    return dimName && broadcastDims.includes(dimName);
+  });
+
+  if (shouldBroadcast) {
+    // For explicitly broadcast groups, load ALL points
+    if (!points.userData.broadcastAnnounced) {
+      console.log(
+        `[📡] [Luxar] Auto-broadcasting group across dimensions: ${broadcastDims.join(', ')}`
+      );
+      points.userData.broadcastAnnounced = true;
+    }
+    startIdx = 0;
+    endIdx = totalPoints;
+  } else {
+    // Check if this slice exists for non-broadcast groups
+    if (startIdx >= totalPoints) {
+      // This slice doesn't exist - show empty
+      console.log(
+        `[⚠️] [Luxar] No points at this slice (requested ${startIdx}-${endIdx}, total ${totalPoints})`
+      );
+      startIdx = 0;
+      endIdx = 0; // Empty slice
+    }
+  }
 
   console.log(
     `[🔄] [Luxar] Loading slice ${linearIndex}/${totalSlices} (points ${startIdx}-${endIdx})`
@@ -353,19 +382,35 @@ export async function updateLazyLoadedPointCloud(
   );
 
   try {
+    // Handle empty slices
+    if (endIdx === 0) {
+      // Empty slice - no points to show
+      const geom = points.geometry;
+      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+      geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
+      geom.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(0), 1));
+      geom.setAttribute('sharpness', new THREE.BufferAttribute(new Float32Array(0), 1));
+      geom.computeBoundingBox();
+      geom.computeBoundingSphere();
+      return;
+    }
+
     // Load positions for the new time frame
     const sliceSpec: (Slice | null)[] = [
       zarr.slice(startIdx, endIdx),
       null, // All dimensions
     ];
+    // CRITICAL: Include full path to prevent cache collisions between different objects
+    const positionsPath = zarrLocation.path ? `${zarrLocation.path}/positions` : 'positions';
     const posData = (await lazyManager.loadSlice(
       positionsArray,
-      'positions',
+      positionsPath,
       sliceSpec
     )) as Float32Array;
 
     // Extract displayed dimensions
     const numLoadedPoints = posData.length / dims.ndim;
+    console.log(`[🔍] [Luxar] Loaded ${numLoadedPoints} points, extracting positions`);
     const pos = new Float32Array(numLoadedPoints * 3);
 
     for (let i = 0; i < numLoadedPoints; i++) {
@@ -384,7 +429,9 @@ export async function updateLazyLoadedPointCloud(
     try {
       const colArr = await zarr.open(zarrLocation.resolve('colors'), { kind: 'array' });
       const colSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx), null];
-      col = (await lazyManager.loadSlice(colArr, 'colors', colSliceSpec)) as Float32Array;
+      const colorsPath = zarrLocation.path ? `${zarrLocation.path}/colors` : 'colors';
+      col = (await lazyManager.loadSlice(colArr, colorsPath, colSliceSpec)) as Float32Array;
+      console.log(`[🎨] [Luxar] Loading slice: colors [${startIdx}-${endIdx}]`);
     } catch (error) {
       console.debug('[🎨] [Luxar] No colors array found:', error);
       // Colors are optional
@@ -395,7 +442,9 @@ export async function updateLazyLoadedPointCloud(
     try {
       const radiiArr = await zarr.open(zarrLocation.resolve('radii'), { kind: 'array' });
       const radiiSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx)];
-      radii = (await lazyManager.loadSlice(radiiArr, 'radii', radiiSliceSpec)) as Float32Array;
+      const radiiPath = zarrLocation.path ? `${zarrLocation.path}/radii` : 'radii';
+      radii = (await lazyManager.loadSlice(radiiArr, radiiPath, radiiSliceSpec)) as Float32Array;
+      console.log(`[📏] [Luxar] Loading slice: radii [${startIdx}-${endIdx}]`);
     } catch (error) {
       console.debug('[📏] [Luxar] No radii array found:', error);
       // Radii are optional
@@ -406,11 +455,13 @@ export async function updateLazyLoadedPointCloud(
     try {
       const sharpnessArr = await zarr.open(zarrLocation.resolve('sharpness'), { kind: 'array' });
       const sharpnessSliceSpec: (Slice | null)[] = [zarr.slice(startIdx, endIdx)];
+      const sharpnessPath = zarrLocation.path ? `${zarrLocation.path}/sharpness` : 'sharpness';
       sharpness = (await lazyManager.loadSlice(
         sharpnessArr,
-        'sharpness',
+        sharpnessPath,
         sharpnessSliceSpec
       )) as Float32Array;
+      console.log(`[✨] [Luxar] Loading slice: sharpness [${startIdx}-${endIdx}]`);
     } catch (error) {
       console.debug('[✨] [Luxar] No sharpness array found:', error);
       // Sharpness is optional

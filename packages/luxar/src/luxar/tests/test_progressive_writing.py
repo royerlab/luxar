@@ -33,9 +33,9 @@ class TestProgressiveWriting:
 
             # Zarr store should exist with consolidated metadata
             assert output_path.exists()
-            store = zarr.open_group(output_path, mode='r')
-            assert store.attrs['type'] == 'scene'
-            assert '.zmetadata' in store.store
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs["type"] == "scene"
+            assert ".zmetadata" in store.store
 
     def test_progressive_points_writing(self):
         """Test that points are written immediately without keeping in memory."""
@@ -48,28 +48,26 @@ class TestProgressiveWriting:
             colors = np.random.rand(n_points, 3).astype(np.float32)
 
             with LuxarZarrCompiler(output_path) as compiler:
-                scene = compiler.create_scene()
+                compiler.create_scene()
 
                 # Write points - should go directly to disk
                 metadata = compiler.write_points(
-                    "test_points",
-                    positions,
-                    colors=colors
+                    "test_points", positions, colors=colors
                 )
 
                 # Check metadata
-                assert metadata['n_points'] == n_points
-                assert metadata['dims'] == 3
-                assert metadata['has_colors'] is True
+                assert metadata["n_points"] == n_points
+                assert metadata["dims"] == 3
+                assert metadata["has_colors"] is True
 
                 # Verify data is in Zarr store
-                store = zarr.open_group(output_path, mode='r')
-                assert 'test_points' in store
-                assert 'test_points/positions' in store
-                assert 'test_points/colors' in store
+                store = zarr.open_group(output_path, mode="r")
+                assert "test_points" in store
+                assert "test_points/positions" in store
+                assert "test_points/colors" in store
 
                 # Verify data matches
-                stored_positions = store['test_points/positions'][:]
+                stored_positions = store["test_points/positions"][:]
                 np.testing.assert_array_almost_equal(stored_positions, positions)
 
     def test_scene_with_dimensions(self):
@@ -78,12 +76,15 @@ class TestProgressiveWriting:
             output_path = Path(tmpdir) / "test.zarr"
 
             from luxar import Dimension
-            dims = Dimensions([
-                Dimension('x', unit='um', display=True),
-                Dimension('y', unit='um', display=True),
-                Dimension('z', unit='um', display=True),
-                Dimension('time', unit='s', display=False)
-            ])
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension("time", unit="s", display=False),
+                ]
+            )
 
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
@@ -91,10 +92,10 @@ class TestProgressiveWriting:
                 assert scene._dimensions == dims
 
                 # Dimensions should be stored in Zarr
-                store = zarr.open_group(output_path, mode='r')
-                assert 'scene_dimensions' in store.attrs
-                dims_dict = store.attrs['scene_dimensions']
-                assert len(dims_dict['dimensions']) == 4
+                store = zarr.open_group(output_path, mode="r")
+                assert "scene_dimensions" in store.attrs
+                dims_dict = store.attrs["scene_dimensions"]
+                assert len(dims_dict["dimensions"]) == 4
 
     def test_hierarchical_structure(self):
         """Test creating hierarchical structure with groups."""
@@ -114,9 +115,9 @@ class TestProgressiveWriting:
                 assert group2.path == "group1/group2"
 
                 # Verify structure in Zarr
-                store = zarr.open_group(output_path, mode='r')
-                assert 'group1' in store
-                assert 'group1/group2' in store
+                store = zarr.open_group(output_path, mode="r")
+                assert "group1" in store
+                assert "group1/group2" in store
 
     def test_no_memory_accumulation(self):
         """Test that data is not kept in memory after writing."""
@@ -133,11 +134,11 @@ class TestProgressiveWriting:
                 metadata = compiler.write_points("points", positions)
 
                 # Metadata should not contain actual data
-                assert 'positions' not in metadata
-                assert metadata['n_points'] == 1000
+                assert "positions" not in metadata
+                assert metadata["n_points"] == 1000
 
                 # Scene should not have the data
-                assert not hasattr(scene, '_positions')
+                assert not hasattr(scene, "_positions")
 
     def test_compiler_without_context_manager(self):
         """Test using compiler without context manager."""
@@ -145,7 +146,7 @@ class TestProgressiveWriting:
             output_path = Path(tmpdir) / "test.zarr"
 
             compiler = LuxarZarrCompiler(output_path)
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             # Add some data
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -169,7 +170,7 @@ class TestProgressiveWriting:
                     "streaming_points/positions",
                     dtype=np.float32,
                     shape=(0, 3),
-                    maxshape=(None, 3)
+                    maxshape=(None, 3),
                 )
 
                 assert dataset is not None

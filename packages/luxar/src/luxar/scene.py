@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
+from os import PathLike
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 from arbol import aprint
@@ -56,7 +57,9 @@ class Scene(Node):
         """
         try:
             if writer is None:
-                raise ValueError("Writer is required. Use LuxarZarrCompiler to create scenes.")
+                raise ValueError(
+                    "Writer is required. Use LuxarZarrCompiler to create scenes."
+                )
 
             # Store writer interface
             self._writer = writer
@@ -116,9 +119,25 @@ class Scene(Node):
         ] = None,
         parent: Optional[Node] = None,
         dimension_metadata: Optional[list[DimensionMetadata]] = None,
+        broadcast_dims: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> Points:
         """Add a point cloud node to the scene.
+
+        Important: Position arrays must ALWAYS include ALL scene dimensions, even when
+        broadcasting. Broadcasting means "show these points at all values of specified
+        dimensions", not "skip these dimensions from the position array".
+
+        Example:
+            For a 5D scene (X, Y, Z, Time, Channel), if you want points to appear
+            at all times and channels:
+
+            CORRECT:
+                positions = [[x, y, z, 0, 0]]  # Include Time=0, Channel=0
+                scene.add_points("pts", positions, broadcast_dims=["Time", "Channel"])
+
+            INCORRECT:
+                positions = [[x, y, z]]  # Missing Time and Channel dimensions!
 
         Args:
             name: Name of the point cloud node
@@ -131,6 +150,12 @@ class Scene(Node):
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root
             dimension_metadata: Optional list of DimensionMetadata for each dimension
+            broadcast_dims: Controls broadcasting behavior for non-displayed dimensions.
+                - None (default): No broadcasting, points only appear at their defined values
+                - List of dimension names: Broadcast to all values of specified dimensions
+                  e.g., ["Time", "Channel"] makes points appear at all times and channels
+                - "auto": Auto-detect broadcast dimensions (use with caution - can be ambiguous)
+                - "all": Broadcast to all non-displayed dimensions
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
@@ -164,6 +189,39 @@ class Scene(Node):
             # Skip dimension metadata application - handled at scene level if needed
             # self._apply_dimension_metadata(attrs, dimension_metadata, ndim)
 
+            # Handle broadcast dimensions based on user specification
+            final_broadcast_dims = []
+
+            if broadcast_dims is None:
+                # Default: No broadcasting
+                final_broadcast_dims = []
+            elif broadcast_dims == "auto":
+                # Auto-detect (use with caution)
+                if self._dimensions is not None:
+                    final_broadcast_dims = self._auto_detect_broadcast_dims(positions)
+                    if final_broadcast_dims:
+                        aprint(
+                            f"  🔍 Auto-detected broadcast dimensions: {final_broadcast_dims}"
+                        )
+            elif broadcast_dims == "all":
+                # Broadcast all non-displayed dimensions
+                if self._dimensions is not None:
+                    final_broadcast_dims = [
+                        dim.name
+                        for dim in self._dimensions.dimensions
+                        if not dim.display and dim.name
+                    ]
+            elif isinstance(broadcast_dims, list):
+                # Use explicit list
+                final_broadcast_dims = broadcast_dims
+            else:
+                raise ValueError(f"Invalid broadcast_dims value: {broadcast_dims}")
+
+            # Add broadcast_dims to attributes if we have any
+            if final_broadcast_dims:
+                attrs["broadcast_dims"] = final_broadcast_dims
+                aprint(f"  📡 Broadcasting across dimensions: {final_broadcast_dims}")
+
             # Process colors, radii, and sharpness using helper functions
             processed_colors = broadcast_color_to_points(colors, n_points)
             processed_radii = broadcast_radii_to_points(radii, n_points)
@@ -179,7 +237,7 @@ class Scene(Node):
                 colors=processed_colors,
                 radii=processed_radii,
                 sharpness=processed_sharpness,
-                **attrs
+                **attrs,
             )
 
             # Return lightweight Points node with only metadata
@@ -249,9 +307,72 @@ class Scene(Node):
                 )
             attrs["dimension_metadata"] = [m.to_dict() for m in legacy_metadata]
 
+    def _auto_detect_broadcast_dims(self, positions: np.ndarray) -> List[str]:
+        """Auto-detect which dimensions should be broadcast based on data.
+
+        A dimension should be broadcast if:
+        1. It has only a single unique value across all points, AND
+        2. The total number of points suggests incomplete coverage
+
+        Args:
+            positions: Position array to analyze
+
+        Returns:
+            List of dimension names that should be auto-broadcasted
+        """
+        broadcast_dims = []
+
+        if self._dimensions is None:
+            return broadcast_dims
+
+        data_ndim = positions.shape[1]
+        n_points = positions.shape[0]
+
+        # Calculate expected total points for full coverage
+        expected_total = 1
+        non_displayed_sizes = []
+
+        for i, dim in enumerate(self._dimensions.dimensions):
+            if not dim.display and i < data_ndim:
+                if dim.range and dim.discrete:
+                    # For discrete dimensions, use the range
+                    dim_size = int(dim.range[1] - dim.range[0] + 1)
+                else:
+                    # For continuous dimensions, check unique values
+                    dim_size = len(np.unique(positions[:, i]))
+                non_displayed_sizes.append((i, dim, dim_size))
+                expected_total *= dim_size
+
+        # If we have full coverage or close to it, don't broadcast anything
+        # Allow some tolerance for non-grid datasets
+        if n_points >= expected_total * 0.8:
+            return broadcast_dims
+
+        # Check each non-displayed dimension
+        for i, dim in enumerate(self._dimensions.dimensions):
+            # Skip displayed dimensions
+            if dim.display:
+                continue
+
+            # Skip if this dimension is beyond the data's dimensionality
+            if i >= data_ndim:
+                # Dimension not present in data - should be broadcast
+                if dim.name:
+                    broadcast_dims.append(dim.name)
+                continue
+
+            # Check if this dimension has only one unique value
+            unique_values = np.unique(positions[:, i])
+            if len(unique_values) == 1:
+                # Single value AND incomplete coverage - good candidate for broadcasting
+                if dim.name:
+                    broadcast_dims.append(dim.name)
+
+        return broadcast_dims
+
     def finalize(self) -> None:
         """Finalize the scene.
-        
+
         Note: Finalization is now handled automatically by LuxarZarrCompiler's
         context manager. This method is kept for compatibility but does nothing.
         """
