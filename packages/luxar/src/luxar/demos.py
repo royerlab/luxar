@@ -120,13 +120,15 @@ def create_lorenz_attractor(
     # Create scene with new API
     with LuxarZarrCompiler(store_path) as compiler:
         # Define 3D dimensions
-        dims = Dimensions([
-            Dimension("x", unit="units", display=True),
-            Dimension("y", unit="units", display=True),
-            Dimension("z", unit="units", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
 
-        scene = compiler.create_scene(dimensions=dims)
+        compiler.create_scene(dimensions=dims)
 
         # Write the attractor data
         compiler.write_points(
@@ -135,7 +137,7 @@ def create_lorenz_attractor(
             colors=colors,
             radii=radii,
             opacity=0.9,
-            blending_mode="additive"
+            blending_mode="additive",
         )
 
     aprint(f"✓ Lorenz attractor demo scene created at {store_path}")
@@ -160,7 +162,7 @@ def create_random_spheres(
     aprint(f"Creating random spheres demo with {n_spheres} spheres")
 
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene()
+        compiler.create_scene()
 
         for i in range(n_spheres):
             # Random center position
@@ -174,7 +176,7 @@ def create_random_spheres(
             theta = np.arccos(costheta)
 
             radius = rng.uniform(0.5, 2.0)
-            r = radius * u ** (1/3)
+            r = radius * u ** (1 / 3)
 
             x = r * np.sin(theta) * np.cos(phi) + center[0]
             y = r * np.sin(theta) * np.sin(phi) + center[1]
@@ -190,7 +192,7 @@ def create_random_spheres(
                 positions,
                 colors=color,  # Single color for whole sphere
                 radii=0.05,
-                opacity=0.8
+                opacity=0.8,
             )
 
     aprint(f"✓ Random spheres demo created at {store_path}")
@@ -215,15 +217,23 @@ def create_time_series_demo(
     aprint(f"Creating 4D time series demo with {n_timepoints} time points")
 
     # Create 4D dimensions
-    dims = Dimensions([
-        Dimension("x", unit="um", display=True),
-        Dimension("y", unit="um", display=True),
-        Dimension("z", unit="um", display=True),
-        Dimension("time", unit="s", display=False, discrete=True, range=(0, n_timepoints-1)),
-    ])
+    dims = Dimensions(
+        [
+            Dimension("x", unit="um", display=True),
+            Dimension("y", unit="um", display=True),
+            Dimension("z", unit="um", display=True),
+            Dimension(
+                "time",
+                unit="s",
+                display=False,
+                discrete=True,
+                range=(0, n_timepoints - 1),
+            ),
+        ]
+    )
 
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene(dimensions=dims)
+        compiler.create_scene(dimensions=dims)
 
         # Generate all time points
         all_positions = []
@@ -239,7 +249,7 @@ def create_time_series_demo(
             u = rng.uniform(0, 1, n_points_per_time)
 
             theta = np.arccos(costheta)
-            r = radius * u ** (1/3)
+            r = radius * u ** (1 / 3)
 
             x = r * np.sin(theta) * np.cos(phi)
             y = r * np.sin(theta) * np.sin(phi)
@@ -252,7 +262,9 @@ def create_time_series_demo(
             all_positions.append(positions_4d)
 
             # Color changes over time
-            color = np.array([1.0 - t/n_timepoints, 0.5, t/n_timepoints], dtype=np.float32)
+            color = np.array(
+                [1.0 - t / n_timepoints, 0.5, t / n_timepoints], dtype=np.float32
+            )
             colors = np.tile(color, (n_points_per_time, 1))
             all_colors.append(colors)
 
@@ -262,10 +274,7 @@ def create_time_series_demo(
 
         # Write as single 4D dataset
         compiler.write_points(
-            "time_series",
-            all_positions,
-            colors=all_colors,
-            radii=0.1
+            "time_series", all_positions, colors=all_colors, radii=0.1
         )
 
     aprint(f"✓ Time series demo created at {store_path}")

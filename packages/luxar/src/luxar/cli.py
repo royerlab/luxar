@@ -34,6 +34,7 @@ def random(
     try:
         aprint(f"Generating random scene with {n} points at {out}.")
         from luxar.demos import create_lorenz_attractor
+
         create_lorenz_attractor(out, n_points=n, seed=seed)
         aprint(f"✔ wrote {n:,} points → {out}")
         typer.secho(f"✔ wrote {n:,} points → {out}", fg=typer.colors.GREEN, bold=True)

@@ -494,7 +494,9 @@ def validate_opacity(opacity: Any) -> float:
         ) from e
 
     if not OPACITY_MIN <= opacity_float <= OPACITY_MAX:
-        raise ValueError(f"Opacity must be between {OPACITY_MIN} and {OPACITY_MAX}, got {opacity_float}")
+        raise ValueError(
+            f"Opacity must be between {OPACITY_MIN} and {OPACITY_MAX}, got {opacity_float}"
+        )
 
     return opacity_float
 
@@ -520,7 +522,9 @@ def validate_gamma(gamma: Any) -> float:
         ) from e
 
     if not GAMMA_MIN <= gamma_float <= GAMMA_MAX:
-        raise ValueError(f"Gamma must be between {GAMMA_MIN} and {GAMMA_MAX}, got {gamma_float}")
+        raise ValueError(
+            f"Gamma must be between {GAMMA_MIN} and {GAMMA_MAX}, got {gamma_float}"
+        )
 
     return gamma_float
 

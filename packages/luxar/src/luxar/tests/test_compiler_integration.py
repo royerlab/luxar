@@ -4,7 +4,6 @@ These tests demonstrate best practices using LuxarZarrCompiler
 and ensure the API works correctly with all features.
 """
 
-
 import numpy as np
 import pytest
 import zarr
@@ -20,7 +19,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             # Add points - written immediately
             positions = np.random.randn(1000, 3).astype(np.float32)
@@ -29,11 +28,11 @@ class TestCompilerIntegration:
             compiler.write_points("points1", positions, colors=colors)
 
         # Verify the scene was created correctly
-        store = zarr.open_group(output_path, mode='r')
-        assert store.attrs['type'] == 'scene'
-        assert 'points1' in store
-        assert store['points1/positions'].shape == (1000, 3)
-        assert store['points1/colors'].shape == (1000, 3)
+        store = zarr.open_group(output_path, mode="r")
+        assert store.attrs["type"] == "scene"
+        assert "points1" in store
+        assert store["points1/positions"].shape == (1000, 3)
+        assert store["points1/colors"].shape == (1000, 3)
 
     def test_hierarchical_scene_with_transforms(self, tmp_path):
         """Test building hierarchical scenes with transforms."""
@@ -44,60 +43,60 @@ class TestCompilerIntegration:
 
             # Create groups with transforms
             transform1 = transforms.translate(10, 0, 0)
-            group1 = scene.add_group("Group1",
-                                   transform=transform1)
+            group1 = scene.add_group("Group1", transform=transform1)
 
             transform2 = transforms.rotate_z(45)
-            group2 = group1.add_group("Group2",
-                                    transform=transform2)
+            group1.add_group("Group2", transform=transform2)
 
             # Add points to nested group
             positions = np.random.randn(500, 3).astype(np.float32)
             compiler.write_points("Group1/Group2/points", positions)
 
         # Verify hierarchy
-        store = zarr.open_group(output_path, mode='r')
-        assert 'Group1' in store
-        assert 'Group1/Group2' in store
-        assert 'Group1/Group2/points' in store
+        store = zarr.open_group(output_path, mode="r")
+        assert "Group1" in store
+        assert "Group1/Group2" in store
+        assert "Group1/Group2/points" in store
 
         # Verify transforms were stored
-        assert 'transform' in store['Group1'].attrs
-        assert 'transform' in store['Group1/Group2'].attrs
+        assert "transform" in store["Group1"].attrs
+        assert "transform" in store["Group1/Group2"].attrs
 
     def test_scene_with_dimensions(self, tmp_path):
         """Test scene with dimension specifications."""
         output_path = tmp_path / "test.zarr"
 
         # Create 5D dimensions
-        dims = Dimensions([
-            Dimension('x', unit='um', display=True),
-            Dimension('y', unit='um', display=True),
-            Dimension('z', unit='um', display=True),
-            Dimension('time', unit='s', display=False, discrete=True),
-            Dimension('channel', unit='ch', display=False, discrete=True)
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+                Dimension("time", unit="s", display=False, discrete=True),
+                Dimension("channel", unit="ch", display=False, discrete=True),
+            ]
+        )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            compiler.create_scene(dimensions=dims)
 
             # Add 5D points
             positions = np.random.randn(1000, 5).astype(np.float32)
             compiler.write_points("points5d", positions)
 
         # Verify dimensions were stored
-        store = zarr.open_group(output_path, mode='r')
-        assert 'scene_dimensions' in store.attrs
-        stored_dims = store.attrs['scene_dimensions']
-        assert len(stored_dims['dimensions']) == 5
-        assert stored_dims['dimensions'][3]['name'] == 'time'
+        store = zarr.open_group(output_path, mode="r")
+        assert "scene_dimensions" in store.attrs
+        stored_dims = store.attrs["scene_dimensions"]
+        assert len(stored_dims["dimensions"]) == 5
+        assert stored_dims["dimensions"][3]["name"] == "time"
 
     def test_streaming_points_integration(self, tmp_path):
         """Test StreamingPoints for huge datasets."""
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             # Create streaming points
             streaming = StreamingPoints("huge_cloud", compiler, expected_dims=3)
@@ -114,21 +113,21 @@ class TestCompilerIntegration:
             # Finalize streaming
             metadata = streaming.finalize(opacity=0.8)
 
-            assert metadata['n_points'] == total_points
-            assert metadata['has_colors'] is True
+            assert metadata["n_points"] == total_points
+            assert metadata["has_colors"] is True
 
         # Verify streamed data
-        store = zarr.open_group(output_path, mode='r')
-        assert store['huge_cloud/positions'].shape == (5000, 3)
-        assert store['huge_cloud/colors'].shape == (5000, 3)
-        assert store['huge_cloud'].attrs['streaming'] is True
+        store = zarr.open_group(output_path, mode="r")
+        assert store["huge_cloud/positions"].shape == (5000, 3)
+        assert store["huge_cloud/colors"].shape == (5000, 3)
+        assert store["huge_cloud"].attrs["streaming"] is True
 
     def test_hdr_colors_and_attributes(self, tmp_path):
         """Test HDR colors and rendering attributes."""
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             # Create points with HDR colors
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -143,16 +142,16 @@ class TestCompilerIntegration:
                 colors=colors,
                 opacity=0.7,
                 gamma=1.2,
-                blending_mode="additive"
+                blending_mode="additive",
             )
 
         # Verify HDR colors and attributes
-        store = zarr.open_group(output_path, mode='r')
-        stored_colors = store['hdr_points/colors'][:]
+        store = zarr.open_group(output_path, mode="r")
+        stored_colors = store["hdr_points/colors"][:]
         assert stored_colors.max() > 1.0  # HDR values
-        assert store['hdr_points'].attrs['opacity'] == 0.7
-        assert store['hdr_points'].attrs['gamma'] == 1.2
-        assert store['hdr_points'].attrs['blending_mode'] == "additive"
+        assert store["hdr_points"].attrs["opacity"] == 0.7
+        assert store["hdr_points"].attrs["gamma"] == 1.2
+        assert store["hdr_points"].attrs["blending_mode"] == "additive"
 
     # Legacy API compatibility test removed - we no longer support the old API
 
@@ -161,7 +160,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             # Write multiple large arrays
             for i in range(10):
@@ -172,17 +171,17 @@ class TestCompilerIntegration:
                 metadata = compiler.write_points(f"cloud_{i}", large_positions)
 
                 # Metadata should be small
-                assert 'positions' not in metadata  # Data not in metadata
-                assert metadata['n_points'] == 1_000_000
+                assert "positions" not in metadata  # Data not in metadata
+                assert metadata["n_points"] == 1_000_000
 
                 # Clear reference to allow garbage collection
                 del large_positions
 
         # Verify all data was written
-        store = zarr.open_group(output_path, mode='r')
+        store = zarr.open_group(output_path, mode="r")
         for i in range(10):
-            assert f'cloud_{i}' in store
-            assert store[f'cloud_{i}/positions'].shape == (1_000_000, 3)
+            assert f"cloud_{i}" in store
+            assert store[f"cloud_{i}/positions"].shape == (1_000_000, 3)
 
     def test_error_handling_in_context(self, tmp_path):
         """Test error handling with context manager."""
@@ -190,7 +189,7 @@ class TestCompilerIntegration:
 
         with pytest.raises(ValueError):
             with LuxarZarrCompiler(output_path) as compiler:
-                scene = compiler.create_scene()
+                compiler.create_scene()
 
                 # Try to write invalid data
                 invalid_positions = np.random.randn(100)  # 1D instead of 2D
@@ -212,20 +211,20 @@ class TestCompilerIntegration:
                 yield positions, colors
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             streaming = StreamingPoints("generated_cloud", compiler)
 
             # Stream from generator
             total = streaming.append_from_generator(
                 data_generator(),
-                max_batches=3  # Only take 3 batches
+                max_batches=3,  # Only take 3 batches
             )
 
             assert total == 3000
             streaming.finalize()
 
         # Verify
-        store = zarr.open_group(output_path, mode='r')
-        assert store['generated_cloud/positions'].shape == (3000, 3)
-        assert store['generated_cloud/colors'].shape == (3000, 3)
+        store = zarr.open_group(output_path, mode="r")
+        assert store["generated_cloud/positions"].shape == (3000, 3)
+        assert store["generated_cloud/colors"].shape == (3000, 3)

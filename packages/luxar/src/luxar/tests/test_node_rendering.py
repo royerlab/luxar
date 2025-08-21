@@ -137,10 +137,9 @@ class TestNodeRenderingAttributes:
         # Create scene and set attributes within context
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene()
-            node = scene.add_group("test_node",
-                                  opacity=0.7,
-                                  gamma=1.5,
-                                  blending_mode="subtractive")
+            scene.add_group(
+                "test_node", opacity=0.7, gamma=1.5, blending_mode="subtractive"
+            )
 
         # Check that attributes are written to zarr
         store = zarr.open_group(store_path, mode="r")
@@ -156,11 +155,11 @@ class TestNodeRenderingAttributes:
 
         store_path = tmp_path / "test.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             positions = np.random.randn(100, 3).astype(np.float32)
 
             # Add points with custom rendering attributes
-            metadata = compiler.write_points(
+            compiler.write_points(
                 "test_points", positions, opacity=0.5, gamma=1.2, blending_mode="normal"
             )
 

@@ -60,7 +60,11 @@ class Node:
         # Determine path in hierarchy
         if parent is not None:
             parent.children.append(self)
-            self.path = f"{parent.path}/{name}" if hasattr(parent, 'path') and parent.path else name
+            self.path = (
+                f"{parent.path}/{name}"
+                if hasattr(parent, "path") and parent.path
+                else name
+            )
         else:
             self.path = ""
 
@@ -74,7 +78,9 @@ class Node:
                     if isinstance(transform_value, list) and len(transform_value) == 16:
                         # Already in the correct format, just validate it
                         # Convert to matrix, validate, and store back as list
-                        matrix = np.array(transform_value, dtype=np.float32).reshape(4, 4).T
+                        matrix = (
+                            np.array(transform_value, dtype=np.float32).reshape(4, 4).T
+                        )
                         validated = validate_transform(matrix)
                         # Store back as list in THREE.js format (transpose back)
                         attrs["transform"] = validated.T.ravel().tolist()
@@ -165,13 +171,17 @@ class Node:
                         # Transpose for THREE.js (column-major order) before flattening
                         attrs["transform"] = transform_matrix.T.ravel().tolist()
                     else:
-                        raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
+                        raise ValueError(
+                            f"Transform must have 16 elements, got {transform_array.size}"
+                        )
 
             if self._writer is not None:
                 # Progressive mode: create via writer
                 child_path = f"{self.path}/{name}" if self.path else name
                 self._writer.write_group(child_path, type="group", **attrs)
-                child_node = Node(name, group=None, parent=self, writer=self._writer, **attrs)
+                child_node = Node(
+                    name, group=None, parent=self, writer=self._writer, **attrs
+                )
             elif self._group is not None:
                 # Legacy mode: create Zarr group
                 grp = self._group.require_group(name)

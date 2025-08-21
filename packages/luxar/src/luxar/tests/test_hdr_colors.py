@@ -49,7 +49,7 @@ class TestHDRColorSupport:
     def test_hdr_colors_extreme(self, tmp_path):
         """Test extreme HDR colors with warnings."""
         with LuxarZarrCompiler(tmp_path / "hdr_extreme.zarr") as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32) * 100.0  # Very bright
@@ -129,13 +129,17 @@ class TestHDRColorSupport:
 
             positions = np.random.randn(10, 3).astype(np.float32)
             # Create colors with specific precision requirements
-            colors = np.array([
-                [0.123456789, 0.987654321, 0.555555555],
-                [1.111111111, 2.222222222, 3.333333333],
-                [np.pi, np.e, np.sqrt(2)],
-                [1e-6, 1e-5, 1e-4],  # Small values
-                [1e3, 1e4, 1e5],     # Large HDR values
-            ] * 2, dtype=np.float32)[:10]  # Repeat to get 10 colors
+            colors = np.array(
+                [
+                    [0.123456789, 0.987654321, 0.555555555],
+                    [1.111111111, 2.222222222, 3.333333333],
+                    [np.pi, np.e, np.sqrt(2)],
+                    [1e-6, 1e-5, 1e-4],  # Small values
+                    [1e3, 1e4, 1e5],  # Large HDR values
+                ]
+                * 2,
+                dtype=np.float32,
+            )[:10]  # Repeat to get 10 colors
 
             scene.add_points("precision_points", positions, colors=colors)
 
@@ -149,26 +153,28 @@ class TestHDRColorSupport:
     def test_negative_color_rejection(self, tmp_path):
         """Test that negative colors are properly rejected."""
         with LuxarZarrCompiler(tmp_path / "negative.zarr") as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.randn(100, 3).astype(np.float32)  # Can be negative
             colors[0, 0] = -1.0  # Ensure at least one negative
 
             from luxar.validation import ValidationError
+
             with pytest.raises(ValidationError, match="Colors cannot be negative"):
                 compiler.write_points("negative_colors", positions, colors=colors)
 
     def test_color_channel_count(self, tmp_path):
         """Test that only RGB (3 channels) is accepted."""
         with LuxarZarrCompiler(tmp_path / "channels.zarr") as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
 
             positions = np.random.randn(100, 3).astype(np.float32)
 
             # Test RGBA (4 channels) - should fail
             rgba_colors = np.random.rand(100, 4).astype(np.float32)
             from luxar.validation import ValidationError
+
             with pytest.raises(ValidationError, match="must have 3 channels"):
                 compiler.write_points("rgba", positions, colors=rgba_colors)
 

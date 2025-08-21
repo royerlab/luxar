@@ -12,7 +12,7 @@ from .types import NodeType
 
 class Points(Node):
     """Point-cloud node that holds metadata about point data.
-    
+
     This class is a lightweight metadata container. Actual data is written
     immediately to Zarr via the writer interface and not kept in memory.
     This class is intended for internal use via Scene.add_points().
@@ -49,13 +49,17 @@ class Points(Node):
 
         # Initialize parent Node
         node_type: NodeType = "points"
-        super().__init__(name, group=None, parent=parent, writer=writer, type=node_type, **attrs)
+        super().__init__(
+            name, group=None, parent=parent, writer=writer, type=node_type, **attrs
+        )
 
         # Log creation
         if metadata:
-            n_points = metadata.get('n_points', 0)
-            n_dims = metadata.get('dims', 3)
-            aprint(f"✓ Points node '{name}' created with {n_points:,} points in {n_dims}D.")
+            n_points = metadata.get("n_points", 0)
+            n_dims = metadata.get("dims", 3)
+            aprint(
+                f"✓ Points node '{name}' created with {n_points:,} points in {n_dims}D."
+            )
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -65,19 +69,19 @@ class Points(Node):
     @property
     def n_points(self) -> int:
         """Get number of points."""
-        return self._metadata.get('n_points', 0)
+        return self._metadata.get("n_points", 0)
 
     @property
     def has_colors(self) -> bool:
         """Check if points have colors."""
-        return self._metadata.get('has_colors', False)
+        return self._metadata.get("has_colors", False)
 
     @property
     def has_radii(self) -> bool:
         """Check if points have radii."""
-        return self._metadata.get('has_radii', False)
+        return self._metadata.get("has_radii", False)
 
     @property
     def has_sharpness(self) -> bool:
         """Check if points have sharpness."""
-        return self._metadata.get('has_sharpness', False)
+        return self._metadata.get("has_sharpness", False)

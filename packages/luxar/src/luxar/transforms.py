@@ -331,8 +331,8 @@ def look_at(
 
 def to_list(transform: TransformMatrix) -> list[float]:
     """Convert a 4x4 transformation matrix to a flat list for storage.
-    
-    Note: The matrix is transposed before flattening to match THREE.js 
+
+    Note: The matrix is transposed before flattening to match THREE.js
     column-major format requirements.
 
     Args:
@@ -351,7 +351,7 @@ def to_list(transform: TransformMatrix) -> list[float]:
 
 def from_list(values: list[float]) -> TransformMatrix:
     """Create a 4x4 transformation matrix from a flat list.
-    
+
     Note: The values are assumed to be in THREE.js column-major format
     and are transposed back to NumPy row-major format.
 

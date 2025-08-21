@@ -1,6 +1,5 @@
 """Comprehensive tests for streaming module."""
 
-
 import numpy as np
 import pytest
 import zarr
@@ -140,6 +139,7 @@ class TestStreamingPointsComprehensive:
 
     def test_streaming_from_generator_tuple(self, tmp_path):
         """Test streaming from generator with tuples."""
+
         def data_generator():
             for i in range(3):
                 positions = np.random.randn(50, 3).astype(np.float32)
@@ -162,6 +162,7 @@ class TestStreamingPointsComprehensive:
 
     def test_streaming_from_generator_positions_only(self, tmp_path):
         """Test streaming from generator with positions only."""
+
         def data_generator():
             for i in range(5):
                 yield np.random.randn(20, 3).astype(np.float32)
@@ -180,6 +181,7 @@ class TestStreamingPointsComprehensive:
 
     def test_streaming_from_generator_max_batches(self, tmp_path):
         """Test streaming with max_batches limit."""
+
         def infinite_generator():
             while True:
                 yield np.random.randn(10, 3).astype(np.float32)
@@ -206,7 +208,7 @@ class TestStreamingPointsComprehensive:
                 opacity=0.8,
                 gamma=1.5,
                 blending_mode="additive",
-                custom_attr="test_value"
+                custom_attr="test_value",
             )
 
             assert metadata["n_points"] == 100
@@ -256,7 +258,9 @@ class TestStreamingPointsComprehensive:
             colors4 = np.random.rand(30, 3).astype(np.float32)
             radii4 = np.ones(30, dtype=np.float32) * 0.5
             sharpness4 = np.ones(30, dtype=np.float32) * 2.0
-            streaming.append_batch(positions4, colors=colors4, radii=radii4, sharpness=sharpness4)
+            streaming.append_batch(
+                positions4, colors=colors4, radii=radii4, sharpness=sharpness4
+            )
 
             metadata = streaming.finalize()
             assert metadata["n_points"] == 120

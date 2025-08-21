@@ -1,6 +1,5 @@
 """Tests for Scene class methods not covered elsewhere."""
 
-
 import numpy as np
 import pytest
 import zarr
@@ -64,11 +63,13 @@ class TestSceneMethods:
     @pytest.mark.skip(reason="_validate_scene_dimensions removed in new API")
     def test_scene_validate_scene_dimensions(self, tmp_path):
         """Test Scene._validate_scene_dimensions method."""
-        dims = Dimensions([
-            Dimension("x", unit="um"),
-            Dimension("y", unit="um"),
-            Dimension("z", unit="um")
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
@@ -111,10 +112,11 @@ class TestSceneMethods:
 
             # Test with metadata (though this is disabled in new API)
             from luxar.types import DimensionMetadata
+
             metadata = [
                 DimensionMetadata(name="x"),
                 DimensionMetadata(name="y"),
-                DimensionMetadata(name="z")
+                DimensionMetadata(name="z"),
             ]
             scene._apply_dimension_metadata(attrs, metadata, 3)
             # This is disabled, so still shouldn't add
@@ -166,10 +168,7 @@ class TestSceneMethods:
 
             # Add group with rendering attributes
             group = scene.add_group(
-                "rendered",
-                opacity=0.5,
-                gamma=1.5,
-                blending_mode="additive"
+                "rendered", opacity=0.5, gamma=1.5, blending_mode="additive"
             )
 
             # Check attributes were set

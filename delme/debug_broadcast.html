@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Broadcast</title>
+    <script>
+        // This HTML file can be opened to debug the broadcast issue
+        console.log("Open the Luxar viewer with broadcast_clarification_example.zarr");
+        console.log("Then check the browser console for these messages:");
+        console.log("");
+        console.log("Expected messages for BroadcastReplication group:");
+        console.log("1. [🔍] [Luxar] Group BroadcastReplication broadcast_dims from attrs: ['Time']");
+        console.log("2. [📡] [Luxar] Group has broadcast dimensions: Time");
+        console.log("3. [📡] [Luxar] Using broadcast mode - loading all 3 points");
+        console.log("4. When navigating time: [📡] [Luxar] Auto-broadcasting group across dimensions: Time");
+        console.log("");
+        console.log("If you see 'No points at this slice' for BroadcastReplication, there's a bug!");
+    </script>
+</head>
+<body>
+    <h1>Debug Instructions</h1>
+    <ol>
+        <li>Run: luxar serve examples/broadcast_clarification_example.zarr</li>
+        <li>Open browser console (F12)</li>
+        <li>Navigate to the viewer</li>
+        <li>Look for broadcast-related messages</li>
+        <li>Navigate time with '[' and ']' keys</li>
+        <li>Check if BroadcastReplication shows at all times</li>
+    </ol>
+</body>
+</html>

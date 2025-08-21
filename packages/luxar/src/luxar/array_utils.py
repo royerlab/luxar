@@ -7,7 +7,7 @@ broadcasting single values to arrays, validation, and type conversions.
 Key Functions:
     - broadcast_color_to_points: Handle color array broadcasting (RGB to n_points)
     - broadcast_radii_to_points: Handle radius array broadcasting
-    - broadcast_sharpness_to_points: Handle sharpness array broadcasting  
+    - broadcast_sharpness_to_points: Handle sharpness array broadcasting
     - ensure_float32: Convert arrays to float32 dtype for GPU compatibility
     - validate_array_shape: Validate array dimensions with helpful errors
 
@@ -21,7 +21,7 @@ Example:
     >>> # Broadcast single color to 1000 points
     >>> colors = broadcast_color_to_points([1.0, 0.5, 0.0], n_points=1000)
     >>> assert colors.shape == (1000, 3)
-    
+
     >>> # Broadcast single radius to all points
     >>> radii = broadcast_radii_to_points(0.1, n_points=1000)
     >>> assert radii.shape == (1000,)
@@ -40,22 +40,21 @@ from .type_aliases import ColorArray, RadiusArray, SharpnessArray
 
 
 def broadcast_color_to_points(
-    colors: Union[ColorArray, List, Tuple, None],
-    n_points: int
+    colors: Union[ColorArray, List, Tuple, None], n_points: int
 ) -> Optional[NDArray[np.float32]]:
     """Broadcast a color specification to all points.
-    
+
     Args:
         colors: Can be:
             - None: No colors
             - Single RGB tuple/list: (r, g, b) broadcast to all points
-            - Single RGB array shape (3,): broadcast to all points  
+            - Single RGB array shape (3,): broadcast to all points
             - Full array shape (n_points, 3): one color per point
         n_points: Number of points
-        
+
     Returns:
         Array of shape (n_points, 3) with float32 dtype, or None
-        
+
     Raises:
         ValueError: If colors have invalid shape
     """
@@ -86,10 +85,10 @@ def broadcast_scalar_to_points(
     values: Union[float, NDArray[np.float32], None],
     n_points: int,
     name: str = "values",
-    require_positive: bool = True
+    require_positive: bool = True,
 ) -> Optional[NDArray[np.float32]]:
     """Broadcast a scalar value or array to all points.
-    
+
     Args:
         values: Can be:
             - None: No values
@@ -98,10 +97,10 @@ def broadcast_scalar_to_points(
         n_points: Number of points
         name: Name of the values for error messages
         require_positive: Whether to require all values > 0
-        
+
     Returns:
         Array of shape (n_points,) with float32 dtype, or None
-        
+
     Raises:
         ValueError: If values have invalid shape or negative values
     """
@@ -133,15 +132,14 @@ def broadcast_scalar_to_points(
 
 
 def broadcast_radii_to_points(
-    radii: Union[float, RadiusArray, None],
-    n_points: int
+    radii: Union[float, RadiusArray, None], n_points: int
 ) -> Optional[RadiusArray]:
     """Broadcast radii to all points.
-    
+
     Args:
         radii: Single radius or array of radii
         n_points: Number of points
-        
+
     Returns:
         Array of shape (n_points,) with radii, or None
     """
@@ -151,15 +149,15 @@ def broadcast_radii_to_points(
 def broadcast_sharpness_to_points(
     sharpness: Union[float, SharpnessArray, None],
     n_points: int,
-    warn_on_out_of_range: bool = True
+    warn_on_out_of_range: bool = True,
 ) -> Optional[SharpnessArray]:
     """Broadcast sharpness values to all points.
-    
+
     Args:
         sharpness: Single sharpness or array of sharpness values
         n_points: Number of points
         warn_on_out_of_range: Whether to warn if values are outside typical range
-        
+
     Returns:
         Array of shape (n_points,) with sharpness values, or None
     """
@@ -173,13 +171,14 @@ def broadcast_sharpness_to_points(
         )
         if out_of_range:
             import warnings
+
             min_val = np.min(result)
             max_val = np.max(result)
             warnings.warn(
                 f"Sharpness values outside typical range "
                 f"[{SHARPNESS_TYPICAL_MIN}, {SHARPNESS_TYPICAL_MAX}]: "
                 f"min={min_val:.2f}, max={max_val:.2f}",
-                UserWarning
+                UserWarning,
             )
 
     return result
@@ -187,10 +186,10 @@ def broadcast_sharpness_to_points(
 
 def ensure_float32(array: NDArray) -> NDArray[np.float32]:
     """Ensure array is float32 dtype, converting if necessary.
-    
+
     Args:
         array: Input array
-        
+
     Returns:
         Array with float32 dtype
     """
@@ -202,15 +201,15 @@ def ensure_float32(array: NDArray) -> NDArray[np.float32]:
 def validate_array_shape(
     array: NDArray,
     expected_shape: Union[Tuple[int, ...], List[Tuple[int, ...]]],
-    name: str = "array"
+    name: str = "array",
 ) -> None:
     """Validate that an array has the expected shape.
-    
+
     Args:
         array: Array to validate
         expected_shape: Expected shape or list of acceptable shapes
         name: Name for error messages
-        
+
     Raises:
         ValueError: If array doesn't match expected shape(s)
     """

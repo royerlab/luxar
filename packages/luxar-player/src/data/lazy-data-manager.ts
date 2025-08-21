@@ -589,7 +589,7 @@ export class LazyDataManager {
     totalSizeMB: number;
     maxSizeMB: number;
     utilizationPercent: number;
-    } {
+  } {
     const totalSizeMB = this.totalCacheSize / (1024 * 1024);
     const maxSizeMB = this.config.maxMemoryMB;
 

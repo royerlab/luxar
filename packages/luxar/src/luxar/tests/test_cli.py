@@ -22,6 +22,7 @@ def sample_scene(tmp_path):
     """Create a sample scene for testing."""
     store_path = tmp_path / "test_scene.zarr"
     from luxar.demos import create_lorenz_attractor
+
     create_lorenz_attractor(store_path, n_points=100, seed=42)
     return store_path
 
@@ -112,7 +113,7 @@ def test_info_command_complex_hierarchy(runner, tmp_path):
         # Create a complex hierarchy
         group1 = scene.add_group("Group1")
         scene.add_group("Group2")
-        subgroup = group1.add_group("SubGroup")
+        group1.add_group("SubGroup")
 
         # Add points to different levels
         pos1 = np.random.rand(10, 3).astype(np.float32)
@@ -171,7 +172,7 @@ def test_dfs_single_group(tmp_path):
     """Test _dfs with single group."""
     store_path = tmp_path / "single.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene()
+        compiler.create_scene()
 
     root = zarr.open_group(store_path, mode="r")
     groups = list(_dfs(root))

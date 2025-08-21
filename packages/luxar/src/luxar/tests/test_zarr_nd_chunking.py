@@ -35,7 +35,7 @@ class TestZarrNDChunking:
 
         # Create scene at the specified store location and add points
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points4D", positions)
 
         # Verify chunking by opening the zarr store
@@ -62,7 +62,7 @@ class TestZarrNDChunking:
 
         # Create scene and add 5D points
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points5D", positions_5d)
 
         # Verify it saved correctly
@@ -81,7 +81,7 @@ class TestZarrNDChunking:
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
@@ -117,7 +117,7 @@ class TestZarrNDChunking:
             positions[start:end, 3] = s  # Slice index as 4th dimension
 
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points", positions)
 
         # Test that we can efficiently load a single slice
@@ -144,7 +144,7 @@ class TestZarrNDChunking:
             # Save with unique name
             dim_store = store / f"dims_{n_dims}.zarr"
             with LuxarZarrCompiler(dim_store) as compiler:
-                scene = compiler.create_scene()
+                compiler.create_scene()
                 compiler.write_points("Points", positions)
 
             # Verify it loads correctly
@@ -163,7 +163,7 @@ class TestZarrNDChunking:
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
@@ -200,7 +200,7 @@ class TestZarrNDChunking:
         positions = np.vstack(positions_list)
 
         with LuxarZarrCompiler(store) as compiler:
-            scene = compiler.create_scene()
+            compiler.create_scene()
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")

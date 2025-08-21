@@ -135,9 +135,12 @@ with LuxarZarrCompiler(scene_path) as compiler:
         sharpness=2.0,
         opacity=0.8,
         blending_mode="additive",
+        # No broadcast_dims specified (default) - points only appear at their defined time/channel values
     )
 
     # Add axis markers for spatial reference
+    # Note: These are only defined for time=0, channel=0, but we explicitly
+    # broadcast them to appear at all time/channel combinations
     axis_length = 20.0
     axis_positions = []
     axis_colors = []
@@ -169,6 +172,8 @@ with LuxarZarrCompiler(scene_path) as compiler:
         sharpness=10.0,
         opacity=1.0,
         blending_mode="normal",
+        # Explicitly broadcast axis markers to all time points and channels
+        broadcast_dims=["Time", "Channel"],
     )
 
 aprint(f"✓ 5D scene created at {scene_path}")

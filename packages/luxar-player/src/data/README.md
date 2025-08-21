@@ -12,6 +12,7 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 - **nD Data Support**: Handle arbitrary-dimensional point clouds with automatic slicing
 - **Hierarchical Scenes**: Load nested scene structures with inheritance
 - **Smart Slicing**: Radius-based hypersphere intersection for smooth navigation
+- **Auto-Broadcasting**: Intelligent replication of point groups across non-displayed dimensions
 - **Directory Navigation**: Multi-strategy server navigation (WebDAV, S3, nginx)
 - **GPU Optimization**: Automatic data format conversion for WebGL compatibility
 - **Streaming Ready**: Progressive loading for massive datasets
@@ -286,6 +287,33 @@ for each point:
     include point in slice
 ```
 
+### Broadcasting
+
+Broadcasting allows point groups to appear across all values of specified non-displayed dimensions without data duplication:
+
+```typescript
+// Broadcast dimensions are explicitly specified in zarr attributes
+// Set via Python API: scene.add_points(..., broadcast_dims=["Time", "Channel"])
+const broadcastDims = attrs.broadcast_dims || [];
+
+// During navigation, broadcast groups are handled specially
+if (group.broadcast_dims.includes(current_dimension)) {
+  // Load all points once and display them at every dimension value
+  // This avoids duplicating data across all dimension values
+  loadAllPoints();
+} else {
+  // Normal slicing based on current dimension value
+  loadSlice(dimension_value);
+}
+```
+
+Benefits:
+
+- **Memory Efficient**: No data duplication needed (66% reduction for 3 time points)
+- **Explicit Control**: Clear API for specifying broadcast behavior
+- **Backwards Compatible**: Works transparently with existing datasets
+- **Cache Aware**: Proper cache key isolation prevents data corruption
+
 ### Attribute Inheritance
 
 Rendering attributes cascade through the scene hierarchy:
@@ -338,6 +366,9 @@ interface ZarrGroupAttrs {
   scene_dimensions?: {
     dimensions: DimensionMetadata[];
   };
+
+  // Broadcasting
+  broadcast_dims?: string[]; // Dimension names to auto-broadcast across
 
   // Physical units
   units?: string; // e.g., 'um', 'nm'
