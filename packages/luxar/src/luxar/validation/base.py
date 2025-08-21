@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-from .constants import (
+from ..typing_utils.constants import (
     SHARPNESS_TYPICAL_MAX,
     SHARPNESS_TYPICAL_MIN,
 )

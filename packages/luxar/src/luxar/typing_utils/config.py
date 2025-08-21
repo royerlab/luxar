@@ -5,18 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final, Literal, Optional
 
-from .constants import (
+from ..typing_utils.constants import (
     CHUNK_SIZE_DEFAULT,
     CHUNK_SIZE_MAX,
     CHUNK_SIZE_MIN,
     LUXAR_VERSION_CURRENT,
 )
-from .types import (
-    CompressionType,
-    CompressorProtocol,
-    LuxarVersion,
-    PhysicalUnit,
-)
+from ..typing_utils.enums import PhysicalUnit
+from ..typing_utils.protocols import CompressorProtocol
+
+# Define literal types locally
+CompressionType = Literal["blosc", "zstd", "lz4", "gzip", "bz2", "lzma"]
+LuxarVersion = Literal["0.1", "0.2", "0.3"]
 
 # =============================================================================
 # Core Configuration Constants
@@ -124,7 +124,7 @@ TRANSFORM_DTYPE: Final[str] = "float32"
 # Default compressor (imported from _io.py)
 DEFAULT_COMP: Optional[CompressorProtocol]
 try:
-    from ._io import DEFAULT_COMP
+    from ..io.reader import DEFAULT_COMP
 except ImportError:
     DEFAULT_COMP = None
 
