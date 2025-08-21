@@ -18,6 +18,17 @@ Last updated from comprehensive codebase scan.
    - **Status**: Open
    - **Priority**: High
 
+4- Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
+   - **Status**: Open
+   - **Priority**: Medium
+
+5- Example world_sizing_example.zarr the big red and green dots are weird: they have a dark halo around them that completely obscures other points in the scene. Is this example playing with blending modes?
+   - **Status**: Open
+   - **Priority**: Medium
+
+6- Allow writting lower bit-depth floats and ints in zarr ahd have client auto-convert them to higher bit-depths when reading fpor compatibilit to Three.js. If Three.js supports lower bit depth for floats (like float16) or can interpret uint8 as a float between 0 and 1, then allow that. This would overall reduce memory consumption and bandwidth pressure. 
+   - **Status**: Open
+   - **Priority**: Medium
 
 ## Notes
 

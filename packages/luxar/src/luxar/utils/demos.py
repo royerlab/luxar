@@ -11,10 +11,10 @@ from typing import Optional
 import numpy as np
 from arbol import aprint
 
-from .compiler import LuxarZarrCompiler
-from .config import check_dataset_size_warning
-from .dimensions import Dimension, Dimensions
-from .types import PathLike
+from ..core.dimensions import Dimension, Dimensions
+from ..io.compiler import LuxarZarrCompiler
+from ..typing_utils.config import check_dataset_size_warning
+from ..typing_utils.protocols import PathLike
 
 
 def create_lorenz_attractor(

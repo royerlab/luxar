@@ -9,7 +9,7 @@ from typing import Dict, Optional, Set, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-from .dimensions import Dimensions
+from ..core.dimensions import Dimensions
 
 
 class DimensionalCoverageError(ValueError):
@@ -81,6 +81,10 @@ def validate_dimensional_coverage(
                 # Get unique values for this dimension
                 unique_values = set(np.unique(positions[:, dim_idx]))
                 coverage_by_group[group_name][dim_idx] = unique_values
+
+    # Handle empty groups
+    if not point_groups:
+        return
 
     # Find the reference coverage (from the first or largest group)
     reference_group = max(point_groups.keys(), key=lambda g: len(point_groups[g]))
@@ -187,9 +191,9 @@ def broadcast_to_all_slices(
             new_positions[start_idx:end_idx, dim_idx] = dim_values[i][slice_values[i]]
 
         # Copy colors and radii if present
-        if colors is not None:
+        if colors is not None and new_colors is not None:
             new_colors[start_idx:end_idx] = colors
-        if radii is not None:
+        if radii is not None and new_radii is not None:
             new_radii[start_idx:end_idx] = radii
 
         idx += 1

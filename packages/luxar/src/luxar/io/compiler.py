@@ -16,18 +16,22 @@ import zarr
 from arbol import aprint
 from numpy.typing import NDArray
 
-from ._io import DEFAULT_COMP
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
-from .dimensions import Dimensions
-from .type_aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
-from .types import CompressorProtocol, PhysicalUnit, validate_physical_unit
-from .validation import (
+from ..core.dimensions import Dimensions
+from ..io.reader import DEFAULT_COMP
+from ..io.writer import ZarrWriterProtocol
+from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
+from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
+from ..typing_utils.protocols import (
+    CompressorProtocol,
+    PhysicalUnit,
+    validate_physical_unit,
+)
+from ..validation.base import (
     validate_colors_for_writing,
     validate_positions_for_writing,
     validate_radii_for_writing,
     validate_sharpness_for_writing,
 )
-from .writer import ZarrWriterProtocol
 
 
 def _calculate_intelligent_chunks(
@@ -169,7 +173,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Scene object configured with this compiler as writer
         """
         # Import here to avoid circular dependency
-        from .scene import Scene
+        from ..core.scene import Scene
 
         # Store dimensions in root attributes if provided
         if dimensions is not None:

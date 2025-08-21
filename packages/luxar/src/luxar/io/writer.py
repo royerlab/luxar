@@ -11,7 +11,7 @@ from typing import Any, Optional, Protocol, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-from .type_aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
+from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 
 
 class ZarrWriterProtocol(Protocol):

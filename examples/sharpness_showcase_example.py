@@ -99,7 +99,7 @@ def create_sharpness_comparison_example(scene) -> None:
         )
 
 
-def create_mixed_sharpness_example(scene, n_points: int = 60000) -> None:
+def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
     """Create a sphere with mixed sharpness values."""
     aprint("Creating mixed sharpness cloud example...")
 
@@ -108,7 +108,7 @@ def create_mixed_sharpness_example(scene, n_points: int = 60000) -> None:
     # Generate points in a sphere
     theta = rng.uniform(0, 2 * np.pi, n_points)
     phi = np.arccos(rng.uniform(-1, 1, n_points))
-    r = rng.uniform(3, 5*7, n_points)
+    r = rng.uniform(3, 5, n_points)
 
     x = r * np.sin(phi) * np.cos(theta)
     y = r * np.sin(phi) * np.sin(theta)

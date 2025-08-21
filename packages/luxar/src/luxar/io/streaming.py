@@ -12,13 +12,13 @@ import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
-from .validation import (
+from ..io.writer import ZarrWriterProtocol
+from ..validation.base import (
     validate_colors_for_writing,
     validate_positions_for_writing,
     validate_radii_for_writing,
     validate_sharpness_for_writing,
 )
-from .writer import ZarrWriterProtocol
 
 
 class StreamingPoints:

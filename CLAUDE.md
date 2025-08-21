@@ -42,7 +42,12 @@ Note: When possible, use `make` commands for convenience (see below).
 
 ### Main Directories
 - `/packages/luxar/` - Main Python package
-  - `/packages/luxar/src/luxar/` - Source code
+  - `/packages/luxar/src/luxar/` - Source code (organized into subpackages)
+    - `core/` - Core data structures (Node, Scene, Points, Dimensions, Transforms)
+    - `io/` - Input/output operations (Compiler, Streaming, Writer)
+    - `typing_utils/` - Type definitions (Protocols, Aliases, Enums, Constants)
+    - `validation/` - Validation functions
+    - `utils/` - Utility functions (Array helpers, Demo generators)
   - `/packages/luxar/src/luxar/tests/` - Python tests
 - `/packages/luxar-player/` - TypeScript/WebGL viewer
   - `/packages/luxar-player/src/` - TypeScript source with per-package documentation
@@ -76,11 +81,22 @@ Note: When possible, use `make` commands for convenience (see below).
   - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
   - Various technical guides and specifications
 - **TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own comprehensive README.md
+- **Python package READMEs**: Each subpackage in `/packages/luxar/src/luxar/` has its own README.md documenting:
+  - Purpose and responsibilities of the package
+  - Key classes and functions
+  - Usage examples
+  - Internal architecture notes
 
 **CRITICAL**: 
 1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
-2. When making changes to Python code, check if `/docs/` folder documentation needs updating
+2. When making changes to Python code:
+   - Update the subpackage README.md if functionality changes
+   - Check if `/docs/` folder documentation needs updating
 3. Keep all documentation synchronized with the implementation!
+4. Python package structure follows best practices:
+   - Flat is better than nested (except for logical groupings)
+   - Each package has clear separation of concerns
+   - Backward compatibility maintained via main `__init__.py`
 
 ## Development Workflow
 

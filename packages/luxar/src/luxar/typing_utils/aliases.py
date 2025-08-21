@@ -1,10 +1,13 @@
 """Type aliases for improved code readability and maintainability.
 
-This module defines type aliases used throughout the Luxar codebase to
-simplify complex type annotations and improve code clarity.
+This module defines simple type aliases used throughout the Luxar codebase.
+For protocols, dataclasses, and validation functions, see protocols.py.
+For enums and literal types, see enums.py.
+For constants, see constants.py.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,6 +24,9 @@ SharpnessArray = Float32Array
 # Transform type aliases
 TransformMatrix = Float32Array  # 4x4 matrix
 TransformList = List[float]  # 16-element list
+
+# Path-like types
+PathLike = Union[str, Path]
 
 # Zarr-related type aliases
 ChunkSpec = Optional[Union[bool, int, Tuple[int, ...]]]
@@ -45,8 +51,9 @@ ColorValue = Union[float, int]  # Single color component
 ColorRGB = Tuple[ColorValue, ColorValue, ColorValue]
 ColorRGBA = Tuple[ColorValue, ColorValue, ColorValue, ColorValue]
 
-# Physical units
-PhysicalUnitStr = str  # One of the supported unit strings
+# Scene hierarchy types
+SceneHierarchy = Generator[Tuple[int, Any], None, None]  # (depth, node) pairs
+GroupAttrs = Dict[str, Any]  # Zarr group attributes
 
 # Validation type aliases
 ValidationResult = Tuple[bool, Optional[str]]  # (is_valid, error_message)

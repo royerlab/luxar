@@ -8,17 +8,21 @@ from typing import Final
 
 # Version constants
 LUXAR_VERSION_CURRENT: Final[str] = "0.2"
+DEFAULT_ZARR_VERSION: Final[str] = "0.2"  # Alias for default version
 LUXAR_VERSION_LEGACY: Final[str] = "0.1"
 LUXAR_VERSION_FUTURE: Final[str] = "0.3"
 
 # Rendering constants
 OPACITY_MIN: Final[float] = 0.0
 OPACITY_MAX: Final[float] = 1.0
-OPACITY_DEFAULT: Final[float] = 1.0
+DEFAULT_OPACITY: Final[float] = 1.0
 
 GAMMA_MIN: Final[float] = 0.2
 GAMMA_MAX: Final[float] = 2.0
-GAMMA_DEFAULT: Final[float] = 1.0
+DEFAULT_GAMMA: Final[float] = 1.0
+
+# Blending modes
+DEFAULT_BLENDING_MODE: Final[str] = "normal"
 
 # Sharpness constants
 SHARPNESS_MIN: Final[float] = 0.0  # Technical minimum (must be positive)
@@ -35,6 +39,7 @@ COLOR_HDR_THEORETICAL_MAX: Final[float] = float("inf")  # No theoretical limit
 # Chunk size constants
 CHUNK_SIZE_MIN: Final[int] = 1_024  # Minimum chunk size in elements (1KB)
 CHUNK_SIZE_DEFAULT: Final[int] = 32_768  # Default chunk size in elements (32KB)
+DEFAULT_CHUNK_SIZE: Final[int] = 32_768  # Alias for backward compatibility
 CHUNK_SIZE_MAX: Final[int] = 1_048_576  # Maximum chunk size in elements (1MB)
 
 # Memory constants
@@ -50,6 +55,7 @@ MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 COMPRESSION_LEVEL_MIN: Final[int] = 0  # No compression
 COMPRESSION_LEVEL_DEFAULT: Final[int] = 3
 COMPRESSION_LEVEL_MAX: Final[int] = 9  # Maximum compression
+DEFAULT_COMPRESSOR: Final[str] = "blosc"  # Default compression algorithm
 
 # Transform matrix constants
 TRANSFORM_MATRIX_SIZE: Final[int] = 4  # 4x4 matrices
@@ -76,6 +82,10 @@ ZARR_ATTRS_KEY: Final[str] = ".zattrs"
 NODE_TYPE_SCENE: Final[str] = "scene"
 NODE_TYPE_GROUP: Final[str] = "group"
 NODE_TYPE_POINTS: Final[str] = "points"
+
+# Point radius constants
+MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius
+MAX_POINT_RADIUS: Final[float] = 1000.0  # Maximum practical radius
 
 # Validation messages
 VALIDATION_POSITIVE_REQUIRED: Final[str] = "Value must be positive"
