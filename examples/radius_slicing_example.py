@@ -89,7 +89,7 @@ def main():
         color = [
             0.78 + 0.22 * (i / n_gradient),  # Red: 0.78 to 1.0
             0.39 + 0.39 * (i / n_gradient),  # Green: 0.39 to 0.78
-            1.0 - 0.61 * (i / n_gradient),   # Blue: 1.0 to 0.39
+            1.0 - 0.61 * (i / n_gradient),  # Blue: 1.0 to 0.39
         ]
         gradient_colors.append(color)
         gradient_radii.append(radius)
@@ -125,13 +125,12 @@ def main():
 
         # Add points to scene
         scene.add_points(
-        "RadiusSlicingDemo",
-        all_positions,
-        colors=all_colors,
-        radii=all_radii,
-        sharpness=sharpness,
+            "RadiusSlicingDemo",
+            all_positions,
+            colors=all_colors,
+            radii=all_radii,
+            sharpness=sharpness,
         )
-
 
         # Print detailed instructions
         aprint(f"\n✓ Created radius slicing example with {len(all_positions):,} points")

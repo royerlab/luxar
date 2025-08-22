@@ -20,6 +20,7 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
 } from '../utils/hdr-detection';
+import { validateFOV } from './scene-manager-utils';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -617,7 +618,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   updateFOV(deltaY: number): void {
     const fovChange = deltaY * config.camera.fovSensitivity;
-    this.camera.fov = THREE.MathUtils.clamp(
+    this.camera.fov = validateFOV(
       this.camera.fov + fovChange,
       config.camera.fovMin,
       config.camera.fovMax

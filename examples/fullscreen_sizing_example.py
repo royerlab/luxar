@@ -79,9 +79,8 @@ def main():
     aprint("6. Use Shift+Wheel to change FOV - relationship maintained")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add metadata with instructions

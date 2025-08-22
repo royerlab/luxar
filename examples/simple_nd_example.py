@@ -146,17 +146,18 @@ def main():
 
         # Add points to scene
         scene.add_points(
-        "Grid5D",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=np.full(len(positions), 2.0, dtype=np.float32),
+            "Grid5D",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=np.full(len(positions), 2.0, dtype=np.float32),
         )
-
 
         # Print summary and instructions
         aprint(f"\n✓ Created 5D grid with {len(positions):,} points")
-        aprint(f"  Dimensions: {n_times} times × {n_depths} depths × {n_channels} channels")
+        aprint(
+            f"  Dimensions: {n_times} times × {n_depths} depths × {n_channels} channels"
+        )
         aprint(f"  Grid size: {grid_size}×{grid_size}")
 
         aprint("\n" + "=" * 60)

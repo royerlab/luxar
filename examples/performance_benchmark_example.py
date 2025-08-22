@@ -92,13 +92,12 @@ def main():
     )  # Rough estimate
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Define rendering property cycles for material variety
-        blending_modes = ["normal", "additive", "subtractive"]
+        blending_modes = ["normal", "additive"]  # , "subtractive"]
         opacities = [0.3, 0.5, 0.7, 0.9, 1.0]
         gammas = [0.8, 1.0, 1.2, 1.5]
         radii_values = [0.05, 0.1, 0.15]  # Different point sizes
@@ -115,7 +114,9 @@ def main():
         for i in range(num_nodes):
             # Show progress
             if i % progress_interval == 0:
-                aprint(f"  Progress: {i}/{num_nodes} nodes ({i / num_nodes * 100:.1f}%)")
+                aprint(
+                    f"  Progress: {i}/{num_nodes} nodes ({i / num_nodes * 100:.1f}%)"
+                )
 
             # Generate deterministic positions for this node
             positions = create_node_positions(i, points_per_node)
@@ -127,7 +128,12 @@ def main():
             radius = radii_values[i % len(radii_values)]
 
             # Track unique material combinations for analysis
-            material_key = (blending, round(opacity, 2), round(gamma, 2), round(radius, 3))
+            material_key = (
+                blending,
+                round(opacity, 2),
+                round(gamma, 2),
+                round(radius, 3),
+            )
             material_combinations.add(material_key)
 
             # Generate deterministic colors using node index as seed

@@ -114,9 +114,8 @@ def main():
     sphere_radius = 10.0
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Generate the spherical spiral

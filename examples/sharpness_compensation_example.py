@@ -23,7 +23,7 @@ def create_compensation_demo():
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
-            # Grid parameters
+        # Grid parameters
         rows = 2
         cols = 6
         spacing = 3.0

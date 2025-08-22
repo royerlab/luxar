@@ -54,9 +54,8 @@ def main():
     aprint("- Property inheritance: Parent-child relationships")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Parameters

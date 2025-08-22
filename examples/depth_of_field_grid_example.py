@@ -119,9 +119,8 @@ def main():
     aprint("- Yellow layer indicators on the left")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add metadata

@@ -94,12 +94,11 @@ def main():
 
         # Add point cloud
         scene.add_points(
-        "RotatingSpiral",
-        positions,
-        colors=colors,
-        radii=np.full(len(positions), 0.15, dtype=np.float32),
+            "RotatingSpiral",
+            positions,
+            colors=colors,
+            radii=np.full(len(positions), 0.15, dtype=np.float32),
         )
-
 
         aprint(f"✓ Created 4D time series with {len(positions):,} total points")
         aprint(f"  Time steps: {n_times}")

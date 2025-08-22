@@ -219,7 +219,9 @@ def main():
 
         # Level 1: Galaxy
         galaxy_transform = transforms.translate(0, 8, 0)
-        galaxy_group = scene.add_group("Galaxy", transform=galaxy_transform, opacity=0.6)
+        galaxy_group = scene.add_group(
+            "Galaxy", transform=galaxy_transform, opacity=0.6
+        )
 
         # Level 2: Star cluster
         cluster_group = galaxy_group.add_group("StarCluster", gamma=1.3)

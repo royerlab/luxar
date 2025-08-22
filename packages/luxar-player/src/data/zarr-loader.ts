@@ -42,28 +42,24 @@ import {
   computeEffectiveRadii,
 } from '../utils/slicing';
 import { LazyDataManager } from './lazy-data-manager';
+import { normalizeZarrPath, inheritRenderingAttributes as inheritAttrs } from './zarr-loader-utils';
 
 /* ------------------------------------------------------------------ utils */
 
 /**
  * Normalizes a path string to a valid URL for Zarr store access.
+ * Delegates to the extracted utility function.
  *
  * @param path - Local path or full URL to Zarr store
  * @returns Normalized URL with trailing slash
  */
 function toURL(path: string) {
-  const abs = path.startsWith('http')
-    ? path
-    : new URL(path.replace(/^\/?/, '/'), window.location.origin).toString();
-  return abs.endsWith('/') ? abs : abs + '/';
+  return normalizeZarrPath(path);
 }
 
 /**
  * Implements rendering attribute inheritance in hierarchical scenes.
- *
- * Child objects inherit rendering properties (opacity, gamma, blending) from their
- * parents unless explicitly overridden. This allows for consistent styling across
- * scene hierarchies while enabling local customization.
+ * Delegates to the extracted utility function.
  *
  * @param attrs - Current group's attributes
  * @param parentAttrs - Parent group's attributes for inheritance
@@ -73,14 +69,7 @@ function inheritRenderingAttributes(
   attrs: ZarrGroupAttrs,
   parentAttrs?: ZarrGroupAttrs
 ): ZarrGroupAttrs {
-  if (!parentAttrs) return attrs;
-
-  return {
-    ...attrs,
-    opacity: attrs.opacity ?? parentAttrs.opacity,
-    gamma: attrs.gamma ?? parentAttrs.gamma,
-    blending_mode: attrs.blending_mode ?? parentAttrs.blending_mode,
-  };
+  return inheritAttrs(attrs as any, parentAttrs as any) as ZarrGroupAttrs;
 }
 
 /** Internal record for tracking THREE.js objects and their Zarr metadata */

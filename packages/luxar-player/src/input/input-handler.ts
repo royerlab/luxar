@@ -44,6 +44,12 @@ import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { INPUT_CONFIG } from '../controls/control-config';
 import { LazyLoadingMonitor } from '../ui/lazy-loading-monitor';
+import {
+  getNonDisplayedDimensions,
+  calculateStepSize,
+  calculateNextPosition,
+  mapKeyToDimension,
+} from './input-handler-utils';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -740,21 +746,16 @@ export class InputHandler {
     const dimMeta = dims.metadata?.[targetDim];
     const [min, max] = dimensionRanges[targetDim];
 
-    let newValue: number;
-    if (dimMeta?.discrete) {
-      // Discrete dimensions: step by defined increment (e.g., time frames)
-      const step = dimMeta.step || 1.0;
-      newValue = currentValue + direction * step;
-      newValue = Math.round(newValue / step) * step; // Ensure step boundary alignment
-    } else {
-      // Continuous dimensions: step by 1% of range for smooth navigation
-      const range = max - min;
-      const step = range * 0.01;
-      newValue = currentValue + direction * step;
-    }
-
-    // Apply bounds constraints
-    newValue = Math.max(min, Math.min(max, newValue));
+    // Use utility functions for step calculation and navigation
+    const stepSize = calculateStepSize(targetDim, dims);
+    const newValue = calculateNextPosition(
+      currentValue,
+      direction,
+      stepSize,
+      [min, max],
+      dimMeta?.discrete,
+      false // no wrap-around
+    );
 
     // Update dimension state if value actually changed
     if (Math.abs(newValue - currentValue) > 1e-6) {
@@ -779,12 +780,19 @@ export class InputHandler {
     const dims = sceneDimsManager.getDims();
     if (!dims) return;
 
-    const navigableDims = this.getNavigableDimensionsList(dims);
+    // Use utility to map key to actual dimension index
+    const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
 
-    if (index < navigableDims.length) {
-      this.selectedDimension = index;
-      // Dimension is now selected for [ ] navigation
+    if (dimIndex >= 0) {
+      // Find which position this is in the non-displayed list
+      const navigableDims = this.getNavigableDimensionsList(dims);
+      const position = navigableDims.indexOf(dimIndex);
+      if (position >= 0) {
+        this.selectedDimension = position;
+        // Dimension is now selected for [ ] navigation
+      }
     } else {
+      const navigableDims = this.getNavigableDimensionsList(dims);
       console.log(
         `Dimension ${index + 1} not available (only ${navigableDims.length} non-displayed dimensions)`
       );
@@ -792,16 +800,11 @@ export class InputHandler {
   }
 
   /**
-   * Get list of navigable (non-displayed) dimensions
+   * Get list of navigable (non-displayed) dimensions.
+   * Delegates to the extracted utility function.
    */
   private getNavigableDimensionsList(dims: SimpleDims): number[] {
-    const navigable: number[] = [];
-    for (let i = 0; i < dims.ndim; i++) {
-      if (!dims.displayed.includes(i)) {
-        navigable.push(i);
-      }
-    }
-    return navigable;
+    return getNonDisplayedDimensions(dims);
   }
 
   /**

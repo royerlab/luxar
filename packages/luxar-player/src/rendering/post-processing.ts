@@ -17,6 +17,11 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 import { config } from '../config';
+import {
+  validateSSAAMultiplier,
+  validateSMAAThreshold,
+  validateSMAASearchSteps,
+} from './post-processing-utils';
 
 /**
  * Configuration for HDR post-processing effects
@@ -494,13 +499,13 @@ export class PostProcessingManager {
   setSSAAMultiplier(multiplier: number): void {
     if (this.ssaaMultiplier === multiplier) return;
 
-    // Validate multiplier
-    if (multiplier < 1.0 || multiplier > 4.0) {
+    // Validate multiplier using utility
+    const validated = validateSSAAMultiplier(multiplier);
+    if (validated !== multiplier) {
       console.warn(`Invalid SSAA multiplier: ${multiplier}. Clamping to [1.0, 4.0].`);
-      multiplier = THREE.MathUtils.clamp(multiplier, 1.0, 4.0);
     }
 
-    this.ssaaMultiplier = multiplier;
+    this.ssaaMultiplier = validated;
     if (this.ssaaEnabled) {
       this.recreateRenderTarget();
       this.resize(this.width, this.height);
@@ -554,8 +559,8 @@ export class PostProcessingManager {
 
     // Update threshold in edge detection shader
     if (threshold !== undefined && smaa.materialEdges) {
-      // Validate threshold
-      const validThreshold = THREE.MathUtils.clamp(threshold, 0.05, 0.2);
+      // Validate threshold using utility
+      const validThreshold = validateSMAAThreshold(threshold);
       if (threshold !== validThreshold) {
         console.warn(`SMAA threshold ${threshold} clamped to [0.05, 0.2]`);
       }
@@ -566,13 +571,12 @@ export class PostProcessingManager {
 
     // Update search steps in weights shader
     if (searchSteps !== undefined && smaa.materialWeights) {
-      // Validate search steps
-      const validSteps = [4, 8, 16, 32];
-      if (!validSteps.includes(searchSteps)) {
-        searchSteps = 8;
-        console.warn('Invalid SMAA search steps. Using 8.');
+      // Validate search steps using utility
+      const validSteps = validateSMAASearchSteps(searchSteps);
+      if (validSteps !== searchSteps) {
+        console.warn(`Invalid SMAA search steps ${searchSteps}. Using ${validSteps}.`);
       }
-      smaa.materialWeights.defines.SMAA_MAX_SEARCH_STEPS = searchSteps.toString();
+      smaa.materialWeights.defines.SMAA_MAX_SEARCH_STEPS = validSteps.toString();
       smaa.materialWeights.needsUpdate = true;
       console.log(`SMAA search steps updated to ${searchSteps}`);
     }

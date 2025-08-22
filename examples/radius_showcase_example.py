@@ -178,9 +178,8 @@ def main():
     aprint("- Layered spheres: Concentric spheres with different point sizes")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add all examples

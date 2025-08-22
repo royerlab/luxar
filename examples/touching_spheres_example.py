@@ -132,9 +132,8 @@ def main():
     aprint("- Cyan/Orange grid: 3x3 grid of touching spheres")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add metadata

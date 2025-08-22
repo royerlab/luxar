@@ -141,9 +141,8 @@ def main():
     aprint("- Color coding for visual differentiation")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # 1. Central spiral galaxy
@@ -224,7 +223,12 @@ def main():
         aprint("Creating planetary ring systems...")
         ring_systems = [
             {"center": (0, 0, 10), "inner": 2, "outer": 4, "color": [0.78, 0.59, 0.39]},
-            {"center": (0, 0, -8), "inner": 1.5, "outer": 3, "color": [0.59, 0.78, 1.0]},
+            {
+                "center": (0, 0, -8),
+                "inner": 1.5,
+                "outer": 3,
+                "color": [0.59, 0.78, 1.0],
+            },
         ]
 
         for i, ring_data in enumerate(ring_systems):
