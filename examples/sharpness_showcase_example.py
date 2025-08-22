@@ -203,9 +203,8 @@ def main():
     aprint("- Wave: Sinusoidal sharpness variation")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add all examples
@@ -222,7 +221,9 @@ def main():
         aprint(f"2. Serve the data: luxar serve {output_path}")
         aprint("3. Open http://localhost:5173 in your browser")
         aprint("\nWhat to look for:")
-        aprint("- Top: Gradient from soft glowing points (left) to sharp points (right)")
+        aprint(
+            "- Top: Gradient from soft glowing points (left) to sharp points (right)"
+        )
         aprint("- Right: 5 rows showing different fixed sharpness values")
         aprint(
             "- Bottom left: Mixed cloud with soft blue, medium green, and sharp red points"

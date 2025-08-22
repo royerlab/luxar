@@ -162,11 +162,11 @@ def main():
         # Add points to scene
         aprint(f"├ Adding points node with {len(positions)} points in 4D space")
         scene.add_points(
-        "Rainbow4DHypersphere",
-        positions=positions,
-        colors=colors,
-        radii=radii,
-        sharpness=sharpness,
+            "Rainbow4DHypersphere",
+            positions=positions,
+            colors=colors,
+            radii=radii,
+            sharpness=sharpness,
         )
 
         # Finalize scene

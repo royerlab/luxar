@@ -107,6 +107,11 @@ Note: When possible, use `make` commands for convenience (see below).
 - Minimum acceptable coverage: 80%
 - Run all tests (Python + TypeScript): `make test-all` (Note: TypeScript dependencies will be auto-installed if missing)
 - Single test file: `hatch run pytest packages/luxar/src/luxar/tests/test_specific.py`
+- **CRITICAL**: NEVER skip tests just because they're difficult to fix. If a test is failing:
+  1. First, try to fix the underlying issue
+  2. If mocking is needed (e.g., WebGL), create proper mocks
+  3. If absolutely impossible to test (rare), document WHY in detail
+  4. Skipping tests without fixing them is unacceptable and defeats the purpose of testing
 
 ### Git Workflow
 - Never commit `.zarr` directories (they're in .gitignore)

@@ -27,7 +27,11 @@ def main():
         n_points = 10
         y_positions = [-2, 0, 2]
         radii_values = [0.05, 0.2, 0.5]
-        colors_rgb = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]  # Red, Green, Blue
+        colors_rgb = [
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ]  # Red, Green, Blue
         labels = ["Small", "Medium", "Large"]
 
         for i, (y, radius, color, label) in enumerate(

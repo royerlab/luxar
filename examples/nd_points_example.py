@@ -65,14 +65,15 @@ def main():
 
     # Create scene
     output_path = Path(__file__).parent / "nd_points_example.zarr"
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Create 5D time series data
         aprint("Generating 5D time series data...")
-        positions_5d = create_5d_time_series(n_timepoints=10, n_channels=3, n_points=500)
+        positions_5d = create_5d_time_series(
+            n_timepoints=10, n_channels=3, n_points=500
+        )
 
         # Define dimension metadata for 5D data
         metadata_5d = [
@@ -101,7 +102,10 @@ def main():
         # Add 5D points to scene
         aprint(f"Adding {n_points_5d:,} 5D points to scene...")
         scene.add_points(
-            "TimeSeries5D", positions_5d, colors=colors_5d, dimension_metadata=metadata_5d
+            "TimeSeries5D",
+            positions_5d,
+            colors=colors_5d,
+            dimension_metadata=metadata_5d,
         )
 
         # Create 2D projection data
@@ -125,7 +129,10 @@ def main():
         # Add 2D points to scene
         aprint(f"Adding {n_points_2d:,} 2D points to scene...")
         scene.add_points(
-            "Projection2D", positions_2d, colors=colors_2d, dimension_metadata=metadata_2d
+            "Projection2D",
+            positions_2d,
+            colors=colors_2d,
+            dimension_metadata=metadata_2d,
         )
 
         # Add standard 3D points for reference
@@ -143,7 +150,10 @@ def main():
         colors_3d = np.full((n_points_3d, 3), 0.78, dtype=np.float32)
 
         scene.add_points(
-            "Reference3D", positions_3d, colors=colors_3d, dimension_metadata=metadata_3d
+            "Reference3D",
+            positions_3d,
+            colors=colors_3d,
+            dimension_metadata=metadata_3d,
         )
 
         # Finalize scene

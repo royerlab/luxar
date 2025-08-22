@@ -32,25 +32,25 @@ def main():
     # Create a 5D scene (X, Y, Z, Time, Channel)
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene(
-        dimensions=Dimensions(
-            [
-                Dimension(name="X", unit="μm", range=(-50, 50), display=True),
-                Dimension(name="Y", unit="μm", range=(-50, 50), display=True),
-                Dimension(name="Z", unit="μm", range=(-50, 50), display=True),
-                Dimension(
-                    name="Time", unit="s", range=(0, 10), display=False, step=1.0
-                ),
-                Dimension(
-                    name="Channel",
-                    unit="",
-                    range=(0, 2),
-                    display=False,
-                    discrete=True,
-                    step=1.0,
-                ),
-            ]
-        ),
-    )
+            dimensions=Dimensions(
+                [
+                    Dimension(name="X", unit="μm", range=(-50, 50), display=True),
+                    Dimension(name="Y", unit="μm", range=(-50, 50), display=True),
+                    Dimension(name="Z", unit="μm", range=(-50, 50), display=True),
+                    Dimension(
+                        name="Time", unit="s", range=(0, 10), display=False, step=1.0
+                    ),
+                    Dimension(
+                        name="Channel",
+                        unit="",
+                        range=(0, 2),
+                        display=False,
+                        discrete=True,
+                        step=1.0,
+                    ),
+                ]
+            ),
+        )
 
         # Create some test data - moving points over time and channels
         aprint("\nGenerating 5D point data...")
@@ -69,9 +69,9 @@ def main():
 
         # Channel colors
         channel_colors = [
-        [1.0, 0.39, 0.39],  # Red
-        [0.39, 1.0, 0.39],  # Green
-        [0.39, 0.39, 1.0],  # Blue
+            [1.0, 0.39, 0.39],  # Red
+            [0.39, 1.0, 0.39],  # Green
+            [0.39, 0.39, 1.0],  # Blue
         ]
 
         for t in range(n_time_points):
@@ -110,21 +110,20 @@ def main():
         radii = np.concatenate(all_radii)
 
         aprint(
-        f"Generated {len(positions):,} points across {n_time_points} time steps and {n_channels} channels"
+            f"Generated {len(positions):,} points across {n_time_points} time steps and {n_channels} channels"
         )
 
         # Add points to scene
         scene.add_points(
-        "AnimatedSpiral",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=2.0,
-        opacity=0.9,
-        gamma=1.0,
-        blending_mode="normal",
+            "AnimatedSpiral",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=2.0,
+            opacity=0.9,
+            gamma=1.0,
+            blending_mode="normal",
         )
-
 
         # Print educational summary
         aprint("\n" + "=" * 60)

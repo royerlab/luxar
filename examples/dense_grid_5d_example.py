@@ -7,7 +7,7 @@ import numpy as np
 from arbol import aprint
 
 import luxar
-from luxar import LuxarZarrCompiler, transforms
+from luxar import LuxarZarrCompiler
 
 # Create a 5D scene (X, Y, Z, Time, Channel)
 scene_path = Path(__file__).parent / "dense_grid_5d_example.zarr"
@@ -179,7 +179,7 @@ with LuxarZarrCompiler(scene_path) as compiler:
 aprint(f"✓ 5D scene created at {scene_path}")
 aprint("\nScene summary:")
 aprint(f"- Total points: {len(all_positions):,}")
-aprint(f"- Dimensions: X, Y, Z (displayed), Time, Channel (hidden)")
+aprint("- Dimensions: X, Y, Z (displayed), Time, Channel (hidden)")
 aprint(f"- Time points: {n_time_points} (0-9)")
 aprint(f"- Channels: {n_channels} (Red, Green, Blue)")
 aprint(f"- Grid size: {grid_size}×{grid_size}×{grid_size} per time/channel")

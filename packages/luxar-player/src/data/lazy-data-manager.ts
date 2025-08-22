@@ -4,11 +4,20 @@
  * Manages chunk-based lazy loading of large nD datasets with intelligent
  * caching and memory management. Designed to handle datasets that exceed
  * available GPU memory by loading only the necessary chunks.
+ *
+ * This version uses extracted pure utility functions for better testability
+ * while maintaining backward compatibility.
  */
 
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
 import { detectMemory, MemoryMonitor } from '../utils/memory-detector';
+import {
+  calculateRequiredChunks,
+  getChunkId,
+  selectChunksToEvict,
+  shouldEnableLazyLoading,
+} from './lazy-data-manager-utils';
 
 /**
  * Represents a loaded chunk with metadata for cache management
@@ -116,24 +125,21 @@ export class LazyDataManager {
 
   /**
    * Get the chunk ID for a given array and chunk indices
+   * Uses the extracted utility function for consistency
    */
   private getChunkId(arrayPath: string, chunkIndices: number[]): string {
-    return `${arrayPath}:${chunkIndices.join(',')}`;
+    return getChunkId(arrayPath, chunkIndices);
   }
 
   /**
    * Calculate which chunks are needed for a given slice position.
+   * Delegates to the extracted utility function for better testability.
    *
-   * This method determines the optimal set of chunks to load based on:
-   * - The current position in the nD array
-   * - Which dimensions should be fully loaded vs partially loaded
-   * - The preload radius for anticipating navigation
-   *
-   * @param arrayShape - The shape of the full array (e.g., [1000000, 4] for 1M points with 4 coords)
-   * @param chunkShape - The chunk dimensions (e.g., [200000, 4])
+   * @param arrayShape - The shape of the full array
+   * @param chunkShape - The chunk dimensions
    * @param slicePosition - Current position in array indices
-   * @param sliceDimensions - Dimensions that should be fully loaded (e.g., [1] to load all coordinates)
-   * @param preloadRadius - How many adjacent chunks to preload (default: 1)
+   * @param sliceDimensions - Dimensions that should be fully loaded
+   * @param preloadRadius - How many adjacent chunks to preload
    * @returns Array of chunk indices to load
    */
   calculateRequiredChunks(
@@ -143,47 +149,13 @@ export class LazyDataManager {
     sliceDimensions: number[],
     preloadRadius: number = this.config.preloadRadius
   ): number[][] {
-    const requiredChunks: number[][] = [];
-    const nDims = arrayShape.length;
-
-    // Calculate chunk grid dimensions
-    const chunkGrid = arrayShape.map((size, i) => Math.ceil(size / chunkShape[i]));
-
-    // For each dimension in the zarr array, determine chunk range
-    const chunkRanges: [number, number][] = [];
-    for (let d = 0; d < nDims; d++) {
-      // sliceDimensions contains indices of array dimensions that should be fully loaded
-      // Other dimensions will be partially loaded around the current position
-
-      if (sliceDimensions.includes(d)) {
-        // This dimension should be fully loaded
-        chunkRanges.push([0, chunkGrid[d] - 1]);
-      } else {
-        // This dimension should be partially loaded around current position
-        const pos = slicePosition[d];
-        const chunkIdx = Math.floor(pos / chunkShape[d]);
-        const minChunk = Math.max(0, chunkIdx - preloadRadius);
-        const maxChunk = Math.min(chunkGrid[d] - 1, chunkIdx + preloadRadius);
-        chunkRanges.push([minChunk, maxChunk]);
-      }
-    }
-
-    // Generate all chunk combinations within ranges
-    const generateChunkIndices = (dimIdx: number, current: number[]): void => {
-      if (dimIdx === nDims) {
-        requiredChunks.push([...current]);
-        return;
-      }
-
-      const [min, max] = chunkRanges[dimIdx];
-      for (let i = min; i <= max; i++) {
-        current.push(i);
-        generateChunkIndices(dimIdx + 1, current);
-        current.pop();
-      }
-    };
-
-    generateChunkIndices(0, []);
+    const requiredChunks = calculateRequiredChunks(
+      arrayShape,
+      chunkShape,
+      slicePosition,
+      sliceDimensions,
+      preloadRadius
+    );
 
     if (this.config.debug) {
       console.log(`[🔄] [Luxar] Calculated ${requiredChunks.length} required chunks`);
@@ -313,32 +285,32 @@ export class LazyDataManager {
 
   /**
    * Evict the least recently used chunk
+   * Uses the utility function to determine which chunks to evict
    */
   private evictOldest(): void {
     if (this.cache.size === 0) return;
 
-    let oldestEntry: ChunkEntry | null = null;
-    let oldestTime = Infinity;
+    // Use utility function to determine which chunk to evict
+    const targetSize = this.totalCacheSize - 1; // Need to free at least 1 byte
+    const toEvict = selectChunksToEvict(this.cache, targetSize, this.totalCacheSize);
 
-    for (const entry of this.cache.values()) {
-      if (entry.lastAccessed < oldestTime) {
-        oldestTime = entry.lastAccessed;
-        oldestEntry = entry;
+    if (toEvict.length > 0) {
+      const chunkId = toEvict[0];
+      const entry = this.cache.get(chunkId);
+
+      if (entry) {
+        this.cache.delete(chunkId);
+        this.totalCacheSize -= entry.sizeBytes;
+
+        if (this.config.debug) {
+          console.log(`[🗑️] [Luxar] Evicted chunk ${chunkId}`);
+        }
+
+        this.emitEvent('evict', `Evicted: ${chunkId}`, {
+          chunkId: chunkId,
+          sizeBytes: entry.sizeBytes,
+        });
       }
-    }
-
-    if (oldestEntry) {
-      this.cache.delete(oldestEntry.id);
-      this.totalCacheSize -= oldestEntry.sizeBytes;
-
-      if (this.config.debug) {
-        console.log(`[🗑️] [Luxar] Evicted chunk ${oldestEntry.id}`);
-      }
-
-      this.emitEvent('evict', `Evicted: ${oldestEntry.id}`, {
-        chunkId: oldestEntry.id,
-        sizeBytes: oldestEntry.sizeBytes,
-      });
     }
   }
 
@@ -603,6 +575,7 @@ export class LazyDataManager {
 
   /**
    * Check if lazy loading should be enabled for a dataset
+   * Uses the utility function for consistent logic
    */
   static shouldUseLazyLoading(
     numPoints: number,
@@ -611,11 +584,11 @@ export class LazyDataManager {
   ): boolean {
     const cfg = { ...DEFAULT_CONFIG, ...config };
 
-    // Use lazy loading for large datasets or high-dimensional data
-    const isLarge = numPoints > 10_000_000; // 10M points
-    const isHighDim = ndim > 3;
+    // Calculate array shape and estimate memory usage
+    const arrayShape = [numPoints, ndim];
+    const dtype = '<f4'; // Assume float32 for points
 
-    return cfg.enabled && (isLarge || isHighDim);
+    return shouldEnableLazyLoading(arrayShape, dtype, cfg.maxMemoryMB);
   }
 
   /**

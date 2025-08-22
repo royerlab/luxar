@@ -18,7 +18,9 @@ from arbol import aprint
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0, rotation: float = 0.0) -> np.ndarray:
+def create_spherical_spiral(
+    n_points: int = 200000, radius: float = 10.0, rotation: float = 0.0
+) -> np.ndarray:
     """Create points distributed in a spherical spiral pattern with rotation.
 
     Uses a technique similar to Fibonacci spiral on a sphere for even distribution.
@@ -51,7 +53,9 @@ def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0, rotati
     return np.column_stack([x, y, z]).astype(np.float32)
 
 
-def create_undulating_rainbow_colors(n_points: int, t_frame: int, n_frames: int) -> np.ndarray:
+def create_undulating_rainbow_colors(
+    n_points: int, t_frame: int, n_frames: int
+) -> np.ndarray:
     """Generate rainbow colors that undulate across time.
 
     Args:
@@ -74,13 +78,21 @@ def create_undulating_rainbow_colors(n_points: int, t_frame: int, n_frames: int)
     wave_speed = 2.0  # Speed of color wave propagation
 
     r = np.sin(color_freq * spiral_t + time_phase * wave_speed) * 0.5 + 0.5
-    g = np.sin(color_freq * spiral_t + time_phase * wave_speed + 2 * np.pi / 3) * 0.5 + 0.5
-    b = np.sin(color_freq * spiral_t + time_phase * wave_speed + 4 * np.pi / 3) * 0.5 + 0.5
+    g = (
+        np.sin(color_freq * spiral_t + time_phase * wave_speed + 2 * np.pi / 3) * 0.5
+        + 0.5
+    )
+    b = (
+        np.sin(color_freq * spiral_t + time_phase * wave_speed + 4 * np.pi / 3) * 0.5
+        + 0.5
+    )
 
     return np.column_stack([r, g, b]).astype(np.float32)
 
 
-def create_pulsating_radii(positions: np.ndarray, base_radius: float, t_frame: int, n_frames: int) -> np.ndarray:
+def create_pulsating_radii(
+    positions: np.ndarray, base_radius: float, t_frame: int, n_frames: int
+) -> np.ndarray:
     """Generate pulsating point radii with spatial patterns.
 
     Args:
@@ -120,7 +132,9 @@ def create_pulsating_radii(positions: np.ndarray, base_radius: float, t_frame: i
     return (base_radius * radius_multiplier).astype(np.float32)
 
 
-def create_dynamic_sharpness(positions: np.ndarray, t_frame: int, n_frames: int) -> np.ndarray:
+def create_dynamic_sharpness(
+    positions: np.ndarray, t_frame: int, n_frames: int
+) -> np.ndarray:
     """Generate dynamic sharpness values with spatial and temporal variation.
 
     Args:
@@ -204,10 +218,23 @@ def main():
         scene = compiler.create_scene(
             dimensions=Dimensions(
                 [
-                    Dimension(name="x", unit="μm", range=(-15, 15), step=0.5, display=True),
-                    Dimension(name="y", unit="μm", range=(-15, 15), step=0.5, display=True),
-                    Dimension(name="z", unit="μm", range=(-15, 15), step=0.5, display=True),
-                    Dimension(name="t", unit="frame", range=(0, n_frames - 1), step=1, display=False, discrete=True),
+                    Dimension(
+                        name="x", unit="μm", range=(-15, 15), step=0.5, display=True
+                    ),
+                    Dimension(
+                        name="y", unit="μm", range=(-15, 15), step=0.5, display=True
+                    ),
+                    Dimension(
+                        name="z", unit="μm", range=(-15, 15), step=0.5, display=True
+                    ),
+                    Dimension(
+                        name="t",
+                        unit="frame",
+                        range=(0, n_frames - 1),
+                        step=1,
+                        display=False,
+                        discrete=True,
+                    ),
                 ]
             )
         )
@@ -228,7 +255,9 @@ def main():
             rotation = (t / n_frames) * total_rotation
 
             # Generate 3D positions with rotation
-            positions_3d = create_spherical_spiral(n_points_per_frame, sphere_radius, rotation)
+            positions_3d = create_spherical_spiral(
+                n_points_per_frame, sphere_radius, rotation
+            )
 
             # Add time dimension to create 4D positions
             t_values = np.full((n_points_per_frame, 1), t, dtype=np.float32)
@@ -267,9 +296,13 @@ def main():
     aprint(f"📊 Dataset shape: {all_positions.shape}")
     aprint(f"🎨 Color range: [{all_colors.min():.2f}, {all_colors.max():.2f}]")
     aprint(f"📏 Radius range: [{all_radii.min():.4f}, {all_radii.max():.4f}]")
-    aprint(f"✨ Sharpness range: [{all_sharpness.min():.4f}, {all_sharpness.max():.4f}]")
+    aprint(
+        f"✨ Sharpness range: [{all_sharpness.min():.4f}, {all_sharpness.max():.4f}]"
+    )
     aprint("\nTo visualize: luxar serve temporal_spiral_sphere_4d_example.zarr")
-    aprint("Then navigate through time with the 't' dimension controls (press 4, then [/])")
+    aprint(
+        "Then navigate through time with the 't' dimension controls (press 4, then [/])"
+    )
 
 
 if __name__ == "__main__":

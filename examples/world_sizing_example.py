@@ -85,9 +85,8 @@ def main():
     aprint("Two points of radius r at distance 2r should just touch")
 
     # Create scene
-    
-    with LuxarZarrCompiler(output_path) as compiler:
 
+    with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene()
 
         # Add metadata

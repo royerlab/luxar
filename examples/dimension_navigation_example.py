@@ -203,19 +203,18 @@ def main():
 
         # Add to scene
         scene.add_points(
-        "ShapeSequence",
-        positions,
-        colors=colors,
-        radii=radii,
-        sharpness=np.full(
-            len(positions), 3.0, dtype=np.float32
-        ),  # Sharp edges for clarity
+            "ShapeSequence",
+            positions,
+            colors=colors,
+            radii=radii,
+            sharpness=np.full(
+                len(positions), 3.0, dtype=np.float32
+            ),  # Sharp edges for clarity
         )
-
 
         # Print instructions
         aprint(
-        f"\n✓ Created dimension navigation example with {len(positions):,} total points"
+            f"\n✓ Created dimension navigation example with {len(positions):,} total points"
         )
         aprint("\n" + "=" * 60)
         aprint("DIMENSION NAVIGATION INSTRUCTIONS")

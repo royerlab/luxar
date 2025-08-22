@@ -10,6 +10,11 @@ import { config, type RenderingSettings } from '../config';
 import { SHADER_CONFIG } from '../rendering/shader-manager';
 import type { NavigationControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
+import {
+  generateSettingsKey,
+  serializeSettings,
+  deserializeSettings,
+} from './rendering-controls-utils';
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI
@@ -932,8 +937,8 @@ export class RenderingControls {
   private saveSettings(): void {
     if (!this.sceneId) return;
 
-    const key = `luxar-rendering-settings-${this.sceneId}`;
-    localStorage.setItem(key, JSON.stringify(this.settings));
+    const key = generateSettingsKey(this.sceneId);
+    localStorage.setItem(key, serializeSettings(this.settings));
   }
 
   /**
@@ -942,13 +947,12 @@ export class RenderingControls {
   private loadSettings(): void {
     if (!this.sceneId) return;
 
-    const key = `luxar-rendering-settings-${this.sceneId}`;
+    const key = generateSettingsKey(this.sceneId);
     const stored = localStorage.getItem(key);
 
     if (stored) {
-      try {
-        const loadedSettings = JSON.parse(stored) as Partial<RenderingSettings>;
-
+      const loadedSettings = deserializeSettings(stored);
+      if (loadedSettings) {
         // Merge with defaults to handle missing properties
         this.settings = { ...config.renderingControls.defaults, ...loadedSettings };
 
@@ -961,8 +965,8 @@ export class RenderingControls {
         });
 
         console.log(`Loaded rendering settings for scene: ${this.sceneId}`);
-      } catch (e) {
-        console.warn('Failed to load rendering settings:', e);
+      } else {
+        console.warn('Failed to parse rendering settings');
       }
     }
   }
