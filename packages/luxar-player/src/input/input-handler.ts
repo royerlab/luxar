@@ -36,20 +36,19 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay, hideHelpOverlay } from '../ui/helpers';
-import { updatePointCloudSlice } from '../utils/dims-navigation';
 import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { INPUT_CONFIG } from '../controls/control-config';
-import { LazyLoadingMonitor } from '../ui/lazy-loading-monitor';
 import {
   getNonDisplayedDimensions,
   calculateStepSize,
   calculateNextPosition,
   mapKeyToDimension,
 } from './input-handler-utils';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -75,9 +74,6 @@ export class InputHandler {
   /** Input context manager for handling keyboard conflicts */
   private contextManager: InputContextManager;
 
-  /** Lazy loading monitoring panel */
-  private lazyLoadingMonitor?: LazyLoadingMonitor;
-
   /**
    * Constructs the input handler with required system dependencies.
    *
@@ -93,11 +89,6 @@ export class InputHandler {
 
     // Initialize input context manager
     this.contextManager = new InputContextManager();
-
-    // Initialize lazy loading monitor
-    this.lazyLoadingMonitor = new LazyLoadingMonitor(document.body);
-    // Expose globally for LazyDataManager to connect
-    (window as any).__luxarLazyMonitor = this.lazyLoadingMonitor;
   }
 
   /**
@@ -205,41 +196,12 @@ export class InputHandler {
       return;
     }
 
-    const nDPointClouds = this.findNDPointClouds();
+    // Use the new loader architecture's update mechanism
+    const { updateSceneForDimensions } = await import('../data');
+    await updateSceneForDimensions(dims, this.sceneManager.scene as unknown as THREE.Group);
 
-    // Process all updates, handling both sync and async cases
-    const updatePromises = nDPointClouds.map(async (points: THREE.Points) => {
-      // Check if this is a lazy-loaded point cloud
-      if (points.userData.isLazyLoaded) {
-        // Use async update for lazy-loaded data
-        const { updateLazyLoadedPointCloud } = await import('../utils/dims-navigation');
-        await updateLazyLoadedPointCloud(points, dims);
-        // Trigger re-render after update
-        this.animationController.startAnimation();
-      } else {
-        // Use traditional update for fully-loaded data
-        const {
-          originalNumPoints,
-          originalPositions,
-          originalColors,
-          originalRadii,
-          originalSharpness,
-        } = points.userData;
-
-        updatePointCloudSlice(
-          points,
-          originalPositions,
-          originalColors,
-          originalRadii,
-          originalSharpness,
-          dims, // Use shared dims from manager
-          originalNumPoints
-        );
-      }
-    });
-
-    // Wait for all updates to complete
-    await Promise.all(updatePromises);
+    // Trigger re-render after update
+    this.animationController.startAnimation();
   }
 
   /**
@@ -453,21 +415,22 @@ export class InputHandler {
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
           this.debugConsole.toggle();
-          console.log(
-            `🔧 [Luxar] Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
+          log.info(
+            Modules.DEBUG_CONSOLE,
+            `Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
           );
         }
         break;
 
       case 'm':
       case 'M':
-        // Ctrl+M to toggle lazy loading monitor
+        // Ctrl+M to toggle data loading monitor
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
-          if (this.lazyLoadingMonitor) {
-            this.lazyLoadingMonitor.toggle();
-            console.log('📊 [Luxar] Lazy loading monitor toggled');
-          }
+          import('../data').then(({ toggleDataMonitor }) => {
+            toggleDataMonitor();
+            log.info(Modules.DATA_MONITOR, 'Data loading monitor toggled');
+          });
         }
         break;
 
@@ -604,16 +567,16 @@ export class InputHandler {
     if (!document.fullscreenElement) {
       // Enter fullscreen - target the document element for true fullscreen
       document.documentElement.requestFullscreen().catch((err) => {
-        console.error('Error attempting to enable fullscreen:', err);
+        log.error(Modules.INPUT, 'Error attempting to enable fullscreen:', err);
         // Fallback: try the canvas element
         this.sceneManager.renderer.domElement.requestFullscreen().catch((fallbackErr) => {
-          console.error('Fallback fullscreen also failed:', fallbackErr);
+          log.error(Modules.INPUT, 'Fallback fullscreen also failed:', fallbackErr);
         });
       });
     } else {
       // Exit fullscreen
       document.exitFullscreen().catch((err) => {
-        console.error('Error attempting to exit fullscreen:', err);
+        log.error(Modules.INPUT, 'Error attempting to exit fullscreen:', err);
       });
     }
   }
@@ -661,7 +624,11 @@ export class InputHandler {
       this.renderingControls.syncCurrentState();
     }
 
-    console.log(`🎮 [Luxar] Switched to ${newType} controls (press V to toggle)`);
+    log.custom(
+      LogEmoji.CONTROLS,
+      Modules.CONTROLS,
+      `Switched to ${newType} controls (press V to toggle)`
+    );
   }
 
   /**
@@ -679,7 +646,11 @@ export class InputHandler {
         this.renderingControls.syncCurrentState();
       }
 
-      console.log(`🚀 [Luxar] Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`);
+      log.custom(
+        LogEmoji.ROCKET,
+        Modules.CONTROLS,
+        `Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`
+      );
     } else {
       console.log(
         'ℹ️ [Luxar] Inertial mode is only available in fly control mode (press V to switch)'
@@ -808,24 +779,6 @@ export class InputHandler {
   }
 
   /**
-   * Find all nD point clouds in the scene
-   */
-  private findNDPointClouds(): THREE.Points[] {
-    const nDPoints: THREE.Points[] = [];
-
-    this.sceneManager.scene.traverse((object) => {
-      if (object instanceof THREE.Points) {
-        // Check for either traditional nD data or lazy-loaded data
-        if (object.userData.originalPositions || object.userData.isLazyLoaded) {
-          nDPoints.push(object);
-        }
-      }
-    });
-
-    return nDPoints;
-  }
-
-  /**
    * Handle ESC key:
    * - If in fullscreen: do nothing (browser handles fullscreen exit)
    * - If not in fullscreen: close all panels
@@ -860,10 +813,10 @@ export class InputHandler {
       this.renderingControls.hide();
     }
 
-    // Close lazy loading monitor
-    if (this.lazyLoadingMonitor?.getIsVisible()) {
-      this.lazyLoadingMonitor.hide();
-    }
+    // Close data loading monitor
+    import('../data').then(({ hideDataMonitor }) => {
+      hideDataMonitor();
+    });
 
     // Close dimension sliders
     if (this.dimensionSliders?.getIsVisible()) {
@@ -945,11 +898,11 @@ export class InputHandler {
         };
 
         smoothRecenter();
-        console.log('🎯 [Luxar] Recentering camera on scene (smooth)');
+        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentering camera on scene (smooth)');
       } else {
         // For orbit/arcball controls, just update the target
         controlsManager.lookAt(center, false);
-        console.log('🎯 [Luxar] Recentered camera on scene');
+        log.custom(LogEmoji.TARGET, Modules.CONTROLS, 'Recentered camera on scene');
       }
     }
   }
@@ -966,13 +919,6 @@ export class InputHandler {
 
     // Dispose debug console
     this.debugConsole.dispose();
-
-    // Dispose lazy loading monitor
-    if (this.lazyLoadingMonitor) {
-      this.lazyLoadingMonitor.dispose();
-      this.lazyLoadingMonitor = undefined;
-      delete (window as any).__luxarLazyMonitor;
-    }
 
     // Clean up event listeners
     this.eventListeners.forEach((cleanup) => cleanup());

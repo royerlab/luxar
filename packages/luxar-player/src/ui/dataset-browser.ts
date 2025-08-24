@@ -5,7 +5,7 @@
  * Zarr datasets from various server types.
  */
 
-import { DirectoryNavigator, DirectoryEntry } from '../data/directory-navigator';
+import { DirectoryNavigator, type DirectoryEntry } from '../data';
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;

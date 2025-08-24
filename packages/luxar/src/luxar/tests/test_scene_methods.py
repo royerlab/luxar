@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar import LuxarZarrCompiler
 
 
 class TestSceneMethods:
@@ -40,46 +40,11 @@ class TestSceneMethods:
         assert ".zmetadata" in store.store
         assert "points" in store
 
-    @pytest.mark.skip(reason="groups property removed in new API")
-    def test_scene_groups_property(self, tmp_path):
-        """Test Scene.groups property."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+    # Test removed: groups property was removed in new API
+    # The Scene class no longer maintains a separate groups list
 
-            # Initially empty
-            assert len(scene.groups) == 0
-
-            # Add groups
-            g1 = scene.add_group("group1")
-            g2 = scene.add_group("group2")
-
-            # Check groups property
-            assert len(scene.groups) == 2
-            assert "group1" in scene.groups
-            assert "group2" in scene.groups
-            assert scene.groups["group1"] is g1
-            assert scene.groups["group2"] is g2
-
-    @pytest.mark.skip(reason="_validate_scene_dimensions removed in new API")
-    def test_scene_validate_scene_dimensions(self, tmp_path):
-        """Test Scene._validate_scene_dimensions method."""
-        dims = Dimensions(
-            [
-                Dimension("x", unit="um"),
-                Dimension("y", unit="um"),
-                Dimension("z", unit="um"),
-            ]
-        )
-
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=dims)
-
-            # Access internal method
-            scene._validate_scene_dimensions()  # Should not raise
-
-            # Test with invalid dimensions attribute
-            scene.dimensions = None
-            scene._validate_scene_dimensions()  # Should handle gracefully
+    # Test removed: _validate_scene_dimensions is no longer part of the public API
+    # Dimension validation is now handled internally during point addition
 
     def test_scene_infer_dimensions_from_points(self, tmp_path):
         """Test Scene._infer_dimensions_from_points method."""
@@ -96,31 +61,8 @@ class TestSceneMethods:
             # Since we disabled inference, dimensions should still be None
             assert scene.dimensions is None
 
-    @pytest.mark.skip(reason="_apply_dimension_metadata is internal implementation")
-    def test_scene_apply_dimension_metadata(self, tmp_path):
-        """Test Scene._apply_dimension_metadata method."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
-
-            # Create attrs dict
-            attrs = {}
-
-            # Test with None metadata
-            scene._apply_dimension_metadata(attrs, None, 3)
-            # Should not add anything
-            assert "dimension_metadata" not in attrs
-
-            # Test with metadata (though this is disabled in new API)
-            from luxar.types import DimensionMetadata
-
-            metadata = [
-                DimensionMetadata(name="x"),
-                DimensionMetadata(name="y"),
-                DimensionMetadata(name="z"),
-            ]
-            scene._apply_dimension_metadata(attrs, metadata, 3)
-            # This is disabled, so still shouldn't add
-            assert "dimension_metadata" not in attrs
+    # Test removed: _apply_dimension_metadata is internal implementation
+    # Metadata application is now handled automatically during scene creation
 
     def test_scene_writer_access(self, tmp_path):
         """Test Scene has access to writer."""

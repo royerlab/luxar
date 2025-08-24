@@ -32,19 +32,23 @@ from ..validation.base import (
     validate_radii_for_writing,
     validate_sharpness_for_writing,
 )
+from .spatial_index import apply_sort_order, build_spatial_index, validate_spatial_index
 
 
 def _calculate_intelligent_chunks(
     shape: Tuple[int, ...],
     target_chunk_size: int = DEFAULT_CHUNK_SIZE,
-    dimension_metadata: Optional[Dict[str, Any]] = None,
+    spatial_index_data: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
+
+    When spatial index data is available, aligns chunks with spatial cells
+    for better query performance during lazy loading.
 
     Args:
         shape: Shape of the dataset
         target_chunk_size: Target size for chunks in elements
-        dimension_metadata: Optional metadata about dimensions for optimization
+        spatial_index_data: Optional spatial index data for optimization
 
     Returns:
         Optimized chunk shape
@@ -56,6 +60,26 @@ def _calculate_intelligent_chunks(
     if len(shape) == 2:
         # 2D array (e.g., positions) - chunk along first dimension
         n_points, n_dims = shape
+
+        # If spatial index is available, align chunks with spatial cells
+        if spatial_index_data and "grid_shape" in spatial_index_data:
+            grid_shape = spatial_index_data["grid_shape"]
+            total_cells = int(np.prod(grid_shape))
+
+            if total_cells > 0:
+                # Calculate average points per cell
+                avg_points_per_cell = max(1, n_points // total_cells)
+
+                # Try to make chunks contain 4-8 cells worth of points for balance
+                # between I/O efficiency and spatial locality
+                cells_per_chunk = max(1, min(8, total_cells // 10))
+                chunk_points = avg_points_per_cell * cells_per_chunk
+
+                # Clamp to reasonable bounds
+                chunk_points = max(1024, min(target_chunk_size, chunk_points))
+                return (chunk_points, n_dims)
+
+        # Fallback to standard chunking
         chunk_points = min(n_points, target_chunk_size // n_dims)
         return (chunk_points, n_dims)
 
@@ -110,6 +134,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
         units: Union[PhysicalUnit, str] = "metre",
         version: str = DEFAULT_VERSION,
+        enable_spatial_index: bool = True,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -118,6 +143,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor: Compressor for datasets
             units: Physical units for the scene
             version: Luxar format version
+            enable_spatial_index: Whether to build spatial indices for point clouds (default: True)
         """
         # Handle store path
         if store_path is None:
@@ -132,6 +158,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Validate units
         if isinstance(units, str):
             units = validate_physical_unit(units)
+
+        # Store spatial index flag
+        self.enable_spatial_index = enable_spatial_index
 
         # Create root Zarr group
         self.store = zarr.open_group(self._store_path, mode="w")
@@ -218,11 +247,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: Optional[NDArray[np.float32]] = None,
         radii: Optional[NDArray[np.float32]] = None,
         sharpness: Optional[NDArray[np.float32]] = None,
+        grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write point cloud data progressively to Zarr.
 
         Data is written immediately to disk without being kept in memory.
+        If spatial indexing is enabled, points are reordered for spatial locality.
 
         Args:
             path: Path for the point cloud within the store
@@ -230,6 +261,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Optional HDR colors of shape (N, 3)
             radii: Optional radii of shape (N,)
             sharpness: Optional sharpness of shape (N,)
+            grid_shape: Optional grid resolution for spatial index (auto if None)
             **attrs: Additional attributes
 
         Returns:
@@ -244,9 +276,173 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
 
-        # Write positions with intelligent chunking
+        # Build spatial index if enabled
+        spatial_index_data = None
+        spatial_extend_dims = None  # Initialize here so it's always defined
+        if self.enable_spatial_index and n_points > 0:
+            # Extract displayed dimensions and spatial flags from scene metadata
+            displayed_dims = None
+            if "scene_dimensions" in self.store.attrs:
+                scene_dims = self.store.attrs["scene_dimensions"]
+                dims_list = (
+                    scene_dims.get("dimensions", [])
+                    if isinstance(scene_dims, dict)
+                    else []
+                )
+
+                # Find which dimensions are displayed
+                displayed_dims = []
+                for i, dim in enumerate(dims_list):
+                    if dim.get("display", True):  # Default to True if not specified
+                        displayed_dims.append(i)
+
+                # Limit to max 3 displayed dimensions
+                displayed_dims = displayed_dims[:3]
+
+                # Get spatial flags from each dimension
+                spatial_extend_dims = [
+                    dim.get("spatial", True if dim.get("display", True) else False)
+                    for dim in dims_list
+                ]
+
+            # If no dimension metadata, default to first 3 dimensions as displayed
+            if displayed_dims is None:
+                displayed_dims = list(range(min(3, n_dims)))
+
+            # Calculate non-displayed dimensions
+            non_displayed_dims = [d for d in range(n_dims) if d not in displayed_dims]
+
+            # Only build spatial index if there are non-displayed dimensions
+            spatial_index_data = None
+            if len(non_displayed_dims) == 0:
+                aprint(
+                    f"  ⚠️ All {n_dims} dimensions are displayed - skipping spatial index"
+                )
+            else:
+                aprint("  🔍 Building spatial index...")
+                aprint(f"    Displayed dimensions: {displayed_dims}")
+                aprint(f"    Non-displayed dimensions to index: {non_displayed_dims}")
+
+                # Auto-determine grid shape based on data characteristics
+                grid_shape_array = None
+                if grid_shape is not None:
+                    # Use provided grid shape, but only for non-displayed dimensions
+                    if len(grid_shape) == len(non_displayed_dims):
+                        grid_shape_array = np.array(grid_shape, dtype=np.uint32)
+                    else:
+                        aprint(
+                            f"    ⚠️ Provided grid_shape has {len(grid_shape)} dims but {len(non_displayed_dims)} non-displayed dims"
+                        )
+                        grid_shape_array = None
+
+                if grid_shape_array is None and "scene_dimensions" in self.store.attrs:
+                    scene_dims = self.store.attrs["scene_dimensions"]
+                    grid_shape_list = []
+
+                    # Calculate position ranges for non-displayed dimensions only
+                    indexed_positions = positions[:, non_displayed_dims]
+                    min_coords = np.min(indexed_positions, axis=0)
+                    max_coords = np.max(indexed_positions, axis=0)
+
+                    # Get dimension list if available
+                    dims_list = (
+                        scene_dims.get("dimensions", [])
+                        if isinstance(scene_dims, dict)
+                        else []
+                    )
+
+                    for idx, d in enumerate(non_displayed_dims):
+                        # Check if this dimension is discrete
+                        is_discrete = False
+                        if d < len(dims_list) and dims_list[d].get("discrete", False):
+                            is_discrete = True
+
+                        if is_discrete:
+                            # For discrete dimensions, use one cell per unique value
+                            unique_vals = len(np.unique(indexed_positions[:, idx]))
+                            # One cell per discrete value for precise indexing
+                            # Only apply a very high cap to prevent memory issues
+                            cells = min(
+                                10000, unique_vals
+                            )  # Very high cap only for safety
+                            grid_shape_list.append(cells)
+                            aprint(
+                                f"    Non-displayed dim {d}: discrete with {unique_vals} unique values → {cells} cells"
+                            )
+                        else:
+                            # For continuous non-displayed dimensions, use fewer cells
+                            dim_range = max_coords[idx] - min_coords[idx]
+                            if dim_range > 0:
+                                # Use fewer cells for non-displayed dimensions (5-10 typically)
+                                cells = min(10, max(3, int(np.sqrt(n_points / 10000))))
+                            else:
+                                cells = 2
+                            grid_shape_list.append(cells)
+                            aprint(
+                                f"    Non-displayed dim {d}: continuous → {cells} cells"
+                            )
+
+                    grid_shape_array = (
+                        np.array(grid_shape_list, dtype=np.uint32)
+                        if grid_shape_list
+                        else None
+                    )
+                    if grid_shape_array is not None:
+                        aprint(
+                            f"  📊 Grid shape for non-displayed dims: {grid_shape_array}"
+                        )
+
+                # Determine which dimensions are discrete
+                discrete_dims = []
+                if "scene_dimensions" in self.store.attrs:
+                    scene_dims = self.store.attrs["scene_dimensions"]
+                    dims_list = (
+                        scene_dims.get("dimensions", [])
+                        if isinstance(scene_dims, dict)
+                        else []
+                    )
+                    for d in range(n_dims):
+                        if d < len(dims_list) and dims_list[d].get("discrete", False):
+                            discrete_dims.append(d)
+
+                # Build the spatial index with displayed and discrete dimensions info
+                # Get max_radius from attrs or default
+                max_radius = attrs.get("max_radius", 0.1)
+                if radii is not None:
+                    # If radii provided, use the max as max_radius
+                    max_radius = float(np.max(radii))
+
+                spatial_index_data = build_spatial_index(
+                    positions,
+                    grid_shape_array,
+                    displayed_dims=displayed_dims,
+                    discrete_dims=discrete_dims,
+                    spatial_extend_dims=spatial_extend_dims,
+                    max_radius=max_radius,
+                )
+
+            # Only process spatial index if it was created
+            if spatial_index_data is not None:
+                # Validate the spatial index before using it
+                validate_spatial_index(spatial_index_data, n_points, n_dims)
+
+                # Reorder all arrays according to spatial index
+                positions = spatial_index_data["sorted_positions"]
+                colors = apply_sort_order(colors, spatial_index_data["sort_order"])
+                radii = apply_sort_order(radii, spatial_index_data["sort_order"])
+                sharpness = apply_sort_order(
+                    sharpness, spatial_index_data["sort_order"]
+                )
+
+                aprint(
+                    f"  ✓ Spatial index built: {len(spatial_index_data['occupied_cells'])} occupied cells"
+                )
+
+        # Write positions with intelligent chunking (aligned with spatial index if available)
         chunks = _calculate_intelligent_chunks(
-            positions.shape, target_chunk_size=DEFAULT_CHUNK_SIZE
+            positions.shape,
+            target_chunk_size=DEFAULT_CHUNK_SIZE,
+            spatial_index_data=spatial_index_data,
         )
         group.create_dataset(
             "positions",
@@ -287,6 +483,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate radii
             validate_radii_for_writing(radii, n_points)
 
+            # Calculate max radius for efficient lazy loading
+            max_radius = float(np.max(radii))
+            metadata["max_radius"] = max_radius
+            aprint(f"  ✓ Max radius: {max_radius:.3f}")
+
             radii_chunks = _calculate_intelligent_chunks(radii.shape)
             group.create_dataset(
                 "radii",
@@ -315,20 +516,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             metadata["has_sharpness"] = True
             aprint("  ✓ Wrote sharpness")
 
-        # Process transform if present to convert numpy array to list
+        # Process transform if present using centralized conversion
         if "transform" in attrs:
-            transform_value = attrs["transform"]
-            if not isinstance(transform_value, list):
-                # Convert numpy array to list for JSON serialization
-                transform_array = np.array(transform_value, dtype=np.float32)
-                if transform_array.size == 16:
-                    transform_matrix = transform_array.reshape(4, 4)
-                    # Transpose for THREE.js (column-major order) before flattening
-                    attrs["transform"] = transform_matrix.T.ravel().tolist()
-                else:
-                    raise ValueError(
-                        f"Transform must have 16 elements, got {transform_array.size}"
-                    )
+            from ..core.transforms import prepare_transform_for_zarr
+
+            attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
         # Set default rendering attributes if not provided
         if "opacity" not in attrs:
@@ -338,10 +530,93 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 
+        # Store spatial extension dimensions if available
+        if spatial_extend_dims is not None:
+            attrs["spatial_extend_dims"] = spatial_extend_dims
+
         # Store attributes
         group.attrs.update(attrs)
         group.attrs["type"] = "points"
         group.attrs["n_points"] = n_points
+
+        # Store max_radius if radii were provided
+        if "max_radius" in metadata:
+            group.attrs["max_radius"] = metadata["max_radius"]
+
+        # Write spatial index if built
+        if spatial_index_data is not None:
+            aprint("  📝 Writing spatial index...")
+
+            # Create spatial_index group
+            index_group = group.require_group("spatial_index")
+
+            # Store index metadata
+            index_metadata = {
+                "grid_shape": spatial_index_data["grid_shape"].tolist(),
+                "grid_origin": spatial_index_data["grid_origin"].tolist(),
+                "cell_size": spatial_index_data["cell_size"].tolist(),
+                "num_occupied": len(spatial_index_data["occupied_cells"]),
+                "total_cells": int(np.prod(spatial_index_data["grid_shape"]))
+                if len(spatial_index_data["grid_shape"]) > 0
+                else 0,
+                "total_points": spatial_index_data[
+                    "total_points"
+                ],  # Total number of points in dataset
+                "dimensions": len(
+                    spatial_index_data["indexed_dimensions"]
+                ),  # Number of indexed dimensions
+                "full_dimensions": spatial_index_data[
+                    "full_dimensions"
+                ],  # Total dimensions
+                "indexed_dimensions": spatial_index_data[
+                    "indexed_dimensions"
+                ],  # Which dimensions are indexed
+                "displayed_dimensions": spatial_index_data[
+                    "displayed_dimensions"
+                ],  # Which dimensions are displayed
+                "build_version": "0.5",  # Bump version for total_points addition
+            }
+
+            # Calculate max points per cell
+            if len(spatial_index_data["cell_ranges"]) > 0:
+                cell_sizes = np.diff(
+                    spatial_index_data["cell_ranges"], axis=1
+                ).flatten()
+                index_metadata["max_points_per_cell"] = int(np.max(cell_sizes))
+            else:
+                index_metadata["max_points_per_cell"] = 0
+
+            index_group.attrs.update(index_metadata)
+
+            # Store occupied cells
+            if len(spatial_index_data["occupied_cells"]) > 0:
+                occupied_chunks = _calculate_intelligent_chunks(
+                    spatial_index_data["occupied_cells"].shape, target_chunk_size=4096
+                )
+                index_group.create_dataset(
+                    "occupied_cells",
+                    data=spatial_index_data["occupied_cells"],
+                    chunks=occupied_chunks,
+                    compressor=self.compressor,
+                    dtype=np.uint32,
+                    overwrite=True,
+                )
+
+                # Store cell ranges
+                ranges_chunks = _calculate_intelligent_chunks(
+                    spatial_index_data["cell_ranges"].shape, target_chunk_size=4096
+                )
+                index_group.create_dataset(
+                    "cell_ranges",
+                    data=spatial_index_data["cell_ranges"],
+                    chunks=ranges_chunks,
+                    compressor=self.compressor,
+                    dtype=np.uint64,
+                    overwrite=True,
+                )
+
+            metadata["has_spatial_index"] = True
+            aprint("  ✓ Spatial index written")
 
         # Cache metadata
         self._metadata_cache[path] = metadata

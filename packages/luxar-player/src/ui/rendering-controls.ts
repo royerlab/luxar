@@ -15,6 +15,7 @@ import {
   serializeSettings,
   deserializeSettings,
 } from './rendering-controls-utils';
+import { log, Modules } from '../utils/log';
 
 /**
  * RenderingControls manages the advanced rendering parameters GUI
@@ -964,9 +965,9 @@ export class RenderingControls {
           controller.updateDisplay();
         });
 
-        console.log(`Loaded rendering settings for scene: ${this.sceneId}`);
+        log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
       } else {
-        console.warn('Failed to parse rendering settings');
+        log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
       }
     }
   }

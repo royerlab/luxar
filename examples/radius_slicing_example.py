@@ -99,7 +99,9 @@ def main():
     # Create scene with proper dimensions
     dimensions = Dimensions(
         [
-            Dimension("time", unit="s", range=(0, 4), step=0.1, display=False),
+            Dimension(
+                "w", unit="units", range=(0, 4), step=0.1, display=False, spatial=True
+            ),
             Dimension("x", unit="units", range=(-10, 10)),
             Dimension("y", unit="units", range=(-10, 10)),
             Dimension("z", unit="units", range=(-2, 2)),

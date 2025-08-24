@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.array_utils import (
+from luxar.utils.array import (
     broadcast_color_to_points,
     broadcast_radii_to_points,
     broadcast_scalar_to_points,

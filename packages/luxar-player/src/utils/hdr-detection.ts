@@ -6,6 +6,7 @@
  */
 
 import * as THREE from 'three';
+import { log, Modules, LogEmoji } from './log';
 
 /**
  * HDR capability detection results
@@ -99,19 +100,20 @@ export function configureHDRRenderer(
     // Full HDR with Rec2020 gamut
     // Note: Three.js doesn't have Rec2020 color space yet, using Linear as closest
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    console.log(
-      '✓ [Luxar] HDR: Configured for HDR with Linear color space (Rec2020 display detected)'
+    log.success(
+      Modules.HDR,
+      'Configured for HDR with Linear color space (Rec2020 display detected)'
     );
   } else if (capabilities.p3Gamut) {
     // Wide gamut P3 (common on Apple displays)
     // Note: DisplayP3ColorSpace might not be available in all Three.js versions
     // Using SRGBColorSpace as fallback but noting P3 capability
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    console.log('✓ [Luxar] HDR: Display P3 gamut detected, using sRGB color space');
+    log.success(Modules.HDR, 'Display P3 gamut detected, using sRGB color space');
   } else {
     // Standard sRGB
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    console.log('✓ [Luxar] HDR: Using standard sRGB color space');
+    log.info(Modules.HDR, 'Using standard sRGB color space');
   }
 
   // Configure tone mapping for HDR
@@ -119,12 +121,12 @@ export function configureHDRRenderer(
     // Use ACES for HDR displays
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.4; // Slightly boost for HDR headroom
-    console.log('✓ [Luxar] HDR: ACES tone mapping enabled with HDR exposure');
+    log.success(Modules.HDR, 'ACES tone mapping enabled with HDR exposure');
   } else {
     // Use ACES for SDR with standard exposure
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
-    console.log('✓ [Luxar] HDR: ACES tone mapping for SDR display');
+    log.info(Modules.HDR, 'ACES tone mapping for SDR display');
   }
 }
 
@@ -132,44 +134,17 @@ export function configureHDRRenderer(
  * Log HDR capabilities to console with color coding
  */
 export function logHDRCapabilities(capabilities: HDRCapabilities): void {
-  const style = (supported: boolean) =>
-    supported ? 'color: #4CAF50; font-weight: bold' : 'color: #f44336';
-
-  console.group('%c🎨 HDR Display Capabilities', 'font-size: 14px; font-weight: bold');
-
-  console.log(
-    '%c' + (capabilities.p3Gamut ? '✅' : '❌') + ' P3 Wide Gamut',
-    style(capabilities.p3Gamut)
+  log.custom(LogEmoji.RENDER, Modules.HDR, 'Display Capabilities:');
+  log.info(Modules.HDR, `  ${capabilities.p3Gamut ? '✅' : '❌'} P3 Wide Gamut`);
+  log.info(Modules.HDR, `  ${capabilities.rec2020Gamut ? '✅' : '❌'} Rec2020 Gamut`);
+  log.info(Modules.HDR, `  ${capabilities.hdr ? '✅' : '❌'} High Dynamic Range`);
+  log.info(Modules.HDR, `  ${capabilities.deepColor ? '✅' : '❌'} 10-bit+ Deep Color`);
+  log.info(Modules.HDR, `  ${capabilities.floatTextures ? '✅' : '❌'} Float Textures`);
+  log.data(
+    Modules.LUXAR,
+    `Color Buffer Depth: R${capabilities.colorDepth.red} G${capabilities.colorDepth.green} B${capabilities.colorDepth.blue}`
   );
-
-  console.log(
-    '%c' + (capabilities.rec2020Gamut ? '✅' : '❌') + ' Rec2020 Gamut',
-    style(capabilities.rec2020Gamut)
-  );
-
-  console.log(
-    '%c' + (capabilities.hdr ? '✅' : '❌') + ' High Dynamic Range',
-    style(capabilities.hdr)
-  );
-
-  console.log(
-    '%c' + (capabilities.deepColor ? '✅' : '❌') + ' 10-bit+ Deep Color',
-    style(capabilities.deepColor)
-  );
-
-  console.log(
-    '%c' + (capabilities.floatTextures ? '✅' : '❌') + ' Float Textures',
-    style(capabilities.floatTextures)
-  );
-
-  console.log(
-    '📊 [Luxar] Color Buffer Depth: ' +
-      `R${capabilities.colorDepth.red} G${capabilities.colorDepth.green} B${capabilities.colorDepth.blue}`
-  );
-
-  console.log('🎯 [Luxar] Recommended Color Space:', capabilities.recommendedColorSpace);
-
-  console.groupEnd();
+  log.info(Modules.LUXAR, `Recommended Color Space: ${capabilities.recommendedColorSpace}`);
 }
 
 /**

@@ -1,0 +1,562 @@
+/**
+ * Unified scene loader that orchestrates the loading of complete Luxar scenes.
+ *
+ * This loader handles the entire scene graph, using spatial index-based
+ * loading for all point cloud nodes and managing the THREE.js scene construction.
+ */
+
+import * as zarr from 'zarrita';
+import * as THREE from 'three';
+import { SpatialIndexLoader } from './spatial-index-loader';
+import {
+  DataLoader,
+  ViewState,
+  SceneNode,
+  LoaderConfig,
+  PointCloudData,
+} from './data-loader-types';
+import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
+import { materialManager, BlendingMode } from '../rendering/material-manager';
+import { DataMonitorManager } from './data-monitor-manager';
+import { log, Modules, LogEmoji } from '../utils/log';
+
+/**
+ * Main scene loader that handles the complete loading pipeline.
+ *
+ * Features:
+ * - Spatial index-based loading for efficient nD queries
+ * - Hierarchical scene graph construction
+ * - Transform and rendering attribute inheritance
+ * - Dimension metadata management
+ * - Memory-efficient loading with proper caching
+ */
+export class SceneLoader {
+  private store: any | null = null;
+  private loaders = new Map<string, DataLoader>();
+  private viewState: ViewState;
+  private config: LoaderConfig;
+  private rootGroup: THREE.Group | null = null;
+  private monitorId: string | null = null;
+
+  constructor(config: LoaderConfig = {}, id?: string) {
+    this.config = config;
+    this.viewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [],
+      tolerance: [],
+    };
+
+    // Use the DataMonitorManager to get or create a monitor
+    if (typeof document !== 'undefined' && config.enableMonitor !== false) {
+      const monitorManager = DataMonitorManager.getInstance();
+      const monitorId = id ? `${id}-monitor` : 'default';
+
+      // Only create if it doesn't exist
+      if (!monitorManager.hasMonitor(monitorId)) {
+        monitorManager.createMonitor(monitorId, document.body);
+      }
+      this.monitorId = monitorId;
+    }
+  }
+
+  /**
+   * Load a complete scene from a zarr store
+   */
+  async loadScene(url: string): Promise<THREE.Group> {
+    log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+
+    // Open zarr store
+    const rawStore = new zarr.FetchStore(this.normalizeURL(url));
+    this.store = await zarr.tryWithConsolidated(rawStore);
+
+    // Create root THREE.js group
+    this.rootGroup = new THREE.Group();
+    this.rootGroup.name = 'LuxarScene';
+
+    // Load scene metadata
+    const rootLoc = zarr.root(this.store);
+    const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
+    const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
+
+    // Initialize scene dimensions
+    if (sceneAttrs?.scene_dimensions) {
+      this.initializeSceneDimensions(sceneAttrs.scene_dimensions);
+      this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
+    }
+
+    // Build scene graph
+    const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
+
+    // Load point clouds
+    await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
+
+    log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
+    return this.rootGroup;
+  }
+
+  /**
+   * Update all point clouds for a new view state
+   */
+  async updateView(viewState: Partial<ViewState>): Promise<void> {
+    this.viewState = { ...this.viewState, ...viewState };
+
+    log.update(Modules.SCENE_LOADER, `Updating view for ${this.loaders.size} loaders`);
+
+    // Update all loaders with new view state
+    const updates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
+      try {
+        const pointCloud = await loader.updateView(this.viewState);
+        // Only update geometry if load succeeded
+        if (pointCloud && pointCloud.metadata.loadedPoints > 0) {
+          this.updatePointCloudGeometry(path, pointCloud);
+        }
+      } catch (error) {
+        // Don't update geometry if load failed - prevents memory leak
+        log.error(Modules.SCENE_LOADER, `Failed to update ${path}:`, error);
+      }
+    });
+
+    await Promise.all(updates);
+  }
+
+  /**
+   * Build the scene graph structure
+   */
+  private async buildSceneGraph(
+    rootLoc: zarr.Location<zarr.Readable>,
+    rootAttrs: any
+  ): Promise<SceneNode> {
+    // Enumerate all groups in the store
+    const listing = await this.enumerateStore();
+
+    // Build hierarchical structure
+    const root: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: rootAttrs,
+      hasSpatialIndex: false,
+      children: [],
+    };
+
+    // Build node map
+    const nodeMap = new Map<string, SceneNode>();
+    nodeMap.set('/', root);
+
+    // Sort by path depth to ensure parents are created before children
+    const sortedPaths = listing
+      .filter((e) => e.kind === 'group' && e.path !== '/')
+      .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
+
+    for (const entry of sortedPaths) {
+      const loc = rootLoc.resolve(entry.path.slice(1)); // Remove leading /
+      const group = await zarr.open(loc, { kind: 'group' });
+      const attrs = group.attrs as ZarrNodeAttrs;
+
+      // We no longer check for spatial index here - SpatialIndexLoader handles it
+      const node: SceneNode = {
+        path: entry.path,
+        type: attrs?.type || 'group',
+        attrs: attrs || {},
+        hasSpatialIndex: false, // Will be determined by the loader
+        children: [],
+      };
+
+      // Log if broadcast_dims is present
+      if (attrs?.broadcast_dims) {
+        log.data(
+          Modules.SCENE_LOADER,
+          `Node ${entry.path} has broadcast_dims: ${attrs.broadcast_dims.join(', ')}`
+        );
+      }
+
+      // Find parent and add as child
+      const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+      const parent = nodeMap.get(parentPath);
+      if (parent) {
+        parent.children = parent.children || [];
+        parent.children.push(node);
+      }
+
+      nodeMap.set(entry.path, node);
+    }
+
+    return root;
+  }
+
+  /**
+   * Load all nodes in the scene graph
+   */
+  private async loadSceneNodes(
+    node: SceneNode,
+    parentThree: THREE.Object3D,
+    parentLoc: zarr.Location<zarr.Readable>
+  ): Promise<void> {
+    if (node.type === 'points') {
+      // Load point cloud
+      const pointCloud = await this.loadPointCloud(node, parentLoc);
+      if (pointCloud) {
+        parentThree.add(pointCloud);
+      }
+    } else if (node.children) {
+      // Create group and recurse
+      const group = new THREE.Group();
+      group.name = node.path;
+
+      // Apply transform if present
+      if (node.attrs.transform) {
+        this.applyTransform(group, node.attrs.transform);
+      }
+
+      parentThree.add(group);
+
+      // Load children
+      for (const child of node.children) {
+        const childLoc = parentLoc.resolve(child.path.slice(1));
+        await this.loadSceneNodes(child, group, childLoc);
+      }
+    }
+  }
+
+  /**
+   * Load a single point cloud node
+   */
+  private async loadPointCloud(
+    node: SceneNode,
+    loc: zarr.Location<zarr.Readable>
+  ): Promise<THREE.Points | null> {
+    log.custom('📍', Modules.SCENE_LOADER, `Loading point cloud: ${node.path}`);
+    log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
+    log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.num_points || 'unknown'}`);
+
+    // Create appropriate loader
+    const loader = this.createLoader(node, loc);
+
+    // Store loader for updates
+    this.loaders.set(node.path, loader);
+
+    try {
+      // Load point cloud data
+      log.info(Modules.SCENE_LOADER, 'Initial ViewState for loading:');
+      log.info(Modules.SCENE_LOADER, `  displayDims: [${this.viewState.displayDims.join(', ')}]`);
+      log.info(
+        Modules.SCENE_LOADER,
+        `  slicePosition: [${this.viewState.slicePosition.join(', ')}]`
+      );
+      log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
+      const data = await loader.loadPointCloud(this.viewState);
+
+      if (data.metadata.loadedPoints === 0) {
+        log.warning(Modules.SCENE_LOADER, `No visible points for ${node.path}`);
+        return null;
+      }
+
+      // Create THREE.js geometry
+      const geometry = this.createGeometry(data);
+
+      // Create material
+      const material = this.createMaterial(node.attrs);
+
+      // Create points object
+      const points = new THREE.Points(geometry, material);
+      points.name = node.path;
+      points.userData.loader = loader;
+      points.userData.node = node;
+
+      // Apply transform
+      if (node.attrs.transform) {
+        this.applyTransform(points, node.attrs.transform);
+      }
+
+      log.success(
+        Modules.SCENE_LOADER,
+        `Loaded ${data.metadata.loadedPoints} points for ${node.path}`
+      );
+
+      return points;
+    } catch (error) {
+      log.error(Modules.SCENE_LOADER, `Failed to load ${node.path}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Create the spatial index loader for a node
+   */
+  private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
+    // Resolve the correct location for this node
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+
+    // Use SpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
+    log.query(Modules.SCENE_LOADER, `Using SpatialIndexLoader for ${node.path}`);
+    const loader = new SpatialIndexLoader(nodeLoc, node, this.config);
+
+    // Connect to monitor if available
+    if (this.monitorId) {
+      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+      if (monitor) {
+        monitor.connectLoader(node.path, loader);
+      }
+    }
+
+    return loader;
+  }
+
+  /**
+   * Create THREE.js geometry from point cloud data
+   */
+  private createGeometry(data: PointCloudData): THREE.BufferGeometry {
+    const geometry = new THREE.BufferGeometry();
+
+    // Set positions
+    geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+
+    // Set colors if available
+    if (data.colors) {
+      geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3));
+    }
+
+    // Set radii if available, or use default
+    if (data.radii) {
+      geometry.setAttribute('radius', new THREE.BufferAttribute(data.radii, 1));
+    } else {
+      // Create default radius array with value 0.5 for all points
+      const numPoints = data.positions.length / 3;
+      const defaultRadii = new Float32Array(numPoints).fill(0.5);
+      geometry.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
+    }
+
+    // Set sharpness if available, or use default
+    if (data.sharpness) {
+      geometry.setAttribute('sharpness', new THREE.BufferAttribute(data.sharpness, 1));
+    } else {
+      // Create default sharpness array with value 2.0 for all points
+      const numPoints = data.positions.length / 3;
+      const defaultSharpness = new Float32Array(numPoints).fill(2.0);
+      geometry.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
+    }
+
+    // Compute bounding box
+    geometry.boundingBox = data.metadata.bounds.clone();
+
+    return geometry;
+  }
+
+  /**
+   * Create material for point cloud
+   */
+  private createMaterial(attrs: any): THREE.ShaderMaterial {
+    return materialManager.getMaterial({
+      opacity: attrs.opacity ?? 1.0,
+      gamma: attrs.gamma ?? 1.0,
+      blendingMode: (attrs.blending_mode as BlendingMode) ?? 'normal',
+    });
+  }
+
+  /**
+   * Apply transformation matrix to object
+   */
+  private applyTransform(object: THREE.Object3D, transform: number[]): void {
+    if (transform.length !== 16) {
+      log.warning(Modules.SCENE_LOADER, `Invalid transform length: ${transform.length}`);
+      return;
+    }
+
+    const matrix = new THREE.Matrix4().fromArray(transform);
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+
+    matrix.decompose(position, quaternion, scale);
+
+    object.position.copy(position);
+    object.quaternion.copy(quaternion);
+    object.scale.copy(scale);
+  }
+
+  /**
+   * Update geometry for a specific point cloud
+   */
+  private updatePointCloudGeometry(path: string, data: PointCloudData): void {
+    if (!this.rootGroup) return;
+
+    // Find the points object
+    const points = this.rootGroup.getObjectByName(path) as THREE.Points;
+    if (!points) return;
+
+    // Store reference to old geometry
+    const oldGeometry = points.geometry;
+
+    // Create new geometry
+    const newGeometry = this.createGeometry(data);
+
+    // Dispose old geometry BEFORE assignment to free memory immediately
+    // This prevents temporary memory spike from holding both geometries
+    if (oldGeometry) {
+      // Copy bounding box/sphere to new geometry before disposal to prevent flicker
+      if (oldGeometry.boundingBox) {
+        newGeometry.boundingBox = oldGeometry.boundingBox.clone();
+      }
+      if (oldGeometry.boundingSphere) {
+        newGeometry.boundingSphere = oldGeometry.boundingSphere?.clone() || null;
+      }
+
+      // Dispose old geometry to free GPU memory
+      oldGeometry.dispose();
+    }
+
+    // Now assign the new geometry
+    points.geometry = newGeometry;
+  }
+
+  /**
+   * Initialize scene dimensions from metadata
+   */
+  private initializeSceneDimensions(sceneDims: any): void {
+    const metadata = sceneDims.dimensions.map((dim: any) => ({
+      name: dim.name,
+      unit: dim.unit,
+      scale: dim.scale || 1.0,
+      range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
+      display: dim.display,
+      discrete: dim.discrete || false,
+      step: dim.step || 1.0,
+    }));
+
+    const ndim = metadata.length;
+    const displayed: number[] = [];
+
+    for (let i = 0; i < ndim; i++) {
+      if (metadata[i].display === true && displayed.length < 3) {
+        displayed.push(i);
+      }
+    }
+
+    // Initialize view state
+    const currentStep = new Array(ndim).fill(0);
+    for (let i = 0; i < ndim; i++) {
+      if (!displayed.includes(i) && metadata[i].range) {
+        currentStep[i] = metadata[i].range[0];
+      }
+    }
+
+    // Build tolerance array based on dimension types
+    const tolerance = new Array(ndim);
+    for (let i = 0; i < ndim; i++) {
+      if (displayed.includes(i)) {
+        // Displayed dimensions don't need tolerance
+        tolerance[i] = 0;
+      } else if (metadata[i].discrete) {
+        // Discrete dimensions need exact matching
+        tolerance[i] = 0;
+      } else {
+        // Continuous non-displayed dimensions get default tolerance
+        tolerance[i] = 0.1;
+      }
+    }
+
+    this.viewState = {
+      displayDims: displayed,
+      slicePosition: currentStep,
+      tolerance,
+      dimensions: {
+        ndim,
+        currentStep,
+        displayed,
+        metadata,
+      },
+    };
+  }
+
+  /**
+   * Enumerate all groups and arrays in the store
+   */
+  private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
+    if (!this.store) return [];
+
+    // Try to use consolidated metadata
+    if (hasContentsMethod(this.store)) {
+      const contents = await this.store.contents();
+      log.custom('📋', Modules.SCENE_LOADER, `Found ${contents.length} items in store`);
+      return contents;
+    }
+
+    // Fallback enumeration
+    log.warning(Modules.SCENE_LOADER, 'Store does not support contents(), using fallback');
+    return [{ path: '/', kind: 'group' }];
+  }
+
+  /**
+   * Normalize URL for zarr store access
+   */
+  private normalizeURL(url: string): string {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url.endsWith('/') ? url : url + '/';
+    }
+    const baseUrl = window.location.origin;
+    const cleanPath = url.startsWith('/') ? url : '/' + url;
+    return baseUrl + cleanPath + (cleanPath.endsWith('/') ? '' : '/');
+  }
+
+  /**
+   * Get cache statistics from all loaders
+   */
+  getCacheStats(): Map<string, any> {
+    const stats = new Map();
+    for (const [path, loader] of this.loaders) {
+      stats.set(path, loader.getCacheStats());
+    }
+    return stats;
+  }
+
+  /**
+   * Clear all caches
+   */
+  clearCaches(): void {
+    for (const loader of this.loaders.values()) {
+      loader.clearCache();
+    }
+  }
+
+  /**
+   * Show the monitor UI
+   */
+  showMonitor(): void {
+    if (this.monitorId) {
+      DataMonitorManager.getInstance().showMonitor(this.monitorId);
+    }
+  }
+
+  /**
+   * Hide the monitor UI
+   */
+  hideMonitor(): void {
+    if (this.monitorId) {
+      DataMonitorManager.getInstance().hideMonitor(this.monitorId);
+    }
+  }
+
+  /**
+   * Toggle the monitor UI
+   */
+  toggleMonitor(): void {
+    if (this.monitorId) {
+      DataMonitorManager.getInstance().toggleMonitor(this.monitorId);
+    }
+  }
+
+  /**
+   * Dispose of all resources
+   */
+  dispose(): void {
+    for (const loader of this.loaders.values()) {
+      loader.dispose();
+    }
+    this.loaders.clear();
+    this.store = null;
+    this.rootGroup = null;
+
+    // Note: We don't dispose the monitor here as it's managed by DataMonitorManager
+    // The monitor can be reused by other SceneLoader instances
+    this.monitorId = null;
+  }
+}

@@ -8,6 +8,7 @@
 
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { DEBUG_CONSOLE_CONFIG } from '../config/debug-console';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 export interface ConsoleMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -51,7 +52,7 @@ export class DebugConsole {
     this.hide();
 
     // Log that debug console is ready
-    console.log('🔧 [Luxar] Debug console ready (Ctrl+L to open)');
+    log.custom(LogEmoji.CONSOLE, Modules.DEBUG_CONSOLE, 'Debug console ready (Ctrl+L to open)');
   }
 
   /**
@@ -652,7 +653,7 @@ export class DebugConsole {
     // Clear the UI
     this.contentArea.innerHTML = '';
     this.updateStatus();
-    console.log('Debug console cleared');
+    log.info(Modules.DEBUG_CONSOLE, 'Debug console cleared');
   }
 
   /**
@@ -670,10 +671,10 @@ export class DebugConsole {
     navigator.clipboard
       .writeText(text)
       .then(() => {
-        console.log('Console output copied to clipboard');
+        log.info(Modules.DEBUG_CONSOLE, 'Console output copied to clipboard');
       })
       .catch((err) => {
-        console.error('Failed to copy to clipboard:', err);
+        log.error(Modules.DEBUG_CONSOLE, 'Failed to copy to clipboard:', err);
       });
   }
 
@@ -692,8 +693,9 @@ export class DebugConsole {
 
     // Log stats for debugging
     const stats = consoleInterceptor.getStats();
-    console.log(
-      `📊 [Luxar] Loading ${stats.total} buffered messages (${stats.types.log} log, ${stats.types.warn} warn, ${stats.types.error} error)`
+    log.data(
+      Modules.DEBUG_CONSOLE,
+      `Loading ${stats.total} buffered messages (${stats.types.log} log, ${stats.types.warn} warn, ${stats.types.error} error)`
     );
 
     // Render each message
@@ -750,6 +752,6 @@ export class DebugConsole {
     const style = document.getElementById('debug-console-styles');
     style?.remove();
 
-    console.log('Debug console disposed');
+    log.info(Modules.DEBUG_CONSOLE, 'Debug console disposed');
   }
 }

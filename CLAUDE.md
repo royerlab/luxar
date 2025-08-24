@@ -78,6 +78,7 @@ Note: When possible, use `make` commands for convenience (see below).
   - `CONTRIBUTING.md` - Contributing guidelines
   - `DEVELOPMENT_TOOLS.md` - Development and build tools documentation
   - `UI_DESIGN.md` - **UI design system and guidelines (MUST READ for UI work)**
+  - `CONSOLE_OUTPUT_STYLE.md` - **Console logging style guide and standards**
   - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
   - Various technical guides and specifications
 - **TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own comprehensive README.md
@@ -141,6 +142,10 @@ Before committing, ensure overall consistency:
 - TypeScript code comments should be in JSDoc format
 - Python code is formatted with ruff (88 char line length)
 - TypeScript code is formatted with prettier
+- **Console logging**: Follow the style guide in `/docs/CONSOLE_OUTPUT_STYLE.md`
+  - Use the logging utility in `/src/utils/log.ts`
+  - Format: `[emoji] [Module] message`
+  - Import: `import { log, Modules, LogEmoji } from '../utils/log';`
 
 ### TypeScript Configuration
 - **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
@@ -245,7 +250,7 @@ After making changes in luxar-player, run:
 5. Do not use unittest, instead use PyTest. Using mocking only as a last resort
 6. Use `arbol` for console output in examples and CLI tools
 7. When implementing new features, avoid over-engineering - "Complete before you perfect"
-8. This is still an early-stage project, don't bother about backwards compatibility, deprecation or migration guides
+8. This is still an early-stage project, DO NOT BOTHER about backwards compatibility, deprecation or migration guides. If something needs to be changed, just change it and update all relevant documentation and examples. Do not keep old code around just for backwards compatibility.
 9. When running test 'by-hand', or doing experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later
 10. Example/test datasets should always be named: 'something_something_example(.py|.zarr)' (e.g., 'test_4d_rainbow_sphere_example.zarr')
 11. Resulting zarr datasets from examples can be left in the examples folder - no need to copy them elsewhere

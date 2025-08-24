@@ -17,6 +17,7 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 import { config } from '../config';
+import { log, Modules } from '../utils/log';
 import {
   validateSSAAMultiplier,
   validateSMAAThreshold,
@@ -105,7 +106,7 @@ export class PostProcessingManager {
     this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.initial.outputColorSpace;
     this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.initial.toneMapping;
 
-    console.log('✓ [Luxar] HDR renderer configured for linear pipeline');
+    log.success(Modules.HDR, 'Renderer configured for linear pipeline');
   }
 
   /**
@@ -144,7 +145,8 @@ export class PostProcessingManager {
     if (this.msaaEnabled) aaInfo.push(`${this.msaaSamples}x MSAA`);
     if (aaInfo.length === 0) aaInfo.push('no AA');
 
-    console.log(
+    log.info(
+      Modules.POST_PROCESSING,
       `HDR render target created: ${renderWidth}x${renderHeight} (16-bit float, ${aaInfo.join(' + ')})`
     );
   }
@@ -154,7 +156,7 @@ export class PostProcessingManager {
    */
   private setupEffectComposer(): void {
     this.composer = new EffectComposer(this.renderer, this.hdrRenderTarget);
-    console.log('✓ [Luxar] EffectComposer initialized with HDR target');
+    log.success(Modules.POST_PROCESSING, 'EffectComposer initialized with HDR target');
   }
 
   /**
@@ -193,7 +195,7 @@ export class PostProcessingManager {
     this.setupFXAAPass();
     this.composer.addPass(this.fxaaPass);
 
-    console.log('✓ [Luxar] Post-processing passes configured');
+    log.success(Modules.POST_PROCESSING, 'Passes configured');
   }
 
   /**
@@ -213,7 +215,8 @@ export class PostProcessingManager {
     // Initially enabled
     this.fxaaPass.enabled = this.fxaaEnabled;
 
-    console.log(
+    log.info(
+      Modules.POST_PROCESSING,
       `FXAA pass configured: ${width}x${height} ` +
         `(enabled: ${this.fxaaEnabled}) ` +
         `resolution: [${this.fxaaPass.uniforms['resolution'].value.x.toFixed(6)}, ${this.fxaaPass.uniforms['resolution'].value.y.toFixed(6)}]`
@@ -230,8 +233,9 @@ export class PostProcessingManager {
     // Initially disabled (user can enable via UI)
     this.smaaPass.enabled = this.smaaEnabled;
 
-    console.log(
-      `SMAA pass configured: ${this.width}x${this.height} ` + `(enabled: ${this.smaaEnabled})`
+    log.info(
+      Modules.POST_PROCESSING,
+      `SMAA pass configured: ${this.width}x${this.height} (enabled: ${this.smaaEnabled})`
     );
   }
 
@@ -256,7 +260,8 @@ export class PostProcessingManager {
       POST_PROCESSING_CONFIG.bloom.threshold
     );
 
-    console.log(
+    log.info(
+      Modules.POST_PROCESSING,
       `Bloom pass configured: ${bloomResolution.x}x${bloomResolution.y} ` +
         `(strength: ${POST_PROCESSING_CONFIG.bloom.strength}, ` +
         `radius: ${POST_PROCESSING_CONFIG.bloom.radius})`
@@ -274,7 +279,7 @@ export class PostProcessingManager {
     this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.final.toneMapping;
     this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.final.outputColorSpace;
 
-    console.log('✓ [Luxar] ACES filmic tone mapping and sRGB color space enabled');
+    log.success(Modules.POST_PROCESSING, 'ACES filmic tone mapping and sRGB color space enabled');
   }
 
   /**
@@ -318,8 +323,9 @@ export class PostProcessingManager {
       this.smaaPass.setSize(renderWidth, renderHeight);
     }
 
-    console.log(
-      `Post-processing resized: output ${width}x${height}, render ${renderWidth}x${renderHeight}`
+    log.info(
+      Modules.POST_PROCESSING,
+      `Resized: output ${width}x${height}, render ${renderWidth}x${renderHeight}`
     );
   }
 
@@ -332,7 +338,7 @@ export class PostProcessingManager {
     this.hdrRenderTarget?.dispose();
     this.composer?.dispose();
 
-    console.log('✓ [Luxar] Post-processing resources disposed');
+    log.success(Modules.POST_PROCESSING, 'Resources disposed');
   }
 
   /**
@@ -356,7 +362,8 @@ export class PostProcessingManager {
     if (radius !== undefined) this.bloomPass.radius = radius;
     if (threshold !== undefined) this.bloomPass.threshold = threshold;
 
-    console.log(
+    log.update(
+      Modules.POST_PROCESSING,
       `Bloom settings updated: strength=${this.bloomPass.strength}, ` +
         `radius=${this.bloomPass.radius}, threshold=${this.bloomPass.threshold}`
     );
@@ -369,7 +376,7 @@ export class PostProcessingManager {
    */
   updateExposure(exposure: number): void {
     this.renderer.toneMappingExposure = exposure;
-    console.log(`✓ [Luxar] Tone mapping exposure updated: ${exposure}`);
+    log.update(Modules.POST_PROCESSING, `Tone mapping exposure updated: ${exposure}`);
   }
 
   /**
@@ -381,9 +388,9 @@ export class PostProcessingManager {
     this.fxaaEnabled = enabled;
     if (this.fxaaPass) {
       this.fxaaPass.enabled = enabled;
-      console.log(`✓ [Luxar] FXAA ${enabled ? 'enabled' : 'disabled'}`);
+      log.update(Modules.POST_PROCESSING, `FXAA ${enabled ? 'enabled' : 'disabled'}`);
     } else {
-      console.warn('FXAA pass not initialized!');
+      log.warning(Modules.POST_PROCESSING, 'FXAA pass not initialized!');
     }
   }
 
@@ -407,7 +414,7 @@ export class PostProcessingManager {
     // Validate samples
     const validSamples = [0, 2, 4, 8];
     if (!validSamples.includes(samples)) {
-      console.warn(`Invalid MSAA samples: ${samples}. Using 4.`);
+      log.warning(Modules.POST_PROCESSING, `Invalid MSAA samples: ${samples}. Using 4.`);
       samples = 4;
     }
 
@@ -475,7 +482,10 @@ export class PostProcessingManager {
     if (this.ssaaEnabled) aaInfo.push(`SSAA ${this.ssaaMultiplier}x`);
     if (this.msaaEnabled) aaInfo.push(`MSAA ${this.msaaSamples}x`);
 
-    console.log(`Render target recreated with ${aaInfo.length > 0 ? aaInfo.join(' + ') : 'no AA'}`);
+    log.info(
+      Modules.POST_PROCESSING,
+      `Render target recreated with ${aaInfo.length > 0 ? aaInfo.join(' + ') : 'no AA'}`
+    );
   }
 
   /**
@@ -502,7 +512,10 @@ export class PostProcessingManager {
     // Validate multiplier using utility
     const validated = validateSSAAMultiplier(multiplier);
     if (validated !== multiplier) {
-      console.warn(`Invalid SSAA multiplier: ${multiplier}. Clamping to [1.0, 4.0].`);
+      log.warning(
+        Modules.POST_PROCESSING,
+        `Invalid SSAA multiplier: ${multiplier}. Clamping to [1.0, 4.0].`
+      );
     }
 
     this.ssaaMultiplier = validated;
@@ -539,9 +552,9 @@ export class PostProcessingManager {
     this.smaaEnabled = enabled;
     if (this.smaaPass) {
       this.smaaPass.enabled = enabled;
-      console.log(`✓ [Luxar] SMAA ${enabled ? 'enabled' : 'disabled'}`);
+      log.update(Modules.POST_PROCESSING, `SMAA ${enabled ? 'enabled' : 'disabled'}`);
     } else {
-      console.warn('SMAA pass not initialized!');
+      log.warning(Modules.POST_PROCESSING, 'SMAA pass not initialized!');
     }
   }
 
@@ -562,11 +575,11 @@ export class PostProcessingManager {
       // Validate threshold using utility
       const validThreshold = validateSMAAThreshold(threshold);
       if (threshold !== validThreshold) {
-        console.warn(`SMAA threshold ${threshold} clamped to [0.05, 0.2]`);
+        log.warning(Modules.POST_PROCESSING, `SMAA threshold ${threshold} clamped to [0.05, 0.2]`);
       }
       smaa.materialEdges.defines.SMAA_THRESHOLD = validThreshold.toFixed(3);
       smaa.materialEdges.needsUpdate = true;
-      console.log(`✓ [Luxar] SMAA threshold updated to ${validThreshold}`);
+      log.update(Modules.POST_PROCESSING, `SMAA threshold updated to ${validThreshold}`);
     }
 
     // Update search steps in weights shader
@@ -574,11 +587,14 @@ export class PostProcessingManager {
       // Validate search steps using utility
       const validSteps = validateSMAASearchSteps(searchSteps);
       if (validSteps !== searchSteps) {
-        console.warn(`Invalid SMAA search steps ${searchSteps}. Using ${validSteps}.`);
+        log.warning(
+          Modules.POST_PROCESSING,
+          `Invalid SMAA search steps ${searchSteps}. Using ${validSteps}.`
+        );
       }
       smaa.materialWeights.defines.SMAA_MAX_SEARCH_STEPS = validSteps.toString();
       smaa.materialWeights.needsUpdate = true;
-      console.log(`SMAA search steps updated to ${searchSteps}`);
+      log.update(Modules.POST_PROCESSING, `SMAA search steps updated to ${validSteps}`);
     }
   }
 
@@ -632,7 +648,8 @@ export class PostProcessingManager {
       this.bokehPass.enabled = true;
       this.composer.addPass(this.bokehPass);
 
-      console.log(
+      log.info(
+        Modules.POST_PROCESSING,
         `DOF pass created - focus: ${normalizedFocus.toFixed(3)} (distance: ${this.dofFocus}), aperture: ${aperture.toFixed(4)}, maxblur: ${maxblur.toFixed(4)}`
       );
     }
@@ -657,7 +674,7 @@ export class PostProcessingManager {
   setToneMapping(toneMapping: THREE.ToneMapping): void {
     this.currentToneMapping = toneMapping;
     this.renderer.toneMapping = toneMapping;
-    console.log(`Tone mapping changed to ${this.getToneMappingName()}`);
+    log.update(Modules.POST_PROCESSING, `Tone mapping changed to ${this.getToneMappingName()}`);
   }
 
   /**
@@ -828,6 +845,9 @@ export class PostProcessingManager {
     // Rebuild the pipeline with only enabled effects
     this.setupRenderPasses();
 
-    console.log(`Pipeline rebuilt - DOF: ${this.dofEnabled}, Chromatic: ${this.chromaticEnabled}`);
+    log.info(
+      Modules.POST_PROCESSING,
+      `Pipeline rebuilt - DOF: ${this.dofEnabled}, Chromatic: ${this.chromaticEnabled}`
+    );
   }
 }

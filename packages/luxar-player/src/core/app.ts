@@ -7,6 +7,7 @@ import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI, clearError } from '../ui/helpers';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -21,6 +22,16 @@ export class LuxarApp {
    */
   async init(src?: string): Promise<void> {
     try {
+      // Inform users about expected console messages
+      log.info(
+        Modules.LUXAR,
+        'Note: You may see 404 errors for optional features like spatial indexes and array attributes.'
+      );
+      log.info(
+        Modules.LUXAR,
+        'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
+      );
+
       // Use provided source or default
       const sceneSrc = src ?? config.defaultZarrPath;
 
@@ -76,7 +87,7 @@ export class LuxarApp {
 
       this.isInitialized = true;
     } catch (error) {
-      console.error('Failed to initialize Luxar app:', error);
+      log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
       // Don't call cleanup() here as it removes error messages that were just displayed
       // The error UI should remain visible to inform the user
       throw error;
@@ -162,19 +173,23 @@ export class LuxarApp {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
 
-    // Clear lazy loading cache when loading new scene
-    const lazyManager = (window as any).__luxarLazyManager;
-    if (lazyManager) {
-      lazyManager.clearCache();
-      console.log('🗑️ [Luxar] Cleared lazy loading cache for new scene');
-    }
+    // Clear cache when loading new scene (new architecture)
+    import('../data/scene-loader-manager').then(({ SceneLoaderManager }) => {
+      const sceneLoader = SceneLoaderManager.getInstance().getDefaultLoader();
+      if (sceneLoader) {
+        sceneLoader.clearCaches();
+        log.custom(LogEmoji.DELETE, Modules.LUXAR, 'Cleared data cache for new scene');
+      }
+    });
 
-    // Reset lazy loading monitor if it exists
-    const lazyMonitor = (window as any).__luxarLazyMonitor;
-    if (lazyMonitor && typeof lazyMonitor.reset === 'function') {
-      lazyMonitor.reset();
-      console.log('📊 [Luxar] Reset lazy loading monitor for new scene');
-    }
+    // Reset data loading monitor if it exists
+    import('../data/data-monitor-manager').then(({ DataMonitorManager }) => {
+      const dataMonitor = DataMonitorManager.getInstance().getDefaultMonitor();
+      if (dataMonitor && typeof dataMonitor.reset === 'function') {
+        dataMonitor.reset();
+        log.data(Modules.LUXAR, 'Reset data loading monitor for new scene');
+      }
+    });
 
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);
@@ -216,7 +231,7 @@ export class LuxarApp {
     window.addEventListener('focus', () => {
       // Start animation briefly to ensure fresh render
       this.animationController.startAnimation();
-      console.log('Window focused - triggering render refresh');
+      log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
     });
 
     // Also handle visibility change (tab switching)
@@ -224,7 +239,7 @@ export class LuxarApp {
       if (!document.hidden) {
         // Document became visible, trigger render
         this.animationController.startAnimation();
-        console.log('Document became visible - triggering render refresh');
+        log.info(Modules.LUXAR, 'Document became visible - triggering render refresh');
       }
     });
   }
@@ -281,7 +296,7 @@ export class LuxarApp {
 
       this.isInitialized = false;
     } catch (error) {
-      console.error('Error during cleanup:', error);
+      log.error(Modules.LUXAR, 'Error during cleanup:', error);
     }
   }
 }

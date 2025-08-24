@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { SHADER_CONFIG } from './shader-manager';
+import { log, Modules } from '../utils/log';
 
 // Supported blending modes
 export type BlendingMode = 'normal' | 'additive' | 'subtractive' | 'minimum' | 'maximum';
@@ -33,7 +34,8 @@ const VERTEX_SHADER = /* glsl */ `
     vColor = color;
     
     // Pass sharpness to fragment shader for per-point falloff control
-    vSharpness = sharpness;
+    // Use default value of 2.0 if sharpness attribute is missing or 0
+    vSharpness = sharpness > 0.0 ? sharpness : 2.0;
     
     // Transform vertex position from world space to view space
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -51,6 +53,7 @@ const VERTEX_SHADER = /* glsl */ `
     
     // Compensate for sharpness effect on apparent size
     // With soft falloff, the visible radius is smaller than the geometric radius
+    // Use the validated sharpness value (never 0)
     float sizeCompensation = sqrt(vSharpness / 2.0);
     
     // Apply size with sharpness compensation
@@ -174,7 +177,7 @@ export class MaterialManager {
         // Three.js doesn't have maximum blending, use additive as approximation
         return THREE.AdditiveBlending;
       default:
-        console.warn(`Unknown blending mode: ${mode}, using normal`);
+        log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
         return THREE.NormalBlending;
     }
   }

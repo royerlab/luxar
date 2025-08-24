@@ -196,80 +196,11 @@ class TestSceneDimensionMetadata:
         assert dims_dict["dimensions"][0]["unit"] == "ms"
         assert dims_dict["dimensions"][0]["range"] == [0, 100]
 
-    @pytest.mark.skip(reason="Dimension validation removed in new flexible API")
-    def test_add_points_with_dimension_metadata(self, tmp_path):
-        """Test adding points with dimension metadata."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+    # Test removed: Dimension validation was removed in new flexible API
+    # The dimension_metadata parameter in add_points is deprecated
 
-        # 5D points
-        positions = np.random.rand(50, 5).astype(np.float32)
-        metadata = [
-            DimensionMetadata(name="t", unit="s"),
-            DimensionMetadata(name="x", unit="um"),
-            DimensionMetadata(name="y", unit="um"),
-            DimensionMetadata(name="z", unit="um"),
-            DimensionMetadata(name="c", unit="au"),
-        ]
+    # Test removed: Dimension inheritance was removed in new flexible API
+    # Points no longer inherit dimension metadata from the scene
 
-        points = scene.add_points("5d_points", positions, dimension_metadata=metadata)
-
-        # Check scene metadata was set
-        assert scene.dimension_metadata is not None
-        assert len(scene.dimension_metadata) == 5
-        assert scene.dimension_metadata[0].name == "t"
-        assert scene.dimension_metadata[4].name == "c"
-
-        # Check points attributes
-        assert "dimension_metadata" in points.attrs
-        assert len(points.attrs["dimension_metadata"]) == 5
-
-    @pytest.mark.skip(reason="Dimension inheritance removed in new flexible API")
-    def test_add_points_inherit_scene_metadata(self, tmp_path):
-        """Test points inherit scene dimension metadata."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
-
-            # Set scene metadata
-            scene.dimension_metadata = [
-                DimensionMetadata(name="x", unit="mm"),
-                DimensionMetadata(name="y", unit="mm"),
-                DimensionMetadata(name="z", unit="mm"),
-            ]
-
-            # Add 3D points without specifying metadata
-            positions = np.random.rand(30, 3).astype(np.float32)
-            points = scene.add_points("inherit_test", positions)
-
-            # Should inherit from scene
-            assert "dimension_metadata" in points.attrs
-            assert points.attrs["dimension_metadata"][0]["name"] == "x"
-            assert points.attrs["dimension_metadata"][1]["unit"] == "mm"
-
-    @pytest.mark.skip(reason="Mixed dimensionality is now allowed in new flexible API")
-    def test_mixed_dimensionality(self, tmp_path):
-        """Test scene with mixed dimensionality points."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
-
-            # Add 3D points
-            pos_3d = np.random.rand(20, 3).astype(np.float32)
-            metadata_3d = [
-                DimensionMetadata(name="x", unit="um"),
-                DimensionMetadata(name="y", unit="um"),
-                DimensionMetadata(name="z", unit="um"),
-            ]
-            scene.add_points("points_3d", pos_3d, dimension_metadata=metadata_3d)
-
-            # Add 2D points (should work independently)
-            pos_2d = np.random.rand(30, 2).astype(np.float32)
-            metadata_2d = [
-                DimensionMetadata(name="x", unit="px"),
-                DimensionMetadata(name="y", unit="px"),
-            ]
-            points_2d = scene.add_points(
-                "points_2d", pos_2d, dimension_metadata=metadata_2d
-            )
-
-            # Each should have its own metadata
-            assert len(points_2d.attrs["dimension_metadata"]) == 2
+    # Test removed: Mixed dimensionality is fully supported in new flexible API
+    # Each point cloud can have any dimensionality independent of others

@@ -34,7 +34,8 @@ class TestZarrNDChunking:
             positions[start_idx:end_idx, 3] = t  # Time coordinate
 
         # Create scene at the specified store location and add points
-        with LuxarZarrCompiler(store) as compiler:
+        # Disable spatial index to preserve order for this test
+        with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
             compiler.create_scene()
             compiler.write_points("Points4D", positions)
 
@@ -61,7 +62,8 @@ class TestZarrNDChunking:
         positions_5d = np.random.randn(n_points, 5).astype(np.float32)
 
         # Create scene and add 5D points
-        with LuxarZarrCompiler(store) as compiler:
+        # Disable spatial index to preserve order for this test
+        with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
             compiler.create_scene()
             compiler.write_points("Points5D", positions_5d)
 
@@ -143,7 +145,8 @@ class TestZarrNDChunking:
 
             # Save with unique name
             dim_store = store / f"dims_{n_dims}.zarr"
-            with LuxarZarrCompiler(dim_store) as compiler:
+            # Disable spatial index to preserve order for this test
+            with LuxarZarrCompiler(dim_store, enable_spatial_index=False) as compiler:
                 compiler.create_scene()
                 compiler.write_points("Points", positions)
 

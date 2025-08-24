@@ -7,7 +7,7 @@ scene hierarchy and provides convenient methods for building point cloud scenes.
 from __future__ import annotations
 
 from os import PathLike
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from arbol import aprint
@@ -126,6 +126,7 @@ class Scene(Node):
         parent: Optional[Node] = None,
         dimension_metadata: Optional[list[DimensionMetadata]] = None,
         broadcast_dims: Optional[Union[List[str], str]] = None,
+        grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> Points:
         """Add a point cloud node to the scene.
@@ -162,6 +163,9 @@ class Scene(Node):
                   e.g., ["Time", "Channel"] makes points appear at all times and channels
                 - "auto": Auto-detect broadcast dimensions (use with caution - can be ambiguous)
                 - "all": Broadcast to all non-displayed dimensions
+            grid_shape: Optional grid resolution for spatial index (if enabled in compiler).
+                Tuple of integers specifying number of cells per dimension, e.g., (10, 10, 10, 5)
+                for a 4D dataset. If None, grid shape is auto-determined.
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
@@ -243,6 +247,7 @@ class Scene(Node):
                 colors=processed_colors,
                 radii=processed_radii,
                 sharpness=processed_sharpness,
+                grid_shape=grid_shape,
                 **attrs,
             )
 

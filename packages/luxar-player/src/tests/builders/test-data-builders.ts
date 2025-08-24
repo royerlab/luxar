@@ -150,7 +150,7 @@ export class DimensionsBuilder {
   private ndim: number = 3;
   private displayed: number[] = [0, 1, 2];
   private currentStep: number[] = [];
-  private metadata: Record<number, DimensionMetadata> = {};
+  private metadata: DimensionMetadata[] = [];
 
   /**
    * Set total number of dimensions
@@ -183,14 +183,25 @@ export class DimensionsBuilder {
       step?: number;
     } = {}
   ): this {
+    // Extend metadata array if necessary
+    while (this.metadata.length <= index) {
+      this.metadata.push({
+        name: `dim${this.metadata.length}`,
+        unit: '',
+        scale: 1.0,
+        range: [0, 1],
+        display: false,
+      });
+    }
+
     this.metadata[index] = {
       name,
       unit,
+      scale: 1.0,
       range,
       display: options.display ?? index < 3,
       discrete: options.discrete,
       step: options.step,
-      scale: 1.0,
     };
     return this;
   }
@@ -254,22 +265,21 @@ export class DimensionsBuilder {
    */
   build(): SimpleDims {
     // Fill in any missing metadata
-    for (let i = 0; i < this.ndim; i++) {
-      if (!this.metadata[i]) {
-        this.metadata[i] = {
-          name: `dim${i}`,
-          unit: '',
-          range: [0, 1],
-          display: this.displayed.includes(i),
-        };
-      }
+    while (this.metadata.length < this.ndim) {
+      this.metadata.push({
+        name: `dim${this.metadata.length}`,
+        unit: '',
+        scale: 1.0,
+        range: [0, 1],
+        display: this.displayed.includes(this.metadata.length),
+      });
     }
 
     return {
       ndim: this.ndim,
       displayed: this.displayed,
       currentStep: this.currentStep,
-      metadata: this.metadata,
+      metadata: this.metadata.slice(0, this.ndim), // Ensure array matches ndim
     };
   }
 }
@@ -334,7 +344,7 @@ export class SceneBuilder {
    * Add nested structure
    */
   withNestedStructure(levels: number = 2): this {
-    let parent = this.scene;
+    let parent: THREE.Object3D = this.scene;
     for (let i = 0; i < levels; i++) {
       const group = new THREE.Group();
       group.name = `level_${i}`;

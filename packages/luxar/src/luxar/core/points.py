@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from arbol import aprint
 
 from ..core.node import Node
-from ..typing_utils.protocols import NodeType
+from ..typing_utils.enums import NodeType
 
 
 class Points(Node):
@@ -48,7 +48,7 @@ class Points(Node):
         self._metadata = metadata or {}
 
         # Initialize parent Node
-        node_type: NodeType = "points"
+        node_type = NodeType.POINTS.value
         super().__init__(
             name, group=None, parent=parent, writer=writer, type=node_type, **attrs
         )
@@ -69,19 +69,19 @@ class Points(Node):
     @property
     def n_points(self) -> int:
         """Get number of points."""
-        return self._metadata.get("n_points", 0)
+        return int(self._metadata.get("n_points", 0))
 
     @property
     def has_colors(self) -> bool:
         """Check if points have colors."""
-        return self._metadata.get("has_colors", False)
+        return bool(self._metadata.get("has_colors", False))
 
     @property
     def has_radii(self) -> bool:
         """Check if points have radii."""
-        return self._metadata.get("has_radii", False)
+        return bool(self._metadata.get("has_radii", False))
 
     @property
     def has_sharpness(self) -> bool:
         """Check if points have sharpness."""
-        return self._metadata.get("has_sharpness", False)
+        return bool(self._metadata.get("has_sharpness", False))

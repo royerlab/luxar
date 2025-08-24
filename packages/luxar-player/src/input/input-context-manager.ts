@@ -12,6 +12,7 @@
  */
 
 import { INPUT_CONFIG } from '../controls/control-config';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
  * Available input contexts
@@ -144,7 +145,11 @@ export class InputContextManager {
     this.currentContext = context;
 
     // Log context change for debugging
-    console.log(`🎮 [Luxar] Input context changed: ${oldContext} → ${context}`);
+    log.custom(
+      LogEmoji.CONTROLS,
+      Modules.INPUT,
+      `Input context changed: ${oldContext} → ${context}`
+    );
   }
 
   /**

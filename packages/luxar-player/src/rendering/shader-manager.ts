@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { config } from '../config';
+import { log, Modules } from '../utils/log';
 
 /**
  * Configuration for shader-based point rendering
@@ -174,18 +175,16 @@ export class ShaderValidator {
     // const renderer = new THREE.WebGLRenderer();
     // renderer.compile(new THREE.Scene(), new THREE.Camera());
 
-    console.log(`Shader material '${name}' created successfully`);
+    log.info(Modules.RENDERER, `Shader material '${name}' created successfully`);
   }
 
   /**
    * Logs shader configuration for debugging
    */
   static logShaderConfig(): void {
-    console.log('Gaussian Point Shader Configuration:', {
-      pointSize: SHADER_CONFIG.POINTS.size,
-      hdrMultiplier: SHADER_CONFIG.POINTS.hdrMultiplier,
-      baseAlpha: SHADER_CONFIG.POINTS.baseAlpha,
-      falloffSteepness: SHADER_CONFIG.POINTS.falloffSteepness,
-    });
+    log.info(
+      Modules.RENDERER,
+      `Gaussian Point Shader Configuration: {pointSize: ${SHADER_CONFIG.POINTS.size}, hdrMultiplier: ${SHADER_CONFIG.POINTS.hdrMultiplier}, baseAlpha: ${SHADER_CONFIG.POINTS.baseAlpha}, falloffSteepness: ${SHADER_CONFIG.POINTS.falloffSteepness}}`
+    );
   }
 }

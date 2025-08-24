@@ -109,7 +109,7 @@ def broadcast_scalar_to_points(
 
     if np.isscalar(values):
         # Single value - broadcast to all points
-        value = float(values)
+        value = float(values)  # type: ignore[arg-type]
         if require_positive and value <= 0:
             raise ValueError(f"{name.capitalize()} must be positive, got {value}")
         return np.full(n_points, value, dtype=np.float32)

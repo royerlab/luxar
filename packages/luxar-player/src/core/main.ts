@@ -6,7 +6,8 @@
 import { consoleInterceptor } from '../utils/console-interceptor';
 
 // Log that we're starting (this will be captured)
-console.log('🚀 [Luxar] Application starting...');
+import { log, Modules, LogEmoji } from '../utils/log';
+log.custom(LogEmoji.START, Modules.LUXAR, 'Application starting...');
 
 import { LuxarApp } from './app';
 import { config } from '../config';
@@ -39,11 +40,11 @@ if (isDebugMode) {
     consoleInterceptor,
     version: '1.0.0',
   };
-  console.log('🔧 [Luxar] Debug interface available at window.__luxarDebug');
+  log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
 }
 
 app.init(src).catch((error) => {
-  console.error('Failed to start Luxar application:', error);
+  log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
 
   // Show error to user if it wasn't already handled by lower-level error handlers
   // This ensures any initialization errors that don't get displayed are still shown

@@ -1,0 +1,9 @@
+We can't have our points extend to all and every dimension, indeed, that does not make sense for categorical or temporal dimensions.                              │
+But, let's refine the idea a bit more: Let's introduce, per dimension, already on the compiler (Python) side a flag: 'spatial' that is true, obviously, for displayed dimensions, and false, by default for any discrete            │
+dimensions. This flag is then used when adding points to the scene to decide automatically over which dimensions to extend the points. This would be represented as a boolean array per dimension, array that would be populated    │
+by default usingt the logic mentioned above, but that can also be overridden by the user if nescessary. This boolean array is then used on the viewer side to know which dimensions to 'extend' the point and therefore how to      │
+scale the radius of points based on their distance to the hyperplane. One isue ight arise: what if the flag is true for a dimension that happens to be discrete? (the user would have had to override the automatic setting) In     │
+that case we need to prevent that from happening already on the Python side. It is ok to override the flag per dimension to say: 'it is a spatial dimension, but nevertheless I do not want points to extend over that dimension',  │
+but it is not ok to force points to extend over a discrete dimension. There is another important consideration: Since we have a spatial index that we use to load just what is visible for non-visible coordinates, we need to      │
+pay attention to the fact that we need to load more points around the current non-visible spatial coordinates over which points extend.  For this we have thenotio of max radius per Points that tells us how much to load 
+  around a position to ensure that all intersecting points are rendered.

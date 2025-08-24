@@ -2,6 +2,8 @@
  * Minimal automatic memory detection for adaptive cache sizing
  */
 
+import { log, Modules } from './log';
+
 export interface MemoryInfo {
   recommendedCacheMB: number;
   confidence: 'high' | 'medium' | 'low';
@@ -27,7 +29,8 @@ export function detectMemory(): MemoryInfo {
     // No artificial maximum - let the browser's actual heap limit be the constraint
     const bounded = Math.max(128, recommended);
 
-    console.log(
+    log.info(
+      Modules.MEMORY,
       `[Memory API] Heap limit: ${heapLimitMB.toFixed(0)}MB, Used: ${usedMB.toFixed(0)}MB, Available: ${availableMB.toFixed(0)}MB → Cache: ${bounded}MB`
     );
 
@@ -80,7 +83,10 @@ export function detectMemory(): MemoryInfo {
     /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
   const recommended = isMobile ? 256 : 1024;
-  console.log(`[Fallback] Platform: ${isMobile ? 'mobile' : 'desktop'} → Cache: ${recommended}MB`);
+  log.info(
+    Modules.MEMORY,
+    `[Fallback] Platform: ${isMobile ? 'mobile' : 'desktop'} → Cache: ${recommended}MB`
+  );
 
   return {
     recommendedCacheMB: recommended,
