@@ -1,7 +1,7 @@
 import numpy as np
 import zarr
 
-from luxar.demos import create_lorenz_attractor
+from luxar.utils.demos import create_lorenz_attractor
 
 
 def test_random_demo_roundtrip(tmp_path):
@@ -12,7 +12,7 @@ def test_random_demo_roundtrip(tmp_path):
 
     root = zarr.open_group(store, mode="r")
     # ---- root attrs
-    assert root.attrs["luxar_version"] == "0.2"
+    assert root.attrs["luxar_version"] == "0.3"
     assert root.attrs["units"] == "metre"
 
     # ---- hierarchy

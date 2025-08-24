@@ -234,18 +234,21 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         break;
       case 'q':
         this.lookState.roll = -1; // Q for roll left
-        console.log('🔧 [Luxar] Q pressed - roll left', this.lookState.roll);
+        // Debug logging - commented out for production
+        // log.info(Modules.CONTROLS, 'Q pressed - roll left', this.lookState.roll);
         break;
       case 'e':
         this.lookState.roll = 1; // E for roll right
-        console.log('🔧 [Luxar] E pressed - roll right', this.lookState.roll);
+        // Debug logging - commented out for production
+        // log.info(Modules.CONTROLS, 'E pressed - roll right', this.lookState.roll);
         break;
     }
 
     // Speed boost with Shift key
     if (event.key === 'Shift') {
       this.speedBoost = true;
-      console.log('🔧 [Luxar] Shift pressed - speed boost ON');
+      // Debug logging - commented out for production
+      // log.info(Modules.CONTROLS, 'Shift pressed - speed boost ON');
     }
 
     // Arrow keys for camera look direction
@@ -459,7 +462,8 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         // Roll: rotate around camera's local forward axis
         torque.addScaledVector(cameraForward, this.lookState.roll * this.rotationSpeed);
         if (this.lookState.roll !== 0) {
-          console.log('🔧 [Luxar] Applying roll torque:', this.lookState.roll * this.rotationSpeed);
+          // Debug logging - commented out for production
+          // log.info(Modules.CONTROLS, 'Applying roll torque:', this.lookState.roll * this.rotationSpeed);
         }
 
         // Add torque to world-space angular velocity

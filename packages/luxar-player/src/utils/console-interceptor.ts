@@ -109,7 +109,10 @@ class ConsoleInterceptor {
     };
 
     // Log that interception has started (using original console)
-    this.originalConsole.log('🎬 [Luxar] Console interception started - capturing all output');
+    // Note: We can't use the log utility here since it would create a circular dependency
+    this.originalConsole.log(
+      '[🎬] [ConsoleInterceptor] Console interception started - capturing all output'
+    );
   }
 
   /**
@@ -247,7 +250,9 @@ class ConsoleInterceptor {
     console.debug = this.originalConsole.debug;
 
     this.isIntercepting = false;
-    this.originalConsole.log('🛑 [Luxar] Console interception stopped - restored original methods');
+    this.originalConsole.log(
+      '[🛑] [ConsoleInterceptor] Console interception stopped - restored original methods'
+    );
   }
 }
 

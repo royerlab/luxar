@@ -7,10 +7,11 @@ maintainability and provide clear documentation of their purposes.
 from typing import Final
 
 # Version constants
-LUXAR_VERSION_CURRENT: Final[str] = "0.2"
-DEFAULT_ZARR_VERSION: Final[str] = "0.2"  # Alias for default version
+LUXAR_VERSION_CURRENT: Final[str] = "0.3"
+DEFAULT_ZARR_VERSION: Final[str] = "0.3"  # Alias for default version
 LUXAR_VERSION_LEGACY: Final[str] = "0.1"
-LUXAR_VERSION_FUTURE: Final[str] = "0.3"
+LUXAR_VERSION_PREVIOUS: Final[str] = "0.2"
+LUXAR_VERSION_FUTURE: Final[str] = "0.4"
 
 # Rendering constants
 OPACITY_MIN: Final[float] = 0.0

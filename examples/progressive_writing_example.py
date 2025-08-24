@@ -35,7 +35,7 @@ def main():
         aprint("📊 Creating scene with progressive writing...")
 
         # Create a group for organization
-        group1 = scene.add_group("DataSet1", opacity=0.9)
+        scene.add_group("DataSet1", opacity=0.9)
 
         # Generate and write first point cloud
         # Data is written immediately and not kept in memory
@@ -68,7 +68,7 @@ def main():
         aprint(f"  ✓ Wrote {n_points_2:,} points to cloud2")
 
         # Create another group
-        group2 = scene.add_group("DataSet2")
+        scene.add_group("DataSet2")
 
         # Demonstrate streaming large dataset in batches
         aprint("📊 Streaming large dataset in batches...")

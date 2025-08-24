@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
-import { loadScene } from '../data/zarr-loader';
+import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
 import { PostProcessingManager } from '../rendering/post-processing';
@@ -21,6 +21,7 @@ import {
   logHDRCapabilities,
 } from '../utils/hdr-detection';
 import { validateFOV } from './scene-manager-utils';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -132,10 +133,13 @@ export class SceneManager extends THREE.EventDispatcher<{
       }) as WebGLRenderingContext | null;
 
       if (!gl) {
-        console.warn('WebGL2 context creation failed, falling back to default');
+        log.warning(
+          Modules.SCENE_MANAGER,
+          'WebGL2 context creation failed, falling back to default'
+        );
       }
     } catch (error) {
-      console.error('Error creating WebGL2 context:', error);
+      log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
       showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
@@ -166,8 +170,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (debugParams.has('debug')) {
       const glContext = this.renderer.getContext();
       const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
-      console.log(
-        `🔍 [Luxar] Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`
+      log.info(
+        Modules.RENDERER,
+        `Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`
       );
     }
     // This allows for better integration into complex HTML pages
@@ -278,7 +283,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Save this configuration as the new default state
     this.controls.saveState();
 
-    console.log('✓ [Luxar] Controls reset to default state');
+    log.success(Modules.CONTROLS, 'Controls reset to default state');
   }
 
   /**
@@ -310,7 +315,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Log shader configuration for debugging
     ShaderValidator.logShaderConfig();
 
-    console.log('✓ [Luxar] HDR post-processing pipeline initialized');
+    log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
   }
 
   /**
@@ -346,10 +351,10 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       // Don't automatically center - let the scene designer's positioning take precedence
       // User can press 'C' to center on bounding box if desired
-      console.log('Scene loaded. Press C to toggle centering on bounding box.');
+      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press C to toggle centering on bounding box.');
     } catch (error) {
       hideLoadingIndicator();
-      console.error('Failed to load scene:', error);
+      log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
       showError(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
     }
@@ -399,7 +404,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.scene.remove(obj);
     }
 
-    console.log(`Cleared ${objectsToRemove.length} objects from scene`);
+    log.info(Modules.SCENE_MANAGER, `Cleared ${objectsToRemove.length} objects from scene`);
   }
 
   /**
@@ -452,7 +457,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       // This prevents awkward camera positioning on edge cases
       if (maxDim < 1.0 || totalPointCount < 100) {
         // Keep default camera position for better user experience
-        console.warn(
+        log.warning(
+          Modules.SCENE_MANAGER,
           `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, points: ${totalPointCount})`
         );
         return;
@@ -488,13 +494,14 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.controls.reset();
       this.controls.saveState();
 
-      console.log('✓ [Luxar] Controls target updated and state saved');
+      log.success(Modules.CONTROLS, 'Controls target updated and state saved');
 
-      console.log(
-        `✓ [Luxar] Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
+      log.success(
+        Modules.SCENE_MANAGER,
+        `Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}], distance: ${distance.toFixed(2)})`
       );
     } else {
-      console.warn('No visible geometry found to center camera on');
+      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
     }
   }
 
@@ -525,12 +532,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Switch to origin (native center)
       this.centerOnOrigin();
       this.isCenteredOnBoundingBox = false;
-      console.log('✓ [Luxar] Centered on origin (native center)');
+      log.success(Modules.SCENE_MANAGER, 'Centered on origin (native center)');
     } else {
       // Switch to bounding box center
       this.centerCameraOnScene();
       this.isCenteredOnBoundingBox = true;
-      console.log('✓ [Luxar] Centered on bounding box');
+      log.success(Modules.SCENE_MANAGER, 'Centered on bounding box');
     }
   }
 
@@ -557,7 +564,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.controls.reset();
     this.controls.saveState();
 
-    console.log(`✓ [Luxar] Camera reset to origin with distance: ${currentDistance.toFixed(2)}`);
+    log.success(
+      Modules.SCENE_MANAGER,
+      `Camera reset to origin with distance: ${currentDistance.toFixed(2)}`
+    );
   }
 
   /**
@@ -570,9 +580,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     const height = window.innerHeight;
 
     if (document.fullscreenElement) {
-      console.log(`✓ [Luxar] Using fullscreen dimensions: ${width}x${height}`);
+      log.success(Modules.SCENE_MANAGER, `Using fullscreen dimensions: ${width}x${height}`);
     } else {
-      console.log(`✓ [Luxar] Using windowed dimensions: ${width}x${height}`);
+      log.success(Modules.SCENE_MANAGER, `Using windowed dimensions: ${width}x${height}`);
     }
 
     // Only update camera if it exists (might be called during init)
@@ -677,7 +687,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     });
 
-    console.log(`✓ [Luxar] HDR multiplier updated for all point materials: ${multiplier}`);
+    log.success(Modules.RENDERER, `HDR multiplier updated for all point materials: ${multiplier}`);
   }
 
   /**
@@ -738,7 +748,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   setAutoRotate(enabled: boolean): void {
     this.controls.setAutoRotate(enabled);
-    console.log(`🎬 [Luxar] Auto-rotation ${enabled ? 'enabled' : 'disabled'}`);
+    log.custom(
+      LogEmoji.SCENE,
+      Modules.SCENE_MANAGER,
+      `Auto-rotation ${enabled ? 'enabled' : 'disabled'}`
+    );
   }
 
   /**

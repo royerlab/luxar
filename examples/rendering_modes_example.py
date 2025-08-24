@@ -107,19 +107,19 @@ def main():
             gamma=1.3,  # Brighter
         )
 
-        # 4. Subtractive blending - darkening purple sphere
-        aprint("Creating subtractive blending (darkening effect)...")
-        positions4 = base_positions + np.array([-3, -2, 0])
-        colors4 = [0.78, 0.39, 1.0]  # Purple
-        scene.add_points(
-            "SubtractiveDark",
-            positions4,
-            colors=colors4,
-            radii=point_radius,
-            blending_mode="subtractive",
-            opacity=0.8,
-            gamma=0.7,  # Darker
-        )
+        # # 4. Subtractive blending - darkening purple sphere
+        # aprint("Creating subtractive blending (darkening effect)...")
+        # positions4 = base_positions + np.array([-3, -2, 0])
+        # colors4 = [0.78, 0.39, 1.0]  # Purple
+        # scene.add_points(
+        #     "SubtractiveDark",
+        #     positions4,
+        #     colors=colors4,
+        #     radii=point_radius,
+        #     blending_mode="subtractive",
+        #     opacity=0.8,
+        #     gamma=0.7,  # Darker
+        # )
 
         # 5. Demonstration of property inheritance
         aprint("Creating parent-child inheritance examples...")

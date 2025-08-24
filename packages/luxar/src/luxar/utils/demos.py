@@ -191,7 +191,7 @@ def create_random_spheres(
                 f"sphere_{i:03d}",
                 positions,
                 colors=color,  # Single color for whole sphere
-                radii=0.05,
+                radii=np.float32(0.05),
                 opacity=0.8,
             )
 
@@ -269,12 +269,12 @@ def create_time_series_demo(
             all_colors.append(colors)
 
         # Concatenate all time points
-        all_positions = np.vstack(all_positions)
-        all_colors = np.vstack(all_colors)
+        positions_array = np.vstack(all_positions)
+        colors_array = np.vstack(all_colors)
 
         # Write as single 4D dataset
         compiler.write_points(
-            "time_series", all_positions, colors=all_colors, radii=0.1
+            "time_series", positions_array, colors=colors_array, radii=np.float32(0.1)
         )
 
     aprint(f"✓ Time series demo created at {store_path}")

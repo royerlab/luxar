@@ -2,7 +2,7 @@
 
 import pytest
 
-from luxar.config import (
+from luxar.typing_utils.config import (
     MAX_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
     validate_chunk_size,

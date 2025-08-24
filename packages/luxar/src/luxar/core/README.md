@@ -46,11 +46,15 @@ Point cloud node implementation.
 - Integration with progressive writing system
 
 ### `dimensions.py`
-Dimension system for nD point clouds.
+Dimension system for nD point clouds with spatial awareness.
 
 **Key Classes:**
-- `Dimension`: Single dimension specification with name, unit, range, and step
+- `Dimension`: Single dimension specification with spatial and discrete properties
+  - `spatial`: Whether points extend through this dimension (hyperspheres)
+  - `discrete`: Whether dimension represents categorical/discrete values
+  - Auto-enforces: non-displayed, non-spatial dimensions must be discrete
 - `Dimensions`: Collection of dimensions defining a coordinate system
+  - Provides `spatial_extend_dims` property for spatial index optimization
 
 **Key Features:**
 - Support for arbitrary number of dimensions
@@ -88,19 +92,26 @@ import numpy as np
 
 # Create compiler for progressive writing
 with LuxarZarrCompiler('output.zarr') as compiler:
-    # Define dimensions for 4D data
+    # Define dimensions for 6D data with different types
     dims = Dimensions([
-        Dimension("x", "um", (-100, 100), 1.0),
-        Dimension("y", "um", (-100, 100), 1.0),
-        Dimension("z", "um", (-50, 50), 0.5),
-        Dimension("time", "ms", (0, 1000), 10.0),
+        # Displayed dimensions - spatial and continuous
+        Dimension("x", "um", (-100, 100), display=True),  # spatial=True (auto)
+        Dimension("y", "um", (-100, 100), display=True),  # spatial=True (auto)
+        Dimension("z", "um", (-50, 50), display=True),    # spatial=True (auto)
+        
+        # Non-displayed spatial dimension - points extend through it
+        Dimension("depth", "um", (0, 200), display=False, spatial=True),  # continuous
+        
+        # Non-displayed, non-spatial dimensions - must be discrete
+        Dimension("time", "ms", (0, 10), display=False, discrete=True, step=1.0),
+        Dimension("channel", "", (0, 3), display=False, discrete=True),
     ])
     
     # Create scene with dimensions
     scene = compiler.create_scene(dimensions=dims)
     
     # Add points
-    positions = np.random.randn(10000, 4).astype(np.float32)
+    positions = np.random.randn(10000, 6).astype(np.float32)
     colors = np.random.rand(10000, 3).astype(np.float32)
     scene.add_points("my_points", positions, colors)
 ```

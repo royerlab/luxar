@@ -38,7 +38,12 @@ def main():
                     Dimension(name="Y", unit="μm", range=(-50, 50), display=True),
                     Dimension(name="Z", unit="μm", range=(-50, 50), display=True),
                     Dimension(
-                        name="Time", unit="s", range=(0, 10), display=False, step=1.0
+                        name="Time",
+                        unit="s",
+                        range=(0, 10),
+                        display=False,
+                        discrete=True,  # Time frames are discrete values
+                        step=1.0,
                     ),
                     Dimension(
                         name="Channel",

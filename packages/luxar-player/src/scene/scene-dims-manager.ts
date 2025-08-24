@@ -1,5 +1,6 @@
 import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
+import { log, Modules } from '../utils/log';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
@@ -78,7 +79,7 @@ export class SceneDimsManager {
 
     // Validation: Ensure we found valid dimension metadata
     if (!sceneDimensions?.dimensions) {
-      console.error('No scene dimensions found in scene or its children');
+      log.error(Modules.SCENE_DIMS, 'No scene dimensions found in scene or its children');
       return false;
     }
 
@@ -253,7 +254,7 @@ export class SceneDimsManager {
   reset(): void {
     this.dims = null;
     this.listeners.clear();
-    console.log('Scene dimension manager reset');
+    log.info('SceneDimensionManager', 'Scene dimension manager reset');
   }
 
   /**

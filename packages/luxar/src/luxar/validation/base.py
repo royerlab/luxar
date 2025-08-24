@@ -274,3 +274,64 @@ def validate_sharpness_for_writing(
             f"  Values > {SHARPNESS_TYPICAL_MAX} create hard-edged points",
             UserWarning,
         )
+
+
+def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
+    """Validate that all required Zarr attributes are present.
+
+    Ensures that zarr groups have the required metadata attributes according
+    to the Luxar Zarr format specification.
+
+    Args:
+        attrs: Dictionary of zarr attributes
+        is_root: Whether this is the root scene group
+
+    Raises:
+        ValidationError: If required attributes are missing or invalid
+    """
+    if is_root:
+        # Root scene requires additional attributes
+        required = {"type", "luxar_version"}
+        recommended = {"units", "scene_dimensions"}
+    else:
+        # Child nodes only require type
+        required = {"type"}
+        recommended = set()
+
+    # Check for missing required attributes
+    missing_required = required - set(attrs.keys())
+    if missing_required:
+        raise ValidationError(
+            f"Missing required zarr attributes: {missing_required}",
+            f"Add these attributes: {', '.join(missing_required)}",
+        )
+
+    # Check for missing recommended attributes
+    missing_recommended = recommended - set(attrs.keys())
+    if missing_recommended:
+        import warnings
+
+        warnings.warn(
+            f"Missing recommended zarr attributes: {missing_recommended}. "
+            f"Consider adding these for better compatibility.",
+            UserWarning,
+        )
+
+    # Validate type attribute
+    if "type" in attrs:
+        valid_types = {"scene", "group", "points"}
+        if attrs["type"] not in valid_types:
+            raise ValidationError(
+                f"Invalid node type: '{attrs['type']}'",
+                f"Use one of: {', '.join(valid_types)}",
+            )
+
+    # Validate version if present
+    if "luxar_version" in attrs:
+        from ..typing_utils.config import SUPPORTED_VERSIONS
+
+        if attrs["luxar_version"] not in SUPPORTED_VERSIONS:
+            raise ValidationError(
+                f"Unsupported Luxar version: '{attrs['luxar_version']}'",
+                f"Supported versions: {', '.join(SUPPORTED_VERSIONS)}",
+            )

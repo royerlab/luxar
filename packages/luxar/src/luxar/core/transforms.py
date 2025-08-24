@@ -13,7 +13,8 @@ from typing import Any, Literal, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ..typing_utils.protocols import TransformMatrix, validate_transform
+from ..typing_utils.aliases import TransformMatrix
+from ..typing_utils.protocols import validate_transform
 
 
 def identity() -> TransformMatrix:
@@ -374,6 +375,54 @@ def from_list(values: list[float]) -> TransformMatrix:
     # Reshape and transpose from column-major (THREE.js) to row-major (NumPy)
     matrix = np.array(values, dtype=np.float32).reshape(4, 4).T
     return validate_transform(matrix)
+
+
+def prepare_transform_for_zarr(transform: Any) -> list[float]:
+    """Prepare any transform format for Zarr storage (THREE.js compatible).
+
+    This centralizes the logic for converting transforms to the format expected
+    by the Zarr storage and THREE.js viewer. The transform is validated and
+    converted to a 16-element list in column-major order.
+
+    Args:
+        transform: Transform in any supported format:
+            - 4x4 numpy array (row-major)
+            - 16-element list (already in column-major)
+            - 16-element numpy array (flat)
+
+    Returns:
+        16-element list in column-major order for THREE.js
+
+    Raises:
+        ValueError: If transform is invalid or wrong shape
+    """
+    if isinstance(transform, list) and len(transform) == 16:
+        # Already a list, validate by converting to matrix and back
+        matrix = np.array(transform, dtype=np.float32).reshape(4, 4).T
+        validated = validate_transform(matrix)
+        result: list[float] = validated.T.ravel().tolist()
+        return result
+
+    # Convert to numpy array
+    transform_array = np.array(transform, dtype=np.float32)
+
+    if transform_array.size != 16:
+        raise ValueError(f"Transform must have 16 elements, got {transform_array.size}")
+
+    # Reshape to 4x4 if flat
+    if transform_array.ndim == 1:
+        transform_matrix = transform_array.reshape(4, 4)
+    elif transform_array.shape == (4, 4):
+        transform_matrix = transform_array
+    else:
+        raise ValueError(f"Transform has invalid shape: {transform_array.shape}")
+
+    # Validate the matrix
+    validated = validate_transform(transform_matrix)
+
+    # Transpose for THREE.js (column-major order) and convert to list
+    result: list[float] = validated.T.ravel().tolist()
+    return result
 
 
 # Convenience function aliases

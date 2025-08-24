@@ -25,6 +25,7 @@ class Dimension:
         discrete: Whether dimension has discrete values (for channels, indices)
         cyclic: Whether dimension wraps around (for angles)
         scale: Physical scale factor (default 1.0)
+        spatial: Whether points extend through this dimension (None = auto-determine)
         description: Optional human-readable description
     """
 
@@ -36,10 +37,11 @@ class Dimension:
     discrete: bool = False
     cyclic: bool = False
     scale: float = 1.0
+    spatial: Optional[bool] = None
     description: str = ""
 
     def __post_init__(self) -> None:
-        """Validate dimension parameters."""
+        """Validate dimension parameters and auto-determine spatial flag."""
         if self.range is not None:
             if len(self.range) != 2:
                 raise ValueError("Range must be a tuple of (min, max)")
@@ -47,6 +49,37 @@ class Dimension:
                 raise ValueError(
                     f"Invalid range {self.range}: min must be less than max"
                 )
+
+        # Auto-determine spatial flag if not specified
+        if self.spatial is None:
+            if self.display:
+                # Displayed dimensions are always spatial
+                self.spatial = True
+            else:
+                # Non-displayed dimensions are never spatial
+                # (Points don't extend through non-displayed dimensions)
+                self.spatial = False
+
+        # Enforce constraint: non-spatial implies discrete
+        # If a dimension is non-spatial, points exist at specific values only
+        if not self.spatial and not self.display:
+            if not self.discrete:
+                # Auto-correct to discrete with a warning
+                self.discrete = True
+                import warnings
+
+                warnings.warn(
+                    f"Dimension '{self.name}' is non-spatial and non-displayed, "
+                    f"so it must be discrete. Setting discrete=True automatically.",
+                    UserWarning,
+                )
+
+        # Validation: discrete dimensions cannot be forced spatial (unless displayed)
+        if self.discrete and self.spatial and not self.display:
+            raise ValueError(
+                f"Dimension '{self.name}' cannot be both discrete and spatial "
+                f"unless it is displayed"
+            )
 
         if self.step is not None and self.step <= 0:
             raise ValueError(f"Step size must be positive, got {self.step}")
@@ -84,6 +117,7 @@ class Dimension:
             "discrete": self.discrete,
             "cyclic": self.cyclic,
             "scale": self.scale,
+            "spatial": self.spatial,
             "description": self.description,
         }
 
@@ -103,6 +137,7 @@ class Dimension:
             discrete=data.get("discrete", False),
             cyclic=data.get("cyclic", False),
             scale=data.get("scale", 1.0),
+            spatial=data.get("spatial"),  # Let __post_init__ auto-determine if None
             description=data.get("description", ""),
         )
 
@@ -154,6 +189,11 @@ class Dimensions:
     def non_displayed(self) -> List[int]:
         """Indices of non-displayed dimensions."""
         return [i for i, d in enumerate(self.dimensions) if not d.display]
+
+    @property
+    def spatial_extend_dims(self) -> List[bool]:
+        """List of spatial extension flags for all dimensions."""
+        return [d.spatial for d in self.dimensions]
 
     def get_dimension(self, name: str) -> Optional[Dimension]:
         """Get dimension by name."""

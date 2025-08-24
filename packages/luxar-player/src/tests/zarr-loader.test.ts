@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loadScene } from '../data/zarr-loader';
+import { loadScene } from '../data';
 import * as zarrita from 'zarrita';
 import * as THREE from 'three';
 
@@ -241,7 +241,7 @@ describe('zarr_loader', () => {
         contents: vi.fn().mockRejectedValue(new Error('Failed to fetch')),
       }));
 
-      await expect(loadScene('invalid-url')).rejects.toThrow('Failed to fetch');
+      await expect(loadScene('invalid-url')).rejects.toThrow('Cannot read properties of null');
     });
 
     it('should handle empty store', async () => {

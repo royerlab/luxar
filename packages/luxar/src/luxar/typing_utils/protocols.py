@@ -399,7 +399,7 @@ def validate_node_type(node_type: str) -> NodeType:
     Raises:
         ValueError: If node type is invalid
     """
-    valid_types: Tuple[NodeType, ...] = ("points", "group", "scene")
+    valid_types = (NodeType.POINTS.value, NodeType.GROUP.value, NodeType.SCENE.value)
     if node_type not in valid_types:
         raise ValueError(
             f"Invalid node type '{node_type}'. Must be one of {valid_types}"
@@ -422,19 +422,19 @@ def validate_physical_unit(unit: str) -> PhysicalUnit:
     Raises:
         ValueError: If unit is invalid
     """
-    valid_units: Tuple[PhysicalUnit, ...] = (
-        "nm",  # nanometer
-        "um",  # micrometer
-        "mm",  # millimeter
-        "cm",  # centimeter
-        "m",  # meter (short form)
-        "metre",  # meter (British spelling)
-        "meter",  # meter (American spelling)
-        "km",  # kilometer
-        "inch",  # inch
-        "foot",  # foot
-        "px",  # pixel
-        "au",  # arbitrary units
+    valid_units = (
+        PhysicalUnit.NANOMETER.value,
+        PhysicalUnit.MICROMETER.value,
+        PhysicalUnit.MILLIMETER.value,
+        PhysicalUnit.CENTIMETER.value,
+        PhysicalUnit.METER.value,
+        PhysicalUnit.METRE.value,
+        "meter",  # Not in enum but needed for compatibility
+        PhysicalUnit.KILOMETER.value,
+        PhysicalUnit.INCH.value,
+        PhysicalUnit.FOOT.value,
+        PhysicalUnit.PIXEL.value,
+        PhysicalUnit.ASTRONOMICAL_UNIT.value,
     )
     if unit not in valid_units:
         raise ValueError(f"Invalid unit '{unit}'. Must be one of {valid_units}")

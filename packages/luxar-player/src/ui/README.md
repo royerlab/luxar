@@ -228,6 +228,49 @@ const styles = `
 
 ---
 
+## Implementation Details
+
+### Event Delegation Pattern
+
+The UI components use event delegation for efficient event handling:
+
+```typescript
+// Instead of inline handlers:
+// ❌ onclick="__luxarMonitor.expand()"
+
+// We use data attributes:
+// ✅ data-action="expand"
+
+// Single event handler manages all interactions:
+private handleUIEvent(event: Event): void {
+  const target = event.target as HTMLElement;
+  const action = target.dataset.action;
+
+  switch (action) {
+    case 'expand': this.expand(); break;
+    case 'hide': this.hide(); break;
+    // ... other actions
+  }
+}
+```
+
+**Benefits:**
+
+- No global namespace pollution
+- Better security (no inline JavaScript)
+- Improved testability
+- Type-safe event handling
+- Single listener for multiple elements
+
+### Component Lifecycle
+
+All UI components follow a consistent lifecycle:
+
+1. **Construction**: Initialize state and configuration
+2. **Creation**: Build DOM elements with event delegation
+3. **Updates**: Efficient DOM updates via requestAnimationFrame
+4. **Disposal**: Clean up listeners and resources
+
 ## User Interactions
 
 ### Keyboard Controls

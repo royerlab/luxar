@@ -30,10 +30,10 @@ MIN_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MIN
 MAX_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MAX
 
 # Default units for scenes
-DEFAULT_UNITS: Final[PhysicalUnit] = "metre"
+DEFAULT_UNITS: Final[str] = PhysicalUnit.METRE.value
 
 # Default version for Luxar scenes
-DEFAULT_VERSION: Final[LuxarVersion] = LUXAR_VERSION_CURRENT
+DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT
 
 # Supported Luxar versions for backwards compatibility
 SUPPORTED_VERSIONS: Final[tuple[LuxarVersion, ...]] = ("0.1", "0.2", "0.3")
@@ -70,19 +70,19 @@ DEFAULT_COMPRESSION: Final[CompressionType] = "blosc"
 DEFAULT_COMPRESSION_LEVEL: Final[int] = 3
 
 # Supported physical units
-SUPPORTED_UNITS: Final[tuple[PhysicalUnit, ...]] = (
-    "nm",  # nanometer
-    "um",  # micrometer
-    "mm",  # millimeter
-    "cm",  # centimeter
-    "m",  # meter (short form)
-    "metre",  # meter (British spelling)
-    "meter",  # meter (American spelling)
-    "km",  # kilometer
-    "inch",  # inch
-    "foot",  # foot
-    "px",  # pixel
-    "au",  # arbitrary units
+SUPPORTED_UNITS: Final[tuple[str, ...]] = (
+    PhysicalUnit.NANOMETER.value,
+    PhysicalUnit.MICROMETER.value,
+    PhysicalUnit.MILLIMETER.value,
+    PhysicalUnit.CENTIMETER.value,
+    PhysicalUnit.METER.value,
+    PhysicalUnit.METRE.value,
+    "meter",  # American spelling - kept for compatibility
+    PhysicalUnit.KILOMETER.value,
+    PhysicalUnit.INCH.value,
+    PhysicalUnit.FOOT.value,
+    PhysicalUnit.PIXEL.value,
+    PhysicalUnit.ASTRONOMICAL_UNIT.value,
 )
 
 # =============================================================================

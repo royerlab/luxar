@@ -8,13 +8,8 @@ import numpy as np
 import zarr
 from arbol import aprint
 
-from ..typing_utils.protocols import (
-    GroupAttrs,
-    SceneHierarchy,
-    TransformMatrix,
-    ZarrGroupProtocol,
-    validate_transform,
-)
+from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
+from ..typing_utils.protocols import ZarrGroupProtocol, validate_transform
 
 
 class Node:
@@ -60,11 +55,8 @@ class Node:
         # Determine path in hierarchy
         if parent is not None:
             parent.children.append(self)
-            self.path = (
-                f"{parent.path}/{name}"
-                if hasattr(parent, "path") and parent.path
-                else name
-            )
+            parent_path = getattr(parent, "path", None)
+            self.path = f"{parent_path}/{name}" if parent_path else name
         else:
             self.path = ""
 

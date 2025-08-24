@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.types import (
+from luxar.typing_utils.protocols import (
     validate_blending_mode,
     validate_gamma,
     validate_node_type,

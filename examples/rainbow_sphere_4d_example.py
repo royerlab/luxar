@@ -141,7 +141,14 @@ def main():
             Dimension(name="X", unit="", range=(-15, 15), display=True),
             Dimension(name="Y", unit="", range=(-15, 15), display=True),
             Dimension(name="Z", unit="", range=(-15, 15), display=True),
-            Dimension(name="W", unit="", range=(-15, 15), display=False, step=0.5),
+            Dimension(
+                name="W",
+                unit="",
+                range=(-15, 15),
+                display=False,
+                spatial=True,
+                step=0.5,
+            ),
         ]
     )
 

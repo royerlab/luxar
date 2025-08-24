@@ -24,37 +24,24 @@ The utils package provides specialized functionality that extends beyond basic 3
 
 ## Key Features
 
-- **nD Slicing**: Advanced algorithms for navigating high-dimensional point clouds
 - **Console Interception**: Ring buffer system for capturing all browser console output
 - **HDR Detection**: Comprehensive display capability detection and configuration
 - **Dimension Navigation**: Smooth navigation through multi-dimensional datasets
-- **Hypersphere Mathematics**: Geometrically accurate radius calculations for nD spheres
+- **Structured Logging**: Consistent logging format with module identification
 
 ## Architecture
 
 ```typescript
 utils/
-├── slicing.ts            # nD slicing algorithms and hypersphere mathematics
 ├── dims-navigation.ts    # Navigation utilities for multi-dimensional data
 ├── console-interceptor.ts # Console output capture and buffering system
-└── hdr-detection.ts      # HDR display capability detection
+├── hdr-detection.ts      # HDR display capability detection
+└── log.ts               # Structured logging utility
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
 
 ## Modules
-
-### slicing.ts - nD Slicing Algorithms
-
-Advanced mathematical algorithms for slicing high-dimensional point clouds:
-
-**Core Functions**:
-
-- `slicePoints()` - Radius-based hypersphere intersection slicing
-- `extractDisplayDimensions()` - Project nD points to 3D visualization space
-- `computeEffectiveRadii()` - Calculate cross-sectional radii of sliced nD spheres
-- `sliceColorsFloat32()` - HDR color slicing with float32 precision
-- `sliceScalarAttribute()` - Generic attribute slicing for point properties
 
 ### dims-navigation.ts - Dimension Navigation
 
@@ -88,66 +75,6 @@ Comprehensive system for detecting and configuring HDR display capabilities:
 - `configureHDRRenderer()` - Optimal Three.js renderer setup
 - `logHDRCapabilities()` - Detailed capability reporting
 - `isHDRDisplay()` - Simple boolean HDR check
-
-## nD Slicing Algorithms
-
-### Hypersphere Intersection Mathematics
-
-The core slicing algorithm implements radius-based hypersphere intersection:
-
-```typescript
-// Mathematical foundation: For a point with nD position P and radius R,
-// the point is visible if its nD hypersphere intersects the slice hyperplane
-// Distance = √(Σ(Pi - Ci)²) where C is current position in non-displayed dims
-// Point is visible if distance ≤ radius
-
-export function slicePoints(
-  positions: Float32Array,
-  dims: SimpleDims,
-  numPoints: number,
-  radii?: Float32Array,
-  fallbackTolerance = 0.1
-): Uint32Array;
-```
-
-**Algorithm Details**:
-
-1. **Discrete Dimensions**: Exact matching for categorical data (time frames, channels)
-2. **Continuous Dimensions**: Radius-based inclusion for smooth navigation
-3. **Early Termination**: Efficient point rejection for performance
-4. **Fallback Tolerance**: Default radius when per-point radii unavailable
-
-### Effective Radius Calculation
-
-When an nD hypersphere is sliced by hyperplanes, the cross-section radius follows:
-
-```typescript
-// R_effective = √(R² - D²) where D is distance to hyperplane
-// This preserves accurate visual representation of point sizes after slicing
-```
-
-### Point Cloud Update Pipeline
-
-```typescript
-// Complete pipeline from nD slicing to GPU rendering:
-export function updatePointCloudSlice(
-  points: THREE.Points,
-  originalPositions: Float32Array,
-  originalColors: Float32Array | undefined,
-  originalRadii: Float32Array | undefined,
-  originalSharpness: Float32Array | undefined,
-  dims: SimpleDims,
-  numPoints: number
-): void;
-```
-
-**Pipeline Stages**:
-
-1. **nD Slicing**: Radius-based hypersphere intersection
-2. **3D Projection**: Extract display dimensions
-3. **Effective Radii**: Compute cross-sectional radii
-4. **GPU Updates**: Update vertex attributes and buffers
-5. **Bounds Calculation**: Recalculate bounding volumes
 
 ## Console Interception
 
@@ -303,23 +230,6 @@ if (stepDimension(dims, primaryDim, direction, ranges)) {
 
 ## Usage Examples
 
-### nD Point Cloud Slicing
-
-```typescript
-import { slicePoints, extractDisplayDimensions, updatePointCloudSlice } from '../utils/slicing';
-import { stepDimension } from '../utils/dims-navigation';
-
-// Slice nD point cloud at current position
-const visibleIndices = slicePoints(positions, dims, numPoints, radii);
-const positions3D = extractDisplayDimensions(positions, visibleIndices, dims);
-
-// Navigate to next slice
-if (stepDimension(dims, dimIndex, 1, ranges)) {
-  // Update GPU geometry with new slice
-  updatePointCloudSlice(points, positions, colors, radii, sharpness, dims, numPoints);
-}
-```
-
 ### Console Debugging Setup
 
 ```typescript
@@ -359,7 +269,6 @@ if (isHDRDisplay(hdrCapabilities)) {
 ### Slicing Optimization
 
 - **Early Termination**: Break loops as soon as point is excluded
-- **Set Lookup**: O(1) displayed dimension checks using Set
 - **Memory Reuse**: Reuse buffers when possible to minimize allocations
 
 ### Navigation Efficiency

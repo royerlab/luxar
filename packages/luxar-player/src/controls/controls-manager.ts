@@ -13,6 +13,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { CONTROL_CONFIG } from './control-config';
+import { log, Modules, LogEmoji } from '../utils/log';
 
 export type ControlType = 'orbit' | 'arcball' | 'fly';
 
@@ -111,7 +112,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Emit change event
     this.dispatchEvent({ type: 'change', controlType: type });
 
-    console.log(`🎮 [Luxar] Switched to ${type} controls`);
+    log.custom(LogEmoji.CONTROLS, Modules.CONTROLS, `Switched to ${type} controls`);
   }
 
   /**
