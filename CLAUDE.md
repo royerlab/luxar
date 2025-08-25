@@ -296,7 +296,7 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 
 #### HDR Color Pipeline Changes (January 2025)
 - **Float32 Colors**: Changed from Uint8Array to Float32Array for HDR color support
-- **nD Slicing Fix**: Updated `dims-navigation.ts` to use `sliceColorsFloat32()` for proper HDR colors
+- **nD Slicing Fix**: Updated slicing algorithms to use `sliceColorsFloat32()` for proper HDR colors
 - **WebGL Limitation**: Discovered WebGL canvas doesn't support true HDR output (limited to 8-bit)
 - **HDR Detection**: Added comprehensive HDR capability detection in `utils/hdr-detection.ts`
 
@@ -314,6 +314,13 @@ This issue was discovered when hierarchical transforms weren't working - all obj
 - **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
 - **TypeScript Integration**: Scene dimensions loaded from zarr attrs, used for step sizes
 - **Examples**: Keep nD examples simple with clear shapes/patterns
+
+#### Data Loading Architecture Refactor (January 2025)
+- **Removed Lazy Loading**: Eliminated LazyDataManager in favor of spatial index-based loading
+- **Spatial Index Required**: All datasets now require spatial indices for efficient loading
+- **Range-Based Caching**: New RangeCache system for intelligent memory management
+- **Improved Monitoring**: Enhanced DataLoadingMonitor with better error handling and disposal
+- **Cleaner Architecture**: Removed intermediate abstractions for simpler, more maintainable code
 
 ### Architecture Overview
 

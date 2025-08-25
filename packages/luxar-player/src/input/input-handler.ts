@@ -424,12 +424,12 @@ export class InputHandler {
 
       case 'm':
       case 'M':
-        // Ctrl+M to toggle data loading monitor
+        // Ctrl+M to cycle data loading monitor (hidden → mini → expanded → hidden)
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
-          import('../data').then(({ toggleDataMonitor }) => {
-            toggleDataMonitor();
-            log.info(Modules.DATA_MONITOR, 'Data loading monitor toggled');
+          import('../data').then(({ cycleDataMonitor }) => {
+            cycleDataMonitor();
+            log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
           });
         }
         break;

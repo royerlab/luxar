@@ -193,7 +193,7 @@ class Dimensions:
     @property
     def spatial_extend_dims(self) -> List[bool]:
         """List of spatial extension flags for all dimensions."""
-        return [d.spatial for d in self.dimensions]
+        return [d.spatial if d.spatial is not None else False for d in self.dimensions]
 
     def get_dimension(self, name: str) -> Optional[Dimension]:
         """Get dimension by name."""

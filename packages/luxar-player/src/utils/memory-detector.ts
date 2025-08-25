@@ -22,7 +22,7 @@ export function detectMemory(): MemoryInfo {
     const availableMB = heapLimitMB - usedMB;
 
     // Use 80% of available heap memory for cache
-    // Since lazy loading is the primary memory consumer, we can be aggressive
+    // Since spatial index loading is the primary memory consumer, we can be aggressive
     const recommended = Math.round(availableMB * 0.8);
 
     // Only apply minimum bound to ensure cache is useful

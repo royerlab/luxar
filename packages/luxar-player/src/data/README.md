@@ -29,10 +29,10 @@ data/
 ├── spatial-index.ts            # Core spatial index query implementation
 ├── range-cache.ts              # Intelligent caching for range-based queries
 ├── data-monitor-manager.ts     # Singleton manager for monitoring UI instances
-├── dimension-update-manager.ts # Bridges dimension navigation with loaders
 ├── directory-navigator.ts      # Multi-strategy server directory browsing
+├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
 ├── data-loader-types.ts        # TypeScript interfaces and types
-├── zarr-loader-utils.ts        # Pure utility functions for data processing
+├── index.ts                    # Package exports
 └── README.md                   # This documentation
 ```
 

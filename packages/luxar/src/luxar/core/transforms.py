@@ -421,8 +421,8 @@ def prepare_transform_for_zarr(transform: Any) -> list[float]:
     validated = validate_transform(transform_matrix)
 
     # Transpose for THREE.js (column-major order) and convert to list
-    result: list[float] = validated.T.ravel().tolist()
-    return result
+    zarr_result: list[float] = validated.T.ravel().tolist()
+    return zarr_result
 
 
 # Convenience function aliases

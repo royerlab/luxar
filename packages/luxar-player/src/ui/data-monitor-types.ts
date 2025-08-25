@@ -103,7 +103,7 @@ export interface SpatialIndexMetrics {
   avgPointsPerCell: number;
   queryEfficiency: number; // Points loaded / points in query region
   lastQueryBounds?: { min: number[]; max: number[] };
-  cellsInCache: number;
+  rangesInCache: number; // Number of cached range queries
 }
 
 /**
@@ -189,10 +189,31 @@ export interface GlobalStats {
 export interface MonitorUIState {
   isVisible: boolean;
   isExpanded: boolean;
-  activeTab: 'overview' | 'spatial' | 'performance' | 'insights';
+  activeTab: 'overview' | 'cache' | 'spatial' | 'performance' | 'insights';
   selectedLoader?: string;
   timeRange: number; // Seconds of history to show
   spatialViewDimensions?: [number, number]; // Which 2D slice to show
+}
+
+/**
+ * Cache metrics for detailed analytics
+ */
+export interface CacheMetrics {
+  totalCacheMemory: number;
+  memoryLimit: number;
+  memoryPercent: number;
+  totalEntries: number;
+  totalAccesses: number;
+  recentHitRate: number;
+  evictionsPerMin: number;
+  avgEntrySize: number;
+  reuseRatio: number;
+  hitsPerSecond: number;
+  missesPerSecond: number;
+  avgAccessTime: number;
+  queriesPerSec: number;
+  loadsPerSec: number;
+  bandwidth: number;
 }
 
 /**

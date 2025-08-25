@@ -179,6 +179,18 @@ export class DataMonitorManager {
   }
 
   /**
+   * Cycle through monitor states: hidden → mini → expanded → hidden
+   *
+   * @param id - Optional monitor ID, defaults to default monitor
+   */
+  cycleMonitor(id?: string): void {
+    const monitor = id ? this.getMonitor(id) : this.getDefaultMonitor();
+    if (monitor) {
+      monitor.cycleState();
+    }
+  }
+
+  /**
    * Reset the singleton instance (mainly for testing)
    */
   static reset(): void {
@@ -205,4 +217,8 @@ export function hideDataMonitor(id?: string): void {
 
 export function toggleDataMonitor(id?: string): void {
   DataMonitorManager.getInstance().toggleMonitor(id);
+}
+
+export function cycleDataMonitor(id?: string): void {
+  DataMonitorManager.getInstance().cycleMonitor(id);
 }
