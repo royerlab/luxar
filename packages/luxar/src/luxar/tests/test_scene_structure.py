@@ -30,4 +30,8 @@ def test_random_demo_roundtrip(tmp_path):
 
     col = grp["colors"]
     assert col.shape == (n, 3)
-    assert col.dtype == np.float32  # HDR colors are now float32
+    # AUTO mode will convert SDR colors to uint8 for efficiency
+    assert col.dtype in [
+        np.float32,
+        np.uint8,
+    ]  # Can be either depending on dtype config
