@@ -995,8 +995,9 @@ export class RenderingControls {
     if (stored) {
       const loadedSettings = deserializeSettings(stored);
       if (loadedSettings) {
-        // Merge with defaults to handle missing properties
-        this.settings = {
+        // Update settings properties IN PLACE to maintain GUI controller bindings
+        // This is critical - replacing the entire settings object breaks the GUI bindings
+        Object.assign(this.settings, {
           ...config.renderingControls.defaults,
           // Override bloom settings with values from rendering.bloom
           bloomThreshold: config.rendering.bloom.threshold,
@@ -1009,7 +1010,7 @@ export class RenderingControls {
           flyDamping: config.controls.fly.movement.damping.default,
           flyRotationDamping: config.controls.fly.rotation.damping.default,
           ...loadedSettings,
-        };
+        });
 
         // Update GUI to reflect loaded values
         this.gui.controllersRecursive().forEach((controller) => {
