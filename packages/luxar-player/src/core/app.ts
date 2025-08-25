@@ -185,14 +185,15 @@ export class LuxarApp {
     // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
     // monitor.disconnectAllLoaders() when loading a new scene
 
+    // Set scene ID for rendering controls persistence BEFORE loading scene
+    // This ensures saved settings (like HDR intensity) are applied before materials are created
+    this.renderingControls.setSceneId(src);
+
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);
 
     // Initialize dimension sliders for nD data
     this.inputHandler.initDimensionSliders();
-
-    // Set scene ID for rendering controls persistence
-    this.renderingControls.setSceneId(src);
 
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
