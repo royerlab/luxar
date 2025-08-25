@@ -412,6 +412,21 @@ export class DataLoadingMonitor {
    * Create UI elements
    */
   private createUI(): void {
+    // Add global styles for the monitor if not already added
+    if (!document.getElementById('luxar-monitor-styles')) {
+      const style = document.createElement('style');
+      style.id = 'luxar-monitor-styles';
+      style.textContent = `
+        .luxar-data-monitor .header-btn:hover {
+          color: #fff !important;
+        }
+        .luxar-data-monitor .expand-btn:hover {
+          color: #fff !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     // Create main panel
     this.panel = document.createElement('div');
     this.panel.className = 'luxar-data-monitor';
@@ -500,7 +515,15 @@ export class DataLoadingMonitor {
           ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
           ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
           
-          <button class="expand-btn" data-action="expand" title="Show details">
+          <button class="expand-btn" data-action="expand" title="Show details" style="
+            background: none;
+            border: none;
+            color: #999;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 4px;
+            transition: color 0.2s;
+          ">
             ⊞
           </button>
         </div>
@@ -532,9 +555,35 @@ export class DataLoadingMonitor {
         <!-- Header -->
         <div class="monitor-header" style="${this.getHeaderStyles()}">
           <h3 style="margin: 0; font-size: 14px;">Data Loading Monitor</h3>
-          <div class="header-actions">
-            <button data-action="minimize" title="Minimize">_</button>
-            <button data-action="hide" title="Close">×</button>
+          <div class="header-actions" style="display: flex; gap: 8px;">
+            <button class="header-btn minimize-btn" data-action="minimize" title="Minimize" style="
+              background: none;
+              border: none;
+              color: #999;
+              font-size: 20px;
+              cursor: pointer;
+              padding: 0;
+              width: 30px;
+              height: 30px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              transition: color 0.2s;
+            ">—</button>
+            <button class="header-btn close-btn" data-action="hide" title="Close" style="
+              background: none;
+              border: none;
+              color: #999;
+              font-size: 24px;
+              cursor: pointer;
+              padding: 0;
+              width: 30px;
+              height: 30px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              transition: color 0.2s;
+            ">×</button>
           </div>
         </div>
         
@@ -554,6 +603,27 @@ export class DataLoadingMonitor {
     if (this.uiState.activeTab === 'performance') {
       this.timeline.initializeCanvas('timeline-canvas');
     }
+    
+    // Add hover effects to header buttons
+    this.addHeaderButtonHoverEffects();
+  }
+  
+  /**
+   * Add hover effects to header buttons
+   */
+  private addHeaderButtonHoverEffects(): void {
+    if (!this.panel) return;
+    
+    const headerButtons = this.panel.querySelectorAll('.header-btn');
+    headerButtons.forEach((btn) => {
+      const button = btn as HTMLButtonElement;
+      button.addEventListener('mouseenter', () => {
+        button.style.color = '#fff';
+      });
+      button.addEventListener('mouseleave', () => {
+        button.style.color = '#999';
+      });
+    });
   }
 
   /**
