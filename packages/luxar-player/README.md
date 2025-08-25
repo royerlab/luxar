@@ -247,8 +247,11 @@ src/
 ├── types/
 │   └── dims.ts                   # Dimension type definitions
 └── utils/
-    ├── slicing.ts                # nD slicing algorithms
-    └── dims-navigation.ts        # Dimension navigation helpers
+    ├── slicing.ts                # nD slicing algorithms  
+    ├── console-interceptor.ts    # Console output capture
+    ├── hdr-detection.ts          # HDR display detection
+    ├── memory-detector.ts        # Memory availability detection
+    └── log.ts                    # Structured logging utility
 ```
 
 ### Available Scripts

@@ -182,14 +182,8 @@ export class LuxarApp {
       }
     });
 
-    // Reset data loading monitor if it exists
-    import('../data/data-monitor-manager').then(({ DataMonitorManager }) => {
-      const dataMonitor = DataMonitorManager.getInstance().getDefaultMonitor();
-      if (dataMonitor && typeof dataMonitor.reset === 'function') {
-        dataMonitor.reset();
-        log.data(Modules.LUXAR, 'Reset data loading monitor for new scene');
-      }
-    });
+    // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
+    // monitor.disconnectAllLoaders() when loading a new scene
 
     // Load scene data (animation loop will continue even if this fails)
     await this.sceneManager.loadSceneData(src);

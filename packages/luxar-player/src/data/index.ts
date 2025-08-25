@@ -28,6 +28,7 @@ export {
   showDataMonitor,
   hideDataMonitor,
   toggleDataMonitor,
+  cycleDataMonitor,
 } from './data-monitor-manager';
 
 // Types

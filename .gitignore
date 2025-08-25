@@ -90,6 +90,7 @@ nosetests.xml
 coverage.xml
 *.cover
 .cache
+coverage/
 
 # Translations
 *.mo

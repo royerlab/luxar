@@ -8,6 +8,7 @@
 
 import { CacheEntry, CacheStats, LoaderConfig, PointRange } from './data-loader-types';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { detectMemory } from '../utils/memory-detector';
 
 /**
  * Cache key generation for point ranges
@@ -68,13 +69,26 @@ export class RangeCache {
     misses: 0,
     evictions: 0,
     bytesEvicted: 0,
+    totalAccessTime: 0, // Total access time in microseconds for precision
+    accessCount: 0, // Total number of accesses (hits + misses)
   };
   private totalMemory = 0;
   private maxMemoryBytes: number;
 
   constructor(config: LoaderConfig = {}) {
+    // Use memory detection if no explicit limit provided
+    let maxMemoryMB = config.maxMemoryMB;
+    if (!maxMemoryMB) {
+      const memInfo = detectMemory();
+      maxMemoryMB = memInfo.recommendedCacheMB;
+      log.info(
+        Modules.CACHE,
+        `Auto-detected cache size: ${maxMemoryMB}MB (confidence: ${memInfo.confidence}, source: ${memInfo.source})`
+      );
+    }
+
     this.config = {
-      maxMemoryMB: config.maxMemoryMB ?? 500,
+      maxMemoryMB,
       debug: config.debug ?? false,
       evictionStrategy: config.evictionStrategy ?? 'lru',
       enableMonitor: config.enableMonitor ?? true,
@@ -86,6 +100,9 @@ export class RangeCache {
    * Get data from cache if available
    */
   get(arrayPath: string, ranges: PointRange[]): Float32Array | null {
+    // Start timing the access
+    const startTime = performance.now();
+
     const key = RangeCacheKey.fromRanges(arrayPath, ranges);
     const entry = this.cache.get(key);
 
@@ -94,6 +111,11 @@ export class RangeCache {
       entry.lastAccess = Date.now();
       entry.accessCount++;
       this.stats.hits++;
+
+      // Track access time in microseconds for precision
+      const accessTime = (performance.now() - startTime) * 1000;
+      this.stats.totalAccessTime += accessTime;
+      this.stats.accessCount++;
 
       if (this.config.debug) {
         log.custom(LogEmoji.CACHE, Modules.CACHE, `Hit for ${key}`);
@@ -111,8 +133,19 @@ export class RangeCache {
     const merged = this.tryMergeFromCache(arrayPath, ranges);
     if (merged) {
       this.stats.hits++;
+
+      // Track access time for merged cache hit
+      const accessTime = (performance.now() - startTime) * 1000;
+      this.stats.totalAccessTime += accessTime;
+      this.stats.accessCount++;
+
       return merged;
     }
+
+    // Track access time for cache miss
+    const accessTime = (performance.now() - startTime) * 1000;
+    this.stats.totalAccessTime += accessTime;
+    this.stats.accessCount++;
 
     return null;
   }
@@ -225,12 +258,19 @@ export class RangeCache {
    */
   getStats(): CacheStats {
     const total = this.stats.hits + this.stats.misses;
+    // Calculate average access time in milliseconds
+    const avgAccessTime =
+      this.stats.accessCount > 0
+        ? this.stats.totalAccessTime / this.stats.accessCount / 1000 // Convert from microseconds to milliseconds
+        : 0;
+
     return {
       numEntries: this.cache.size,
       totalMemory: this.totalMemory,
       hitRate: total > 0 ? this.stats.hits / total : 0,
       hits: this.stats.hits,
       misses: this.stats.misses,
+      avgAccessTime: avgAccessTime,
     };
   }
 
@@ -243,6 +283,14 @@ export class RangeCache {
 
     this.cache.clear();
     this.totalMemory = 0;
+
+    // Reset all statistics
+    this.stats.hits = 0;
+    this.stats.misses = 0;
+    this.stats.evictions = 0;
+    this.stats.bytesEvicted = 0;
+    this.stats.totalAccessTime = 0;
+    this.stats.accessCount = 0;
 
     if (this.config.debug) {
       log.custom(

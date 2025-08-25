@@ -55,6 +55,17 @@ vi.mock('../data/range-cache', () => ({
       numEntries: 2,
       totalMemory: 1024 * 1024,
     }),
+    getMemoryInfo: vi.fn().mockReturnValue({
+      used: 1024 * 1024,
+      max: 100 * 1024 * 1024,
+      percentage: 1,
+    }),
+    getCacheStats: vi.fn().mockReturnValue({
+      hits: 5,
+      misses: 3,
+      evictions: 0,
+      avgAccessTime: 0.5,
+    }),
   })),
 }));
 
@@ -156,7 +167,9 @@ describe('SpatialIndexLoader', () => {
   });
 
   afterEach(() => {
-    loader.dispose();
+    if (loader) {
+      loader.dispose();
+    }
   });
 
   describe('initialization', () => {

@@ -21,6 +21,14 @@ export class PerformanceTimeline {
   private lastLoadTime = 0;
   private recentCacheHits = 0;
   private recentCacheMisses = 0;
+  private lastCacheCounterReset = Date.now();
+
+  // Rendering optimization
+  private renderPending = false;
+  private animationFrameId: number | null = null;
+  private lastRenderTime = 0;
+  private minRenderInterval = 100; // Minimum 100ms between renders (10 FPS max)
+  private needsRender = false;
 
   // Colors
   private colors = {
@@ -61,30 +69,56 @@ export class PerformanceTimeline {
         break;
     }
 
-    // Add timeline point
-    const point: TimelinePoint = {
-      timestamp: now,
-      queryTime: this.lastQueryTime,
-      loadTime: this.lastLoadTime,
-      cacheHitRate: this.calculateRecentCacheRate(),
-      event: event.type,
-      loaderType: event.loader,
-    };
+    // Add timeline point only at reasonable intervals (aggregate events)
+    const lastPoint = this.points[this.points.length - 1];
+    const shouldAddPoint = !lastPoint || now - lastPoint.timestamp > 200; // Max 5 points per second
 
-    this.points.push(point);
+    if (shouldAddPoint) {
+      const point: TimelinePoint = {
+        timestamp: now,
+        queryTime: this.lastQueryTime,
+        loadTime: this.lastLoadTime,
+        cacheHitRate: this.calculateRecentCacheRate(),
+        event: event.type,
+        loaderType: event.loader,
+      };
 
-    // Trim old points
-    if (this.points.length > this.maxPoints) {
-      this.points.shift();
+      this.points.push(point);
+
+      // Efficient trimming: remove old points in one operation
+      // Keep points from last 5 minutes AND respect max points limit
+      const cutoff = now - 300000; // 5 minutes ago
+
+      // Find the index of the first point to keep
+      let keepFromIndex = 0;
+      for (let i = 0; i < this.points.length; i++) {
+        if (this.points[i].timestamp >= cutoff) {
+          keepFromIndex = i;
+          break;
+        }
+      }
+
+      // If we need to trim by time, do it efficiently
+      if (keepFromIndex > 0) {
+        this.points = this.points.slice(keepFromIndex);
+      }
+
+      // Also enforce max points limit efficiently
+      if (this.points.length > this.maxPoints) {
+        // Keep only the most recent maxPoints
+        this.points = this.points.slice(this.points.length - this.maxPoints);
+      }
     }
 
-    // Reset cache counters periodically
-    if (now % 5000 < 100) {
+    // Reset cache counters every 5 seconds (reliable timing)
+    if (now - this.lastCacheCounterReset >= 5000) {
       this.recentCacheHits = 0;
       this.recentCacheMisses = 0;
+      this.lastCacheCounterReset = now;
     }
 
-    this.render();
+    // Schedule render with requestAnimationFrame
+    this.scheduleRender();
   }
 
   /**
@@ -94,7 +128,79 @@ export class PerformanceTimeline {
     this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
     if (this.canvas) {
       this.ctx = this.canvas.getContext('2d');
+
+      // Get the parent container width to ensure canvas fits properly
+      const parent = this.canvas.parentElement;
+      const maxWidth = parent ? parent.clientWidth : 400;
+
+      // Set canvas display size (CSS)
+      this.canvas.style.width = `${maxWidth}px`;
+      this.canvas.style.height = '200px';
+
+      // Set up proper canvas resolution for retina displays
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = maxWidth * dpr;
+      this.canvas.height = 200 * dpr;
+      this.ctx?.scale(dpr, dpr);
+
+      this.scheduleRender();
+    }
+  }
+
+  /**
+   * Set time range (no-op for now, fixed at 60s)
+   */
+  setTimeRange(_range: number): void {
+    // Fixed at 60 seconds, ignore parameter
+    this.timeRange = 60;
+    this.scheduleRender();
+  }
+
+  /**
+   * Schedule render with requestAnimationFrame
+   */
+  private scheduleRender(): void {
+    this.needsRender = true;
+
+    if (!this.renderPending) {
+      this.renderPending = true;
+
+      // Cancel any pending frame
+      if (this.animationFrameId !== null) {
+        cancelAnimationFrame(this.animationFrameId);
+      }
+
+      this.animationFrameId = requestAnimationFrame(() => {
+        this.performRender();
+      });
+    }
+  }
+
+  /**
+   * Perform the actual render with throttling
+   */
+  private performRender(): void {
+    const now = Date.now();
+    const timeSinceLastRender = now - this.lastRenderTime;
+
+    // Throttle renders to max 10 FPS
+    if (timeSinceLastRender < this.minRenderInterval) {
+      // Schedule another frame
+      this.animationFrameId = requestAnimationFrame(() => {
+        this.performRender();
+      });
+      return;
+    }
+
+    // Reset flags
+    this.renderPending = false;
+    this.animationFrameId = null;
+    this.lastRenderTime = now;
+
+    // Only render if we actually need to
+    if (this.needsRender) {
       this.render();
+      this.needsRender = false;
     }
   }
 
@@ -105,8 +211,10 @@ export class PerformanceTimeline {
     if (!this.canvas || !this.ctx) return;
 
     const ctx = this.ctx;
-    const width = this.canvas.width;
-    const height = this.canvas.height;
+    // Use display size, not pixel size (for retina displays)
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
 
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
@@ -311,14 +419,6 @@ export class PerformanceTimeline {
   }
 
   /**
-   * Set time range
-   */
-  setTimeRange(seconds: number): void {
-    this.timeRange = seconds;
-    this.render();
-  }
-
-  /**
    * Clear timeline
    */
   clear(): void {
@@ -327,7 +427,8 @@ export class PerformanceTimeline {
     this.lastLoadTime = 0;
     this.recentCacheHits = 0;
     this.recentCacheMisses = 0;
-    this.render();
+    this.lastCacheCounterReset = Date.now();
+    this.scheduleRender();
   }
 
   /**
@@ -375,8 +476,46 @@ export class PerformanceTimeline {
    * Dispose
    */
   dispose(): void {
+    const errors: Error[] = [];
+
+    // Cancel any pending animation frame
+    if (this.animationFrameId !== null) {
+      try {
+        cancelAnimationFrame(this.animationFrameId);
+      } catch (error) {
+        // Non-critical - animation frame may already be cancelled
+        errors.push(new Error(`Failed to cancel animation frame: ${error}`));
+      }
+      this.animationFrameId = null;
+    }
+
+    // Clear context and canvas references
+    if (this.ctx && this.canvas) {
+      try {
+        // Clear the canvas before disposing
+        const rect = this.canvas.getBoundingClientRect();
+        if (rect && rect.width > 0 && rect.height > 0) {
+          this.ctx.clearRect(0, 0, rect.width, rect.height);
+        }
+      } catch (error) {
+        // Canvas might be detached or context lost - non-critical
+        errors.push(new Error(`Failed to clear canvas: ${error}`));
+      }
+    }
+
+    // Clear references to allow garbage collection
     this.canvas = null;
     this.ctx = null;
     this.points = [];
+
+    // Reset render state
+    this.renderPending = false;
+    this.needsRender = false;
+    this.lastRenderTime = 0;
+
+    // Log any non-critical errors for debugging
+    if (errors.length > 0) {
+      console.debug('[PerformanceTimeline] Disposal completed with non-critical errors:', errors);
+    }
   }
 }

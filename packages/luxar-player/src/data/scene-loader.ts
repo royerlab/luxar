@@ -65,6 +65,19 @@ export class SceneLoader {
   async loadScene(url: string): Promise<THREE.Group> {
     log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
 
+    // Clear any existing loaders from monitor before loading new scene
+    if (this.monitorId) {
+      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+      if (monitor) {
+        monitor.disconnectAllLoaders();
+      }
+    }
+
+    // Dispose of any existing loaders
+    if (this.loaders.size > 0) {
+      this.dispose();
+    }
+
     // Open zarr store
     const rawStore = new zarr.FetchStore(this.normalizeURL(url));
     this.store = await zarr.tryWithConsolidated(rawStore);
@@ -89,6 +102,15 @@ export class SceneLoader {
 
     // Load point clouds
     await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
+
+    // Force update the monitor UI after all loaders are connected
+    // This ensures the UI shows the correct state even if no events have fired yet
+    if (this.monitorId) {
+      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+      if (monitor) {
+        monitor.forceUpdate();
+      }
+    }
 
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
     return this.rootGroup;

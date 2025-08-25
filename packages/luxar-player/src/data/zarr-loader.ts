@@ -36,11 +36,9 @@ export async function loadScene(
 
   const manager = SceneLoaderManager.getInstance();
 
-  // Create or reuse scene loader
-  let sceneLoader = manager.getLoader(loaderId);
-  if (!sceneLoader) {
-    sceneLoader = manager.createLoader(loaderId, config);
-  }
+  // Always create a fresh scene loader for each load to ensure clean state
+  // This properly disposes the old loader and its connections if it exists
+  const sceneLoader = manager.createLoader(loaderId, config);
 
   try {
     // Load the scene

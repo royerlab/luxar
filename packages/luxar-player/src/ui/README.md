@@ -12,6 +12,7 @@ The Luxar UI package provides a comprehensive set of user interface components f
 - **Rendering Controls**: Real-time adjustment of visual parameters
 - **Dataset Browser**: Navigate and load Zarr datasets
 - **Performance Monitor**: FPS and GPU memory tracking
+- **Data Loading Monitor**: Real-time monitoring of spatial index-based data loading
 - **Debug Console**: In-app console for development
 - **Helper Overlays**: Keyboard shortcuts and tips
 - **Responsive Design**: Mobile and desktop friendly
@@ -20,13 +21,19 @@ The Luxar UI package provides a comprehensive set of user interface components f
 
 ```
 ui/
-├── dimension-sliders.ts    # nD navigation controls
-├── rendering-controls.ts   # Visual parameter adjustments
-├── dataset-browser.ts      # Zarr dataset navigation
-├── performance-monitor.ts  # FPS and performance stats
-├── debug-console.ts        # Developer console overlay
-├── helpers.ts             # Help overlays and tooltips
-└── README.md              # This documentation
+├── dimension-sliders.ts         # nD navigation controls
+├── rendering-controls.ts        # Visual parameter adjustments
+├── dataset-browser.ts           # Zarr dataset navigation
+├── performance-monitor.ts       # FPS and performance stats
+├── data-loading-monitor.ts      # Data loading performance monitoring
+├── data-loading-monitor-styles.ts # Styling for data monitor
+├── data-monitor-types.ts        # Type definitions for monitoring
+├── debug-console.ts             # Developer console overlay
+├── helpers.ts                   # Help overlays and tooltips
+├── components/                  # Reusable UI components
+│   ├── loading-advisor.ts       # Smart recommendations engine
+│   └── performance-timeline.ts  # Real-time performance graphs
+└── README.md                    # This documentation
 ```
 
 ---
@@ -154,22 +161,161 @@ Real-time performance statistics overlay.
 └─────────────────┘
 ```
 
-### 5. Debug Console
+### 5. Data Loading Monitor
 
-In-app console for development and debugging.
+Advanced real-time monitoring system for spatial index-based data loading with performance analytics and smart recommendations.
 
 **Features:**
 
-- Captures all console output
-- Syntax highlighting
-- Command history
-- Object inspection
+- **Three-State UI**: Cycles through hidden → mini → expanded views
+- **Event-Driven Monitoring**: Tracks queries, loads, cache hits/misses, evictions
+- **Cache Analytics**: Detailed cache memory usage and hit rate statistics
+- **Performance Timeline**: Real-time graphing of loading performance
+- **Smart Recommendations**: AI-powered suggestions for optimization
+- **Multi-Loader Support**: Monitors multiple data loaders simultaneously
+
+**UI States:**
+
+1. **Hidden**: No UI visible (default on startup)
+2. **Mini View**: Compact metrics bar showing key statistics
+3. **Expanded View**: Full panel with tabs for detailed analytics
+
+**Keyboard Shortcut:** `Ctrl+M` to cycle through states
+
+**Architecture:**
+
+```typescript
+// Managed by DataMonitorManager singleton
+DataMonitorManager.getInstance().createMonitor(id, container).connectLoader(path, loader);
+
+// Monitor receives events from loaders
+loader.addEventListener((event: MonitorEvent) => {
+  // Event types: query, load, cache-hit, cache-miss, evict, error
+});
+```
+
+**Tabs in Expanded View:**
+
+1. **Overview Tab**
+   - Global statistics (total points, memory, loaders)
+   - Active loader list with real-time status
+   - Key performance indicators
+   - Recent events stream
+
+2. **Cache Tab**
+   - Cache memory usage with visual gauge
+   - Hit rate statistics (global and recent)
+   - Cached ranges count and average size
+   - Cache performance metrics (hits/sec, misses/sec)
+   - Memory breakdown by data type
+
+3. **Performance Tab**
+   - Real-time performance timeline graph
+   - Query latency tracking
+   - Load time analysis
+   - Bandwidth utilization
+   - Historical trends
+
+4. **Insights Tab**
+   - Smart recommendations from LoadingAdvisor
+   - Severity-based alerts (error, warning, info)
+   - Actionable optimization suggestions
+   - Performance bottleneck detection
+
+**Performance Optimizations:**
+
+- **Event Cleanup**: Automatically removes events older than 5 minutes
+- **Rate Caching**: Calculations cached for 1 second to reduce CPU usage
+- **Timeline Batching**: Uses requestAnimationFrame with 10 FPS throttling
+- **Efficient Updates**: Only re-renders changed UI sections
+
+**Integration with Scene Loading:**
+
+```typescript
+// Automatic integration - no setup required!
+// SceneLoader creates monitor on construction
+const loader = new SceneLoader(config);
+
+// Monitor automatically connects to spatial index loaders
+// Tracks all data loading operations
+// Disconnects old loaders when loading new scenes
+```
+
+**Event Types Monitored:**
+
+- `query`: Spatial index query with cell/point counts
+- `load`: Data chunk loaded with memory usage
+- `cache-hit`: Data served from cache
+- `cache-miss`: Cache miss requiring network load
+- `evict`: Cache eviction due to memory pressure
+- `error`: Loading errors with details
+
+**Usage Example:**
+
+```typescript
+import { cycleDataMonitor } from '../data';
+
+// Toggle monitor with Ctrl+M
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'm') {
+    cycleDataMonitor(); // Cycles: hidden → mini → expanded → hidden
+  }
+});
+```
+
+**Configuration Options:**
+
+```typescript
+interface MonitorConfig {
+  position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  theme: 'dark' | 'light';
+  defaultView: 'compact' | 'detailed';
+  updateInterval: number; // UI update frequency (ms)
+  maxEvents: number; // Maximum events to store
+  showSpatialGrid: boolean; // Show spatial index visualization
+  showTimeline: boolean; // Show performance timeline
+  showRecommendations: boolean; // Show LoadingAdvisor tips
+  autoExpand: boolean; // Auto-expand on warnings
+  enableProfiling: boolean; // Enable detailed profiling
+  sampleRate: number; // Event sampling rate (0-1)
+}
+```
+
+**Key Benefits:**
+
+- **Zero Configuration**: Automatic integration with scene loading
+- **Real-time Insights**: Immediate visibility into loading performance
+- **Smart Recommendations**: AI-powered optimization suggestions
+- **Performance Optimized**: Minimal overhead with intelligent batching
+- **Developer Friendly**: Clean API and comprehensive documentation
+
+### 6. Debug Console
+
+In-app developer console for debugging and diagnostics.
+
+**Features:**
+
+- Console output capture and display
+- Command execution
 - Network request logging
 - Error stack traces
+- Performance profiling
+- Local storage inspection
 
 **Keyboard Shortcut:** `Ctrl+L` to toggle
 
-### 6. Helper Overlays
+**Interface:**
+
+```typescript
+class DebugConsole {
+  toggle(): void;
+  clear(): void;
+  log(message: string, level?: 'info' | 'warn' | 'error'): void;
+  executeCommand(command: string): void;
+}
+```
+
+### 7. Helper Overlays
 
 Context-sensitive help and keyboard shortcuts.
 
@@ -283,6 +429,7 @@ Global keyboard shortcuts managed by the UI system:
 | `P`      | Toggle performance monitor | Global              |
 | `R`      | Toggle rendering controls  | Global              |
 | `D`      | Toggle dimension sliders   | When nD data loaded |
+| `Ctrl+M` | Cycle data loading monitor | Global              |
 | `Ctrl+L` | Toggle debug console       | Development mode    |
 | `Esc`    | Close active panel         | Any panel open      |
 
@@ -396,6 +543,7 @@ function restoreUIState(): UIState {
 
 ```typescript
 import { DimensionSliders, RenderingControls, PerformanceMonitor, DatasetBrowser } from './ui';
+import { DataMonitorManager } from '../data';
 
 // Initialize UI components
 const ui = {
@@ -404,6 +552,14 @@ const ui = {
   performance: new PerformanceMonitor(renderer),
   browser: new DatasetBrowser(),
 };
+
+// Data loading monitor is automatically created by SceneLoader
+// But you can access it via the manager:
+const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
+if (monitor) {
+  // Monitor is already connected to loaders automatically
+  // Use Ctrl+M to show/hide/expand
+}
 
 // Connect to application
 ui.dimensions.on('change', updateSlice);
@@ -603,6 +759,22 @@ Override default styles:
 | `refresh()`      | Reload current directory |
 | `setServer(url)` | Change data server       |
 | `getSelection()` | Get selected dataset     |
+
+### DataLoadingMonitor
+
+| Method                           | Description                           |
+| -------------------------------- | ------------------------------------- |
+| `connectLoader(path, loader)`    | Connect a loader for monitoring       |
+| `disconnectLoader(path)`         | Disconnect a specific loader          |
+| `disconnectAllLoaders()`         | Disconnect all loaders (scene change) |
+| `show()/hide()/toggle()`         | Control visibility                    |
+| `cycleState()`                   | Cycle through hidden→mini→expanded    |
+| `expand()/minimize()/collapse()` | Control expanded state                |
+| `getGlobalStats()`               | Get aggregated statistics             |
+| `getLoaderMetrics(path)`         | Get metrics for specific loader       |
+| `getRecommendations()`           | Get optimization recommendations      |
+| `setActiveTab(tab)`              | Switch between overview/cache/spatial |
+| `dispose()`                      | Clean up resources                    |
 
 ---
 

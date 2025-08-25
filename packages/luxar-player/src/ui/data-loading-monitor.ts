@@ -17,12 +17,19 @@ import type {
   Recommendation,
   MonitorEventType,
   LoaderType,
+  CacheMetrics,
 } from './data-monitor-types';
 
-import { SpatialQueryVisualizer } from './components/spatial-query-visualizer';
 import { PerformanceTimeline } from './components/performance-timeline';
 import { LoadingAdvisor } from './components/loading-advisor';
 import { log, Modules } from '../utils/log';
+import {
+  MonitorColors,
+  MonitorTypography,
+  MonitorSpacing,
+  MonitorEffects,
+  MonitorStyles,
+} from './data-loading-monitor-styles';
 
 /**
  * Main Data Loading Monitor class
@@ -36,7 +43,6 @@ export class DataLoadingMonitor {
   private queries = new Map<string, QueryInfo>();
 
   // UI Components
-  private spatialViz: SpatialQueryVisualizer;
   private timeline: PerformanceTimeline;
   private advisor: LoadingAdvisor;
 
@@ -54,6 +60,22 @@ export class DataLoadingMonitor {
   // Update tracking
   private updateTimer: number | null = null;
   private lastUpdateTime = 0;
+
+  // Performance optimization
+  private lastEventCleanup = 0;
+  private eventCleanupInterval = 30000; // Clean events every 30 seconds
+  private maxEventAge = 300000; // Keep events for 5 minutes
+
+  // Cached calculations
+  private cachedRates = {
+    queriesPerSec: 0,
+    loadsPerSec: 0,
+    hitsPerSec: 0,
+    missesPerSec: 0,
+    bandwidth: 0,
+    lastCalculated: 0,
+  };
+  private ratesCacheTimeout = 1000; // Recalculate rates every second max
 
   // Event listener for external updates
   private eventListener = this.handleLoaderEvent.bind(this);
@@ -79,7 +101,6 @@ export class DataLoadingMonitor {
     };
 
     // Initialize components
-    this.spatialViz = new SpatialQueryVisualizer();
     this.timeline = new PerformanceTimeline();
     this.advisor = new LoadingAdvisor();
 
@@ -103,9 +124,9 @@ export class DataLoadingMonitor {
     // Analyze metrics for recommendations
     this.advisor.analyzeMetrics(metrics);
 
-    // Update UI if visible
+    // Schedule an update if visible to show the new loader
     if (this.uiState.isVisible) {
-      this.updateUI();
+      this.scheduleUpdate();
     }
   }
 
@@ -122,6 +143,33 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Disconnect all loaders and reset monitor state
+   * This should be called when loading a new scene
+   */
+  public disconnectAllLoaders(): void {
+    // Disconnect all loaders
+    for (const loader of this.loaders.values()) {
+      loader.removeEventListener(this.eventListener);
+    }
+    this.loaders.clear();
+    this.metrics.clear();
+
+    // Reset other state but keep recent events for debugging
+    this.queries.clear();
+
+    // Reset components
+    this.timeline.clear();
+    this.advisor.clear();
+
+    // Update UI to reflect cleared state if visible
+    if (this.uiState.isVisible) {
+      this.updateUI();
+    }
+
+    log.info(Modules.DATA_MONITOR, 'All loaders disconnected and monitor state reset');
+  }
+
+  /**
    * Handle events from loaders
    */
   private handleLoaderEvent(event: MonitorEvent): void {
@@ -129,6 +177,13 @@ export class DataLoadingMonitor {
     this.events.push(event);
     if (this.events.length > this.config.maxEvents) {
       this.events.shift();
+    }
+
+    // Clean old events periodically by time
+    const now = Date.now();
+    if (now - this.lastEventCleanup > this.eventCleanupInterval) {
+      this.cleanOldEvents();
+      this.lastEventCleanup = now;
     }
 
     // Update metrics
@@ -139,8 +194,7 @@ export class DataLoadingMonitor {
       this.trackQuery(event);
     }
 
-    // Update components
-    this.spatialViz.handleEvent(event);
+    // Update components (timeline will batch its own rendering)
     this.timeline.addEvent(event);
 
     // Check for issues
@@ -152,6 +206,9 @@ export class DataLoadingMonitor {
         this.expand();
       }
     }
+
+    // Invalidate cached rates
+    this.cachedRates.lastCalculated = 0;
 
     // Schedule UI update
     this.scheduleUpdate();
@@ -225,12 +282,16 @@ export class DataLoadingMonitor {
       ranges: event.data.ranges,
     });
 
-    // Clean up old queries
-    const cutoff = Date.now() - 60000; // Keep last minute
-    for (const [id, query] of this.queries) {
-      if (query.startTime < cutoff) {
-        this.queries.delete(id);
+    // Clean up old queries more efficiently - only check every 10 queries
+    if (this.queries.size % 10 === 0) {
+      const cutoff = Date.now() - 60000; // Keep last minute
+      const toDelete: string[] = [];
+      for (const [id, query] of this.queries) {
+        if (query.startTime < cutoff) {
+          toDelete.push(id);
+        }
       }
+      toDelete.forEach((id) => this.queries.delete(id));
     }
   }
 
@@ -253,7 +314,7 @@ export class DataLoadingMonitor {
       avgLoadTime: 0,
       cacheHitRate: 0,
       memoryUsed: 0,
-      memoryLimit: 500 * 1024 * 1024, // 500MB default
+      memoryLimit: 1024 * 1024 * 1024, // 1GB default (will be overridden by actual loader limits)
     };
   }
 
@@ -261,6 +322,9 @@ export class DataLoadingMonitor {
    * Schedule UI update
    */
   private scheduleUpdate(): void {
+    // Skip if monitor is not visible
+    if (!this.uiState.isVisible) return;
+
     if (this.updateTimer !== null) return;
 
     const now = Date.now();
@@ -273,6 +337,21 @@ export class DataLoadingMonitor {
         this.updateTimer = null;
         this.updateUI();
       }, this.config.updateInterval - timeSinceLastUpdate);
+    }
+  }
+
+  /**
+   * Force an immediate UI update
+   * Used when scene changes or loaders are connected
+   */
+  public forceUpdate(): void {
+    if (this.uiState.isVisible) {
+      // Cancel any pending update
+      if (this.updateTimer !== null) {
+        clearTimeout(this.updateTimer);
+        this.updateTimer = null;
+      }
+      this.updateUI();
     }
   }
 
@@ -354,20 +433,25 @@ export class DataLoadingMonitor {
    */
   private getPanelStyles(): string {
     const positions: Record<string, string> = {
-      'top-left': 'top: 20px; left: 20px;',
-      'top-right': 'top: 20px; right: 20px;',
-      'bottom-left': 'bottom: 20px; left: 20px;',
-      'bottom-right': 'bottom: 20px; right: 20px;',
+      'top-left': `top: ${MonitorSpacing.panelMargin}px; left: ${MonitorSpacing.panelMargin}px;`,
+      'top-right': `top: ${MonitorSpacing.panelMargin}px; right: ${MonitorSpacing.panelMargin}px;`,
+      'bottom-left': `bottom: ${MonitorSpacing.panelMargin}px; left: ${MonitorSpacing.panelMargin}px;`,
+      'bottom-right': `bottom: ${MonitorSpacing.panelMargin}px; right: ${MonitorSpacing.panelMargin}px;`,
     };
+
+    // Set fixed width for expanded mode, auto for compact mode
+    const widthStyle = this.uiState.isExpanded
+      ? 'width: 480px; min-width: 480px; max-width: 480px;'
+      : 'width: auto;';
 
     return `
       position: fixed;
       ${positions[this.config.position]}
-      z-index: 10000;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 12px;
+      ${MonitorStyles.panel.base}
+      ${widthStyle}
       user-select: none;
       pointer-events: auto;
+      box-sizing: border-box;
     `;
   }
 
@@ -376,6 +460,12 @@ export class DataLoadingMonitor {
    */
   private updateCompactView(): void {
     if (!this.panel) return;
+
+    // Update metrics from all loaders first
+    for (const [path, loader] of this.loaders) {
+      const metrics = loader.getMetrics();
+      this.metrics.set(path, metrics);
+    }
 
     const stats = this.getGlobalStats();
     const hasSpatialIndex = stats.activeSpatialLoaders > 0;
@@ -418,9 +508,6 @@ export class DataLoadingMonitor {
         ${
           hasSpatialIndex && this.config.showSpatialGrid
             ? `
-          <div class="mini-spatial" style="${this.getMiniSpatialStyles()}">
-            ${this.spatialViz.renderMiniGrid()}
-          </div>
         `
             : ''
         }
@@ -433,6 +520,12 @@ export class DataLoadingMonitor {
    */
   private updateDetailedView(): void {
     if (!this.panel) return;
+
+    // Update metrics from all loaders first
+    for (const [path, loader] of this.loaders) {
+      const metrics = loader.getMetrics();
+      this.metrics.set(path, metrics);
+    }
 
     this.panel.innerHTML = `
       <div class="monitor-detailed" style="${this.getDetailedStyles()}">
@@ -458,9 +551,7 @@ export class DataLoadingMonitor {
     `;
 
     // Reinitialize component canvases if needed
-    if (this.uiState.activeTab === 'spatial') {
-      this.spatialViz.initializeCanvas('spatial-grid-canvas');
-    } else if (this.uiState.activeTab === 'performance') {
+    if (this.uiState.activeTab === 'performance') {
       this.timeline.initializeCanvas('timeline-canvas');
     }
   }
@@ -471,7 +562,7 @@ export class DataLoadingMonitor {
   private renderTabs(): string {
     const tabs = [
       { id: 'overview', label: 'Overview', icon: '📊' },
-      { id: 'spatial', label: 'Spatial', icon: '🔍' },
+      { id: 'cache', label: 'Cache', icon: '💾' },
       { id: 'performance', label: 'Performance', icon: '⚡' },
       { id: 'insights', label: 'Insights', icon: '💡' },
     ];
@@ -482,9 +573,9 @@ export class DataLoadingMonitor {
       <button 
         class="tab ${this.uiState.activeTab === tab.id ? 'active' : ''}"
         data-action="setTab" data-tab-id="${tab.id}"
-        style="${this.getTabButtonStyles(this.uiState.activeTab === tab.id)}"
+        style="${this.getTabButtonStyles(this.uiState.activeTab === tab.id)}; white-space: nowrap;"
       >
-        ${tab.icon} ${tab.label}
+        ${tab.icon}&nbsp;${tab.label}
       </button>
     `
       )
@@ -498,8 +589,8 @@ export class DataLoadingMonitor {
     switch (this.uiState.activeTab) {
       case 'overview':
         return this.renderOverviewTab();
-      case 'spatial':
-        return this.renderSpatialTab();
+      case 'cache':
+        return this.renderCacheTab();
       case 'performance':
         return this.renderPerformanceTab();
       case 'insights':
@@ -510,92 +601,183 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Render overview tab
+   * Render overview tab with cleaner visual hierarchy
    */
   private renderOverviewTab(): string {
     const stats = this.getGlobalStats();
+    const cacheColor = this.getCacheRateColor(stats.globalCacheHitRate);
+    // Get actual memory limit from cache metrics
+    const cacheMetrics = this.getCacheMetrics();
+    const memoryPercent =
+      cacheMetrics.memoryLimit > 0 ? (stats.totalMemory / cacheMetrics.memoryLimit) * 100 : 0;
 
     return `
       <div class="overview-content">
-        <div class="stats-grid" style="${this.getStatsGridStyles()}">
-          <div class="stat-card">
-            <label>Active Loaders</label>
-            <value>${stats.totalLoaders}</value>
-            <detail>${stats.activeSpatialLoaders} spatial index loaders</detail>
+        <!-- Primary metrics with large, clear values -->
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
+          
+          <div style="background: ${MonitorColors.sectionBg}; padding: 15px; border-radius: 6px;">
+            <div style="font-size: 32px; font-weight: bold; color: ${MonitorColors.success};">
+              ${this.formatNumber(stats.totalPoints)}
+            </div>
+            <div style="font-size: 11px; color: ${MonitorColors.muted}; margin-top: 4px;">
+              POINTS LOADED
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 2px;">
+              ${stats.totalLoaders} loaders (${stats.activeSpatialLoaders} spatial)
+            </div>
           </div>
           
-          <div class="stat-card">
-            <label>Total Points</label>
-            <value>${this.formatNumber(stats.totalPoints)}</value>
-            <detail>${this.formatBytes(stats.totalMemory)} in memory</detail>
+          <div style="background: ${MonitorColors.sectionBg}; padding: 15px; border-radius: 6px;">
+            <div style="font-size: 32px; font-weight: bold; color: ${cacheColor};">
+              ${stats.globalCacheHitRate.toFixed(0)}%
+            </div>
+            <div style="font-size: 11px; color: ${MonitorColors.muted}; margin-top: 4px;">
+              CACHE HIT RATE
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 2px;">
+              ${stats.totalCacheHits}/${stats.totalCacheHits + (stats.totalQueries - stats.totalCacheHits)} hits
+            </div>
           </div>
           
-          <div class="stat-card">
-            <label>Cache Performance</label>
-            <value>${stats.globalCacheHitRate.toFixed(1)}%</value>
-            <detail>Hit rate</detail>
+        </div>
+        
+        <!-- Secondary metrics bar -->
+        <div style="display: flex; gap: 20px; padding: 10px; background: ${MonitorColors.sectionBg}; border-radius: 4px; margin-bottom: 15px;">
+          <div style="flex: 1;">
+            <span style="color: ${MonitorColors.muted}; font-size: 10px;">MEMORY</span>
+            <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+              ${this.formatBytes(stats.totalMemory)}
+            </div>
+            <div style="height: 2px; background: rgba(255,255,255,0.1); margin-top: 4px;">
+              <div style="height: 100%; background: ${this.getCacheMemoryColor(memoryPercent)}; width: ${Math.min(100, memoryPercent)}%;"></div>
+            </div>
           </div>
           
-          <div class="stat-card">
-            <label>Query Performance</label>
-            <value>${stats.avgQueryTime.toFixed(0)}ms</value>
-            <detail>${stats.queriesPerSecond.toFixed(1)} queries/sec</detail>
+          <div style="flex: 1;">
+            <span style="color: ${MonitorColors.muted}; font-size: 10px;">QUERY SPEED</span>
+            <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+              ${stats.avgQueryTime.toFixed(0)}ms
+            </div>
+            <div style="color: ${MonitorColors.dimmed}; font-size: 10px;">
+              ${stats.queriesPerSecond.toFixed(1)}/sec
+            </div>
+          </div>
+          
+          <div style="flex: 1;">
+            <span style="color: ${MonitorColors.muted}; font-size: 10px;">LOAD SPEED</span>
+            <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+              ${stats.totalLoads} loads
+            </div>
+            <div style="color: ${MonitorColors.dimmed}; font-size: 10px;">
+              ${this.formatBytes(stats.totalMemoryUsed)}/s
+            </div>
           </div>
         </div>
         
-        <!-- Loader breakdown -->
-        <div class="loader-list" style="margin-top: 15px;">
-          <h4 style="margin: 0 0 10px 0; font-size: 12px; opacity: 0.7;">Active Loaders</h4>
-          ${this.renderLoaderList()}
+        <!-- Compact loader list -->
+        <div class="loader-list">
+          <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">ACTIVE LOADERS</h4>
+          <div style="max-height: 150px; overflow-y: auto;">
+            ${this.renderCompactLoaderList()}
+          </div>
         </div>
       </div>
     `;
   }
 
   /**
-   * Render spatial tab
+   * Render comprehensive cache analytics tab
    */
-  private renderSpatialTab(): string {
-    const spatialMetrics = this.getSpatialMetrics();
-
-    if (!spatialMetrics) {
-      return `
-        <div class="no-spatial" style="text-align: center; padding: 20px; opacity: 0.5;">
-          No spatial index active
-        </div>
-      `;
-    }
+  private renderCacheTab(): string {
+    const stats = this.getGlobalStats();
+    const cacheMetrics = this.getCacheMetrics();
 
     return `
-      <div class="spatial-content">
-        <!-- Grid visualization -->
-        <div class="spatial-grid">
-          <canvas id="spatial-grid-canvas" width="400" height="300"></canvas>
+      <div class="cache-content">
+        <!-- Cache overview cards -->
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
+          
+          <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 4px;">
+            <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">CACHE MEMORY</div>
+            <div style="font-size: 24px; font-weight: bold; color: ${MonitorColors.success};">
+              ${this.formatBytes(cacheMetrics.totalCacheMemory)}
+            </div>
+            <div style="margin-top: 6px;">
+              <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px;">
+                <div style="height: 100%; background: ${this.getCacheMemoryColor(cacheMetrics.memoryPercent)}; width: ${cacheMetrics.memoryPercent}%; border-radius: 2px;"></div>
+              </div>
+              <div style="font-size: 9px; color: ${MonitorColors.dimmed}; margin-top: 2px;">
+                ${cacheMetrics.memoryPercent.toFixed(0)}% of ${this.formatBytes(cacheMetrics.memoryLimit)}
+              </div>
+            </div>
+          </div>
+          
+          <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 4px;">
+            <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">HIT RATE</div>
+            <div style="font-size: 24px; font-weight: bold; color: ${this.getCacheRateColor(stats.globalCacheHitRate)};">
+              ${stats.globalCacheHitRate.toFixed(1)}%
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 4px;">
+              ${cacheMetrics.recentHitRate.toFixed(0)}% recent (1m)
+            </div>
+            <div style="font-size: 9px; color: ${MonitorColors.muted}; margin-top: 2px;">
+              ${stats.totalCacheHits} hits / ${cacheMetrics.totalAccesses} total
+            </div>
+          </div>
+          
+          <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 4px;">
+            <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">CACHED RANGES</div>
+            <div style="font-size: 24px; font-weight: bold; color: ${MonitorColors.primaryText};">
+              ${cacheMetrics.totalEntries}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 4px;">
+              ${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min
+            </div>
+          </div>
+          
+          <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 4px;">
+            <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">AVG RANGE SIZE</div>
+            <div style="font-size: 24px; font-weight: bold; color: ${MonitorColors.primaryText};">
+              ${this.formatBytes(cacheMetrics.avgEntrySize)}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 4px;">
+              Reuse: ${cacheMetrics.reuseRatio.toFixed(1)}x
+            </div>
+          </div>
+          
         </div>
         
-        <!-- Spatial metrics -->
-        <div class="spatial-stats" style="${this.getStatsGridStyles()}">
-          <div class="stat-card">
-            <label>Grid Shape</label>
-            <value>${spatialMetrics.gridShape.join('×')}</value>
-          </div>
-          
-          <div class="stat-card">
-            <label>Occupancy</label>
-            <value>${spatialMetrics.occupiedCells}/${spatialMetrics.totalCells}</value>
-            <detail>${((spatialMetrics.occupiedCells / spatialMetrics.totalCells) * 100).toFixed(1)}%</detail>
-          </div>
-          
-          <div class="stat-card">
-            <label>Avg Cells/Query</label>
-            <value>${spatialMetrics.avgCellsPerQuery.toFixed(1)}</value>
-          </div>
-          
-          <div class="stat-card">
-            <label>Query Efficiency</label>
-            <value>${spatialMetrics.queryEfficiency.toFixed(1)}%</value>
+        <!-- Cache performance metrics -->
+        <div style="margin-bottom: 15px;">
+          <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">CACHE PERFORMANCE</h4>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+            <div style="background: ${MonitorColors.sectionBg}; padding: 8px; border-radius: 4px; text-align: center;">
+              <div style="font-size: 16px; font-weight: bold; color: ${MonitorColors.info};">
+                ${cacheMetrics.hitsPerSecond.toFixed(1)}/s
+              </div>
+              <div style="font-size: 9px; color: ${MonitorColors.muted};">Hits/sec</div>
+            </div>
+            <div style="background: ${MonitorColors.sectionBg}; padding: 8px; border-radius: 4px; text-align: center;">
+              <div style="font-size: 16px; font-weight: bold; color: ${MonitorColors.warning};">
+                ${cacheMetrics.missesPerSecond.toFixed(1)}/s
+              </div>
+              <div style="font-size: 9px; color: ${MonitorColors.muted};">Misses/sec</div>
+            </div>
+            <div style="background: ${MonitorColors.sectionBg}; padding: 8px; border-radius: 4px; text-align: center;">
+              <div style="font-size: 16px; font-weight: bold; color: ${this.getAccessTimeColor(cacheMetrics.avgAccessTime)};">
+                ${
+                  cacheMetrics.avgAccessTime < 1
+                    ? (cacheMetrics.avgAccessTime * 1000).toFixed(0) + 'μs' // Show in microseconds if < 1ms
+                    : cacheMetrics.avgAccessTime.toFixed(2) + 'ms'
+                }
+              </div>
+              <div style="font-size: 9px; color: ${MonitorColors.muted};">Avg Access</div>
+            </div>
           </div>
         </div>
+        
+        
       </div>
     `;
   }
@@ -605,17 +787,11 @@ export class DataLoadingMonitor {
    */
   private renderPerformanceTab(): string {
     return `
-      <div class="performance-content">
-        <canvas id="timeline-canvas" width="400" height="200"></canvas>
+      <div class="performance-content" style="width: 100%; overflow: hidden;">
+        <canvas id="timeline-canvas" style="width: 100%; height: 200px;"></canvas>
         
-        <div class="timeline-controls" style="margin-top: 10px;">
-          <label>Time Range:</label>
-          <select data-action="setTimeRange">
-            <option value="10" ${this.uiState.timeRange === 10 ? 'selected' : ''}>10s</option>
-            <option value="30" ${this.uiState.timeRange === 30 ? 'selected' : ''}>30s</option>
-            <option value="60" ${this.uiState.timeRange === 60 ? 'selected' : ''}>1m</option>
-            <option value="300" ${this.uiState.timeRange === 300 ? 'selected' : ''}>5m</option>
-          </select>
+        <div class="timeline-controls" style="margin-top: 10px; font-size: 11px; color: ${MonitorColors.muted};">
+          Performance timeline (1 minute window)
         </div>
         
         <!-- Recent events -->
@@ -670,28 +846,7 @@ export class DataLoadingMonitor {
   /**
    * Render loader list
    */
-  private renderLoaderList(): string {
-    const entries = Array.from(this.metrics.entries());
-
-    if (entries.length === 0) {
-      return '<div style="opacity: 0.5;">No active loaders</div>';
-    }
-
-    return entries
-      .map(
-        ([path, metrics]) => `
-      <div class="loader-item" style="${this.getLoaderItemStyles()}">
-        <span class="loader-icon">${metrics.type === 'spatial-index' ? '🔍' : '📦'}</span>
-        <span class="loader-path" style="flex: 1;">${this.truncatePath(path)}</span>
-        <span class="loader-stats">
-          ${this.formatNumber(metrics.pointsLoaded)} pts,
-          ${metrics.cacheHitRate.toFixed(0)}% cache
-        </span>
-      </div>
-    `
-      )
-      .join('');
-  }
+  // Removed unused renderLoaderList method - functionality moved to renderCompactLoaderList
 
   /**
    * Render recent events
@@ -737,11 +892,9 @@ export class DataLoadingMonitor {
       if (metrics.type === 'spatial-index') activeSpatial++;
     }
 
-    // Calculate QPS from recent events
-    const recentQueries = this.events.filter(
-      (e) => e.type === 'query' && e.timestamp > Date.now() - 5000
-    );
-    const qps = recentQueries.length / 5;
+    // Use cached QPS calculation instead of filtering events again
+    this.calculateRates();
+    const qps = this.cachedRates.queriesPerSec;
 
     return {
       totalLoaders: this.loaders.size,
@@ -762,15 +915,204 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Get spatial metrics
+   * Get cache metrics aggregated across all loaders
    */
-  private getSpatialMetrics(): any {
-    for (const metrics of this.metrics.values()) {
-      if (metrics.spatialIndex) {
-        return metrics.spatialIndex;
+  private getCacheMetrics(): CacheMetrics {
+    let totalCacheMemory = 0;
+    let memoryLimit = 0;
+    let totalEntries = 0;
+    let totalAccesses = 0;
+    let totalHits = 0;
+    let evictions = 0;
+    let totalAccessTimeWeighted = 0; // Sum of (avgAccessTime * accessCount) for weighted average
+    let totalAccessCount = 0; // Total number of cache accesses across all loaders
+
+    // Aggregate from all loaders
+    for (const [path, loader] of this.loaders) {
+      // Get fresh metrics from the loader
+      const metrics = loader.getMetrics();
+      this.metrics.set(path, metrics);
+
+      totalCacheMemory += metrics.memoryUsed;
+      memoryLimit += metrics.memoryLimit;
+      totalHits += metrics.cacheHits;
+      totalAccesses += metrics.cacheHits + metrics.cacheMisses;
+      evictions += metrics.evictions;
+
+      // Get actual cached ranges from the loader's cache stats
+      if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
+        totalEntries += metrics.spatialIndex.rangesInCache;
+      }
+
+      // Get cache stats from the loader to calculate weighted average access time
+      // Note: We need to access the loader's cache directly or through a method
+      // For now, we'll check if the loader has a getCacheStats method
+      if ('getCacheStats' in loader && typeof loader.getCacheStats === 'function') {
+        const cacheStats = (loader as any).getCacheStats();
+        if (cacheStats && typeof cacheStats.avgAccessTime === 'number') {
+          const accessCount = cacheStats.hits + cacheStats.misses;
+          if (accessCount > 0) {
+            totalAccessTimeWeighted += cacheStats.avgAccessTime * accessCount;
+            totalAccessCount += accessCount;
+          }
+        }
       }
     }
-    return null;
+
+    const hitRate = totalAccesses > 0 ? (totalHits / totalAccesses) * 100 : 0;
+    const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
+
+    // Calculate weighted average access time
+    const avgAccessTime = totalAccessCount > 0 ? totalAccessTimeWeighted / totalAccessCount : 0;
+
+    // Calculate rates once and reuse
+    this.calculateRates();
+
+    return {
+      totalCacheMemory,
+      memoryLimit,
+      memoryPercent,
+      totalEntries,
+      totalAccesses,
+      recentHitRate: hitRate, // Simplified for now
+      evictionsPerMin: evictions, // Simplified
+      avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
+      reuseRatio: totalHits > 0 ? totalHits / Math.max(1, totalAccesses - totalHits) : 0,
+      hitsPerSecond: this.cachedRates.hitsPerSec,
+      missesPerSecond: this.cachedRates.missesPerSec,
+      avgAccessTime: avgAccessTime,
+      queriesPerSec: this.cachedRates.queriesPerSec,
+      loadsPerSec: this.cachedRates.loadsPerSec,
+      bandwidth: this.cachedRates.bandwidth,
+    };
+  }
+
+  private getCacheRateColor(rate: number): string {
+    if (rate >= 80) return MonitorColors.success;
+    if (rate >= 60) return MonitorColors.warning;
+    return MonitorColors.error;
+  }
+
+  private getCacheMemoryColor(percent: number): string {
+    if (percent <= 60) return MonitorColors.success;
+    if (percent <= 80) return MonitorColors.warning;
+    return MonitorColors.error;
+  }
+
+  private getAccessTimeColor(timeMs: number): string {
+    // Color based on cache access speed
+    if (timeMs < 0.1) return MonitorColors.success; // < 0.1ms is excellent (memory cache)
+    if (timeMs < 1.0) return MonitorColors.info; // < 1ms is good
+    if (timeMs < 5.0) return MonitorColors.warning; // < 5ms is acceptable
+    return MonitorColors.error; // >= 5ms is slow
+  }
+
+  /**
+   * Clean old events based on age
+   */
+  private cleanOldEvents(): void {
+    const cutoff = Date.now() - this.maxEventAge;
+    const originalLength = this.events.length;
+    this.events = this.events.filter((e) => e.timestamp > cutoff);
+
+    // Log cleanup info only if profiling is enabled
+    if (this.events.length < originalLength && this.config.enableProfiling) {
+      log.info(Modules.DATA_MONITOR, `Cleaned ${originalLength - this.events.length} old events`);
+    }
+  }
+
+  /**
+   * Calculate all rates with caching
+   */
+  private calculateRates(): void {
+    const now = Date.now();
+
+    // Use cached values if recent enough
+    if (now - this.cachedRates.lastCalculated < this.ratesCacheTimeout) {
+      return;
+    }
+
+    // Single pass through events to calculate all rates
+    let queries5s = 0;
+    let loads5s = 0;
+    let hits5s = 0;
+    let misses5s = 0;
+    let bandwidth1s = 0;
+
+    const cutoff5s = now - 5000;
+    const cutoff1s = now - 1000;
+
+    // Iterate backwards for early exit optimization
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      const event = this.events[i];
+
+      // Early exit if event is too old
+      if (event.timestamp < cutoff5s) {
+        break;
+      }
+
+      // Count events in 5s window
+      switch (event.type) {
+        case 'query':
+          queries5s++;
+          break;
+        case 'load':
+          loads5s++;
+          // Also count bandwidth for 1s window
+          if (event.timestamp > cutoff1s) {
+            bandwidth1s += event.data.memory || 0;
+          }
+          break;
+        case 'cache-hit':
+          hits5s++;
+          break;
+        case 'cache-miss':
+          misses5s++;
+          break;
+      }
+    }
+
+    // Update cached values
+    this.cachedRates.queriesPerSec = queries5s / 5;
+    this.cachedRates.loadsPerSec = loads5s / 5;
+    this.cachedRates.hitsPerSec = hits5s / 5;
+    this.cachedRates.missesPerSec = misses5s / 5;
+    this.cachedRates.bandwidth = bandwidth1s;
+    this.cachedRates.lastCalculated = now;
+  }
+
+  // Individual rate calculation methods removed - use calculateRates() and cachedRates directly
+
+  private renderCompactLoaderList(): string {
+    const loaderEntries = Array.from(this.metrics.entries());
+
+    if (loaderEntries.length === 0) {
+      return '<div style="color: rgba(255,255,255,0.4); font-size: 10px;">No active loaders</div>';
+    }
+
+    return loaderEntries
+      .map(([path, metrics]) => {
+        const hitRate =
+          metrics.cacheHits + metrics.cacheMisses > 0
+            ? (metrics.cacheHits / (metrics.cacheHits + metrics.cacheMisses)) * 100
+            : 0;
+        const statusColor = metrics.queries > 0 ? MonitorColors.success : MonitorColors.muted;
+
+        return `
+        <div style="background: ${MonitorColors.sectionBg}; padding: 8px; margin-bottom: 6px; border-radius: 4px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span style="font-size: 10px; color: ${statusColor}; font-family: monospace;">${path}</span>
+            <span style="font-size: 9px; color: ${MonitorColors.muted};">${metrics.type}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 9px; color: ${MonitorColors.dimmed};">
+            <span>${metrics.pointsLoaded.toLocaleString()} pts</span>
+            <span>${hitRate.toFixed(0)}% cache</span>
+            <span>${this.formatBytes(metrics.memoryUsed)}</span>
+          </div>
+        </div>
+      `;
+      })
+      .join('');
   }
 
   // Public API
@@ -779,6 +1121,8 @@ export class DataLoadingMonitor {
     if (this.panel) {
       this.panel.style.display = 'block';
       this.uiState.isVisible = true;
+      // Always update immediately when showing to get fresh metrics
+      this.updateUI();
       this.startUpdating();
     }
   }
@@ -799,13 +1143,46 @@ export class DataLoadingMonitor {
     }
   }
 
+  /**
+   * Cycle through monitor states: hidden → mini → expanded → hidden
+   * This implements the three-state cycling as per the comprehensive plan
+   */
+  public cycleState(): void {
+    if (!this.uiState.isVisible) {
+      // Hidden → Mini (show in compact view)
+      this.uiState.isExpanded = false;
+      this.show();
+      // Update panel styles for compact mode
+      if (this.panel) {
+        this.panel.style.cssText = this.getPanelStyles();
+      }
+      log.info(Modules.DATA_MONITOR, 'Monitor state: Mini view');
+    } else if (!this.uiState.isExpanded) {
+      // Mini → Expanded
+      this.expand();
+      log.info(Modules.DATA_MONITOR, 'Monitor state: Expanded view');
+    } else {
+      // Expanded → Hidden
+      this.hide();
+      log.info(Modules.DATA_MONITOR, 'Monitor state: Hidden');
+    }
+  }
+
   public expand(): void {
     this.uiState.isExpanded = true;
+    // Update panel styles to apply fixed width
+    if (this.panel) {
+      this.panel.style.cssText = this.getPanelStyles();
+    }
     this.updateUI();
   }
 
   public minimize(): void {
     this.uiState.isExpanded = false;
+    // Update panel styles to remove fixed width
+    if (this.panel) {
+      this.panel.style.cssText = this.getPanelStyles();
+    }
     this.updateUI();
   }
 
@@ -834,8 +1211,12 @@ export class DataLoadingMonitor {
   }
 
   public setActiveTab(tab: string): void {
-    this.uiState.activeTab = tab as any;
-    this.updateUI();
+    // Validate tab is a valid tab type
+    const validTabs = ['overview', 'cache', 'spatial', 'performance', 'insights'] as const;
+    if (validTabs.includes(tab as any)) {
+      this.uiState.activeTab = tab as 'overview' | 'cache' | 'spatial' | 'performance' | 'insights';
+      this.updateUI();
+    }
   }
 
   public setTimeRange(range: string): void {
@@ -868,7 +1249,7 @@ export class DataLoadingMonitor {
     if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + 'GB';
     if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + 'MB';
     if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + 'KB';
-    return bytes + 'B';
+    return bytes.toFixed(0) + 'B';
   }
 
   private truncatePath(path: string): string {
@@ -931,11 +1312,9 @@ export class DataLoadingMonitor {
 
   private getCompactStyles(): string {
     return `
-      background: rgba(30, 30, 30, 0.95);
-      border-radius: 6px;
-      padding: 8px 12px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      backdrop-filter: blur(10px);
+      ${MonitorStyles.panel.base}
+      ${MonitorStyles.panel.compact}
+      border-radius: ${MonitorEffects.borderRadiusSmall}px;
     `;
   }
 
@@ -943,213 +1322,187 @@ export class DataLoadingMonitor {
     return `
       display: flex;
       align-items: center;
-      gap: 12px;
-      color: #e0e0e0;
-      font-size: 11px;
+      gap: ${MonitorSpacing.elementGap}px;
+      color: ${MonitorColors.primaryText};
+      font-size: ${MonitorTypography.body.fontSize};
       font-weight: 500;
-    `;
-  }
-
-  private getMiniSpatialStyles(): string {
-    return `
-      margin-top: 8px;
-      height: 40px;
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: 4px;
-      overflow: hidden;
     `;
   }
 
   private getDetailedStyles(): string {
     return `
-      background: rgba(30, 30, 30, 0.98);
-      border-radius: 8px;
-      width: 450px;
+      ${MonitorStyles.panel.base}
+      ${MonitorStyles.panel.expanded}
       max-height: 600px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-      backdrop-filter: blur(10px);
-      overflow: hidden;
+      box-shadow: ${MonitorEffects.boxShadowStrong};
     `;
   }
 
   private getHeaderStyles(): string {
-    return `
-      padding: 12px 15px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      color: #e0e0e0;
-    `;
+    return MonitorStyles.header;
   }
 
   private getTabStyles(): string {
     return `
       display: flex;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid ${MonitorColors.separator};
+      background: ${MonitorColors.sectionBg};
     `;
   }
 
   private getTabButtonStyles(active: boolean): string {
     return `
-      flex: 1;
-      padding: 8px;
-      background: ${active ? 'rgba(255, 255, 255, 0.1)' : 'transparent'};
-      border: none;
-      color: ${active ? '#fff' : '#999'};
-      cursor: pointer;
-      font-size: 11px;
-      transition: all 0.2s;
+      ${MonitorStyles.button.tab.base}
+      ${active ? MonitorStyles.button.tab.active : MonitorStyles.button.tab.inactive}
     `;
   }
 
   private getContentStyles(): string {
     return `
-      padding: 15px;
+      padding: ${MonitorSpacing.panelPadding}px;
       max-height: 500px;
       overflow-y: auto;
-      color: #e0e0e0;
+      color: ${MonitorColors.primaryText};
     `;
   }
 
-  private getStatsGridStyles(): string {
-    return `
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      
-      .stat-card {
-        background: rgba(0, 0, 0, 0.3);
-        padding: 10px;
-        border-radius: 4px;
-      }
-      
-      .stat-card label {
-        display: block;
-        font-size: 10px;
-        opacity: 0.7;
-        margin-bottom: 4px;
-      }
-      
-      .stat-card value {
-        display: block;
-        font-size: 18px;
-        font-weight: bold;
-        color: #4CAF50;
-      }
-      
-      .stat-card detail {
-        display: block;
-        font-size: 10px;
-        opacity: 0.5;
-        margin-top: 2px;
-      }
-    `;
-  }
-
-  private getLoaderItemStyles(): string {
-    return `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 4px 0;
-      font-size: 11px;
-      opacity: 0.8;
-    `;
-  }
+  // Removed unused getLoaderItemStyles - styles inlined where needed
 
   private getEventItemStyles(): string {
     return `
       display: flex;
-      gap: 8px;
-      padding: 2px 0;
-      font-size: 10px;
+      gap: ${MonitorSpacing.elementGap}px;
+      padding: ${MonitorSpacing.tinyGap}px 0;
+      font-size: ${MonitorTypography.small.fontSize};
       opacity: 0.7;
     `;
   }
 
   private getRecommendationStyles(severity: string): string {
-    const colors = {
-      error: 'rgba(244, 67, 54, 0.2)',
-      warning: 'rgba(255, 193, 7, 0.2)',
-      info: 'rgba(33, 150, 243, 0.2)',
+    const styleMap = {
+      error: MonitorStyles.alert.error,
+      warning: MonitorStyles.alert.warning,
+      info: MonitorStyles.alert.success,
     };
 
-    return `
-      background: ${colors[severity as keyof typeof colors] || colors.info};
-      border-radius: 4px;
-      padding: 10px;
-      margin-bottom: 8px;
-      font-size: 11px;
-      
-      .rec-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 4px;
-      }
-      
-      .rec-message {
-        opacity: 0.8;
-        margin-bottom: 4px;
-      }
-      
-      .rec-suggestion {
-        opacity: 0.6;
-        font-style: italic;
-      }
-    `;
-  }
-
-  /**
-   * Reset monitor state for new scene
-   */
-  public reset(): void {
-    // Clear events and metrics
-    this.events = [];
-    this.metrics.clear();
-    this.queries.clear();
-
-    // Reset UI components (if they have reset methods)
-    if ('reset' in this.spatialViz) {
-      (this.spatialViz as any).reset();
-    }
-    if ('reset' in this.timeline) {
-      (this.timeline as any).reset();
-    }
-    if ('reset' in this.advisor) {
-      (this.advisor as any).reset();
-    }
-
-    // Update UI if visible
-    if (this.uiState.isVisible) {
-      this.updateUI();
-    }
+    return styleMap[severity as keyof typeof styleMap] || MonitorStyles.alert.success;
   }
 
   public dispose(): void {
-    this.stopUpdating();
+    const errors: Error[] = [];
 
-    // Disconnect all loaders
-    for (const [, loader] of this.loaders) {
-      loader.removeEventListener(this.eventListener);
+    // Step 1: Stop update timer (safe operation)
+    try {
+      this.stopUpdating();
+    } catch (error) {
+      errors.push(new Error(`Failed to stop update timer: ${error}`));
     }
-    this.loaders.clear();
 
-    // Remove UI
+    // Step 2: Disconnect all loaders (critical for memory cleanup)
+    for (const [path, loader] of this.loaders.entries()) {
+      try {
+        // Check if loader still has the removeEventListener method
+        if (loader && typeof loader.removeEventListener === 'function') {
+          loader.removeEventListener(this.eventListener);
+        }
+      } catch (error) {
+        // Log but continue - we want to attempt cleanup of other loaders
+        errors.push(new Error(`Failed to disconnect loader '${path}': ${error}`));
+      }
+    }
+
+    // Clear the loaders map regardless of individual failures
+    try {
+      this.loaders.clear();
+    } catch (error) {
+      errors.push(new Error(`Failed to clear loaders map: ${error}`));
+    }
+
+    // Step 3: Remove UI panel (important for DOM cleanup)
     if (this.panel) {
-      // Remove event listeners
-      this.panel.removeEventListener('click', this.uiEventHandler);
-      this.panel.removeEventListener('change', this.uiEventHandler);
+      // Remove event listeners - non-critical if they fail
+      try {
+        this.panel.removeEventListener('click', this.uiEventHandler);
+      } catch (error) {
+        // Non-critical - log but continue
+        errors.push(new Error(`Failed to remove click listener: ${error}`));
+      }
 
-      this.panel.remove();
+      try {
+        this.panel.removeEventListener('change', this.uiEventHandler);
+      } catch (error) {
+        // Non-critical - log but continue
+        errors.push(new Error(`Failed to remove change listener: ${error}`));
+      }
+
+      // Remove panel from DOM - critical for cleanup
+      try {
+        // Check if panel is still in the DOM before removing
+        if (this.panel.parentNode) {
+          this.panel.remove();
+        }
+      } catch (error) {
+        // Try alternative removal method
+        try {
+          this.panel.parentNode?.removeChild(this.panel);
+        } catch (fallbackError) {
+          errors.push(
+            new Error(`Failed to remove panel from DOM: ${error}, fallback: ${fallbackError}`)
+          );
+        }
+      }
+
+      // Clear reference regardless of removal success
       this.panel = null;
     }
 
-    // Clean up components
-    this.spatialViz.dispose();
-    this.timeline.dispose();
-    this.advisor.dispose();
+    // Step 4: Clean up components (important for animation frame cleanup)
+    try {
+      if (this.timeline && typeof this.timeline.dispose === 'function') {
+        this.timeline.dispose();
+      }
+    } catch (error) {
+      errors.push(new Error(`Failed to dispose timeline: ${error}`));
+    }
+
+    try {
+      if (this.advisor && typeof this.advisor.dispose === 'function') {
+        this.advisor.dispose();
+      }
+    } catch (error) {
+      errors.push(new Error(`Failed to dispose advisor: ${error}`));
+    }
+
+    // Step 5: Clear remaining state to prevent memory leaks
+    try {
+      this.events = [];
+      this.metrics.clear();
+      this.queries.clear();
+    } catch (error) {
+      errors.push(new Error(`Failed to clear internal state: ${error}`));
+    }
+
+    // Step 6: Report any errors that occurred during disposal
+    if (errors.length > 0) {
+      // Log all errors for debugging
+      console.warn('[DataLoadingMonitor] Disposal completed with errors:');
+      errors.forEach((error, index) => {
+        console.warn(`  ${index + 1}. ${error.message}`);
+      });
+
+      // Optionally throw a composite error if critical failures occurred
+      const criticalErrors = errors.filter(
+        (e) =>
+          e.message.includes('Failed to clear loaders') ||
+          e.message.includes('Failed to clear internal state')
+      );
+
+      if (criticalErrors.length > 0) {
+        throw new Error(
+          `DataLoadingMonitor disposal failed with ${criticalErrors.length} critical error(s): ` +
+            criticalErrors.map((e) => e.message).join('; ')
+        );
+      }
+    }
   }
 }

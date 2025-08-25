@@ -495,7 +495,7 @@ describe('SceneManager', () => {
 
     it('should handle missing container gracefully during resize', () => {
       // Remove container temporarily
-      const originalContainer = sceneManager.container;
+      const originalContainer = (sceneManager as any).container;
       (sceneManager as any).container = null;
 
       // Should not crash when updating size without container

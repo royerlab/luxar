@@ -66,16 +66,16 @@ class SceneManager {
 
 ```typescript
 // Before: Hard-coded dependency
-class LazyDataManager {
+class SpatialIndexLoader {
   constructor() {
-    this.memoryMonitor = new MemoryMonitor(); // Hard to test
+    this.cache = new RangeCache(); // Hard to test
   }
 }
 
 // After: Injected dependency
-class LazyDataManager {
-  constructor(memoryMonitor: IMemoryMonitor = new MemoryMonitor()) {
-    this.memoryMonitor = memoryMonitor;
+class SpatialIndexLoader {
+  constructor(config: LoaderConfig = {}) {
+    this.cache = new RangeCache(config); // Configurable for testing
   }
 }
 ```
@@ -246,7 +246,7 @@ describe.each([
 
 ### Phase 1: Refactor for Testability (Week 1)
 - [ ] Extract pure functions from `slicing.ts`
-- [ ] Add dependency injection to `LazyDataManager`
+- [ ] Add dependency injection to `SpatialIndexLoader`
 - [ ] Separate logic from UI in dimension navigation
 - [ ] Create test data builders
 

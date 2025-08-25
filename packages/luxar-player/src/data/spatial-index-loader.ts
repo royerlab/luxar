@@ -95,7 +95,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       avgLoadTime: 0,
       cacheHitRate: 0,
       memoryUsed: 0,
-      memoryLimit: config.maxMemoryMB ? config.maxMemoryMB * 1024 * 1024 : 500 * 1024 * 1024,
+      memoryLimit: this.cache.getMemoryInfo().max,
     };
   }
 
@@ -308,12 +308,41 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
-      const [positions, colors, radii, sharpness] = await Promise.all([
-        this.loadRanges('positions', ranges),
-        this.arrays.colors ? this.loadRanges('colors', ranges) : null,
-        this.arrays.radii ? this.loadRanges('radii', ranges) : null,
-        this.arrays.sharpness ? this.loadRanges('sharpness', ranges) : null,
-      ]);
+      // Load sequentially to prevent browser resource exhaustion (ERR_INSUFFICIENT_RESOURCES)
+      // This is especially important for large datasets with many chunks
+      log.info(
+        LogEmoji.LOAD,
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading positions for ${ranges.length} ranges`
+      );
+      const positions = await this.loadRanges('positions', ranges);
+
+      const colors = this.arrays.colors
+        ? (log.info(
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
+        : null;
+
+      const radii = this.arrays.radii
+        ? (log.info(
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
+        : null;
+
+      const sharpness = this.arrays.sharpness
+        ? (log.info(
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
+        : null;
 
       // Update query status
       const query = this.activeQueries.get(queryId);
@@ -779,7 +808,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         avgCellsPerQuery: this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0,
         avgPointsPerCell: occupiedCells > 0 ? this.metrics.pointsLoaded / occupiedCells : 0,
         queryEfficiency: 0.8, // TODO: Calculate actual efficiency
-        cellsInCache: this.cache.getStats().numEntries,
+        rangesInCache: this.cache.getStats().numEntries,
       };
     }
 

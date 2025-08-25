@@ -274,6 +274,7 @@ export function showHelpOverlay() {
         'C: Toggle center (origin/bbox)',
         '⇧ + Wheel: Adjust field of view',
         'Ctrl+L: Debug console',
+        'Ctrl+M: Cycle data monitor (mini/expanded/off)',
       ],
     },
     {

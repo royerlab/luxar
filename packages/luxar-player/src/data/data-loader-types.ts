@@ -124,6 +124,9 @@ export interface CacheStats {
 
   /** Number of cache misses */
   misses: number;
+
+  /** Average cache access time in milliseconds */
+  avgAccessTime: number;
 }
 
 /**

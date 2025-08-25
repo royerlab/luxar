@@ -99,6 +99,55 @@ describe('RangeCache', () => {
       expect(stats.hitRate).toBe(0.5);
     });
 
+    it('should track average access time', () => {
+      const cache = new RangeCache({ maxMemoryMB: 10 });
+      const data = new Float32Array(100).fill(1);
+
+      // Store data first
+      cache.set('positions', [{ start: 0, end: 100 }], data);
+
+      // Access the data multiple times
+      cache.get('positions', [{ start: 0, end: 100 }]); // hit
+      cache.get('positions', [{ start: 100, end: 200 }]); // miss
+      cache.get('positions', [{ start: 0, end: 100 }]); // hit
+
+      const stats = cache.getStats();
+
+      // Should have avgAccessTime property
+      expect(stats.avgAccessTime).toBeDefined();
+      expect(typeof stats.avgAccessTime).toBe('number');
+
+      // Access time should be positive but very small (< 10ms for in-memory operations)
+      expect(stats.avgAccessTime).toBeGreaterThanOrEqual(0);
+      expect(stats.avgAccessTime).toBeLessThan(10); // Should be less than 10ms for memory access
+
+      // Verify we tracked 3 accesses
+      expect(stats.hits).toBe(2);
+      expect(stats.misses).toBe(1);
+    });
+
+    it('should reset access time stats on clear', () => {
+      const cache = new RangeCache({ maxMemoryMB: 10 });
+      const data = new Float32Array(100).fill(1);
+
+      // Store and access data
+      cache.set('positions', [{ start: 0, end: 100 }], data);
+      cache.get('positions', [{ start: 0, end: 100 }]);
+
+      let stats = cache.getStats();
+      expect(stats.avgAccessTime).toBeGreaterThanOrEqual(0);
+      expect(stats.hits).toBe(1);
+
+      // Clear cache
+      cache.clear();
+
+      // Stats should be reset
+      stats = cache.getStats();
+      expect(stats.avgAccessTime).toBe(0);
+      expect(stats.hits).toBe(0);
+      expect(stats.misses).toBe(0);
+    });
+
     it('should evict old entries when memory limit exceeded', () => {
       // Set very small limit
       cache = new RangeCache({ maxMemoryMB: 0.001 }); // 1KB

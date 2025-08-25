@@ -1,6 +1,6 @@
 # Utils Package
 
-Utility functions and helpers for advanced features in the Luxar player. This package contains specialized algorithms for nD data slicing, console debugging, HDR detection, and dimensional navigation.
+Utility functions and helpers for advanced features in the Luxar player. This package contains specialized algorithms for console debugging, HDR detection, memory management, and structured logging.
 
 ## Table of Contents
 
@@ -8,51 +8,41 @@ Utility functions and helpers for advanced features in the Luxar player. This pa
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Modules](#modules)
-- [nD Slicing Algorithms](#nd-slicing-algorithms)
 - [Console Interception](#console-interception)
 - [HDR Detection](#hdr-detection)
-- [Dimension Navigation](#dimension-navigation)
+- [Memory Detection](#memory-detection)
+- [Structured Logging](#structured-logging)
 - [Usage Examples](#usage-examples)
 - [Performance Considerations](#performance-considerations)
 - [Best Practices](#best-practices)
 
 ## Overview
 
-The utils package provides specialized functionality that extends beyond basic 3D visualization to support advanced features like high-dimensional data navigation, debugging capabilities, and HDR display optimization. These utilities are the mathematical and algorithmic foundation for Luxar's advanced visualization capabilities.
+The utils package provides specialized functionality that extends beyond basic 3D visualization to support advanced features like debugging capabilities, HDR display optimization, and memory management. These utilities are the foundation for Luxar's advanced visualization capabilities.
 
-**Core Philosophy**: Provide robust, well-tested utility functions that handle complex mathematical operations and system interactions with clear interfaces and comprehensive error handling.
+**Core Philosophy**: Provide robust, well-tested utility functions that handle complex system interactions with clear interfaces and comprehensive error handling.
 
 ## Key Features
 
 - **Console Interception**: Ring buffer system for capturing all browser console output
 - **HDR Detection**: Comprehensive display capability detection and configuration
-- **Dimension Navigation**: Smooth navigation through multi-dimensional datasets
+- **Memory Detection**: Intelligent memory availability detection for cache sizing
 - **Structured Logging**: Consistent logging format with module identification
 
 ## Architecture
 
 ```typescript
 utils/
-├── dims-navigation.ts    # Navigation utilities for multi-dimensional data
 ├── console-interceptor.ts # Console output capture and buffering system
 ├── hdr-detection.ts      # HDR display capability detection
-└── log.ts               # Structured logging utility
+├── memory-detector.ts    # System memory detection for cache management
+├── log.ts               # Structured logging utility
+└── slicing.ts           # nD slicing algorithms (moved from dims-navigation)
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
 
 ## Modules
-
-### dims-navigation.ts - Dimension Navigation
-
-User interaction utilities for navigating high-dimensional space:
-
-**Core Functions**:
-
-- `stepDimension()` - Intelligent stepping with boundary handling
-- `jumpToDimension()` - Direct positioning via UI sliders
-- `updatePointCloudSlice()` - Real-time GPU geometry updates
-- `getNavigableDimensions()` - Identify keyboard-controllable dimensions
 
 ### console-interceptor.ts - Console Debugging
 
