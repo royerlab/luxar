@@ -7,6 +7,8 @@
  * dependencies.
  */
 
+import { config } from '../config';
+
 /**
  * 3D bounding box representation
  */
@@ -151,7 +153,7 @@ export function getBoundingBoxMaxDimension(box: BoundingBox): number {
 export function calculateCameraDistance(
   box: BoundingBox,
   camera: CameraConfig,
-  fitRatio: number = 0.75
+  fitRatio: number = config.scene.defaultFitRatio
 ): number {
   const maxDim = getBoundingBoxMaxDimension(box);
 

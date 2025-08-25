@@ -94,6 +94,15 @@ vi.mock('three', () => ({
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })),
+  // Constants
+  HalfFloatType: 1016,
+  FloatType: 1015,
+  UnsignedByteType: 1009,
+  LinearSRGBColorSpace: 'srgb-linear',
+  SRGBColorSpace: 'srgb',
+  NoToneMapping: 0,
+  ACESFilmicToneMapping: 4,
+  PCFSoftShadowMap: 2,
 }));
 
 // Mock zarrita

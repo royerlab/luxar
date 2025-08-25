@@ -11,7 +11,7 @@
  */
 
 import * as THREE from 'three';
-import { CONTROL_CONFIG } from './control-config';
+import { config } from '../config';
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
@@ -31,13 +31,13 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   public enabled: boolean = true;
 
   // Configuration
-  public movementSpeed: number = CONTROL_CONFIG.fly.movement.speed.default;
-  public rotationSpeed: number = CONTROL_CONFIG.fly.rotation.speed.default;
-  public lookSpeed: number = CONTROL_CONFIG.fly.look.mouseSpeed.default;
-  public inertialMode: boolean = CONTROL_CONFIG.fly.inertialMode.default;
-  public damping: number = CONTROL_CONFIG.fly.movement.damping.default;
-  public rotationDamping: number = CONTROL_CONFIG.fly.rotation.damping.default;
-  public acceleration: number = CONTROL_CONFIG.fly.movement.acceleration.default;
+  public movementSpeed: number = config.controls.fly.movement.speed.default;
+  public rotationSpeed: number = config.controls.fly.rotation.speed.default;
+  public lookSpeed: number = config.controls.fly.look.mouseSpeed.default;
+  public inertialMode: boolean = config.controls.fly.inertialMode.default;
+  public damping: number = config.controls.fly.movement.damping.default;
+  public rotationDamping: number = config.controls.fly.rotation.damping.default;
+  public acceleration: number = config.controls.fly.movement.acceleration.default;
 
   // Movement state
   private moveState = {
@@ -426,14 +426,14 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Apply damping
     this.velocity.multiplyScalar(
-      Math.pow(effectiveDamping, delta * CONTROL_CONFIG.fly.physics.dampingPower)
+      Math.pow(effectiveDamping, delta * config.controls.fly.physics.dampingPower)
     );
 
     // Apply velocity to position
     this.camera.position.addScaledVector(this.velocity, delta);
 
     // Check if we're still moving (using configured threshold)
-    if (this.velocity.length() < CONTROL_CONFIG.fly.physics.velocityThreshold) {
+    if (this.velocity.length() < config.controls.fly.physics.velocityThreshold) {
       this.velocity.set(0, 0, 0);
     } else {
       isMoving = true;
@@ -491,7 +491,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Apply angular velocity to orientation
     const angularSpeed = this.angularVelocity.length();
-    if (angularSpeed > CONTROL_CONFIG.fly.physics.angularVelocityThreshold) {
+    if (angularSpeed > config.controls.fly.physics.angularVelocityThreshold) {
       // Create rotation from angular velocity
       const angle = angularSpeed * delta;
       const axis = this.angularVelocity.clone().normalize();
@@ -506,11 +506,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
     // Apply angular damping to world-space angular velocity
     this.angularVelocity.multiplyScalar(
-      Math.pow(effectiveRotationDamping, delta * CONTROL_CONFIG.fly.physics.dampingPower)
+      Math.pow(effectiveRotationDamping, delta * config.controls.fly.physics.dampingPower)
     );
 
     // Stop tiny rotations
-    if (this.angularVelocity.length() < CONTROL_CONFIG.fly.physics.angularVelocityThreshold) {
+    if (this.angularVelocity.length() < config.controls.fly.physics.angularVelocityThreshold) {
       this.angularVelocity.set(0, 0, 0);
     }
 

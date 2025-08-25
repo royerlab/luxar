@@ -1,10 +1,9 @@
 // Main configuration file for the Luxar scene player
-// This module centralizes all configuration values to ensure consistency
+// This module centralizes ALL configuration values to ensure consistency
 // and make the application easy to customize.
 
 import * as THREE from 'three';
 import type { AppConfig } from './types';
-import { CONTROL_CONFIG } from '../controls/control-config';
 
 /**
  * Main configuration object containing all application settings
@@ -28,32 +27,28 @@ export const config: AppConfig = {
   // Animation loop and performance optimization settings
   animation: {
     idleTimeoutMs: 2000, // Time in milliseconds before pausing animation when idle - saves power
+    targetFPS: 60, // Target frames per second
+    minFPS: 30, // Minimum acceptable FPS before quality reduction
   },
 
   // 3D scene visual configuration
   scene: {
     backgroundColor: 0x111111, // Background color in hexadecimal - dark gray for good contrast with point clouds
+    defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
   },
 
   // HDR post-processing and rendering configuration
   rendering: {
     hdrEnabled: true, // Enable HDR post-processing pipeline with bloom effects
 
-    // Bloom effect settings
+    // Unified bloom configuration - single source of truth
     bloom: {
       strength: 0.25, // Bloom intensity - how strong the glow effect appears
       radius: 1.0, // Bloom radius - how far the glow spreads from bright areas
-      threshold: 0.0, // Bloom threshold - brightness level required to trigger bloom (0.0 = everything glows)
+      threshold: 0.01, // Bloom threshold - brightness level required to trigger bloom
       resolutionScale: 4, // Resolution scale for bloom pass - higher = faster but lower quality
     },
-
-    // Advanced point rendering settings
-    points: {
-      size: 4.0, // Base point size in screen pixels
-      hdrMultiplier: 16.0, // HDR color multiplier for driving bloom effects
-      baseAlpha: 0.01, // Base alpha intensity for point visibility
-      falloffSteepness: 40.0, // Gaussian falloff steepness for smooth point edges
-    },
+    // Note: Point rendering settings moved to shader.points to avoid duplication
   },
 
   // Shader configuration for point rendering
@@ -71,13 +66,7 @@ export const config: AppConfig = {
     hdr: {
       renderTargetType: THREE.HalfFloatType, // Use 16-bit float for HDR precision without banding
     },
-
-    bloom: {
-      threshold: 0.01, // Bloom threshold - 0.0 means everything blooms, higher = only bright areas
-      strength: 0.25, // Bloom strength - controls intensity of glow effect
-      radius: 1.0, // Bloom radius - controls how far the glow spreads
-      resolutionScale: 4, // Resolution divisor for bloom pass - higher = faster but lower quality
-    },
+    // Note: bloom settings moved to rendering.bloom for consolidation
 
     toneMapping: {
       initial: {
@@ -94,9 +83,20 @@ export const config: AppConfig = {
   // UI configuration for overlays and visual elements
   ui: {
     zIndex: {
-      loading: 1000, // Loading indicator z-index
-      error: 1000, // Error message z-index
-      help: 1001, // Help overlay z-index
+      // Base layer components (100-199)
+      dimensionSliders: 100, // Dimension sliders at bottom
+      performanceMonitor: 100, // Performance stats panel
+      debugConsole: 150, // Debug console (slightly above base)
+
+      // Mid-layer overlays (1000-1999)
+      datasetBrowser: 1000, // Dataset browser modal
+      loading: 1000, // Loading indicator
+      error: 1000, // Error messages
+      help: 1001, // Help overlay (above errors)
+      renderingControls: 1999, // Rendering controls panel (top of mid-layer)
+
+      // Top layer (2000+)
+      statsMonitor: 2000, // Three.js stats monitor (always on top)
     },
     timings: {
       errorAutoDismissMs: 10000, // Auto-dismiss error messages after 10s
@@ -106,14 +106,152 @@ export const config: AppConfig = {
       size: 24, // Loading spinner size in pixels
       borderWidth: 3, // Spinner border width
     },
+    // Style system (migrated from data-loading-monitor-styles.ts)
+    styles: {
+      colors: {
+        // Semantic colors
+        success: '#4CAF50',
+        warning: '#FFC107',
+        error: '#f44336',
+        info: '#2196F3',
+        secondary: '#9C27B0',
+        // Text colors
+        primaryText: '#e0e0e0',
+        secondaryText: '#888',
+        muted: 'rgba(255, 255, 255, 0.6)',
+        dimmed: 'rgba(255, 255, 255, 0.4)',
+        // Background colors
+        panelBg: 'rgba(30, 30, 30, 0.95)',
+        sectionBg: 'rgba(0, 0, 0, 0.3)',
+        hoverBg: 'rgba(40, 40, 40, 0.9)',
+        // Cache visualization
+        cacheHot: '#ff6b6b',
+        cacheWarm: '#FFC107',
+        cacheCold: '#4CAF50',
+        // Grid/separator colors
+        separator: 'rgba(255, 255, 255, 0.1)',
+        separatorStrong: 'rgba(255, 255, 255, 0.2)',
+      },
+      typography: {
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif',
+        fontFamilyMono: 'monospace',
+        // Font sizes
+        title: { fontSize: '14px', fontWeight: 'bold' },
+        sectionHeader: { fontSize: '12px', fontWeight: 600 },
+        body: { fontSize: '11px' },
+        small: { fontSize: '10px' },
+        tiny: { fontSize: '9px' },
+        // Line heights
+        compact: { lineHeight: 1.2 },
+        normal: { lineHeight: 1.4 },
+        relaxed: { lineHeight: 1.6 },
+      },
+      spacing: {
+        // Panel spacing
+        panelPadding: 15,
+        panelMargin: 20,
+        // Section spacing
+        sectionPadding: 10,
+        sectionGap: 15,
+        // Element spacing
+        elementGap: 8,
+        compactGap: 5,
+        tinyGap: 2,
+        // Border and separator spacing
+        borderPadding: 6,
+      },
+      effects: {
+        // Backdrop and shadows
+        backdropBlur: 'blur(10px)',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+        boxShadowStrong: '0 8px 32px rgba(0, 0, 0, 0.4)',
+        // Border radius
+        borderRadius: 8,
+        borderRadiusSmall: 4,
+        borderRadiusLarge: 12,
+        // Transitions
+        transition: 'all 0.2s ease',
+        transitionFast: 'all 0.1s ease',
+        transitionSlow: 'all 0.3s ease',
+      },
+    },
+    // Debug console configuration (migrated from debug-console.ts)
+    debugConsole: {
+      panel: {
+        defaultWidth: 600,
+        defaultHeight: 400,
+        minWidth: 400,
+        maxWidth: 1200,
+        minHeight: 200,
+        maxHeight: 800,
+        bottomOffset: 20,
+        leftOffset: 20,
+      },
+      interceptor: {
+        maxBufferSize: 10000,
+      },
+      resize: {
+        borderWidth: 4,
+      },
+      style: {
+        backgroundColor: 'rgba(30, 30, 30, 0.95)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderRadius: 8,
+        backdropBlur: 10,
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+      },
+    },
+    // UI component-specific configuration for consistent styling
+    components: {
+      datasetBrowser: {
+        zIndex: 1000,
+        borderRadius: {
+          panel: 12,
+          section: 6,
+          element: 4,
+        },
+        padding: {
+          panel: 20,
+          section: 15,
+          element: 10,
+        },
+      },
+      debugConsole: {
+        zIndex: 150,
+        borderRadius: {
+          header: 8,
+          content: 4,
+          button: 3,
+        },
+      },
+      renderingControls: {
+        borderRadius: {
+          checkbox: 4,
+          section: 4,
+          header: 4,
+        },
+      },
+      dataMonitor: {
+        borderRadius: {
+          card: 4,
+          section: 6,
+        },
+        padding: {
+          default: 10,
+          compact: 8,
+        },
+      },
+    },
   },
 
   // Rendering controls configuration with user-adjustable defaults
   renderingControls: {
     defaults: {
-      bloomThreshold: 0.01, // Bloom threshold for rendering controls
-      bloomStrength: 0.25, // Bloom strength for rendering controls
-      bloomRadius: 1.0, // Bloom radius for rendering controls
+      // Bloom settings directly reference rendering.bloom
+      bloomThreshold: 0.01,
+      bloomStrength: 0.25,
+      bloomRadius: 1.0,
       exposure: 1.0, // Tone mapping exposure value
       hdrMultiplier: 16.0, // HDR intensity multiplier
       fxaaEnabled: false, // FXAA disabled by default
@@ -134,13 +272,203 @@ export const config: AppConfig = {
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
-      autoRotateSpeed: CONTROL_CONFIG.orbit.autoRotate.speed.default, // Slow rotation speed for presentations
-      // Fly controls - all defaults from CONTROL_CONFIG
-      flyMovementSpeed: CONTROL_CONFIG.fly.movement.speed.default,
-      flyRotationSpeed: CONTROL_CONFIG.fly.rotation.speed.default,
-      flyInertialMode: CONTROL_CONFIG.fly.inertialMode.default,
-      flyDamping: CONTROL_CONFIG.fly.movement.damping.default,
-      flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default,
+      autoRotateSpeed: 0.25, // Slow rotation speed for presentations
+      // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
+    },
+  },
+
+  // Control system configuration (migrated from control-config.ts)
+  controls: {
+    fly: {
+      inertialMode: {
+        default: true,
+      },
+      movement: {
+        speed: { min: 0.5, max: 50.0, default: 5.0, step: 0.1 },
+        acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 },
+        damping: { min: 0.9, max: 0.99999, default: 0.999, step: 0.0001 },
+      },
+      rotation: {
+        speed: { min: 0.1, max: 5.0, default: 1.5, step: 0.1 },
+        damping: { min: 0.9, max: 0.9999, default: 0.99, step: 0.0001 },
+      },
+      look: {
+        mouseSpeed: { default: 0.002 },
+      },
+      physics: {
+        velocityThreshold: 1e-4,
+        dampingPower: 60,
+        angularVelocityThreshold: 1e-4,
+      },
+    },
+    orbit: {
+      autoRotate: {
+        speed: { min: 0.1, max: 5.0, default: 0.25, step: 0.1 },
+      },
+      zoom: {
+        minDistance: 0.1,
+        maxDistance: 1000,
+        speed: { min: 0.5, max: 2.0, default: 1.0, step: 0.1 },
+      },
+      damping: {
+        enabled: true,
+        factor: { min: 0.01, max: 0.3, default: 0.05, step: 0.01 },
+      },
+    },
+  },
+
+  // Input handling configuration (migrated from control-config.ts)
+  input: {
+    defaultSensitivity: 0.1, // Default input sensitivity for adjustments
+    keyboard: {
+      shortcuts: {
+        toggleFullscreen: ' ',
+        toggleHelp: 'h',
+        toggleDimensions: 'n',
+        toggleDatasetBrowser: 'o',
+        togglePerformance: 'p',
+        toggleRendering: 'r',
+        toggleDebugConsole: 'ctrl+l',
+        recenterCamera: 'f',
+        toggleControlMode: 'v',
+        toggleInertialMode: 'i',
+      },
+      flyModeKeys: [
+        'w',
+        'a',
+        's',
+        'd',
+        'q',
+        'e',
+        'W',
+        'A',
+        'S',
+        'D',
+        'Q',
+        'E',
+        'Shift',
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+      ],
+      dimensionKeys: ['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+    },
+    mouse: {
+      doubleClickDelay: 300,
+    },
+  },
+
+  // Data loading configuration
+  dataLoading: {
+    spatial: {
+      defaultTolerance: 0.1, // Default tolerance for nD slicing
+      defaultMaxRadius: 0.1, // Default max radius for spatial queries
+    },
+    cache: {
+      maxSizeMB: 512,
+      evictionStrategy: 'lru' as const,
+      ttlMs: 300000,
+    },
+    network: {
+      timeoutMs: 30000,
+      maxConcurrent: 6,
+      retryAttempts: 3,
+    },
+    memory: {
+      targetHeapUsage: 0.8,
+      minCacheMB: 128,
+      checkIntervalMs: 10000,
+      adjustmentThresholds: {
+        critical: 0.85,
+        high: 0.7,
+      },
+    },
+    monitor: {
+      timings: {
+        eventCleanupInterval: 30000,
+        maxEventAge: 300000,
+        ratesCacheTimeout: 1000,
+        defaultUpdateInterval: 100,
+        minRenderInterval: 100,
+        timelinePointInterval: 200,
+        defaultTimeRange: 60,
+        queryCleanupCheckInterval: 10,
+        maxQueryAge: 60000,
+      },
+      thresholds: {
+        lowCacheHitRate: 30,
+        highQueryTime: 100,
+        highLoadTime: 500,
+        highMemoryUsage: 0.8,
+        highErrorRate: 0.05,
+        lowQueryEfficiency: 0.5,
+      },
+      limits: {
+        maxEvents: 1000,
+        maxTimelinePoints: 300,
+        maxAdvisorHistory: 100,
+        defaultMemoryLimit: 1024 * 1024 * 1024,
+        rateCalculationWindow: 5000,
+        bandwidthCalculationWindow: 1000,
+      },
+    },
+  },
+
+  // WebGL context and renderer configuration
+  webgl: {
+    // WebGL2 context attributes for canvas
+    context: {
+      alpha: false, // No transparency in canvas background
+      antialias: true, // Enable antialiasing for smoother edges
+      depth: true, // Enable depth buffer for 3D rendering
+      stencil: false, // No stencil buffer needed (saves memory)
+      powerPreference: 'high-performance' as const, // Request high-performance GPU
+      colorSpace: 'display-p3', // Wide color gamut for better colors
+      preserveDrawingBuffer: false, // Don't preserve buffer (better performance)
+      desynchronized: true, // Better performance with async updates
+      premultipliedAlpha: true, // Standard alpha blending
+      failIfMajorPerformanceCaveat: false, // Don't fail on slow GPUs
+    },
+
+    // THREE.WebGLRenderer specific settings
+    renderer: {
+      antialias: true, // MSAA for smoother rendering
+      powerPreference: 'high-performance' as const, // High performance GPU
+      preserveDrawingBuffer: false, // Better performance
+      logarithmicDepthBuffer: false, // Standard depth buffer (faster)
+      precision: 'highp' as const, // High precision for better quality
+      premultipliedAlpha: true, // Standard alpha blending
+      shadowMap: {
+        enabled: false, // No shadows needed for point clouds
+        type: THREE.PCFSoftShadowMap, // Soft shadows if enabled
+      },
+    },
+
+    // Render target configuration for post-processing
+    renderTarget: {
+      depthBuffer: true, // Needed for depth testing
+      stencilBuffer: false, // Not needed, saves memory
+      samples: 0, // MSAA samples (0 = disabled for additive blending compatibility)
+    },
+
+    // Performance profiles for different hardware/use cases
+    profiles: {
+      quality: {
+        powerPreference: 'high-performance' as const,
+        antialias: true,
+        precision: 'highp' as const,
+      },
+      balanced: {
+        powerPreference: 'default' as const,
+        antialias: true,
+        precision: 'mediump' as const,
+      },
+      performance: {
+        powerPreference: 'low-power' as const,
+        antialias: false,
+        precision: 'lowp' as const,
+      },
     },
   },
 

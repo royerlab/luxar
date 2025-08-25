@@ -6,7 +6,10 @@
  */
 
 import type { MonitorEvent, TimelinePoint } from '../data-monitor-types';
-import { MonitorTimings, MonitorLimits } from '../data-monitor-constants';
+import { config } from '../../config';
+
+const MonitorTimings = config.dataLoading.monitor.timings;
+const MonitorLimits = config.dataLoading.monitor.limits;
 
 export class PerformanceTimeline {
   private canvas: HTMLCanvasElement | null = null;
@@ -14,8 +17,8 @@ export class PerformanceTimeline {
 
   // Timeline data
   private points: TimelinePoint[] = [];
-  private maxPoints = MonitorLimits.MAX_TIMELINE_POINTS;
-  private timeRange: number = MonitorTimings.DEFAULT_TIME_RANGE;
+  private maxPoints = MonitorLimits.maxTimelinePoints;
+  private timeRange: number = MonitorTimings.defaultTimeRange;
 
   // Metrics tracking
   private lastQueryTime = 0;
@@ -28,7 +31,7 @@ export class PerformanceTimeline {
   private renderPending = false;
   private animationFrameId: number | null = null;
   private lastRenderTime = 0;
-  private minRenderInterval = MonitorTimings.MIN_RENDER_INTERVAL;
+  private minRenderInterval = MonitorTimings.minRenderInterval;
   private needsRender = false;
 
   // Colors
@@ -72,7 +75,8 @@ export class PerformanceTimeline {
 
     // Add timeline point only at reasonable intervals (aggregate events)
     const lastPoint = this.points[this.points.length - 1];
-    const shouldAddPoint = !lastPoint || now - lastPoint.timestamp > MonitorTimings.TIMELINE_POINT_INTERVAL;
+    const shouldAddPoint =
+      !lastPoint || now - lastPoint.timestamp > MonitorTimings.timelinePointInterval;
 
     if (shouldAddPoint) {
       const point: TimelinePoint = {
@@ -88,7 +92,7 @@ export class PerformanceTimeline {
 
       // Efficient trimming: remove old points in one operation
       // Keep points from last 5 minutes AND respect max points limit
-      const cutoff = now - (MonitorLimits.MAX_TIMELINE_POINTS * 1000); // Convert to ms
+      const cutoff = now - MonitorLimits.maxTimelinePoints * 1000; // Convert to ms
 
       // Find the index of the first point to keep
       let keepFromIndex = 0;
@@ -439,7 +443,7 @@ export class PerformanceTimeline {
     avgQueryTime: number;
     avgLoadTime: number;
     avgCacheRate: number;
-    } {
+  } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0, avgCacheRate: 0 };
     }

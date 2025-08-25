@@ -116,21 +116,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private setupRenderer(): void {
-    // Try to get HDR canvas context first
+    // Try to get HDR canvas context first using config values
     let gl: WebGLRenderingContext | null = null;
     try {
-      gl = this.canvasElement.getContext('webgl2', {
-        alpha: false,
-        antialias: true,
-        depth: true,
-        stencil: false,
-        powerPreference: 'high-performance',
-        // Request wide color gamut - critical for HDR
-        colorSpace: 'display-p3',
-        // Request high precision
-        preserveDrawingBuffer: false,
-        desynchronized: true,
-      }) as WebGLRenderingContext | null;
+      gl = this.canvasElement.getContext(
+        'webgl2',
+        config.webgl.context
+      ) as WebGLRenderingContext | null;
 
       if (!gl) {
         log.warning(
@@ -143,17 +135,12 @@ export class SceneManager extends THREE.EventDispatcher<{
       showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
-    // Create WebGL renderer with antialiasing enabled
-    // Antialiasing uses MSAA (Multisample Anti-Aliasing) to smooth jagged edges
-    // This is especially important for point clouds and wireframe objects
+    // Create WebGL renderer using configuration values
+    // This ensures consistent settings across all rendering components
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true, // Enable MSAA for smoother rendering
       canvas: this.canvasElement, // Use our pre-existing canvas element
       context: gl || undefined, // Use our HDR context if available
-      // Request high performance GPU context
-      powerPreference: 'high-performance',
-      // Preserve drawing buffer for screenshots if needed
-      preserveDrawingBuffer: false,
+      ...config.webgl.renderer, // Apply all renderer settings from config
     });
 
     // Configure page for immersive fullscreen 3D experience

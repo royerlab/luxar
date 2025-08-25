@@ -31,7 +31,9 @@ import {
  * of the post-processing pipeline, allowing fine-tuning of
  * bloom effects and tone mapping behavior.
  */
-export const POST_PROCESSING_CONFIG = config.postProcessing;
+const BLOOM_CONFIG = config.rendering.bloom;
+const HDR_CONFIG = config.postProcessing.hdr;
+const TONE_MAPPING_CONFIG = config.postProcessing.toneMapping;
 
 /**
  * HDR Post-Processing Pipeline Manager
@@ -103,8 +105,8 @@ export class PostProcessingManager {
    */
   private setupHDRRenderer(): void {
     // Start in linear space so bloom sees unclamped HDR values
-    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.initial.outputColorSpace;
-    this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.initial.toneMapping;
+    this.renderer.outputColorSpace = TONE_MAPPING_CONFIG.initial.outputColorSpace;
+    this.renderer.toneMapping = TONE_MAPPING_CONFIG.initial.toneMapping;
 
     log.success(Modules.HDR, 'Renderer configured for linear pipeline');
   }
@@ -122,7 +124,7 @@ export class PostProcessingManager {
 
     this.hdrRenderTarget = new THREE.WebGLRenderTarget(renderWidth, renderHeight, {
       // Use 16-bit float for HDR precision without color banding
-      type: POST_PROCESSING_CONFIG.hdr.renderTargetType,
+      type: HDR_CONFIG.renderTargetType,
 
       // MSAA samples (WebGL2 only) - only apply if MSAA is enabled
       samples: this.msaaEnabled ? this.msaaSamples : 0,
@@ -135,9 +137,9 @@ export class PostProcessingManager {
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
 
-      // Depth buffer settings - crucial for DOF to work properly
-      depthBuffer: true,
-      stencilBuffer: false,
+      // Depth buffer settings from config
+      depthBuffer: config.webgl.renderTarget.depthBuffer,
+      stencilBuffer: config.webgl.renderTarget.stencilBuffer,
     });
 
     const aaInfo = [];
@@ -245,26 +247,22 @@ export class PostProcessingManager {
   private setupBloomPass(): void {
     const canvas = this.renderer.domElement;
     const bloomResolution = new THREE.Vector2(
-      Math.floor(
-        (canvas.clientWidth || window.innerWidth) / POST_PROCESSING_CONFIG.bloom.resolutionScale
-      ),
-      Math.floor(
-        (canvas.clientHeight || window.innerHeight) / POST_PROCESSING_CONFIG.bloom.resolutionScale
-      )
+      Math.floor((canvas.clientWidth || window.innerWidth) / BLOOM_CONFIG.resolutionScale),
+      Math.floor((canvas.clientHeight || window.innerHeight) / BLOOM_CONFIG.resolutionScale)
     );
 
     this.bloomPass = new UnrealBloomPass(
       bloomResolution,
-      POST_PROCESSING_CONFIG.bloom.strength,
-      POST_PROCESSING_CONFIG.bloom.radius,
-      POST_PROCESSING_CONFIG.bloom.threshold
+      BLOOM_CONFIG.strength,
+      BLOOM_CONFIG.radius,
+      BLOOM_CONFIG.threshold
     );
 
     log.info(
       Modules.POST_PROCESSING,
       `Bloom pass configured: ${bloomResolution.x}x${bloomResolution.y} ` +
-        `(strength: ${POST_PROCESSING_CONFIG.bloom.strength}, ` +
-        `radius: ${POST_PROCESSING_CONFIG.bloom.radius})`
+        `(strength: ${BLOOM_CONFIG.strength}, ` +
+        `radius: ${BLOOM_CONFIG.radius})`
     );
   }
 
@@ -276,8 +274,8 @@ export class PostProcessingManager {
    * knows what transformations to apply.
    */
   private finalizeToneMapping(): void {
-    this.renderer.toneMapping = POST_PROCESSING_CONFIG.toneMapping.final.toneMapping;
-    this.renderer.outputColorSpace = POST_PROCESSING_CONFIG.toneMapping.final.outputColorSpace;
+    this.renderer.toneMapping = TONE_MAPPING_CONFIG.final.toneMapping;
+    this.renderer.outputColorSpace = TONE_MAPPING_CONFIG.final.outputColorSpace;
 
     log.success(Modules.POST_PROCESSING, 'ACES filmic tone mapping and sRGB color space enabled');
   }
@@ -813,7 +811,7 @@ export class PostProcessingManager {
     msaa: boolean;
     ssaa: boolean;
     toneMapping: string;
-    } {
+  } {
     return {
       bloom: this.bloomPass?.enabled ?? false,
       dof: this.dofEnabled,

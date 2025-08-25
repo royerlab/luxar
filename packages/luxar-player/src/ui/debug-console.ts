@@ -7,8 +7,12 @@
  */
 
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
-import { DEBUG_CONSOLE_CONFIG } from '../config/debug-console';
+import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+
+// Extract component configuration
+const consoleConfig = config.ui.components.debugConsole;
+const spacingConfig = config.ui.styles.spacing;
 
 export interface ConsoleMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -102,28 +106,28 @@ export class DebugConsole {
     style.textContent = `
       .debug-console-panel {
         position: fixed;
-        bottom: ${DEBUG_CONSOLE_CONFIG.panel.bottomOffset}px;
-        left: ${DEBUG_CONSOLE_CONFIG.panel.leftOffset}px;
-        width: ${DEBUG_CONSOLE_CONFIG.panel.defaultWidth}px;
-        height: ${DEBUG_CONSOLE_CONFIG.panel.defaultHeight}px;
-        background: ${DEBUG_CONSOLE_CONFIG.style.backgroundColor};
-        border-radius: ${DEBUG_CONSOLE_CONFIG.style.borderRadius}px;
+        bottom: ${config.ui.debugConsole.panel.bottomOffset}px;
+        left: ${config.ui.debugConsole.panel.leftOffset}px;
+        width: ${config.ui.debugConsole.panel.defaultWidth}px;
+        height: ${config.ui.debugConsole.panel.defaultHeight}px;
+        background: ${config.ui.debugConsole.style.backgroundColor};
+        border-radius: ${config.ui.debugConsole.style.borderRadius}px;
         display: flex;
         flex-direction: column;
         font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif;
         font-size: 12px;
-        z-index: 150;
-        backdrop-filter: blur(${DEBUG_CONSOLE_CONFIG.style.backdropBlur}px);
-        box-shadow: ${DEBUG_CONSOLE_CONFIG.style.boxShadow};
+        z-index: ${consoleConfig.zIndex};
+        backdrop-filter: blur(${config.ui.debugConsole.style.backdropBlur}px);
+        box-shadow: ${config.ui.debugConsole.style.boxShadow};
       }
 
       .debug-console-header {
-        padding: 15px;
+        padding: ${spacingConfig.panelPadding}px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-radius: 8px 8px 0 0;
+        border-radius: ${consoleConfig.borderRadius.header}px ${consoleConfig.borderRadius.header}px 0 0;
       }
 
       .debug-console-title {
@@ -139,10 +143,10 @@ export class DebugConsole {
       }
 
       .debug-console-filter {
-        padding: 4px 8px;
+        padding: ${spacingConfig.borderPadding - 2}px ${spacingConfig.elementGap}px;
         background: rgba(0, 0, 0, 0.3);
         border: none;
-        border-radius: 4px;
+        border-radius: ${consoleConfig.borderRadius.content}px;
         color: #e0e0e0;
         width: 150px;
         font-family: inherit;
@@ -151,10 +155,10 @@ export class DebugConsole {
 
       .debug-console-clear,
       .debug-console-copy {
-        padding: 4px 12px;
+        padding: ${spacingConfig.borderPadding - 2}px ${spacingConfig.elementGap + 4}px;
         background: none;
         border: none;
-        border-radius: 4px;
+        border-radius: ${consoleConfig.borderRadius.content}px;
         color: rgba(255, 255, 255, 0.6);
         cursor: pointer;
         transition: color 0.2s;
@@ -201,26 +205,26 @@ export class DebugConsole {
         flex: 1;
         overflow-y: auto;
         overflow-x: auto;
-        padding: 10px;
+        padding: ${spacingConfig.sectionPadding}px;
         background: rgba(0, 0, 0, 0.3);
         font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
         font-size: 11px;
       }
 
       .debug-console-status {
-        padding: 8px 15px;
+        padding: ${spacingConfig.elementGap}px ${spacingConfig.panelPadding}px;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         display: flex;
         justify-content: space-between;
         color: rgba(255, 255, 255, 0.4);
         font-size: 10px;
-        border-radius: 0 0 8px 8px;
+        border-radius: 0 0 ${consoleConfig.borderRadius.header}px ${consoleConfig.borderRadius.header}px;
       }
 
       .console-message {
         margin: 2px 0;
-        padding: 4px 8px;
-        border-radius: 3px;
+        padding: ${spacingConfig.borderPadding - 2}px ${spacingConfig.elementGap}px;
+        border-radius: ${consoleConfig.borderRadius.button}px;
         word-wrap: break-word;
         font-family: inherit;
         line-height: 1.4;
@@ -302,7 +306,7 @@ export class DebugConsole {
 
       .debug-console-content::-webkit-scrollbar-thumb {
         background: rgba(255, 255, 255, 0.2);
-        border-radius: 4px;
+        border-radius: ${consoleConfig.borderRadius.content}px;
       }
 
       .debug-console-content::-webkit-scrollbar-thumb:hover {
@@ -438,13 +442,13 @@ export class DebugConsole {
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      if (y < DEBUG_CONSOLE_CONFIG.resize.borderWidth) {
+      if (y < config.ui.debugConsole.resize.borderWidth) {
         isResizing = true;
         resizeDirection = 'n';
         startY = e.clientY;
         startHeight = rect.height;
         e.preventDefault();
-      } else if (x < DEBUG_CONSOLE_CONFIG.resize.borderWidth) {
+      } else if (x < config.ui.debugConsole.resize.borderWidth) {
         isResizing = true;
         resizeDirection = 'w';
         startX = e.clientX;
@@ -459,15 +463,15 @@ export class DebugConsole {
       if (resizeDirection === 'n') {
         const deltaY = startY - e.clientY;
         const newHeight = Math.max(
-          DEBUG_CONSOLE_CONFIG.panel.minHeight,
-          Math.min(DEBUG_CONSOLE_CONFIG.panel.maxHeight, startHeight + deltaY)
+          config.ui.debugConsole.panel.minHeight,
+          Math.min(config.ui.debugConsole.panel.maxHeight, startHeight + deltaY)
         );
         panel.style.height = `${newHeight}px`;
       } else if (resizeDirection === 'w') {
         const deltaX = startX - e.clientX;
         const newWidth = Math.max(
-          DEBUG_CONSOLE_CONFIG.panel.minWidth,
-          Math.min(DEBUG_CONSOLE_CONFIG.panel.maxWidth, startWidth + deltaX)
+          config.ui.debugConsole.panel.minWidth,
+          Math.min(config.ui.debugConsole.panel.maxWidth, startWidth + deltaX)
         );
         panel.style.width = `${newWidth}px`;
       }

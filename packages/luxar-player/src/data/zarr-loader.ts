@@ -16,6 +16,7 @@ import { SceneLoaderManager } from './scene-loader-manager';
 import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { config } from '../config';
 
 /**
  * Load a complete scene from a Zarr store using the new architecture.
@@ -100,12 +101,12 @@ export async function updateSceneForDimensions(
   const viewState: ViewState = {
     displayDims: dims.displayed,
     slicePosition: dims.currentStep,
-    tolerance: new Array(dims.ndim).fill(0.1), // Default tolerance
+    tolerance: new Array(dims.ndim).fill(config.dataLoading.spatial.defaultTolerance), // Default tolerance
     dimensions: dims,
   };
 
   // Update max radius from scene metadata if available
-  const maxRadius = scene.userData.maxRadius || 0.1;
+  const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
 
   // For non-displayed dimensions, use the max radius as tolerance for slicing
   // Displayed dimensions are not indexed, so no tolerance is needed for them

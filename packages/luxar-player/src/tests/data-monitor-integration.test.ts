@@ -71,6 +71,7 @@ vi.mock('three', () => ({
   AgXToneMapping: 5,
   NeutralToneMapping: 6,
   CustomToneMapping: 7,
+  PCFSoftShadowMap: 2,
 }));
 
 describe('Data Monitor Integration', () => {
@@ -138,7 +139,8 @@ describe('Data Monitor Integration', () => {
       const manager = DataMonitorManager.getInstance();
 
       // Create scene loader with monitor enabled
-      const _sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      void sceneLoader; // Explicitly mark as used for testing
 
       // Monitor should be created
       const monitor = manager.getMonitor('test-scene-monitor');
@@ -149,7 +151,8 @@ describe('Data Monitor Integration', () => {
       const manager = DataMonitorManager.getInstance();
 
       // Create scene loader with monitor disabled
-      const _sceneLoader = new SceneLoader({ enableMonitor: false }, 'test-scene');
+      const sceneLoader = new SceneLoader({ enableMonitor: false }, 'test-scene');
+      void sceneLoader; // Explicitly mark as used for testing
 
       // Monitor should not be created
       const monitor = manager.getMonitor('test-scene-monitor');
@@ -158,17 +161,19 @@ describe('Data Monitor Integration', () => {
 
     it('should connect loaders to monitor', async () => {
       const manager = DataMonitorManager.getInstance();
-      const _sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      void sceneLoader; // Explicitly mark as used for testing
       const monitor = manager.getMonitor('test-scene-monitor');
 
       expect(monitor).toBeDefined();
       if (!monitor) return;
 
       // Mock the zarr store and scene loading
-      const _mockStore = {
+      const mockStore = {
         getItem: vi.fn(),
         containsItem: vi.fn(),
       };
+      void mockStore; // Explicitly mark as used for testing
 
       // Note: Actual zarr mocking is already handled by vi.mock at the top
       // We would need more complex mocking for actual scene loading
@@ -184,7 +189,8 @@ describe('Data Monitor Integration', () => {
 
     it('should disconnect all loaders when loading new scene', () => {
       const manager = DataMonitorManager.getInstance();
-      const _sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
+      void sceneLoader; // Explicitly mark as used for testing
       const monitor = manager.getMonitor('test-scene-monitor');
 
       if (!monitor) throw new Error('Monitor should exist');
@@ -248,7 +254,8 @@ describe('Data Monitor Integration', () => {
       const manager = DataMonitorManager.getInstance();
 
       const monitor1 = manager.createMonitor('scene1', document.body, undefined, true);
-      const _monitor2 = manager.createMonitor('scene2', document.body, undefined, false);
+      const monitor2 = manager.createMonitor('scene2', document.body, undefined, false);
+      void monitor2; // Explicitly mark as used for testing
 
       expect(manager.getDefaultMonitor()).toBe(monitor1);
 
@@ -260,8 +267,7 @@ describe('Data Monitor Integration', () => {
     it('should destroy monitors', () => {
       const manager = DataMonitorManager.getInstance();
 
-      /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
-      const monitor = manager.createMonitor('test', document.body);
+      manager.createMonitor('test', document.body);
       expect(manager.hasMonitor('test')).toBe(true);
 
       manager.destroyMonitor('test');
@@ -278,9 +284,9 @@ describe('Data Monitor Integration', () => {
       let eventListener: ((event: MonitorEvent) => void) | null = null;
 
       const mockLoader: LoaderMonitor = {
-        addEventListener: vi.fn((listener) => {
+        addEventListener: vi.fn((listener: (event: MonitorEvent) => void) => {
           eventListener = listener;
-        }),
+        }) as any,
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
           type: 'spatial-index' as const,
@@ -308,14 +314,14 @@ describe('Data Monitor Integration', () => {
 
       // Send events
       if (eventListener) {
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000 },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
           loader: 'spatial-index',
           timestamp: Date.now(),
@@ -337,9 +343,9 @@ describe('Data Monitor Integration', () => {
       let eventListener: ((event: MonitorEvent) => void) | null = null;
 
       const mockLoader: LoaderMonitor = {
-        addEventListener: vi.fn((listener) => {
+        addEventListener: vi.fn((listener: (event: MonitorEvent) => void) => {
           eventListener = listener;
-        }),
+        }) as any,
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
           type: 'spatial-index' as const,
@@ -365,56 +371,56 @@ describe('Data Monitor Integration', () => {
 
       // Send events to update metrics
       if (eventListener) {
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000, latency: 10 },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000, latency: 20 },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'load',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 2000, memory: 8000, latency: 50 },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-miss',
           loader: 'spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
-        eventListener({
+        (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-miss',
           loader: 'spatial-index',
           timestamp: Date.now(),

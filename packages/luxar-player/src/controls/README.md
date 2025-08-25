@@ -195,10 +195,11 @@ contextManager.popContext();
 
 ### Configuration System
 
-All control parameters are centralized in `control-config.ts`:
+All control parameters are centralized in the main config (`config/index.ts`):
 
 ```typescript
-export const CONTROL_CONFIG = {
+// In config/index.ts
+controls: {
   fly: {
     inertialMode: { default: true },
     movement: {

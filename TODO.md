@@ -69,7 +69,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-21- I noticed something starnge when trying example 'rainbow_sphere_4d_example.zarr', the points that are not visible because they do not intersect the 3D hyperplane ar still visible as ultrathin points. I think what is going on is that the shader is rendering points of radius zero, and instead of discarding entirely these points, it is rendering them as very small points. This is not the desired behaviour, we want these points to be completely invisible and not waste shader render time on them. Please take this interpretation of the bug with a grain of salt, and VERY CAREFULLY READ ALL RELEVANT CODE to determine the true cause of the issue. 
+21- I noticed something strange when trying example 'rainbow_sphere_4d_example.zarr', the points that are not visible because they do not intersect the 3D hyperplane ar still visible as ultrathin points. I think what is going on is that the shader is rendering points of radius zero, and instead of discarding entirely these points, it is rendering them as very small points. This is not the desired behaviour, we want these points to be completely invisible and not waste shader render time on them. Please take this interpretation of the bug with a grain of salt, and VERY CAREFULLY READ ALL RELEVANT CODE to determine the true cause of the issue. 
     - **Status**: Open
     - **Priority**: HIGH
 

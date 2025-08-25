@@ -7,6 +7,10 @@ import { PostProcessingManager } from '../rendering/post-processing';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
+
+// Extract component configuration
+const controlsConfig = config.ui.components.renderingControls;
+const spacingConfig = config.ui.styles.spacing;
 import { SHADER_CONFIG } from '../rendering/shader-manager';
 import type { NavigationControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
@@ -58,7 +62,19 @@ export class RenderingControls {
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
-    this.settings = { ...config.renderingControls.defaults };
+    this.settings = {
+      ...config.renderingControls.defaults,
+      // Override bloom settings with values from rendering.bloom
+      bloomThreshold: config.rendering.bloom.threshold,
+      bloomStrength: config.rendering.bloom.strength,
+      bloomRadius: config.rendering.bloom.radius,
+      // Add fly control defaults from config.controls.fly
+      flyMovementSpeed: config.controls.fly.movement.speed.default,
+      flyRotationSpeed: config.controls.fly.rotation.speed.default,
+      flyInertialMode: config.controls.fly.inertialMode.default,
+      flyDamping: config.controls.fly.movement.damping.default,
+      flyRotationDamping: config.controls.fly.rotation.damping.default,
+    };
 
     // Initialize GUI
     this.gui = new GUI({
@@ -71,7 +87,7 @@ export class RenderingControls {
     this.gui.domElement.style.position = 'fixed';
     this.gui.domElement.style.top = '20px'; // Standard 20px margin
     this.gui.domElement.style.left = '20px'; // Standard 20px margin
-    this.gui.domElement.style.zIndex = '1999'; // Below performance monitor (2000)
+    this.gui.domElement.style.zIndex = String(config.ui.zIndex.renderingControls);
 
     // Start hidden
     this.gui.hide();
@@ -234,9 +250,16 @@ export class RenderingControls {
         '• 5.0 = Fast (12 seconds per rotation)'
     );
 
-    // Fly controls settings
+    // Fly controls settings - use ranges from config.controls.fly
+    const flyMovementConfig = config.controls.fly.movement.speed;
     const flySpeedControl = flyFolder
-      .add(this.settings, 'flyMovementSpeed', 0.5, 20, 0.1)
+      .add(
+        this.settings,
+        'flyMovementSpeed',
+        flyMovementConfig.min,
+        flyMovementConfig.max,
+        flyMovementConfig.step || 0.1
+      )
       .name('Movement Speed')
       .onChange((value: number) => {
         this.sceneManager.setFlyMovementSpeed(value);
@@ -254,8 +277,15 @@ export class RenderingControls {
         '• Alt+W/S for vertical movement'
     );
 
+    const flyRotationConfig = config.controls.fly.rotation.speed;
     const flyRotationSpeedControl = flyFolder
-      .add(this.settings, 'flyRotationSpeed', 0.1, 5.0, 0.1)
+      .add(
+        this.settings,
+        'flyRotationSpeed',
+        flyRotationConfig.min,
+        flyRotationConfig.max,
+        flyRotationConfig.step || 0.1
+      )
       .name('Rotation Speed')
       .onChange((value: number) => {
         this.sceneManager.setFlyRotationSpeed(value);
@@ -299,8 +329,15 @@ export class RenderingControls {
         '• Inertial: Acceleration-based with momentum (drift to stop)'
     );
 
+    const flyDampingConfig = config.controls.fly.movement.damping;
     const flyDampingControl = flyFolder
-      .add(this.settings, 'flyDamping', 0.9, 0.9999, 0.0001)
+      .add(
+        this.settings,
+        'flyDamping',
+        flyDampingConfig.min,
+        flyDampingConfig.max,
+        flyDampingConfig.step || 0.0001
+      )
       .name('Translation Damping')
       .onChange((value: number) => {
         this.sceneManager.setFlyDamping(value);
@@ -745,12 +782,12 @@ export class RenderingControls {
         --font-size: 12px !important;
         --input-font-size: 12px !important;
         --folder-border-color: rgba(255, 255, 255, 0.2) !important;
-        --checkbox-border-radius: 4px !important;
+        --checkbox-border-radius: ${controlsConfig.borderRadius.checkbox}px !important;
         color: #e0e0e0 !important;
       }
       
       .lil-gui .controller {
-        border-radius: 4px !important;
+        border-radius: ${controlsConfig.borderRadius.section}px !important;
         margin: 2px 0 !important;
       }
       
@@ -759,12 +796,12 @@ export class RenderingControls {
       }
       
       .lil-gui .title {
-        padding: 5px !important;
-        border-radius: 4px 4px 0 0 !important;
+        padding: ${spacingConfig.compactGap}px !important;
+        border-radius: ${controlsConfig.borderRadius.header}px ${controlsConfig.borderRadius.header}px 0 0 !important;
       }
       
       .lil-gui button {
-        border-radius: 4px !important;
+        border-radius: ${controlsConfig.borderRadius.section}px !important;
         background-color: rgba(255, 255, 255, 0.1) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
       }
@@ -777,17 +814,17 @@ export class RenderingControls {
       .lil-gui input[type="text"] {
         background-color: rgba(0, 0, 0, 0.2) !important;
         border: none !important;
-        border-radius: 4px !important;
+        border-radius: ${controlsConfig.borderRadius.section}px !important;
         color: #4CAF50 !important;
-        padding: 2px 6px !important;
+        padding: ${spacingConfig.tinyGap}px ${spacingConfig.borderPadding}px !important;
       }
       
       .lil-gui select {
         background-color: rgba(0, 0, 0, 0.2) !important;
         border: none !important;
-        border-radius: 4px !important;
+        border-radius: ${controlsConfig.borderRadius.section}px !important;
         color: #e0e0e0 !important;
-        padding: 2px 6px !important;
+        padding: ${spacingConfig.tinyGap}px ${spacingConfig.borderPadding}px !important;
       }
       
       /* Remove borders from sliders too */
@@ -864,7 +901,7 @@ export class RenderingControls {
 
     // Load settings for this scene (will apply if found)
     this.loadSettings();
-    
+
     // Always apply current settings to ensure proper initialization
     // This is needed when no stored settings exist (first time loading)
     this.applySettings();
@@ -959,7 +996,20 @@ export class RenderingControls {
       const loadedSettings = deserializeSettings(stored);
       if (loadedSettings) {
         // Merge with defaults to handle missing properties
-        this.settings = { ...config.renderingControls.defaults, ...loadedSettings };
+        this.settings = {
+          ...config.renderingControls.defaults,
+          // Override bloom settings with values from rendering.bloom
+          bloomThreshold: config.rendering.bloom.threshold,
+          bloomStrength: config.rendering.bloom.strength,
+          bloomRadius: config.rendering.bloom.radius,
+          // Add fly control defaults from config.controls.fly
+          flyMovementSpeed: config.controls.fly.movement.speed.default,
+          flyRotationSpeed: config.controls.fly.rotation.speed.default,
+          flyInertialMode: config.controls.fly.inertialMode.default,
+          flyDamping: config.controls.fly.movement.damping.default,
+          flyRotationDamping: config.controls.fly.rotation.damping.default,
+          ...loadedSettings,
+        };
 
         // Update GUI to reflect loaded values
         this.gui.controllersRecursive().forEach((controller) => {
@@ -1120,6 +1170,9 @@ export class RenderingControls {
     );
 
     // Vignetting removed - effect was lame
+
+    // Trigger render to ensure changes are visible
+    this.triggerAnimation();
   }
 
   /**

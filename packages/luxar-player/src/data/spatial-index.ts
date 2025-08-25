@@ -9,6 +9,7 @@ import * as zarr from 'zarrita';
 import { get } from 'zarrita';
 import { SpatialIndexMetadata, SpatialIndex, PointRange } from '../types/spatial-index';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
 
 // Re-export types for backwards compatibility
 export type { SpatialIndexMetadata, SpatialIndex, PointRange };
@@ -161,7 +162,7 @@ export function querySpatialIndex(
   for (let i = 0; i < D; i++) {
     const fullDimIdx = metadata.indexed_dimensions[i];
     indexedSlicePos[i] = slicePos[fullDimIdx] ?? 0; // Default to 0 if undefined
-    indexedTolerance[i] = tolerance[fullDimIdx] ?? 0.1; // Default tolerance
+    indexedTolerance[i] = tolerance[fullDimIdx] ?? config.dataLoading.spatial.defaultTolerance; // Default tolerance
   }
 
   // Debug logging for indexed values

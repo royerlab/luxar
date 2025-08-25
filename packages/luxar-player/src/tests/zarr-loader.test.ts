@@ -46,11 +46,12 @@ vi.mock('three', () => ({
     });
     return vec;
   }),
-  HalfFloatType: 'HalfFloatType',
-  LinearSRGBColorSpace: 'LinearSRGBColorSpace',
-  NoToneMapping: 'NoToneMapping',
-  SRGBColorSpace: 'SRGBColorSpace',
-  ACESFilmicToneMapping: 'ACESFilmicToneMapping',
+  HalfFloatType: 1016,
+  LinearSRGBColorSpace: 'srgb-linear',
+  NoToneMapping: 0,
+  SRGBColorSpace: 'srgb',
+  ACESFilmicToneMapping: 4,
+  PCFSoftShadowMap: 2,
 }));
 
 // Store mock setup

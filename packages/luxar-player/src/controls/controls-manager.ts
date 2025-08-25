@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls';
 import { LuxarFlyControls } from './luxar-fly-controls';
-import { CONTROL_CONFIG } from './control-config';
+import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 
 export type ControlType = 'orbit' | 'arcball' | 'fly';
@@ -43,17 +43,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private currentControls: OrbitControls | ArcballControls | LuxarFlyControls | null = null;
   private currentType: ControlType = 'orbit';
 
-  // Configuration - uses defaults from CONTROL_CONFIG
+  // Configuration - uses defaults from config
   private config: ControlsManagerConfig = {
     autoRotate: false,
-    autoRotateSpeed: CONTROL_CONFIG.orbit.autoRotate.speed.default,
-    flyMovementSpeed: CONTROL_CONFIG.fly.movement.speed.default,
-    flyRotationSpeed: CONTROL_CONFIG.fly.rotation.speed.default,
-    flyLookSpeed: CONTROL_CONFIG.fly.look.mouseSpeed.default,
-    flyInertialMode: CONTROL_CONFIG.fly.inertialMode.default,
-    flyDamping: CONTROL_CONFIG.fly.movement.damping.default,
-    flyRotationDamping: CONTROL_CONFIG.fly.rotation.damping.default,
-    flyAcceleration: CONTROL_CONFIG.fly.movement.acceleration.default,
+    autoRotateSpeed: config.controls.orbit.autoRotate.speed.default,
+    flyMovementSpeed: config.controls.fly.movement.speed.default,
+    flyRotationSpeed: config.controls.fly.rotation.speed.default,
+    flyLookSpeed: config.controls.fly.look.mouseSpeed.default,
+    flyInertialMode: config.controls.fly.inertialMode.default,
+    flyDamping: config.controls.fly.movement.damping.default,
+    flyRotationDamping: config.controls.fly.rotation.damping.default,
+    flyAcceleration: config.controls.fly.movement.acceleration.default,
   };
 
   // Saved camera state for switching
@@ -558,14 +558,14 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     rotationDamping: number;
     movementSpeed: number;
     rotationSpeed: number;
-    } {
+  } {
     return {
-      inertialMode: this.config.flyInertialMode ?? CONTROL_CONFIG.fly.inertialMode.default,
-      damping: this.config.flyDamping ?? CONTROL_CONFIG.fly.movement.damping.default,
+      inertialMode: this.config.flyInertialMode ?? config.controls.fly.inertialMode.default,
+      damping: this.config.flyDamping ?? config.controls.fly.movement.damping.default,
       rotationDamping:
-        this.config.flyRotationDamping ?? CONTROL_CONFIG.fly.rotation.damping.default,
-      movementSpeed: this.config.flyMovementSpeed ?? CONTROL_CONFIG.fly.movement.speed.default,
-      rotationSpeed: this.config.flyRotationSpeed ?? CONTROL_CONFIG.fly.rotation.speed.default,
+        this.config.flyRotationDamping ?? config.controls.fly.rotation.damping.default,
+      movementSpeed: this.config.flyMovementSpeed ?? config.controls.fly.movement.speed.default,
+      rotationSpeed: this.config.flyRotationSpeed ?? config.controls.fly.rotation.speed.default,
     };
   }
 

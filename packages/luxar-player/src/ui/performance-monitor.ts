@@ -5,6 +5,7 @@
 // performance overhead.
 
 import Stats from 'stats.js';
+import { config } from '../config';
 
 /**
  * PerformanceMonitor manages real-time performance statistics display
@@ -57,9 +58,8 @@ export class PerformanceMonitor {
     statsElement.style.width = 'auto'; // Use natural width
     statsElement.style.height = 'auto'; // Use natural height
 
-    // Set z-index appropriate for UI panels
-    // Standard UI panels use 100-200 range
-    statsElement.style.zIndex = '100';
+    // Set z-index from config for consistent layering
+    statsElement.style.zIndex = String(config.ui.zIndex.statsMonitor);
 
     // Slightly transparent to reduce visual impact while maintaining readability
     statsElement.style.opacity = '0.9';

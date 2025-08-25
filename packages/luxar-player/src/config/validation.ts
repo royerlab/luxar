@@ -1,0 +1,324 @@
+/**
+ * Configuration Validation Module
+ *
+ * Provides runtime validation for configuration values to catch errors early
+ * and ensure configuration consistency.
+ */
+
+import type { AppConfig } from './types';
+import { log, Modules } from '../utils/log';
+
+/**
+ * Validation result interface
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Validates the entire application configuration
+ */
+export function validateConfig(config: AppConfig): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Validate camera configuration
+  validateCamera(config, errors, warnings);
+
+  // Validate rendering configuration
+  validateRendering(config, errors, warnings);
+
+  // Validate bloom configuration consistency
+  validateBloomConsistency(config, errors, warnings);
+
+  // Validate control configuration
+  validateControls(config, errors, warnings);
+
+  // Validate data loading configuration
+  validateDataLoading(config, errors, warnings);
+
+  // Validate scene configuration
+  validateScene(config, errors, warnings);
+
+  // Validate input configuration
+  validateInput(config, errors, warnings);
+
+  // Validate WebGL configuration
+  validateWebGL(config, errors, warnings);
+
+  // Check for value synchronization
+  checkValueSync(config, warnings);
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+/**
+ * Validate camera configuration
+ */
+function validateCamera(config: AppConfig, errors: string[], warnings: string[]): void {
+  const { camera } = config;
+
+  // FOV validation
+  if (camera.fov < 1 || camera.fov > 180) {
+    errors.push(`Invalid camera FOV: ${camera.fov} (must be between 1 and 180)`);
+  }
+
+  // Near/far plane validation
+  if (camera.near <= 0) {
+    errors.push(`Invalid camera near plane: ${camera.near} (must be > 0)`);
+  }
+  if (camera.far <= camera.near) {
+    errors.push(`Invalid camera far plane: ${camera.far} (must be > near plane ${camera.near})`);
+  }
+
+  // FOV min/max validation
+  if (camera.fovMin >= camera.fovMax) {
+    errors.push(`Invalid FOV limits: min ${camera.fovMin} >= max ${camera.fovMax}`);
+  }
+
+  // FOV sensitivity
+  if (camera.fovSensitivity <= 0 || camera.fovSensitivity > 1) {
+    warnings.push(`Unusual FOV sensitivity: ${camera.fovSensitivity} (typical range 0.01-0.2)`);
+  }
+}
+
+/**
+ * Validate rendering configuration
+ */
+function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
+  const { shader } = config;
+
+  // Shader points validation
+  if (shader.points.size <= 0) {
+    errors.push(`Invalid shader point size: ${shader.points.size} (must be > 0)`);
+  }
+  if (shader.points.hdrMultiplier < 0) {
+    errors.push(`Invalid HDR multiplier: ${shader.points.hdrMultiplier} (must be >= 0)`);
+  }
+  if (shader.points.baseAlpha < 0 || shader.points.baseAlpha > 1) {
+    errors.push(`Invalid base alpha: ${shader.points.baseAlpha} (must be between 0 and 1)`);
+  }
+  if (shader.points.falloffSteepness <= 0) {
+    errors.push(`Invalid falloff steepness: ${shader.points.falloffSteepness} (must be > 0)`);
+  }
+}
+
+/**
+ * Validate bloom configuration consistency
+ */
+function validateBloomConsistency(config: AppConfig, _errors: string[], warnings: string[]): void {
+  const { rendering } = config;
+  const bloom = rendering.bloom;
+
+  // Check bloom value ranges
+  if (bloom.strength < 0 || bloom.strength > 10) {
+    warnings.push(`Unusual bloom.strength: ${bloom.strength} (typical range 0-2)`);
+  }
+  if (bloom.radius < 0 || bloom.radius > 10) {
+    warnings.push(`Unusual bloom.radius: ${bloom.radius} (typical range 0-2)`);
+  }
+  if (bloom.threshold < 0 || bloom.threshold > 1) {
+    warnings.push(`Invalid bloom.threshold: ${bloom.threshold} (must be 0-1)`);
+  }
+  if (bloom.resolutionScale < 1 || bloom.resolutionScale > 16) {
+    warnings.push(`Unusual bloom.resolutionScale: ${bloom.resolutionScale} (typical range 2-8)`);
+  }
+
+  // No more duplication to check - single source of truth!
+}
+
+/**
+ * Validate control configuration
+ */
+function validateControls(_config: AppConfig, _errors: string[], _warnings: string[]): void {
+  // Fly control validation removed - no longer duplicated
+  // Add any other control validations here as needed
+}
+
+/**
+ * Validate data loading configuration
+ */
+function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
+  const { dataLoading } = config;
+
+  // Cache validation
+  if (dataLoading.cache.maxSizeMB <= 0) {
+    errors.push(`Invalid cache max size: ${dataLoading.cache.maxSizeMB} MB (must be > 0)`);
+  }
+  if (dataLoading.cache.ttlMs < 0) {
+    errors.push(`Invalid cache TTL: ${dataLoading.cache.ttlMs} ms (must be >= 0)`);
+  }
+
+  // Network validation
+  if (dataLoading.network.timeoutMs <= 0) {
+    errors.push(`Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be > 0)`);
+  }
+  if (dataLoading.network.maxConcurrent <= 0) {
+    errors.push(
+      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be > 0)`
+    );
+  }
+  if (dataLoading.network.retryAttempts < 0) {
+    errors.push(`Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be >= 0)`);
+  }
+
+  // Memory validation
+  if (dataLoading.memory.targetHeapUsage <= 0 || dataLoading.memory.targetHeapUsage > 1) {
+    errors.push(`Invalid target heap usage: ${dataLoading.memory.targetHeapUsage} (must be 0-1)`);
+  }
+  if (dataLoading.memory.minCacheMB <= 0) {
+    errors.push(`Invalid min cache size: ${dataLoading.memory.minCacheMB} MB (must be > 0)`);
+  }
+
+  // Spatial validation (new)
+  if (dataLoading.spatial) {
+    if (dataLoading.spatial.defaultTolerance <= 0) {
+      errors.push(
+        `Invalid spatial default tolerance: ${dataLoading.spatial.defaultTolerance} (must be > 0)`
+      );
+    }
+    if (dataLoading.spatial.defaultMaxRadius <= 0) {
+      errors.push(
+        `Invalid spatial default max radius: ${dataLoading.spatial.defaultMaxRadius} (must be > 0)`
+      );
+    }
+  }
+}
+
+/**
+ * Validate scene configuration
+ */
+function validateScene(config: AppConfig, errors: string[], _warnings: string[]): void {
+  const { scene } = config;
+
+  // Background color validation
+  if (scene.backgroundColor < 0 || scene.backgroundColor > 0xffffff) {
+    errors.push(
+      `Invalid scene background color: ${scene.backgroundColor} (must be valid hex color)`
+    );
+  }
+
+  // Fit ratio validation
+  if (scene.defaultFitRatio <= 0 || scene.defaultFitRatio > 1) {
+    errors.push(`Invalid scene fit ratio: ${scene.defaultFitRatio} (must be between 0 and 1)`);
+  }
+}
+
+/**
+ * Validate input configuration
+ */
+function validateInput(config: AppConfig, _errors: string[], warnings: string[]): void {
+  const { input } = config;
+
+  // Sensitivity validation
+  if (input.defaultSensitivity <= 0 || input.defaultSensitivity > 1) {
+    warnings.push(
+      `Unusual input sensitivity: ${input.defaultSensitivity} (typical range 0.01-0.5)`
+    );
+  }
+}
+
+/**
+ * Validate WebGL configuration
+ */
+function validateWebGL(config: AppConfig, errors: string[], warnings: string[]): void {
+  const { webgl } = config;
+
+  // Validate power preference
+  const validPowerPreferences = ['high-performance', 'low-power', 'default'];
+  if (!validPowerPreferences.includes(webgl.context.powerPreference)) {
+    errors.push(
+      `Invalid WebGL context powerPreference: ${webgl.context.powerPreference} (must be one of: ${validPowerPreferences.join(', ')})`
+    );
+  }
+  if (!validPowerPreferences.includes(webgl.renderer.powerPreference)) {
+    errors.push(
+      `Invalid WebGL renderer powerPreference: ${webgl.renderer.powerPreference} (must be one of: ${validPowerPreferences.join(', ')})`
+    );
+  }
+
+  // Validate precision
+  const validPrecisions = ['highp', 'mediump', 'lowp'];
+  if (!validPrecisions.includes(webgl.renderer.precision)) {
+    errors.push(
+      `Invalid WebGL precision: ${webgl.renderer.precision} (must be one of: ${validPrecisions.join(', ')})`
+    );
+  }
+
+  // Validate MSAA samples
+  const validSamples = [0, 2, 4, 8];
+  if (!validSamples.includes(webgl.renderTarget.samples)) {
+    warnings.push(
+      `Unusual MSAA samples: ${webgl.renderTarget.samples} (typical values: ${validSamples.join(', ')})`
+    );
+  }
+
+  // Validate color space
+  const validColorSpaces = ['srgb', 'display-p3', 'rec2020'];
+  if (!validColorSpaces.includes(webgl.context.colorSpace)) {
+    warnings.push(
+      `Unusual color space: ${webgl.context.colorSpace} (typical values: ${validColorSpaces.join(', ')})`
+    );
+  }
+
+  // Check for consistency between context and renderer
+  if (webgl.context.antialias !== webgl.renderer.antialias) {
+    warnings.push(
+      `Antialias mismatch: context=${webgl.context.antialias}, renderer=${webgl.renderer.antialias}`
+    );
+  }
+  if (webgl.context.powerPreference !== webgl.renderer.powerPreference) {
+    warnings.push(
+      `Power preference mismatch: context=${webgl.context.powerPreference}, renderer=${webgl.renderer.powerPreference}`
+    );
+  }
+  if (webgl.context.preserveDrawingBuffer !== webgl.renderer.preserveDrawingBuffer) {
+    warnings.push(
+      `Preserve drawing buffer mismatch: context=${webgl.context.preserveDrawingBuffer}, renderer=${webgl.renderer.preserveDrawingBuffer}`
+    );
+  }
+}
+
+/**
+ * Check value synchronization
+ */
+function checkValueSync(_config: AppConfig, _warnings: string[]): void {
+  // This has been covered in bloom and control validation
+  // Add any additional sync checks here
+}
+
+/**
+ * Log validation results
+ */
+export function logValidationResults(result: ValidationResult): void {
+  if (result.valid) {
+    log.success(Modules.LUXAR, 'Configuration validation passed');
+  } else {
+    log.error(Modules.LUXAR, `Configuration validation failed with ${result.errors.length} errors`);
+    result.errors.forEach((error) => {
+      console.error(`  ❌ ${error}`);
+    });
+  }
+
+  if (result.warnings.length > 0) {
+    log.warning(Modules.LUXAR, `Configuration has ${result.warnings.length} warnings`);
+    result.warnings.forEach((warning) => {
+      console.warn(`  ⚠️ ${warning}`);
+    });
+  }
+}
+
+/**
+ * Validate configuration at runtime with automatic logging
+ */
+export function validateAndLog(config: AppConfig): boolean {
+  const result = validateConfig(config);
+  logValidationResults(result);
+  return result.valid;
+}

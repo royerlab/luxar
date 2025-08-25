@@ -35,6 +35,7 @@ import {
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
+import { config } from '../config';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -185,7 +186,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
         this._effectiveRadiusConfig = {
           spatialExtendDims: spatialExtendDims,
-          maxRadius: this.node.attrs.max_radius || 0.1,
+          maxRadius: this.node.attrs.max_radius || config.dataLoading.spatial.defaultMaxRadius,
           // discreteDims is deprecated - kept for backwards compatibility only
         };
 
@@ -322,29 +323,29 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -440,7 +441,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     const { slicePosition, tolerance } = viewState;
 
     // Use max radius from node attributes if available
-    const maxRadius = this.node.attrs.max_radius || 0.1;
+    const maxRadius = this.node.attrs.max_radius || config.dataLoading.spatial.defaultMaxRadius;
 
     // The spatial index now only contains non-displayed dimensions
     // We need to build the query arrays using the full dimension count
@@ -578,11 +579,15 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       output = new Uint8Array(totalElements);
     } else if (dtype === 'uint16' || (dtype as string) === '<u2' || (dtype as string) === '>u2') {
       output = new Uint16Array(totalElements);
-    } else if (dtype === 'float16' || (dtype as string) === '<f2' || (dtype as string) === '>f2') {
+    } else if (
+      (dtype as string) === 'float16' ||
+      (dtype as string) === '<f2' ||
+      (dtype as string) === '>f2'
+    ) {
       // Float16Array is supported in modern browsers (2024+)
       // Use runtime detection for compatibility
-      if (typeof Float16Array !== 'undefined') {
-        output = new Float16Array(totalElements);
+      if (typeof (globalThis as any).Float16Array !== 'undefined') {
+        output = new (globalThis as any).Float16Array(totalElements);
       } else {
         // Fallback to Float32 for older browsers
         log.warning(

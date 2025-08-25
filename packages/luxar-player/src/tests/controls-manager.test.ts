@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { LuxarFlyControls } from '../controls/luxar-fly-controls';
+import { createTestCamera } from './test-config';
 
 describe('ControlsManager', () => {
   let camera: THREE.PerspectiveCamera;
@@ -18,9 +19,9 @@ describe('ControlsManager', () => {
   let scene: THREE.Scene;
 
   beforeEach(() => {
-    // Create mock camera
-    camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
-    camera.position.set(0, 0, 5);
+    // Create camera using test config
+    camera = createTestCamera(1);
+    camera.position.set(0, 0, 5); // Override position for specific test needs
 
     // Create mock DOM element
     domElement = document.createElement('div');

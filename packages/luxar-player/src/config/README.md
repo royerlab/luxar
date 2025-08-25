@@ -40,7 +40,7 @@ The architecture follows a separation of concerns approach:
 
 - `index.ts` contains the actual configuration values and imports
 - `types.ts` defines all TypeScript interfaces
-- `debug-console.ts` isolates debug-specific configuration
+- `validation.ts` provides runtime validation of configuration values
 
 ## Configuration Sections
 
@@ -70,14 +70,17 @@ rendering: {
   bloom: {
     strength: 0.25,           // Glow intensity
     radius: 1.0,              // Glow spread
-    threshold: 0.0,           // Brightness trigger (0.0 = everything glows)
+    threshold: 0.01,          // Brightness trigger
     resolutionScale: 4        // Quality vs performance
-  },
+  }
+}
+
+shader: {
   points: {
-    size: 4.0,               // Base point size (pixels)
+    size: 8.0,               // Base point size (pixels)
     hdrMultiplier: 16.0,     // HDR bloom multiplier
     baseAlpha: 0.01,         // Transparency
-    falloffSteepness: 40.0   // Edge softness
+    falloffSteepness: 20.0   // Edge softness
   }
 }
 ```
@@ -148,13 +151,47 @@ renderingControls: {
 }
 ```
 
+### WebGL Configuration
+
+WebGL context and renderer settings for optimal 3D rendering:
+
+```typescript
+webgl: {
+  context: {
+    alpha: false,                       // No canvas transparency
+    antialias: true,                   // Enable edge smoothing
+    depth: true,                       // Enable depth buffer
+    stencil: false,                    // No stencil (saves memory)
+    powerPreference: 'high-performance', // GPU preference
+    colorSpace: 'display-p3',          // Wide color gamut
+    preserveDrawingBuffer: false,      // Better performance
+    desynchronized: true,              // Async updates
+  },
+  renderer: {
+    antialias: true,                   // MSAA antialiasing
+    precision: 'highp',                // Shader precision
+    logarithmicDepthBuffer: false,    // Standard depth (faster)
+  },
+  renderTarget: {
+    depthBuffer: true,                 // Depth testing
+    stencilBuffer: false,              // No stencil
+    samples: 0,                        // MSAA samples
+  },
+  profiles: {
+    quality: { /* high-performance settings */ },
+    balanced: { /* default settings */ },
+    performance: { /* low-power settings */ }
+  }
+}
+```
+
 ### Debug Console Configuration
 
 Development and debugging features:
 
 ```typescript
-// debug-console.ts
-DEBUG_CONSOLE_CONFIG = {
+// Debug console configuration is now in config.ui.debugConsole
+debugConsole: {
   panel: {
     defaultWidth: 600,
     defaultHeight: 400,
@@ -164,12 +201,8 @@ DEBUG_CONSOLE_CONFIG = {
   interceptor: {
     maxBufferSize: 10000, // Ring buffer for console messages
   },
-  style: {
-    backgroundColor: 'rgba(20, 20, 20, 0.95)',
-    borderRadius: 8,
-    backdropBlur: 10,
-  },
-};
+  // ... other settings
+}
 ```
 
 ## Usage Examples
@@ -297,12 +330,12 @@ import type { CameraConfig } from '../config';
 ### Debug Configuration
 
 ```typescript
-// Debug console configuration is isolated for modularity
-import { DEBUG_CONSOLE_CONFIG } from './debug-console';
+// Debug console configuration is now part of main config
+import { config } from '../config';
 
 // Access debug settings
-const panelWidth = DEBUG_CONSOLE_CONFIG.panel.defaultWidth;
-const bufferSize = DEBUG_CONSOLE_CONFIG.interceptor.maxBufferSize;
+const panelWidth = config.ui.debugConsole.panel.defaultWidth;
+const bufferSize = config.ui.debugConsole.interceptor.maxBufferSize;
 ```
 
 ### Migration and Versioning

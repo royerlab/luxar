@@ -11,7 +11,14 @@ log.custom(LogEmoji.START, Modules.LUXAR, 'Application starting...');
 
 import { LuxarApp } from './app';
 import { config } from '../config';
+import { validateAndLog } from '../config/validation';
 import { showError } from '../ui/helpers';
+
+// Validate configuration at startup
+const configValid = validateAndLog(config);
+if (!configValid) {
+  console.error('[Config] Application starting with invalid configuration - errors may occur');
+}
 
 // Parse URL parameters for scene source
 const params = new URLSearchParams(window.location.search);

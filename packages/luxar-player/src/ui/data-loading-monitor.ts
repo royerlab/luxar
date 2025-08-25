@@ -23,19 +23,102 @@ import type {
 import { PerformanceTimeline } from './components/performance-timeline';
 import { LoadingAdvisor } from './components/loading-advisor';
 import { log, Modules } from '../utils/log';
-import {
-  MonitorColors,
-  MonitorTypography,
-  MonitorSpacing,
-  MonitorEffects,
-  MonitorStyles,
-} from './data-loading-monitor-styles';
-import {
-  MonitorTimings,
-  MonitorLimits,
-  isValidTab,
-  hasCacheStats,
-} from './data-monitor-constants';
+import { config } from '../config';
+
+// Extract commonly used config values
+const MonitorColors = config.ui.styles.colors;
+const MonitorTypography = config.ui.styles.typography;
+const MonitorSpacing = config.ui.styles.spacing;
+const MonitorEffects = config.ui.styles.effects;
+const MonitorTimings = config.dataLoading.monitor.timings;
+const MonitorLimits = config.dataLoading.monitor.limits;
+
+// MonitorStyles - CSS-in-JS styles
+const MonitorStyles = {
+  panel: {
+    base: `
+      font-family: ${MonitorTypography.fontFamily};
+      font-size: ${MonitorTypography.body.fontSize};
+      color: ${MonitorColors.primaryText};
+      background: ${MonitorColors.panelBg};
+      backdrop-filter: ${MonitorEffects.backdropBlur};
+      border-radius: ${MonitorEffects.borderRadius}px;
+      box-shadow: ${MonitorEffects.boxShadow};
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    `,
+    compact: `
+      width: 300px;
+      padding: ${MonitorSpacing.sectionPadding}px;
+    `,
+    expanded: `
+      width: 600px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    `,
+  },
+  header: `
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: ${MonitorSpacing.sectionPadding}px;
+    border-bottom: 1px solid ${MonitorColors.separator};
+    background: ${MonitorColors.sectionBg};
+  `,
+  button: {
+    tab: {
+      base: `
+        padding: ${MonitorSpacing.elementGap}px ${MonitorSpacing.sectionPadding}px;
+        background: transparent;
+        border: none;
+        color: ${MonitorColors.secondaryText};
+        cursor: pointer;
+        font-size: ${MonitorTypography.body.fontSize};
+        font-family: ${MonitorTypography.fontFamily};
+        transition: ${MonitorEffects.transitionFast};
+        outline: none;
+        border-radius: ${MonitorEffects.borderRadiusSmall}px;
+      `,
+      active: `
+        background: ${MonitorColors.sectionBg};
+        color: ${MonitorColors.primaryText};
+        font-weight: 600;
+      `,
+      inactive: `
+        &:hover {
+          background: ${MonitorColors.hoverBg};
+          color: ${MonitorColors.primaryText};
+        }
+      `,
+    },
+  },
+};
+
+// Helper functions
+const VALID_TABS = ['overview', 'cache', 'performance', 'insights'] as const;
+type ValidTab = (typeof VALID_TABS)[number];
+function isValidTab(tab: string): tab is ValidTab {
+  return VALID_TABS.includes(tab as ValidTab);
+}
+
+interface LoaderWithCacheStats {
+  getCacheStats(): {
+    hits: number;
+    misses: number;
+    avgAccessTime: number;
+  };
+}
+
+function hasCacheStats(loader: unknown): loader is LoaderWithCacheStats {
+  return (
+    typeof loader === 'object' &&
+    loader !== null &&
+    'getCacheStats' in loader &&
+    typeof (loader as Record<string, unknown>).getCacheStats === 'function'
+  );
+}
 import {
   renderLoaderItem,
   renderOverviewContent,
@@ -66,7 +149,7 @@ export class DataLoadingMonitor {
     isVisible: false,
     isExpanded: false,
     activeTab: 'overview',
-    timeRange: MonitorTimings.DEFAULT_TIME_RANGE,
+    timeRange: MonitorTimings.defaultTimeRange,
   };
 
   // Update tracking
@@ -75,8 +158,8 @@ export class DataLoadingMonitor {
 
   // Performance optimization
   private lastEventCleanup = 0;
-  private eventCleanupInterval = MonitorTimings.EVENT_CLEANUP_INTERVAL;
-  private maxEventAge = MonitorTimings.MAX_EVENT_AGE;
+  private eventCleanupInterval = MonitorTimings.eventCleanupInterval;
+  private maxEventAge = MonitorTimings.maxEventAge;
 
   // Cached calculations
   private cachedRates = {
@@ -87,7 +170,7 @@ export class DataLoadingMonitor {
     bandwidth: 0,
     lastCalculated: 0,
   };
-  private ratesCacheTimeout = MonitorTimings.RATES_CACHE_TIMEOUT;
+  private ratesCacheTimeout = MonitorTimings.ratesCacheTimeout;
 
   // Event listener for external updates
   private eventListener = this.handleLoaderEvent.bind(this);
@@ -101,8 +184,8 @@ export class DataLoadingMonitor {
       position: 'top-right',
       theme: 'dark',
       defaultView: 'compact',
-      updateInterval: MonitorTimings.DEFAULT_UPDATE_INTERVAL,
-      maxEvents: MonitorLimits.MAX_EVENTS,
+      updateInterval: MonitorTimings.defaultUpdateInterval,
+      maxEvents: MonitorLimits.maxEvents,
       showSpatialGrid: true,
       showTimeline: true,
       showRecommendations: true,
@@ -295,8 +378,8 @@ export class DataLoadingMonitor {
     });
 
     // Clean up old queries more efficiently
-    if (this.queries.size % MonitorTimings.QUERY_CLEANUP_CHECK_INTERVAL === 0) {
-      const cutoff = Date.now() - MonitorTimings.MAX_QUERY_AGE;
+    if (this.queries.size % MonitorTimings.queryCleanupCheckInterval === 0) {
+      const cutoff = Date.now() - MonitorTimings.maxQueryAge;
       const toDelete: string[] = [];
       for (const [id, query] of this.queries) {
         if (query.startTime < cutoff) {
@@ -326,7 +409,7 @@ export class DataLoadingMonitor {
       avgLoadTime: 0,
       cacheHitRate: 0,
       memoryUsed: 0,
-      memoryLimit: MonitorLimits.DEFAULT_MEMORY_LIMIT, // Will be overridden by actual loader limits
+      memoryLimit: MonitorLimits.defaultMemoryLimit, // Will be overridden by actual loader limits
     };
   }
 
@@ -541,11 +624,11 @@ export class DataLoadingMonitor {
         </div>
         
         ${
-  hasSpatialIndex && this.config.showSpatialGrid
-    ? `
+          hasSpatialIndex && this.config.showSpatialGrid
+            ? `
         `
-    : ''
-}
+            : ''
+        }
       </div>
     `;
   }
@@ -615,17 +698,17 @@ export class DataLoadingMonitor {
     if (this.uiState.activeTab === 'performance') {
       this.timeline.initializeCanvas('timeline-canvas');
     }
-    
+
     // Add hover effects to header buttons
     this.addHeaderButtonHoverEffects();
   }
-  
+
   /**
    * Add hover effects to header buttons
    */
   private addHeaderButtonHoverEffects(): void {
     if (!this.panel) return;
-    
+
     const headerButtons = this.panel.querySelectorAll('.header-btn');
     headerButtons.forEach((btn) => {
       const button = btn as HTMLButtonElement;
@@ -688,15 +771,12 @@ export class DataLoadingMonitor {
   private renderOverviewTab(): string {
     const stats = this.getGlobalStats();
     const cacheMetrics = this.getCacheMetrics();
-    
+
     // Use the template function for the main content
     const content = renderOverviewContent(stats, cacheMetrics);
-    
+
     // Replace the loader list placeholder with actual content
-    return content.replace(
-      '<div id="loader-list-content"></div>',
-      this.renderCompactLoaderList()
-    );
+    return content.replace('<div id="loader-list-content"></div>', this.renderCompactLoaderList());
   }
 
   /**
@@ -705,7 +785,7 @@ export class DataLoadingMonitor {
   private renderCacheTab(): string {
     const stats = this.getGlobalStats();
     const cacheMetrics = this.getCacheMetrics();
-    
+
     // Use the template function
     return renderCacheContent(stats, cacheMetrics);
   }
@@ -882,7 +962,6 @@ export class DataLoadingMonitor {
     };
   }
 
-
   /**
    * Clean old events based on age
    */
@@ -915,8 +994,8 @@ export class DataLoadingMonitor {
     let misses5s = 0;
     let bandwidth1s = 0;
 
-    const cutoff5s = now - MonitorLimits.RATE_CALCULATION_WINDOW;
-    const cutoff1s = now - MonitorLimits.BANDWIDTH_CALCULATION_WINDOW;
+    const cutoff5s = now - MonitorLimits.rateCalculationWindow;
+    const cutoff1s = now - MonitorLimits.bandwidthCalculationWindow;
 
     // Iterate backwards for early exit optimization
     for (let i = this.events.length - 1; i >= 0; i--) {
@@ -949,7 +1028,7 @@ export class DataLoadingMonitor {
     }
 
     // Update cached values (convert window to seconds)
-    const windowSeconds = MonitorLimits.RATE_CALCULATION_WINDOW / 1000;
+    const windowSeconds = MonitorLimits.rateCalculationWindow / 1000;
     this.cachedRates.queriesPerSec = queries5s / windowSeconds;
     this.cachedRates.loadsPerSec = loads5s / windowSeconds;
     this.cachedRates.hitsPerSec = hits5s / windowSeconds;
@@ -967,9 +1046,7 @@ export class DataLoadingMonitor {
       return '<div style="color: rgba(255,255,255,0.4); font-size: 10px;">No active loaders</div>';
     }
 
-    return loaderEntries
-      .map(([path, metrics]) => renderLoaderItem(path, metrics))
-      .join('');
+    return loaderEntries.map(([path, metrics]) => renderLoaderItem(path, metrics)).join('');
   }
 
   // Public API
@@ -1153,7 +1230,6 @@ export class DataLoadingMonitor {
     }
   }
 
-
   // Styles
 
   private getCompactStyles(): string {
@@ -1223,7 +1299,6 @@ export class DataLoadingMonitor {
       opacity: 0.7;
     `;
   }
-
 
   public dispose(): void {
     const errors: Error[] = [];
