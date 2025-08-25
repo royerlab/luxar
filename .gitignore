@@ -45,6 +45,9 @@ htmlcov/
 .nox/
 .hypothesis/
 
+# Coverage reports (centralized)
+coverage/
+
 # macOS
 .DS_Store
 .AppleDouble
@@ -90,7 +93,6 @@ nosetests.xml
 coverage.xml
 *.cover
 .cache
-coverage/
 
 # Translations
 *.mo

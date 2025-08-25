@@ -813,7 +813,7 @@ export class PostProcessingManager {
     msaa: boolean;
     ssaa: boolean;
     toneMapping: string;
-  } {
+    } {
     return {
       bloom: this.bloomPass?.enabled ?? false,
       dof: this.dofEnabled,

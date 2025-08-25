@@ -30,21 +30,31 @@ export interface ViewState {
 }
 
 /**
+ * Supported TypedArray types for point cloud attributes
+ * Note: Float16Array is supported in modern browsers (2024+)
+ * We include it in the type but handle fallback at runtime
+ */
+export type PositionArray = Float32Array | Float16Array;
+export type ColorArray = Float32Array | Uint8Array | Uint16Array;
+export type ScalarArray = Float32Array | Float16Array | Uint8Array;
+
+/**
  * Point cloud data ready for GPU rendering.
  * All arrays are properly aligned with the same point ordering.
+ * Arrays can be in different data types for memory efficiency.
  */
 export interface PointCloudData {
   /** 3D positions extracted from nD space (size: numPoints * 3) */
-  positions: Float32Array;
+  positions: PositionArray;
 
-  /** RGB colors in HDR format (size: numPoints * 3, optional) */
-  colors?: Float32Array;
+  /** RGB colors (size: numPoints * 3, optional) */
+  colors?: ColorArray;
 
   /** Point radii in world units (size: numPoints, optional) */
-  radii?: Float32Array;
+  radii?: ScalarArray;
 
   /** Point sharpness values (size: numPoints, optional) */
-  sharpness?: Float32Array;
+  sharpness?: ScalarArray;
 
   /** Metadata about the loaded data */
   metadata: {
@@ -65,6 +75,14 @@ export interface PointCloudData {
 
     /** Whether effective radius calculation was applied */
     usedEffectiveRadius?: boolean;
+
+    /** Original data types from zarr (for proper conversion) */
+    dtypes?: {
+      positions?: string;
+      colors?: string;
+      radii?: string;
+      sharpness?: string;
+    };
   };
 }
 

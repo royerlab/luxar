@@ -18,6 +18,9 @@ import {
   CacheStats,
   PointRange,
   SceneNode,
+  PositionArray,
+  ColorArray,
+  ScalarArray,
 } from './data-loader-types';
 import { RangeCache } from './range-cache';
 import {
@@ -319,29 +322,29 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -517,7 +520,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
   private async loadRanges(
     arrayName: string,
     ranges: PointRange[]
-  ): Promise<Float32Array | Uint8Array | null> {
+  ): Promise<Float32Array | Uint8Array | Uint16Array | Float16Array | null> {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) return null;
 
@@ -569,10 +572,25 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Allocate output buffer - keep native type for efficiency
     const dtype = array.dtype;
-    let output: Float32Array | Uint8Array;
+    let output: Float32Array | Uint8Array | Uint16Array | Float16Array;
 
     if (dtype === 'uint8' || (dtype as string) === '|u1') {
       output = new Uint8Array(totalElements);
+    } else if (dtype === 'uint16' || (dtype as string) === '<u2' || (dtype as string) === '>u2') {
+      output = new Uint16Array(totalElements);
+    } else if (dtype === 'float16' || (dtype as string) === '<f2' || (dtype as string) === '>f2') {
+      // Float16Array is supported in modern browsers (2024+)
+      // Use runtime detection for compatibility
+      if (typeof Float16Array !== 'undefined') {
+        output = new Float16Array(totalElements);
+      } else {
+        // Fallback to Float32 for older browsers
+        log.warning(
+          Modules.SPATIAL_INDEX_LOADER,
+          'Float16Array not supported, using Float32Array as fallback'
+        );
+        output = new Float32Array(totalElements);
+      }
     } else {
       output = new Float32Array(totalElements);
     }
@@ -588,7 +606,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       // Load data from zarr
       const chunkData = await get(array, sliceSpec);
-      const data = chunkData.data as Float32Array | Uint8Array;
+      const data = chunkData.data as Float32Array | Uint8Array | Uint16Array | Float16Array;
 
       // Copy to output buffer
       output.set(data, destOffset);
@@ -632,10 +650,10 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Project nD points to 3D display space
    */
   private projectTo3D(
-    positions: Float32Array | Uint8Array | null,
-    colors: Float32Array | Uint8Array | null,
-    radii: Float32Array | Uint8Array | null,
-    sharpness: Float32Array | Uint8Array | null,
+    positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     viewState: ViewState,
     ranges: PointRange[]
   ): PointCloudData {
@@ -718,17 +736,19 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
     }
 
+    // Get dtype metadata from node attributes
+    const dtypes = {
+      positions: this.node.attrs.position_dtype as string | undefined,
+      colors: this.node.attrs.color_dtype as string | undefined,
+      radii: this.node.attrs.radius_dtype as string | undefined,
+      sharpness: this.node.attrs.sharpness_dtype as string | undefined,
+    };
+
     return {
-      positions: positions3D,
-      colors:
-        colors instanceof Float32Array ? colors : colors ? new Float32Array(colors) : undefined,
-      radii: finalRadii,
-      sharpness:
-        sharpness instanceof Float32Array
-          ? sharpness
-          : sharpness
-            ? new Float32Array(sharpness)
-            : undefined,
+      positions: positions3D as PositionArray,
+      colors: colors as ColorArray | undefined,
+      radii: finalRadii as ScalarArray | undefined,
+      sharpness: sharpness as ScalarArray | undefined,
       metadata: {
         totalPoints: this.node.attrs.num_points || totalPoints,
         loadedPoints: numPoints,
@@ -736,6 +756,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         ndim,
         usedSpatialIndex: true,
         usedEffectiveRadius,
+        dtypes,
       },
     };
   }
@@ -748,14 +769,23 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     // dimension-aware empty point clouds (e.g., different ndim based on view)
     void viewState; // Explicitly mark as intentionally unused for now
 
+    // Get dtype metadata from node attributes
+    const dtypes = {
+      positions: this.node.attrs.position_dtype as string | undefined,
+      colors: this.node.attrs.color_dtype as string | undefined,
+      radii: this.node.attrs.radius_dtype as string | undefined,
+      sharpness: this.node.attrs.sharpness_dtype as string | undefined,
+    };
+
     return {
-      positions: new Float32Array(0),
+      positions: new Float32Array(0) as PositionArray,
       metadata: {
         totalPoints: this.node.attrs.num_points || 0,
         loadedPoints: 0,
         bounds: new THREE.Box3(),
         ndim: this.spatialIndex?.metadata.dimensions || 3,
         usedSpatialIndex: true,
+        dtypes,
       },
     };
   }

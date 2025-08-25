@@ -21,6 +21,11 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
+from ..typing_utils.datatypes import (
+    DEFAULT_CONFIG,
+    DataTypeConfig,
+    convert_array_dtype,
+)
 from ..typing_utils.protocols import (
     CompressorProtocol,
     PhysicalUnit,
@@ -135,6 +140,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         units: Union[PhysicalUnit, str] = "metre",
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
+        dtype_config: Optional[DataTypeConfig] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -144,6 +150,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             units: Physical units for the scene
             version: Luxar format version
             enable_spatial_index: Whether to build spatial indices for point clouds (default: True)
+            dtype_config: Configuration for data types (default: auto-detection)
         """
         # Handle store path
         if store_path is None:
@@ -161,6 +168,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Store spatial index flag
         self.enable_spatial_index = enable_spatial_index
+
+        # Store dtype configuration
+        self.dtype_config = dtype_config or DEFAULT_CONFIG
 
         # Create root Zarr group
         self.store = zarr.open_group(self._store_path, mode="w")
@@ -438,20 +448,27 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     f"  ✓ Spatial index built: {len(spatial_index_data['occupied_cells'])} occupied cells"
                 )
 
+        # Determine and apply optimal dtype for positions
+        position_dtype = self.dtype_config.get_position_dtype(positions)
+        positions_converted = convert_array_dtype(positions, position_dtype)
+
         # Write positions with intelligent chunking (aligned with spatial index if available)
         chunks = _calculate_intelligent_chunks(
-            positions.shape,
+            positions_converted.shape,
             target_chunk_size=DEFAULT_CHUNK_SIZE,
             spatial_index_data=spatial_index_data,
         )
         group.create_dataset(
             "positions",
-            data=positions,
+            data=positions_converted,
             chunks=chunks,
             compressor=self.compressor,
-            dtype=np.float32,
+            dtype=position_dtype,
             overwrite=True,
         )
+
+        # Store dtype metadata for client-side handling
+        group.attrs["position_dtype"] = np.dtype(position_dtype).name
 
         # Write optional arrays
         metadata = {
@@ -467,54 +484,82 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate colors
             validate_colors_for_writing(colors, n_points)
 
-            color_chunks = _calculate_intelligent_chunks(colors.shape)
+            # Determine and apply optimal dtype for colors
+            color_dtype = self.dtype_config.get_color_dtype(colors)
+            colors_converted = convert_array_dtype(
+                colors, color_dtype, normalize=(color_dtype == np.uint8)
+            )
+
+            color_chunks = _calculate_intelligent_chunks(colors_converted.shape)
             group.create_dataset(
                 "colors",
-                data=colors,
+                data=colors_converted,
                 chunks=color_chunks,
                 compressor=self.compressor,
-                dtype=np.float32,
+                dtype=color_dtype,
                 overwrite=True,
             )
             metadata["has_colors"] = True
-            aprint("  ✓ Wrote HDR colors")
+            group.attrs["color_dtype"] = np.dtype(color_dtype).name
+
+            # Log appropriate message based on dtype
+            if color_dtype == np.float32:
+                aprint("  ✓ Wrote HDR colors (float32)")
+            elif color_dtype == np.uint16:
+                aprint("  ✓ Wrote colors (uint16)")
+            else:
+                aprint("  ✓ Wrote colors (uint8)")
 
         if radii is not None:
             # Validate radii
             validate_radii_for_writing(radii, n_points)
 
-            # Calculate max radius for efficient lazy loading
+            # Calculate max radius for efficient lazy loading (before conversion)
             max_radius = float(np.max(radii))
             metadata["max_radius"] = max_radius
             aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
-            radii_chunks = _calculate_intelligent_chunks(radii.shape)
+            # Determine and apply optimal dtype for radii
+            radius_dtype = self.dtype_config.get_radius_dtype(radii)
+            radii_converted = convert_array_dtype(
+                radii, radius_dtype, normalize=(radius_dtype == np.uint8)
+            )
+
+            radii_chunks = _calculate_intelligent_chunks(radii_converted.shape)
             group.create_dataset(
                 "radii",
-                data=radii,
+                data=radii_converted,
                 chunks=radii_chunks,
                 compressor=self.compressor,
-                dtype=np.float32,
+                dtype=radius_dtype,
                 overwrite=True,
             )
             metadata["has_radii"] = True
-            aprint("  ✓ Wrote radii")
+            group.attrs["radius_dtype"] = np.dtype(radius_dtype).name
+            aprint(f"  ✓ Wrote radii ({radius_dtype})")
 
         if sharpness is not None:
             # Validate sharpness
             validate_sharpness_for_writing(sharpness, n_points)
 
-            sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
+            # Determine and apply optimal dtype for sharpness
+            sharpness_dtype = self.dtype_config.get_sharpness_dtype(sharpness)
+            sharpness_converted = convert_array_dtype(
+                sharpness, sharpness_dtype, normalize=(sharpness_dtype == np.uint8)
+            )
+
+            sharp_chunks = _calculate_intelligent_chunks(sharpness_converted.shape)
             group.create_dataset(
                 "sharpness",
-                data=sharpness,
+                data=sharpness_converted,
                 chunks=sharp_chunks,
                 compressor=self.compressor,
-                dtype=np.float32,
+                dtype=sharpness_dtype,
                 overwrite=True,
             )
             metadata["has_sharpness"] = True
-            aprint("  ✓ Wrote sharpness")
+            group.attrs["sharpness_dtype"] = np.dtype(sharpness_dtype).name
+            aprint(f"  ✓ Wrote sharpness ({sharpness_dtype})")
 
         # Process transform if present using centralized conversion
         if "transform" in attrs:

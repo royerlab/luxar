@@ -97,7 +97,7 @@ def validate_positions_for_writing(
 
 
 def validate_colors_for_writing(
-    colors: NDArray[np.float32], n_points: int, context: str = "colors"
+    colors: NDArray, n_points: int, context: str = "colors"
 ) -> None:
     """Validate colors array for writing.
 
@@ -112,7 +112,7 @@ def validate_colors_for_writing(
     if not isinstance(colors, np.ndarray):
         raise ValidationError(
             f"{context}: Expected numpy array, got {type(colors).__name__}",
-            "Convert colors to numpy array: np.array(colors, dtype=np.float32)",
+            "Convert colors to numpy array: np.array(colors)",
         )
 
     expected_shape = (n_points, 3)
@@ -161,7 +161,7 @@ def validate_colors_for_writing(
 
 
 def validate_radii_for_writing(
-    radii: NDArray[np.float32], n_points: int, context: str = "radii"
+    radii: NDArray, n_points: int, context: str = "radii"
 ) -> None:
     """Validate radii array for writing.
 
@@ -176,7 +176,7 @@ def validate_radii_for_writing(
     if not isinstance(radii, np.ndarray):
         raise ValidationError(
             f"{context}: Expected numpy array, got {type(radii).__name__}",
-            "Convert to numpy array: np.array(radii, dtype=np.float32)",
+            "Convert to numpy array: np.array(radii)",
         )
 
     if radii.ndim != 1:
@@ -213,7 +213,7 @@ def validate_radii_for_writing(
 
 
 def validate_sharpness_for_writing(
-    sharpness: NDArray[np.float32], n_points: int, context: str = "sharpness"
+    sharpness: NDArray, n_points: int, context: str = "sharpness"
 ) -> None:
     """Validate sharpness array for writing.
 
@@ -228,7 +228,7 @@ def validate_sharpness_for_writing(
     if not isinstance(sharpness, np.ndarray):
         raise ValidationError(
             f"{context}: Expected numpy array, got {type(sharpness).__name__}",
-            "Convert to numpy array: np.array(sharpness, dtype=np.float32)",
+            "Convert to numpy array: np.array(sharpness)",
         )
 
     if sharpness.ndim != 1:
