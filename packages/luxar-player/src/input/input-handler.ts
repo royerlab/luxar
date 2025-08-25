@@ -41,7 +41,7 @@ import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
-import { INPUT_CONFIG } from '../controls/control-config';
+import { config } from '../config';
 import {
   getNonDisplayedDimensions,
   calculateStepSize,
@@ -343,7 +343,7 @@ export class InputHandler {
     const flyControls = this.sceneManager.controls.getFlyControls();
     if (flyControls && flyControls.enabled) {
       const flyKeys = [
-        ...INPUT_CONFIG.keyboard.flyModeKeys,
+        ...config.input.keyboard.flyModeKeys,
         'ArrowUp',
         'ArrowDown',
         'ArrowLeft',
@@ -407,7 +407,7 @@ export class InputHandler {
         }
         break;
 
-        // 'C' key removed - use 'F' to recenter on bounding box instead
+      // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':
@@ -509,7 +509,7 @@ export class InputHandler {
     const flyControls = this.sceneManager.controls.getFlyControls();
     if (flyControls && flyControls.enabled) {
       const flyKeys = [
-        ...INPUT_CONFIG.keyboard.flyModeKeys,
+        ...config.input.keyboard.flyModeKeys,
         'ArrowUp',
         'ArrowDown',
         'ArrowLeft',

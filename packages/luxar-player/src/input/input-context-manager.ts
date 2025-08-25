@@ -11,7 +11,7 @@
  * - Priority-based key handling
  */
 
-import { INPUT_CONFIG } from '../controls/control-config';
+import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
@@ -76,7 +76,7 @@ export class InputContextManager {
       name: 'Navigation',
       priority: 0,
       passthrough: true,
-      blockedKeys: [...INPUT_CONFIG.keyboard.flyModeKeys], // Block WASD in orbit mode
+      blockedKeys: [...config.input.keyboard.flyModeKeys], // Block WASD in orbit mode
     });
 
     // Fly controls context - WASD movement active
@@ -85,7 +85,7 @@ export class InputContextManager {
       priority: 1,
       passthrough: true,
       allowedKeys: [
-        ...INPUT_CONFIG.keyboard.flyModeKeys,
+        ...config.input.keyboard.flyModeKeys,
         'ArrowUp',
         'ArrowDown',
         'ArrowLeft',
@@ -113,7 +113,7 @@ export class InputContextManager {
       name: 'Dimension Navigation',
       priority: 2,
       passthrough: true,
-      allowedKeys: [...INPUT_CONFIG.keyboard.dimensionKeys],
+      allowedKeys: [...config.input.keyboard.dimensionKeys],
     });
   }
 
@@ -362,7 +362,7 @@ export class InputContextManager {
     currentContext: InputContext;
     contextStack: InputContext[];
     registeredBindings: Map<InputContext, string[]>;
-    } {
+  } {
     const registeredBindings = new Map<InputContext, string[]>();
 
     this.bindings.forEach((bindings, context) => {

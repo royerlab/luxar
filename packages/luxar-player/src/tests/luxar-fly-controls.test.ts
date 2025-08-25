@@ -8,7 +8,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { LuxarFlyControls } from '../controls/luxar-fly-controls';
-import { CONTROL_CONFIG } from '../controls/control-config';
+import { config } from '../config';
+import { createTestCamera } from './test-config';
 
 describe('LuxarFlyControls', () => {
   let camera: THREE.PerspectiveCamera;
@@ -16,9 +17,9 @@ describe('LuxarFlyControls', () => {
   let controls: LuxarFlyControls;
 
   beforeEach(() => {
-    // Create mock camera
-    camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
-    camera.position.set(0, 0, 5);
+    // Create camera using test config
+    camera = createTestCamera(1);
+    camera.position.set(0, 0, 5); // Override for test
     camera.lookAt(0, 0, 0);
 
     // Create mock DOM element
@@ -39,11 +40,11 @@ describe('LuxarFlyControls', () => {
   describe('initialization', () => {
     it('should initialize with default configuration', () => {
       expect(controls.enabled).toBe(true);
-      expect(controls.movementSpeed).toBe(CONTROL_CONFIG.fly.movement.speed.default);
-      expect(controls.lookSpeed).toBe(CONTROL_CONFIG.fly.look.mouseSpeed.default);
+      expect(controls.movementSpeed).toBe(config.controls.fly.movement.speed.default);
+      expect(controls.lookSpeed).toBe(config.controls.fly.look.mouseSpeed.default);
       expect(controls.inertialMode).toBe(true); // Default is now true
-      expect(controls.damping).toBe(CONTROL_CONFIG.fly.movement.damping.default);
-      expect(controls.acceleration).toBe(CONTROL_CONFIG.fly.movement.acceleration.default);
+      expect(controls.damping).toBe(config.controls.fly.movement.damping.default);
+      expect(controls.acceleration).toBe(config.controls.fly.movement.acceleration.default);
     });
 
     it('should accept custom configuration', () => {

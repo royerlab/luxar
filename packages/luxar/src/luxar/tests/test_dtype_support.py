@@ -70,7 +70,7 @@ class TestDataTypeConfig:
             position_dtype="float16",
             color_dtype="uint16",
             radius_dtype="float16",
-            sharpness_dtype="uint8"
+            sharpness_dtype="uint8",
         )
 
         assert config.get_position_dtype() == np.float16
@@ -83,7 +83,7 @@ class TestDataTypeConfig:
         with pytest.raises(ValueError, match="CUSTOM mode requires all dtypes"):
             DataTypeConfig(
                 mode=DataTypeMode.CUSTOM,
-                position_dtype="float32"
+                position_dtype="float32",
                 # Missing other dtypes
             )
 
@@ -105,7 +105,7 @@ class TestArrayConversion:
         float_arr = convert_array_dtype(uint8_arr, np.float32, normalize=True)
 
         assert float_arr.dtype == np.float32
-        np.testing.assert_array_almost_equal(float_arr, [0.0, 127/255, 1.0])
+        np.testing.assert_array_almost_equal(float_arr, [0.0, 127 / 255, 1.0])
 
     def test_float16_float32_conversion(self):
         """Test conversion between float16 and float32."""
@@ -263,7 +263,7 @@ class TestCompilerWithDtypes:
                 position_dtype="float32",
                 color_dtype="uint16",
                 radius_dtype="float16",
-                sharpness_dtype="uint8"
+                sharpness_dtype="uint8",
             )
 
             # Create test data
@@ -276,11 +276,7 @@ class TestCompilerWithDtypes:
             with LuxarZarrCompiler(zarr_path, dtype_config=config) as compiler:
                 scene = compiler.create_scene()
                 scene.add_points(
-                    "test",
-                    positions,
-                    colors=colors,
-                    radii=radii,
-                    sharpness=sharpness
+                    "test", positions, colors=colors, radii=radii, sharpness=sharpness
                 )
 
             # Check dtypes in zarr

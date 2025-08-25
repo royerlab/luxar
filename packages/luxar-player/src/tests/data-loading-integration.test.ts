@@ -95,6 +95,12 @@ vi.mock('three', () => {
     HalfFloatType: 1016,
     FloatType: 1015,
     UnsignedByteType: 1009,
+    // Color space and tone mapping constants
+    LinearSRGBColorSpace: 'srgb-linear',
+    SRGBColorSpace: 'srgb',
+    NoToneMapping: 0,
+    ACESFilmicToneMapping: 4,
+    PCFSoftShadowMap: 2,
   };
 });
 

@@ -1,5 +1,6 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { config } from '../config';
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -126,7 +127,7 @@ export class DimensionSliders {
     container.style.color = '#e0e0e0';
     container.style.backdropFilter = 'blur(10px)';
     container.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-    container.style.zIndex = '100';
+    container.style.zIndex = String(config.ui.zIndex.dimensionSliders);
     container.style.userSelect = 'none';
 
     this.container.appendChild(container);

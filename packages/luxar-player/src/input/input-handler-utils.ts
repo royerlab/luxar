@@ -7,6 +7,7 @@
  */
 
 import { SimpleDims } from '../types/dims';
+import { config } from '../config';
 
 /**
  * Keyboard navigation configuration
@@ -307,7 +308,7 @@ export function isNavigationKey(event: KeyboardEvent): boolean {
 export function calculateFovChange(
   currentFov: number,
   delta: number,
-  sensitivity: number = 0.1
+  sensitivity: number = config.input.defaultSensitivity
 ): number {
   const change = delta * sensitivity;
   const newFov = currentFov + change;

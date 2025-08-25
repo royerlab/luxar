@@ -6,6 +6,11 @@
  */
 
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
+import { config } from '../config';
+
+// Extract component configuration
+const browserConfig = config.ui.components.datasetBrowser;
+const spacingConfig = config.ui.styles.spacing;
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
@@ -134,19 +139,19 @@ export class DatasetBrowser {
       max-height: 80vh;
       background: rgba(30, 30, 30, 0.95);
       backdrop-filter: blur(10px);
-      border-radius: 12px;
+      border-radius: ${browserConfig.borderRadius.panel}px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
       display: flex;
       flex-direction: column;
       font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
       color: #e0e0e0;
-      z-index: 1000;
+      z-index: ${browserConfig.zIndex};
     `;
 
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
-      padding: 20px;
+      padding: ${browserConfig.padding.panel}px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       display: flex;
       justify-content: space-between;
@@ -187,7 +192,7 @@ export class DatasetBrowser {
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'breadcrumb';
     breadcrumb.style.cssText = `
-      padding: 10px 20px;
+      padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
       background: rgba(255, 255, 255, 0.05);
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       font-size: 13px;
@@ -203,14 +208,14 @@ export class DatasetBrowser {
     content.style.cssText = `
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
+      padding: ${browserConfig.padding.panel}px;
     `;
 
     // Status bar
     const statusBar = document.createElement('div');
     statusBar.id = 'browser-status';
     statusBar.style.cssText = `
-      padding: 10px 20px;
+      padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
       border-top: 1px solid rgba(255, 255, 255, 0.1);
       font-size: 12px;
       color: #888;
@@ -235,7 +240,7 @@ export class DatasetBrowser {
     const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
 
     // Show loading state
-    content.innerHTML = '<div style="text-align: center; padding: 40px;">Loading...</div>';
+    content.innerHTML = `<div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px;">Loading...</div>`;
     statusBar.textContent = 'Fetching directory contents...';
 
     try {
@@ -274,7 +279,7 @@ export class DatasetBrowser {
       }
     } catch (error) {
       content.innerHTML = `
-        <div style="text-align: center; padding: 40px; color: #f44336;">
+        <div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px; color: #f44336;">
           <p>Failed to load directory</p>
           <p style="font-size: 12px; margin-top: 10px;">${error}</p>
         </div>
@@ -345,8 +350,7 @@ export class DatasetBrowser {
     content.innerHTML = '';
 
     if (entries.length === 0) {
-      content.innerHTML =
-        '<div style="text-align: center; padding: 40px; color: #888;">Empty directory</div>';
+      content.innerHTML = `<div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px; color: #888;">Empty directory</div>`;
       return;
     }
 
@@ -375,9 +379,9 @@ export class DatasetBrowser {
       const isCurrentDataset = this.currentDataset && entry.name === this.currentDataset;
 
       item.style.cssText = `
-        padding: 12px 16px;
+        padding: ${Math.floor(browserConfig.padding.element * 1.2)}px ${Math.floor(browserConfig.padding.element * 1.6)}px;
         background: ${isCurrentDataset ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)'};
-        border-radius: 6px;
+        border-radius: ${browserConfig.borderRadius.section}px;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -430,8 +434,8 @@ export class DatasetBrowser {
         badge.style.cssText = `
           background: #4CAF50;
           color: white;
-          padding: 2px 6px;
-          border-radius: 4px;
+          padding: ${spacingConfig.tinyGap}px ${browserConfig.borderRadius.section}px;
+          border-radius: ${browserConfig.borderRadius.element}px;
           font-size: 10px;
           font-weight: 600;
         `;
@@ -444,8 +448,8 @@ export class DatasetBrowser {
           currentBadge.style.cssText = `
             background: #2196F3;
             color: white;
-            padding: 2px 6px;
-            border-radius: 4px;
+            padding: ${spacingConfig.tinyGap}px ${browserConfig.borderRadius.section}px;
+            border-radius: ${browserConfig.borderRadius.element}px;
             font-size: 10px;
             font-weight: 600;
           `;
@@ -483,7 +487,7 @@ export class DatasetBrowser {
     const content = this.panel.querySelector('#browser-content') as HTMLElement;
 
     content.innerHTML = `
-      <div style="text-align: center; padding: 40px;">
+      <div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px;">
         <p style="margin-bottom: 20px;">Directory listing not available. Enter dataset path manually:</p>
         <input 
           type="text" 
@@ -492,10 +496,10 @@ export class DatasetBrowser {
           style="
             width: 100%;
             max-width: 400px;
-            padding: 10px;
+            padding: ${browserConfig.padding.element}px;
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 6px;
+            border-radius: ${browserConfig.borderRadius.section}px;
             color: white;
             font-size: 14px;
           "
@@ -507,8 +511,8 @@ export class DatasetBrowser {
               background: #4CAF50;
               color: white;
               border: none;
-              padding: 10px 20px;
-              border-radius: 6px;
+              padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
+              border-radius: ${browserConfig.borderRadius.section}px;
               cursor: pointer;
               font-size: 14px;
               margin-right: 10px;
@@ -520,8 +524,8 @@ export class DatasetBrowser {
               background: rgba(255, 255, 255, 0.1);
               color: white;
               border: 1px solid rgba(255, 255, 255, 0.2);
-              padding: 10px 20px;
-              border-radius: 6px;
+              padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
+              border-radius: ${browserConfig.borderRadius.section}px;
               cursor: pointer;
               font-size: 14px;
             "

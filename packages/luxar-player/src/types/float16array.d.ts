@@ -1,9 +1,9 @@
 /**
  * Type declarations for Float16Array
- * 
+ *
  * Float16Array is supported in modern browsers (2024+) but TypeScript
  * doesn't have built-in type definitions for it yet.
- * 
+ *
  * Browser support as of 2024:
  * - Chrome 122 (Feb 2024)
  * - Edge 122 (Feb 2024)
@@ -26,17 +26,22 @@ interface Float16Array extends ArrayBufferView {
   readonly byteOffset: number;
   readonly length: number;
   readonly BYTES_PER_ELEMENT: number;
-  
+
   [index: number]: number;
-  
+
   set(array: ArrayLike<number>, offset?: number): void;
   subarray(begin?: number, end?: number): Float16Array;
   copyWithin(target: number, start: number, end?: number): this;
   fill(value: number, start?: number, end?: number): this;
-  forEach(callbackfn: (value: number, index: number, array: Float16Array) => void, thisArg?: any): void;
+  forEach(
+    callbackfn: (value: number, index: number, array: Float16Array) => void,
+    thisArg?: any
+  ): void;
   indexOf(searchElement: number, fromIndex?: number): number;
   lastIndexOf(searchElement: number, fromIndex?: number): number;
   slice(start?: number, end?: number): Float16Array;
 }
 
-declare var Float16Array: Float16ArrayConstructor;
+declare global {
+  var Float16Array: Float16ArrayConstructor;
+}

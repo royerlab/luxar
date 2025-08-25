@@ -26,7 +26,6 @@ ui/
 ├── dataset-browser.ts           # Zarr dataset navigation
 ├── performance-monitor.ts       # FPS and performance stats
 ├── data-loading-monitor.ts      # Data loading performance monitoring
-├── data-loading-monitor-styles.ts # Styling for data monitor
 ├── data-monitor-types.ts        # Type definitions for monitoring
 ├── debug-console.ts             # Developer console overlay
 ├── helpers.ts                   # Help overlays and tooltips

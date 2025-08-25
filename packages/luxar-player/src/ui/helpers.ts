@@ -179,7 +179,7 @@ export function showHelpOverlay() {
   helpDiv.style.fontFamily =
     '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   helpDiv.style.fontSize = '12px';
-  helpDiv.style.zIndex = '1001';
+  helpDiv.style.zIndex = String(UI_CONFIG.zIndex.help);
   helpDiv.style.width = '380px';
   helpDiv.style.maxHeight = '80vh';
   helpDiv.style.overflowY = 'auto';

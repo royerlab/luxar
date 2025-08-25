@@ -6,12 +6,15 @@
  */
 
 import type { MonitorEvent, Recommendation, LoaderMetrics } from '../data-monitor-types';
-import { PerformanceThresholds, MonitorLimits } from '../data-monitor-constants';
+import { config } from '../../config';
+
+const PerformanceThresholds = config.dataLoading.monitor.thresholds;
+const MonitorLimits = config.dataLoading.monitor.limits;
 
 export class LoadingAdvisor {
   private recommendations: Map<string, Recommendation> = new Map();
   private eventHistory: MonitorEvent[] = [];
-  private maxHistory = MonitorLimits.MAX_ADVISOR_HISTORY;
+  private maxHistory = MonitorLimits.maxAdvisorHistory;
 
   // Use centralized performance thresholds
   private thresholds = PerformanceThresholds;
@@ -32,13 +35,13 @@ export class LoadingAdvisor {
         break;
 
       case 'query':
-        if (event.data.latency && event.data.latency > this.thresholds.HIGH_QUERY_TIME) {
+        if (event.data.latency && event.data.latency > this.thresholds.highQueryTime) {
           this.addSlowQueryRecommendation(event);
         }
         break;
 
       case 'load':
-        if (event.data.latency && event.data.latency > this.thresholds.HIGH_LOAD_TIME) {
+        if (event.data.latency && event.data.latency > this.thresholds.highLoadTime) {
           this.addSlowLoadRecommendation(event);
         }
         break;
@@ -58,7 +61,7 @@ export class LoadingAdvisor {
     const cacheHitRate = cacheAccesses > 0 ? (metrics.cacheHits / cacheAccesses) * 100 : 100;
 
     // Check cache hit rate (now properly calculated as percentage)
-    if (cacheHitRate < this.thresholds.LOW_CACHE_HIT_RATE && cacheAccesses > 10) {
+    if (cacheHitRate < this.thresholds.lowCacheHitRate && cacheAccesses > 10) {
       this.addLowCacheRateRecommendation(metrics, cacheHitRate);
     } else {
       // Remove low cache rate recommendation if it's now good
@@ -66,19 +69,19 @@ export class LoadingAdvisor {
     }
 
     // Check query performance
-    if (metrics.avgQueryTime > this.thresholds.HIGH_QUERY_TIME) {
+    if (metrics.avgQueryTime > this.thresholds.highQueryTime) {
       this.addHighQueryTimeRecommendation(metrics);
     }
 
     // Check memory usage
-    if (metrics.memoryUsed / metrics.memoryLimit > this.thresholds.HIGH_MEMORY_USAGE) {
+    if (metrics.memoryUsed / metrics.memoryLimit > this.thresholds.highMemoryUsage) {
       this.addHighMemoryRecommendation(metrics);
     }
 
     // Check spatial index efficiency
     if (metrics.spatialIndex) {
       const efficiency = metrics.spatialIndex.queryEfficiency;
-      if (efficiency < this.thresholds.LOW_QUERY_EFFICIENCY) {
+      if (efficiency < this.thresholds.lowQueryEfficiency) {
         this.addLowEfficiencyRecommendation(metrics);
       }
     }
@@ -97,7 +100,7 @@ export class LoadingAdvisor {
       suggestion: 'Check network latency or consider increasing cache size',
       metric: 'queryTime',
       value: event.data.latency,
-      threshold: this.thresholds.HIGH_QUERY_TIME,
+      threshold: this.thresholds.highQueryTime,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -116,7 +119,7 @@ export class LoadingAdvisor {
       suggestion: 'Check network bandwidth and consider using smaller chunk sizes',
       metric: 'loadTime',
       value: event.data.latency,
-      threshold: this.thresholds.HIGH_LOAD_TIME,
+      threshold: this.thresholds.highLoadTime,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -135,7 +138,7 @@ export class LoadingAdvisor {
       suggestion: 'Increase cache size or adjust preload radius for better performance',
       metric: 'cacheHitRate',
       value: actualHitRate,
-      threshold: this.thresholds.LOW_CACHE_HIT_RATE,
+      threshold: this.thresholds.lowCacheHitRate,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -155,7 +158,7 @@ export class LoadingAdvisor {
         'Spatial index may be suboptimal - consider rebuilding with different grid resolution',
       metric: 'avgQueryTime',
       value: metrics.avgQueryTime,
-      threshold: this.thresholds.HIGH_QUERY_TIME,
+      threshold: this.thresholds.highQueryTime,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -176,7 +179,7 @@ export class LoadingAdvisor {
       suggestion: 'Consider reducing cache size or enabling more aggressive eviction',
       metric: 'memoryUsage',
       value: usage,
-      threshold: this.thresholds.HIGH_MEMORY_USAGE * 100,
+      threshold: this.thresholds.highMemoryUsage * 100,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -199,7 +202,7 @@ export class LoadingAdvisor {
       suggestion: 'Grid resolution may be too coarse - consider rebuilding with finer grid',
       metric: 'queryEfficiency',
       value: efficiency,
-      threshold: this.thresholds.LOW_QUERY_EFFICIENCY,
+      threshold: this.thresholds.lowQueryEfficiency,
     };
 
     this.recommendations.set(rec.id, rec);
@@ -213,7 +216,7 @@ export class LoadingAdvisor {
     const errors = recentEvents.filter((e) => e.type === 'error').length;
     const errorRate = errors / recentEvents.length;
 
-    if (errorRate > this.thresholds.HIGH_ERROR_RATE) {
+    if (errorRate > this.thresholds.highErrorRate) {
       const rec: Recommendation = {
         id: 'high-errors',
         severity: 'error',
@@ -223,7 +226,7 @@ export class LoadingAdvisor {
         suggestion: 'Check network connectivity and data availability',
         metric: 'errorRate',
         value: errorRate,
-        threshold: this.thresholds.HIGH_ERROR_RATE,
+        threshold: this.thresholds.highErrorRate,
       };
 
       this.recommendations.set(rec.id, rec);
@@ -267,7 +270,7 @@ export class LoadingAdvisor {
 
     // Check global cache hit rate
     if (stats.globalCacheHitRate !== undefined && stats.totalQueries > 10) {
-      if (stats.globalCacheHitRate < this.thresholds.LOW_CACHE_HIT_RATE) {
+      if (stats.globalCacheHitRate < this.thresholds.lowCacheHitRate) {
         const rec: Recommendation = {
           id: 'global-low-cache',
           severity: 'warning',
@@ -277,7 +280,7 @@ export class LoadingAdvisor {
           suggestion: 'Consider increasing cache memory limit or preloading more data',
           metric: 'globalCacheHitRate',
           value: stats.globalCacheHitRate,
-          threshold: this.thresholds.LOW_CACHE_HIT_RATE,
+          threshold: this.thresholds.lowCacheHitRate,
         };
         this.recommendations.set(rec.id, rec);
       }
