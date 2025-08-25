@@ -329,17 +329,42 @@ export class SceneLoader {
   private createGeometry(data: PointCloudData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
-    // Set positions
-    geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+    // Set positions (handle Float16Array conversion if needed)
+    if (typeof Float16Array !== 'undefined' && data.positions instanceof Float16Array) {
+      // Convert Float16Array to Float32Array for THREE.js compatibility
+      const float32Positions = new Float32Array(data.positions);
+      geometry.setAttribute('position', new THREE.BufferAttribute(float32Positions, 3));
+    } else {
+      geometry.setAttribute('position', new THREE.BufferAttribute(data.positions as Float32Array, 3));
+    }
 
     // Set colors if available
     if (data.colors) {
-      geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3));
+      // Check if colors need normalization (for uint8/uint16 arrays)
+      const needsNormalization = 
+        data.colors instanceof Uint8Array || 
+        data.colors instanceof Uint16Array;
+      
+      geometry.setAttribute(
+        'color', 
+        new THREE.BufferAttribute(data.colors, 3, needsNormalization)
+      );
     }
 
     // Set radii if available, or use default
     if (data.radii) {
-      geometry.setAttribute('radius', new THREE.BufferAttribute(data.radii, 1));
+      // Check if radii need normalization or conversion
+      if (typeof Float16Array !== 'undefined' && data.radii instanceof Float16Array) {
+        // Convert Float16Array to Float32Array for THREE.js
+        const float32Radii = new Float32Array(data.radii);
+        geometry.setAttribute('radius', new THREE.BufferAttribute(float32Radii, 1));
+      } else {
+        const needsNormalization = data.radii instanceof Uint8Array;
+        geometry.setAttribute(
+          'radius', 
+          new THREE.BufferAttribute(data.radii as (Float32Array | Uint8Array), 1, needsNormalization)
+        );
+      }
     } else {
       // Create default radius array with value 0.5 for all points
       const numPoints = data.positions.length / 3;
@@ -349,7 +374,18 @@ export class SceneLoader {
 
     // Set sharpness if available, or use default
     if (data.sharpness) {
-      geometry.setAttribute('sharpness', new THREE.BufferAttribute(data.sharpness, 1));
+      // Check if sharpness needs normalization or conversion
+      if (typeof Float16Array !== 'undefined' && data.sharpness instanceof Float16Array) {
+        // Convert Float16Array to Float32Array for THREE.js
+        const float32Sharpness = new Float32Array(data.sharpness);
+        geometry.setAttribute('sharpness', new THREE.BufferAttribute(float32Sharpness, 1));
+      } else {
+        const needsNormalization = data.sharpness instanceof Uint8Array;
+        geometry.setAttribute(
+          'sharpness', 
+          new THREE.BufferAttribute(data.sharpness as (Float32Array | Uint8Array), 1, needsNormalization)
+        );
+      }
     } else {
       // Create default sharpness array with value 2.0 for all points
       const numPoints = data.positions.length / 3;

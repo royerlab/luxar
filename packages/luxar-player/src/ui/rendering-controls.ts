@@ -862,8 +862,12 @@ export class RenderingControls {
     const baseId = zarrUrl.replace(/[^a-zA-Z0-9]/g, '_');
     this.sceneId = sceneName ? `${baseId}_${sceneName}` : baseId;
 
-    // Load settings for this scene
+    // Load settings for this scene (will apply if found)
     this.loadSettings();
+    
+    // Always apply current settings to ensure proper initialization
+    // This is needed when no stored settings exist (first time loading)
+    this.applySettings();
   }
 
   /**
@@ -956,9 +960,6 @@ export class RenderingControls {
       if (loadedSettings) {
         // Merge with defaults to handle missing properties
         this.settings = { ...config.renderingControls.defaults, ...loadedSettings };
-
-        // Apply loaded settings
-        this.applySettings();
 
         // Update GUI to reflect loaded values
         this.gui.controllersRecursive().forEach((controller) => {
@@ -1069,7 +1070,7 @@ export class RenderingControls {
     // Apply exposure
     this.postProcessing.updateExposure(this.settings.exposure);
 
-    // Apply HDR multiplier
+    // Apply HDR multiplier - must update both config AND materials
     (SHADER_CONFIG.POINTS as any).hdrMultiplier = this.settings.hdrMultiplier;
     this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
 

@@ -124,7 +124,7 @@ dependencies = [
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:packages/luxar/src/luxar/tests}"
-test-cov = "pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar/tests}"
+test-cov = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar/tests}"
 format = [
     "ruff format packages/luxar/src",
     "ruff check --fix packages/luxar/src"
@@ -250,16 +250,38 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--verbose",
-    "--cov=luxar",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-fail-under=80"
+    "--verbose"
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
 ]
+
+[tool.coverage.run]
+data_file = "coverage/python/.coverage"
+source = ["packages/luxar/src/luxar"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+show_missing = true
+skip_covered = false
+fail_under = 80
+
+[tool.coverage.html]
+directory = "coverage/python/htmlcov"
 
 [tool.bandit]
 exclude_dirs = ["tests", "test_*.py"]

@@ -153,7 +153,7 @@ export function runErrorHandlingExamples() {
   console.log('\n' + '='.repeat(50));
   console.log('✅ All examples completed successfully');
   console.log('\nKey takeaways:');
-  console.log("1. Non-critical errors are logged but don't stop cleanup");
+  console.log('1. Non-critical errors are logged but don\'t stop cleanup');
   console.log('2. All cleanup operations are attempted even if some fail');
   console.log('3. Critical errors (rare) are properly thrown');
   console.log('4. Resources are freed even in error scenarios');

@@ -112,10 +112,15 @@ POSITION_SHAPE_CHANNELS: Final[int] = 3
 COLOR_SHAPE_CHANNELS: Final[int] = 3
 TRANSFORM_MATRIX_SIZE: Final[tuple[int, int]] = (4, 4)
 
-# Data type validation
-POSITION_DTYPE: Final[str] = "float32"
-COLOR_DTYPE: Final[str] = "uint8"
-TRANSFORM_DTYPE: Final[str] = "float32"
+# Data type validation - Default dtypes (can be overridden with DataTypeConfig)
+POSITION_DTYPE: Final[str] = "float32"  # Default, supports float16 with DataTypeConfig
+COLOR_DTYPE: Final[str] = "float32"  # Changed to float32 for HDR, supports uint8/uint16
+TRANSFORM_DTYPE: Final[str] = "float32"  # Always float32 for accuracy
+
+# Supported data types for each attribute
+SUPPORTED_POSITION_DTYPES: Final[tuple[str, ...]] = ("float32", "float16")
+SUPPORTED_COLOR_DTYPES: Final[tuple[str, ...]] = ("float32", "uint8", "uint16")
+SUPPORTED_SCALAR_DTYPES: Final[tuple[str, ...]] = ("float32", "float16", "uint8")
 
 # =============================================================================
 # Import Default Compressor

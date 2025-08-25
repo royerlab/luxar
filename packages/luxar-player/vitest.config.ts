@@ -8,6 +8,7 @@ export default defineConfig({
     setupFiles: ['./src/tests/setup.ts'],
     coverage: {
       reporter: ['text', 'html', 'json'],
+      reportsDirectory: '../../coverage/typescript',
       exclude: [
         'node_modules/',
         'src/tests/',

@@ -189,10 +189,10 @@ export interface GlobalStats {
 export interface MonitorUIState {
   isVisible: boolean;
   isExpanded: boolean;
-  activeTab: 'overview' | 'cache' | 'spatial' | 'performance' | 'insights';
+  activeTab: 'overview' | 'cache' | 'performance' | 'insights'; // Removed 'spatial' as it's not implemented
   selectedLoader?: string;
   timeRange: number; // Seconds of history to show
-  spatialViewDimensions?: [number, number]; // Which 2D slice to show
+  spatialViewDimensions?: [number, number]; // Which 2D slice to show (for future use)
 }
 
 /**

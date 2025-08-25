@@ -6,6 +6,7 @@
  */
 
 import type { MonitorEvent, TimelinePoint } from '../data-monitor-types';
+import { MonitorTimings, MonitorLimits } from '../data-monitor-constants';
 
 export class PerformanceTimeline {
   private canvas: HTMLCanvasElement | null = null;
@@ -13,8 +14,8 @@ export class PerformanceTimeline {
 
   // Timeline data
   private points: TimelinePoint[] = [];
-  private maxPoints = 300; // Keep last 5 minutes at 1Hz
-  private timeRange = 60; // Seconds to display
+  private maxPoints = MonitorLimits.MAX_TIMELINE_POINTS;
+  private timeRange: number = MonitorTimings.DEFAULT_TIME_RANGE;
 
   // Metrics tracking
   private lastQueryTime = 0;
@@ -27,7 +28,7 @@ export class PerformanceTimeline {
   private renderPending = false;
   private animationFrameId: number | null = null;
   private lastRenderTime = 0;
-  private minRenderInterval = 100; // Minimum 100ms between renders (10 FPS max)
+  private minRenderInterval = MonitorTimings.MIN_RENDER_INTERVAL;
   private needsRender = false;
 
   // Colors
@@ -71,7 +72,7 @@ export class PerformanceTimeline {
 
     // Add timeline point only at reasonable intervals (aggregate events)
     const lastPoint = this.points[this.points.length - 1];
-    const shouldAddPoint = !lastPoint || now - lastPoint.timestamp > 200; // Max 5 points per second
+    const shouldAddPoint = !lastPoint || now - lastPoint.timestamp > MonitorTimings.TIMELINE_POINT_INTERVAL;
 
     if (shouldAddPoint) {
       const point: TimelinePoint = {
@@ -87,7 +88,7 @@ export class PerformanceTimeline {
 
       // Efficient trimming: remove old points in one operation
       // Keep points from last 5 minutes AND respect max points limit
-      const cutoff = now - 300000; // 5 minutes ago
+      const cutoff = now - (MonitorLimits.MAX_TIMELINE_POINTS * 1000); // Convert to ms
 
       // Find the index of the first point to keep
       let keepFromIndex = 0;
@@ -150,9 +151,9 @@ export class PerformanceTimeline {
   /**
    * Set time range (no-op for now, fixed at 60s)
    */
-  setTimeRange(_range: number): void {
-    // Fixed at 60 seconds, ignore parameter
-    this.timeRange = 60;
+  setTimeRange(range: number): void {
+    // Update the time range
+    this.timeRange = range;
     this.scheduleRender();
   }
 
@@ -438,7 +439,7 @@ export class PerformanceTimeline {
     avgQueryTime: number;
     avgLoadTime: number;
     avgCacheRate: number;
-  } {
+    } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0, avgCacheRate: 0 };
     }

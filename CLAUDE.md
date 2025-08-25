@@ -104,7 +104,8 @@ Note: When possible, use `make` commands for convenience (see below).
 ### Testing Strategy
 - Always run Python tests with: `hatch run test`
 - For Python test coverage reports: `hatch run test-cov`
-- View coverage HTML report: `open htmlcov/index.html`
+- View Python coverage HTML report: `open coverage/python/htmlcov/index.html`
+- View TypeScript coverage HTML report: `open coverage/typescript/index.html`
 - Minimum acceptable coverage: 80%
 - Run all tests (Python + TypeScript): `make test-all` (Note: TypeScript dependencies will be auto-installed if missing)
 - Single test file: `hatch run pytest packages/luxar/src/luxar/tests/test_specific.py`

@@ -99,14 +99,12 @@ clean:  ## Clean up temporary files and caches
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 	rm -rf build/
 	rm -rf dist/
-	rm -rf htmlcov/
+	rm -rf coverage/
 	rm -rf .coverage*
-	rm -rf packages/luxar/htmlcov/
 	@echo "🧹 Cleaning TypeScript/Node.js artifacts..."
 	rm -rf packages/luxar-player/dist/
 	rm -rf packages/luxar-player/node_modules/
 	rm -rf packages/luxar-player/.vite/
-	rm -rf packages/luxar-player/coverage/
 	rm -rf packages/luxar-player/.parcel-cache/
 	rm -f packages/luxar-player/*.tsbuildinfo
 	rm -f packages/luxar-player/vite.config.*.timestamp-*

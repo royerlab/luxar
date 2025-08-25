@@ -236,9 +236,9 @@ describe('SpatialIndexLoader', () => {
       const result = await testLoader.loadPointCloud(viewState);
 
       expect(result.positions).toBeDefined();
-      expect(result.colors).toBeUndefined();
-      expect(result.radii).toBeUndefined();
-      expect(result.sharpness).toBeUndefined();
+      expect(result.colors).toBeFalsy(); // Can be null or undefined
+      expect(result.radii).toBeFalsy(); // Can be null or undefined
+      expect(result.sharpness).toBeFalsy(); // Can be null or undefined
 
       testLoader.dispose();
     });
@@ -726,8 +726,8 @@ describe('SpatialIndexLoader', () => {
 
       const result = await loader.loadPointCloud(viewState);
 
-      // Should convert uint8 to float32
-      expect(result.colors).toBeInstanceOf(Float32Array);
+      // Should keep uint8 as is for efficiency (with normalized flag in BufferAttribute)
+      expect(result.colors).toBeInstanceOf(Uint8Array);
     });
 
     it('should keep float32 data as is', async () => {
