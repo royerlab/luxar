@@ -21,12 +21,13 @@ Main entry point for creating Luxar scenes with progressive writing.
 - Context manager protocol for resource safety
 - Metadata consolidation for fast loading
 - Scene creation with dimension support
+- **Automatic data type optimization**: Configurable dtype selection for memory efficiency
 
 **Usage:**
 ```python
 from luxar.io import LuxarZarrCompiler
 
-with LuxarZarrCompiler('output.zarr', mode='w') as compiler:
+with LuxarZarrCompiler('output.zarr') as compiler:
     scene = compiler.create_scene()
     # Add data progressively
     scene.add_points('points', positions, colors)
@@ -102,10 +103,10 @@ output.zarr/
 │   ├── .zattrs        # Scene attributes
 │   └── points_0/
 │       ├── .zattrs    # Point cloud attributes
-│       ├── positions/ # (N, D) float32 array
-│       ├── colors/    # (N, 3) float32 array
-│       ├── radii/     # (N,) float32 array
-│       └── sharpness/ # (N,) float32 array
+│       ├── positions/ # (N, D) array (float32/float16)
+│       ├── colors/    # (N, 3) array (float32 for HDR, uint8/uint16 for SDR)
+│       ├── radii/     # (N,) array (float32/float16/uint8)
+│       └── sharpness/ # (N,) array (float32/float16/uint8)
 ```
 
 ## Performance Considerations
@@ -183,11 +184,38 @@ with LuxarZarrCompiler('fast.zarr', compressor=compressor) as compiler:
     # Fast compression for real-time data
 ```
 
+## Data Type Optimization
+
+The compiler supports automatic data type optimization to reduce memory usage:
+
+### DataTypeConfig Modes
+- **AUTO** (default): Automatically selects optimal dtype based on data range
+- **PRECISION**: Uses float32 for maximum precision
+- **MEMORY**: Uses smallest viable dtype (float16/uint8)
+- **CUSTOM**: Use explicitly specified dtypes
+
+### Example with Memory Optimization
+```python
+from luxar.io import LuxarZarrCompiler
+from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
+
+# Use memory-efficient dtypes
+dtype_config = DataTypeConfig(mode=DataTypeMode.MEMORY)
+
+with LuxarZarrCompiler('efficient.zarr', dtype_config=dtype_config) as compiler:
+    scene = compiler.create_scene()
+    # SDR colors will be stored as uint8
+    # Positions as float16
+    # Radii/sharpness as uint8
+```
+
+Memory savings can be 30-65% compared to all-float32 storage.
+
 ## Dependencies
 
 Internal:
 - `core`: Scene graph nodes
-- `typing_utils`: Type definitions
+- `typing_utils`: Type definitions and data type configuration
 - `validation`: Data validation
 
 External:

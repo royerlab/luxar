@@ -3,6 +3,7 @@ import pytest
 import zarr
 
 from luxar import LuxarZarrCompiler
+from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
 
 
 def test_bad_positions_shape(tmp_path):
@@ -26,7 +27,9 @@ def test_mismatched_colors(tmp_path):
 def test_valid_radii(tmp_path):
     """Test that valid radii are accepted and stored correctly."""
     store = tmp_path / "radii_test.zarr"
-    with LuxarZarrCompiler(store) as compiler:
+    # Use PRECISION mode to preserve float32 for test consistency
+    dtype_config = DataTypeConfig(mode=DataTypeMode.PRECISION)
+    with LuxarZarrCompiler(store, dtype_config=dtype_config) as compiler:
         compiler.create_scene()
 
         positions = np.random.randn(100, 3).astype(np.float32)
@@ -92,7 +95,9 @@ def test_wrong_shape_radii(tmp_path):
 def test_valid_sharpness(tmp_path):
     """Test that valid sharpness values are accepted and stored correctly."""
     store = tmp_path / "sharpness_test.zarr"
-    with LuxarZarrCompiler(store) as compiler:
+    # Use PRECISION mode to preserve float32 for test consistency
+    dtype_config = DataTypeConfig(mode=DataTypeMode.PRECISION)
+    with LuxarZarrCompiler(store, dtype_config=dtype_config) as compiler:
         compiler.create_scene()
 
         positions = np.random.randn(100, 3).astype(np.float32)

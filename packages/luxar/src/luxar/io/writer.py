@@ -6,12 +6,18 @@ enabling memory-efficient handling of arbitrarily large datasets.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol, Tuple
+from typing import Any, Optional, Protocol, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
+
+# Type aliases for arrays that can be written with different dtypes
+# The actual dtype used depends on the DataTypeConfig settings
+PositionArray = Union[NDArray[np.float32], NDArray[np.float16]]
+ColorArray = Union[NDArray[np.float32], NDArray[np.uint8], NDArray[np.uint16]]
+ScalarArray = Union[NDArray[np.float32], NDArray[np.float16], NDArray[np.uint8]]
 
 
 class ZarrWriterProtocol(Protocol):
@@ -35,10 +41,10 @@ class ZarrWriterProtocol(Protocol):
     def write_points(
         self,
         path: NodePath,
-        positions: NDArray[np.float32],
-        colors: Optional[NDArray[np.float32]] = None,
-        radii: Optional[NDArray[np.float32]] = None,
-        sharpness: Optional[NDArray[np.float32]] = None,
+        positions: PositionArray,
+        colors: Optional[ColorArray] = None,
+        radii: Optional[ScalarArray] = None,
+        sharpness: Optional[ScalarArray] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write point cloud data immediately to Zarr.
@@ -46,12 +52,18 @@ class ZarrWriterProtocol(Protocol):
         Data is written directly to disk without being kept in memory.
         Only metadata about the written data is returned.
 
+        The actual dtypes used for storage depend on the DataTypeConfig:
+        - AUTO mode: Automatically selects optimal dtype based on data range
+        - PRECISION mode: Uses float32 for maximum precision
+        - MEMORY mode: Uses smallest viable dtype (float16/uint8)
+        - CUSTOM mode: Uses explicitly specified dtypes
+
         Args:
             path: Path within the Zarr store for this point cloud
-            positions: Point positions array of shape (N, D)
-            colors: Optional HDR colors array of shape (N, 3)
-            radii: Optional radii array of shape (N,)
-            sharpness: Optional sharpness array of shape (N,)
+            positions: Point positions array of shape (N, D) - float32 or float16
+            colors: Optional colors array of shape (N, 3) - float32 (HDR), uint8/uint16 (SDR)
+            radii: Optional radii array of shape (N,) - float32, float16, or uint8
+            sharpness: Optional sharpness array of shape (N,) - float32, float16, or uint8
             **attrs: Additional attributes for the point cloud
 
         Returns:

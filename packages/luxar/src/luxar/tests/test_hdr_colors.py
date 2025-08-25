@@ -21,12 +21,14 @@ class TestHDRColorSupport:
             scene.add_points("sdr_points", positions, colors=colors)
 
         # Verify colors are stored correctly
+        # With AUTO mode, SDR colors should be converted to uint8 for efficiency
         store = zarr.open_group(tmp_path / "sdr.zarr", mode="r")
         stored_colors = store["sdr_points/colors"][:]
-        assert stored_colors.dtype == np.float32
+        assert stored_colors.dtype == np.uint8  # AUTO mode converts SDR to uint8
         assert np.all(stored_colors >= 0)
-        assert np.all(stored_colors <= 1)
-        np.testing.assert_array_almost_equal(stored_colors, colors)
+        assert np.all(stored_colors <= 255)
+        # Check values are correctly normalized
+        np.testing.assert_array_almost_equal(stored_colors / 255.0, colors, decimal=2)
 
     def test_hdr_colors_moderate(self, tmp_path):
         """Test moderate HDR colors (1-5 range)."""
