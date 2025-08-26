@@ -45,7 +45,7 @@ vi.mock('three', () => ({
     set: vi.fn().mockReturnThis(),
     copy: vi.fn().mockReturnThis(),
   })),
-  ShaderMaterial: vi.fn().mockImplementation(function(this: any, params: any) {
+  ShaderMaterial: vi.fn().mockImplementation(function (this: any, params: any) {
     Object.assign(this, {
       uniforms: params?.uniforms || {},
       vertexShader: params?.vertexShader || '',

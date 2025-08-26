@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MaterialManager, BlendingMode, PointMaterialProperties } from '../rendering/material-manager';
+import {
+  MaterialManager,
+  BlendingMode,
+  PointMaterialProperties,
+} from '../rendering/material-manager';
 import { PointMaterial } from '../rendering/point-material';
 
 // Mock Three.js
@@ -100,15 +104,15 @@ vi.mock('../rendering/point-material', () => {
       this.dispose = vi.fn();
     }
   }
-  
+
   // Make it constructable with `new` but also spy-able
-  const PointMaterialSpy = vi.fn(function(this: any, config: any) {
+  const PointMaterialSpy = vi.fn(function (this: any, config: any) {
     return new MockPointMaterial(config);
   }) as any;
-  
+
   // Copy prototype so instanceof checks work
   PointMaterialSpy.prototype = MockPointMaterial.prototype;
-  
+
   return { PointMaterial: PointMaterialSpy };
 });
 

@@ -90,6 +90,7 @@ The `PointMaterial` class extends THREE.ShaderMaterial to provide specialized po
 **Sharpness Compensation:**
 
 The vertex shader includes mathematically justified compensation for the sharpness parameter:
+
 - For falloff function `f(r) = (1-r)^s` where s is sharpness
 - Visible radius at 1% intensity: `r_vis = 1 - 0.01^(1/s)`
 - Exact compensation factor: `1 / r_vis = 1 / (1 - 0.01^(1/s))`
@@ -424,24 +425,24 @@ Typical performance with 1M points:
 
 ### MaterialManager
 
-| Method                                  | Description                           |
-| --------------------------------------- | ------------------------------------- |
-| `getPointMaterial(props)`               | Get/create cached point material      |
-| `updateCameraParams(fov, resolution)`   | Update camera params for all materials|
-| `updateHDRMultiplier(multiplier)`       | Update HDR multiplier globally        |
-| `dispose()`                             | Dispose all cached materials          |
-| `getCacheStats()`                       | Get material cache statistics         |
+| Method                                | Description                            |
+| ------------------------------------- | -------------------------------------- |
+| `getPointMaterial(props)`             | Get/create cached point material       |
+| `updateCameraParams(fov, resolution)` | Update camera params for all materials |
+| `updateHDRMultiplier(multiplier)`     | Update HDR multiplier globally         |
+| `dispose()`                           | Dispose all cached materials           |
+| `getCacheStats()`                     | Get material cache statistics          |
 
 ### PointMaterial
 
-| Method                                  | Description                           |
-| --------------------------------------- | ------------------------------------- |
-| `constructor(config)`                   | Create new point material             |
-| `updateCameraParams(fov, resolution)`   | Update world-space sizing parameters  |
-| `updateHDRMultiplier(multiplier)`       | Update HDR intensity                  |
-| `updateOpacity(opacity)`                | Update material opacity               |
-| `updateGamma(gamma)`                    | Update gamma correction               |
-| `clone()`                               | Clone material with current settings  |
+| Method                                | Description                          |
+| ------------------------------------- | ------------------------------------ |
+| `constructor(config)`                 | Create new point material            |
+| `updateCameraParams(fov, resolution)` | Update world-space sizing parameters |
+| `updateHDRMultiplier(multiplier)`     | Update HDR intensity                 |
+| `updateOpacity(opacity)`              | Update material opacity              |
+| `updateGamma(gamma)`                  | Update gamma correction              |
+| `clone()`                             | Clone material with current settings |
 
 ---
 
