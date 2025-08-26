@@ -1,6 +1,6 @@
 /**
  * Point Material for Luxar
- * 
+ *
  * Specialized THREE.ShaderMaterial for physically accurate point cloud rendering.
  * Features world-space sizing, HDR colors, and per-point sharpness control.
  */
@@ -62,36 +62,39 @@ export class PointMaterial extends THREE.ShaderMaterial {
       gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5);
     }
   `;
-  
-  // Static fragment shader with proper HDR handling
+
+  // Optimized fragment shader with simple, effective optimizations
   private static readonly FRAGMENT_SHADER = /* glsl */ `
     uniform float hdrMultiplier;
     uniform float opacity;
     uniform float gamma;
     uniform float baseAlpha;
+    uniform float invGamma; // Pre-computed 1/gamma for performance
     varying vec3 vColor;
     varying float vSharpness;
     
     void main() {
-      // Calculate distance from center of point sprite (0.0 to 0.5)
-      float r = length(gl_PointCoord - 0.5);
+      // OPTIMIZATION: Use dot product for squared distance calculation
+      vec2 centered = gl_PointCoord - 0.5;
+      float r2 = dot(centered, centered);
       
-      // Discard pixels outside the circular area
-      if (r > 0.5) {
+      // OPTIMIZATION: Compare squared distances to avoid sqrt in discard check
+      if (r2 > 0.25) {
         discard;
       }
       
-      // Normalize radius to 0-1 range for the visible circle
-      float normalizedR = r * 2.0;  // Now 0.0 at center, 1.0 at edge
+      // Calculate actual radius for falloff (single sqrt operation)
+      float r = sqrt(r2);
+      float normalizedR = r * 2.0; // Normalize to 0-1 range
       
-      // Variable falloff controlled by per-point sharpness
-      float falloff = pow(1.0 - normalizedR, vSharpness);
+      // Simple power function for falloff - modern GPUs optimize pow() well
+      float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
       
-      // Apply HDR multiplier FIRST (before any other color transformations)
+      // Apply HDR multiplier
       vec3 hdrColor = vColor * hdrMultiplier;
       
-      // Then apply gamma correction
-      vec3 finalColor = pow(hdrColor, vec3(1.0 / gamma));
+      // Apply gamma correction using pre-computed inverse
+      vec3 finalColor = pow(hdrColor, vec3(invGamma));
       
       // Calculate final alpha
       float alpha = baseAlpha * falloff * opacity;
@@ -100,28 +103,30 @@ export class PointMaterial extends THREE.ShaderMaterial {
       gl_FragColor = vec4(finalColor, alpha);
     }
   `;
-  
+
   /**
    * Create a new PointMaterial with the specified configuration
    */
   constructor(materialConfig: PointMaterialConfig = {}) {
+    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
     super({
       uniforms: {
         // HDR and color uniforms
         hdrMultiplier: { value: config.shader.points.hdrMultiplier },
         baseAlpha: { value: config.shader.points.baseAlpha },
         opacity: { value: materialConfig.opacity ?? 1.0 },
-        gamma: { value: materialConfig.gamma ?? 1.0 },
-        
+        gamma: { value: gammaValue },
+        invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+
         // Camera uniforms for world-space sizing
         fov: { value: (60 * Math.PI) / 180 }, // Default 60 degrees in radians
         resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated
       },
-      
+
       // Shader source
       vertexShader: PointMaterial.VERTEX_SHADER,
       fragmentShader: PointMaterial.FRAGMENT_SHADER,
-      
+
       // Material properties
       vertexColors: true, // Enable per-vertex colors
       transparent: true, // Enable transparency for blending
@@ -130,7 +135,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
       blending: materialConfig.blending ?? THREE.AdditiveBlending,
     });
   }
-  
+
   /**
    * Update camera parameters for world-space point sizing
    */
@@ -139,28 +144,30 @@ export class PointMaterial extends THREE.ShaderMaterial {
     // Copy values to avoid reference issues
     this.uniforms.resolution.value.copy(resolution);
   }
-  
+
   /**
    * Update HDR multiplier
    */
   updateHDRMultiplier(multiplier: number): void {
     this.uniforms.hdrMultiplier.value = multiplier;
   }
-  
+
   /**
    * Update opacity
    */
   updateOpacity(opacity: number): void {
     this.uniforms.opacity.value = opacity;
   }
-  
+
   /**
    * Update gamma correction
    */
   updateGamma(gamma: number): void {
-    this.uniforms.gamma.value = gamma;
+    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    this.uniforms.gamma.value = safeGamma;
+    this.uniforms.invGamma.value = 1.0 / safeGamma;
   }
-  
+
   /**
    * Clone this material with optional config overrides
    * Override base class clone to return PointMaterial type
@@ -172,18 +179,19 @@ export class PointMaterial extends THREE.ShaderMaterial {
       blending: this.blending,
       depthWrite: this.depthWrite,
     });
-    
+
     // Copy current uniform values
     cloned.uniforms.hdrMultiplier.value = this.uniforms.hdrMultiplier.value;
     cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;
     cloned.uniforms.fov.value = this.uniforms.fov.value;
     cloned.uniforms.resolution.value.copy(this.uniforms.resolution.value);
-    
+    cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
+
     // Copy other properties if they exist
     if ('renderOrder' in this) {
       (cloned as any).renderOrder = (this as any).renderOrder;
     }
-    
+
     return cloned as this;
   }
 }

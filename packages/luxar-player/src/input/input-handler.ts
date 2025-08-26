@@ -407,7 +407,7 @@ export class InputHandler {
         }
         break;
 
-        // 'C' key removed - use 'F' to recenter on bounding box instead
+      // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':

@@ -20,7 +20,6 @@ export interface PointMaterialProperties {
   gamma: number;
 }
 
-
 /**
  * Manages all materials in the scene with caching and global updates.
  * Future: Will handle line, mesh, volume materials in addition to points.
