@@ -297,19 +297,11 @@ const postProcessing = new PostProcessingManager(renderer, scene, camera, size);
 ### Creating Point Cloud Material
 
 ```typescript
-// Option 1: Use MaterialManager for cached materials
+// Use MaterialManager for cached materials
 const material = materialManager.getPointMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
   gamma: 1.0,
-});
-
-// Option 2: Create PointMaterial directly (not cached)
-const customMaterial = new PointMaterial({
-  opacity: 0.8,
-  gamma: 2.2,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
 });
 
 // Apply to point cloud

@@ -120,7 +120,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
         // Camera uniforms for world-space sizing
         fov: { value: (60 * Math.PI) / 180 }, // Default 60 degrees in radians
-        resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated
+        resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated immediately
       },
 
       // Shader source
@@ -186,11 +186,6 @@ export class PointMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.fov.value = this.uniforms.fov.value;
     cloned.uniforms.resolution.value.copy(this.uniforms.resolution.value);
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
-
-    // Copy other properties if they exist
-    if ('renderOrder' in this) {
-      (cloned as any).renderOrder = (this as any).renderOrder;
-    }
 
     return cloned as this;
   }

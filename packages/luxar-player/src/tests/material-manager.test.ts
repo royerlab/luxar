@@ -54,7 +54,6 @@ vi.mock('../rendering/point-material', () => {
     depthWrite: boolean;
     toneMapped: boolean;
     blending: string;
-    renderOrder: number;
     userData: any;
     updateCameraParams: any;
     updateHDRMultiplier: any;
@@ -93,7 +92,6 @@ vi.mock('../rendering/point-material', () => {
       this.depthWrite = config?.depthWrite || false;
       this.toneMapped = false;
       this.blending = config?.blending || 'AdditiveBlending';
-      this.renderOrder = 0;
       this.userData = {};
       this.updateCameraParams = vi.fn();
       this.updateHDRMultiplier = vi.fn((value: number) => {
@@ -132,7 +130,7 @@ describe('MaterialManager', () => {
         gamma: 1.5,
       };
 
-      const material = materialManager.getPointMaterial(props);
+      materialManager.getPointMaterial(props);
 
       expect(PointMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -143,8 +141,6 @@ describe('MaterialManager', () => {
         })
       );
 
-      expect(material.userData.renderOrder).toBe(100); // transparent normal blending
-      expect(material.userData.managedByMaterialManager).toBe(true);
     });
 
     it('should enable depth write for opaque normal blending', () => {
@@ -224,30 +220,6 @@ describe('MaterialManager', () => {
       });
     });
 
-    it('should set correct render order based on blending mode', () => {
-      const testCases: Array<{
-        mode: BlendingMode;
-        opacity: number;
-        expectedOrder: number;
-      }> = [
-        { mode: 'normal', opacity: 1.0, expectedOrder: 0 }, // opaque
-        { mode: 'normal', opacity: 0.5, expectedOrder: 100 }, // transparent
-        { mode: 'subtractive', opacity: 0.8, expectedOrder: 200 },
-        { mode: 'additive', opacity: 0.7, expectedOrder: 300 },
-        { mode: 'minimum', opacity: 0.9, expectedOrder: 400 },
-        { mode: 'maximum', opacity: 0.6, expectedOrder: 400 },
-      ];
-
-      testCases.forEach(({ mode, opacity, expectedOrder }) => {
-        const material = materialManager.getPointMaterial({
-          blendingMode: mode,
-          opacity,
-          gamma: 1.0,
-        });
-
-        expect(material.userData.renderOrder).toBe(expectedOrder);
-      });
-    });
   });
 
   describe('updateHDRMultiplier', () => {

@@ -20,7 +20,6 @@ vi.mock('three', () => ({
   Points: vi.fn().mockImplementation(() => ({
     name: '',
     userData: {},
-    renderOrder: 0,
   })),
   Color: vi.fn(),
   Matrix4: vi.fn().mockImplementation(() => ({
@@ -94,9 +93,7 @@ vi.mock('../rendering/material-manager', () => ({
         resolution: { value: { x: 1, y: 1 } },
       },
       userData: {
-        renderOrder: 0,
-        managedByMaterialManager: true,
-      },
+          },
       updateCameraParams: vi.fn(),
       updateHDRMultiplier: vi.fn(),
       updateOpacity: vi.fn(),

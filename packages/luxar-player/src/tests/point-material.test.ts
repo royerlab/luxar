@@ -17,7 +17,6 @@ vi.mock('three', async () => {
       depthWrite: params.depthWrite,
       toneMapped: params.toneMapped,
       blending: params.blending,
-      renderOrder: 0,
       userData: {},
       dispose: vi.fn(),
     });
@@ -170,14 +169,12 @@ describe('PointMaterial', () => {
       });
 
       original.updateHDRMultiplier(24.0);
-      (original as any).renderOrder = 100;
 
       const cloned = original.clone();
 
       expect(cloned.uniforms.opacity.value).toBe(0.5);
       expect(cloned.uniforms.gamma.value).toBe(2.0);
       expect(cloned.uniforms.hdrMultiplier.value).toBe(24.0);
-      expect((cloned as any).renderOrder).toBe(100);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
