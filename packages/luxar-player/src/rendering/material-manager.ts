@@ -28,7 +28,7 @@ export class MaterialManager {
   private pointMaterialCache = new Map<string, PointMaterial>();
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
-  private currentResolution = new THREE.Vector2(1, 1); // Minimal default
+  private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
 
   /**
    * Get or create a point material with caching
@@ -51,18 +51,17 @@ export class MaterialManager {
       depthWrite: props.blendingMode === 'normal' && props.opacity >= 0.99,
     });
 
-    // Set render order (renderOrder is a property of Object3D, not Material)
-    // Store it in userData for later application to the Points object
-    material.userData.renderOrder = this.getRenderOrder(props.blendingMode, props.opacity);
-
-    // Mark this material as managed by MaterialManager
-    material.userData.managedByMaterialManager = true;
-
     // Register for global updates
     this.registeredMaterials.add(material);
 
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution);
+    
+    // Debug log the camera params being set
+    log.info(Modules.RENDERER, 
+      `Material camera params: FOV=${(this.currentFov * 180 / Math.PI).toFixed(1)}°, ` +
+      `Resolution=${this.currentResolution.x}x${this.currentResolution.y}`
+    );
 
     // Cache it
     this.pointMaterialCache.set(key, material);
@@ -95,32 +94,6 @@ export class MaterialManager {
   }
 
   /**
-   * Determine render order based on blending mode and opacity
-   */
-  private getRenderOrder(mode: BlendingMode, opacity: number): number {
-    // Opaque objects render first (order 0)
-    if (mode === 'normal' && opacity >= 0.99) {
-      return 0;
-    }
-
-    // Transparent and special blend modes render later
-    // Higher values render later
-    switch (mode) {
-      case 'normal':
-        return 100; // Transparent normal blending
-      case 'subtractive':
-        return 200; // Subtractive needs to see what's behind
-      case 'additive':
-        return 300; // Additive on top
-      case 'minimum':
-      case 'maximum':
-        return 400; // Special modes last
-      default:
-        return 100;
-    }
-  }
-
-  /**
    * Update HDR multiplier globally
    */
   updateHDRMultiplier(multiplier: number): void {
@@ -142,10 +115,10 @@ export class MaterialManager {
 
     // Update all registered materials
     this.registeredMaterials.forEach((material) => {
-      if (material instanceof PointMaterial) {
-        material.updateCameraParams(fov, resolution);
+      // Check if this material has updateCameraParams method
+      if ('updateCameraParams' in material && typeof (material as any).updateCameraParams === 'function') {
+        (material as any).updateCameraParams(fov, resolution);
       }
-      // Future: handle other material types
     });
   }
 

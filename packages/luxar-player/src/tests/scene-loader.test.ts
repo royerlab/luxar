@@ -122,9 +122,7 @@ vi.mock('../rendering/material-manager', () => ({
       uniforms: {},
       vertexShader: '',
       fragmentShader: '',
-      userData: {
-        renderOrder: 0,
-      },
+      userData: {},
     }),
   },
 }));
