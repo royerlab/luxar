@@ -12,7 +12,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
    - **Status**: RESOLVED
    - **Priority**: Medium
 
-4- Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
+4- ✅ COMPLETED: Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
    - **Status**: Open
    - **Priority**: Medium
 
@@ -25,11 +25,11 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
    - **Status**: COMPLETED
    - **Priority**: Medium
 
-7- Improve CLI commands so that: (i) there is a command to generate examples, serve them and open them in a browser, (ii) there is a command to serve a folder and its content, (iii) there is a command to serve the viewer itself, (iv) there is a command to serve a zarr file and serve the viewer with it shown, with the option, by default on to open the browser (v) there is command to provide detailed information and stats about a luxar zarr and display its contents (and info and stats of each object) as a tree. Make sure all CLI commands are tested and have tests that cover them.
+7- ✅ COMPLETED: Improve CLI commands so that: (i) there is a command to generate examples, serve them and open them in a browser, (ii) there is a command to serve a folder and its content, (iii) there is a command to serve the viewer itself, (iv) there is a command to serve a zarr file and serve the viewer with it shown, with the option, by default on to open the browser (v) there is command to provide detailed information and stats about a luxar zarr and display its contents (and info and stats of each object) as a tree. Make sure all CLI commands are tested and have tests that cover them.
    - **Status**: Open
    - **Priority**: Medium
 
-11- Remove 'substraction' blending mode from the Python API (not allowed), it is not useful and does not work well with the current implementation of the viewer. Make sure to remove it also from all tests and examples.
+11- Remove 'substraction' blending mode from the Python API (completely, do not leave dead code!), it is not useful and does not work well with the current implementation of the viewer. Make sure to remove it also from all tests and examples.
     - **Status**: Open
     - **Priority**: Medium
 

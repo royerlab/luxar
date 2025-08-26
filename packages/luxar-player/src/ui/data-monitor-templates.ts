@@ -72,8 +72,8 @@ export function renderStatGrid(
   return `
     <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
       ${stats
-    .map(
-      (stat) => `
+        .map(
+          (stat) => `
         <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
           <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
             ${stat.value}
@@ -81,8 +81,8 @@ export function renderStatGrid(
           <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
         </div>
       `
-    )
-    .join('')}
+        )
+        .join('')}
     </div>
   `;
 }
@@ -164,27 +164,27 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <!-- Primary metrics -->
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
         ${renderMetricCard(
-    'POINTS LOADED',
-    formatNumber(stats.totalPoints),
-    `${stats.totalLoaders} loaders (${stats.activeSpatialLoaders} spatial)`,
-    MonitorColors.success,
-    'large'
-  )}
+          'POINTS LOADED',
+          formatNumber(stats.totalPoints),
+          `${stats.totalLoaders} loaders (${stats.activeSpatialLoaders} spatial)`,
+          MonitorColors.success,
+          'large'
+        )}
         ${renderMetricCard(
-    'CACHE HIT RATE',
-    `${stats.globalCacheHitRate.toFixed(0)}%`,
-    `${stats.totalCacheHits}/${stats.totalCacheHits + (stats.totalQueries - stats.totalCacheHits)} hits`,
-    getCacheRateColor(stats.globalCacheHitRate),
-    'large'
-  )}
+          'CACHE HIT RATE',
+          `${stats.globalCacheHitRate.toFixed(0)}%`,
+          `${stats.totalCacheHits}/${stats.totalCacheHits + (stats.totalQueries - stats.totalCacheHits)} hits`,
+          getCacheRateColor(stats.globalCacheHitRate),
+          'large'
+        )}
       </div>
       
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-    { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
-    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-    { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
-  )}
+        { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
+        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+        { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
+      )}
       
       <!-- Loader list -->
       <div class="loader-list">
@@ -206,55 +206,55 @@ export function renderCacheContent(stats: GlobalStats, cacheMetrics: CacheMetric
       <!-- Cache overview cards -->
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
         ${renderMetricCard(
-    'CACHE MEMORY',
-    formatBytes(cacheMetrics.totalCacheMemory),
-    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-    MonitorColors.success,
-    'medium'
-  )}
+          'CACHE MEMORY',
+          formatBytes(cacheMetrics.totalCacheMemory),
+          `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+          MonitorColors.success,
+          'medium'
+        )}
         ${renderMetricCard(
-    'HIT RATE',
-    `${stats.globalCacheHitRate.toFixed(1)}%`,
-    `${cacheMetrics.recentHitRate.toFixed(0)}% recent (1m) | ${stats.totalCacheHits} hits / ${cacheMetrics.totalAccesses} total`,
-    getCacheRateColor(stats.globalCacheHitRate),
-    'medium'
-  )}
+          'HIT RATE',
+          `${stats.globalCacheHitRate.toFixed(1)}%`,
+          `${cacheMetrics.recentHitRate.toFixed(0)}% recent (1m) | ${stats.totalCacheHits} hits / ${cacheMetrics.totalAccesses} total`,
+          getCacheRateColor(stats.globalCacheHitRate),
+          'medium'
+        )}
         ${renderMetricCard(
-    'CACHED RANGES',
-    cacheMetrics.totalEntries.toString(),
-    `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
-    MonitorColors.primaryText,
-    'medium'
-  )}
+          'CACHED RANGES',
+          cacheMetrics.totalEntries.toString(),
+          `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
+          MonitorColors.primaryText,
+          'medium'
+        )}
         ${renderMetricCard(
-    'AVG RANGE SIZE',
-    formatBytes(cacheMetrics.avgEntrySize),
-    `Reuse: ${cacheMetrics.reuseRatio.toFixed(1)}x`,
-    MonitorColors.primaryText,
-    'medium'
-  )}
+          'AVG RANGE SIZE',
+          formatBytes(cacheMetrics.avgEntrySize),
+          `Reuse: ${cacheMetrics.reuseRatio.toFixed(1)}x`,
+          MonitorColors.primaryText,
+          'medium'
+        )}
       </div>
       
       <!-- Cache performance metrics -->
       <div style="margin-bottom: 15px;">
         <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">CACHE PERFORMANCE</h4>
         ${renderStatGrid([
-    {
-      label: 'Hits/sec',
-      value: `${cacheMetrics.hitsPerSecond.toFixed(1)}/s`,
-      color: MonitorColors.info,
-    },
-    {
-      label: 'Misses/sec',
-      value: `${cacheMetrics.missesPerSecond.toFixed(1)}/s`,
-      color: MonitorColors.warning,
-    },
-    {
-      label: 'Avg Access',
-      value: formatAccessTime(cacheMetrics.avgAccessTime),
-      color: getAccessTimeColor(cacheMetrics.avgAccessTime),
-    },
-  ])}
+          {
+            label: 'Hits/sec',
+            value: `${cacheMetrics.hitsPerSecond.toFixed(1)}/s`,
+            color: MonitorColors.info,
+          },
+          {
+            label: 'Misses/sec',
+            value: `${cacheMetrics.missesPerSecond.toFixed(1)}/s`,
+            color: MonitorColors.warning,
+          },
+          {
+            label: 'Avg Access',
+            value: formatAccessTime(cacheMetrics.avgAccessTime),
+            color: getAccessTimeColor(cacheMetrics.avgAccessTime),
+          },
+        ])}
       </div>
     </div>
   `;
@@ -286,14 +286,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-  rec.suggestion
-    ? `
+        rec.suggestion
+          ? `
         <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-    : ''
-}
+          : ''
+      }
     </div>
   `;
 }

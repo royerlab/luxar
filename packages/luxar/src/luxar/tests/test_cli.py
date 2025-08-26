@@ -8,7 +8,8 @@ import zarr
 from typer.testing import CliRunner
 
 from luxar import LuxarZarrCompiler
-from luxar.cli import _dfs, app
+from luxar.cli import app
+from luxar.cli.main import _dfs
 
 
 @pytest.fixture
@@ -27,17 +28,27 @@ def sample_scene(tmp_path):
     return store_path
 
 
-def test_random_command_success(runner, tmp_path):
-    """Test successful random scene generation."""
-    output_path = tmp_path / "random_test.zarr"
+def test_demo_command_no_serve_success(runner, tmp_path):
+    """Test successful demo generation without serving."""
+    output_path = tmp_path / "demo_test.zarr"
 
     result = runner.invoke(
-        app, ["random", "--out", str(output_path), "--n", "50", "--seed", "123"]
+        app,
+        [
+            "demo",
+            "--no-serve",
+            "--output",
+            str(output_path),
+            "--points",
+            "50",
+            "--seed",
+            "123",
+        ],
     )
 
     assert result.exit_code == 0
     assert output_path.exists()
-    assert "wrote 50 points" in result.stdout
+    assert "Generated 50 points" in result.stdout
 
     # Verify the generated scene
     root = zarr.open_group(output_path, mode="r")
@@ -46,37 +57,41 @@ def test_random_command_success(runner, tmp_path):
     assert root["LorenzAttractor"]["colors"].shape == (50, 3)
 
 
-def test_random_command_with_defaults(runner, tmp_path):
-    """Test random command with default parameters."""
-    output_path = tmp_path / "default_random.zarr"
+def test_demo_command_no_serve_with_defaults(runner, tmp_path):
+    """Test demo command without serving with default parameters."""
+    output_path = tmp_path / "default_demo.zarr"
 
-    result = runner.invoke(app, ["random", "--out", str(output_path)])
+    result = runner.invoke(app, ["demo", "--no-serve", "--output", str(output_path)])
 
     assert result.exit_code == 0
     assert output_path.exists()
-    assert "wrote 100,000 points" in result.stdout
+    assert "Generated 10,000 points" in result.stdout
 
 
-def test_random_command_short_options(runner, tmp_path):
-    """Test random command with short option flags."""
+def test_demo_command_no_serve_short_options(runner, tmp_path):
+    """Test demo command without serving using short option flags."""
     output_path = tmp_path / "short_opts.zarr"
 
-    result = runner.invoke(app, ["random", "-o", str(output_path), "-n", "25"])
+    result = runner.invoke(
+        app, ["demo", "--no-serve", "-o", str(output_path), "-n", "25"]
+    )
 
     assert result.exit_code == 0
     assert output_path.exists()
-    assert "wrote 25 points" in result.stdout
+    assert "Generated 25 points" in result.stdout
 
 
-def test_random_command_scene_creation_failure(runner, tmp_path):
-    """Test random command when scene creation fails."""
+def test_demo_command_no_serve_failure(runner, tmp_path):
+    """Test demo command when scene creation fails."""
     # Use invalid path to trigger failure
     invalid_path = "/invalid/path/that/does/not/exist.zarr"
 
-    result = runner.invoke(app, ["random", "--out", invalid_path, "--n", "10"])
+    result = runner.invoke(
+        app, ["demo", "--no-serve", "--output", invalid_path, "--points", "10"]
+    )
 
     assert result.exit_code == 1
-    assert "Error generating random scene:" in result.stdout
+    assert "Error:" in result.stdout
 
 
 def test_info_command_success(runner, sample_scene):
@@ -84,11 +99,17 @@ def test_info_command_success(runner, sample_scene):
     result = runner.invoke(app, ["info", str(sample_scene)])
 
     assert result.exit_code == 0
-    assert "Root attributes" in result.stdout
-    assert "Hierarchy" in result.stdout
-    assert "Summary" in result.stdout
-    assert "point clouds : 1" in result.stdout
-    assert "total points : 100" in result.stdout
+    # Check for new format with emojis
+    assert "Root Attributes" in result.stdout or "🎯 Root Attributes" in result.stdout
+    assert "Scene Hierarchy" in result.stdout or "🌳 Scene Hierarchy" in result.stdout
+    assert (
+        "Summary Statistics" in result.stdout
+        or "📊 Summary Statistics" in result.stdout
+    )
+    assert "Point clouds: 1" in result.stdout or "⭕ Point clouds: 1" in result.stdout
+    assert (
+        "Total points: 100" in result.stdout or "✨ Total points: 100" in result.stdout
+    )
     assert "luxar_version" in result.stdout
     assert "units" in result.stdout
 
@@ -127,8 +148,9 @@ def test_info_command_complex_hierarchy(runner, tmp_path):
     result = runner.invoke(app, ["info", str(store_path)])
 
     assert result.exit_code == 0
-    assert "point clouds : 3" in result.stdout
-    assert "total points : 45" in result.stdout
+    # Check for new format with emojis
+    assert "Point clouds: 3" in result.stdout or "⭕ Point clouds: 3" in result.stdout
+    assert "Total points: 45" in result.stdout or "✨ Total points: 45" in result.stdout
     assert "Group1" in result.stdout
     assert "Group2" in result.stdout
     assert "SubGroup" in result.stdout
@@ -210,13 +232,23 @@ def test_dfs_nested_groups(tmp_path):
     assert "SubGroup" in names
 
 
-def test_random_then_info_workflow(runner, tmp_path):
-    """Test complete workflow: generate random scene then get info."""
+def test_demo_then_info_workflow(runner, tmp_path):
+    """Test complete workflow: generate demo scene then get info."""
     store_path = tmp_path / "workflow.zarr"
 
-    # Step 1: Generate random scene
+    # Step 1: Generate demo scene without serving
     result1 = runner.invoke(
-        app, ["random", "--out", str(store_path), "--n", "75", "--seed", "999"]
+        app,
+        [
+            "demo",
+            "--no-serve",
+            "--output",
+            str(store_path),
+            "--points",
+            "75",
+            "--seed",
+            "999",
+        ],
     )
     assert result1.exit_code == 0
     assert store_path.exists()
@@ -224,7 +256,9 @@ def test_random_then_info_workflow(runner, tmp_path):
     # Step 2: Get info about the scene
     result2 = runner.invoke(app, ["info", str(store_path)])
     assert result2.exit_code == 0
-    assert "total points : 75" in result2.stdout
+    assert (
+        "Total points: 75" in result2.stdout or "✨ Total points: 75" in result2.stdout
+    )
     assert "LorenzAttractor" in result2.stdout
 
 
@@ -236,7 +270,7 @@ def test_cli_help_commands(runner):
     assert "luxar – build and serve Zarr-backed 3-D scenes" in result.stdout
 
     # Test individual command help
-    for command in ["random", "serve", "info"]:
+    for command in ["demo", "serve", "info", "viewer"]:
         result = runner.invoke(app, [command, "--help"])
         assert result.exit_code == 0
         assert command in result.stdout.lower()

@@ -321,8 +321,8 @@ Luxar provides a CLI for common operations:
 # Serve a Zarr dataset for visualization
 luxar serve dataset.zarr
 
-# Create a random demo dataset
-luxar random --out demo.zarr --n 100000
+# Create a demo dataset without serving
+luxar demo --no-serve --output demo.zarr --points 100000
 
 # Build a scene from a Python script
 luxar build scene_script.py
@@ -337,8 +337,9 @@ luxar info dataset.zarr
 - Use `--host` to bind to specific interface
 
 **Creating demo data:**
-- `luxar random --out <path.zarr>` - Create Lorenz attractor demo
-- Use `--n` to specify number of points (default: 10,000)
+- `luxar demo` - Create and serve demo with viewer (opens browser)
+- `luxar demo --no-serve --output <path.zarr>` - Create demo without serving
+- Use `--points` to specify number of points (default: 10,000)
 - Use `--seed` for reproducible results
 
 ## 🎨 Rendering Attributes

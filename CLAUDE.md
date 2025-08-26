@@ -196,10 +196,13 @@ hatch build                      # Build distribution packages
 
 ### Luxar CLI Commands
 ```bash
+luxar demo                       # Quick demo with viewer (auto-opens browser)
+luxar demo --no-serve --output demo.zarr --points 100000  # Generate demo dataset without serving
 luxar serve <data.zarr>          # Serve zarr data (default port 8000)
-luxar build <scene.py>           # Build a scene from Python script
-luxar random --out demo.zarr --n 100000  # Generate random demo dataset
+luxar serve <data.zarr> --viewer # Serve data with viewer
+luxar viewer --data <data.zarr>  # Serve viewer with data
 luxar info <data.zarr>           # Display dataset information
+luxar info <data.zarr> --stats   # Display with detailed statistics
 ```
 
 ### Development Commands
