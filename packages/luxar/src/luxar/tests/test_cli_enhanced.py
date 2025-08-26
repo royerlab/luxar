@@ -33,7 +33,7 @@ def runner():
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
     store_path = tmp_path / "test_scene.zarr"
-    from luxar.demos import create_lorenz_attractor
+    from luxar.utils.demos import create_lorenz_attractor
 
     create_lorenz_attractor(store_path, n_points=100, seed=42)
     return store_path
@@ -224,7 +224,7 @@ class TestDemoCommand:
         """Test basic demo command."""
         mock_check.return_value = True
 
-        with patch("luxar.demos.create_lorenz_attractor") as mock_create:
+        with patch("luxar.utils.demos.create_lorenz_attractor") as mock_create:
             runner.invoke(app, ["demo", "--no-open", "--points", "100"])
             # Demo should be created
             assert mock_create.called

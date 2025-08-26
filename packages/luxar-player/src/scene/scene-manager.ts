@@ -13,7 +13,6 @@ import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
 import { PostProcessingManager } from '../rendering/post-processing';
-import { ShaderValidator } from '../rendering/shader-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
   detectHDRCapabilities,
@@ -300,7 +299,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
 
     // Log shader configuration for debugging
-    ShaderValidator.logShaderConfig();
+    // Shader configuration logging removed - now handled by PointMaterial
 
     log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
   }

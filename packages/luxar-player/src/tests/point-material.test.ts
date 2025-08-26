@@ -1,0 +1,198 @@
+import { describe, it, expect, vi } from 'vitest';
+import * as THREE from 'three';
+import { PointMaterial } from '../rendering/point-material';
+import { config } from '../config';
+
+// Mock THREE.ShaderMaterial
+vi.mock('three', async () => {
+  const actual = await vi.importActual<typeof import('three')>('three');
+  
+  const ShaderMaterial = vi.fn(function(this: any, params: any) {
+    Object.assign(this, {
+      uniforms: params.uniforms,
+      vertexShader: params.vertexShader,
+      fragmentShader: params.fragmentShader,
+      vertexColors: params.vertexColors,
+      transparent: params.transparent,
+      depthWrite: params.depthWrite,
+      toneMapped: params.toneMapped,
+      blending: params.blending,
+      renderOrder: 0,
+      userData: {},
+      dispose: vi.fn(),
+    });
+  });
+  
+  return {
+    ...actual,
+    ShaderMaterial: ShaderMaterial as any,
+    Vector2: actual.Vector2,
+    AdditiveBlending: 'AdditiveBlending',
+    NormalBlending: 'NormalBlending',
+  };
+});
+
+describe('PointMaterial', () => {
+  describe('constructor', () => {
+    it('should create a material with default values', () => {
+      const material = new PointMaterial();
+      
+      expect(material.uniforms.hdrMultiplier.value).toBe(config.shader.points.hdrMultiplier);
+      expect(material.uniforms.baseAlpha.value).toBe(config.shader.points.baseAlpha);
+      expect(material.uniforms.opacity.value).toBe(1.0);
+      expect(material.uniforms.gamma.value).toBe(1.0);
+      expect(material.uniforms.fov.value).toBeCloseTo((60 * Math.PI) / 180);
+      expect(material.uniforms.resolution.value).toBeInstanceOf(THREE.Vector2);
+      
+      expect(material.vertexColors).toBe(true);
+      expect(material.transparent).toBe(true);
+      expect(material.depthWrite).toBe(false);
+      expect(material.toneMapped).toBe(false);
+      expect(material.blending).toBe('AdditiveBlending');
+    });
+    
+    it('should accept custom configuration', () => {
+      const material = new PointMaterial({
+        opacity: 0.5,
+        gamma: 2.2,
+        blending: 'NormalBlending' as any,
+        depthWrite: true,
+      });
+      
+      expect(material.uniforms.opacity.value).toBe(0.5);
+      expect(material.uniforms.gamma.value).toBe(2.2);
+      expect(material.blending).toBe('NormalBlending');
+      expect(material.depthWrite).toBe(true);
+    });
+  });
+  
+  describe('shaders', () => {
+    it('should have correct vertex shader with world-space sizing formula', () => {
+      const material = new PointMaterial();
+      
+      // Check for correct world-space sizing formula
+      expect(material.vertexShader).toContain('float basePointSize = 2.0 * radius * resolution.y / (distance * tan(fov * 0.5))');
+      
+      // Check that sharpness compensation IS applied
+      expect(material.vertexShader).toContain('float sharpnessCompensation = 1.0 + (vSharpness - 1.0) * 0.15');
+      expect(material.vertexShader).toContain('float pointSize = basePointSize * sharpnessCompensation');
+      expect(material.vertexShader).toContain('gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5)');
+      
+      // Check for attributes
+      expect(material.vertexShader).toContain('attribute float radius');
+      expect(material.vertexShader).toContain('attribute float sharpness');
+      
+      // Check for uniforms
+      expect(material.vertexShader).toContain('uniform float fov');
+      expect(material.vertexShader).toContain('uniform vec2 resolution');
+      
+      // Check for default sharpness handling
+      expect(material.vertexShader).toContain('vSharpness = sharpness > 0.0 ? sharpness : 2.0');
+    });
+    
+    it('should have correct fragment shader with HDR handling', () => {
+      const material = new PointMaterial();
+      
+      // Check HDR is applied BEFORE gamma correction
+      expect(material.fragmentShader).toContain('vec3 hdrColor = vColor * hdrMultiplier');
+      expect(material.fragmentShader).toContain('vec3 finalColor = pow(hdrColor, vec3(1.0 / gamma))');
+      
+      // Check for uniforms
+      expect(material.fragmentShader).toContain('uniform float hdrMultiplier');
+      expect(material.fragmentShader).toContain('uniform float opacity');
+      expect(material.fragmentShader).toContain('uniform float gamma');
+      expect(material.fragmentShader).toContain('uniform float baseAlpha');
+      
+      // Check for falloff calculation
+      expect(material.fragmentShader).toContain('float falloff = pow(1.0 - normalizedR, vSharpness)');
+    });
+  });
+  
+  describe('methods', () => {
+    it('should update camera parameters', () => {
+      const material = new PointMaterial();
+      const fov = (45 * Math.PI) / 180;
+      const resolution = new THREE.Vector2(1920, 1080);
+      
+      material.updateCameraParams(fov, resolution);
+      
+      expect(material.uniforms.fov.value).toBe(fov);
+      expect(material.uniforms.resolution.value.x).toBe(1920);
+      expect(material.uniforms.resolution.value.y).toBe(1080);
+    });
+    
+    it('should update HDR multiplier', () => {
+      const material = new PointMaterial();
+      
+      material.updateHDRMultiplier(32.0);
+      
+      expect(material.uniforms.hdrMultiplier.value).toBe(32.0);
+    });
+    
+    it('should update opacity', () => {
+      const material = new PointMaterial();
+      
+      material.updateOpacity(0.75);
+      
+      expect(material.uniforms.opacity.value).toBe(0.75);
+    });
+    
+    it('should update gamma', () => {
+      const material = new PointMaterial();
+      
+      material.updateGamma(1.8);
+      
+      expect(material.uniforms.gamma.value).toBe(1.8);
+    });
+    
+    it('should clone material with current values', () => {
+      const original = new PointMaterial({
+        opacity: 0.5,
+        gamma: 2.0,
+      });
+      
+      original.updateHDRMultiplier(24.0);
+      (original as any).renderOrder = 100;
+      
+      const cloned = original.clone();
+      
+      expect(cloned.uniforms.opacity.value).toBe(0.5);
+      expect(cloned.uniforms.gamma.value).toBe(2.0);
+      expect(cloned.uniforms.hdrMultiplier.value).toBe(24.0);
+      expect((cloned as any).renderOrder).toBe(100);
+      
+      // Ensure it's a new instance
+      expect(cloned).not.toBe(original);
+    });
+  });
+  
+  describe('shader correctness', () => {
+    it('should have correct sharpness compensation in vertex shader', () => {
+      const material = new PointMaterial();
+      
+      // The old incorrect sharpness compensation should be removed
+      expect(material.vertexShader).not.toContain('sizeCompensation');
+      expect(material.vertexShader).not.toContain('sqrt(vSharpness / 2.0)');
+      expect(material.vertexShader).not.toContain('pow(sharpness, 0.15)');
+      
+      // The new correct compensation should be present
+      expect(material.vertexShader).toContain('sharpnessCompensation');
+      expect(material.vertexShader).toContain('1.0 + (vSharpness - 1.0) * 0.15');
+    });
+    
+    it('should clamp point size to reasonable limits', () => {
+      const material = new PointMaterial();
+      
+      // Check for clamping in vertex shader (with compensation applied)
+      expect(material.vertexShader).toContain('gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5)');
+    });
+    
+    it('should discard pixels outside circular area', () => {
+      const material = new PointMaterial();
+      
+      // Check for circle discard logic
+      expect(material.fragmentShader).toContain('if (r > 0.5)');
+      expect(material.fragmentShader).toContain('discard');
+    });
+  });
+});

@@ -81,31 +81,29 @@ vi.mock('zarrita', async () => {
   };
 });
 
-// Mock our shader manager
-vi.mock('../shader-manager', () => ({
-  createGaussianPointMaterial: vi.fn().mockReturnValue({
-    uniforms: {},
-  }),
-  SHADER_CONFIG: {
-    POINTS: {
-      size: 1.0,
-      baseAlpha: 0.9,
-      hdrMultiplier: 1.0,
-    },
-  },
-}));
-
-// Mock material manager
-vi.mock('../material-manager', () => ({
+// Mock material manager - updated to use getPointMaterial
+vi.mock('../rendering/material-manager', () => ({
   materialManager: {
-    getMaterial: vi.fn().mockReturnValue({
+    getPointMaterial: vi.fn().mockReturnValue({
       uniforms: {
         hdrMultiplier: { value: 1.0 },
         opacity: { value: 1.0 },
         gamma: { value: 1.0 },
+        baseAlpha: { value: 0.01 },
+        fov: { value: 1.047 },
+        resolution: { value: { x: 1, y: 1 } },
       },
-      userData: { renderOrder: 0 },
+      userData: { 
+        renderOrder: 0,
+        managedByMaterialManager: true,
+      },
+      updateCameraParams: vi.fn(),
+      updateHDRMultiplier: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateGamma: vi.fn(),
     }),
+    updateCameraParams: vi.fn(),
+    updateHDRMultiplier: vi.fn(),
   },
   BlendingMode: {},
 }));

@@ -36,6 +36,7 @@ vi.mock('three', () => ({
     x,
     y,
     set: vi.fn().mockReturnThis(),
+    copy: vi.fn().mockReturnThis(),
   })),
   Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
     x,
@@ -44,6 +45,20 @@ vi.mock('three', () => ({
     set: vi.fn().mockReturnThis(),
     copy: vi.fn().mockReturnThis(),
   })),
+  ShaderMaterial: vi.fn().mockImplementation(function(this: any, params: any) {
+    Object.assign(this, {
+      uniforms: params?.uniforms || {},
+      vertexShader: params?.vertexShader || '',
+      fragmentShader: params?.fragmentShader || '',
+      vertexColors: params?.vertexColors || false,
+      transparent: params?.transparent || false,
+      depthWrite: params?.depthWrite !== undefined ? params.depthWrite : true,
+      toneMapped: params?.toneMapped !== undefined ? params.toneMapped : true,
+      blending: params?.blending || 'NormalBlending',
+      userData: {},
+      dispose: vi.fn(),
+    });
+  }),
   WebGLRenderer: vi.fn().mockImplementation(() => ({
     setSize: vi.fn(),
     render: vi.fn(),
@@ -72,6 +87,10 @@ vi.mock('three', () => ({
   NeutralToneMapping: 6,
   CustomToneMapping: 7,
   PCFSoftShadowMap: 2,
+  // Blending modes
+  NormalBlending: 'NormalBlending',
+  AdditiveBlending: 'AdditiveBlending',
+  SubtractiveBlending: 'SubtractiveBlending',
 }));
 
 describe('Data Monitor Integration', () => {

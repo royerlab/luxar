@@ -44,10 +44,8 @@ export interface SceneConfig {
  */
 export interface ShaderConfig {
   points: {
-    size: number;
     hdrMultiplier: number;
     baseAlpha: number;
-    falloffSteepness: number;
   };
 }
 

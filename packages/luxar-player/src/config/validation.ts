@@ -95,17 +95,11 @@ function validateRendering(config: AppConfig, errors: string[], _warnings: strin
   const { shader } = config;
 
   // Shader points validation
-  if (shader.points.size <= 0) {
-    errors.push(`Invalid shader point size: ${shader.points.size} (must be > 0)`);
-  }
   if (shader.points.hdrMultiplier < 0) {
     errors.push(`Invalid HDR multiplier: ${shader.points.hdrMultiplier} (must be >= 0)`);
   }
   if (shader.points.baseAlpha < 0 || shader.points.baseAlpha > 1) {
     errors.push(`Invalid base alpha: ${shader.points.baseAlpha} (must be between 0 and 1)`);
-  }
-  if (shader.points.falloffSteepness <= 0) {
-    errors.push(`Invalid falloff steepness: ${shader.points.falloffSteepness} (must be > 0)`);
   }
 }
 
