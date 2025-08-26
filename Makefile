@@ -139,7 +139,7 @@ dev-setup:  ## Complete development setup with Hatch
 # Demo and serving
 demo:  ## Generate a demo dataset (dist/demo.zarr with 100k points)
 	@mkdir -p dist
-	hatch run luxar random --out dist/demo.zarr --n 100000
+	hatch run luxar demo --no-serve --output dist/demo.zarr --points 100000
 	@echo "✅ Demo dataset created at dist/demo.zarr"
 
 run-examples:  ## Run all examples to generate zarr files

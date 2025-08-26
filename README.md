@@ -52,7 +52,7 @@ make demo-and-serve
 pip install -e .
 
 # 2. Create a scene in Python
-luxar random --out my_scene.zarr --n 1000000
+luxar demo --no-serve --output my_scene.zarr --points 1000000
 
 # 3. Visualize in browser
 make viewer  # Starts viewer at http://localhost:5173
@@ -424,7 +424,7 @@ For detailed contributing guidelines, development setup, coding standards, and m
 ## 🎓 Learning Resources
 
 ### Getting Started
-1. Run the basic demo: `luxar random --out demo.zarr --n 50000`
+1. Run the basic demo: `luxar demo --no-serve --output demo.zarr --points 50000`
 2. Start the viewer: `cd packages/luxar-player && pnpm dev`
 3. Load your data: `http://localhost:5173/?src=http://localhost:8000/data/demo.zarr/`
 
@@ -438,4 +438,4 @@ For detailed contributing guidelines, development setup, coding standards, and m
 
 Built with ❤️ for the scientific visualization and data exploration community
 
-**Ready to visualize your data in 3D? Start with `luxar random --out demo.zarr` and explore! 🚀**
+**Ready to visualize your data in 3D? Start with `luxar demo` and explore! 🚀**
