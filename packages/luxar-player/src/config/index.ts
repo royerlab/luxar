@@ -54,10 +54,8 @@ export const config: AppConfig = {
   // Shader configuration for point rendering
   shader: {
     points: {
-      size: 8.0, // Base point size in screen pixels
       hdrMultiplier: 16.0, // HDR color multiplier for bloom effects
       baseAlpha: 0.01, // Base alpha intensity
-      falloffSteepness: 20.0, // Gaussian falloff steepness
     },
   },
 

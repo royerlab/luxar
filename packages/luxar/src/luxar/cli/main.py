@@ -385,7 +385,7 @@ def demo(
         aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
 
         if demo_type == "lorenz":
-            from luxar.demos import create_lorenz_attractor
+            from luxar.utils.demos import create_lorenz_attractor
 
             create_lorenz_attractor(output, n_points=n_points, seed=seed)
         else:

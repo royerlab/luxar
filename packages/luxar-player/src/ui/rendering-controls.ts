@@ -11,7 +11,6 @@ import { config, type RenderingSettings } from '../config';
 // Extract component configuration
 const controlsConfig = config.ui.components.renderingControls;
 const spacingConfig = config.ui.styles.spacing;
-import { SHADER_CONFIG } from '../rendering/shader-manager';
 import type { NavigationControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
 import {
@@ -415,7 +414,7 @@ export class RenderingControls {
       .name('HDR Intensity')
       .onChange((value: number) => {
         // Update shader config and trigger material updates
-        (SHADER_CONFIG.POINTS as any).hdrMultiplier = value;
+        // HDR multiplier is now handled through material manager
         this.sceneManager.updateHDRMultiplier(value);
         this.saveSettings();
         this.triggerAnimation();
@@ -1122,7 +1121,7 @@ export class RenderingControls {
     this.postProcessing.updateExposure(this.settings.exposure);
 
     // Apply HDR multiplier - must update both config AND materials
-    (SHADER_CONFIG.POINTS as any).hdrMultiplier = this.settings.hdrMultiplier;
+    // HDR multiplier is now handled through material manager
     this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
 
     // Apply SSAA settings

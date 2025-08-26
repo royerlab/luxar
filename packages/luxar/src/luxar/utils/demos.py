@@ -34,7 +34,7 @@ def create_lorenz_attractor(
         seed: Random seed for reproducible results
 
     Example:
-        >>> from luxar.demos import create_lorenz_attractor
+        >>> from luxar.utils import create_lorenz_attractor
         >>> create_lorenz_attractor('demo.zarr', n_points=50000)
     """
     aprint(f"Creating Lorenz attractor demo scene with {n_points:,} points.")
@@ -115,7 +115,7 @@ def create_lorenz_attractor(
 
     # Generate radii based on position in the trajectory (growing over time)
     # This creates a visual effect of the attractor "growing" as it evolves
-    radii = np.linspace(0.05, 0.2, n_points).astype(np.float32)
+    radii = np.linspace(0.01, 0.02, n_points).astype(np.float32)
 
     # Create scene with new API
     with LuxarZarrCompiler(store_path) as compiler:
@@ -133,7 +133,7 @@ def create_lorenz_attractor(
         # Write the attractor data
         compiler.write_points(
             "LorenzAttractor",
-            positions,
+            positions * 100.0 - 50.0,  # Scale up for better visibility
             colors=colors,
             radii=radii,
             opacity=0.9,

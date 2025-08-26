@@ -416,7 +416,7 @@ export class SceneLoader {
    * Create material for point cloud
    */
   private createMaterial(attrs: any): THREE.ShaderMaterial {
-    return materialManager.getMaterial({
+    return materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
       blendingMode: (attrs.blending_mode as BlendingMode) ?? 'normal',

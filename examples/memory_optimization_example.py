@@ -50,10 +50,10 @@ def create_dataset_with_dtype_config(
     colors: np.ndarray,
     radii: np.ndarray,
     sharpness: np.ndarray,
-    description: str
+    description: str,
 ):
     """Create a dataset with specific dtype configuration."""
-    aprint(f"\n{'='*60}")
+    aprint(f"\n{'=' * 60}")
     aprint(f"Creating dataset: {description}")
     aprint(f"Output: {output_path}")
 
@@ -76,6 +76,7 @@ def create_dataset_with_dtype_config(
 
     # Report data types used
     import zarr
+
     store = zarr.open_group(output_path, mode="r")
     points_group = store["optimized_points"]
 
@@ -108,17 +109,17 @@ def main():
         (
             DataTypeConfig(mode=DataTypeMode.PRECISION),
             "memory_precision_example.zarr",
-            "Maximum Precision (all float32)"
+            "Maximum Precision (all float32)",
         ),
         (
             DataTypeConfig(mode=DataTypeMode.MEMORY),
             "memory_efficient_example.zarr",
-            "Memory Efficient (mixed types)"
+            "Memory Efficient (mixed types)",
         ),
         (
             DataTypeConfig(mode=DataTypeMode.AUTO),
             "memory_auto_example.zarr",
-            "Auto-detected types"
+            "Auto-detected types",
         ),
         (
             DataTypeConfig(
@@ -126,10 +127,10 @@ def main():
                 position_dtype="float32",
                 color_dtype="uint8",
                 radius_dtype="uint8",
-                sharpness_dtype="uint8"
+                sharpness_dtype="uint8",
             ),
             "memory_custom_example.zarr",
-            "Custom (float32 positions, uint8 attributes)"
+            "Custom (float32 positions, uint8 attributes)",
         ),
     ]
 
@@ -142,40 +143,46 @@ def main():
         sizes.append((description, size_mb))
 
     # Print comparison summary
-    aprint(f"\n{'='*60}")
+    aprint(f"\n{'=' * 60}")
     aprint("MEMORY USAGE COMPARISON")
-    aprint(f"{'='*60}")
+    aprint(f"{'=' * 60}")
 
     baseline_size = sizes[0][1]  # Precision mode as baseline
     for description, size_mb in sizes:
         reduction = ((baseline_size - size_mb) / baseline_size) * 100
         if reduction > 0:
-            aprint(f"{description:50s}: {size_mb:6.2f} MB ({reduction:+.1f}% reduction)")
+            aprint(
+                f"{description:50s}: {size_mb:6.2f} MB ({reduction:+.1f}% reduction)"
+            )
         else:
             aprint(f"{description:50s}: {size_mb:6.2f} MB (baseline)")
 
     # Calculate theoretical memory usage
-    aprint(f"\n{'='*60}")
+    aprint(f"\n{'=' * 60}")
     aprint("THEORETICAL MEMORY USAGE (uncompressed)")
-    aprint(f"{'='*60}")
+    aprint(f"{'=' * 60}")
 
     # Float32 everything (baseline)
-    float32_size = n_points * (3 * 4 + 3 * 4 + 4 + 4) / (1024 * 1024)  # positions + colors + radius + sharpness
+    float32_size = (
+        n_points * (3 * 4 + 3 * 4 + 4 + 4) / (1024 * 1024)
+    )  # positions + colors + radius + sharpness
     aprint(f"All float32:                     {float32_size:6.2f} MB")
 
     # Mixed precision
-    mixed_size = n_points * (3 * 4 + 3 * 1 + 1 + 1) / (1024 * 1024)  # float32 pos + uint8 rest
+    mixed_size = (
+        n_points * (3 * 4 + 3 * 1 + 1 + 1) / (1024 * 1024)
+    )  # float32 pos + uint8 rest
     aprint(f"Float32 pos + uint8 attributes:  {mixed_size:6.2f} MB")
     reduction = ((float32_size - mixed_size) / float32_size) * 100
     aprint(f"Theoretical reduction:            {reduction:.1f}%")
 
-    aprint(f"\n{'='*60}")
+    aprint(f"\n{'=' * 60}")
     aprint("NOTES:")
     aprint("- Actual file sizes are smaller due to compression")
     aprint("- uint8 types use normalization for 0-1 range in WebGL")
     aprint("- Float16 support depends on browser/hardware capabilities")
     aprint("- Choose dtype based on your precision requirements")
-    aprint(f"{'='*60}\n")
+    aprint(f"{'=' * 60}\n")
 
     # Serve the most memory-efficient example
     aprint("To view the memory-efficient example, run:")

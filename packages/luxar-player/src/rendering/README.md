@@ -20,8 +20,9 @@ The Luxar Rendering package provides a sophisticated rendering pipeline optimize
 ```
 rendering/
 ├── post-processing.ts    # Post-processing pipeline manager
-├── shader-manager.ts     # Custom WebGL shader programs
+├── point-material.ts     # Point cloud material with custom shaders
 ├── material-manager.ts   # Material creation and caching
+├── post-processing-utils.ts # Utilities for post-processing
 └── README.md            # This documentation
 ```
 
@@ -66,68 +67,62 @@ postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
 postProcessing.setFXAAEnabled(true);
 ```
 
-### 2. Shader Manager
+### 2. Point Material
 
-The `ShaderManager` provides optimized WebGL shaders for point cloud rendering.
-
-**Custom Shaders:**
-
-#### Vertex Shader Features:
-
-- World-space point sizing based on camera distance
-- Angular size calculation for perspective consistency
-- FOV-independent sizing
-- Depth-based scaling
-
-#### Fragment Shader Features:
-
-- Gaussian falloff for smooth point edges
-- HDR color multiplication
-- Alpha blending with configurable intensity
-- Depth testing and writing
-
-**Configuration:**
-
-```typescript
-export const SHADER_CONFIG = {
-  points: {
-    hdrMultiplier: 16.0, // HDR intensity boost
-    baseAlpha: 0.01, // Base transparency
-    falloffSteepness: 20.0, // Gaussian edge softness
-    depthTest: true, // Enable depth testing
-    depthWrite: false, // Disable for additive blending
-  },
-};
-```
-
-### 3. Material Manager
-
-The `MaterialManager` handles creation and caching of THREE.js materials.
+The `PointMaterial` class extends THREE.ShaderMaterial to provide specialized point cloud rendering with custom shaders.
 
 **Features:**
 
-- Material caching by configuration key
-- Dynamic uniform updates
-- Memory-efficient material reuse
-- Automatic disposal management
+#### Vertex Shader:
 
-**Material Types:**
+- World-space point sizing with correct formula
+- Sharpness compensation using mathematical model
+- FOV-independent sizing
+- Automatic viewport adaptation
+
+#### Fragment Shader:
+
+- Power-based falloff for smooth point edges
+- HDR color multiplication (applied before gamma)
+- Per-point sharpness control
+- Configurable opacity and gamma correction
+
+**Sharpness Compensation:**
+
+The vertex shader includes mathematically justified compensation for the sharpness parameter:
+- For falloff function `f(r) = (1-r)^s` where s is sharpness
+- Visible radius at 1% intensity: `r_vis = 1 - 0.01^(1/s)`
+- Exact compensation factor: `1 / r_vis = 1 / (1 - 0.01^(1/s))`
+- Linear approximation used: `compensation = 1.0 + (s - 1.0) * 0.15`
+- This ensures consistent visual point size regardless of sharpness value
+
+### 3. Material Manager
+
+The `MaterialManager` handles creation and caching of all materials in the scene, with support for future material types.
+
+**Features:**
+
+- Point material creation and caching
+- Global uniform updates (camera params, HDR)
+- Memory-efficient material reuse
+- Automatic registration and disposal
+- Future: Support for line, mesh, volume materials
+
+**Usage:**
 
 ```typescript
-// Point cloud material with custom shaders
+// Create a point material with specific properties
 const material = materialManager.getPointMaterial({
-  vertexShader: customVertexShader,
-  fragmentShader: customFragmentShader,
-  uniforms: {
-    hdrMultiplier: { value: 16.0 },
-    baseAlpha: { value: 0.01 },
-    falloffSteepness: { value: 20.0 },
-  },
-  transparent: true,
-  blending: THREE.AdditiveBlending,
-  depthTest: true,
-  depthWrite: false,
+  blendingMode: 'additive', // 'normal', 'additive', 'subtractive', etc.
+  opacity: 1.0,
+  gamma: 1.0,
 });
+
+// Update camera parameters globally
+materialManager.updateCameraParams(fov, resolution);
+
+// Update HDR multiplier for all materials
+materialManager.updateHDRMultiplier(16.0);
 ```
 
 ---
@@ -288,26 +283,32 @@ gl_PointSize = angularSize * resolution.y / fov;
 
 ```typescript
 import { PostProcessingManager } from './rendering/post-processing';
-import { MaterialManager } from './rendering/material-manager';
-import { ShaderManager } from './rendering/shader-manager';
+import { materialManager } from './rendering/material-manager';
+import { PointMaterial } from './rendering/point-material';
 
 // Initialize rendering pipeline
 const postProcessing = new PostProcessingManager(renderer, scene, camera, size);
 
-const materialManager = new MaterialManager();
-const shaderManager = new ShaderManager();
+// Material manager is a singleton, just import and use
+// materialManager is already instantiated
 ```
 
 ### Creating Point Cloud Material
 
 ```typescript
-// Get optimized point material
+// Option 1: Use MaterialManager for cached materials
 const material = materialManager.getPointMaterial({
-  vertexShader: shaderManager.getVertexShader(),
-  fragmentShader: shaderManager.getFragmentShader(),
-  uniforms: shaderManager.getUniforms(),
-  transparent: true,
+  blendingMode: 'additive',
+  opacity: 1.0,
+  gamma: 1.0,
+});
+
+// Option 2: Create PointMaterial directly (not cached)
+const customMaterial = new PointMaterial({
+  opacity: 0.8,
+  gamma: 2.2,
   blending: THREE.AdditiveBlending,
+  depthWrite: false,
 });
 
 // Apply to point cloud
@@ -423,21 +424,24 @@ Typical performance with 1M points:
 
 ### MaterialManager
 
-| Method                          | Description                |
-| ------------------------------- | -------------------------- |
-| `getPointMaterial(config)`      | Get/create point material  |
-| `updateMaterial(key, uniforms)` | Update material uniforms   |
-| `disposeMaterial(key)`          | Remove material from cache |
-| `clear()`                       | Clear all cached materials |
+| Method                                  | Description                           |
+| --------------------------------------- | ------------------------------------- |
+| `getPointMaterial(props)`               | Get/create cached point material      |
+| `updateCameraParams(fov, resolution)`   | Update camera params for all materials|
+| `updateHDRMultiplier(multiplier)`       | Update HDR multiplier globally        |
+| `dispose()`                             | Dispose all cached materials          |
+| `getCacheStats()`                       | Get material cache statistics         |
 
-### ShaderManager
+### PointMaterial
 
-| Method                 | Description                 |
-| ---------------------- | --------------------------- |
-| `getVertexShader()`    | Get point vertex shader     |
-| `getFragmentShader()`  | Get point fragment shader   |
-| `getUniforms()`        | Get shader uniforms         |
-| `updateConfig(config)` | Update shader configuration |
+| Method                                  | Description                           |
+| --------------------------------------- | ------------------------------------- |
+| `constructor(config)`                   | Create new point material             |
+| `updateCameraParams(fov, resolution)`   | Update world-space sizing parameters  |
+| `updateHDRMultiplier(multiplier)`       | Update HDR intensity                  |
+| `updateOpacity(opacity)`                | Update material opacity               |
+| `updateGamma(gamma)`                    | Update gamma correction               |
+| `clone()`                               | Clone material with current settings  |
 
 ---
 

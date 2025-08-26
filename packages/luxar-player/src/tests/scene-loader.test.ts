@@ -118,10 +118,13 @@ vi.mock('zarrita', () => ({
 // Mock material manager
 vi.mock('../rendering/material-manager', () => ({
   materialManager: {
-    getMaterial: vi.fn().mockReturnValue({
+    getPointMaterial: vi.fn().mockReturnValue({
       uniforms: {},
       vertexShader: '',
       fragmentShader: '',
+      userData: {
+        renderOrder: 0,
+      },
     }),
   },
 }));

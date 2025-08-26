@@ -1,161 +1,74 @@
 /**
  * Material Manager for Luxar
  *
- * This module manages materials with different rendering properties,
- * implementing a caching strategy to minimize material switching overhead.
+ * This module manages all materials in the scene, providing caching,
+ * global uniform updates, and support for multiple material types.
+ * Currently supports point materials, with future support for lines, meshes, etc.
  */
 
 import * as THREE from 'three';
-import { SHADER_CONFIG } from './shader-manager';
+import { PointMaterial } from './point-material';
 import { log, Modules } from '../utils/log';
 
 // Supported blending modes
 export type BlendingMode = 'normal' | 'additive' | 'subtractive' | 'minimum' | 'maximum';
 
-// Material properties for caching
-interface MaterialProperties {
+// Point material properties
+export interface PointMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
   gamma: number;
 }
 
-// Vertex shader with world-space point sizing
-const VERTEX_SHADER = /* glsl */ `
-  attribute float radius;
-  attribute float sharpness;
-  uniform float fov;  // Camera FOV in radians
-  uniform vec2 resolution;  // Viewport resolution in pixels
-  
-  varying vec3 vColor;
-  varying float vSharpness;
-  
-  void main() {
-    // Pass vertex color to fragment shader for per-point coloring
-    vColor = color;
-    
-    // Pass sharpness to fragment shader for per-point falloff control
-    // Use default value of 2.0 if sharpness attribute is missing or 0
-    vSharpness = sharpness > 0.0 ? sharpness : 2.0;
-    
-    // Transform vertex position from world space to view space
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_Position = projectionMatrix * mvPosition;
-    
-    // Calculate world-space point sizing
-    // Goal: Maintain the ratio of (point size / distance between points) constant
-    // This ensures two spheres of radius r at distance 2r will always just touch
-    
-    float distance = length(mvPosition.xyz);
-    
-    // The correct formula for world-space point sizing:
-    // Points should maintain constant world size regardless of viewport
-    float pointSize = 2.0 * radius * resolution.y / (distance * tan(fov * 0.5));
-    
-    // Compensate for sharpness effect on apparent size
-    // With soft falloff, the visible radius is smaller than the geometric radius
-    // Use the validated sharpness value (never 0)
-    float sizeCompensation = sqrt(vSharpness / 2.0);
-    
-    // Apply size with sharpness compensation
-    gl_PointSize = pointSize * sizeCompensation;
-  }
-`;
-
-// Fragment shader with opacity and gamma support
-const FRAGMENT_SHADER = /* glsl */ `
-  uniform float hdrMultiplier;
-  uniform float opacity;
-  uniform float gamma;
-  varying vec3 vColor;
-  varying float vSharpness;
-  
-  void main() {
-    // Calculate distance from center of point sprite (0.0 to 0.5)
-    float r = length(gl_PointCoord - 0.5);
-    
-    // Discard pixels outside the circular area
-    if (r > 0.5) {
-      discard;
-    }
-    
-    // Normalize radius to 0-1 range for the visible circle
-    float normalizedR = r * 2.0;  // Now 0.0 at center, 1.0 at edge
-    
-    // Variable falloff controlled by per-point sharpness
-    float falloff = pow(1.0 - normalizedR, vSharpness);
-    
-    // Apply base alpha
-    float alpha = ${SHADER_CONFIG.POINTS.baseAlpha.toFixed(3)} * falloff * opacity;
-    
-    // Apply gamma correction to color
-    vec3 gammaCorrected = pow(vColor, vec3(1.0 / gamma));
-    
-    // Multiply color by HDR multiplier to drive bloom effects
-    vec3 hdr = gammaCorrected * hdrMultiplier;
-    
-    // Output HDR color with computed alpha
-    gl_FragColor = vec4(hdr, alpha);
-  }
-`;
 
 /**
- * Manages Three.js materials with caching for performance
+ * Manages all materials in the scene with caching and global updates.
+ * Future: Will handle line, mesh, volume materials in addition to points.
  */
 export class MaterialManager {
-  private materialCache: Map<string, THREE.ShaderMaterial> = new Map();
-  private currentFov: number = (60 * Math.PI) / 180; // Current FOV in radians
-  private currentResolution: THREE.Vector2 = new THREE.Vector2(1, 1); // Minimal default
+  private pointMaterialCache = new Map<string, PointMaterial>();
+  private registeredMaterials = new Set<THREE.Material>();
+  private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
+  private currentResolution = new THREE.Vector2(1, 1); // Minimal default
 
   /**
-   * Get or create a material with specified properties
+   * Get or create a point material with caching
    */
-  getMaterial(props: MaterialProperties): THREE.ShaderMaterial {
+  getPointMaterial(props: PointMaterialProperties): PointMaterial {
     // Create cache key from properties
-    const key = `${props.blendingMode}_${props.opacity.toFixed(2)}_${props.gamma.toFixed(2)}`;
+    const key = `point_${props.blendingMode}_${props.opacity.toFixed(2)}_${props.gamma.toFixed(2)}`;
 
     // Check cache first
-    let material = this.materialCache.get(key);
+    let material = this.pointMaterialCache.get(key);
     if (material) {
       return material;
     }
 
-    // Create new material with current camera parameters
-    material = new THREE.ShaderMaterial({
-      uniforms: {
-        hdrMultiplier: { value: SHADER_CONFIG.POINTS.hdrMultiplier },
-        opacity: { value: props.opacity },
-        gamma: { value: props.gamma },
-        fov: { value: this.currentFov },
-        resolution: { value: this.currentResolution.clone() }, // Clone to avoid reference issues
-      },
-      vertexShader: VERTEX_SHADER,
-      fragmentShader: FRAGMENT_SHADER,
-
-      // Enable per-vertex colors from geometry
-      vertexColors: true,
-
-      // Enable transparency for smooth point blending
-      transparent: true,
-
-      // Disable depth writing for transparent objects to avoid artifacts
-      depthWrite: props.blendingMode === 'normal' && props.opacity >= 0.99,
-
-      // Don't apply tone mapping to this material - handled in post-processing
-      toneMapped: false,
-
-      // Set blending mode based on property
+    // Create new PointMaterial instance
+    material = new PointMaterial({
+      opacity: props.opacity,
+      gamma: props.gamma,
       blending: this.getThreeBlending(props.blendingMode),
+      depthWrite: props.blendingMode === 'normal' && props.opacity >= 0.99,
     });
 
-    // Store render order in userData for later application to mesh/points
+    // Set render order (renderOrder is a property of Object3D, not Material)
+    // Store it in userData for later application to the Points object
     material.userData.renderOrder = this.getRenderOrder(props.blendingMode, props.opacity);
 
-    // Mark this material as managed by MaterialManager to avoid double updates
+    // Mark this material as managed by MaterialManager
     material.userData.managedByMaterialManager = true;
 
-    // Cache the material
-    this.materialCache.set(key, material);
+    // Register for global updates
+    this.registeredMaterials.add(material);
 
+    // Update with current camera params
+    material.updateCameraParams(this.currentFov, this.currentResolution);
+
+    // Cache it
+    this.pointMaterialCache.set(key, material);
+
+    log.info(Modules.RENDERER, `Created point material: ${key}`);
     return material;
   }
 
@@ -209,31 +122,31 @@ export class MaterialManager {
   }
 
   /**
-   * Update HDR multiplier for all cached materials
+   * Update HDR multiplier globally
    */
   updateHDRMultiplier(multiplier: number): void {
-    this.materialCache.forEach((material) => {
-      material.uniforms.hdrMultiplier.value = multiplier;
+    this.registeredMaterials.forEach((material) => {
+      if (material instanceof PointMaterial) {
+        material.updateHDRMultiplier(multiplier);
+      }
+      // Future: handle other material types
     });
   }
 
   /**
-   * Update camera parameters for world-space point sizing
+   * Update camera parameters for all registered materials
    */
   updateCameraParams(fov: number, resolution: THREE.Vector2): void {
     // Store current values for future material creation
     this.currentFov = fov;
     this.currentResolution.copy(resolution);
 
-    // Update existing materials
-    this.materialCache.forEach((material) => {
-      if (material.uniforms.fov) {
-        material.uniforms.fov.value = fov;
+    // Update all registered materials
+    this.registeredMaterials.forEach((material) => {
+      if (material instanceof PointMaterial) {
+        material.updateCameraParams(fov, resolution);
       }
-      if (material.uniforms.resolution) {
-        // Update the values of the existing Vector2, don't replace the reference
-        material.uniforms.resolution.value.copy(resolution);
-      }
+      // Future: handle other material types
     });
   }
 
@@ -241,19 +154,21 @@ export class MaterialManager {
    * Dispose all cached materials
    */
   dispose(): void {
-    this.materialCache.forEach((material) => {
+    this.registeredMaterials.forEach((material) => {
       material.dispose();
     });
-    this.materialCache.clear();
+    this.pointMaterialCache.clear();
+    this.registeredMaterials.clear();
   }
 
   /**
    * Get cache statistics
    */
-  getCacheStats(): { size: number; keys: string[] } {
+  getCacheStats(): { pointMaterials: number; totalRegistered: number; keys: string[] } {
     return {
-      size: this.materialCache.size,
-      keys: Array.from(this.materialCache.keys()),
+      pointMaterials: this.pointMaterialCache.size,
+      totalRegistered: this.registeredMaterials.size,
+      keys: Array.from(this.pointMaterialCache.keys()),
     };
   }
 }
