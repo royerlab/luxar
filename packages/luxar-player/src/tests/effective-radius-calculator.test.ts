@@ -199,11 +199,11 @@ describe('effective-radius-calculator', () => {
       expect(result[3]).toBe(0); // Non-spatial (e.g., category) → exact match
     });
 
-    it('should respect explicit tolerance when provided', () => {
+    it('should always use maxRadius for spatial dimensions, ignoring tolerance array', () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 0],
-        tolerance: [0.1, 0.2, 0.3, 0.4], // Explicit tolerances
+        tolerance: [0.1, 0.2, 0.3, 0.4], // Explicit tolerances (should be ignored for spatial dims)
       };
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, true, true, true],
@@ -212,10 +212,10 @@ describe('effective-radius-calculator', () => {
 
       const result = calculateSpatialQueryTolerance(viewState, config, 4);
 
-      expect(result[0]).toBe(0); // Displayed (override)
-      expect(result[1]).toBe(0); // Displayed (override)
-      expect(result[2]).toBe(0); // Displayed (override)
-      expect(result[3]).toBe(0.4); // Use explicit tolerance
+      expect(result[0]).toBe(0); // Displayed
+      expect(result[1]).toBe(0); // Displayed
+      expect(result[2]).toBe(0); // Displayed
+      expect(result[3]).toBe(1.0); // Always use maxRadius for spatial dims, not tolerance
     });
   });
 
