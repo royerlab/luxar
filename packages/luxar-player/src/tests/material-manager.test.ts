@@ -140,7 +140,6 @@ describe('MaterialManager', () => {
           depthWrite: false, // opacity < 0.99
         })
       );
-
     });
 
     it('should enable depth write for opaque normal blending', () => {
@@ -219,7 +218,6 @@ describe('MaterialManager', () => {
         );
       });
     });
-
   });
 
   describe('updateHDRMultiplier', () => {

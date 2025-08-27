@@ -18,6 +18,8 @@ export interface PointMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
   gamma: number;
+  radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
+  sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
 }
 
 /**
@@ -34,8 +36,14 @@ export class MaterialManager {
    * Get or create a point material with caching
    */
   getPointMaterial(props: PointMaterialProperties): PointMaterial {
-    // Create cache key from properties
-    const key = `point_${props.blendingMode}_${props.opacity.toFixed(2)}_${props.gamma.toFixed(2)}`;
+    // Create cache key from properties (including radiusScale and sharpnessScale if different from 1.0)
+    const radiusScalePart =
+      props.radiusScale && props.radiusScale !== 1.0 ? `_rs${props.radiusScale.toFixed(6)}` : '';
+    const sharpnessScalePart =
+      props.sharpnessScale && props.sharpnessScale !== 1.0
+        ? `_ss${props.sharpnessScale.toFixed(6)}`
+        : '';
+    const key = `point_${props.blendingMode}_${props.opacity.toFixed(2)}_${props.gamma.toFixed(2)}${radiusScalePart}${sharpnessScalePart}`;
 
     // Check cache first
     let material = this.pointMaterialCache.get(key);
@@ -49,6 +57,8 @@ export class MaterialManager {
       gamma: props.gamma,
       blending: this.getThreeBlending(props.blendingMode),
       depthWrite: props.blendingMode === 'normal' && props.opacity >= 0.99,
+      radiusScale: props.radiusScale,
+      sharpnessScale: props.sharpnessScale,
     });
 
     // Register for global updates
@@ -56,11 +66,12 @@ export class MaterialManager {
 
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution);
-    
+
     // Debug log the camera params being set
-    log.info(Modules.RENDERER, 
-      `Material camera params: FOV=${(this.currentFov * 180 / Math.PI).toFixed(1)}°, ` +
-      `Resolution=${this.currentResolution.x}x${this.currentResolution.y}`
+    log.info(
+      Modules.RENDERER,
+      `Material camera params: FOV=${((this.currentFov * 180) / Math.PI).toFixed(1)}°, ` +
+        `Resolution=${this.currentResolution.x}x${this.currentResolution.y}`
     );
 
     // Cache it
@@ -116,7 +127,10 @@ export class MaterialManager {
     // Update all registered materials
     this.registeredMaterials.forEach((material) => {
       // Check if this material has updateCameraParams method
-      if ('updateCameraParams' in material && typeof (material as any).updateCameraParams === 'function') {
+      if (
+        'updateCameraParams' in material &&
+        typeof (material as any).updateCameraParams === 'function'
+      ) {
         (material as any).updateCameraParams(fov, resolution);
       }
     });

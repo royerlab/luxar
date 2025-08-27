@@ -71,9 +71,10 @@ describe('PointMaterial', () => {
     it('should have correct vertex shader with world-space sizing formula', () => {
       const material = new PointMaterial();
 
-      // Check for correct world-space sizing formula
+      // Check for correct world-space sizing formula with radius scaling
+      expect(material.vertexShader).toContain('float normalizedRadius = radius * radiusScale');
       expect(material.vertexShader).toContain(
-        'float basePointSize = 2.0 * radius * resolution.y / (distance * tan(fov * 0.5))'
+        'float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5))'
       );
 
       // Check that sharpness compensation IS applied
@@ -94,9 +95,16 @@ describe('PointMaterial', () => {
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform float fov');
       expect(material.vertexShader).toContain('uniform vec2 resolution');
+      expect(material.vertexShader).toContain('uniform float radiusScale');
+      expect(material.vertexShader).toContain('uniform float sharpnessScale');
 
-      // Check for default sharpness handling
-      expect(material.vertexShader).toContain('vSharpness = sharpness > 0.0 ? sharpness : 2.0');
+      // Check for sharpness normalization and default handling
+      expect(material.vertexShader).toContain(
+        'float normalizedSharpness = sharpness * sharpnessScale'
+      );
+      expect(material.vertexShader).toContain(
+        'vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0'
+      );
     });
 
     it('should have correct fragment shader with HDR handling', () => {

@@ -276,8 +276,10 @@ export class SceneLoader {
       // Create THREE.js geometry
       const geometry = this.createGeometry(data);
 
-      // Create material
-      const material = this.createMaterial(node.attrs);
+      // Create material with radius and sharpness scales from geometry userData
+      const radiusScale = geometry.userData.radiusScale ?? 1.0;
+      const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
+      const material = this.createMaterial(node.attrs, radiusScale, sharpnessScale);
 
       // Create points object
       const points = new THREE.Points(geometry, material);
@@ -355,6 +357,8 @@ export class SceneLoader {
     }
 
     // Set radii if available, or use default
+    let radiusScale = 1.0; // Default scale for float32 radii
+
     if (data.radii) {
       // Check if radii need normalization or conversion
       if (
@@ -364,21 +368,39 @@ export class SceneLoader {
         // Convert Float16Array to Float32Array for THREE.js
         const float32Radii = new Float32Array(data.radii);
         geometry.setAttribute('radius', new THREE.BufferAttribute(float32Radii, 1));
-      } else {
-        const needsNormalization = data.radii instanceof Uint8Array;
+        // Float16 values are already in world units, no scaling needed
+        radiusScale = 1.0;
+      } else if (data.radii instanceof Uint8Array) {
+        // Uint8 radii need scaling from 0-255 to 0-1 (or world units)
+        // Use the normalization flag for proper GPU upload
         geometry.setAttribute(
           'radius',
-          new THREE.BufferAttribute(data.radii as Float32Array | Uint8Array, 1, needsNormalization)
+          new THREE.BufferAttribute(data.radii, 1, true) // true = normalize on GPU
         );
+        // Since Python stores values multiplied by 255, we need to scale back
+        radiusScale = 1.0 / 255.0;
+
+        // Note: If we need to handle max_radius scaling in the future,
+        // we can check for it in the node attributes
+      } else {
+        // Float32 radii - no normalization or scaling needed
+        geometry.setAttribute(
+          'radius',
+          new THREE.BufferAttribute(data.radii as Float32Array, 1, false)
+        );
+        radiusScale = 1.0;
       }
     } else {
       // Create default radius array with value 0.5 for all points
       const numPoints = data.positions.length / 3;
       const defaultRadii = new Float32Array(numPoints).fill(0.5);
       geometry.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
+      radiusScale = 1.0;
     }
 
     // Set sharpness if available, or use default
+    let sharpnessScale = 1.0; // Default scale for float32 sharpness
+
     if (data.sharpness) {
       // Check if sharpness needs normalization or conversion
       if (
@@ -388,26 +410,42 @@ export class SceneLoader {
         // Convert Float16Array to Float32Array for THREE.js
         const float32Sharpness = new Float32Array(data.sharpness);
         geometry.setAttribute('sharpness', new THREE.BufferAttribute(float32Sharpness, 1));
-      } else {
-        const needsNormalization = data.sharpness instanceof Uint8Array;
+        // Float16 values are already in world units, no scaling needed
+        sharpnessScale = 1.0;
+      } else if (data.sharpness instanceof Uint8Array) {
+        // Uint8 sharpness needs scaling from 0-255 to 0-1 (or world units)
+        // Use the normalization flag for proper GPU upload
         geometry.setAttribute(
           'sharpness',
-          new THREE.BufferAttribute(
-            data.sharpness as Float32Array | Uint8Array,
-            1,
-            needsNormalization
-          )
+          new THREE.BufferAttribute(data.sharpness, 1, true) // true = normalize on GPU
         );
+        // Since Python stores values multiplied by 255, we need to scale back
+        sharpnessScale = 1.0 / 255.0;
+      } else {
+        // Float32 sharpness - no normalization or scaling needed
+        geometry.setAttribute(
+          'sharpness',
+          new THREE.BufferAttribute(data.sharpness as Float32Array, 1, false)
+        );
+        sharpnessScale = 1.0;
       }
     } else {
       // Create default sharpness array with value 2.0 for all points
       const numPoints = data.positions.length / 3;
       const defaultSharpness = new Float32Array(numPoints).fill(2.0);
       geometry.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
+      sharpnessScale = 1.0;
     }
 
     // Compute bounding box
     geometry.boundingBox = data.metadata.bounds.clone();
+
+    // Store radius and sharpness scales as user data for material creation
+    if (!geometry.userData) {
+      geometry.userData = {};
+    }
+    geometry.userData.radiusScale = radiusScale;
+    geometry.userData.sharpnessScale = sharpnessScale;
 
     return geometry;
   }
@@ -415,11 +453,17 @@ export class SceneLoader {
   /**
    * Create material for point cloud
    */
-  private createMaterial(attrs: any): THREE.ShaderMaterial {
+  private createMaterial(
+    attrs: any,
+    radiusScale: number = 1.0,
+    sharpnessScale: number = 1.0
+  ): THREE.ShaderMaterial {
     return materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
       blendingMode: (attrs.blending_mode as BlendingMode) ?? 'normal',
+      radiusScale: radiusScale,
+      sharpnessScale: sharpnessScale,
     });
   }
 
