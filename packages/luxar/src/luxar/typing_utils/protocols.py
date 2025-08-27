@@ -516,7 +516,7 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     if not isinstance(mode, str):
         raise TypeError(f"Blending mode must be a string, got {type(mode).__name__}")
 
-    valid_modes = {"normal", "additive", "subtractive", "minimum", "maximum"}
+    valid_modes = {"normal", "additive"}
     if mode not in valid_modes:
         raise ValueError(
             f"Invalid blending mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}"

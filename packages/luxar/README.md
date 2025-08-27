@@ -212,7 +212,7 @@ class Scene:
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum", default "additive")
+                blending_mode: str ("normal", "additive", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
     
@@ -238,7 +238,7 @@ class Scene:
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction  
-                blending_mode: str ("normal", "additive", "multiply", "minimum", "maximum", default "additive")
+                blending_mode: str ("normal", "additive", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
     
@@ -364,7 +364,7 @@ points = scene.add_points(
 # Modify rendering after creation
 points.opacity = 0.5
 points.gamma = 0.8
-points.blending_mode = "multiply"
+points.blending_mode = "normal"
 
 # Chain modifications
 points.set_opacity(0.7).set_gamma(1.2).set_blending_mode("additive")

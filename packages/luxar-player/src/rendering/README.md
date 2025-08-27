@@ -114,7 +114,7 @@ The `MaterialManager` handles creation and caching of all materials in the scene
 ```typescript
 // Create a point material with specific properties
 const material = materialManager.getPointMaterial({
-  blendingMode: 'additive', // 'normal', 'additive', 'subtractive', etc.
+  blendingMode: 'additive', // 'normal' or 'additive'
   opacity: 1.0,
   gamma: 1.0,
 });

@@ -107,7 +107,7 @@ class TestNodeRenderingAttributes:
             node = scene.add_group("test_node")
 
         # Test setting valid blending modes
-        for mode in ["normal", "additive", "subtractive", "minimum", "maximum"]:
+        for mode in ["normal", "additive"]:
             node.blending_mode = mode
             assert node.blending_mode == mode
             assert node.attrs["blending_mode"] == mode
@@ -138,7 +138,7 @@ class TestNodeRenderingAttributes:
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene()
             scene.add_group(
-                "test_node", opacity=0.7, gamma=1.5, blending_mode="subtractive"
+                "test_node", opacity=0.7, gamma=1.5, blending_mode="additive"
             )
 
         # Check that attributes are written to zarr
@@ -146,7 +146,7 @@ class TestNodeRenderingAttributes:
         test_node_attrs = store["test_node"].attrs
         assert test_node_attrs.get("opacity") == 0.7
         assert test_node_attrs.get("gamma") == 1.5
-        assert test_node_attrs.get("blending_mode") == "subtractive"
+        assert test_node_attrs.get("blending_mode") == "additive"
 
     def test_rendering_attributes_in_add_points(self, tmp_path):
         """Test setting rendering attributes when adding points."""
@@ -176,9 +176,9 @@ class TestNodeRenderingAttributes:
             scene = compiler.create_scene()
 
         # Create parent with custom attributes
-        parent = scene.add_group("parent", opacity=0.3, blending_mode="subtractive")
+        parent = scene.add_group("parent", opacity=0.3, blending_mode="additive")
         assert parent.opacity == 0.3
-        assert parent.blending_mode == "subtractive"
+        assert parent.blending_mode == "additive"
 
         # Create child without specifying attributes
         child = parent.add_group("child")
@@ -188,4 +188,4 @@ class TestNodeRenderingAttributes:
 
         # But parent attributes are stored for TypeScript inheritance
         assert parent.attrs["opacity"] == 0.3
-        assert parent.attrs["blending_mode"] == "subtractive"
+        assert parent.attrs["blending_mode"] == "additive"

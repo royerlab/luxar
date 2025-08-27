@@ -252,7 +252,7 @@ scene.zarr/
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix
   "opacity": 1.0,  // 0.0-1.0
   "gamma": 1.0,    // 0.2-2.0
-  "blending_mode": "additive"  // normal|additive|multiply|minimum|maximum
+  "blending_mode": "additive"  // normal|additive
 }
 ```
 

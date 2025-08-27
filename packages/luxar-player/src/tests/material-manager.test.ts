@@ -198,9 +198,6 @@ describe('MaterialManager', () => {
       const testCases: Array<{ mode: BlendingMode; expected: string }> = [
         { mode: 'normal', expected: 'NormalBlending' },
         { mode: 'additive', expected: 'AdditiveBlending' },
-        { mode: 'subtractive', expected: 'SubtractiveBlending' },
-        { mode: 'minimum', expected: 'SubtractiveBlending' },
-        { mode: 'maximum', expected: 'AdditiveBlending' },
       ];
 
       testCases.forEach(({ mode, expected }) => {
