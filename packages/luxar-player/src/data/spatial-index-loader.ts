@@ -671,7 +671,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     // Get dimensionality from positions array - use full dimensions, not just indexed ones
     const ndim =
       this.spatialIndex?.metadata.full_dimensions || this.spatialIndex?.metadata.dimensions || 3;
-    const numPoints = positions.length / ndim;
+    let numPoints = positions.length / ndim;
 
     if (numPoints !== totalPoints) {
       log.error(
@@ -682,7 +682,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Extract 3D positions from nD data
     const { displayDims } = viewState;
-    const positions3D = new Float32Array(numPoints * 3);
+    let positions3D = new Float32Array(numPoints * 3);
 
     for (let i = 0; i < numPoints; i++) {
       // Extract displayed dimensions
@@ -709,14 +709,32 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       radii instanceof Float32Array ? radii : radii ? new Float32Array(radii) : undefined;
     let usedEffectiveRadius = false;
 
-    if (finalRadii && this._effectiveRadiusConfig && positions instanceof Float32Array) {
+    // Normalize uint8 radii to world units before effective radius calculation
+    let effectiveRadiusConfig = this._effectiveRadiusConfig;
+    if (finalRadii && radii instanceof Uint8Array) {
+      // uint8 radii are stored as 0-255, need to scale to 0-1 (or actual world units)
+      // This matches the radiusScale = 1.0 / 255.0 used in the shader
+      for (let i = 0; i < finalRadii.length; i++) {
+        finalRadii[i] = finalRadii[i] / 255.0;
+      }
+      // Also need to scale max_radius for effective radius calculation
+      // Create a copy of the config to avoid modifying the original
+      if (effectiveRadiusConfig) {
+        effectiveRadiusConfig = {
+          ...effectiveRadiusConfig,
+          maxRadius: effectiveRadiusConfig.maxRadius / 255.0
+        };
+      }
+    }
+
+    if (finalRadii && effectiveRadiusConfig && positions instanceof Float32Array) {
       // Check if we should apply effective radius
-      if (shouldApplyEffectiveRadius(this._effectiveRadiusConfig, viewState.displayDims, true)) {
+      if (shouldApplyEffectiveRadius(effectiveRadiusConfig, viewState.displayDims, true)) {
         finalRadii = calculateEffectiveRadii(
           positions, // Original nD positions
-          finalRadii,
+          finalRadii, // Now in world units
           viewState,
-          this._effectiveRadiusConfig,
+          effectiveRadiusConfig, // Config with scaled maxRadius
           ndim
         );
         usedEffectiveRadius = true;
@@ -740,6 +758,109 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         }
       }
     }
+
+    // Filter out zero-radius points to avoid sending them to GPU
+    // This significantly improves performance for nD slicing
+    // IMPORTANT: Only filter when we actually calculated effective radii
+    if (usedEffectiveRadius && finalRadii) {
+      const threshold = 0.0001; // Small threshold for floating point precision
+      const validIndices: number[] = [];
+      
+      // Find indices of points with non-zero radius
+      for (let i = 0; i < numPoints; i++) {
+        if (finalRadii[i] > threshold) {
+          validIndices.push(i);
+        }
+      }
+
+      const filteredCount = validIndices.length;
+      
+      // Only filter if we're actually removing points AND we have valid points left
+      if (filteredCount < numPoints && filteredCount > 0) {
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Filtering out ${numPoints - filteredCount} zero-radius points (keeping ${filteredCount})`
+        );
+
+        // Create filtered arrays
+        const filteredPositions3D = new Float32Array(filteredCount * 3);
+        const filteredRadii = new Float32Array(filteredCount);
+        
+        // Filter colors if present
+        let filteredColors: Float32Array | Uint8Array | Uint16Array | undefined;
+        if (colors) {
+          if (colors instanceof Float32Array) {
+            filteredColors = new Float32Array(filteredCount * 3);
+          } else if (colors instanceof Uint8Array) {
+            filteredColors = new Uint8Array(filteredCount * 3);
+          } else if (colors instanceof Uint16Array) {
+            filteredColors = new Uint16Array(filteredCount * 3);
+          }
+        }
+
+        // Filter sharpness if present
+        let filteredSharpness: Float32Array | Uint8Array | Uint16Array | undefined;
+        if (sharpness) {
+          if (sharpness instanceof Float32Array) {
+            filteredSharpness = new Float32Array(filteredCount);
+          } else if (sharpness instanceof Uint8Array) {
+            filteredSharpness = new Uint8Array(filteredCount);
+          } else if (sharpness instanceof Uint16Array) {
+            filteredSharpness = new Uint16Array(filteredCount);
+          }
+        }
+
+        // Copy only valid points
+        for (let i = 0; i < filteredCount; i++) {
+          const srcIdx = validIndices[i];
+          
+          // Copy position (3 components)
+          filteredPositions3D[i * 3] = positions3D[srcIdx * 3];
+          filteredPositions3D[i * 3 + 1] = positions3D[srcIdx * 3 + 1];
+          filteredPositions3D[i * 3 + 2] = positions3D[srcIdx * 3 + 2];
+          
+          // Copy radius
+          filteredRadii[i] = finalRadii[srcIdx];
+          
+          // Copy colors if present (3 components)
+          if (colors && filteredColors) {
+            filteredColors[i * 3] = colors[srcIdx * 3];
+            filteredColors[i * 3 + 1] = colors[srcIdx * 3 + 1];
+            filteredColors[i * 3 + 2] = colors[srcIdx * 3 + 2];
+          }
+          
+          // Copy sharpness if present
+          if (sharpness && filteredSharpness) {
+            filteredSharpness[i] = sharpness[srcIdx];
+          }
+        }
+
+        // Replace arrays with filtered versions
+        positions3D = filteredPositions3D;
+        finalRadii = filteredRadii;
+        colors = filteredColors || colors;
+        sharpness = filteredSharpness || sharpness;
+        
+        // Update point count
+        numPoints = filteredCount;
+        
+        // Recalculate bounds for filtered points only
+        bounds.makeEmpty();
+        for (let i = 0; i < filteredCount; i++) {
+          point.set(positions3D[i * 3], positions3D[i * 3 + 1], positions3D[i * 3 + 2]);
+          bounds.expandByPoint(point);
+        }
+      } else if (filteredCount === 0) {
+        // All points were filtered out - this is correct behavior for points outside the hyperplane!
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `All ${numPoints} points have zero effective radius - no points visible at this slice`
+        );
+        // Return empty point cloud - this is the correct behavior
+        return this.createEmptyPointCloud(viewState);
+      }
+    }
+
 
     // Get dtype metadata from node attributes
     const dtypes = {

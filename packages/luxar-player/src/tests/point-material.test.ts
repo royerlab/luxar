@@ -73,6 +73,11 @@ describe('PointMaterial', () => {
 
       // Check for correct world-space sizing formula with radius scaling
       expect(material.vertexShader).toContain('float normalizedRadius = radius * radiusScale');
+      
+      // Check that gl_PointSize avoids undefined behavior (always >= 1.0)
+      expect(material.vertexShader).toContain('gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5))');
+      
+      // Check that normal points still get proper sizing
       expect(material.vertexShader).toContain(
         'float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5))'
       );
@@ -84,8 +89,9 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain(
         'float pointSize = basePointSize * sharpnessCompensation'
       );
+      // Check for proper clamping to avoid undefined behavior
       expect(material.vertexShader).toContain(
-        'gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5)'
+        'gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5))'
       );
 
       // Check for attributes
@@ -109,7 +115,7 @@ describe('PointMaterial', () => {
 
     it('should have correct fragment shader with HDR handling', () => {
       const material = new PointMaterial();
-
+      
       // Check HDR is applied BEFORE gamma correction
       expect(material.fragmentShader).toContain('vec3 hdrColor = vColor * hdrMultiplier');
 
@@ -203,13 +209,28 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('1.0 + (vSharpness - 1.0) * 0.15');
     });
 
-    it('should clamp point size to reasonable limits', () => {
+    it('should clamp point size to avoid undefined behavior', () => {
+      const material = new PointMaterial();
+      
+      // Check gl_PointSize has minimum of 1.0 to avoid undefined behavior
+      expect(material.vertexShader).toContain(
+        'gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5))'
+      );
+      
+      // Check comment about zero-radius filtering
+      expect(material.vertexShader).toContain('Zero-radius filtering happens in fragment shader');
+    });
+
+    it('should discard zero-radius points in fragment shader', () => {
       const material = new PointMaterial();
 
-      // Check for clamping in vertex shader (with compensation applied)
-      expect(material.vertexShader).toContain(
-        'gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5)'
-      );
+      // Check for zero-radius discard
+      expect(material.fragmentShader).toContain('if (vRadius < 0.0001)');
+      expect(material.fragmentShader).toContain('discard');
+      
+      // Check that vRadius is passed from vertex shader
+      expect(material.vertexShader).toContain('varying float vRadius');
+      expect(material.vertexShader).toContain('vRadius = normalizedRadius');
     });
 
     it('should discard pixels outside circular area', () => {

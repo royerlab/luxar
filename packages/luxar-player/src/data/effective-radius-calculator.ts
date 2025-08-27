@@ -106,7 +106,7 @@ export function calculateSpatialQueryTolerance(
   config: EffectiveRadiusConfig,
   ndim: number
 ): number[] {
-  const { displayDims, tolerance } = viewState;
+  const { displayDims } = viewState;
   const { spatialExtendDims, maxRadius } = config;
 
   const queryTolerance = new Array(ndim).fill(0);
@@ -118,7 +118,8 @@ export function calculateSpatialQueryTolerance(
     } else if (spatialExtendDims[d]) {
       // Non-displayed spatial dimensions need maxRadius tolerance
       // to catch all points that might intersect the slice
-      queryTolerance[d] = tolerance?.[d] ?? maxRadius;
+      // ALWAYS use maxRadius for spatial dimensions, ignore tolerance array
+      queryTolerance[d] = maxRadius;
     } else {
       // Non-spatial dimensions are always discrete (by design)
       // Use 0 tolerance for exact matching

@@ -65,8 +65,12 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-15- I noticed something strange when trying example 'rainbow_sphere_4d_example.zarr', the points that are not visible because they do not intersect the 3D hyperplane ar still visible as ultrathin points. I think what is going on is that the shader is rendering points of radius zero, and instead of discarding entirely these points, it is rendering them as very small points. This is not the desired behaviour, we want these points to be completely invisible and not waste shader render time on them. Please take this interpretation of the bug with a grain of salt, and VERY CAREFULLY READ ALL RELEVANT CODE to determine the true cause of the issue. 
-    - **Status**: Open
+15- ✅ FIXED: Zero-radius points (from nD slicing) are now properly handled:
+    - **Fragment shader discard**: Points with radius < 0.0001 are discarded in the fragment shader
+    - **CPU-side filtering**: Points with effective radius < 0.0001 are filtered out before sending to GPU
+    - **Empty cloud handling**: When ALL points have zero radius (e.g., viewing outside hypersphere), returns empty point cloud instead of showing ultrathin points
+    - This correctly shows no points when viewing outside the 4D hypersphere bounds
+    - **Status**: RESOLVED  
     - **Priority**: HIGH
 
 ## Notes

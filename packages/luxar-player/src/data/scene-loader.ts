@@ -129,8 +129,8 @@ export class SceneLoader {
     const updates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
       try {
         const pointCloud = await loader.updateView(this.viewState);
-        // Only update geometry if load succeeded
-        if (pointCloud && pointCloud.metadata.loadedPoints > 0) {
+        // Always update geometry, even when empty (to clear old points)
+        if (pointCloud) {
           this.updatePointCloudGeometry(path, pointCloud);
         }
       } catch (error) {
@@ -268,13 +268,13 @@ export class SceneLoader {
       log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
       const data = await loader.loadPointCloud(this.viewState);
 
-      if (data.metadata.loadedPoints === 0) {
-        log.warning(Modules.SCENE_LOADER, `No visible points for ${node.path}`);
-        return null;
-      }
-
-      // Create THREE.js geometry
+      // Create THREE.js geometry even if empty (for future updates)
       const geometry = this.createGeometry(data);
+      
+      // Log if no initial points are visible (this is normal for nD slicing)
+      if (data.metadata.loadedPoints === 0) {
+        log.info(Modules.SCENE_LOADER, `No initially visible points for ${node.path} - object created for future updates`);
+      }
 
       // Create material with radius and sharpness scales from geometry userData
       const radiusScale = geometry.userData.radiusScale ?? 1.0;
@@ -497,6 +497,11 @@ export class SceneLoader {
     // Find the points object
     const points = this.rootGroup.getObjectByName(path) as THREE.Points;
     if (!points) return;
+
+    // Log if updating to empty geometry (clearing points)
+    if (data.metadata.loadedPoints === 0) {
+      log.info(Modules.SCENE_LOADER, `Clearing points for ${path} (no visible points at current slice)`);
+    }
 
     // Store reference to old geometry
     const oldGeometry = points.geometry;

@@ -36,6 +36,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
     
     varying vec3 vColor;
     varying float vSharpness;
+    varying float vRadius; // Pass radius to fragment for zero-check
     
     void main() {
       // Pass vertex color to fragment shader
@@ -54,6 +55,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
       float distance = length(mvPosition.xyz);
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
       float normalizedRadius = radius * radiusScale;
+      vRadius = normalizedRadius; // Pass to fragment shader
+      
+      // Calculate base point size
       float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5));
       
       // Sharpness compensation based on visibility threshold
@@ -65,8 +69,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
       float sharpnessCompensation = 1.0 + (vSharpness - 1.0) * 0.15;
       float pointSize = basePointSize * sharpnessCompensation;
       
-      // Clamp to hardware limits
-      gl_PointSize = clamp(pointSize, 1.0, resolution.y * 0.5);
+      // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior
+      // Zero-radius filtering happens in fragment shader
+      gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5));
     }
   `;
 
@@ -79,8 +84,14 @@ export class PointMaterial extends THREE.ShaderMaterial {
     uniform float invGamma; // Pre-computed 1/gamma for performance
     varying vec3 vColor;
     varying float vSharpness;
+    varying float vRadius; // Radius from vertex shader
     
     void main() {
+      // Discard zero-radius points (from nD slicing where points don't intersect hyperplane)
+      if (vRadius < 0.0001) {
+        discard;
+      }
+      
       // OPTIMIZATION: Use dot product for squared distance calculation
       vec2 centered = gl_PointCoord - 0.5;
       float r2 = dot(centered, centered);
