@@ -257,6 +257,7 @@ Always available regardless of context:
 | `H`      | Show help     | Display keyboard shortcuts                      |
 | `Space`  | Fullscreen    | Toggle fullscreen mode                          |
 | `Escape` | Exit/Close    | Exit fullscreen OR close panels (context-aware) |
+| `M`      | Monitor       | Cycle data loading monitor                      |
 | `Ctrl+L` | Debug console | Toggle debug console                            |
 
 **Note on ESC key behavior:**

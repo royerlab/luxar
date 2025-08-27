@@ -110,7 +110,7 @@ describe('Data Monitor Integration', () => {
     document.body.innerHTML = '';
   });
 
-  describe('Ctrl+M keyboard integration', () => {
+  describe('M key keyboard integration', () => {
     it('should cycle monitor state when cycleDataMonitor is called', () => {
       // Create a monitor
       const manager = DataMonitorManager.getInstance();
@@ -119,17 +119,17 @@ describe('Data Monitor Integration', () => {
       // Initial state: hidden
       expect(monitor.isVisible()).toBe(false);
 
-      // Simulate Ctrl+M (calls cycleDataMonitor)
+      // Simulate M key (calls cycleDataMonitor)
       cycleDataMonitor('test');
       expect(monitor.isVisible()).toBe(true);
       expect(monitor.isExpanded()).toBe(false); // Mini state
 
-      // Second Ctrl+M
+      // Second M key press
       cycleDataMonitor('test');
       expect(monitor.isVisible()).toBe(true);
       expect(monitor.isExpanded()).toBe(true); // Expanded state
 
-      // Third Ctrl+M
+      // Third M key press
       cycleDataMonitor('test');
       expect(monitor.isVisible()).toBe(false); // Hidden again
     });

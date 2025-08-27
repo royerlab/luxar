@@ -33,7 +33,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: RESOLVED
     - **Priority**: Medium
 
-7- Additional post-processing effects and better effect management using pmndrs: https://github.com/pmndrs/postprocessing
+7- Additional post-processing effects and better effect management using: https://github.com/pmndrs/postprocessing
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
@@ -72,6 +72,14 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - This correctly shows no points when viewing outside the 4D hypersphere bounds
     - **Status**: RESOLVED  
     - **Priority**: HIGH
+
+16- Clarify cache eviction policy (I don't see eviction happening when I expect it to happen)
+    - **Status**: Open
+    - **Priority**: Medium
+
+17- Check Shader code for AlphaBlending mode, it seems to be broken
+    - **Status**: Open
+    - **Priority**: Medium
 
 ## Notes
 
