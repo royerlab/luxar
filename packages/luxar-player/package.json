@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "lil-gui": "^0.20.0",
+    "postprocessing": "^6.37.7",
     "three": "^0.163.0",
     "zarrita": "^0.5.2"
   },

@@ -248,7 +248,7 @@ export const config: AppConfig = {
     defaults: {
       // Bloom settings directly reference rendering.bloom
       bloomThreshold: 0.01,
-      bloomStrength: 0.25,
+      bloomStrength: 0.5, // Increased for more visible bloom
       bloomRadius: 1.0,
       exposure: 1.0, // Tone mapping exposure value
       hdrMultiplier: 16.0, // HDR intensity multiplier
@@ -267,6 +267,12 @@ export const config: AppConfig = {
       dofStrength: 0.5, // DOF blur strength (0-1)
       chromaticAberrationEnabled: false, // Chromatic aberration disabled by default
       chromaticAberrationStrength: 0.15, // Chromatic aberration strength - default as shown
+      // New pmndrs effects
+      aoEnabled: false, // Ambient occlusion disabled by default
+      aoQuality: 'medium' as const, // AO quality level
+      vignetteEnabled: false, // Vignette disabled by default
+      vignetteDarkness: 0.5, // Vignette darkness (0-1)
+      vignetteOffset: 0.5, // Vignette offset from center (0-1)
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default

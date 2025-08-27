@@ -12,7 +12,7 @@ import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
-import { PostProcessingManager } from '../rendering/post-processing';
+import { PostProcessingManager } from '../rendering/postprocessing-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
   detectHDRCapabilities,
@@ -290,13 +290,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     const height = canvas.clientHeight || window.innerHeight;
 
     // Create post-processing manager with actual canvas dimensions
-    this.postProcessing = new PostProcessingManager(
-      this.renderer,
-      this.scene,
-      this.camera,
+    this.postProcessing = new PostProcessingManager(this.renderer, this.scene, this.camera, {
       width,
-      height
-    );
+      height,
+    });
 
     // Log shader configuration for debugging
     // Shader configuration logging removed - now handled by PointMaterial
