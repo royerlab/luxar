@@ -15,9 +15,6 @@ class BlendingMode(str, Enum):
 
     NORMAL = "normal"  # Standard alpha blending
     ADDITIVE = "additive"  # Colors add together (glow effect)
-    SUBTRACTIVE = "subtractive"  # Colors subtract (darkening)
-    MINIMUM = "minimum"  # Keep minimum color values
-    MAXIMUM = "maximum"  # Keep maximum color values
 
     @classmethod
     def validate(cls, value: str) -> "BlendingMode":

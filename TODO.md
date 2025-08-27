@@ -12,11 +12,11 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
    - **Status**: RESOLVED
    - **Priority**: Medium
 
-4- ✅ COMPLETED: Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
+2- ✅ COMPLETED: Example sharpness_compensation_example.zarr is very dim when opened, then I touch the HDR intensity slider in rendering control, and it gets much brighter although the effective value has barely changed!
    - **Status**: Open
    - **Priority**: Medium
 
-6- ✅ COMPLETED: Added support for lower bit-depth data types in zarr with automatic conversion for Three.js compatibility. Implementation includes:
+3- ✅ COMPLETED: Added support for lower bit-depth data types in zarr with automatic conversion for Three.js compatibility. Implementation includes:
    - Python: DataTypeConfig with AUTO, PRECISION, MEMORY, and CUSTOM modes
    - Intelligent dtype selection based on data ranges (uint8 for SDR colors, float32 for HDR)
    - TypeScript: Support for Uint8Array and Uint16Array with WebGL normalization
@@ -25,51 +25,47 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
    - **Status**: COMPLETED
    - **Priority**: Medium
 
-7- ✅ COMPLETED: Improve CLI commands so that: (i) there is a command to generate examples, serve them and open them in a browser, (ii) there is a command to serve a folder and its content, (iii) there is a command to serve the viewer itself, (iv) there is a command to serve a zarr file and serve the viewer with it shown, with the option, by default on to open the browser (v) there is command to provide detailed information and stats about a luxar zarr and display its contents (and info and stats of each object) as a tree. Make sure all CLI commands are tested and have tests that cover them.
+4- ✅ COMPLETED: Improve CLI commands so that: (i) there is a command to generate examples, serve them and open them in a browser, (ii) there is a command to serve a folder and its content, (iii) there is a command to serve the viewer itself, (iv) there is a command to serve a zarr file and serve the viewer with it shown, with the option, by default on to open the browser (v) there is command to provide detailed information and stats about a luxar zarr and display its contents (and info and stats of each object) as a tree. Make sure all CLI commands are tested and have tests that cover them.
    - **Status**: Open
    - **Priority**: Medium
 
-11- Remove 'substraction' blending mode from the Python API (completely, do not leave dead code!), it is not useful and does not work well with the current implementation of the viewer. Make sure to remove it also from all tests and examples.
-    - **Status**: Open
+5- ✅ COMPLETED: Remove 'substraction' blending mode from the Python API (completely, do not leave dead code!), it is not useful and does not work well with the current implementation of the viewer. Same for minimum and maximum blending modes. Make sure to remove all three modes from all tests and examples.
+    - **Status**: RESOLVED
     - **Priority**: Medium
 
-12- Reintroduce the key 'C' to center the camera rotation point at the center of the scene i.e. at the 'center of mass' of the scene, or simpler: center of the scene's bounding box. This is useful when the scene is very large and the camera rotation point is not at the center of the scene, which makes it difficult to rotate around the scene.
-    - **Status**: Open
-    - **Priority**: Medium
-
-13- Additional post-processing effects and better effect management using pmndrs: https://github.com/pmndrs/postprocessing
+7- Additional post-processing effects and better effect management using pmndrs: https://github.com/pmndrs/postprocessing
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-14- Cleanup of AA modes, we need to decide what we keep and what we trash...
+8- Cleanup of AA modes, we need to decide what we keep and what we trash...
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-15- The Depth of Focus effect is not working. 
+9- The Depth of Focus effect is not working. 
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-16- Implement Ray Casting: specific strings can be associated to objects, when picking an object the associated string is displayed on the screen at a fixed position. This is useful for providing visualisation context.
+10- Implement Ray Casting: specific strings can be associated to objects, when picking an object the associated string is displayed on the screen at a fixed position. This is useful for providing visualisation context.
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-17- Introduce the notion of "scene domain". The main domain is the 'main' domain that of nD space visualised in a 3D 'slice', another domain is 'overlay' which is that for a specific set of non-visible dimensions from main, we can associate a scene that is rendered as a transparent overlay on top of the main rendering, this overlay is fixed, and its frame of reference is in normalised canvas coordinates ([0, 1]x[0, 1]). The viewer controls do not affect that scene since it is fixed and not in the main domain. Finally another important domain is that of 'sound' which allows to associate sound to a scene, and have it played when the scene is loaded. This is useful for providing context to the visualisation.
+11- Introduce the notion of "scene domain". The main domain is the 'main' domain that of nD space visualised in a 3D 'slice', another domain is 'overlay' which is that for a specific set of non-visible dimensions from main, we can associate a scene that is rendered as a transparent overlay on top of the main rendering, this overlay is fixed, and its frame of reference is in normalised canvas coordinates ([0, 1]x[0, 1]). The viewer controls do not affect that scene since it is fixed and not in the main domain. Finally another important domain is that of 'sound' which allows to associate sound to a scene, and have it played when the scene is loaded. This is useful for providing context to the visualisation.
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!) 
 
-18- VR/AR Add the possibility to activate VR/AR mode. 
+12- VR/AR Add the possibility to activate VR/AR mode. 
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-19- Rename luxar-player to luxar-viewer everywhere. 
+13- Rename luxar-player to luxar-viewer everywhere. 
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-20- In the viewer, do not use 'point cloud' terminology, use 'points' instead. A 'Point Cloud' is a 'Points' object in Luxar terminology.  
+14- In the viewer, do not use 'point cloud' terminology, use 'points' instead. A 'Point Cloud' is a 'Points' object in Luxar terminology.  
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-21- I noticed something strange when trying example 'rainbow_sphere_4d_example.zarr', the points that are not visible because they do not intersect the 3D hyperplane ar still visible as ultrathin points. I think what is going on is that the shader is rendering points of radius zero, and instead of discarding entirely these points, it is rendering them as very small points. This is not the desired behaviour, we want these points to be completely invisible and not waste shader render time on them. Please take this interpretation of the bug with a grain of salt, and VERY CAREFULLY READ ALL RELEVANT CODE to determine the true cause of the issue. 
+15- I noticed something strange when trying example 'rainbow_sphere_4d_example.zarr', the points that are not visible because they do not intersect the 3D hyperplane ar still visible as ultrathin points. I think what is going on is that the shader is rendering points of radius zero, and instead of discarding entirely these points, it is rendering them as very small points. This is not the desired behaviour, we want these points to be completely invisible and not waste shader render time on them. Please take this interpretation of the bug with a grain of salt, and VERY CAREFULLY READ ALL RELEVANT CODE to determine the true cause of the issue. 
     - **Status**: Open
     - **Priority**: HIGH
 

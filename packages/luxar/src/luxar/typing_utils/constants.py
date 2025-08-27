@@ -23,7 +23,7 @@ GAMMA_MAX: Final[float] = 2.0
 DEFAULT_GAMMA: Final[float] = 1.0
 
 # Blending modes
-DEFAULT_BLENDING_MODE: Final[str] = "normal"
+DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
 # Sharpness constants
 SHARPNESS_MIN: Final[float] = 0.0  # Technical minimum (must be positive)

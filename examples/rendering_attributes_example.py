@@ -123,7 +123,7 @@ def main():
 
         points1.opacity = 0.7
         points1.gamma = 0.8
-        points1.blending_mode = "subtractive"
+        points1.blending_mode = "normal"
         aprint(f"  Changed from opacity={original_opacity} to {points1.opacity}")
         aprint(f"  Changed from gamma={original_gamma} to {points1.gamma}")
         aprint(
@@ -173,18 +173,18 @@ def main():
         aprint("  Top-right: Yellow points with normal blending")
 
         aprint("\nRuntime Modifications:")
-        aprint("- Red points: Modified to subtractive blending, 70% opacity, gamma=0.8")
+        aprint("- Red points: Modified to normal blending, 70% opacity, gamma=0.8")
         aprint("- Green points: Chained to additive blending, 40% opacity, gamma=1.3")
 
         aprint("\nRendering Properties:")
         aprint("- Opacity: Controls transparency (0.0 = transparent, 1.0 = opaque)")
         aprint("- Gamma: Brightness correction (0.2 to 5.0, 1.0 = neutral)")
-        aprint("- Blending: How colors combine (normal, additive, subtractive, etc.)")
+        aprint("- Blending: How colors combine (normal, additive)")
 
         aprint("\nValidation Rules:")
         aprint("- Opacity: Must be between 0.0 and 1.0")
         aprint("- Gamma: Must be between 0.2 and 5.0")
-        aprint("- Blending: Must be valid mode (normal, additive, subtractive, etc.)")
+        aprint("- Blending: Must be valid mode (normal, additive)")
 
         aprint(f"\nTo view: luxar serve {output_path}")
         aprint("Python-side attribute handling working correctly!")

@@ -357,7 +357,7 @@ Python Data → Luxar Core → Zarr Archive → Luxar Player → WebGL → Displ
 ### Broader Vision and Known Issues
 
 #### Future Extensions
-- **Multiple blending modes**: Support different blending modes (additive, normal, multiply) per layer/object
+- **Multiple blending modes**: Support different blending modes (additive, normal) per layer/object
 - **Beyond points**: Support for meshes, lines, volumes, and other geometry types
 - **Material system**: More sophisticated materials with different shading models
 - **Level of Detail (LOD)**: Automatic LOD for massive datasets

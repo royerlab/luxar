@@ -252,7 +252,7 @@ luxar serve multiple_objects_example.zarr
 
 #### 19. **rendering_modes_example.py** - Blending Modes Comparison
 Educational demonstration of different blending modes:
-- Normal, additive, and multiply blending modes
+- Normal and additive blending modes
 - Side-by-side comparison of effects
 - Parent-child property inheritance
 - Visual understanding of compositing techniques

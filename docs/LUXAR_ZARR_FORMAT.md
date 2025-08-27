@@ -84,7 +84,7 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix as 16-element array
   "opacity": 1.0,           // 0.0-1.0, inherited by children
   "gamma": 1.0,            // 0.2-2.0, gamma correction
-  "blending_mode": "additive"  // normal, additive, multiply, minimum, maximum
+  "blending_mode": "additive"  // normal, additive
 }
 ```
 

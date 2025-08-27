@@ -11,7 +11,7 @@ import { PointMaterial } from './point-material';
 import { log, Modules } from '../utils/log';
 
 // Supported blending modes
-export type BlendingMode = 'normal' | 'additive' | 'subtractive' | 'minimum' | 'maximum';
+export type BlendingMode = 'normal' | 'additive';
 
 // Point material properties
 export interface PointMaterialProperties {
@@ -89,14 +89,6 @@ export class MaterialManager {
       case 'normal':
         return THREE.NormalBlending;
       case 'additive':
-        return THREE.AdditiveBlending;
-      case 'subtractive':
-        return THREE.SubtractiveBlending;
-      case 'minimum':
-        // Three.js doesn't have minimum blending, use subtractive as approximation
-        return THREE.SubtractiveBlending;
-      case 'maximum':
-        // Three.js doesn't have maximum blending, use additive as approximation
         return THREE.AdditiveBlending;
       default:
         log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
