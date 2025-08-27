@@ -271,10 +271,10 @@ export function showHelpOverlay() {
       items: [
         'R: Rendering controls panel',
         'P: Performance monitor',
+        'M: Cycle data monitor (mini/expanded/off)',
         'C: Toggle center (origin/bbox)',
         '⇧ + Wheel: Adjust field of view',
         'Ctrl+L: Debug console',
-        'Ctrl+M: Cycle data monitor (mini/expanded/off)',
       ],
     },
     {

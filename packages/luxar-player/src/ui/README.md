@@ -179,7 +179,7 @@ Advanced real-time monitoring system for spatial index-based data loading with p
 2. **Mini View**: Compact metrics bar showing key statistics
 3. **Expanded View**: Full panel with tabs for detailed analytics
 
-**Keyboard Shortcut:** `Ctrl+M` to cycle through states
+**Keyboard Shortcut:** `M` to cycle through states
 
 **Architecture:**
 
@@ -254,9 +254,9 @@ const loader = new SceneLoader(config);
 ```typescript
 import { cycleDataMonitor } from '../data';
 
-// Toggle monitor with Ctrl+M
+// Toggle monitor with M key
 document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key === 'm') {
+  if (!e.ctrlKey && !e.metaKey && e.key === 'm') {
     cycleDataMonitor(); // Cycles: hidden → mini → expanded → hidden
   }
 });
@@ -428,7 +428,7 @@ Global keyboard shortcuts managed by the UI system:
 | `P`      | Toggle performance monitor | Global              |
 | `R`      | Toggle rendering controls  | Global              |
 | `D`      | Toggle dimension sliders   | When nD data loaded |
-| `Ctrl+M` | Cycle data loading monitor | Global              |
+| `M`      | Cycle data loading monitor | Global              |
 | `Ctrl+L` | Toggle debug console       | Development mode    |
 | `Esc`    | Close active panel         | Any panel open      |
 
@@ -557,7 +557,7 @@ const ui = {
 const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
 if (monitor) {
   // Monitor is already connected to loaders automatically
-  // Use Ctrl+M to show/hide/expand
+  // Use M key to show/hide/expand
 }
 
 // Connect to application

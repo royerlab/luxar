@@ -18,9 +18,11 @@
  * - Number keys (1-9) select which dimension to control
  * - Space bar toggles fullscreen mode
  * - Shift+wheel adjusts field of view
- * - Ctrl+P toggles performance statistics
- * - Ctrl+A toggles advanced rendering controls
+ * - P key toggles performance statistics
+ * - M key cycles data loading monitor
+ * - R key toggles rendering controls
  * - H key shows/hides help overlay
+ * - Ctrl+L toggles debug console
  *
  * The system maintains careful separation between:
  * - Camera controls (handled by THREE.js OrbitControls)
@@ -424,8 +426,9 @@ export class InputHandler {
 
       case 'm':
       case 'M':
-        // Ctrl+M to cycle data loading monitor (hidden → mini → expanded → hidden)
-        if (event.ctrlKey || event.metaKey) {
+        // M key to cycle data loading monitor (hidden → mini → expanded → hidden)
+        // Only handle if not using modifiers and not typing in input
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
           event.preventDefault();
           import('../data').then(({ cycleDataMonitor }) => {
             cycleDataMonitor();
