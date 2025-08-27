@@ -92,8 +92,7 @@ vi.mock('../rendering/material-manager', () => ({
         fov: { value: 1.047 },
         resolution: { value: { x: 1, y: 1 } },
       },
-      userData: {
-          },
+      userData: {},
       updateCameraParams: vi.fn(),
       updateHDRMultiplier: vi.fn(),
       updateOpacity: vi.fn(),

@@ -16,6 +16,8 @@ export interface PointMaterialConfig {
   gamma?: number;
   blending?: THREE.Blending;
   depthWrite?: boolean;
+  radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
+  sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
 }
 
 /**
@@ -29,6 +31,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
     attribute float sharpness;
     uniform float fov;
     uniform vec2 resolution;
+    uniform float radiusScale;
+    uniform float sharpnessScale;
     
     varying vec3 vColor;
     varying float vSharpness;
@@ -37,8 +41,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // Pass vertex color to fragment shader
       vColor = color;
       
-      // Use 2.0 as default sharpness if not provided or zero
-      vSharpness = sharpness > 0.0 ? sharpness : 2.0;
+      // Apply sharpness scale for dtype normalization and use 2.0 as default
+      float normalizedSharpness = sharpness * sharpnessScale;
+      vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
       
       // Transform vertex position from world space to view space
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -47,7 +52,9 @@ export class PointMaterial extends THREE.ShaderMaterial {
       // CORRECT world-space point sizing formula
       // This ensures two points with radius r at distance 2r will just touch
       float distance = length(mvPosition.xyz);
-      float basePointSize = 2.0 * radius * resolution.y / (distance * tan(fov * 0.5));
+      // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
+      float normalizedRadius = radius * radiusScale;
+      float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5));
       
       // Sharpness compensation based on visibility threshold
       // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
@@ -121,6 +128,10 @@ export class PointMaterial extends THREE.ShaderMaterial {
         // Camera uniforms for world-space sizing
         fov: { value: (60 * Math.PI) / 180 }, // Default 60 degrees in radians
         resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated immediately
+
+        // Radius and sharpness scaling for dtype normalization
+        radiusScale: { value: materialConfig.radiusScale ?? 1.0 }, // Default 1.0 (no scaling)
+        sharpnessScale: { value: materialConfig.sharpnessScale ?? 1.0 }, // Default 1.0 (no scaling)
       },
 
       // Shader source
@@ -166,6 +177,22 @@ export class PointMaterial extends THREE.ShaderMaterial {
     const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
     this.uniforms.gamma.value = safeGamma;
     this.uniforms.invGamma.value = 1.0 / safeGamma;
+  }
+
+  /**
+   * Update radius scale for dtype normalization
+   * Use 1/255 for uint8 radii, 1.0 for float radii
+   */
+  updateRadiusScale(scale: number): void {
+    this.uniforms.radiusScale.value = scale;
+  }
+
+  /**
+   * Update sharpness scale for dtype normalization
+   * Use 1/255 for uint8 sharpness, 1.0 for float sharpness
+   */
+  updateSharpnessScale(scale: number): void {
+    this.uniforms.sharpnessScale.value = scale;
   }
 
   /**

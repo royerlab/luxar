@@ -334,7 +334,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         const fovRadians = (this.camera.fov * Math.PI) / 180;
         const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-        
+
         // Also update any materials that might have been created directly
         this.scene.traverse((object) => {
           if (object instanceof THREE.Points) {
@@ -620,7 +620,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       const fovRadians = (this.camera.fov * Math.PI) / 180;
       const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-      
+
       // Also update any materials in the scene directly
       this.scene.traverse((object) => {
         if (object instanceof THREE.Points) {
@@ -655,7 +655,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     const fovRadians = (this.camera.fov * Math.PI) / 180;
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-    
+
     // Also update any materials in the scene directly
     this.scene.traverse((object) => {
       if (object instanceof THREE.Points) {
@@ -676,7 +676,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   updateHDRMultiplier(multiplier: number): void {
     // Update all materials in the material manager
     materialManager.updateHDRMultiplier(multiplier);
-    
+
     // Also update any materials in the scene directly
     this.scene.traverse((object) => {
       if (object instanceof THREE.Points) {
