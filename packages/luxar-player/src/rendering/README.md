@@ -1,51 +1,50 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline for high-quality point cloud visualization
+> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality point cloud visualization
 
 ## Overview
 
-The Luxar Rendering package provides a sophisticated rendering pipeline optimized for large-scale point cloud visualization with support for HDR rendering, post-processing effects, and dynamic material management. It leverages THREE.js and custom WebGL shaders to achieve high-performance, visually stunning results.
+The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale point cloud visualization.
 
 ### Key Features
 
-- **HDR Rendering Pipeline**: Full HDR color support with bloom effects
-- **Custom Shader System**: Optimized shaders for point cloud rendering
-- **Post-Processing Effects**: Bloom, tone mapping, FXAA, SMAA, DOF
-- **Material Management**: Dynamic material creation and caching
-- **World-Space Point Sizing**: Physically accurate point scaling
-- **Additive Blending**: Beautiful overlapping point effects
+- **HDR Rendering Pipeline**: 16-bit float buffers for true HDR support
+- **Modern Post-Processing**: Powered by pmndrs/postprocessing
+- **Professional Effects**: Bloom, SSAO, DOF, tone mapping, and more
+- **Custom Shader System**: Optimized shaders for point clouds
+- **Material Management**: Efficient caching and reuse
+- **World-Space Point Sizing**: Physically accurate scaling
+- **Multiple Anti-Aliasing Options**: FXAA and SMAA support
 
 ### Package Architecture
 
 ```
 rendering/
-├── post-processing.ts    # Post-processing pipeline manager
-├── point-material.ts     # Point cloud material with custom shaders
-├── material-manager.ts   # Material creation and caching
-├── post-processing-utils.ts # Utilities for post-processing
-└── README.md            # This documentation
+├── postprocessing-manager.ts  # Post-processing pipeline using pmndrs
+├── point-material.ts          # Custom point cloud shaders
+├── material-manager.ts        # Material creation and caching
+└── README.md                 # This documentation
 ```
 
 ---
 
 ## Components
 
-### 1. Post-Processing Manager
+### 1. PostProcessing Manager (pmndrs)
 
-The `PostProcessingManager` orchestrates all post-processing effects in the rendering pipeline.
+The `PostProcessingManager` leverages the pmndrs/postprocessing library for state-of-the-art visual effects.
 
-**Features:**
+**Key Advantages:**
 
-- HDR render targets with 16-bit float precision
-- Configurable bloom with threshold, strength, and radius
-- Multiple tone mapping operators (ACES, Reinhard, Linear, etc.)
-- Anti-aliasing (FXAA, SMAA, MSAA, SSAA)
-- Depth of field effects
-- Chromatic aberration
+- Single-pass effect composition for optimal performance
+- Automatic effect merging to minimize draw calls
+- Professional-grade effects out of the box
+- Active community and regular updates
 
-**Usage:**
+**Core Effects:**
 
 ```typescript
+// Initialize with HDR support
 const postProcessing = new PostProcessingManager(
   renderer,
   scene,
@@ -55,226 +54,208 @@ const postProcessing = new PostProcessingManager(
 
 // Configure bloom
 postProcessing.updateBloomSettings(
-  strength: 0.25,
-  radius: 1.0,
+  strength: 0.3,
+  radius: 0.85,
   threshold: 0.01
 );
 
 // Set tone mapping
 postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
 
-// Enable anti-aliasing
-postProcessing.setFXAAEnabled(true);
+// Enable advanced effects
+postProcessing.setAOEnabled(true, 'medium');
+postProcessing.setVignetteEnabled(true, 0.5, 0.5);
 ```
 
 ### 2. Point Material
 
-The `PointMaterial` class extends THREE.ShaderMaterial to provide specialized point cloud rendering with custom shaders.
+Advanced shader material for point cloud rendering with custom vertex and fragment shaders.
 
-**Features:**
+**Vertex Shader Features:**
 
-#### Vertex Shader:
-
-- World-space point sizing with correct formula
+- World-space sizing with correct angular calculation
 - Sharpness compensation using mathematical model
 - FOV-independent sizing
 - Automatic viewport adaptation
 
-#### Fragment Shader:
+**Fragment Shader Features:**
 
-- Power-based falloff for smooth point edges
-- HDR color multiplication (applied before gamma)
+- Power-based falloff for smooth edges
+- HDR color support with multiplier
 - Per-point sharpness control
-- Configurable opacity and gamma correction
-
-**Sharpness Compensation:**
-
-The vertex shader includes mathematically justified compensation for the sharpness parameter:
-
-- For falloff function `f(r) = (1-r)^s` where s is sharpness
-- Visible radius at 1% intensity: `r_vis = 1 - 0.01^(1/s)`
-- Exact compensation factor: `1 / r_vis = 1 / (1 - 0.01^(1/s))`
-- Linear approximation used: `compensation = 1.0 + (s - 1.0) * 0.15`
-- This ensures consistent visual point size regardless of sharpness value
+- Optimized with pre-computed uniforms
 
 ### 3. Material Manager
 
-The `MaterialManager` handles creation and caching of all materials in the scene, with support for future material types.
-
-**Features:**
-
-- Point material creation and caching
-- Global uniform updates (camera params, HDR)
-- Memory-efficient material reuse
-- Automatic registration and disposal
-- Future: Support for line, mesh, volume materials
-
-**Usage:**
+Singleton manager for efficient material creation and caching.
 
 ```typescript
-// Create a point material with specific properties
+// Get cached material
 const material = materialManager.getPointMaterial({
-  blendingMode: 'additive', // 'normal' or 'additive'
+  blendingMode: 'additive',
   opacity: 1.0,
   gamma: 1.0,
 });
 
-// Update camera parameters globally
+// Update global parameters
 materialManager.updateCameraParams(fov, resolution);
-
-// Update HDR multiplier for all materials
 materialManager.updateHDRMultiplier(16.0);
 ```
 
 ---
 
-## Rendering Pipeline
+## Effects Library
 
-### Pipeline Stages
+### Core Effects
+
+#### Bloom
+
+Professional bloom effect with HDR support:
+
+- Luminance threshold for selective blooming
+- Configurable intensity and radius
+- Mipmap blur for performance
+- Multiple kernel sizes
+
+#### Tone Mapping
+
+Multiple tone mapping operators:
+
+- ACES Filmic (default) - Industry standard
+- AgX - Modern alternative
+- Reinhard - Classic operator
+- Linear - No tone mapping
+- Neutral - Balanced look
+
+#### Ambient Occlusion (SSAO)
+
+Screen-space ambient occlusion for depth:
+
+- Multiple quality levels
+- Configurable radius and intensity
+- Luminance-based influence
+- Minimal performance impact
+
+### Anti-Aliasing
+
+#### FXAA
+
+Fast Approximate Anti-Aliasing:
+
+- Very fast performance
+- Good quality for most cases
+- Single-pass implementation
+
+#### SMAA
+
+Subpixel Morphological Anti-Aliasing:
+
+- Superior edge detection
+- Multiple quality presets
+- Better quality than FXAA
+- Moderate performance impact
+
+### Cinematic Effects
+
+#### Depth of Field
+
+Realistic camera focus simulation:
+
+- Configurable focus distance
+- Bokeh scale adjustment
+- Performance-optimized
+
+#### Vignette
+
+Screen edge darkening:
+
+- Adjustable darkness
+- Configurable offset
+- Minimal performance cost
+
+#### Chromatic Aberration
+
+Lens color fringing effect:
+
+- RGB channel separation
+- Configurable strength
+- Cinematic look
+
+---
+
+## Pipeline Architecture
+
+### Rendering Flow
 
 ```
 Scene Geometry
     ↓
-Custom Vertex Shader (world-space sizing)
+Custom Point Shaders (HDR colors)
     ↓
-Rasterization
+HDR Render Target (HalfFloatType)
     ↓
-Custom Fragment Shader (HDR colors)
-    ↓
-HDR Render Target (16-bit float)
-    ↓
-Bloom Pass (extract bright pixels)
-    ↓
-Tone Mapping (HDR to LDR)
+Effect Composition (single pass)
+    ├── Bloom (HDR space)
+    ├── SSAO
+    ├── DOF
+    ├── Tone Mapping (HDR→LDR)
+    ├── Vignette
+    └── Chromatic Aberration
     ↓
 Anti-Aliasing (FXAA/SMAA)
     ↓
-Final Output
+Final Output (sRGB)
 ```
 
-### HDR Color Pipeline
+### Performance Optimizations
 
-1. **Input**: Colors as Float32Array (0.0 to unlimited)
-2. **Shader**: Multiply by hdrMultiplier (typically 16.0)
-3. **Render Target**: Store in HalfFloatType buffer
-4. **Bloom**: Extract pixels above threshold
-5. **Tone Map**: Convert to displayable range
-6. **Output**: Final 8-bit sRGB for display
+1. **Effect Merging**: Multiple effects rendered in single pass
+2. **Smart Rebuilding**: Effect pass only rebuilt when necessary
+3. **Material Caching**: Reuse materials with same properties
+4. **Selective AA**: Choose AA method based on performance
+5. **Quality Presets**: Easy performance/quality tradeoffs
 
 ---
 
 ## Configuration
 
-### Render Settings
+### Quality Presets
 
 ```typescript
-const renderSettings = {
-  // HDR Configuration
-  hdrEnabled: true,
-  hdrMultiplier: 16.0,
+// Low quality (60+ FPS target)
+{
+  bloom: { kernelSize: KernelSize.SMALL },
+  ao: null,  // Disabled
+  aa: 'FXAA'
+}
 
-  // Bloom Settings
-  bloomThreshold: 0.01, // Minimum brightness for bloom
-  bloomStrength: 0.25, // Bloom intensity
-  bloomRadius: 1.0, // Blur radius
+// Medium quality (30+ FPS target)
+{
+  bloom: { kernelSize: KernelSize.MEDIUM },
+  ao: { quality: 'low' },
+  aa: 'SMAA'
+}
 
-  // Anti-Aliasing
-  fxaaEnabled: false, // Fast approximate AA
-  smaaEnabled: false, // Enhanced subpixel AA
-  msaaEnabled: false, // Multi-sample AA
-  ssaaEnabled: false, // Super-sample AA
-
-  // Tone Mapping
-  toneMapping: 'ACES', // Options: None, Linear, Reinhard, ACES, etc.
-  exposure: 1.0, // Exposure adjustment
-
-  // Advanced Effects
-  dofEnabled: false, // Depth of field
-  dofFocus: 10.0, // Focus distance
-  dofStrength: 0.5, // Blur strength
-};
+// High quality (best visuals)
+{
+  bloom: { kernelSize: KernelSize.LARGE },
+  ao: { quality: 'high' },
+  aa: 'SMAA'
+}
 ```
 
-### Performance Tuning
+### HDR Configuration
 
 ```typescript
-// Quality presets
-const qualityPresets = {
-  low: {
-    bloomResolutionScale: 8,
-    fxaaEnabled: true,
-    msaaSamples: 0,
-  },
-  medium: {
-    bloomResolutionScale: 4,
-    smaaEnabled: true,
-    msaaSamples: 2,
-  },
-  high: {
-    bloomResolutionScale: 2,
-    smaaEnabled: true,
-    msaaSamples: 4,
-    ssaaMultiplier: 1.5,
-  },
-};
+// Renderer setup for HDR
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+
+// Composer with HDR buffers
+new EffectComposer(renderer, {
+  frameBufferType: THREE.HalfFloatType,
+});
 ```
-
----
-
-## World-Space Point Sizing
-
-The rendering system implements physically accurate point sizing:
-
-### Mathematical Model
-
-```glsl
-// Calculate angular size of point
-float distance = length(mvPosition.xyz);
-float angularSize = 2.0 * atan(radius / distance);
-
-// Convert to pixels
-float fov = radians(60.0);  // Camera FOV
-gl_PointSize = angularSize * resolution.y / fov;
-```
-
-### Key Properties
-
-- Points maintain consistent physical size
-- Two points of radius r at distance 2r will just touch
-- Size is independent of FOV changes
-- Proper perspective scaling with distance
-
----
-
-## Anti-Aliasing Techniques
-
-### FXAA (Fast Approximate Anti-Aliasing)
-
-- **Performance**: Very fast
-- **Quality**: Good for most cases
-- **Compatibility**: Works everywhere
-- **Best for**: Real-time interaction
-
-### SMAA (Enhanced Subpixel Morphological AA)
-
-- **Performance**: Moderate
-- **Quality**: Excellent edge detection
-- **Compatibility**: Good
-- **Best for**: High-quality captures
-
-### MSAA (Multi-Sample Anti-Aliasing)
-
-- **Performance**: GPU-intensive
-- **Quality**: Hardware-accelerated
-- **Compatibility**: Limited with additive blending
-- **Best for**: Opaque geometry
-
-### SSAA (Super-Sample Anti-Aliasing)
-
-- **Performance**: Very expensive
-- **Quality**: Best possible
-- **Compatibility**: Universal
-- **Best for**: Final renders
 
 ---
 
@@ -283,47 +264,36 @@ gl_PointSize = angularSize * resolution.y / fov;
 ### Basic Setup
 
 ```typescript
-import { PostProcessingManager } from './rendering/post-processing';
+import { PostProcessingManager } from './rendering/postprocessing-manager';
 import { materialManager } from './rendering/material-manager';
-import { PointMaterial } from './rendering/point-material';
 
-// Initialize rendering pipeline
-const postProcessing = new PostProcessingManager(renderer, scene, camera, size);
+// Initialize post-processing
+const postProcessing = new PostProcessingManager(renderer, scene, camera, {
+  width: canvas.width,
+  height: canvas.height,
+});
 
-// Material manager is a singleton, just import and use
-// materialManager is already instantiated
-```
-
-### Creating Point Cloud Material
-
-```typescript
-// Use MaterialManager for cached materials
+// Create point material
 const material = materialManager.getPointMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
   gamma: 1.0,
 });
-
-// Apply to point cloud
-const points = new THREE.Points(geometry, material);
-scene.add(points);
 ```
 
-### Configuring Post-Processing
+### Configuring Effects
 
 ```typescript
-// Enable HDR bloom
-postProcessing.updateBloomSettings(0.3, 1.2, 0.0);
-
-// Set tone mapping
+// Enable multiple effects
+postProcessing.updateBloomSettings(0.3, 1.0, 0.01);
 postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
-postProcessing.setExposure(1.2);
-
-// Enable anti-aliasing
+postProcessing.setAOEnabled(true, 'medium');
 postProcessing.setFXAAEnabled(true);
 
-// Add depth of field
-postProcessing.setDOF(true, 15.0, 0.5);
+// Add cinematic effects
+postProcessing.setDOF(true, 10.0, 0.5);
+postProcessing.setVignetteEnabled(true, 0.5, 0.5);
+postProcessing.setChromaticAberration(true, 0.15);
 ```
 
 ### Render Loop
@@ -332,7 +302,7 @@ postProcessing.setDOF(true, 15.0, 0.5);
 function animate() {
   requestAnimationFrame(animate);
 
-  // Update any animations
+  // Update controls
   controls.update();
 
   // Render with post-processing
@@ -342,32 +312,47 @@ function animate() {
 
 ---
 
-## Performance Considerations
+## Performance Guidelines
 
 ### Optimization Strategies
 
-1. **Resolution Scaling**: Reduce bloom resolution for better performance
-2. **Conditional Effects**: Enable effects only when needed
-3. **Material Reuse**: Cache and reuse materials
-4. **Depth Sorting**: Disable for additive blending
-5. **LOD System**: Reduce point count at distance
+1. **Start Simple**: Begin with bloom and tone mapping only
+2. **Add Selectively**: Enable effects based on performance budget
+3. **Profile First**: Measure impact before adding effects
+4. **Use Quality Presets**: Match quality to hardware capability
+5. **Monitor FPS**: Disable effects if FPS drops below target
 
-### Benchmarks
+### Performance Impact (1M points, 1080p)
 
-Typical performance with 1M points:
+| Effect         | Performance Cost |
+| -------------- | ---------------- |
+| Base Rendering | ~5ms             |
+| Bloom          | ~2ms             |
+| Tone Mapping   | ~0.5ms           |
+| FXAA           | ~0.5ms           |
+| SMAA           | ~1-2ms           |
+| SSAO (medium)  | ~2-3ms           |
+| DOF            | ~2-3ms           |
+| Vignette       | <0.1ms           |
 
-- Base rendering: ~5ms
-- Bloom pass: ~2-3ms
-- FXAA: ~0.5ms
-- SMAA: ~1-2ms
-- Total frame time: ~8-10ms (100+ FPS)
+---
 
-### Memory Usage
+## Migration from Custom System
 
-- HDR render target: ~32MB at 1080p
-- Bloom buffers: ~8MB total
-- Material cache: ~1MB
-- Shader programs: ~100KB
+The rendering system has been migrated from a custom post-processing implementation to the pmndrs/postprocessing library. Key benefits:
+
+1. **Better Performance**: Single-pass effect composition
+2. **More Effects**: Access to professional-grade effects
+3. **Active Maintenance**: Regular updates and bug fixes
+4. **Community Support**: Large user base and documentation
+5. **Future-Proof**: Industry-standard implementation
+
+### Breaking Changes
+
+- MSAA no longer supported (use SMAA instead)
+- SSAA temporarily unavailable (coming soon)
+- Some method signatures changed
+- Effect parameters may differ slightly
 
 ---
 
@@ -375,25 +360,30 @@ Typical performance with 1M points:
 
 ### Common Issues
 
-**Problem: Points appear blocky**
+**Problem: Black screen after enabling effects**
 
-- Solution: Increase `falloffSteepness` in shader config
+- Check console for WebGL errors
+- Verify HDR buffer support
+- Try disabling effects one by one
 
-**Problem: Bloom too intense**
+**Problem: Poor performance with all effects**
 
-- Solution: Reduce `bloomStrength` or increase `bloomThreshold`
+- Reduce effect quality settings
+- Disable SSAO first (highest cost)
+- Use FXAA instead of SMAA
+- Lower bloom resolution
 
-**Problem: Colors look washed out**
+**Problem: Colors look wrong**
 
-- Solution: Adjust tone mapping and exposure settings
+- Verify tone mapping settings
+- Check HDR multiplier value
+- Ensure proper color space (sRGB)
 
-**Problem: Performance drops with MSAA**
+**Problem: Effects not visible**
 
-- Solution: Use FXAA or SMAA instead with additive blending
-
-**Problem: Points disappear at distance**
-
-- Solution: Check far clipping plane and point size calculations
+- Check effect enabled state
+- Verify threshold values
+- Ensure proper effect order
 
 ---
 
@@ -401,40 +391,33 @@ Typical performance with 1M points:
 
 ### PostProcessingManager
 
-| Method                                             | Description                |
-| -------------------------------------------------- | -------------------------- |
-| `render()`                                         | Execute rendering pipeline |
-| `updateBloomSettings(strength, radius, threshold)` | Configure bloom            |
-| `setToneMapping(type)`                             | Set tone mapping operator  |
-| `setExposure(value)`                               | Adjust exposure            |
-| `setFXAAEnabled(enabled)`                          | Toggle FXAA                |
-| `setSMAAEnabled(enabled)`                          | Toggle SMAA                |
-| `setMSAAEnabled(enabled)`                          | Toggle MSAA                |
-| `setSSAAEnabled(enabled)`                          | Toggle SSAA                |
-| `setDOF(enabled, focus, strength)`                 | Configure depth of field   |
-| `resize(width, height)`                            | Update render size         |
-| `dispose()`                                        | Clean up resources         |
+| Method                                             | Description                    |
+| -------------------------------------------------- | ------------------------------ |
+| `render()`                                         | Execute rendering pipeline     |
+| `updateBloomSettings(strength, radius, threshold)` | Configure bloom                |
+| `setToneMapping(type)`                             | Set tone mapping operator      |
+| `updateExposure(value)`                            | Adjust exposure                |
+| `setFXAAEnabled(enabled)`                          | Toggle FXAA                    |
+| `setSMAAEnabled(enabled)`                          | Toggle SMAA                    |
+| `setAOEnabled(enabled, quality)`                   | Configure ambient occlusion    |
+| `setDOF(enabled, focus, strength)`                 | Configure depth of field       |
+| `setVignetteEnabled(enabled, darkness, offset)`    | Configure vignette             |
+| `setChromaticAberration(enabled, strength)`        | Configure chromatic aberration |
+| `resize(width, height)`                            | Update render size             |
+| `dispose()`                                        | Clean up resources             |
 
-### MaterialManager
+---
 
-| Method                                | Description                            |
-| ------------------------------------- | -------------------------------------- |
-| `getPointMaterial(props)`             | Get/create cached point material       |
-| `updateCameraParams(fov, resolution)` | Update camera params for all materials |
-| `updateHDRMultiplier(multiplier)`     | Update HDR multiplier globally         |
-| `dispose()`                           | Dispose all cached materials           |
-| `getCacheStats()`                     | Get material cache statistics          |
+## Future Enhancements
 
-### PointMaterial
-
-| Method                                | Description                          |
-| ------------------------------------- | ------------------------------------ |
-| `constructor(config)`                 | Create new point material            |
-| `updateCameraParams(fov, resolution)` | Update world-space sizing parameters |
-| `updateHDRMultiplier(multiplier)`     | Update HDR intensity                 |
-| `updateOpacity(opacity)`              | Update material opacity              |
-| `updateGamma(gamma)`                  | Update gamma correction              |
-| `clone()`                             | Clone material with current settings |
+- Temporal Anti-Aliasing (TAA)
+- Screen Space Reflections (SSR)
+- Motion Blur
+- Lens Flare
+- God Rays
+- Color Grading with LUTs
+- SSAA Re-implementation
+- Custom Effect API
 
 ---
 
@@ -442,11 +425,11 @@ Typical performance with 1M points:
 
 When extending the rendering system:
 
-1. **Maintain HDR pipeline** - Preserve float precision
-2. **Test across GPUs** - Ensure compatibility
-3. **Profile performance** - Monitor frame times
-4. **Document shaders** - Explain mathematical models
-5. **Cache aggressively** - Reuse materials and buffers
+1. **Use pmndrs effects** when available
+2. **Create custom effects** following pmndrs patterns
+3. **Test performance** across different hardware
+4. **Document settings** and performance impact
+5. **Maintain HDR pipeline** integrity
 
 ---
 

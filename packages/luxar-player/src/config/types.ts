@@ -482,6 +482,12 @@ export interface RenderingSettings {
   dofStrength: number;
   chromaticAberrationEnabled: boolean;
   chromaticAberrationStrength: number;
+  // New pmndrs effects
+  aoEnabled: boolean;
+  aoQuality: 'low' | 'medium' | 'high' | 'ultra';
+  vignetteEnabled: boolean;
+  vignetteDarkness: number;
+  vignetteOffset: number;
   // Navigation controls
   controlType: 'orbit' | 'arcball' | 'fly';
   autoRotate: boolean;

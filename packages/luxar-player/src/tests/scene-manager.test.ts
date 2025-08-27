@@ -19,6 +19,8 @@ vi.mock('three', async () => {
       return canvas;
     })();
     shadowMap = { enabled: false, type: actual.PCFSoftShadowMap };
+    outputColorSpace = actual.SRGBColorSpace;
+    toneMapping = actual.NoToneMapping;
 
     setSize() {}
     setPixelRatio() {}
@@ -26,7 +28,16 @@ vi.mock('three', async () => {
     render() {}
     dispose() {}
     getContext() {
-      return {};
+      return {
+        getContextAttributes: () => ({
+          alpha: true,
+          antialias: false,
+          depth: true,
+          premultipliedAlpha: true,
+          preserveDrawingBuffer: false,
+          stencil: true,
+        }),
+      };
     }
     getSize() {
       return new actual.Vector2(800, 600);

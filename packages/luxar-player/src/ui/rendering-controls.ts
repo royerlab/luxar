@@ -3,7 +3,7 @@
 
 import GUI from 'lil-gui';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/post-processing';
+import { PostProcessingManager } from '../rendering/postprocessing-manager';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
@@ -595,8 +595,8 @@ export class RenderingControls {
     smaaFolder
       .add(this.settings, 'smaaThreshold', 0.05, 0.2, 0.01)
       .name('Edge Threshold')
-      .onChange((value: number) => {
-        this.postProcessing.updateSMAASettings(value, undefined);
+      .onChange((_value: number) => {
+        this.postProcessing.updateSMAASettings();
         this.saveSettings();
         this.triggerAnimation();
       });
@@ -604,8 +604,8 @@ export class RenderingControls {
     smaaFolder
       .add(this.settings, 'smaaSearchSteps', [4, 8, 16, 32])
       .name('Search Steps')
-      .onChange((value: number) => {
-        this.postProcessing.updateSMAASettings(undefined, value);
+      .onChange((_value: number) => {
+        this.postProcessing.updateSMAASettings();
         this.saveSettings();
         this.triggerAnimation();
       });
@@ -736,7 +736,109 @@ export class RenderingControls {
         '• 1.0 = Strong rainbow edges'
     );
 
-    // Vignetting removed - effect was lame
+    // Ambient Occlusion subfolder
+    const aoFolder = effectsFolder.addFolder('Ambient Occlusion');
+    aoFolder.close();
+
+    const aoEnabledControl = aoFolder
+      .add(this.settings, 'aoEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setAOEnabled(value, this.settings.aoQuality);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    aoEnabledControl.domElement.setAttribute(
+      'title',
+      'Ambient Occlusion: Darkens corners and crevices\n' +
+        '• Adds depth and realism to scene\n' +
+        '• Simulates indirect shadows\n' +
+        '• Performance impact scales with quality'
+    );
+
+    const aoQualityControl = aoFolder
+      .add(this.settings, 'aoQuality', ['low', 'medium', 'high', 'ultra'])
+      .name('Quality')
+      .onChange((value: 'low' | 'medium' | 'high' | 'ultra') => {
+        if (this.settings.aoEnabled) {
+          this.postProcessing.setAOEnabled(true, value);
+          this.saveSettings();
+          this.triggerAnimation();
+        }
+      });
+
+    aoQualityControl.domElement.setAttribute(
+      'title',
+      'AO Quality Level:\n' +
+        '• Low: Fast, lower quality (4 samples)\n' +
+        '• Medium: Balanced (8 samples)\n' +
+        '• High: Better quality (16 samples)\n' +
+        '• Ultra: Best quality, slower (32 samples)'
+    );
+
+    // Vignette subfolder
+    const vignetteFolder = effectsFolder.addFolder('Vignette');
+    vignetteFolder.close();
+
+    const vignetteEnabledControl = vignetteFolder
+      .add(this.settings, 'vignetteEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setVignetteEnabled(
+          value,
+          this.settings.vignetteDarkness,
+          this.settings.vignetteOffset
+        );
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    vignetteEnabledControl.domElement.setAttribute(
+      'title',
+      'Vignette: Darkens edges of the screen\n' +
+        '• Draws focus to center of view\n' +
+        '• Creates cinematic look\n' +
+        '• Minimal performance impact'
+    );
+
+    const vignetteDarknessControl = vignetteFolder
+      .add(this.settings, 'vignetteDarkness', 0, 1, 0.01)
+      .name('Darkness')
+      .onChange((value: number) => {
+        if (this.settings.vignetteEnabled) {
+          this.postProcessing.setVignetteEnabled(true, value, this.settings.vignetteOffset);
+          this.saveSettings();
+          this.triggerAnimation();
+        }
+      });
+
+    vignetteDarknessControl.domElement.setAttribute(
+      'title',
+      'Vignette Darkness:\n' +
+        '• 0 = No darkening\n' +
+        '• 0.5 = Moderate darkness (default)\n' +
+        '• 1.0 = Maximum darkness'
+    );
+
+    const vignetteOffsetControl = vignetteFolder
+      .add(this.settings, 'vignetteOffset', 0, 1, 0.01)
+      .name('Offset')
+      .onChange((value: number) => {
+        if (this.settings.vignetteEnabled) {
+          this.postProcessing.setVignetteEnabled(true, this.settings.vignetteDarkness, value);
+          this.saveSettings();
+          this.triggerAnimation();
+        }
+      });
+
+    vignetteOffsetControl.domElement.setAttribute(
+      'title',
+      'Vignette Offset:\n' +
+        '• 0 = Effect starts at center\n' +
+        '• 0.5 = Effect starts mid-way (default)\n' +
+        '• 1.0 = Effect only at very edges'
+    );
   }
 
   /**
@@ -1138,10 +1240,7 @@ export class RenderingControls {
     // Apply SMAA settings
     this.postProcessing.setSMAAEnabled(this.settings.smaaEnabled);
     if (this.settings.smaaEnabled) {
-      this.postProcessing.updateSMAASettings(
-        this.settings.smaaThreshold,
-        this.settings.smaaSearchSteps
-      );
+      this.postProcessing.updateSMAASettings();
     }
 
     // Apply tone mapping

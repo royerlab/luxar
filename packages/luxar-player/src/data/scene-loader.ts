@@ -270,10 +270,13 @@ export class SceneLoader {
 
       // Create THREE.js geometry even if empty (for future updates)
       const geometry = this.createGeometry(data);
-      
+
       // Log if no initial points are visible (this is normal for nD slicing)
       if (data.metadata.loadedPoints === 0) {
-        log.info(Modules.SCENE_LOADER, `No initially visible points for ${node.path} - object created for future updates`);
+        log.info(
+          Modules.SCENE_LOADER,
+          `No initially visible points for ${node.path} - object created for future updates`
+        );
       }
 
       // Create material with radius and sharpness scales from geometry userData
@@ -500,7 +503,10 @@ export class SceneLoader {
 
     // Log if updating to empty geometry (clearing points)
     if (data.metadata.loadedPoints === 0) {
-      log.info(Modules.SCENE_LOADER, `Clearing points for ${path} (no visible points at current slice)`);
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing points for ${path} (no visible points at current slice)`
+      );
     }
 
     // Store reference to old geometry

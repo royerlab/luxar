@@ -112,6 +112,7 @@ target/
 *.swp
 *~
 .~*
+delme/
 
 # Hatch
 .hatch/

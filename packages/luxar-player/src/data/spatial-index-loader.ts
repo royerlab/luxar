@@ -323,29 +323,29 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -722,7 +722,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       if (effectiveRadiusConfig) {
         effectiveRadiusConfig = {
           ...effectiveRadiusConfig,
-          maxRadius: effectiveRadiusConfig.maxRadius / 255.0
+          maxRadius: effectiveRadiusConfig.maxRadius / 255.0,
         };
       }
     }
@@ -765,7 +765,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (usedEffectiveRadius && finalRadii) {
       const threshold = 0.0001; // Small threshold for floating point precision
       const validIndices: number[] = [];
-      
+
       // Find indices of points with non-zero radius
       for (let i = 0; i < numPoints; i++) {
         if (finalRadii[i] > threshold) {
@@ -774,7 +774,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       const filteredCount = validIndices.length;
-      
+
       // Only filter if we're actually removing points AND we have valid points left
       if (filteredCount < numPoints && filteredCount > 0) {
         log.info(
@@ -785,7 +785,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Create filtered arrays
         const filteredPositions3D = new Float32Array(filteredCount * 3);
         const filteredRadii = new Float32Array(filteredCount);
-        
+
         // Filter colors if present
         let filteredColors: Float32Array | Uint8Array | Uint16Array | undefined;
         if (colors) {
@@ -813,22 +813,22 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Copy only valid points
         for (let i = 0; i < filteredCount; i++) {
           const srcIdx = validIndices[i];
-          
+
           // Copy position (3 components)
           filteredPositions3D[i * 3] = positions3D[srcIdx * 3];
           filteredPositions3D[i * 3 + 1] = positions3D[srcIdx * 3 + 1];
           filteredPositions3D[i * 3 + 2] = positions3D[srcIdx * 3 + 2];
-          
+
           // Copy radius
           filteredRadii[i] = finalRadii[srcIdx];
-          
+
           // Copy colors if present (3 components)
           if (colors && filteredColors) {
             filteredColors[i * 3] = colors[srcIdx * 3];
             filteredColors[i * 3 + 1] = colors[srcIdx * 3 + 1];
             filteredColors[i * 3 + 2] = colors[srcIdx * 3 + 2];
           }
-          
+
           // Copy sharpness if present
           if (sharpness && filteredSharpness) {
             filteredSharpness[i] = sharpness[srcIdx];
@@ -840,10 +840,10 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         finalRadii = filteredRadii;
         colors = filteredColors || colors;
         sharpness = filteredSharpness || sharpness;
-        
+
         // Update point count
         numPoints = filteredCount;
-        
+
         // Recalculate bounds for filtered points only
         bounds.makeEmpty();
         for (let i = 0; i < filteredCount; i++) {
@@ -860,7 +860,6 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
         return this.createEmptyPointCloud(viewState);
       }
     }
-
 
     // Get dtype metadata from node attributes
     const dtypes = {

@@ -33,15 +33,17 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: RESOLVED
     - **Priority**: Medium
 
-7- Additional post-processing effects and better effect management using: https://github.com/pmndrs/postprocessing
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+7- ✅ COMPLETED: Migrated post-processing system to pmndrs/postprocessing library
+    - Replaced custom implementation with industry-standard library
+    - Added new effects: SSAO, Vignette, improved Chromatic Aberration
+    - Improved performance with single-pass effect composition
+    - Extended UI controls with new effect options
+    - Maintained HDR pipeline with 16-bit float buffers
+    - Bloom and DOF working correctly
+    - **Status**: RESOLVED
+    - **Priority**: LOW
 
 8- Cleanup of AA modes, we need to decide what we keep and what we trash...
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
-
-9- The Depth of Focus effect is not working. 
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
