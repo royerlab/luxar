@@ -120,8 +120,8 @@ function validateBloomConsistency(config: AppConfig, _errors: string[], warnings
   if (bloom.threshold < 0 || bloom.threshold > 1) {
     warnings.push(`Invalid bloom.threshold: ${bloom.threshold} (must be 0-1)`);
   }
-  if (bloom.resolutionScale < 1 || bloom.resolutionScale > 16) {
-    warnings.push(`Unusual bloom.resolutionScale: ${bloom.resolutionScale} (typical range 2-8)`);
+  if (bloom.levels < 1 || bloom.levels > 12) {
+    warnings.push(`Invalid bloom.levels: ${bloom.levels} (must be 1-12)`);
   }
 
   // No more duplication to check - single source of truth!

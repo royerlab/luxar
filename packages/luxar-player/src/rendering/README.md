@@ -114,8 +114,9 @@ Professional bloom effect with HDR support:
 
 - Luminance threshold for selective blooming
 - Configurable intensity and radius
-- Mipmap blur for performance
+- Mipmap blur with adjustable levels (1-12)
 - Multiple kernel sizes
+- Performance/quality tradeoff via mipmap levels
 
 #### Tone Mapping
 
@@ -145,15 +146,40 @@ Fast Approximate Anti-Aliasing:
 - Very fast performance
 - Good quality for most cases
 - Single-pass implementation
+- **Recommended for general use**
+- Works perfectly with additive blending
 
 #### SMAA
 
 Subpixel Morphological Anti-Aliasing:
 
 - Superior edge detection
-- Multiple quality presets
+- Multiple quality presets (LOW, MEDIUM, HIGH, ULTRA)
 - Better quality than FXAA
 - Moderate performance impact
+- **Best quality/performance balance**
+- Compatible with additive blending
+
+#### MSAA
+
+Multisample Anti-Aliasing:
+
+- Hardware-accelerated
+- Sample counts: 2x, 4x, 8x
+- **⚠️ WARNING**: Incompatible with additive blending
+- Causes brightness multiplication artifacts with point clouds
+- Only use with normal blending mode
+- Automatically validates GPU support
+
+#### SSAA
+
+Super-Sample Anti-Aliasing:
+
+- Renders at higher resolution (1.5x, 2x, 3x, 4x)
+- Best possible quality
+- **Heavy performance cost**
+- Recommended only for screenshots or high-end GPUs
+- Properly manages renderer and composer sizes
 
 ### Cinematic Effects
 
@@ -180,6 +206,35 @@ Lens color fringing effect:
 - RGB channel separation
 - Configurable strength
 - Cinematic look
+
+---
+
+## Anti-Aliasing Recommendations
+
+### For Best Results with Point Clouds
+
+1. **General Use**: Enable **FXAA** - fast and effective
+2. **Quality Priority**: Enable **SMAA** with HIGH preset
+3. **Maximum Quality**: Enable **SSAA** at 2x (heavy performance cost)
+4. **Avoid MSAA**: Due to additive blending incompatibility
+
+### Troubleshooting
+
+#### SSAA Issues
+- If viewport appears cropped, restart the viewer
+- Performance impact scales quadratically with multiplier
+
+#### MSAA Not Working
+- Check console for GPU support warnings
+- MSAA requires WebGL2 with float buffer extensions
+- Will not show effect with additive blending
+- Try switching to normal blending mode to verify
+
+#### Performance Tips
+- Start with FXAA for best performance
+- SMAA provides best quality/performance ratio
+- SSAA should only be used for final renders
+- Monitor FPS when enabling AA effects
 
 ---
 
@@ -264,7 +319,7 @@ new EffectComposer(renderer, {
 ### Basic Setup
 
 ```typescript
-import { PostProcessingManager } from './rendering/postprocessing-manager';
+import { PostProcessingManager } from './rendering/post-processing-manager';
 import { materialManager } from './rendering/material-manager';
 
 // Initialize post-processing
@@ -371,7 +426,7 @@ The rendering system has been migrated from a custom post-processing implementat
 - Reduce effect quality settings
 - Disable SSAO first (highest cost)
 - Use FXAA instead of SMAA
-- Lower bloom resolution
+- Reduce bloom mipmap levels
 
 **Problem: Colors look wrong**
 

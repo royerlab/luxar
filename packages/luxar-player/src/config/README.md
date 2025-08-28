@@ -71,7 +71,7 @@ rendering: {
     strength: 0.25,           // Glow intensity
     radius: 1.0,              // Glow spread
     threshold: 0.01,          // Brightness trigger
-    resolutionScale: 4        // Quality vs performance
+    levels: 8                 // Mipmap levels (1-12, quality vs performance)
   }
 }
 
@@ -139,6 +139,7 @@ renderingControls: {
     bloomThreshold: 0.01,
     bloomStrength: 0.25,
     bloomRadius: 1.0,
+    bloomLevels: 8,
     exposure: 1.0,
     hdrMultiplier: 16.0,
     fxaaEnabled: false,
@@ -230,12 +231,12 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 // In PostProcessing
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(width, height),
-  config.postProcessing.bloom.strength,
-  config.postProcessing.bloom.radius,
-  config.postProcessing.bloom.threshold
-);
+const bloomEffect = new BloomEffect({
+  intensity: config.rendering.bloom.strength,
+  luminanceThreshold: config.rendering.bloom.threshold,
+  levels: config.rendering.bloom.levels,
+  // radius is set on mipmapBlurPass after creation
+});
 ```
 
 ### Customizing Configuration

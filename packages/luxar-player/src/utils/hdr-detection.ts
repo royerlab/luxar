@@ -95,39 +95,42 @@ export function configureHDRRenderer(
   renderer: THREE.WebGLRenderer,
   capabilities: HDRCapabilities
 ): void {
-  // Set appropriate output color space based on display capabilities
+  // IMPORTANT: When using pmndrs/postprocessing library, we should NOT set
+  // outputColorSpace or toneMapping on the renderer here. The post-processing
+  // library handles these internally. Setting them here causes conflicts.
+  //
+  // The PostProcessingManager will:
+  // 1. Set renderer.outputColorSpace = THREE.SRGBColorSpace
+  // 2. Set renderer.toneMapping = THREE.NoToneMapping
+  // 3. Handle all color space conversions and tone mapping in its pipeline
+  
+  // Log detected capabilities for informational purposes only
   if (capabilities.rec2020Gamut && capabilities.hdr) {
-    // Full HDR with Rec2020 gamut
-    // Note: Three.js doesn't have Rec2020 color space yet, using Linear as closest
-    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     log.success(
       Modules.HDR,
-      'Configured for HDR with Linear color space (Rec2020 display detected)'
+      'HDR display with Rec2020 gamut detected - post-processing will handle color management'
     );
   } else if (capabilities.p3Gamut) {
-    // Wide gamut P3 (common on Apple displays)
-    // Note: DisplayP3ColorSpace might not be available in all Three.js versions
-    // Using SRGBColorSpace as fallback but noting P3 capability
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    log.success(Modules.HDR, 'Display P3 gamut detected, using sRGB color space');
+    log.success(Modules.HDR, 'Display P3 gamut detected - post-processing will handle color management');
   } else {
-    // Standard sRGB
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    log.info(Modules.HDR, 'Using standard sRGB color space');
+    log.info(Modules.HDR, 'Standard sRGB display detected');
   }
 
-  // Configure tone mapping for HDR
-  if (capabilities.hdr) {
-    // Use ACES for HDR displays
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.4; // Slightly boost for HDR headroom
-    log.success(Modules.HDR, 'ACES tone mapping enabled with HDR exposure');
-  } else {
-    // Use ACES for SDR with standard exposure
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    log.info(Modules.HDR, 'ACES tone mapping for SDR display');
-  }
+  // Store exposure value recommendation for post-processing to use
+  const recommendedExposure = capabilities.hdr ? 1.4 : 1.0;
+  
+  // Note: The actual tone mapping and color space configuration is handled by
+  // PostProcessingManager to avoid conflicts with the pmndrs library.
+  // These settings will be overridden when PostProcessingManager is initialized.
+  log.info(
+    Modules.HDR, 
+    `Recommended exposure: ${recommendedExposure} (will be applied by post-processing)`
+  );
+  
+  // We could pass the recommended exposure to the PostProcessingManager
+  // through a global config or by storing it on the renderer object
+  // for the PostProcessingManager to read later
+  (renderer as any).__recommendedExposure = recommendedExposure;
 }
 
 /**

@@ -3,7 +3,7 @@
 
 import GUI from 'lil-gui';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/postprocessing-manager';
+import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
@@ -67,6 +67,7 @@ export class RenderingControls {
       bloomThreshold: config.rendering.bloom.threshold,
       bloomStrength: config.rendering.bloom.strength,
       bloomRadius: config.rendering.bloom.radius,
+      bloomLevels: config.rendering.bloom.levels,
       // Add fly control defaults from config.controls.fly
       flyMovementSpeed: config.controls.fly.movement.speed.default,
       flyRotationSpeed: config.controls.fly.rotation.speed.default,
@@ -163,6 +164,32 @@ export class RenderingControls {
         '• 0 = tight glow, 1 = wide spread\n' +
         '• Larger radius = softer, more diffuse glow\n' +
         '• Affects computational cost'
+    );
+
+    // Bloom levels control (mipmap blur levels)
+    const bloomLevelsControl = bloomFolder
+      .add(
+        this.settings,
+        'bloomLevels',
+        1,
+        12,
+        1
+      )
+      .name('Mipmap Levels')
+      .onChange((value: number) => {
+        this.postProcessing.setBloomLevels(Math.round(value));
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for bloom levels
+    bloomLevelsControl.domElement.setAttribute(
+      'title',
+      'Bloom Mipmap Levels: Quality vs Performance\n' +
+        '• 1-3 = Coarse bloom (fastest)\n' +
+        '• 4-6 = Balanced quality\n' +
+        '• 7-9 = Smooth bloom (default 8)\n' +
+        '• 10-12 = Very smooth (slowest)'
     );
 
     // Navigation folder - for camera movement and rotation controls
@@ -1104,6 +1131,7 @@ export class RenderingControls {
           bloomThreshold: config.rendering.bloom.threshold,
           bloomStrength: config.rendering.bloom.strength,
           bloomRadius: config.rendering.bloom.radius,
+          bloomLevels: config.rendering.bloom.levels,
           // Add fly control defaults from config.controls.fly
           flyMovementSpeed: config.controls.fly.movement.speed.default,
           flyRotationSpeed: config.controls.fly.rotation.speed.default,
@@ -1218,6 +1246,7 @@ export class RenderingControls {
       this.settings.bloomRadius,
       this.settings.bloomThreshold
     );
+    this.postProcessing.setBloomLevels(this.settings.bloomLevels);
 
     // Apply exposure
     this.postProcessing.updateExposure(this.settings.exposure);

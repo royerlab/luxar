@@ -465,6 +465,7 @@ export interface RenderingSettings {
   bloomThreshold: number;
   bloomStrength: number;
   bloomRadius: number;
+  bloomLevels: number;
   exposure: number;
   hdrMultiplier: number;
   fxaaEnabled: boolean;
@@ -511,10 +512,10 @@ export interface RenderingControlsConfig {
  * Bloom configuration - single source of truth
  */
 export interface BloomConfig {
-  strength: number;
-  radius: number;
-  threshold: number;
-  resolutionScale: number;
+  strength: number;    // Bloom intensity multiplier
+  radius: number;      // Blur radius for bloom spread
+  threshold: number;   // Luminance threshold (0-1)
+  levels: number;      // Mipmap levels (1-12, quality/performance tradeoff)
 }
 
 /**
