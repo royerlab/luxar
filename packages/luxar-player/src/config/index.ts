@@ -46,7 +46,7 @@ export const config: AppConfig = {
       strength: 0.25, // Bloom intensity - how strong the glow effect appears
       radius: 1.0, // Bloom radius - how far the glow spreads from bright areas
       threshold: 0.01, // Bloom threshold - brightness level required to trigger bloom
-      resolutionScale: 4, // Resolution scale for bloom pass - higher = faster but lower quality
+      levels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
     },
     // Note: Point rendering settings moved to shader.points to avoid duplication
   },
@@ -246,10 +246,11 @@ export const config: AppConfig = {
   // Rendering controls configuration with user-adjustable defaults
   renderingControls: {
     defaults: {
-      // Bloom settings directly reference rendering.bloom
-      bloomThreshold: 0.01,
-      bloomStrength: 0.5, // Increased for more visible bloom
-      bloomRadius: 1.0,
+      // Bloom settings
+      bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom
+      bloomStrength: 0.5, // Bloom intensity multiplier
+      bloomRadius: 0.6, // Blur radius for bloom spread (in mipmap blur units)
+      bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
       exposure: 1.0, // Tone mapping exposure value
       hdrMultiplier: 16.0, // HDR intensity multiplier
       fxaaEnabled: false, // FXAA disabled by default

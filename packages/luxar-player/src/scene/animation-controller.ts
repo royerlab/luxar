@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
 import { PerformanceMonitor } from '../ui/performance-monitor';
-import { PostProcessingManager } from '../rendering/postprocessing-manager';
+import { PostProcessingManager } from '../rendering/post-processing-manager';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization

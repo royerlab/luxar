@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/postprocessing-manager';
+import { PostProcessingManager } from '../rendering/post-processing-manager';
 
 // Mock postprocessing library
 vi.mock('postprocessing', () => ({
@@ -20,9 +20,15 @@ vi.mock('postprocessing', () => ({
   EffectPass: vi.fn().mockImplementation(() => ({})),
   BloomEffect: vi.fn().mockImplementation(() => ({
     intensity: 1.0,
+    mipmapBlurPass: {
+      radius: 1.0,
+    },
+    luminanceMaterial: {
+      threshold: 0.01,
+    },
   })),
   ToneMappingEffect: vi.fn().mockImplementation(() => ({
-    mode: 0,
+    mode: 4, // ToneMappingMode.ACES_FILMIC = 4
     uniforms: { whitePoint: { value: 4.0 } },
   })),
   DepthOfFieldEffect: vi.fn().mockImplementation(() => ({
@@ -59,9 +65,9 @@ vi.mock('postprocessing', () => ({
     LINEAR: 0,
     REINHARD: 1,
     OPTIMIZED_CINEON: 2,
-    ACES_FILMIC: 3,
-    AGX: 4,
-    NEUTRAL: 5,
+    ACES_FILMIC: 4,
+    AGX: 5,
+    NEUTRAL: 6,
   },
   SMAAPreset: {
     LOW: 0,
@@ -80,9 +86,21 @@ describe('PostProcessingManager', () => {
   beforeEach(() => {
     // Mock WebGL context with all required methods
     const mockGL = {
-      getExtension: vi.fn(() => ({})),
+      getExtension: vi.fn((name: string) => {
+        // Return mock extension for EXT_color_buffer_float
+        if (name === 'EXT_color_buffer_float') return {};
+        return {};
+      }),
       getParameter: vi.fn((param: number) => {
-        if (param === 0x1f01) return 'WebGL 2.0'; // VERSION
+        // VERSION constant in WebGL is 0x1F02 (7938 in decimal)
+        if (param === 7938) {
+          return 'WebGL 2.0 (OpenGL ES 3.0)';
+        }
+        // MAX_SAMPLES (0x8D57 = 36183 in decimal) 
+        if (param === 36183) {
+          return 8;
+        }
+        // For all other parameters return reasonable defaults
         return 1;
       }),
       getContextAttributes: vi.fn(() => ({
@@ -120,6 +138,8 @@ describe('PostProcessingManager', () => {
       shaderSource: vi.fn(),
       compileShader: vi.fn(),
       attachShader: vi.fn(),
+      VERSION: 0x1f02,
+      MAX_SAMPLES: 0x8d57,
       linkProgram: vi.fn(),
       getProgramParameter: vi.fn(() => true),
       getShaderParameter: vi.fn(() => true),
@@ -138,6 +158,9 @@ describe('PostProcessingManager', () => {
       depthMask: vi.fn(),
       depthFunc: vi.fn(),
       pixelStorei: vi.fn(),
+      texImage3D: vi.fn(),
+      clearDepth: vi.fn(),
+      clearStencil: vi.fn(),
       drawingBufferWidth: 1920,
       drawingBufferHeight: 1080,
     };
@@ -308,12 +331,17 @@ describe('PostProcessingManager', () => {
   });
 
   describe('compatibility methods', () => {
-    it('should handle MSAA methods (not supported)', () => {
+    it('should handle MSAA methods', () => {
+      // MSAA is now supported in the pmndrs implementation
       manager.setMSAAEnabled(true);
-      expect(manager.isMSAAEnabled()).toBe(false);
+      expect(manager.isMSAAEnabled()).toBe(true);
 
       manager.setMSAASamples(4);
-      expect(manager.getMSAASamples()).toBe(0);
+      expect(manager.getMSAASamples()).toBe(4);
+      
+      // Disable MSAA
+      manager.setMSAAEnabled(false);
+      expect(manager.isMSAAEnabled()).toBe(false);
     });
 
     it('should handle SSAA methods (not implemented)', () => {

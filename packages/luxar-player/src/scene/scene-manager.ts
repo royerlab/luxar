@@ -12,7 +12,7 @@ import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
-import { PostProcessingManager } from '../rendering/postprocessing-manager';
+import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
   detectHDRCapabilities,
