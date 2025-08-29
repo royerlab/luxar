@@ -30,14 +30,14 @@ describe('rendering-controls-utils', () => {
     it('should preserve valid values', () => {
       const input = {
         bloomThreshold: 0.5,
-        exposure: 2.0,
+        hdrMultiplier: 20.0,
         controlType: 'fly' as const,
       };
 
       const result = validateRenderingSettings(input);
 
       expect(result.bloomThreshold).toBe(0.5);
-      expect(result.exposure).toBe(2.0);
+      expect(result.hdrMultiplier).toBe(20.0);
       expect(result.controlType).toBe('fly');
     });
   });

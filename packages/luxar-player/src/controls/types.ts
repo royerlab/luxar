@@ -86,10 +86,9 @@ export interface BloomControllers {
 }
 
 /**
- * HDR/Exposure GUI controllers
+ * HDR GUI controllers
  */
 export interface HDRControllers {
-  exposure?: Controller;
   hdrMultiplier?: Controller;
   toneMapping?: Controller;
 }

@@ -167,9 +167,8 @@ export function configureHDRRenderer(
     renderer.outputColorSpace = THREE.SRGBColorSpace;
   }
 
-  // Configure tone mapping for HDR
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = capabilities.hdr ? 1.4 : 1.0;
+  // Note: Tone mapping is now handled by PostProcessingManager
+  // to avoid conflicts with the pmndrs library
 }
 ```
 

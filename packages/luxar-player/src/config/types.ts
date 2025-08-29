@@ -466,7 +466,6 @@ export interface RenderingSettings {
   bloomStrength: number;
   bloomRadius: number;
   bloomLevels: number;
-  exposure: number;
   hdrMultiplier: number;
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
@@ -489,6 +488,11 @@ export interface RenderingSettings {
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;
+  // Noise effect (film grain / static)
+  noiseEnabled: boolean;
+  noiseIntensity: number;
+  noisePremultiply: boolean;
+  noiseBlendMode: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT';
   // Navigation controls
   controlType: 'orbit' | 'arcball' | 'fly';
   autoRotate: boolean;

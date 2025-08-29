@@ -451,13 +451,15 @@ The rendering system has been migrated from a custom post-processing implementat
 | `render()`                                         | Execute rendering pipeline     |
 | `updateBloomSettings(strength, radius, threshold)` | Configure bloom                |
 | `setToneMapping(type)`                             | Set tone mapping operator      |
-| `updateExposure(value)`                            | Adjust exposure                |
+| `setNoiseEnabled(enabled, intensity, premul, blend)` | Configure noise effect       |
+| `updateNoiseSettings(intensity, premul, blend)`    | Update noise parameters       |
 | `setFXAAEnabled(enabled)`                          | Toggle FXAA                    |
 | `setSMAAEnabled(enabled)`                          | Toggle SMAA                    |
 | `setAOEnabled(enabled, quality)`                   | Configure ambient occlusion    |
 | `setDOF(enabled, focus, strength)`                 | Configure depth of field       |
 | `setVignetteEnabled(enabled, darkness, offset)`    | Configure vignette             |
 | `setChromaticAberration(enabled, strength)`        | Configure chromatic aberration |
+| `needsContinuousAnimation()`                       | Check if effects need animation |
 | `resize(width, height)`                            | Update render size             |
 | `dispose()`                                        | Clean up resources             |
 

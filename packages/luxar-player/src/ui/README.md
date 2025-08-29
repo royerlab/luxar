@@ -82,7 +82,7 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 **Control Categories:**
 
-- **Visual Effects**: Bloom, tone mapping, exposure
+- **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration
 - **Anti-Aliasing**: FXAA, SMAA, MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
 - **Camera**: FOV, centering modes
@@ -92,19 +92,48 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 ```
 Rendering Controls
-├── Effects
-│   ├── Bloom (strength, radius, threshold)
-│   ├── Tone Mapping (type selector)
-│   └── Exposure (slider)
+├── Navigation
+│   ├── Control Type (Orbit|Arcball|Fly)
+│   ├── Orbit Controls
+│   │   ├── Auto Rotate □
+│   │   └── Rotation Speed (slider)
+│   └── Fly Controls
+│       ├── Movement Speed (slider)
+│       ├── Rotation Speed (slider)
+│       └── Inertial Mode □
+├── HDR
+│   ├── Intensity (slider)
+│   └── Tone Mapping (type selector)
 ├── Anti-Aliasing
+│   ├── SSAA □ (with resolution multiplier)
 │   ├── FXAA □
-│   ├── SMAA □
-│   └── MSAA (samples)
-├── Camera
-│   ├── FOV (slider)
-│   └── Center Mode (toggle)
-└── Performance
-    └── Quality (Low|Medium|High|Ultra)
+│   ├── SMAA □ (with settings)
+│   └── MSAA □ (with samples)
+└── Post-Processing Effects
+    ├── Bloom
+    │   ├── Threshold (slider)
+    │   ├── Strength (slider)
+    │   ├── Radius (slider)
+    │   └── Mipmap Levels (slider)
+    ├── Noise
+    │   ├── Enabled □
+    │   ├── Intensity (slider)
+    │   ├── Film Grain Mode □
+    │   └── Blend Mode (selector)
+    ├── Depth of Field
+    │   ├── Enabled □
+    │   ├── Focus Distance (slider)
+    │   └── Strength (slider)
+    ├── Chromatic Aberration
+    │   ├── Enabled □
+    │   └── Strength (slider)
+    ├── Ambient Occlusion
+    │   ├── Enabled □
+    │   └── Quality (selector)
+    └── Vignette
+        ├── Enabled □
+        ├── Darkness (slider)
+        └── Offset (slider)
 ```
 
 ### 3. Dataset Browser

@@ -19,6 +19,7 @@ import {
   ChromaticAberrationEffect,
   VignetteEffect,
   SSAOEffect,
+  NoiseEffect,
   KernelSize,
   BlendFunction,
 } from 'postprocessing';
@@ -57,6 +58,7 @@ export class PostProcessingManager {
   private aoEffect?: SSAOEffect;
   private vignetteEffect?: VignetteEffectTyped;
   private chromaticEffect?: ChromaticAberrationEffectTyped;
+  private noiseEffect?: NoiseEffect;
 
   // State tracking
   private fxaaEnabled: boolean = false;
@@ -154,15 +156,10 @@ export class PostProcessingManager {
       `Bloom initialized with ${config.renderingControls.defaults.bloomLevels} mipmap levels, radius: ${config.renderingControls.defaults.bloomRadius}`);
 
     // Tone mapping for HDR to LDR conversion - using ACES filmic by default
-    // Use recommended exposure from HDR detection if available
-    const recommendedExposure = (this.renderer as any).__recommendedExposure || 1.0;
-    const configuredExposure = config.renderingControls.defaults.exposure;
-    const finalExposure = configuredExposure * recommendedExposure; // Combine both factors
-    
     this.toneMappingEffect = new ToneMappingEffect({
       mode: ToneMappingMode.ACES_FILMIC,
       resolution: 256,
-      whitePoint: finalExposure * 2.0, // More reasonable exposure scaling
+      whitePoint: 2.0, // Standard white point
       middleGrey: 0.4, // Lower middle grey for brighter output
       minLuminance: 0.001, // Lower min for better dark detail
       averageLuminance: 1.0,
@@ -199,6 +196,7 @@ export class PostProcessingManager {
 
     // Pre-tone mapping effects (work in HDR space)
     if (this.bloomEffect) effects.push(this.bloomEffect);
+    if (this.noiseEffect) effects.push(this.noiseEffect);
     if (this.dofEffect) effects.push(this.dofEffect);
     if (this.aoEffect) effects.push(this.aoEffect);
 
@@ -267,31 +265,6 @@ export class PostProcessingManager {
     );
   }
 
-  /**
-   * Updates exposure (affects tone mapping white point)
-   */
-  updateExposure(exposure: number): void {
-    if (!this.toneMappingEffect) {
-      log.warning(Modules.POST_PROCESSING, 'ToneMapping effect not initialized');
-      return;
-    }
-
-    // Use properly typed tone mapping effect
-    if (!isToneMappingEffectTyped(this.toneMappingEffect)) {
-      log.error(Modules.POST_PROCESSING, 'Invalid tone mapping effect type');
-      return;
-    }
-    
-    if (this.toneMappingEffect.uniforms?.whitePoint) {
-      // Use a more reasonable exposure scaling (1.0 - 2.0 range typically)
-      this.toneMappingEffect.uniforms.whitePoint.value = exposure * 2.0;
-    }
-    
-    log.update(
-      Modules.POST_PROCESSING,
-      `Exposure updated: ${exposure} (white point: ${exposure * 2.0})`
-    );
-  }
 
   /**
    * Sets the tone mapping mode
@@ -503,6 +476,96 @@ export class PostProcessingManager {
   }
 
   /**
+   * Sets noise effect (film grain / static)
+   * @param enabled - Whether to enable the effect
+   * @param intensity - Opacity/strength of the noise (0-1)
+   * @param premultiply - Whether to use premultiplied alpha (film grain style)
+   * @param blendMode - Blend mode for the effect
+   */
+  setNoiseEnabled(
+    enabled: boolean, 
+    intensity?: number, 
+    premultiply?: boolean,
+    blendMode?: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT'
+  ): void {
+    if (enabled && !this.noiseEffect) {
+      const blendFunctionMap = {
+        'SCREEN': BlendFunction.SCREEN,
+        'ADD': BlendFunction.ADD,
+        'MULTIPLY': BlendFunction.MULTIPLY,
+        'OVERLAY': BlendFunction.OVERLAY,
+        'SOFT_LIGHT': BlendFunction.SOFT_LIGHT,
+      };
+      
+      this.noiseEffect = new NoiseEffect({
+        premultiply: premultiply ?? false,
+        blendFunction: blendFunctionMap[blendMode ?? 'SCREEN'],
+      });
+      
+      // Set initial intensity
+      this.noiseEffect.blendMode.setOpacity(intensity ?? 0.05);
+      
+      this.rebuildEffectPass();
+      log.info(Modules.POST_PROCESSING, 
+        `Noise enabled: intensity=${intensity}, premultiply=${premultiply}, blend=${blendMode}`);
+    } else if (!enabled && this.noiseEffect) {
+      this.noiseEffect = undefined;
+      this.rebuildEffectPass();
+      log.info(Modules.POST_PROCESSING, 'Noise disabled');
+    }
+  }
+
+  /**
+   * Updates noise effect parameters
+   */
+  updateNoiseSettings(intensity?: number, premultiply?: boolean, blendMode?: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT'): void {
+    if (!this.noiseEffect) {
+      log.warning(Modules.POST_PROCESSING, 'Noise effect not initialized');
+      return;
+    }
+
+    if (intensity !== undefined) {
+      this.noiseEffect.blendMode.setOpacity(intensity);
+    }
+
+    // If premultiply or blend mode changed, we need to recreate the effect
+    if (premultiply !== undefined || blendMode !== undefined) {
+      const currentIntensity = this.noiseEffect.blendMode.opacity.value;
+      const currentPremultiply = (this.noiseEffect as any).premultiply ?? false;
+      
+      const blendFunctionMap = {
+        'SCREEN': BlendFunction.SCREEN,
+        'ADD': BlendFunction.ADD,
+        'MULTIPLY': BlendFunction.MULTIPLY,
+        'OVERLAY': BlendFunction.OVERLAY,
+        'SOFT_LIGHT': BlendFunction.SOFT_LIGHT,
+      };
+      
+      // Get current blend function name
+      let currentBlendName: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT' = 'SCREEN';
+      const currentBlendFunction = this.noiseEffect.blendMode.blendFunction;
+      for (const [name, func] of Object.entries(blendFunctionMap)) {
+        if (func === currentBlendFunction) {
+          currentBlendName = name as typeof currentBlendName;
+          break;
+        }
+      }
+      
+      // Recreate with new settings
+      this.noiseEffect = new NoiseEffect({
+        premultiply: premultiply ?? currentPremultiply,
+        blendFunction: blendFunctionMap[blendMode ?? currentBlendName],
+      });
+      
+      this.noiseEffect.blendMode.setOpacity(intensity ?? currentIntensity);
+      this.rebuildEffectPass();
+    }
+    
+    log.update(Modules.POST_PROCESSING, 
+      `Noise updated: intensity=${intensity}, premultiply=${premultiply}, blend=${blendMode}`);
+  }
+
+  /**
    * Sets vignette effect with proper typing and validation
    */
   setVignetteEnabled(enabled: boolean, darkness?: number, offset?: number): void {
@@ -576,10 +639,20 @@ export class PostProcessingManager {
   }
 
   /**
+   * Check if any effects require continuous animation
+   * @returns True if animation should continue running
+   */
+  needsContinuousAnimation(): boolean {
+    // Noise effect needs continuous updates as it changes every frame
+    return !!this.noiseEffect;
+  }
+
+  /**
    * Gets the status of all effects
    */
   getEffectsStatus(): {
     bloom: boolean;
+    noise: boolean;
     dof: boolean;
     chromaticAberration: boolean;
     fxaa: boolean;
@@ -601,6 +674,7 @@ export class PostProcessingManager {
 
     return {
       bloom: !!this.bloomEffect,
+      noise: !!this.noiseEffect,
       dof: !!this.dofEffect,
       chromaticAberration: !!this.chromaticEffect,
       fxaa: this.fxaaEnabled,
@@ -841,9 +915,6 @@ export class PostProcessingManager {
       `Composer recreated - MSAA: ${this.msaaEnabled ? this.msaaSamples : 0}x, SSAA: ${this.ssaaEnabled ? this.ssaaMultiplier : 1}x`);
   }
 
-  setExposure(exposure: number): void {
-    this.updateExposure(exposure);
-  }
 
   /**
    * Get current quality preset
@@ -1063,6 +1134,7 @@ export class PostProcessingManager {
 
     // Dispose individual effects if needed
     this.bloomEffect = undefined;
+    this.noiseEffect = undefined;
     this.dofEffect = undefined;
     this.aoEffect = undefined;
     this.vignetteEffect = undefined;

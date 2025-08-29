@@ -186,9 +186,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     controls.enableGizmos = false;
     controls.setGizmosVisible(false); // This actually hides the gizmos
 
-    // Store auto-rotation flag for manual implementation
-    (controls as any)._autoRotate = this.config.autoRotate || false;
-    (controls as any)._autoRotateSpeed = this.config.autoRotateSpeed || 0.25;
+    // Note: ArcballControls doesn't support auto-rotation
 
     // Listen for changes
     controls.addEventListener('change', () => {
@@ -329,28 +327,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.update();
     } else if (this.currentControls instanceof ArcballControls) {
-      // First update the control
+      // ArcballControls need manual update call
       this.currentControls.update();
-
-      // Then apply manual auto-rotation for ArcballControls
-      const controls = this.currentControls as any;
-
-      // Check if auto-rotate is enabled
-      if (controls._autoRotate) {
-        // ArcballControls doesn't have a simple state check, so we'll just rotate continuously
-        // This matches the behavior of OrbitControls
-        const rotationSpeed = (controls._autoRotateSpeed || 0.25) * 0.005; // Reduced speed for smoother rotation
-
-        // Use the rotate method from ArcballControls itself
-        const rotationAxis = new THREE.Vector3(0, 1, 0);
-        const transformation = controls.rotate(rotationAxis, rotationSpeed);
-
-        // Apply the transformation
-        if (transformation) {
-          controls.applyTransformMatrix(transformation);
-          this.dispatchEvent({ type: 'change' });
-        }
-      }
+      // Note: ArcballControls doesn't support auto-rotation
     } else if (this.currentControls instanceof LuxarFlyControls) {
       const delta = this.clock.getDelta();
       this.currentControls.update(delta);
@@ -374,23 +353,20 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.autoRotate = enabled;
-    } else if (this.currentControls instanceof ArcballControls) {
-      // Auto-rotation not supported in arcball mode - always set to false
-      (this.currentControls as any)._autoRotate = false;
     }
+    // ArcballControls and FlyControls don't support auto-rotation
   }
 
   /**
-   * Set auto-rotation speed (for orbit and arcball controls)
+   * Set auto-rotation speed (only for orbit controls)
    */
   public setAutoRotateSpeed(speed: number): void {
     this.config.autoRotateSpeed = speed;
 
     if (this.currentControls instanceof OrbitControls) {
       this.currentControls.autoRotateSpeed = speed;
-    } else if (this.currentControls instanceof ArcballControls) {
-      (this.currentControls as any)._autoRotateSpeed = speed;
     }
+    // ArcballControls and FlyControls don't support auto-rotation
   }
 
   /**
@@ -399,10 +375,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   public getAutoRotate(): boolean {
     if (this.currentControls instanceof OrbitControls) {
       return this.currentControls.autoRotate;
-    } else if (this.currentControls instanceof ArcballControls) {
-      // Auto-rotation not supported in arcball mode
-      return false;
     }
+    // ArcballControls and FlyControls don't support auto-rotation
     return false;
   }
 
