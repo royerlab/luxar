@@ -24,8 +24,10 @@ import { log, Modules } from '../utils/log';
  * RenderingControls manages the advanced rendering parameters GUI
  *
  * Features:
- * - Real-time control of bloom parameters
- * - HDR exposure and intensity controls
+ * - Real-time control of post-processing effects (bloom, noise, DOF, etc.)
+ * - HDR intensity control
+ * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
+ * - Navigation controls (orbit, arcball, fly)
  * - Settings persistence per scene
  * - Clean, collapsible UI using lil-gui
  */
@@ -108,89 +110,6 @@ export class RenderingControls {
   private setupControls(): void {
     // Setup auto-blur for all controls
     this.setupAutoBlur();
-
-    // Bloom folder
-    const bloomFolder = this.gui.addFolder('Bloom Effects');
-    bloomFolder.open();
-
-    const bloomThresholdControl = bloomFolder
-      .add(this.settings, 'bloomThreshold', 0, 1, 0.01)
-      .name('Threshold')
-      .onChange((value: number) => {
-        this.postProcessing.updateBloomSettings(undefined, undefined, value);
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Set tooltip on the DOM element
-    bloomThresholdControl.domElement.setAttribute(
-      'title',
-      'Bloom Threshold: Minimum brightness for bloom\n' +
-        '• Only pixels brighter than this value will bloom\n' +
-        '• 0 = everything blooms, 1 = only brightest areas bloom\n' +
-        '• Use with HDR intensity for best results'
-    );
-
-    const bloomStrengthControl = bloomFolder
-      .add(this.settings, 'bloomStrength', 0, 2, 0.01)
-      .name('Strength')
-      .onChange((value: number) => {
-        this.postProcessing.updateBloomSettings(value, undefined, undefined);
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Set tooltip on the DOM element
-    bloomStrengthControl.domElement.setAttribute(
-      'title',
-      'Bloom Strength: Intensity of the glow effect\n' +
-        '• 0 = no bloom, 1 = normal, 2 = intense glow\n' +
-        '• Creates realistic light bleeding from bright areas'
-    );
-
-    const bloomRadiusControl = bloomFolder
-      .add(this.settings, 'bloomRadius', 0, 1, 0.01)
-      .name('Radius')
-      .onChange((value: number) => {
-        this.postProcessing.updateBloomSettings(undefined, value, undefined);
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Set tooltip on the DOM element
-    bloomRadiusControl.domElement.setAttribute(
-      'title',
-      'Bloom Radius: Size of the glow spread\n' +
-        '• 0 = tight glow, 1 = wide spread\n' +
-        '• Larger radius = softer, more diffuse glow\n' +
-        '• Affects computational cost'
-    );
-
-    // Bloom levels control (mipmap blur levels)
-    const bloomLevelsControl = bloomFolder
-      .add(
-        this.settings,
-        'bloomLevels',
-        1,
-        12,
-        1
-      )
-      .name('Mipmap Levels')
-      .onChange((value: number) => {
-        this.postProcessing.setBloomLevels(Math.round(value));
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Set tooltip for bloom levels
-    bloomLevelsControl.domElement.setAttribute(
-      'title',
-      'Bloom Mipmap Levels: Quality vs Performance\n' +
-        '• 1-3 = Coarse bloom (fastest)\n' +
-        '• 4-6 = Balanced quality\n' +
-        '• 7-9 = Smooth bloom (default 8)\n' +
-        '• 10-12 = Very smooth (slowest)'
-    );
 
     // Navigation folder - for camera movement and rotation controls
     const navigationFolder = this.gui.addFolder('Navigation');
@@ -413,32 +332,13 @@ export class RenderingControls {
       flyRotationDampingControl.hide();
     }
 
-    // HDR/Exposure folder
-    const hdrFolder = this.gui.addFolder('HDR & Exposure');
+    // HDR folder
+    const hdrFolder = this.gui.addFolder('HDR');
     hdrFolder.open();
-
-    const exposureControl = hdrFolder
-      .add(this.settings, 'exposure', 0.1, 3, 0.01)
-      .name('Exposure')
-      .onChange((value: number) => {
-        this.postProcessing.updateExposure(value);
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Set tooltip on the DOM element
-    exposureControl.domElement.setAttribute(
-      'title',
-      'Exposure: Controls overall image brightness (post-process)\n' +
-        '• Acts like a camera exposure setting\n' +
-        '• Applied AFTER HDR rendering during tone mapping\n' +
-        '• 1.0 = neutral, <1.0 = darker, >1.0 = brighter\n' +
-        '• Affects the entire image uniformly'
-    );
 
     const hdrControl = hdrFolder
       .add(this.settings, 'hdrMultiplier', 0.01, 100, 0.01)
-      .name('HDR Intensity')
+      .name('Intensity')
       .onChange((value: number) => {
         // Update shader config and trigger material updates
         // HDR multiplier is now handled through material manager
@@ -450,14 +350,14 @@ export class RenderingControls {
     // Set tooltip on the DOM element
     hdrControl.domElement.setAttribute(
       'title',
-      'HDR Intensity: Multiplies point light emission (pre-process)\n' +
-        '• Controls how bright points can be in HDR space\n' +
-        '• Applied DURING rendering before tone mapping\n' +
+      'Intensity: Multiplies point light emission\n' +
+        '• Controls how bright points appear in HDR space\n' +
+        '• Applied during rendering before tone mapping\n' +
         '• Higher values = stronger glow/bloom effects\n' +
         '• Can create values >1.0 for realistic bright sources'
     );
 
-    // Tone Mapping selector - moved to HDR & Exposure folder
+    // Tone Mapping selector - moved to HDR folder
     const toneMappingControl = hdrFolder
       .add(this.settings, 'toneMapping', [
         'None',
@@ -656,6 +556,178 @@ export class RenderingControls {
     // Post-Processing Effects folder
     const effectsFolder = this.gui.addFolder('Post-Processing Effects');
     effectsFolder.close(); // Closed by default
+
+    // Bloom subfolder - moved here from top level
+    const bloomFolder = effectsFolder.addFolder('Bloom');
+    bloomFolder.open(); // Open by default since it's commonly used
+
+    const bloomThresholdControl = bloomFolder
+      .add(this.settings, 'bloomThreshold', 0, 1, 0.01)
+      .name('Threshold')
+      .onChange((value: number) => {
+        this.postProcessing.updateBloomSettings(undefined, undefined, value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip on the DOM element
+    bloomThresholdControl.domElement.setAttribute(
+      'title',
+      'Bloom Threshold: Minimum brightness for bloom\n' +
+        '• Only pixels brighter than this value will bloom\n' +
+        '• 0 = everything blooms, 1 = only brightest areas bloom\n' +
+        '• Use with HDR intensity for best results'
+    );
+
+    const bloomStrengthControl = bloomFolder
+      .add(this.settings, 'bloomStrength', 0, 2, 0.01)
+      .name('Strength')
+      .onChange((value: number) => {
+        this.postProcessing.updateBloomSettings(value, undefined, undefined);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip on the DOM element
+    bloomStrengthControl.domElement.setAttribute(
+      'title',
+      'Bloom Strength: Intensity of the glow effect\n' +
+        '• 0 = no bloom, 1 = normal, 2 = intense glow\n' +
+        '• Creates realistic light bleeding from bright areas'
+    );
+
+    const bloomRadiusControl = bloomFolder
+      .add(this.settings, 'bloomRadius', 0, 1, 0.01)
+      .name('Radius')
+      .onChange((value: number) => {
+        this.postProcessing.updateBloomSettings(undefined, value, undefined);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip on the DOM element
+    bloomRadiusControl.domElement.setAttribute(
+      'title',
+      'Bloom Radius: Size of the glow spread\n' +
+        '• 0 = tight glow, 1 = wide spread\n' +
+        '• Larger radius = softer, more diffuse glow\n' +
+        '• Affects computational cost'
+    );
+
+    // Bloom levels control (mipmap blur levels)
+    const bloomLevelsControl = bloomFolder
+      .add(
+        this.settings,
+        'bloomLevels',
+        1,
+        12,
+        1
+      )
+      .name('Mipmap Levels')
+      .onChange((value: number) => {
+        this.postProcessing.setBloomLevels(Math.round(value));
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for bloom levels
+    bloomLevelsControl.domElement.setAttribute(
+      'title',
+      'Bloom Mipmap Levels: Quality vs Performance\n' +
+        '• 1-3 = Coarse bloom (fastest)\n' +
+        '• 4-6 = Balanced quality\n' +
+        '• 7-9 = Smooth bloom (default 8)\n' +
+        '• 10-12 = Very smooth (slowest)'
+    );
+
+    // Noise subfolder (film grain / TV static) - after bloom
+    const noiseFolder = effectsFolder.addFolder('Noise');
+    noiseFolder.close();
+
+    const noiseEnabledControl = noiseFolder
+      .add(this.settings, 'noiseEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setNoiseEnabled(
+          value,
+          this.settings.noiseIntensity,
+          this.settings.noisePremultiply,
+          this.settings.noiseBlendMode
+        );
+        this.saveSettings();
+        // Keep animation running when noise is enabled (like auto-rotate)
+        if (value) {
+          this.animationController?.startAnimation();
+        }
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for noise enabled
+    noiseEnabledControl.domElement.setAttribute(
+      'title',
+      'Noise: Adds film grain or TV static effect\n' +
+        '• Simulates analog film or video noise\n' +
+        '• Can add vintage or cinematic feel\n' +
+        '• Minimal performance impact'
+    );
+
+    const noiseIntensityControl = noiseFolder
+      .add(this.settings, 'noiseIntensity', 0, 1.0, 0.01)
+      .name('Intensity')
+      .onChange((value: number) => {
+        this.postProcessing.updateNoiseSettings(value, undefined, undefined);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for noise intensity
+    noiseIntensityControl.domElement.setAttribute(
+      'title',
+      'Noise Intensity: Amount of noise/grain\n' +
+        '• 0 = No noise\n' +
+        '• 0.05 = Subtle grain (default)\n' +
+        '• 0.15 = Moderate noise\n' +
+        '• 0.5 = Heavy static\n' +
+        '• 1.0 = Maximum noise'
+    );
+
+    const noisePremultiplyControl = noiseFolder
+      .add(this.settings, 'noisePremultiply')
+      .name('Film Grain Mode')
+      .onChange((value: boolean) => {
+        this.postProcessing.updateNoiseSettings(undefined, value, undefined);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for premultiply
+    noisePremultiplyControl.domElement.setAttribute(
+      'title',
+      'Film Grain Mode:\n' +
+        '• Off: TV static / digital noise style\n' +
+        '• On: Film grain style (premultiplied alpha)\n' +
+        '• Film grain looks more organic and cinematic'
+    );
+
+    const noiseBlendModeControl = noiseFolder
+      .add(this.settings, 'noiseBlendMode', ['SCREEN', 'ADD', 'MULTIPLY', 'OVERLAY', 'SOFT_LIGHT'])
+      .name('Blend Mode')
+      .onChange((value: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT') => {
+        this.postProcessing.updateNoiseSettings(undefined, undefined, value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Set tooltip for blend mode
+    noiseBlendModeControl.domElement.setAttribute(
+      'title',
+      'Noise Blend Mode:\n' +
+        '• SCREEN: Brightens image (default, good for dark scenes)\n' +
+        '• ADD: Additive blending (brighter)\n' +
+        '• MULTIPLY: Darkens image (good for bright scenes)\n' +
+        '• OVERLAY: Mix of multiply and screen\n' +
+        '• SOFT_LIGHT: Subtle overlay effect'
+    );
 
     // Depth of Field subfolder
     const dofFolder = effectsFolder.addFolder('Depth of Field');
@@ -1248,9 +1320,6 @@ export class RenderingControls {
     );
     this.postProcessing.setBloomLevels(this.settings.bloomLevels);
 
-    // Apply exposure
-    this.postProcessing.updateExposure(this.settings.exposure);
-
     // Apply HDR multiplier - must update both config AND materials
     // HDR multiplier is now handled through material manager
     this.sceneManager.updateHDRMultiplier(this.settings.hdrMultiplier);
@@ -1297,7 +1366,30 @@ export class RenderingControls {
       this.settings.chromaticAberrationStrength
     );
 
-    // Vignetting removed - effect was lame
+    // Apply noise effect
+    this.postProcessing.setNoiseEnabled(
+      this.settings.noiseEnabled,
+      this.settings.noiseIntensity,
+      this.settings.noisePremultiply,
+      this.settings.noiseBlendMode
+    );
+    
+    // Start animation if noise is enabled (from loaded settings)
+    if (this.settings.noiseEnabled) {
+      this.animationController?.startAnimation();
+    }
+
+    // Apply vignette effect
+    this.postProcessing.setVignetteEnabled(
+      this.settings.vignetteEnabled,
+      this.settings.vignetteDarkness,
+      this.settings.vignetteOffset
+    );
+
+    // Apply ambient occlusion
+    if (this.settings.aoEnabled) {
+      this.postProcessing.setAOEnabled(true, this.settings.aoQuality);
+    }
 
     // Trigger render to ensure changes are visible
     this.triggerAnimation();

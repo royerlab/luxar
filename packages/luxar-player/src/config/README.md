@@ -137,16 +137,24 @@ User-adjustable settings with persistence:
 renderingControls: {
   defaults: {
     bloomThreshold: 0.01,
-    bloomStrength: 0.25,
-    bloomRadius: 1.0,
+    bloomStrength: 0.5,
+    bloomRadius: 0.6,
     bloomLevels: 8,
-    exposure: 1.0,
     hdrMultiplier: 16.0,
     fxaaEnabled: false,
     msaaEnabled: false,         // Incompatible with additive blending
+    msaaSamples: 4,
+    smaaEnabled: false,
+    ssaaEnabled: false,
     toneMapping: 'ACES',
     dofEnabled: false,          // Depth of field
-    controlType: 'orbit',       // vs 'fly'
+    noiseEnabled: false,        // Film grain/TV static
+    noiseIntensity: 0.05,
+    noisePremultiply: false,
+    noiseBlendMode: 'SCREEN',
+    vignetteEnabled: false,
+    aoEnabled: false,           // Ambient occlusion
+    controlType: 'orbit',       // vs 'arcball' or 'fly'
     autoRotate: false
   }
 }

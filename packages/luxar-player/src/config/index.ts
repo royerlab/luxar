@@ -251,7 +251,6 @@ export const config: AppConfig = {
       bloomStrength: 0.5, // Bloom intensity multiplier
       bloomRadius: 0.6, // Blur radius for bloom spread (in mipmap blur units)
       bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
-      exposure: 1.0, // Tone mapping exposure value
       hdrMultiplier: 16.0, // HDR intensity multiplier
       fxaaEnabled: false, // FXAA disabled by default
       msaaEnabled: false, // MSAA disabled by default (incompatible with additive blending)
@@ -274,6 +273,11 @@ export const config: AppConfig = {
       vignetteEnabled: false, // Vignette disabled by default
       vignetteDarkness: 0.5, // Vignette darkness (0-1)
       vignetteOffset: 0.5, // Vignette offset from center (0-1)
+      // Noise effect settings
+      noiseEnabled: false, // Noise disabled by default
+      noiseIntensity: 0.05, // Subtle noise intensity (0-1)
+      noisePremultiply: false, // False for TV static, true for film grain
+      noiseBlendMode: 'SCREEN' as const, // Screen blend mode works well for most cases
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default

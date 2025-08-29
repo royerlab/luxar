@@ -227,11 +227,6 @@ describe('PostProcessingManager', () => {
       expect(manager.getToneMapping()).toBe(THREE.ACESFilmicToneMapping);
     });
 
-    it('should update exposure', () => {
-      manager.updateExposure(2.0);
-      // Exposure is applied as white point internally
-      expect(manager).toBeDefined();
-    });
   });
 
   describe('anti-aliasing', () => {

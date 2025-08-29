@@ -94,6 +94,34 @@ export class AnimationController {
   };
 
   /**
+   * Check if any features require continuous animation
+   * @returns True if animation should continue regardless of user interaction
+   */
+  private shouldContinueAnimating(): boolean {
+    // Check if auto-rotate is enabled
+    const autoRotate = this.controls.getAutoRotate();
+    
+    // Check if any post-processing effects need continuous updates
+    const hasEffects = this.postProcessing.needsContinuousAnimation();
+    
+    return autoRotate || hasEffects;
+  }
+
+  /**
+   * Handle idle timeout - only stop if no continuous effects are active
+   */
+  private handleIdleTimeout = (): void => {
+    // Check if we should continue animating due to effects or auto-rotate
+    if (this.shouldContinueAnimating()) {
+      // Continuous effects are active, schedule another check
+      this.idleTimeout = setTimeout(this.handleIdleTimeout, config.animation.idleTimeoutMs);
+    } else {
+      // No continuous effects, safe to stop animation
+      this.stopAnimation();
+    }
+  };
+
+  /**
    * Start animation loop and reset idle timer for power efficiency
    *
    * This method is called whenever user interaction is detected:
@@ -101,12 +129,15 @@ export class AnimationController {
    * - Camera control events (start, change)
    * - Keyboard input
    * - Touch events
+   * - When continuous effects are enabled (noise, auto-rotate)
    *
    * The idle timer automatically pauses rendering after inactivity to:
    * - Reduce CPU/GPU usage when scene is static
    * - Improve battery life on mobile devices
    * - Lower thermal impact on laptops
    * - Maintain 0% CPU usage when user is not interacting
+   *
+   * Continuous effects (noise, auto-rotate) will keep animation running.
    *
    * Uses arrow function to maintain 'this' context when used as event handler.
    */
@@ -122,9 +153,9 @@ export class AnimationController {
     // Clear any existing timeout to prevent premature stopping
     clearTimeout(this.idleTimeout);
 
-    // Set new timeout to auto-pause after configured idle period (2 seconds)
+    // Set new timeout to check for idle - will continue if continuous effects are active
     // This is the key power-saving optimization for static scenes
-    this.idleTimeout = setTimeout(this.stopAnimation, config.animation.idleTimeoutMs);
+    this.idleTimeout = setTimeout(this.handleIdleTimeout, config.animation.idleTimeoutMs);
   };
 
   /**
@@ -135,8 +166,9 @@ export class AnimationController {
    * - Cancels pending requestAnimationFrame to stop browser scheduling
    * - Clears idle timeout to prevent memory leaks
    *
-   * Called automatically after idle timeout or manually for cleanup.
-   * Scene remains visible but static until next user interaction.
+   * Called automatically after idle timeout (when no continuous effects)
+   * or manually for cleanup. Scene remains visible but static until
+   * next user interaction or continuous effect activation.
    */
   stopAnimation = (): void => {
     // Set flag to prevent animate() from continuing the loop

@@ -92,7 +92,7 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
  * Configure Three.js renderer for HDR output
  */
 export function configureHDRRenderer(
-  renderer: THREE.WebGLRenderer,
+  _renderer: THREE.WebGLRenderer,
   capabilities: HDRCapabilities
 ): void {
   // IMPORTANT: When using pmndrs/postprocessing library, we should NOT set
@@ -115,22 +115,10 @@ export function configureHDRRenderer(
   } else {
     log.info(Modules.HDR, 'Standard sRGB display detected');
   }
-
-  // Store exposure value recommendation for post-processing to use
-  const recommendedExposure = capabilities.hdr ? 1.4 : 1.0;
   
   // Note: The actual tone mapping and color space configuration is handled by
   // PostProcessingManager to avoid conflicts with the pmndrs library.
   // These settings will be overridden when PostProcessingManager is initialized.
-  log.info(
-    Modules.HDR, 
-    `Recommended exposure: ${recommendedExposure} (will be applied by post-processing)`
-  );
-  
-  // We could pass the recommended exposure to the PostProcessingManager
-  // through a global config or by storing it on the renderer object
-  // for the PostProcessingManager to read later
-  (renderer as any).__recommendedExposure = recommendedExposure;
 }
 
 /**
