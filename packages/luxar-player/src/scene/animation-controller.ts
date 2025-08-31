@@ -100,10 +100,10 @@ export class AnimationController {
   private shouldContinueAnimating(): boolean {
     // Check if auto-rotate is enabled
     const autoRotate = this.controls.getAutoRotate();
-    
+
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
-    
+
     return autoRotate || hasEffects;
   }
 

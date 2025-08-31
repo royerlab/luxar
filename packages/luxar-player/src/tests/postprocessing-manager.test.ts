@@ -96,7 +96,7 @@ describe('PostProcessingManager', () => {
         if (param === 7938) {
           return 'WebGL 2.0 (OpenGL ES 3.0)';
         }
-        // MAX_SAMPLES (0x8D57 = 36183 in decimal) 
+        // MAX_SAMPLES (0x8D57 = 36183 in decimal)
         if (param === 36183) {
           return 8;
         }
@@ -226,7 +226,6 @@ describe('PostProcessingManager', () => {
       manager.setToneMapping(THREE.ACESFilmicToneMapping);
       expect(manager.getToneMapping()).toBe(THREE.ACESFilmicToneMapping);
     });
-
   });
 
   describe('anti-aliasing', () => {
@@ -333,7 +332,7 @@ describe('PostProcessingManager', () => {
 
       manager.setMSAASamples(4);
       expect(manager.getMSAASamples()).toBe(4);
-      
+
       // Disable MSAA
       manager.setMSAAEnabled(false);
       expect(manager.isMSAAEnabled()).toBe(false);

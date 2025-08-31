@@ -48,7 +48,7 @@ def create_cubic_array(
     )
 
     # Create meshgrid for all 3 dimensions
-    x, y, z = np.meshgrid(axis, axis, axis, indexing='ij')
+    x, y, z = np.meshgrid(axis, axis, axis, indexing="ij")
 
     # Flatten to create position array
     positions = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
@@ -185,9 +185,9 @@ Performance notes:
         aprint("\nGenerating cubic array...")
         positions, colors, radii, sharpness = create_cubic_array(
             grid_size=100,  # 100x100x100 grid
-            spacing=0.5,    # Distance between points
-            radius=0.05,    # Small radius for disc-like appearance
-            sharpness=10.0, # High sharpness for sharp edges
+            spacing=0.5,  # Distance between points
+            radius=0.05,  # Small radius for disc-like appearance
+            sharpness=10.0,  # High sharpness for sharp edges
         )
 
         # Add main point cloud

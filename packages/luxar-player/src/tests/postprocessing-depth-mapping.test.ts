@@ -33,16 +33,16 @@ describe('PerspectiveDepthMapper', () => {
       const d1 = 1.0;
       const d2 = 10.0;
       const d3 = 100.0;
-      
+
       const n1 = PerspectiveDepthMapper.worldToNormalizedDepth(d1, near, far);
       const n2 = PerspectiveDepthMapper.worldToNormalizedDepth(d2, near, far);
       const n3 = PerspectiveDepthMapper.worldToNormalizedDepth(d3, near, far);
-      
+
       // The difference between n1 and n2 should be larger than between n2 and n3
       // This is because perspective projection gives more precision to near objects
       const diff1 = n2 - n1;
       const diff2 = n3 - n2;
-      
+
       expect(diff1).toBeGreaterThan(diff2);
     });
 
@@ -64,11 +64,11 @@ describe('PerspectiveDepthMapper', () => {
   describe('normalizedDepthToWorld', () => {
     it('should correctly reverse the depth mapping', () => {
       const distances = [0.5, 1, 5, 10, 50, 100, 500];
-      
+
       for (const distance of distances) {
         const normalized = PerspectiveDepthMapper.worldToNormalizedDepth(distance, near, far);
         const reversed = PerspectiveDepthMapper.normalizedDepthToWorld(normalized, near, far);
-        
+
         expect(reversed).toBeCloseTo(distance, 3);
       }
     });
@@ -89,17 +89,17 @@ describe('PerspectiveDepthMapper', () => {
       const d1 = 1.0;
       const d2 = 10.0;
       const d3 = 100.0;
-      
+
       const n1 = PerspectiveDepthMapper.worldToLogDepth(d1, near, far);
       const n2 = PerspectiveDepthMapper.worldToLogDepth(d2, near, far);
       const n3 = PerspectiveDepthMapper.worldToLogDepth(d3, near, far);
-      
+
       // For logarithmic mapping, the ratios should be more uniform
       // Ratio d2/d1 = 10, Ratio d3/d2 = 10
       // Since ratios are equal, normalized differences should be similar
       const diff1 = n2 - n1;
       const diff2 = n3 - n2;
-      
+
       expect(Math.abs(diff1 - diff2)).toBeLessThan(0.1);
     });
 
@@ -115,11 +115,11 @@ describe('PerspectiveDepthMapper', () => {
   describe('logDepthToWorld', () => {
     it('should correctly reverse logarithmic depth', () => {
       const distances = [0.5, 1, 5, 10, 50, 100, 500];
-      
+
       for (const distance of distances) {
         const logDepth = PerspectiveDepthMapper.worldToLogDepth(distance, near, far);
         const reversed = PerspectiveDepthMapper.logDepthToWorld(logDepth, near, far);
-        
+
         expect(reversed).toBeCloseTo(distance, 3);
       }
     });
@@ -128,28 +128,28 @@ describe('PerspectiveDepthMapper', () => {
   describe('Comparison of mapping methods', () => {
     it('should show different distributions for linear vs log mapping', () => {
       const testDistance = 10.0;
-      
+
       const inverseDepth = PerspectiveDepthMapper.worldToNormalizedDepth(testDistance, near, far);
       const logDepth = PerspectiveDepthMapper.worldToLogDepth(testDistance, near, far);
-      
+
       // These should be different values due to different mapping functions
       expect(Math.abs(inverseDepth - logDepth)).toBeGreaterThan(0.01);
     });
 
     it('should maintain monotonic increasing property', () => {
       const distances = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
-      
+
       let prevInverse = -1;
       let prevLog = -1;
-      
+
       for (const d of distances) {
         const inverse = PerspectiveDepthMapper.worldToNormalizedDepth(d, near, far);
         const log = PerspectiveDepthMapper.worldToLogDepth(d, near, far);
-        
+
         // Both mappings should be monotonically increasing
         expect(inverse).toBeGreaterThan(prevInverse);
         expect(log).toBeGreaterThan(prevLog);
-        
+
         prevInverse = inverse;
         prevLog = log;
       }
