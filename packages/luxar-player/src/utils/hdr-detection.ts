@@ -103,7 +103,7 @@ export function configureHDRRenderer(
   // 1. Set renderer.outputColorSpace = THREE.SRGBColorSpace
   // 2. Set renderer.toneMapping = THREE.NoToneMapping
   // 3. Handle all color space conversions and tone mapping in its pipeline
-  
+
   // Log detected capabilities for informational purposes only
   if (capabilities.rec2020Gamut && capabilities.hdr) {
     log.success(
@@ -111,11 +111,14 @@ export function configureHDRRenderer(
       'HDR display with Rec2020 gamut detected - post-processing will handle color management'
     );
   } else if (capabilities.p3Gamut) {
-    log.success(Modules.HDR, 'Display P3 gamut detected - post-processing will handle color management');
+    log.success(
+      Modules.HDR,
+      'Display P3 gamut detected - post-processing will handle color management'
+    );
   } else {
     log.info(Modules.HDR, 'Standard sRGB display detected');
   }
-  
+
   // Note: The actual tone mapping and color space configuration is handled by
   // PostProcessingManager to avoid conflicts with the pmndrs library.
   // These settings will be overridden when PostProcessingManager is initialized.

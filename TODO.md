@@ -43,7 +43,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: RESOLVED
     - **Priority**: LOW
 
-8- Cleanup of AA modes, we need to decide what we keep and what we trash...
+8- ✅ COMPLETED: Cleanup of AA modes, we need to decide what we keep and what we trash...
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
