@@ -207,6 +207,16 @@ Lens color fringing effect:
 - Configurable strength
 - Cinematic look
 
+#### Lens Distortion
+
+Camera lens imperfection simulation:
+
+- Barrel/pincushion distortion effects
+- Principal point and focal length adjustment
+- Skew correction for non-square pixels
+- Simulates realistic camera optics
+- **Note**: Uses separate pass due to UV transformation incompatibility
+
 ---
 
 ## Anti-Aliasing Recommendations
@@ -221,16 +231,19 @@ Lens color fringing effect:
 ### Troubleshooting
 
 #### SSAA Issues
+
 - If viewport appears cropped, restart the viewer
 - Performance impact scales quadratically with multiplier
 
 #### MSAA Not Working
+
 - Check console for GPU support warnings
 - MSAA requires WebGL2 with float buffer extensions
 - Will not show effect with additive blending
 - Try switching to normal blending mode to verify
 
 #### Performance Tips
+
 - Start with FXAA for best performance
 - SMAA provides best quality/performance ratio
 - SSAA should only be used for final renders
@@ -249,18 +262,37 @@ Custom Point Shaders (HDR colors)
     ↓
 HDR Render Target (HalfFloatType)
     ↓
-Effect Composition (single pass)
-    ├── Bloom (HDR space)
-    ├── SSAO
-    ├── DOF
-    ├── Tone Mapping (HDR→LDR)
-    ├── Vignette
-    └── Chromatic Aberration
-    ↓
-Anti-Aliasing (FXAA/SMAA)
-    ↓
-Final Output (sRGB)
+Dynamic Pass Assignment Algorithm:
+
+1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → Noise → ToneMapping → AA
+2. Add effects sequentially to Pass A until incompatibility detected
+3. When incompatibility found, switch to Pass B for that effect and ALL remaining effects
+4. Pass A (if exists) → Pass B (if exists) → Final Output
+
+Example Scenarios:
+┌─ No Incompatibilities ─┐     ┌─ Incompatibilities Detected ─┐
+│ Pass A:                │     │ Pass A:                       │
+│ ├── Bloom              │     │ ├── Bloom                     │
+│ ├── Vignette           │     │ └── Vignette                  │
+│ ├── Noise              │     │                               │
+│ └── Tone Mapping       │     │ Pass B:                       │
+│                        │     │ ├── Lens Distortion (UV)     │
+│ Final Output           │     │ ├── Noise                     │
+└────────────────────────┘     │ └── Tone Mapping             │
+                               │                               │
+                               │ Pass A → Pass B → Final       │
+                               └───────────────────────────────┘
 ```
+
+### Dynamic Pass System
+
+The renderer automatically handles effect incompatibilities using a **sequential pass assignment algorithm**:
+
+1. **Sequential Processing**: Effects are processed in their correct visual order
+2. **Incompatibility Detection**: When UV transformation effects (LensDistortion) encounter convolution effects (ChromaticAberration) or vice versa, incompatibility is detected
+3. **Pass Switching**: Upon incompatibility, all remaining effects (including the incompatible one) are moved to Pass B
+4. **Final Pass Logic**: Pass B always contains tone mapping when it exists, ensuring proper HDR→LDR conversion
+5. **Single vs Dual Pass**: If no incompatibilities exist, only Pass A is used; otherwise Pass A feeds into Pass B
 
 ### Performance Optimizations
 
@@ -446,22 +478,24 @@ The rendering system has been migrated from a custom post-processing implementat
 
 ### PostProcessingManager
 
-| Method                                             | Description                    |
-| -------------------------------------------------- | ------------------------------ |
-| `render()`                                         | Execute rendering pipeline     |
-| `updateBloomSettings(strength, radius, threshold)` | Configure bloom                |
-| `setToneMapping(type)`                             | Set tone mapping operator      |
-| `setNoiseEnabled(enabled, intensity, premul, blend)` | Configure noise effect       |
-| `updateNoiseSettings(intensity, premul, blend)`    | Update noise parameters       |
-| `setFXAAEnabled(enabled)`                          | Toggle FXAA                    |
-| `setSMAAEnabled(enabled)`                          | Toggle SMAA                    |
-| `setAOEnabled(enabled, quality)`                   | Configure ambient occlusion    |
-| `setDOF(enabled, focus, strength)`                 | Configure depth of field       |
-| `setVignetteEnabled(enabled, darkness, offset)`    | Configure vignette             |
-| `setChromaticAberration(enabled, strength)`        | Configure chromatic aberration |
-| `needsContinuousAnimation()`                       | Check if effects need animation |
-| `resize(width, height)`                            | Update render size             |
-| `dispose()`                                        | Clean up resources             |
+| Method                                               | Description                     |
+| ---------------------------------------------------- | ------------------------------- |
+| `render()`                                           | Execute rendering pipeline      |
+| `updateBloomSettings(strength, radius, threshold)`   | Configure bloom                 |
+| `setToneMapping(type)`                               | Set tone mapping operator       |
+| `setNoiseEnabled(enabled, intensity, premul, blend)` | Configure noise effect          |
+| `updateNoiseSettings(intensity, premul, blend)`      | Update noise parameters         |
+| `setFXAAEnabled(enabled)`                            | Toggle FXAA                     |
+| `setSMAAEnabled(enabled)`                            | Toggle SMAA                     |
+| `setAOEnabled(enabled, quality)`                     | Configure ambient occlusion     |
+| `setDOF(enabled, focus, strength)`                   | Configure depth of field        |
+| `setVignetteEnabled(enabled, darkness, offset)`      | Configure vignette              |
+| `setChromaticAberration(enabled, strength)`          | Configure chromatic aberration  |
+| `setLensDistortionEnabled(enabled, ...params)`       | Configure lens distortion       |
+| `updateLensDistortion(params)`                       | Update lens distortion params   |
+| `needsContinuousAnimation()`                         | Check if effects need animation |
+| `resize(width, height)`                              | Update render size              |
+| `dispose()`                                          | Clean up resources              |
 
 ---
 

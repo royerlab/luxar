@@ -378,6 +378,15 @@ export class InputHandler {
         this.toggleHelp();
         break;
 
+      case 'c':
+      case 'C':
+        // C key for cinematic mode toggle
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+          event.preventDefault();
+          this.toggleCinematicMode();
+        }
+        break;
+
       case 'n':
       case 'N':
         // N key for nD dimension sliders
@@ -589,6 +598,13 @@ export class InputHandler {
    */
   private toggleRenderingControls(): void {
     this.renderingControls?.toggle();
+  }
+
+  /**
+   * Toggle cinematic mode - enables/disables noise, vignette, chromatic aberration, and lens distortion
+   */
+  private toggleCinematicMode(): void {
+    this.renderingControls?.toggleCinematicMode();
   }
 
   /**

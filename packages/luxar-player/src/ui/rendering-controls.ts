@@ -616,13 +616,7 @@ export class RenderingControls {
 
     // Bloom levels control (mipmap blur levels)
     const bloomLevelsControl = bloomFolder
-      .add(
-        this.settings,
-        'bloomLevels',
-        1,
-        12,
-        1
-      )
+      .add(this.settings, 'bloomLevels', 1, 12, 1)
       .name('Mipmap Levels')
       .onChange((value: number) => {
         this.postProcessing.setBloomLevels(Math.round(value));
@@ -937,6 +931,155 @@ export class RenderingControls {
         '• 0 = Effect starts at center\n' +
         '• 0.5 = Effect starts mid-way (default)\n' +
         '• 1.0 = Effect only at very edges'
+    );
+
+    // Lens Distortion subfolder
+    const lensDistortionFolder = effectsFolder.addFolder('Lens Distortion');
+    lensDistortionFolder.close();
+
+    const lensDistortionEnabledControl = lensDistortionFolder
+      .add(this.settings, 'lensDistortionEnabled')
+      .name('Enabled')
+      .onChange((value: boolean) => {
+        this.postProcessing.setLensDistortionEnabled(
+          value,
+          this.settings.lensDistortionX,
+          this.settings.lensDistortionY,
+          this.settings.lensPrincipalPointX,
+          this.settings.lensPrincipalPointY,
+          this.settings.lensFocalLengthX,
+          this.settings.lensFocalLengthY,
+          this.settings.lensSkew
+        );
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensDistortionEnabledControl.domElement.setAttribute(
+      'title',
+      'Lens Distortion: Simulates camera lens imperfections\n' +
+        '• Barrel/pincushion distortion effects\n' +
+        '• Principal point and focal length adjustment\n' +
+        '• Skew correction for non-square pixels'
+    );
+
+    const lensDistortionXControl = lensDistortionFolder
+      .add(this.settings, 'lensDistortionX', -1, 1, 0.001)
+      .name('Distortion X')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ distortionX: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensDistortionXControl.domElement.setAttribute(
+      'title',
+      'Radial Distortion X:\n' +
+        '• 0 = No distortion\n' +
+        '• Negative = Barrel distortion (fish-eye)\n' +
+        '• Positive = Pincushion distortion'
+    );
+
+    const lensDistortionYControl = lensDistortionFolder
+      .add(this.settings, 'lensDistortionY', -1, 1, 0.001)
+      .name('Distortion Y')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ distortionY: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensDistortionYControl.domElement.setAttribute(
+      'title',
+      'Radial Distortion Y:\n' +
+        '• 0 = No distortion\n' +
+        '• Negative = Barrel distortion (fish-eye)\n' +
+        '• Positive = Pincushion distortion'
+    );
+
+    const lensPrincipalPointXControl = lensDistortionFolder
+      .add(this.settings, 'lensPrincipalPointX', -1, 1, 0.001)
+      .name('Principal Point X')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ principalPointX: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensPrincipalPointXControl.domElement.setAttribute(
+      'title',
+      'Principal Point X offset:\n' +
+        '• 0 = Centered (default)\n' +
+        '• Negative = Shift distortion center left\n' +
+        '• Positive = Shift distortion center right'
+    );
+
+    const lensPrincipalPointYControl = lensDistortionFolder
+      .add(this.settings, 'lensPrincipalPointY', -1, 1, 0.001)
+      .name('Principal Point Y')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ principalPointY: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensPrincipalPointYControl.domElement.setAttribute(
+      'title',
+      'Principal Point Y offset:\n' +
+        '• 0 = Centered (default)\n' +
+        '• Negative = Shift distortion center up\n' +
+        '• Positive = Shift distortion center down'
+    );
+
+    const lensFocalLengthXControl = lensDistortionFolder
+      .add(this.settings, 'lensFocalLengthX', 0.1, 3, 0.001)
+      .name('Focal Length X')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ focalLengthX: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensFocalLengthXControl.domElement.setAttribute(
+      'title',
+      'Focal Length X:\n' +
+        '• 1 = Normal (default)\n' +
+        '• < 1 = Wide angle effect\n' +
+        '• > 1 = Telephoto effect'
+    );
+
+    const lensFocalLengthYControl = lensDistortionFolder
+      .add(this.settings, 'lensFocalLengthY', 0.1, 3, 0.001)
+      .name('Focal Length Y')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ focalLengthY: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensFocalLengthYControl.domElement.setAttribute(
+      'title',
+      'Focal Length Y:\n' +
+        '• 1 = Normal (default)\n' +
+        '• < 1 = Wide angle effect\n' +
+        '• > 1 = Telephoto effect'
+    );
+
+    const lensSkewControl = lensDistortionFolder
+      .add(this.settings, 'lensSkew', -0.1, 0.1, 0.001)
+      .name('Skew')
+      .onChange((value: number) => {
+        this.postProcessing.updateLensDistortion({ skew: value });
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    lensSkewControl.domElement.setAttribute(
+      'title',
+      'Lens Skew (radians):\n' +
+        '• 0 = No skew (default)\n' +
+        '• Corrects for non-square pixels\n' +
+        '• Usually very small values'
     );
   }
 
@@ -1373,7 +1516,7 @@ export class RenderingControls {
       this.settings.noisePremultiply,
       this.settings.noiseBlendMode
     );
-    
+
     // Start animation if noise is enabled (from loaded settings)
     if (this.settings.noiseEnabled) {
       this.animationController?.startAnimation();
@@ -1384,6 +1527,18 @@ export class RenderingControls {
       this.settings.vignetteEnabled,
       this.settings.vignetteDarkness,
       this.settings.vignetteOffset
+    );
+
+    // Apply lens distortion effect
+    this.postProcessing.setLensDistortionEnabled(
+      this.settings.lensDistortionEnabled,
+      this.settings.lensDistortionX,
+      this.settings.lensDistortionY,
+      this.settings.lensPrincipalPointX,
+      this.settings.lensPrincipalPointY,
+      this.settings.lensFocalLengthX,
+      this.settings.lensFocalLengthY,
+      this.settings.lensSkew
     );
 
     // Apply ambient occlusion
@@ -1585,6 +1740,90 @@ export class RenderingControls {
       document.removeEventListener('mousedown', this.clickOutsideHandler, true);
       this.clickOutsideHandler = undefined;
     }
+  }
+
+  /**
+   * Toggle cinematic mode - intelligently manages noise, vignette, chromatic aberration, and lens distortion
+   * Uses majority vote to determine whether to turn effects on or off
+   */
+  toggleCinematicMode(): void {
+    // Get current state of cinematic effects
+    const cinematicEffects = [
+      this.settings.noiseEnabled,
+      this.settings.vignetteEnabled,
+      this.settings.chromaticAberrationEnabled,
+      this.settings.lensDistortionEnabled,
+    ];
+
+    // Count how many effects are currently enabled
+    const enabledCount = cinematicEffects.filter(Boolean).length;
+    const totalEffects = cinematicEffects.length;
+
+    // Use majority vote to decide direction (>= 50% enabled = turn all off, < 50% = turn all on)
+    const shouldEnableAll = enabledCount < totalEffects / 2;
+
+    // Apply cinematic mode settings
+    this.settings.noiseEnabled = shouldEnableAll;
+    this.settings.vignetteEnabled = shouldEnableAll;
+    this.settings.chromaticAberrationEnabled = shouldEnableAll;
+    this.settings.lensDistortionEnabled = shouldEnableAll;
+
+    // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
+    this.postProcessing.startDeferRebuild();
+
+    this.postProcessing.setNoiseEnabled(
+      this.settings.noiseEnabled,
+      this.settings.noiseIntensity,
+      this.settings.noisePremultiply,
+      this.settings.noiseBlendMode
+    );
+
+    this.postProcessing.setVignetteEnabled(
+      this.settings.vignetteEnabled,
+      this.settings.vignetteDarkness,
+      this.settings.vignetteOffset
+    );
+
+    this.postProcessing.setChromaticAberration(
+      this.settings.chromaticAberrationEnabled,
+      this.settings.chromaticAberrationStrength
+    );
+
+    this.postProcessing.setLensDistortionEnabled(
+      this.settings.lensDistortionEnabled,
+      this.settings.lensDistortionX,
+      this.settings.lensDistortionY,
+      this.settings.lensPrincipalPointX,
+      this.settings.lensPrincipalPointY,
+      this.settings.lensFocalLengthX,
+      this.settings.lensFocalLengthY,
+      this.settings.lensSkew
+    );
+
+    // End deferred mode and trigger single rebuild with all effects
+    this.postProcessing.endDeferRebuild();
+
+    // Update GUI to reflect new state
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
+
+    // Save settings and trigger animation
+    this.saveSettings();
+    this.triggerAnimation();
+
+    // Start animation if noise is now enabled (like auto-rotate)
+    if (this.settings.noiseEnabled) {
+      this.animationController?.startAnimation();
+    }
+
+    // Log the action
+    const modeText = shouldEnableAll ? 'enabled' : 'disabled';
+    log.info(
+      Modules.RENDERER,
+      `Cinematic mode ${modeText}: noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
+        `chromatic aberration=${shouldEnableAll}, lens distortion=${shouldEnableAll}`
+    );
   }
 
   /**

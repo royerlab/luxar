@@ -278,6 +278,15 @@ export const config: AppConfig = {
       noiseIntensity: 0.05, // Subtle noise intensity (0-1)
       noisePremultiply: false, // False for TV static, true for film grain
       noiseBlendMode: 'SCREEN' as const, // Screen blend mode works well for most cases
+      // Lens distortion effect settings
+      lensDistortionEnabled: false, // Lens distortion disabled by default
+      lensDistortionX: -0.04, // Radial distortion coefficient X (subtle barrel distortion)
+      lensDistortionY: -0.04, // Radial distortion coefficient Y (subtle barrel distortion)
+      lensPrincipalPointX: 0, // Principal point offset X (default: centered)
+      lensPrincipalPointY: 0, // Principal point offset Y (default: centered)
+      lensFocalLengthX: 1.045, // Focal length X (slight telephoto effect)
+      lensFocalLengthY: 1.045, // Focal length Y (slight telephoto effect)
+      lensSkew: 0, // Skew in radians (default: no skew)
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
@@ -341,6 +350,7 @@ export const config: AppConfig = {
         recenterCamera: 'f',
         toggleControlMode: 'v',
         toggleInertialMode: 'i',
+        toggleCinematicMode: 'c',
       },
       flyModeKeys: [
         'w',

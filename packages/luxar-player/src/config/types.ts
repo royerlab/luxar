@@ -155,6 +155,7 @@ export interface InputConfig {
       recenterCamera: string;
       toggleControlMode: string;
       toggleInertialMode: string;
+      toggleCinematicMode: string;
     };
     flyModeKeys: string[];
     dimensionKeys: string[];
@@ -493,6 +494,15 @@ export interface RenderingSettings {
   noiseIntensity: number;
   noisePremultiply: boolean;
   noiseBlendMode: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT';
+  // Lens distortion effect
+  lensDistortionEnabled: boolean;
+  lensDistortionX: number;
+  lensDistortionY: number;
+  lensPrincipalPointX: number;
+  lensPrincipalPointY: number;
+  lensFocalLengthX: number;
+  lensFocalLengthY: number;
+  lensSkew: number;
   // Navigation controls
   controlType: 'orbit' | 'arcball' | 'fly';
   autoRotate: boolean;
@@ -516,10 +526,10 @@ export interface RenderingControlsConfig {
  * Bloom configuration - single source of truth
  */
 export interface BloomConfig {
-  strength: number;    // Bloom intensity multiplier
-  radius: number;      // Blur radius for bloom spread
-  threshold: number;   // Luminance threshold (0-1)
-  levels: number;      // Mipmap levels (1-12, quality/performance tradeoff)
+  strength: number; // Bloom intensity multiplier
+  radius: number; // Blur radius for bloom spread
+  threshold: number; // Luminance threshold (0-1)
+  levels: number; // Mipmap levels (1-12, quality/performance tradeoff)
 }
 
 /**
