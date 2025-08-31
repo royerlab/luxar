@@ -272,7 +272,7 @@ export function showHelpOverlay() {
         'R: Rendering controls panel',
         'P: Performance monitor',
         'M: Cycle data monitor (mini/expanded/off)',
-        'C: Toggle center (origin/bbox)',
+        'C: Toggle cinematic mode (noise/vignette/CA/lens)',
         '⇧ + Wheel: Adjust field of view',
         'Ctrl+L: Debug console',
       ],

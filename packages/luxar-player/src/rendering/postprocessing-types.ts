@@ -1,11 +1,18 @@
 /**
  * Type definitions for pmndrs/postprocessing library
- * 
+ *
  * These interfaces provide proper typing for the postprocessing effects
  * to avoid unsafe 'any' casting and improve type safety.
  */
 
-import { BloomEffect, ToneMappingEffect, DepthOfFieldEffect, ChromaticAberrationEffect, VignetteEffect } from 'postprocessing';
+import {
+  BloomEffect,
+  ToneMappingEffect,
+  DepthOfFieldEffect,
+  ChromaticAberrationEffect,
+  VignetteEffect,
+  LensDistortionEffect,
+} from 'postprocessing';
 import * as THREE from 'three';
 
 /**
@@ -14,13 +21,13 @@ import * as THREE from 'three';
  * - intensity is a direct property
  * - radius is accessed via mipmapBlurPass.radius
  * - luminanceThreshold is accessed via luminanceMaterial.threshold
- * 
+ *
  * We use a type alias instead of interface to avoid strict structural typing
  */
 export type BloomEffectTyped = BloomEffect & {
   /** Direct access to intensity property */
   intensity: number;
-}
+};
 
 /**
  * ToneMapping uniforms interface
@@ -75,13 +82,23 @@ export interface VignetteEffectTyped extends VignetteEffect {
 }
 
 /**
+ * Extended LensDistortionEffect interface
+ */
+export interface LensDistortionEffectTyped extends LensDistortionEffect {
+  distortion: THREE.Vector2;
+  principalPoint: THREE.Vector2;
+  focalLength: THREE.Vector2;
+  skew: number;
+}
+
+/**
  * Depth mapping utilities for perspective cameras
  */
 export class PerspectiveDepthMapper {
   /**
    * Converts world-space distance to normalized depth value (0-1)
    * using proper perspective projection mathematics.
-   * 
+   *
    * @param distance - World-space distance from camera
    * @param near - Camera near plane
    * @param far - Camera far plane
@@ -90,24 +107,24 @@ export class PerspectiveDepthMapper {
   static worldToNormalizedDepth(distance: number, near: number, far: number): number {
     // Clamp distance to valid range
     const clampedDistance = Math.max(near, Math.min(far, distance));
-    
+
     // Use inverse depth mapping for better precision distribution
     // This gives more precision to near objects (as GPU depth buffers do)
     // We map so that near=0 and far=1 for the normalized output
     const invNear = 1.0 / near;
     const invFar = 1.0 / far;
     const invDistance = 1.0 / clampedDistance;
-    
+
     // Map inverse depth linearly between near and far
     // Note: invNear > invFar, so we reverse the mapping
     const normalizedInverseDepth = (invNear - invDistance) / (invNear - invFar);
-    
+
     return normalizedInverseDepth;
   }
-  
+
   /**
    * Converts normalized depth value (0-1) back to world-space distance
-   * 
+   *
    * @param normalizedDepth - Normalized depth value (0-1) where 0=near, 1=far
    * @param near - Camera near plane
    * @param far - Camera far plane
@@ -116,22 +133,22 @@ export class PerspectiveDepthMapper {
   static normalizedDepthToWorld(normalizedDepth: number, near: number, far: number): number {
     // Clamp normalized depth to valid range
     const clamped = Math.max(0, Math.min(1, normalizedDepth));
-    
+
     // Reverse the inverse depth mapping
     const invNear = 1.0 / near;
     const invFar = 1.0 / far;
-    
+
     // Calculate inverse distance (reversing the normalization)
     const invDistance = invNear - clamped * (invNear - invFar);
-    
+
     // Return world distance
     return 1.0 / invDistance;
   }
-  
+
   /**
    * Alternative logarithmic depth mapping for better precision
    * This provides more uniform precision across the depth range.
-   * 
+   *
    * @param distance - World-space distance from camera
    * @param near - Camera near plane
    * @param far - Camera far plane
@@ -139,19 +156,19 @@ export class PerspectiveDepthMapper {
    */
   static worldToLogDepth(distance: number, near: number, far: number): number {
     const clampedDistance = Math.max(near, Math.min(far, distance));
-    
+
     // Logarithmic mapping
     const logNear = Math.log(near);
     const logFar = Math.log(far);
     const logDistance = Math.log(clampedDistance);
-    
+
     // Normalize to 0-1 range
     return (logDistance - logNear) / (logFar - logNear);
   }
-  
+
   /**
    * Convert logarithmic depth back to world distance
-   * 
+   *
    * @param logDepth - Normalized logarithmic depth (0-1)
    * @param near - Camera near plane
    * @param far - Camera far plane
@@ -159,13 +176,13 @@ export class PerspectiveDepthMapper {
    */
   static logDepthToWorld(logDepth: number, near: number, far: number): number {
     const clamped = Math.max(0, Math.min(1, logDepth));
-    
+
     const logNear = Math.log(near);
     const logFar = Math.log(far);
-    
+
     // Inverse logarithmic mapping
     const logDistance = logNear + clamped * (logFar - logNear);
-    
+
     return Math.exp(logDistance);
   }
 }
@@ -179,15 +196,15 @@ export function isBloomEffectTyped(effect: any): effect is BloomEffectTyped {
   // - radius is on mipmapBlurPass.radius
   // - threshold is on luminanceMaterial.threshold
   if (!effect) return false;
-  
+
   try {
     // Check for the key identifying properties of BloomEffect
     const hasIntensity = typeof effect.intensity === 'number' || effect.intensity !== undefined;
-    
+
     // Check for the sub-objects that contain other properties
     const hasMipmapBlurPass = effect.mipmapBlurPass !== undefined;
     const hasLuminanceMaterial = effect.luminanceMaterial !== undefined;
-    
+
     // A valid bloom effect should have intensity and at least one of the sub-objects
     return hasIntensity && (hasMipmapBlurPass || hasLuminanceMaterial);
   } catch {
@@ -204,10 +221,22 @@ export function isDepthOfFieldEffectTyped(effect: any): effect is DepthOfFieldEf
   return effect && 'bokehScale' in effect;
 }
 
-export function isChromaticAberrationEffectTyped(effect: any): effect is ChromaticAberrationEffectTyped {
+export function isChromaticAberrationEffectTyped(
+  effect: any
+): effect is ChromaticAberrationEffectTyped {
   return effect && 'offset' in effect;
 }
 
 export function isVignetteEffectTyped(effect: any): effect is VignetteEffectTyped {
   return effect && 'darkness' in effect && 'offset' in effect;
+}
+
+export function isLensDistortionEffectTyped(effect: any): effect is LensDistortionEffectTyped {
+  return (
+    effect &&
+    'distortion' in effect &&
+    'principalPoint' in effect &&
+    'focalLength' in effect &&
+    'skew' in effect
+  );
 }

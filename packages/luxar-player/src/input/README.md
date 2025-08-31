@@ -278,6 +278,7 @@ Always available regardless of context:
 | `O` | Open dataset browser                   |
 | `P` | Toggle performance stats               |
 | `R` | Toggle rendering controls              |
+| `C` | Toggle cinematic mode                  |
 
 #### Fly Mode
 
