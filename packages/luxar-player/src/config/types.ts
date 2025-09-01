@@ -20,6 +20,7 @@ export interface CameraConfig {
   fovMin: number;
   fovMax: number;
   fovSensitivity: number;
+  fovPresets: Record<string, number>;
 }
 
 /**
@@ -56,7 +57,7 @@ export interface PostProcessingConfig {
   hdr: {
     renderTargetType: typeof HalfFloatType;
   };
-  // Note: bloom configuration moved to RenderingConfig.bloom for consolidation
+  // Note: bloom configuration moved to RenderingSettings for centralization
   toneMapping: {
     initial: {
       outputColorSpace: typeof LinearSRGBColorSpace;
@@ -463,6 +464,12 @@ export interface DataLoadingConfig {
  * User-adjustable rendering settings that can be persisted
  */
 export interface RenderingSettings {
+  // Camera settings
+  fov: number;
+  fovPreset: '28mm Wide' | '35mm' | '50mm Normal' | '85mm Portrait' | '135mm Tele' | 'Custom';
+  near: number;
+  far: number;
+  // Rendering effects (bloom is now the single source of truth)
   bloomThreshold: number;
   bloomStrength: number;
   bloomRadius: number;
@@ -522,24 +529,7 @@ export interface RenderingControlsConfig {
   defaults: RenderingSettings;
 }
 
-/**
- * Bloom configuration - single source of truth
- */
-export interface BloomConfig {
-  strength: number; // Bloom intensity multiplier
-  radius: number; // Blur radius for bloom spread
-  threshold: number; // Luminance threshold (0-1)
-  levels: number; // Mipmap levels (1-12, quality/performance tradeoff)
-}
-
-/**
- * Main rendering configuration
- */
-export interface RenderingConfig {
-  hdrEnabled: boolean;
-  bloom: BloomConfig;
-  // Note: points configuration moved to ShaderConfig to avoid duplication
-}
+// Note: RenderingConfig removed - all rendering settings moved to RenderingSettings for centralization
 
 /**
  * WebGL context attributes
@@ -612,7 +602,6 @@ export interface AppConfig {
   camera: CameraConfig;
   animation: AnimationConfig;
   scene: SceneConfig;
-  rendering: RenderingConfig;
   shader: ShaderConfig;
   postProcessing: PostProcessingConfig;
   ui: UIConfig;

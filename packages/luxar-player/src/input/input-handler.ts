@@ -326,6 +326,13 @@ export class InputHandler {
     if (event.shiftKey) {
       event.preventDefault();
       this.sceneManager.updateFOV(event.deltaY);
+
+      // Update rendering controls display if available
+      if (this.renderingControls) {
+        // Shift+wheel FOV change should switch to Custom preset
+        (this.renderingControls as any).settings.fovPreset = 'Custom';
+        this.renderingControls.syncCurrentState();
+      }
     }
   }
 
@@ -418,7 +425,7 @@ export class InputHandler {
         }
         break;
 
-        // 'C' key removed - use 'F' to recenter on bounding box instead
+      // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':

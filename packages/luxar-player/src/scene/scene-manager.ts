@@ -19,7 +19,7 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
 } from '../utils/hdr-detection';
-import { validateFOV } from './scene-manager-utils';
+import { validateFOV, calculateClippingPlanes } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 
 /**
@@ -663,6 +663,67 @@ export class SceneManager extends THREE.EventDispatcher<{
         }
       }
     });
+  }
+
+  /**
+   * Update camera clipping planes with validation
+   */
+  updateClippingPlanes(near: number, far: number): void {
+    // Validate near/far relationship
+    if (near >= far) {
+      log.warning(Modules.SCENE_MANAGER, 'Near plane must be less than far plane');
+      return;
+    }
+
+    // Warn about Z-buffer precision if ratio is too high
+    const ratio = far / near;
+    if (ratio > 10000) {
+      log.warning(
+        Modules.SCENE_MANAGER,
+        `High near/far ratio (${ratio.toFixed(0)}:1) may cause Z-buffer precision issues. Consider adjusting clipping planes.`
+      );
+    }
+
+    // Update camera clipping planes
+    this.camera.near = near;
+    this.camera.far = far;
+    this.camera.updateProjectionMatrix();
+
+    log.info(
+      Modules.SCENE_MANAGER,
+      `Clipping planes updated - Near: ${near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
+    );
+  }
+
+  /**
+   * Auto-adjust clipping planes based on current scene bounds
+   */
+  autoAdjustClippingPlanes(): { near: number; far: number } {
+    // Calculate scene bounding box
+    const box = new THREE.Box3().setFromObject(this.scene);
+
+    if (box.isEmpty()) {
+      log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
+      return { near: config.camera.near, far: config.camera.far };
+    }
+
+    // Get camera distance to scene center
+    const center = box.getCenter(new THREE.Vector3());
+    const cameraDistance = this.camera.position.distanceTo(center);
+
+    // Use existing utility function
+    const { near, far } = calculateClippingPlanes(
+      {
+        min: { x: box.min.x, y: box.min.y, z: box.min.z },
+        max: { x: box.max.x, y: box.max.y, z: box.max.z },
+      },
+      cameraDistance
+    );
+
+    // Apply the calculated planes
+    this.updateClippingPlanes(near, far);
+
+    return { near, far };
   }
 
   /**

@@ -235,7 +235,7 @@ object.traverse((child) => {
 
 ### FOV Control
 
-The scene manager provides FOV adjustment with clamping:
+The scene manager provides comprehensive FOV management:
 
 ```typescript
 // Adjust FOV with mouse wheel + shift
@@ -244,6 +244,32 @@ sceneManager.updateFOV(delta);
 // FOV limits: 10° to 200°
 // Sensitivity: 0.05 per wheel unit
 ```
+
+**Professional FOV Presets** (35mm equivalent, horizontal FOV):
+
+- **28mm Wide** (75°): Ultra-wide for landscapes
+- **35mm** (63°): Wide angle for environmental shots
+- **50mm Normal** (47°): Natural human vision equivalent
+- **85mm Portrait** (29°): Telephoto for subject isolation
+- **135mm Tele** (18°): Strong telephoto for extreme focus
+
+### Clipping Plane Control
+
+Advanced Z-buffer management for optimal rendering precision:
+
+```typescript
+// Manual clipping plane adjustment
+sceneManager.updateClippingPlanes(near, far);
+
+// Auto-calculate optimal planes from scene bounds
+const { near, far } = sceneManager.autoAdjustClippingPlanes();
+```
+
+**Z-Buffer Best Practices:**
+
+- Keep near/far ratio under 10,000:1 for best precision
+- Use auto-adjust after loading new datasets
+- Lower near values see closer objects but reduce precision
 
 ### Centering Modes
 
@@ -520,17 +546,19 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method                 | Description             |
-| ---------------------- | ----------------------- |
-| `addToScene(object)`   | Add object to scene     |
-| `clearScene()`         | Remove all objects      |
-| `updateBoundingBox()`  | Recalculate bounds      |
-| `toggleCentering()`    | Switch center mode      |
-| `getCurrentCenter()`   | Get active center point |
-| `updateFOV(delta)`     | Adjust field of view    |
-| `setControlType(type)` | Switch control mode     |
-| `updateSize()`         | Handle resize           |
-| `dispose()`            | Clean up resources      |
+| Method                            | Description                           |
+| --------------------------------- | ------------------------------------- |
+| `addToScene(object)`              | Add object to scene                   |
+| `clearScene()`                    | Remove all objects                    |
+| `updateBoundingBox()`             | Recalculate bounds                    |
+| `toggleCentering()`               | Switch center mode                    |
+| `getCurrentCenter()`              | Get active center point               |
+| `updateFOV(delta)`                | Adjust field of view                  |
+| `updateClippingPlanes(near, far)` | Set camera clipping planes            |
+| `autoAdjustClippingPlanes()`      | Calculate optimal clipping from scene |
+| `setControlType(type)`            | Switch control mode                   |
+| `updateSize()`                    | Handle resize                         |
+| `dispose()`                       | Clean up resources                    |
 
 ### AnimationController
 

@@ -39,9 +39,14 @@ export function createTestCamera(aspectRatio: number = 1): THREE.PerspectiveCame
 }
 
 /**
- * Test bloom configuration - simplified structure
+ * Test bloom configuration - now from renderingControls.defaults
  */
-export const testBloomConfig = config.rendering.bloom;
+export const testBloomConfig = {
+  strength: config.renderingControls.defaults.bloomStrength,
+  radius: config.renderingControls.defaults.bloomRadius,
+  threshold: config.renderingControls.defaults.bloomThreshold,
+  levels: config.renderingControls.defaults.bloomLevels,
+};
 
 /**
  * Test control configuration

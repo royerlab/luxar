@@ -107,21 +107,20 @@ function validateRendering(config: AppConfig, errors: string[], _warnings: strin
  * Validate bloom configuration consistency
  */
 function validateBloomConsistency(config: AppConfig, _errors: string[], warnings: string[]): void {
-  const { rendering } = config;
-  const bloom = rendering.bloom;
+  const bloom = config.renderingControls.defaults;
 
   // Check bloom value ranges
-  if (bloom.strength < 0 || bloom.strength > 10) {
-    warnings.push(`Unusual bloom.strength: ${bloom.strength} (typical range 0-2)`);
+  if (bloom.bloomStrength < 0 || bloom.bloomStrength > 10) {
+    warnings.push(`Unusual bloom.bloomStrength: ${bloom.bloomStrength} (typical range 0-2)`);
   }
-  if (bloom.radius < 0 || bloom.radius > 10) {
-    warnings.push(`Unusual bloom.radius: ${bloom.radius} (typical range 0-2)`);
+  if (bloom.bloomRadius < 0 || bloom.bloomRadius > 10) {
+    warnings.push(`Unusual bloom.bloomRadius: ${bloom.bloomRadius} (typical range 0-2)`);
   }
-  if (bloom.threshold < 0 || bloom.threshold > 1) {
-    warnings.push(`Invalid bloom.threshold: ${bloom.threshold} (must be 0-1)`);
+  if (bloom.bloomThreshold < 0 || bloom.bloomThreshold > 1) {
+    warnings.push(`Invalid bloom.bloomThreshold: ${bloom.bloomThreshold} (must be 0-1)`);
   }
-  if (bloom.levels < 1 || bloom.levels > 12) {
-    warnings.push(`Invalid bloom.levels: ${bloom.levels} (must be 1-12)`);
+  if (bloom.bloomLevels < 1 || bloom.bloomLevels > 12) {
+    warnings.push(`Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be 1-12)`);
   }
 
   // No more duplication to check - single source of truth!
