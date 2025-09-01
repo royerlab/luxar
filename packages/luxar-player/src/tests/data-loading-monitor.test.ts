@@ -801,7 +801,7 @@ describe('DataLoadingMonitor', () => {
         expect.stringContaining('[DataLoadingMonitor] Disposal completed with errors:')
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to disconnect loader \'/failing\'')
+        expect.stringContaining("Failed to disconnect loader '/failing'")
       );
 
       // Verify that the normal loader was still cleaned up
