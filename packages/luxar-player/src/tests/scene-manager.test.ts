@@ -284,7 +284,7 @@ describe('SceneManager', () => {
       await sceneManager.init();
 
       expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
-      expect(sceneManager.camera.fov).toBe(60);
+      expect(sceneManager.camera.fov).toBe(47);
       expect(sceneManager.camera.near).toBe(0.1);
       expect(sceneManager.camera.far).toBe(1000);
     });

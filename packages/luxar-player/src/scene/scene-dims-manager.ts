@@ -1,6 +1,5 @@
 import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
-import { log, Modules } from '../utils/log';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
@@ -77,13 +76,24 @@ export class SceneDimsManager {
       }
     }
 
+    // Step 3: If still not found, look for the LuxarScene group specifically
+    if (!sceneDimensions) {
+      const luxarScene = scene.getObjectByName('LuxarScene');
+      if (luxarScene?.userData.sceneDimensions) {
+        sceneDimensions = luxarScene.userData.sceneDimensions;
+      }
+    }
+
     // Validation: Ensure we found valid dimension metadata
     if (!sceneDimensions?.dimensions) {
-      log.error(Modules.SCENE_DIMS, 'No scene dimensions found in scene or its children');
+      // Only log error if it's expected (not all scenes have dimensions)
+      // For 3D-only scenes, this is normal behavior
+      // This is normal for 3D-only scenes, no need to log as error
+      // The calling code will handle the false return appropriately
       return false;
     }
 
-    // Step 3: Parse and normalize dimension metadata
+    // Step 4: Parse and normalize dimension metadata
     const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: any) => ({
       name: dim.name,
       unit: dim.unit,
@@ -96,7 +106,7 @@ export class SceneDimsManager {
 
     const ndim = metadata.length;
 
-    // Step 4: Establish dimension ranges for navigation bounds
+    // Step 5: Establish dimension ranges for navigation bounds
     this.dimensionRanges = metadata.map((meta) => {
       if (meta.range) {
         return meta.range as [number, number];
@@ -105,7 +115,7 @@ export class SceneDimsManager {
       return [0, 1];
     });
 
-    // Step 5: Initialize dimension positions
+    // Step 6: Initialize dimension positions
     // Critical decision: non-displayed dimensions start at minimum for predictability
     const currentStep = new Array(ndim).fill(0);
 
@@ -117,7 +127,7 @@ export class SceneDimsManager {
       // Displayed dimensions start at 0 (camera will determine actual position)
     }
 
-    // Step 6: Identify which dimensions should be displayed in 3D scene
+    // Step 7: Identify which dimensions should be displayed in 3D scene
     const displayed: number[] = [];
     for (let i = 0; i < ndim; i++) {
       if (metadata[i].display === true && displayed.length < 3) {
@@ -125,7 +135,7 @@ export class SceneDimsManager {
       }
     }
 
-    // Step 7: Create the shared dimension state object
+    // Step 8: Create the shared dimension state object
     this.dims = {
       ndim,
       currentStep,
@@ -254,7 +264,7 @@ export class SceneDimsManager {
   reset(): void {
     this.dims = null;
     this.listeners.clear();
-    log.info('SceneDimensionManager', 'Scene dimension manager reset');
+    // Scene dimension manager has been reset
   }
 
   /**
