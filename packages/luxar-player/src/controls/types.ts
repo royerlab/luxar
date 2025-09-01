@@ -65,6 +65,11 @@ export interface GuiControllers {
  */
 export interface NavigationControllers {
   controlType?: Controller;
+  // Camera controls
+  fov?: Controller;
+  fovPreset?: Controller;
+  nearPlane?: Controller;
+  farPlane?: Controller;
   // Orbit controls
   autoRotate?: Controller;
   autoRotateSpeed?: Controller;

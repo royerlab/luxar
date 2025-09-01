@@ -60,30 +60,20 @@ camera: {
 }
 ```
 
-### Rendering Configuration
+### Shader Configuration
 
-HDR pipeline, bloom effects, and point rendering:
+Point rendering and HDR settings:
 
 ```typescript
-rendering: {
-  hdrEnabled: true,
-  bloom: {
-    strength: 0.25,           // Glow intensity
-    radius: 1.0,              // Glow spread
-    threshold: 0.01,          // Brightness trigger
-    levels: 8                 // Mipmap levels (1-12, quality vs performance)
-  }
-}
-
 shader: {
   points: {
-    size: 8.0,               // Base point size (pixels)
     hdrMultiplier: 16.0,     // HDR bloom multiplier
     baseAlpha: 0.01,         // Transparency
-    falloffSteepness: 20.0   // Edge softness
   }
 }
 ```
+
+**Note**: Bloom settings moved to `renderingControls.defaults` for centralization.
 
 ### Post-Processing Pipeline
 
@@ -224,7 +214,7 @@ import type { AppConfig, RenderingSettings } from '../config';
 
 // Access specific configuration sections
 const cameraSettings = config.camera;
-const bloomSettings = config.rendering.bloom;
+const bloomSettings = config.renderingControls.defaults;
 ```
 
 ### Using Configuration in Components
@@ -240,9 +230,9 @@ const camera = new THREE.PerspectiveCamera(
 
 // In PostProcessing
 const bloomEffect = new BloomEffect({
-  intensity: config.rendering.bloom.strength,
-  luminanceThreshold: config.rendering.bloom.threshold,
-  levels: config.rendering.bloom.levels,
+  intensity: config.renderingControls.defaults.bloomStrength,
+  luminanceThreshold: config.renderingControls.defaults.bloomThreshold,
+  levels: config.renderingControls.defaults.bloomLevels,
   // radius is set on mipmapBlurPass after creation
 });
 ```
@@ -253,9 +243,12 @@ const bloomEffect = new BloomEffect({
 // For development or testing, create modified config
 const testConfig = {
   ...config,
-  rendering: {
-    ...config.rendering,
-    hdrEnabled: false, // Disable HDR for testing
+  renderingControls: {
+    ...config.renderingControls,
+    defaults: {
+      ...config.renderingControls.defaults,
+      bloomStrength: 0.1, // Reduce bloom for testing
+    },
   },
 };
 ```
@@ -269,11 +262,14 @@ interface AppConfig {
   camera: CameraConfig;
   animation: AnimationConfig;
   scene: SceneConfig;
-  rendering: RenderingConfig;
   shader: ShaderConfig;
   postProcessing: PostProcessingConfig;
   ui: UIConfig;
   renderingControls: RenderingControlsConfig;
+  controls: ControlsConfig;
+  input: InputConfig;
+  dataLoading: DataLoadingConfig;
+  webgl: WebGLConfig;
   defaultZarrPath: string;
   canvasId: string;
 }

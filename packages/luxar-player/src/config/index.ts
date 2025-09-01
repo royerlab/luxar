@@ -15,13 +15,22 @@ import type { AppConfig } from './types';
 export const config: AppConfig = {
   // Camera configuration for 3D perspective and navigation
   camera: {
-    fov: 60, // Field of view in degrees - 60° provides natural human-like viewing angle
+    fov: 47, // Field of view in degrees - 47° equivalent to 50mm Normal lens (natural human vision)
     near: 0.1, // Near clipping plane distance - objects closer than this are not rendered
     far: 1000, // Far clipping plane distance - objects further than this are not rendered
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
     fovMax: 200, // Maximum field of view for zoom limits - prevents excessive zoom-out
     fovSensitivity: 0.05, // FOV change sensitivity for Shift+wheel input - lower = finer control
+    // FOV presets based on 35mm equivalent focal lengths (horizontal FOV - photography standard)
+    fovPresets: {
+      '28mm Wide': 75, // Wide angle - 75° horizontal FOV, good for large scenes and landscapes
+      '35mm': 63, // Wide normal - 63° horizontal FOV, comfortable wide viewing
+      '50mm Normal': 47, // Normal lens - 47° horizontal FOV, closest to human vision
+      '85mm Portrait': 29, // Portrait lens - 29° horizontal FOV, good for isolating subjects
+      '135mm Tele': 18, // Telephoto - 18° horizontal FOV, extreme subject isolation
+      Custom: -1, // Custom value - preserves current FOV slider setting
+    },
   },
 
   // Animation loop and performance optimization settings
@@ -37,19 +46,7 @@ export const config: AppConfig = {
     defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
   },
 
-  // HDR post-processing and rendering configuration
-  rendering: {
-    hdrEnabled: true, // Enable HDR post-processing pipeline with bloom effects
-
-    // Unified bloom configuration - single source of truth
-    bloom: {
-      strength: 0.25, // Bloom intensity - how strong the glow effect appears
-      radius: 1.0, // Bloom radius - how far the glow spreads from bright areas
-      threshold: 0.01, // Bloom threshold - brightness level required to trigger bloom
-      levels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
-    },
-    // Note: Point rendering settings moved to shader.points to avoid duplication
-  },
+  // Note: Rendering configuration moved to renderingControls.defaults for centralization
 
   // Shader configuration for point rendering
   shader: {
@@ -64,7 +61,7 @@ export const config: AppConfig = {
     hdr: {
       renderTargetType: THREE.HalfFloatType, // Use 16-bit float for HDR precision without banding
     },
-    // Note: bloom settings moved to rendering.bloom for consolidation
+    // Note: bloom settings moved to renderingControls.defaults for centralization
 
     toneMapping: {
       initial: {
@@ -246,10 +243,15 @@ export const config: AppConfig = {
   // Rendering controls configuration with user-adjustable defaults
   renderingControls: {
     defaults: {
-      // Bloom settings
+      // Camera settings
+      fov: 47, // Field of view in degrees (50mm Normal, default matches camera.fov)
+      fovPreset: '50mm Normal', // Default to normal lens equivalent
+      near: 0.1, // Near clipping plane (default matches camera.near)
+      far: 1000, // Far clipping plane (default matches camera.far)
+      // Bloom settings - single source of truth (moved from config.rendering.bloom)
       bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom
-      bloomStrength: 0.5, // Bloom intensity multiplier
-      bloomRadius: 0.6, // Blur radius for bloom spread (in mipmap blur units)
+      bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)
+      bloomRadius: 1.0, // Blur radius for bloom spread (moved from rendering.bloom)
       bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
       hdrMultiplier: 16.0, // HDR intensity multiplier
       fxaaEnabled: false, // FXAA disabled by default

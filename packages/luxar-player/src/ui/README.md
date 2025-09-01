@@ -82,10 +82,10 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 **Control Categories:**
 
-- **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration
+- **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration, lens distortion
 - **Anti-Aliasing**: FXAA, SMAA, MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
-- **Camera**: FOV, centering modes
+- **Camera**: FOV presets (28mm-135mm equivalents), manual FOV control, clipping plane adjustments
 - **Materials**: Opacity, gamma, blending modes
 
 **Panel Layout:**
@@ -101,6 +101,13 @@ Rendering Controls
 │       ├── Movement Speed (slider)
 │       ├── Rotation Speed (slider)
 │       └── Inertial Mode □
+├── Camera
+│   ├── FOV Preset (dropdown: 28mm/35mm/50mm/85mm/135mm/Custom)
+│   ├── Field of View (slider, 10°-200°)
+│   └── Clipping Planes ▼
+│       ├── Near Plane (slider, 0.001-10.0)
+│       ├── Far Plane (slider, 10-10000)
+│       └── Auto Adjust (button)
 ├── HDR
 │   ├── Intensity (slider)
 │   └── Tone Mapping (type selector)

@@ -65,11 +65,6 @@ export class RenderingControls {
     this.sceneManager = sceneManager;
     this.settings = {
       ...config.renderingControls.defaults,
-      // Override bloom settings with values from rendering.bloom
-      bloomThreshold: config.rendering.bloom.threshold,
-      bloomStrength: config.rendering.bloom.strength,
-      bloomRadius: config.rendering.bloom.radius,
-      bloomLevels: config.rendering.bloom.levels,
       // Add fly control defaults from config.controls.fly
       flyMovementSpeed: config.controls.fly.movement.speed.default,
       flyRotationSpeed: config.controls.fly.rotation.speed.default,
@@ -331,6 +326,176 @@ export class RenderingControls {
       flyDampingControl.hide();
       flyRotationDampingControl.hide();
     }
+
+    // Camera folder - for camera-specific settings
+    const cameraFolder = this.gui.addFolder('Camera');
+    cameraFolder.open();
+
+    // FOV Preset dropdown
+    const presetOptions = Object.keys(config.camera.fovPresets);
+    const fovPresetControl = cameraFolder
+      .add(this.settings, 'fovPreset', presetOptions)
+      .name('FOV Preset')
+      .onChange((presetName: string) => {
+        const fovValue = config.camera.fovPresets[presetName];
+        if (fovValue > 0) {
+          // Apply preset FOV
+          this.settings.fov = fovValue;
+
+          // Calculate delta and apply to camera
+          const currentFOV = this.sceneManager.camera.fov;
+          const delta = (fovValue - currentFOV) / config.camera.fovSensitivity;
+          this.sceneManager.updateFOV(delta);
+
+          // Update FOV slider display
+          if (this.controllers.fov) {
+            this.controllers.fov.setValue(fovValue);
+            this.controllers.fov.updateDisplay();
+          }
+        }
+
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Store reference for updates
+    this.controllers.fovPreset = fovPresetControl;
+
+    // Set tooltip for FOV presets
+    fovPresetControl.domElement.setAttribute(
+      'title',
+      'FOV Preset: Professional camera lens equivalents (horizontal FOV)\n' +
+        '• 28mm Wide (75°): Ultra-wide angle for landscapes and large scenes\n' +
+        '• 35mm (63°): Wide angle for environmental shots\n' +
+        '• 50mm Normal (47°): Natural human vision equivalent\n' +
+        '• 85mm Portrait (29°): Telephoto for subject isolation\n' +
+        '• 135mm Tele (18°): Strong telephoto for extreme focus\n' +
+        '• Custom: Manual FOV control via slider or Shift+Wheel'
+    );
+
+    const fovControl = cameraFolder
+      .add(this.settings, 'fov', config.camera.fovMin, config.camera.fovMax, 1)
+      .name('Field of View')
+      .onChange((value: number) => {
+        // When FOV slider changes, switch to Custom preset
+        this.settings.fovPreset = 'Custom';
+        if (this.controllers.fovPreset) {
+          this.controllers.fovPreset.setValue('Custom');
+          this.controllers.fovPreset.updateDisplay();
+        }
+
+        // Calculate the delta needed to reach the target FOV
+        const currentFOV = this.sceneManager.camera.fov;
+        const targetFOV = value;
+        const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
+
+        // Use the existing updateFOV method which handles bounds checking and material updates
+        this.sceneManager.updateFOV(delta);
+
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Store reference for updates
+    this.controllers.fov = fovControl;
+
+    // Set tooltip for FOV control
+    fovControl.domElement.setAttribute(
+      'title',
+      'Field of View: Camera viewing angle in degrees\n' +
+        '• Lower values: Telephoto lens effect (narrow view)\n' +
+        '• Higher values: Wide-angle lens effect (broader view)\n' +
+        '• 60° provides natural human-like viewing angle\n' +
+        '• Also controllable with Shift+Wheel for fine adjustment\n' +
+        '• Maintains world-space point sizing (points stay same physical size)'
+    );
+
+    // Clipping Planes sub-folder
+    const clippingFolder = cameraFolder.addFolder('Clipping Planes');
+    clippingFolder.close(); // Collapsed by default (advanced setting)
+
+    const nearPlaneControl = clippingFolder
+      .add(this.settings, 'near', 0.001, 10.0, 0.001)
+      .name('Near Plane')
+      .onChange((value: number) => {
+        // Validate near plane is less than far plane
+        if (value >= this.settings.far) {
+          log.warning(Modules.RENDERER, 'Near plane must be less than far plane');
+          return;
+        }
+        this.sceneManager.updateClippingPlanes(value, this.settings.far);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    const farPlaneControl = clippingFolder
+      .add(this.settings, 'far', 10, 10000, 1)
+      .name('Far Plane')
+      .onChange((value: number) => {
+        // Validate far plane is greater than near plane
+        if (value <= this.settings.near) {
+          log.warning(Modules.RENDERER, 'Far plane must be greater than near plane');
+          return;
+        }
+        this.sceneManager.updateClippingPlanes(this.settings.near, value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Store references for updates
+    this.controllers.nearPlane = nearPlaneControl;
+    this.controllers.farPlane = farPlaneControl;
+
+    // Set tooltips for clipping planes
+    nearPlaneControl.domElement.setAttribute(
+      'title',
+      'Near Clipping Plane: Closest visible distance\n' +
+        '• Objects closer than this are not rendered\n' +
+        '• Lower values: See objects very close to camera\n' +
+        '• Higher values: Better Z-buffer precision\n' +
+        '• Too low can cause Z-fighting artifacts'
+    );
+
+    farPlaneControl.domElement.setAttribute(
+      'title',
+      'Far Clipping Plane: Furthest visible distance\n' +
+        '• Objects further than this are not rendered\n' +
+        '• Higher values: See distant objects\n' +
+        '• Lower values: Better Z-buffer precision\n' +
+        '• Keep near/far ratio under 10,000:1 for best precision'
+    );
+
+    // Auto-adjust clipping planes button
+    const autoAdjustButton = {
+      'Auto Adjust': () => {
+        const { near, far } = this.sceneManager.autoAdjustClippingPlanes();
+        this.settings.near = near;
+        this.settings.far = far;
+
+        // Update controls display
+        if (this.controllers.nearPlane) {
+          this.controllers.nearPlane.setValue(near);
+          this.controllers.nearPlane.updateDisplay();
+        }
+        if (this.controllers.farPlane) {
+          this.controllers.farPlane.setValue(far);
+          this.controllers.farPlane.updateDisplay();
+        }
+
+        this.saveSettings();
+        this.triggerAnimation();
+      },
+    };
+
+    const autoAdjustControl = clippingFolder.add(autoAdjustButton, 'Auto Adjust');
+    autoAdjustControl.domElement.setAttribute(
+      'title',
+      'Auto Adjust: Calculate optimal clipping planes\n' +
+        '• Analyzes current scene bounds\n' +
+        '• Sets near/far planes for best Z-buffer precision\n' +
+        '• Prevents Z-fighting while maximizing depth range\n' +
+        '• Recommended after loading new datasets'
+    );
 
     // HDR folder
     const hdrFolder = this.gui.addFolder('HDR');
@@ -1342,11 +1507,6 @@ export class RenderingControls {
         // This is critical - replacing the entire settings object breaks the GUI bindings
         Object.assign(this.settings, {
           ...config.renderingControls.defaults,
-          // Override bloom settings with values from rendering.bloom
-          bloomThreshold: config.rendering.bloom.threshold,
-          bloomStrength: config.rendering.bloom.strength,
-          bloomRadius: config.rendering.bloom.radius,
-          bloomLevels: config.rendering.bloom.levels,
           // Add fly control defaults from config.controls.fly
           flyMovementSpeed: config.controls.fly.movement.speed.default,
           flyRotationSpeed: config.controls.fly.rotation.speed.default,
@@ -1373,6 +1533,19 @@ export class RenderingControls {
    * This ensures the GUI reflects the actual state when opened
    */
   public syncCurrentState(): void {
+    // Sync camera settings
+    this.settings.fov = this.sceneManager.camera.fov;
+    this.settings.near = this.sceneManager.camera.near;
+    this.settings.far = this.sceneManager.camera.far;
+
+    // Check if current FOV matches any preset
+    const currentPreset = Object.entries(config.camera.fovPresets).find(
+      ([_, fovValue]) => fovValue > 0 && Math.abs(fovValue - this.settings.fov) < 0.5
+    );
+    this.settings.fovPreset = (
+      currentPreset ? currentPreset[0] : 'Custom'
+    ) as typeof this.settings.fovPreset;
+
     // Get current control type
     const currentControlType = this.sceneManager.controls.getControlType();
     this.settings.controlType = currentControlType;
@@ -1440,6 +1613,26 @@ export class RenderingControls {
     if (this.controllers.autoRotateSpeed) {
       this.controllers.autoRotateSpeed.setValue(this.settings.autoRotateSpeed);
       this.controllers.autoRotateSpeed.updateDisplay();
+    }
+
+    if (this.controllers.fov) {
+      this.controllers.fov.setValue(this.settings.fov);
+      this.controllers.fov.updateDisplay();
+    }
+
+    if (this.controllers.fovPreset) {
+      this.controllers.fovPreset.setValue(this.settings.fovPreset);
+      this.controllers.fovPreset.updateDisplay();
+    }
+
+    if (this.controllers.nearPlane) {
+      this.controllers.nearPlane.setValue(this.settings.near);
+      this.controllers.nearPlane.updateDisplay();
+    }
+
+    if (this.controllers.farPlane) {
+      this.controllers.farPlane.setValue(this.settings.far);
+      this.controllers.farPlane.updateDisplay();
     }
 
     // Update all other controllers
@@ -1768,6 +1961,14 @@ export class RenderingControls {
     this.settings.chromaticAberrationEnabled = shouldEnableAll;
     this.settings.lensDistortionEnabled = shouldEnableAll;
 
+    // FOV switching: 35mm for cinematic, 50mm Normal for regular
+    const targetFOV = shouldEnableAll
+      ? config.camera.fovPresets['35mm'] // 63° - Wide angle for cinematic
+      : config.camera.fovPresets['50mm Normal']; // 47° - Normal for regular use
+
+    this.settings.fov = targetFOV;
+    this.settings.fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
+
     // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
     this.postProcessing.startDeferRebuild();
 
@@ -1803,6 +2004,13 @@ export class RenderingControls {
     // End deferred mode and trigger single rebuild with all effects
     this.postProcessing.endDeferRebuild();
 
+    // Apply FOV change to camera
+    const currentFOV = this.sceneManager.camera.fov;
+    if (Math.abs(currentFOV - targetFOV) > 0.5) {
+      const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
+      this.sceneManager.updateFOV(delta);
+    }
+
     // Update GUI to reflect new state
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
@@ -1819,10 +2027,11 @@ export class RenderingControls {
 
     // Log the action
     const modeText = shouldEnableAll ? 'enabled' : 'disabled';
+    const fovText = shouldEnableAll ? '35mm (63°)' : '50mm Normal (47°)';
     log.info(
       Modules.RENDERER,
       `Cinematic mode ${modeText}: noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
-        `chromatic aberration=${shouldEnableAll}, lens distortion=${shouldEnableAll}`
+        `chromatic aberration=${shouldEnableAll}, lens distortion=${shouldEnableAll}, FOV=${fovText}`
     );
   }
 
