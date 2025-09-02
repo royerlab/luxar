@@ -76,7 +76,7 @@ export const config: AppConfig = {
 
   // 3D scene visual configuration
   scene: {
-    backgroundColor: 0x111111, // Background color in hexadecimal - dark gray for good contrast with point clouds
+    backgroundColor: 0x111111, // Background color in hexadecimal - dark gray for good contrast with points
     defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
   },
 
@@ -495,7 +495,7 @@ export const config: AppConfig = {
       precision: 'highp' as const, // High precision for better quality
       premultipliedAlpha: true, // Standard alpha blending
       shadowMap: {
-        enabled: false, // No shadows needed for point clouds
+        enabled: false, // No shadows needed for points
         type: THREE.PCFSoftShadowMap, // Soft shadows if enabled
       },
     },

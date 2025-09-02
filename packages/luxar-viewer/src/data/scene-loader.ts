@@ -2,7 +2,7 @@
  * Unified scene loader that orchestrates the loading of complete Luxar scenes.
  *
  * This loader handles the entire scene graph, using spatial index-based
- * loading for all point cloud nodes and managing the THREE.js scene construction.
+ * loading for all points nodes and managing the THREE.js scene construction.
  */
 
 import * as zarr from 'zarrita';
@@ -13,7 +13,7 @@ import {
   ViewState,
   SceneNode,
   LoaderConfig,
-  PointCloudData,
+  PointsData,
 } from './data-loader-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
@@ -101,7 +101,7 @@ export class SceneLoader {
     // Build scene graph
     const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
 
-    // Load point clouds
+    // Load points
     await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
 
     // Force update the monitor UI after all loaders are connected
@@ -118,7 +118,7 @@ export class SceneLoader {
   }
 
   /**
-   * Update all point clouds for a new view state
+   * Update all points for a new view state
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     this.viewState = { ...this.viewState, ...viewState };
@@ -128,10 +128,10 @@ export class SceneLoader {
     // Update all loaders with new view state
     const updates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
       try {
-        const pointCloud = await loader.updateView(this.viewState);
+        const points = await loader.updateView(this.viewState);
         // Always update geometry, even when empty (to clear old points)
-        if (pointCloud) {
-          this.updatePointCloudGeometry(path, pointCloud);
+        if (points) {
+          this.updatePointsGeometry(path, points);
         }
       } catch (error) {
         // Don't update geometry if load failed - prevents memory leak
@@ -215,10 +215,10 @@ export class SceneLoader {
     parentLoc: zarr.Location<zarr.Readable>
   ): Promise<void> {
     if (node.type === 'points') {
-      // Load point cloud
-      const pointCloud = await this.loadPointCloud(node, parentLoc);
-      if (pointCloud) {
-        parentThree.add(pointCloud);
+      // Load points
+      const points = await this.loadPoints(node, parentLoc);
+      if (points) {
+        parentThree.add(points);
       }
     } else if (node.children) {
       // Create group and recurse
@@ -241,13 +241,13 @@ export class SceneLoader {
   }
 
   /**
-   * Load a single point cloud node
+   * Load a single points node
    */
-  private async loadPointCloud(
+  private async loadPoints(
     node: SceneNode,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Points | null> {
-    log.custom('📍', Modules.SCENE_LOADER, `Loading point cloud: ${node.path}`);
+    log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
     log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
     log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.num_points || 'unknown'}`);
 
@@ -258,7 +258,7 @@ export class SceneLoader {
     this.loaders.set(node.path, loader);
 
     try {
-      // Load point cloud data
+      // Load points data
       log.info(Modules.SCENE_LOADER, 'Initial ViewState for loading:');
       log.info(Modules.SCENE_LOADER, `  displayDims: [${this.viewState.displayDims.join(', ')}]`);
       log.info(
@@ -266,7 +266,7 @@ export class SceneLoader {
         `  slicePosition: [${this.viewState.slicePosition.join(', ')}]`
       );
       log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
-      const data = await loader.loadPointCloud(this.viewState);
+      const data = await loader.loadPoints(this.viewState);
 
       // Create THREE.js geometry even if empty (for future updates)
       const geometry = this.createGeometry(data);
@@ -330,9 +330,9 @@ export class SceneLoader {
   }
 
   /**
-   * Create THREE.js geometry from point cloud data
+   * Create THREE.js geometry from points data
    */
-  private createGeometry(data: PointCloudData): THREE.BufferGeometry {
+  private createGeometry(data: PointsData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     // Set positions (handle Float16Array conversion if needed)
@@ -454,7 +454,7 @@ export class SceneLoader {
   }
 
   /**
-   * Create material for point cloud
+   * Create material for points
    */
   private createMaterial(
     attrs: any,
@@ -492,9 +492,9 @@ export class SceneLoader {
   }
 
   /**
-   * Update geometry for a specific point cloud
+   * Update geometry for a specific points
    */
-  private updatePointCloudGeometry(path: string, data: PointCloudData): void {
+  private updatePointsGeometry(path: string, data: PointsData): void {
     if (!this.rootGroup) return;
 
     // Find the points object

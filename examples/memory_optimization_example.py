@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Memory optimization example using different data types.
 
-This example demonstrates how to use different data types for Luxar point clouds
+This example demonstrates how to use different data types for Luxar points
 to optimize memory usage and bandwidth. It shows the trade-offs between precision
 and memory efficiency.
 """
@@ -17,7 +17,7 @@ from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
 
 
 def create_test_data(n_points: int = 100000):
-    """Create test point cloud data with known ranges."""
+    """Create test points data with known ranges."""
     # Create positions in a reasonable range (can use float16)
     positions = np.random.randn(n_points, 3).astype(np.float32) * 10
 

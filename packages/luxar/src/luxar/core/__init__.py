@@ -1,4 +1,4 @@
-"""Core data structures for Luxar scene graph and point clouds."""
+"""Core data structures for Luxar scene graph and points."""
 
 from .dimensions import Dimension, Dimensions
 from .node import Node

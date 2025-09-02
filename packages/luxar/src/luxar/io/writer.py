@@ -47,7 +47,7 @@ class ZarrWriterProtocol(Protocol):
         sharpness: Optional[ScalarArray] = None,
         **attrs: Any,
     ) -> PointsMetadata:
-        """Write point cloud data immediately to Zarr.
+        """Write points data immediately to Zarr.
 
         Data is written directly to disk without being kept in memory.
         Only metadata about the written data is returned.
@@ -59,12 +59,12 @@ class ZarrWriterProtocol(Protocol):
         - CUSTOM mode: Uses explicitly specified dtypes
 
         Args:
-            path: Path within the Zarr store for this point cloud
+            path: Path within the Zarr store for this points
             positions: Point positions array of shape (N, D) - float32 or float16
             colors: Optional colors array of shape (N, 3) - float32 (HDR), uint8/uint16 (SDR)
             radii: Optional radii array of shape (N,) - float32, float16, or uint8
             sharpness: Optional sharpness array of shape (N,) - float32, float16, or uint8
-            **attrs: Additional attributes for the point cloud
+            **attrs: Additional attributes for the points
 
         Returns:
             Dictionary containing only metadata about the written data:

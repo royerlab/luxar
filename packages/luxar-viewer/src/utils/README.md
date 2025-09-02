@@ -213,7 +213,7 @@ const [primaryDim, secondaryDim] = getNavigableDimensions(dims);
 
 // Step through dimension and update visualization if changed
 if (stepDimension(dims, primaryDim, direction, ranges)) {
-  updatePointCloudSlice(points, positions, colors, radii, sharpness, dims, numPoints);
+  updatePointsSlice(points, positions, colors, radii, sharpness, dims, numPoints);
 }
 ```
 

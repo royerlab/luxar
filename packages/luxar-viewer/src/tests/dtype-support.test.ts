@@ -1,10 +1,10 @@
 /**
- * Tests for data type support in point cloud loading
+ * Tests for data type support in points loading
  */
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PointCloudData } from '../data/data-loader-types';
+import { PointsData } from '../data/data-loader-types';
 
 describe('Data Type Support', () => {
   describe('TypedArray type detection', () => {
@@ -60,10 +60,10 @@ describe('Data Type Support', () => {
     });
   });
 
-  describe('PointCloudData with different dtypes', () => {
+  describe('PointsData with different dtypes', () => {
     it('should handle Float32Array positions', () => {
       const positions = new Float32Array([1, 2, 3, 4, 5, 6]);
-      const data: PointCloudData = {
+      const data: PointsData = {
         positions,
         metadata: {
           totalPoints: 2,
@@ -85,7 +85,7 @@ describe('Data Type Support', () => {
       const positions = new Float32Array([1, 2, 3]);
       const colors = new Uint8Array([255, 128, 0]);
 
-      const data: PointCloudData = {
+      const data: PointsData = {
         positions,
         colors,
         metadata: {
@@ -111,7 +111,7 @@ describe('Data Type Support', () => {
       const radii = new Uint8Array([255, 128]);
       const sharpness = new Float32Array([2.0, 3.0]);
 
-      const data: PointCloudData = {
+      const data: PointsData = {
         positions,
         colors,
         radii,

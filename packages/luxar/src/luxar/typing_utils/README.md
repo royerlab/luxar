@@ -12,7 +12,7 @@ This package centralizes all type-related code to ensure consistency and type sa
 Protocol definitions, dataclasses, validation functions, and type guards.
 
 **Key Components:**
-- **Protocols**: `CompressorProtocol`, `ZarrGroupProtocol`, `NodeProtocol`, `PointCloudProtocol`, `SceneProtocol`
+- **Protocols**: `CompressorProtocol`, `ZarrGroupProtocol`, `NodeProtocol`, `PointsProtocol`, `SceneProtocol`
 - **Dataclasses**: `DimensionMetadata`
 - **Validation Functions**: `validate_positions()`, `validate_colors()`, `validate_transform()`, etc.
 - **Type Guards**: `is_position_array()`, `is_color_array()`, `is_transform_matrix()`

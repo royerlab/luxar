@@ -316,7 +316,7 @@ class TestCompilerIntegration:
         assert scene_dims[3]["spatial"] is True  # depth
         assert scene_dims[4]["spatial"] is False  # time
 
-        # Check point cloud node has spatial_extend_dims
+        # Check points node has spatial_extend_dims
         points_node = store["test_points"]
         if "spatial_extend_dims" in points_node.attrs:
             assert points_node.attrs["spatial_extend_dims"] == [

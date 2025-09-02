@@ -29,7 +29,7 @@ Demo scene generators for examples and testing.
 
 **Key Functions:**
 - `create_lorenz_attractor()`: Generate Lorenz attractor visualization
-- `create_random_spheres()`: Create random spherical point clouds
+- `create_random_spheres()`: Create random spherical points
 - `create_time_series_demo()`: Generate time-varying data
 
 **Features:**
@@ -137,7 +137,7 @@ def create_random_spheres(
     points_per_sphere: int = 1000
 ) -> None:
 ```
-Creates multiple spherical point clouds:
+Creates multiple spherical points:
 - Random positions and sizes
 - Different colors per sphere
 - Hierarchical organization

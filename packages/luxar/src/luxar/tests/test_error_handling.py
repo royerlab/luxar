@@ -388,7 +388,7 @@ class TestRecoveryStrategies:
                 positions_7d = np.random.randn(25, 7).astype(np.float32)
                 scene.add_points("points_7d", positions_7d)
 
-            # Verify all point clouds were written with their respective dimensions
+            # Verify all points were written with their respective dimensions
             import zarr
 
             store = zarr.open_group(zarr_path, mode="r")

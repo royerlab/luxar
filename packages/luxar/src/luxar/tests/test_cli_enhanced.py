@@ -157,10 +157,10 @@ class TestCLIUtils:
         assert info["n_groups"] >= 4  # At least the hierarchy groups
         assert info["n_arrays"] > 0
         assert info["n_points_total"] == 225  # 50 + 100 + 75
-        assert len(info["point_clouds"]) == 3
+        assert len(info["points_objects"]) == 3
 
-        # Check point cloud details
-        for pc in info["point_clouds"]:
+        # Check points details
+        for pc in info["points_objects"]:
             assert "n_points" in pc
             assert "n_dims" in pc
             assert pc["n_dims"] == 3

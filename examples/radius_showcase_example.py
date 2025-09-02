@@ -2,7 +2,7 @@
 """
 Comprehensive example showcasing the point radius feature in Luxar.
 
-This script generates several point cloud examples with varying radii to demonstrate
+This script generates several points examples with varying radii to demonstrate
 the new per-point radius functionality. The examples include:
 1. Size gradient - points that grow from small to large
 2. Distance-based sizing - points sized based on distance from center

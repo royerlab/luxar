@@ -7,7 +7,7 @@ This example demonstrates:
 - Undulating rainbow colors across temporal frames
 - Pulsating point sizes with spatial patterns
 - Dynamic sharpness variations
-- High-density point cloud (200,000 points per frame × 256 frames)
+- High-density points (200,000 points per frame × 256 frames)
 """
 
 from pathlib import Path

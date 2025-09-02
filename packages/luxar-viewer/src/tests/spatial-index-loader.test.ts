@@ -180,7 +180,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(loadSpatialIndex).toHaveBeenCalledWith(mockZarrLocation);
       expect(zarr.open).toHaveBeenCalledTimes(4); // positions, colors, radii, sharpness
@@ -211,7 +211,7 @@ describe('SpatialIndexLoader', () => {
       };
 
       // Should not throw - creates a dummy spatial index instead
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
       expect(result).toBeDefined();
       expect(result.positions).toBeDefined();
     });
@@ -233,7 +233,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const result = await testLoader.loadPointCloud(viewState);
+      const result = await testLoader.loadPoints(viewState);
 
       expect(result.positions).toBeDefined();
       expect(result.colors).toBeFalsy(); // Can be null or undefined
@@ -252,9 +252,9 @@ describe('SpatialIndexLoader', () => {
 
       // Start multiple loads concurrently
       const promises = [
-        loader.loadPointCloud(viewState),
-        loader.loadPointCloud(viewState),
-        loader.loadPointCloud(viewState),
+        loader.loadPoints(viewState),
+        loader.loadPoints(viewState),
+        loader.loadPoints(viewState),
       ];
 
       await Promise.all(promises);
@@ -272,7 +272,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.2],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(querySpatialIndex).toHaveBeenCalledWith(
         mockSpatialIndex,
@@ -281,7 +281,7 @@ describe('SpatialIndexLoader', () => {
       );
     });
 
-    it('should return empty point cloud when no points visible', async () => {
+    it('should return empty points when no points visible', async () => {
       (querySpatialIndex as any).mockReturnValue([]);
 
       const viewState: ViewState = {
@@ -290,7 +290,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.01],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       expect(result.metadata.loadedPoints).toBe(0);
       expect(result.positions.length).toBe(0);
@@ -314,7 +314,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.5],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(mergePointRanges).toHaveBeenCalled();
     });
@@ -343,7 +343,7 @@ describe('SpatialIndexLoader', () => {
       };
 
       // Should not call querySpatialIndex but return all points
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       // When broadcasting, returns all points
       expect(result.metadata.totalPoints).toBeGreaterThan(0);
@@ -366,7 +366,7 @@ describe('SpatialIndexLoader', () => {
         },
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(querySpatialIndex).toHaveBeenCalled();
     });
@@ -384,7 +384,7 @@ describe('SpatialIndexLoader', () => {
       const cache = (loader as any).cache;
       cache.get.mockReturnValue(null);
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(cache.get).toHaveBeenCalled();
       expect(cache.set).toHaveBeenCalled();
@@ -395,7 +395,7 @@ describe('SpatialIndexLoader', () => {
       // Second load - cache hit
       cache.get.mockReturnValue(new Float32Array([1, 2, 3]));
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       // Should not call zarr.get again if cache hit
       expect(cache.get).toHaveBeenCalled();
@@ -451,7 +451,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       // Check that projection happened (should have 3D positions)
       expect(result.positions).toBeDefined();
@@ -466,7 +466,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0.1, 0, 0, 0],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       expect(result.metadata.ndim).toBe(4);
       expect(result.positions).toBeDefined();
@@ -480,7 +480,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0.1, 0.1],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       // Third dimension should be filled with zeros
       expect(result.positions.length % 3).toBe(0);
@@ -498,7 +498,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -518,7 +518,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       // Should emit cache miss (first load)
       expect(listener).toHaveBeenCalledWith(
@@ -541,7 +541,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const loadPromise = loader.loadPointCloud(viewState);
+      const loadPromise = loader.loadPoints(viewState);
 
       // Give a tiny bit of time for the query to start
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -564,7 +564,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       const metrics = loader.getMetrics();
 
@@ -588,7 +588,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Error in event listener'),
@@ -612,7 +612,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await expect(errorLoader.loadPointCloud(viewState)).rejects.toThrow('Failed to open');
+      await expect(errorLoader.loadPoints(viewState)).rejects.toThrow('Failed to open');
 
       errorLoader.dispose();
     });
@@ -629,7 +629,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await expect(loader.loadPointCloud(viewState)).rejects.toThrow();
+      await expect(loader.loadPoints(viewState)).rejects.toThrow();
 
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -655,7 +655,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       // Should handle gracefully
       expect(result).toBeDefined();
@@ -676,7 +676,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState1);
+      await loader.loadPoints(viewState1);
       const result = await loader.updateView(viewState2);
 
       expect(result).toBeDefined();
@@ -692,7 +692,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      await loader.loadPointCloud(viewState);
+      await loader.loadPoints(viewState);
 
       loader.dispose();
 
@@ -724,7 +724,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       // Should keep uint8 as is for efficiency (with normalized flag in BufferAttribute)
       expect(result.colors).toBeInstanceOf(Uint8Array);
@@ -737,7 +737,7 @@ describe('SpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const result = await loader.loadPointCloud(viewState);
+      const result = await loader.loadPoints(viewState);
 
       expect(result.positions).toBeInstanceOf(Float32Array);
     });

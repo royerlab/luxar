@@ -1,7 +1,7 @@
-"""luxar.streaming – Streaming support for handling huge point clouds.
+"""luxar.streaming – Streaming support for handling huge points.
 
 This module provides the StreamingPoints class for progressively writing
-massive point clouds that exceed available RAM.
+massive points that exceed available RAM.
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ from ..validation.base import (
 
 
 class StreamingPoints:
-    """Special node type for streaming huge point clouds.
+    """Special node type for streaming huge points.
 
     This class enables appending point data in batches without loading
     existing data into memory, perfect for datasets larger than RAM.
 
     Args:
-        name: Name for the point cloud
+        name: Name for the points
         writer: Writer interface for progressive writing
         expected_dims: Expected dimensionality of points
         initial_capacity: Initial capacity (will auto-grow)
@@ -70,7 +70,7 @@ class StreamingPoints:
         """Initialize streaming points.
 
         Args:
-            name: Name for this point cloud
+            name: Name for this points
             writer: Writer for progressive output
             expected_dims: Expected dimensionality
             initial_capacity: Initial array capacity

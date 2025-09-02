@@ -74,7 +74,7 @@ def validate_positions_for_writing(
 
     if n_points == 0:
         raise ValidationError(
-            f"{context}: Cannot write empty point cloud (0 points)",
+            f"{context}: Cannot write empty points (0 points)",
             "Ensure your positions array contains at least one point",
         )
 

@@ -1,5 +1,5 @@
 /**
- * Spatial index-based data loader for efficient nD point cloud loading.
+ * Spatial index-based data loader for efficient nD points loading.
  *
  * This loader uses the spatial index built by the Python compiler to load
  * only the points that are visible in the current nD slice. It ensures
@@ -13,7 +13,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import {
   DataLoader,
   ViewState,
-  PointCloudData,
+  PointsData,
   LoaderConfig,
   CacheStats,
   PointRange,
@@ -254,9 +254,9 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Load point cloud data for the given view state
+   * Load points data for the given view state
    */
-  async loadPointCloud(viewState: ViewState): Promise<PointCloudData> {
+  async loadPoints(viewState: ViewState): Promise<PointsData> {
     const startTime = Date.now();
     const queryId = `${this.node.path}-${startTime}`;
 
@@ -308,7 +308,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       if (ranges.length === 0) {
         // No visible points - return empty dataset
         this.activeQueries.delete(queryId);
-        return this.createEmptyPointCloud(viewState);
+        return this.createEmptyPoints(viewState);
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
@@ -396,10 +396,10 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
   /**
    * Update view for new position (more efficient than full reload)
    */
-  async updateView(viewState: ViewState): Promise<PointCloudData> {
+  async updateView(viewState: ViewState): Promise<PointsData> {
     // For now, just reload everything
     // TODO: Implement incremental updates
-    return this.loadPointCloud(viewState);
+    return this.loadPoints(viewState);
   }
 
   /**
@@ -661,11 +661,11 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     viewState: ViewState,
     ranges: PointRange[]
-  ): PointCloudData {
+  ): PointsData {
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     if (!positions) {
-      throw new Error('Positions data is required for point cloud');
+      throw new Error('Positions data is required for points');
     }
 
     // Get dimensionality from positions array - use full dimensions, not just indexed ones
@@ -856,8 +856,8 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
           Modules.SPATIAL_INDEX_LOADER,
           `All ${numPoints} points have zero effective radius - no points visible at this slice`
         );
-        // Return empty point cloud - this is the correct behavior
-        return this.createEmptyPointCloud(viewState);
+        // Return empty points - this is the correct behavior
+        return this.createEmptyPoints(viewState);
       }
     }
 
@@ -887,11 +887,11 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Create empty point cloud when no points are visible
+   * Create empty points when no points are visible
    */
-  private createEmptyPointCloud(viewState: ViewState): PointCloudData {
+  private createEmptyPoints(viewState: ViewState): PointsData {
     // Note: viewState parameter kept for future use when we might need
-    // dimension-aware empty point clouds (e.g., different ndim based on view)
+    // dimension-aware empty points (e.g., different ndim based on view)
     void viewState; // Explicitly mark as intentionally unused for now
 
     // Get dtype metadata from node attributes

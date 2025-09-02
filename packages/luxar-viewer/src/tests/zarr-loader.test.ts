@@ -122,11 +122,11 @@ describe('zarr_loader', () => {
       // Setup mock data
       mockStoreContents = [
         { path: '/', kind: 'group' },
-        { path: '/PointCloud1', kind: 'group' },
-        { path: '/PointCloud1/positions', kind: 'array' },
-        { path: '/PointCloud1/colors', kind: 'array' },
-        { path: '/PointCloud1/radii', kind: 'array' },
-        { path: '/PointCloud1/sharpness', kind: 'array' },
+        { path: '/Points1', kind: 'group' },
+        { path: '/Points1/positions', kind: 'array' },
+        { path: '/Points1/colors', kind: 'array' },
+        { path: '/Points1/radii', kind: 'array' },
+        { path: '/Points1/sharpness', kind: 'array' },
       ];
 
       const mockRootGroup = {
@@ -134,7 +134,7 @@ describe('zarr_loader', () => {
           scene_type: 'points',
           version: '1.0',
         },
-        contents: new Map([['PointCloud1', { type: 'group' }]]),
+        contents: new Map([['Points1', { type: 'group' }]]),
       };
 
       const mockNodeGroup = {
@@ -161,9 +161,9 @@ describe('zarr_loader', () => {
       mockOpenResult = mockRootGroup;
       mockGetResult = (item: any) => {
         if (item?.path === '/') return mockRootGroup;
-        if (item?.path === '/PointCloud1') return mockNodeGroup;
+        if (item?.path === '/Points1') return mockNodeGroup;
         // Return array data based on the node path
-        const pathMatch = item?.store?.url?.match(/\/PointCloud1\/(\w+)\/?$/);
+        const pathMatch = item?.store?.url?.match(/\/Points1\/(\w+)\/?$/);
         if (pathMatch) {
           return mockArrays[pathMatch[1] as keyof typeof mockArrays];
         }

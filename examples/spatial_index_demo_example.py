@@ -2,7 +2,7 @@
 """Spatial index demonstration example.
 
 This example creates a 5D dataset with spatial indexing enabled to demonstrate
-efficient nD point cloud navigation and querying.
+efficient nD points navigation and querying.
 
 The dataset contains multiple clusters of points distributed across a 5D space
 (x, y, z, time, channel), with the spatial index enabling efficient loading

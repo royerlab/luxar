@@ -37,7 +37,7 @@ def main():
         # Create a group for organization
         scene.add_group("DataSet1", opacity=0.9)
 
-        # Generate and write first point cloud
+        # Generate and write first points
         # Data is written immediately and not kept in memory
         n_points_1 = 10000
         positions_1 = np.random.randn(n_points_1, 3).astype(np.float32) * 10
@@ -49,7 +49,7 @@ def main():
         )
         aprint(f"  ✓ Wrote {n_points_1:,} points to cloud1")
 
-        # Generate and write second point cloud
+        # Generate and write second points
         # Previous data is already on disk, not in memory
         n_points_2 = 15000
         positions_2 = np.random.randn(n_points_2, 3).astype(np.float32) * 15

@@ -149,7 +149,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor: Compressor for datasets
             units: Physical units for the scene
             version: Luxar format version
-            enable_spatial_index: Whether to build spatial indices for point clouds (default: True)
+            enable_spatial_index: Whether to build spatial indices for points (default: True)
             dtype_config: Configuration for data types (default: auto-detection)
         """
         # Handle store path
@@ -260,13 +260,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
-        """Write point cloud data progressively to Zarr.
+        """Write points data progressively to Zarr.
 
         Data is written immediately to disk without being kept in memory.
         If spatial indexing is enabled, points are reordered for spatial locality.
 
         Args:
-            path: Path for the point cloud within the store
+            path: Path for the points within the store
             positions: Point positions of shape (N, D)
             colors: Optional HDR colors of shape (N, 3)
             radii: Optional radii of shape (N,)

@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Luxar Controls package provides a sophisticated, extensible control system for navigating and interacting with 3D point cloud visualizations. It implements multiple control paradigms, seamless mode switching, and a robust input management system designed for both scientific exploration and cinematic presentation.
+The Luxar Controls package provides a sophisticated, extensible control system for navigating and interacting with 3D points visualizations. It implements multiple control paradigms, seamless mode switching, and a robust input management system designed for both scientific exploration and cinematic presentation.
 
 ### Key Features
 
@@ -46,7 +46,7 @@ The **OrbitControls** provide intuitive trackball-style navigation, ideal for ex
 
 **Best for:**
 
-- Examining point clouds from outside
+- Examining points from outside
 - Presentations and demos
 - Traditional 3D manipulation
 
@@ -91,7 +91,7 @@ The **ArcballControls** provide quaternion-based rotation without gimbal lock li
 
 ### 3. Fly Controls (Advanced)
 
-The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 degrees of freedom, perfect for exploring point clouds from within.
+The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 degrees of freedom, perfect for exploring points from within.
 
 **Features:**
 
@@ -103,7 +103,7 @@ The **LuxarFlyControls** provide quaternion-based free-flight navigation with 6 
 
 **Best for:**
 
-- Exploring inside point clouds
+- Exploring inside points
 - Flying through data
 - Cinematic camera movements
 

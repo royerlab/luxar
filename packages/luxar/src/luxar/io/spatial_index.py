@@ -1,7 +1,7 @@
 """Spatial index implementation for efficient nD point queries.
 
 This module provides functionality to build and query spatial indices for
-nD point clouds, enabling efficient range queries and lazy loading.
+nD points, enabling efficient range queries and lazy loading.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union

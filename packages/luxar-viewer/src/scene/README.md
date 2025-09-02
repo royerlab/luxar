@@ -1,10 +1,10 @@
 # Luxar Scene Package
 
-> Core 3D scene management and orchestration for point cloud visualization
+> Core 3D scene management and orchestration for points visualization
 
 ## Overview
 
-The Luxar Scene package provides comprehensive scene management, animation control, and nD dimension coordination for complex point cloud visualizations. It handles the THREE.js scene graph, camera management, rendering pipeline integration, and multi-dimensional data navigation.
+The Luxar Scene package provides comprehensive scene management, animation control, and nD dimension coordination for complex points visualizations. It handles the THREE.js scene graph, camera management, rendering pipeline integration, and multi-dimensional data navigation.
 
 ### Key Features
 

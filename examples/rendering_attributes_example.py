@@ -116,7 +116,7 @@ def main():
 
         # 5. Demonstrate runtime property modification
         aprint("\nDemonstrating runtime property modification...")
-        aprint("Modifying first point cloud's attributes...")
+        aprint("Modifying first points's attributes...")
         original_opacity = points1.opacity
         original_gamma = points1.gamma
         original_blending = points1.blending_mode

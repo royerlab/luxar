@@ -1,17 +1,17 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality point cloud visualization
+> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality points visualization
 
 ## Overview
 
-The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale point cloud visualization.
+The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale points visualization.
 
 ### Key Features
 
 - **HDR Rendering Pipeline**: 16-bit float buffers for true HDR support
 - **Modern Post-Processing**: Powered by pmndrs/postprocessing
 - **Professional Effects**: Bloom, SSAO, DOF, tone mapping, and more
-- **Custom Shader System**: Optimized shaders for point clouds
+- **Custom Shader System**: Optimized shaders for points
 - **Material Management**: Efficient caching and reuse
 - **World-Space Point Sizing**: Physically accurate scaling
 - **Multiple Anti-Aliasing Options**: FXAA and SMAA support
@@ -21,7 +21,7 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 ```
 rendering/
 ├── postprocessing-manager.ts  # Post-processing pipeline using pmndrs
-├── point-material.ts          # Custom point cloud shaders
+├── point-material.ts          # Custom points shaders
 ├── material-manager.ts        # Material creation and caching
 └── README.md                 # This documentation
 ```
@@ -69,7 +69,7 @@ postProcessing.setVignetteEnabled(true, 0.5, 0.5);
 
 ### 2. Point Material
 
-Advanced shader material for point cloud rendering with custom vertex and fragment shaders.
+Advanced shader material for points rendering with custom vertex and fragment shaders.
 
 **Vertex Shader Features:**
 
@@ -167,7 +167,7 @@ Multisample Anti-Aliasing:
 - Hardware-accelerated
 - Sample counts: 2x, 4x, 8x
 - **⚠️ WARNING**: Incompatible with additive blending
-- Causes brightness multiplication artifacts with point clouds
+- Causes brightness multiplication artifacts with points
 - Only use with normal blending mode
 - Automatically validates GPU support
 

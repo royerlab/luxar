@@ -270,7 +270,7 @@ class TestNodeTransformIntegration:
             assert np.allclose(g3.transform, scale(2, 2, 2))
 
     def test_transform_with_points(self, tmp_path):
-        """Test transforms work with point clouds."""
+        """Test transforms work with points."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
 

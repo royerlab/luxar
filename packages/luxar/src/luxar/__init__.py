@@ -1,13 +1,13 @@
-"""Luxar - High-dimensional point cloud visualization and analysis toolkit.
+"""Luxar - High-dimensional points visualization and analysis toolkit.
 
 Luxar provides a powerful Python API for creating, manipulating, and visualizing
-massive point cloud datasets with arbitrary dimensions. The system is designed
+massive points datasets with arbitrary dimensions. The system is designed
 for memory-efficient progressive writing, enabling processing of TB-scale datasets
 on GB-scale machines.
 
 Key Features:
     - Progressive writing to Zarr for memory-efficient processing
-    - Support for nD point clouds (not limited to 3D)
+    - Support for nD points (not limited to 3D)
     - HDR color support with float32 precision
     - Hierarchical scene graphs with transforms
     - Streaming API for datasets larger than RAM

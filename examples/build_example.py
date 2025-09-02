@@ -66,11 +66,11 @@ def add_coordinate_axes(scene, length: float = 5.0, n_points: int = 50):
 
 
 def add_data_cloud(scene, name: str, center: list, n_points: int = 500):
-    """Add a spherical point cloud at specified location.
+    """Add a spherical points at specified location.
 
     Args:
         scene: The Luxar scene to add cloud to
-        name: Name for the point cloud
+        name: Name for the points
         center: Center position [x, y, z]
         n_points: Number of points in the cloud
     """

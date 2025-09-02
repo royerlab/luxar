@@ -178,8 +178,8 @@ class NodeProtocol(Protocol):
         ...
 
 
-class PointCloudProtocol(Protocol):
-    """Protocol for point cloud data containers."""
+class PointsProtocol(Protocol):
+    """Protocol for points data containers."""
 
     def __init__(
         self,
@@ -192,7 +192,7 @@ class PointCloudProtocol(Protocol):
         compressor: Optional[CompressorProtocol] = None,
         **attrs: Any,
     ) -> None:
-        """Initialize point cloud."""
+        """Initialize points object."""
         ...
 
 
@@ -210,7 +210,7 @@ class SceneProtocol(Protocol):
         colors: Optional[ColorArray] = None,
         parent: Optional[NodeProtocol] = None,
         **attrs: Any,
-    ) -> PointCloudProtocol:
+    ) -> PointsProtocol:
         """Add points to the scene."""
         ...
 

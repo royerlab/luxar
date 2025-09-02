@@ -154,7 +154,7 @@ export class PostProcessingManager {
       luminanceSmoothing: 0.01, // Very low to minimize dark halo with additive blending
       mipmapBlur: true, // Use mipmap blur for better quality bloom
       kernelSize: KernelSize.LARGE, // Standard kernel size
-      blendFunction: BlendFunction.ADD, // ADD works better with additive point clouds
+      blendFunction: BlendFunction.ADD, // ADD works better with additive points
       levels: config.renderingControls.defaults.bloomLevels, // Number of mipmap levels
     }) as BloomEffectTyped;
 

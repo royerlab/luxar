@@ -2,7 +2,7 @@
 """Rainbow Sphere Spiral Example - Creates a dense sphere with spiraling rainbow colors.
 
 This example demonstrates:
-- Creating a very dense point cloud (200,000 points) on a sphere
+- Creating a very dense points (200,000 points) on a sphere
 - Using spherical spiral for even distribution
 - Calculating appropriate point spacing
 - High sharpness for crisp point rendering

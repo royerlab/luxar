@@ -70,7 +70,7 @@ class TestPositionValidation:
         with pytest.raises(ValidationError) as exc_info:
             validate_positions_for_writing(positions)
 
-        assert "Cannot write empty point cloud" in str(exc_info.value)
+        assert "Cannot write empty points" in str(exc_info.value)
         assert "at least one point" in str(exc_info.value)
 
     def test_zero_dimensions(self):

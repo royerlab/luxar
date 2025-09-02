@@ -1,5 +1,5 @@
 /**
- * Zarr-based nD point cloud data loader - Clean Architecture v2
+ * Zarr-based nD points data loader - Clean Architecture v2
  *
  * This is the new implementation that properly handles spatial indices
  * and ensures all attributes are loaded with aligned ranges.
@@ -22,7 +22,7 @@ import { config } from '../config';
  * Load a complete scene from a Zarr store using the new architecture.
  *
  * This is the main entry point that replaces the old loadScene function.
- * It uses the new SceneLoader which uses SpatialIndexLoader for all point clouds.
+ * It uses the new SceneLoader which uses SpatialIndexLoader for all points.
  *
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
@@ -57,9 +57,9 @@ export async function loadScene(
 }
 
 /**
- * Update the view state for all loaded point clouds.
+ * Update the view state for all loaded points.
  *
- * This function updates all point clouds when the user navigates
+ * This function updates all points when the user navigates
  * through nD space or changes display dimensions.
  *
  * @param viewState - New view state to apply
@@ -169,7 +169,7 @@ export function dispose(loaderId?: string): void {
  */
 function logSceneStats(scene: THREE.Group): void {
   let totalPoints = 0;
-  let totalPointClouds = 0;
+  let totalPointsObjects = 0;
   let usedSpatialIndex = 0;
 
   // Check if scene has traverse method (it might be a mock in tests)
@@ -180,7 +180,7 @@ function logSceneStats(scene: THREE.Group): void {
 
   scene.traverse((obj) => {
     if (obj instanceof THREE.Points) {
-      totalPointClouds++;
+      totalPointsObjects++;
       const geometry = obj.geometry;
       const positions = geometry.getAttribute('position');
       if (positions) {
@@ -193,7 +193,7 @@ function logSceneStats(scene: THREE.Group): void {
   });
 
   log.info(Modules.LUXAR, 'Scene statistics:');
-  log.info(Modules.LUXAR, `  - Point clouds: ${totalPointClouds}`);
+  log.info(Modules.LUXAR, `  - Points objects: ${totalPointsObjects}`);
   log.info(Modules.LUXAR, `  - Total points loaded: ${totalPoints.toLocaleString()}`);
-  log.info(Modules.LUXAR, `  - Using spatial index: ${usedSpatialIndex}/${totalPointClouds}`);
+  log.info(Modules.LUXAR, `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects}`);
 }

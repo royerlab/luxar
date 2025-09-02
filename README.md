@@ -77,7 +77,7 @@ dims = Dimensions([
 with LuxarZarrCompiler("output.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     
-    # Add 4D point cloud (time + xyz)
+    # Add 4D points (time + xyz)
     positions = np.random.randn(100_000, 4).astype(np.float32)
     colors = np.random.rand(100_000, 3).astype(np.float32)  # HDR colors supported
     radii = np.random.uniform(0.1, 0.5, 100_000).astype(np.float32)
@@ -203,7 +203,7 @@ make help
 
 ## 📋 Data Format
 
-Luxar uses Zarr for efficient, chunked storage of large point cloud datasets with support for arbitrary dimensionality.
+Luxar uses Zarr for efficient, chunked storage of large points datasets with support for arbitrary dimensionality.
 
 ### Zarr Structure
 
@@ -212,7 +212,7 @@ scene.zarr/
 ├── .zattrs                 # Scene-level metadata (version, dimensions, units)
 ├── .zgroup                 # Zarr group marker
 ├── .zmetadata             # Consolidated metadata (created by finalize())
-└── <node_name>/           # Scene nodes (groups or point clouds)
+└── <node_name>/           # Scene nodes (groups or points)
     ├── .zattrs            # Node metadata (type, transform, rendering)
     ├── .zgroup            # Zarr group marker
     ├── positions/         # nD coordinates (Float32, shape: [N, D])
@@ -294,7 +294,7 @@ scene.finalize()
 ### Synthetic Datasets
 
 ```python
-# Generate procedural point clouds
+# Generate procedural points
 def generate_fractal_points(iterations=5, scale=2.0):
     # Your fractal algorithm here
     return positions, colors

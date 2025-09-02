@@ -1,7 +1,7 @@
 /**
  * Core types and interfaces for the new data loading architecture.
  *
- * This module defines the clean abstractions for loading nD point cloud data
+ * This module defines the clean abstractions for loading nD points data
  * with proper spatial indexing support and aligned attribute loading.
  */
 
@@ -30,7 +30,7 @@ export interface ViewState {
 }
 
 /**
- * Supported TypedArray types for point cloud attributes
+ * Supported TypedArray types for points attributes
  * Note: Float16Array is supported in modern browsers (2024+)
  * We include it in the type but handle fallback at runtime
  */
@@ -39,11 +39,11 @@ export type ColorArray = Float32Array | Uint8Array | Uint16Array;
 export type ScalarArray = Float32Array | Float16Array | Uint8Array;
 
 /**
- * Point cloud data ready for GPU rendering.
+ * Points data ready for GPU rendering.
  * All arrays are properly aligned with the same point ordering.
  * Arrays can be in different data types for memory efficiency.
  */
-export interface PointCloudData {
+export interface PointsData {
   /** 3D positions extracted from nD space (size: numPoints * 3) */
   positions: PositionArray;
 
@@ -91,11 +91,11 @@ export interface PointCloudData {
  * Implementations handle different loading strategies (spatial index vs fallback).
  */
 export interface DataLoader {
-  /** Load point cloud data for the given view state */
-  loadPointCloud(viewState: ViewState): Promise<PointCloudData>;
+  /** Load points data for the given view state */
+  loadPoints(viewState: ViewState): Promise<PointsData>;
 
   /** Update existing data for a new view state */
-  updateView(viewState: ViewState): Promise<PointCloudData>;
+  updateView(viewState: ViewState): Promise<PointsData>;
 
   /** Get cache statistics */
   getCacheStats(): CacheStats;

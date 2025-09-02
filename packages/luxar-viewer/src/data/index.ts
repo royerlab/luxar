@@ -1,7 +1,7 @@
 /**
  * Data loading module exports.
  *
- * Clean architecture for loading nD point cloud data from Zarr stores
+ * Clean architecture for loading nD points data from Zarr stores
  * with proper spatial index support and aligned attribute loading.
  */
 
@@ -35,7 +35,7 @@ export {
 export type {
   DataLoader,
   ViewState,
-  PointCloudData,
+  PointsData,
   LoaderConfig,
   CacheStats,
   PointRange,

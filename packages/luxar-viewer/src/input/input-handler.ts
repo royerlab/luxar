@@ -180,7 +180,7 @@ export class InputHandler {
 
     // Listen for dimension changes
     sceneDimsManager.addListener(() => {
-      this.updateAllNDPointClouds();
+      this.updateAllNDPoints();
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
@@ -190,9 +190,9 @@ export class InputHandler {
   }
 
   /**
-   * Update all nD point clouds with current dimension values
+   * Update all nD points with current dimension values
    */
-  private async updateAllNDPointClouds(): Promise<void> {
+  private async updateAllNDPoints(): Promise<void> {
     const dims = sceneDimsManager.getDims();
     if (!dims) {
       return;
@@ -873,7 +873,7 @@ export class InputHandler {
       if (object instanceof THREE.Points && object.visible) {
         const geometry = object.geometry;
 
-        // For point clouds, compute bounding box from position attribute
+        // For points, compute bounding box from position attribute
         const positions = geometry.attributes.position;
         if (positions && positions.count > 0) {
           // Compute the bounding box if needed
