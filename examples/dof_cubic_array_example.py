@@ -120,7 +120,7 @@ testing depth-of-field post-processing effects:
 - Reference markers at near/middle/far planes
 
 Use this scene to test:
-- DOF blur quality with dense point clouds
+- DOF blur quality with dense points
 - Focus distance transitions
 - Bokeh quality and shape
 - Performance with high point counts
@@ -147,7 +147,7 @@ Performance notes:
             sharpness=10.0,  # High sharpness for sharp edges
         )
 
-        # Add main point cloud
+        # Add main points
         scene.add_points(
             "CubicArray",
             positions,
@@ -155,7 +155,7 @@ Performance notes:
             radii=radii,
             sharpness=sharpness,
             opacity=1.0,
-            blending_mode="additive",  # Use additive blending for point clouds
+            blending_mode="additive",  # Use additive blending for points
         )
 
         aprint(f"✓ Added {len(positions):,} points to cubic array")

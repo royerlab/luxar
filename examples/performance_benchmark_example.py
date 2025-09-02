@@ -2,7 +2,7 @@
 """Performance Benchmark Example - Stress test for large scenes with many nodes and materials.
 
 This benchmark example demonstrates:
-- Creating large scenes with many point cloud nodes
+- Creating large scenes with many points nodes
 - Testing material combination caching efficiency
 - Measuring scene creation performance
 - Generating systematic test data for performance analysis

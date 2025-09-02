@@ -1,4 +1,4 @@
-"""luxar.points – Defines the Points node for point cloud data in Luxar scenes."""
+"""luxar.points – Defines the Points node for points data in Luxar scenes."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from ..typing_utils.enums import NodeType
 
 
 class Points(Node):
-    """Point-cloud node that holds metadata about point data.
+    """Points node that holds metadata about points data.
 
     This class is a lightweight metadata container. Actual data is written
     immediately to Zarr via the writer interface and not kept in memory.
     This class is intended for internal use via Scene.add_points().
 
     Args:
-        name: Name of the point cloud node
+        name: Name of the points node
         metadata: Metadata dictionary about the written points
         parent: Parent node in hierarchy
         writer: Writer interface for progressive writing
@@ -37,7 +37,7 @@ class Points(Node):
         """Initialize a Points node.
 
         Args:
-            name: Name of the point cloud node
+            name: Name of the points node
             positions: Ignored, for compatibility only
             metadata: Metadata dictionary about the written points
             parent: Parent node in the scene graph

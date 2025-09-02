@@ -203,4 +203,4 @@ class TestSceneDimensionMetadata:
     # Points no longer inherit dimension metadata from the scene
 
     # Test removed: Mixed dimensionality is fully supported in new flexible API
-    # Each point cloud can have any dimensionality independent of others
+    # Each points can have any dimensionality independent of others

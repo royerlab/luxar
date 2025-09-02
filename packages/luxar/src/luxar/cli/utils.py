@@ -210,7 +210,7 @@ def get_zarr_info(store_path: Path) -> dict[str, Any]:
         "n_groups": 0,
         "n_arrays": 0,
         "n_points_total": 0,
-        "point_clouds": [],
+        "points_objects": [],
     }
 
     if not info["exists"]:
@@ -241,7 +241,7 @@ def get_zarr_info(store_path: Path) -> dict[str, Any]:
                     "has_radii": "radii" in group,
                     "has_sharpness": "sharpness" in group,
                 }
-                info["point_clouds"].append(point_info)  # type: ignore
+                info["points_objects"].append(point_info)  # type: ignore
                 info["n_points_total"] += point_info["n_points"]
 
             # Count arrays

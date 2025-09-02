@@ -172,7 +172,7 @@ luxar serve sharpness_compensation_example.zarr
 ### Advanced Examples
 
 #### 13. **nd_points_example.py** - Mixed Dimensionality Scene
-Complex example with multiple point clouds of different dimensions:
+Complex example with multiple points of different dimensions:
 - 5D time series data
 - 2D projection planes
 - 3D reference geometry
@@ -237,7 +237,7 @@ luxar serve hierarchy_example.zarr
 
 #### 18. **multiple_objects_example.py** - Multiple Point Clouds
 Showcases complex scenes with multiple distinct objects:
-- Six different point cloud objects (spiral galaxy, clusters, nebula, rings, stars, particles)
+- Six different points objects (spiral galaxy, clusters, nebula, rings, stars, particles)
 - Varied rendering properties per object
 - Visual composition techniques
 - ~31,000 total points across objects
@@ -380,7 +380,7 @@ def main():
     
     # Add to scene
     scene.add_points(
-        "MyPointCloud",
+        "MyPoints",
         positions,
         colors=colors,
         radii=radii,

@@ -7,11 +7,11 @@
 - Points are reordered during compilation for spatial locality
 - Grid-based sparse index structure for all dimensions
 
-This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD point cloud visualization.
+This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD points visualization.
 
 ## Overview
 
-The Luxar Zarr format is a hierarchical data structure designed for efficient storage and streaming of large-scale point cloud data with support for arbitrary dimensionality, transformations, and rendering attributes.
+The Luxar Zarr format is a hierarchical data structure designed for efficient storage and streaming of large-scale points data with support for arbitrary dimensionality, transformations, and rendering attributes.
 
 ## Format Structure
 
@@ -20,10 +20,10 @@ scene.zarr/
 ├── .zattrs                  # Scene-level metadata
 ├── .zgroup                  # Zarr group marker
 ├── .zmetadata              # Consolidated metadata (optional, created by finalize())
-└── <node_name>/            # Scene nodes (groups or point clouds)
+└── <node_name>/            # Scene nodes (groups or points)
     ├── .zattrs             # Node-level metadata
     ├── .zgroup             # Zarr group marker
-    ├── positions/          # Point positions (required for point clouds)
+    ├── positions/          # Point positions (required for points)
     ├── colors/             # Point colors (optional)
     ├── radii/              # Point radii (optional)
     ├── sharpness/          # Point sharpness (optional)
@@ -369,7 +369,7 @@ Point clouds without spatial indices will continue to work but with slower nD qu
 
 ### Implementation in LuxarZarrCompiler
 
-When building a point cloud with spatial index:
+When building points with spatial index:
 
 1. **Compute Grid Parameters**: Based on data bounds and desired resolution
 2. **Assign Points to Cells**: Map each point to its grid cell
@@ -381,7 +381,7 @@ When building a point cloud with spatial index:
 ```python
 def add_points_with_spatial_index(group, positions, colors=None, radii=None, 
                                   sharpness=None, grid_shape=None):
-    """Add point cloud with spatial index to zarr group."""
+    """Add points with spatial index to zarr group."""
     import zarr
     
     # Build spatial index
@@ -571,7 +571,7 @@ dims = Dimensions([
 with LuxarZarrCompiler("output.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     
-    # Add point cloud
+    # Add points
     positions = np.random.randn(10000, 4).astype(np.float32)  # 4D points
     colors = np.random.rand(10000, 3).astype(np.float32)  # SDR colors (0.0-1.0)
     radii = np.ones(10000, dtype=np.float32) * 0.5

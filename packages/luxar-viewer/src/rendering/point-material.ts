@@ -1,7 +1,7 @@
 /**
  * Point Material for Luxar
  *
- * Specialized THREE.ShaderMaterial for physically accurate point cloud rendering.
+ * Specialized THREE.ShaderMaterial for physically accurate points rendering.
  * Features world-space sizing, HDR colors, and per-point sharpness control.
  */
 
@@ -21,7 +21,7 @@ export interface PointMaterialConfig {
 }
 
 /**
- * Point cloud material with physically accurate world-space sizing.
+ * Points material with physically accurate world-space sizing.
  * Extends THREE.ShaderMaterial to provide specialized point rendering.
  */
 export class PointMaterial extends THREE.ShaderMaterial {

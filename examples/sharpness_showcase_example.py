@@ -2,7 +2,7 @@
 """
 Comprehensive example showcasing the point sharpness feature in Luxar.
 
-This script generates several point cloud examples with varying sharpness values
+This script generates several points examples with varying sharpness values
 to demonstrate how the sharpness parameter controls the edge falloff of points.
 Low sharpness values create soft, glowing points while high values create sharp edges.
 """

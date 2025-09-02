@@ -106,7 +106,7 @@ def test_info_command_success(runner, sample_scene):
         "Summary Statistics" in result.stdout
         or "📊 Summary Statistics" in result.stdout
     )
-    assert "Point clouds: 1" in result.stdout or "⭕ Point clouds: 1" in result.stdout
+    assert "Points objects: 1" in result.stdout or "⭕ Points objects: 1" in result.stdout
     assert (
         "Total points: 100" in result.stdout or "✨ Total points: 100" in result.stdout
     )
@@ -149,7 +149,7 @@ def test_info_command_complex_hierarchy(runner, tmp_path):
 
     assert result.exit_code == 0
     # Check for new format with emojis
-    assert "Point clouds: 3" in result.stdout or "⭕ Point clouds: 3" in result.stdout
+    assert "Points objects: 3" in result.stdout or "⭕ Points objects: 3" in result.stdout
     assert "Total points: 45" in result.stdout or "✨ Total points: 45" in result.stdout
     assert "Group1" in result.stdout
     assert "Group2" in result.stdout

@@ -5,14 +5,14 @@ import * as THREE from 'three';
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
  *
  * This singleton is a critical architectural component that solves the fundamental problem
- * of keeping multiple nD point clouds synchronized when navigating through dimensional space.
- * Without it, each point cloud could have its own slice position, leading to confusing
+ * of keeping multiple nD points synchronized when navigating through dimensional space.
+ * Without it, each points could have its own slice position, leading to confusing
  * and inconsistent visualizations.
  *
  * Core responsibilities:
  * - Initialize dimension metadata from scene-level configuration
  * - Maintain a single source of truth for current dimension positions
- * - Coordinate slider updates with point cloud re-slicing
+ * - Coordinate slider updates with points re-slicing
  * - Handle discrete vs continuous dimension semantics
  * - Provide change notification system for reactive updates
  *
@@ -215,7 +215,7 @@ export class SceneDimsManager {
    *
    * This implements the observer pattern, allowing UI components and
    * visualization objects to react automatically to navigation events.
-   * Typical subscribers include sliders, point clouds, and status displays.
+   * Typical subscribers include sliders, points, and status displays.
    *
    * @param callback - Function to call when dimensions change
    */
@@ -337,7 +337,7 @@ export class SceneDimsManager {
  * // Register for dimension changes
  * sceneDimsManager.addListener(() => {
  *   console.log('Dimensions changed!');
- *   updatePointCloudSlice();
+ *   updatePointsSlice();
  * });
  *
  * // Navigate through time dimension

@@ -141,7 +141,7 @@ vi.mock('../ui/data-loading-monitor', () => ({
 // Mock SpatialIndexLoader
 vi.mock('../data/spatial-index-loader', () => ({
   SpatialIndexLoader: vi.fn().mockImplementation(() => ({
-    loadPointCloud: vi.fn().mockResolvedValue({
+    loadPoints: vi.fn().mockResolvedValue({
       positions: new Float32Array([1, 2, 3, 4, 5, 6]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       radii: new Float32Array([0.1, 0.2]),
@@ -320,7 +320,7 @@ describe('SceneLoader', () => {
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('broadcast_dims'));
     });
 
-    it('should handle missing spatial index gracefully for 3D point clouds', async () => {
+    it('should handle missing spatial index gracefully for 3D points', async () => {
       // Setup points group without spatial index
       mockStore.contents.mockResolvedValue([
         { path: '/', kind: 'group' },
@@ -407,7 +407,7 @@ describe('SceneLoader', () => {
 
       await sceneLoader.updateView({});
 
-      // Geometry update should not happen for empty point clouds
+      // Geometry update should not happen for empty points
       expect(mockLoader.updateView).toHaveBeenCalled();
     });
   });

@@ -63,9 +63,15 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: COMPLETED
     - **Priority**: LOW
 
-14- In the viewer, do not use 'point cloud' terminology, use 'points' instead. A 'Point Cloud' is a 'Points' object in Luxar terminology.  
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+14- ✅ In the viewer, we should not use 'point cloud' terminology, we should use 'points' instead. A 'Point Cloud' should be a 'Points' 'object' in Luxar terminology.  
+    - **Status**: COMPLETED
+    - Updated all TypeScript types: PointCloudData → PointsData
+    - Updated all function names: loadPointCloud → loadPoints
+    - Updated Python protocol: PointCloudProtocol → PointsProtocol
+    - Updated all documentation and comments
+    - All tests passing (484 TypeScript, 374 Python)
+
+
 
 15- ✅ FIXED: Zero-radius points (from nD slicing) are now properly handled:
     - **Fragment shader discard**: Points with radius < 0.0001 are discarded in the fragment shader

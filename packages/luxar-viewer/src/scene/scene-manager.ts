@@ -31,8 +31,8 @@ import { log, Modules, LogEmoji } from '../utils/log';
  * - Control system for user interaction (rotation, zoom, pan)
  * - Scene graph management for 3D objects
  * - HDR post-processing pipeline with bloom effects
- * - Advanced shader-based point cloud rendering
- * - Dynamic loading of point cloud data from Zarr sources
+ * - Advanced shader-based points rendering
+ * - Dynamic loading of points data from Zarr sources
  * - Resource cleanup to prevent memory leaks
  *
  * Technical Details:
@@ -206,7 +206,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
 
     // Position camera at initial viewing location
-    // Z=8 provides good overview of typical point cloud scenes
+    // Z=8 provides good overview of typical points scenes
     // X=0, Y=0 centers the view on the origin
     this.camera.position.set(
       config.camera.initialPosition.x, // X position (0 = centered)
@@ -423,7 +423,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       if (object instanceof THREE.Points) {
         const geometry = object.geometry;
 
-        // For point clouds, compute bounding box from position attribute
+        // For points, compute bounding box from position attribute
         const positions = geometry.attributes.position;
         if (positions && positions.count > 0) {
           totalPointCount += positions.count;

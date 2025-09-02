@@ -1,7 +1,7 @@
 """Data type configuration and utilities for Luxar.
 
 This module provides data type mappings, conversions, and validation
-for efficient storage of point cloud attributes in zarr format.
+for efficient storage of points attributes in zarr format.
 """
 
 from enum import Enum

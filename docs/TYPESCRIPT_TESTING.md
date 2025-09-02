@@ -167,7 +167,7 @@ vi.mock('../api/fetch'); // Network calls
 ### 4. Test Data Builders
 ```typescript
 // Create test data builders for complex objects
-class PointCloudBuilder {
+class PointsBuilder {
   private positions: number[] = [];
   private colors: number[] = [];
   
@@ -176,7 +176,7 @@ class PointCloudBuilder {
     return this;
   }
   
-  build(): PointCloud {
+  build(): Points {
     return {
       positions: new Float32Array(this.positions),
       colors: new Float32Array(this.colors),
@@ -185,7 +185,7 @@ class PointCloudBuilder {
 }
 
 // Usage in tests
-const pointCloud = new PointCloudBuilder()
+const points = new PointsBuilder()
   .withPoint(0, 0, 0)
   .withPoint(1, 1, 1)
   .build();

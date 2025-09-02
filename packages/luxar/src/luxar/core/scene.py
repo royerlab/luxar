@@ -1,7 +1,7 @@
 """Scene root node for Luxar hierarchical scene graphs.
 
 This module provides the Scene class, which serves as the root node of the
-scene hierarchy and provides convenient methods for building point cloud scenes.
+scene hierarchy and provides convenient methods for building points scenes.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ class Scene(Node):
         grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> Points:
-        """Add a point cloud node to the scene.
+        """Add a points node to the scene.
 
         Important: Position arrays must ALWAYS include ALL scene dimensions, even when
         broadcasting. Broadcasting means "show these points at all values of specified
@@ -146,7 +146,7 @@ class Scene(Node):
                 positions = [[x, y, z]]  # Missing Time and Channel dimensions!
 
         Args:
-            name: Name of the point cloud node
+            name: Name of the points node
             positions: Array of shape (N, D) for point positions where D is dimensionality
             colors: Optional array of shape (N, 3) for point colors, or single RGB color
                 as (R, G, B) tuple/list to apply to all points
@@ -174,7 +174,7 @@ class Scene(Node):
             The created Points node
 
         Raises:
-            ValueError: If point cloud creation fails or rendering attributes are invalid
+            ValueError: If points creation fails or rendering attributes are invalid
         """
         try:
             # Ensure positions is array-like
@@ -271,9 +271,9 @@ class Scene(Node):
         if self._dimensions is not None:
             self._dimensions.validate_positions(positions, "Points")
         else:
-            # Infer dimensions from first point cloud if not set
+            # Infer dimensions from first points if not set
             if dimension_metadata is None and not hasattr(self, "_inferred_dimensions"):
-                aprint("No scene dimensions defined, inferring from first point cloud")
+                aprint("No scene dimensions defined, inferring from first points")
                 self._dimensions = Dimensions.from_positions(positions)
                 self._inferred_dimensions = True
                 self.attrs["scene_dimensions"] = self._dimensions.to_dict()

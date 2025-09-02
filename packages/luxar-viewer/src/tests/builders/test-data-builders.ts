@@ -12,7 +12,7 @@
  *
  * ## Usage:
  * ```typescript
- * const pointCloud = new PointCloudBuilder()
+ * const pointCloud = new PointsBuilder()
  *   .withPoints(1000)
  *   .withDimensions(4)
  *   .withColors()
@@ -26,9 +26,9 @@ import * as THREE from 'three';
 import { vi } from 'vitest';
 
 /**
- * Builder for point cloud test data
+ * Builder for points test data
  */
-export class PointCloudBuilder {
+export class PointsBuilder {
   private numPoints: number = 100;
   private dimensions: number = 3;
   private positions: Float32Array | null = null;
@@ -117,7 +117,7 @@ export class PointCloudBuilder {
   }
 
   /**
-   * Build the point cloud data
+   * Build the points data
    */
   build(): {
     positions: Float32Array;
@@ -296,9 +296,9 @@ export class SceneBuilder {
   }
 
   /**
-   * Add a point cloud to the scene
+   * Add a points to the scene
    */
-  withPointCloud(
+  withPoints(
     positions: Float32Array,
     options: {
       colors?: Float32Array;

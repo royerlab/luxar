@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dense Grid 5D Example - Multi-dimensional point cloud with time and channels."""
+"""Dense Grid 5D Example - Multi-dimensional points with time and channels."""
 
 from pathlib import Path
 

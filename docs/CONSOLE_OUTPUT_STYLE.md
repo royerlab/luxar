@@ -128,7 +128,7 @@ log.custom('🌟', Modules.HDR, 'HDR display capabilities detected');
 const logger = createModuleLogger(Modules.SCENE_LOADER);
 
 logger.info('Starting scene load');
-logger.load('Loading point cloud data');
+logger.load('Loading points data');
 logger.success('Scene ready');
 ```
 

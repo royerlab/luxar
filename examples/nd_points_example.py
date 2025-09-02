@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Example demonstrating nD point cloud support in Luxar.
+Example demonstrating nD points support in Luxar.
 
 This example shows how to:
-1. Create 5D point clouds with time and channel dimensions
+1. Create 5D points with time and channel dimensions
 2. Add dimension metadata for proper interpretation
 3. Mix different dimensionalities in the same scene
 """
@@ -20,7 +20,7 @@ from luxar.types import DimensionMetadata
 def create_5d_time_series(
     n_timepoints: int = 10, n_channels: int = 3, n_points: int = 1000
 ) -> np.ndarray:
-    """Create a 5D point cloud representing a time series with multiple channels."""
+    """Create a 5D points representing a time series with multiple channels."""
     positions = np.zeros((n_timepoints * n_channels * n_points, 5), dtype=np.float32)
 
     idx = 0
@@ -49,7 +49,7 @@ def create_5d_time_series(
 
 
 def create_2d_projection(n_points: int = 5000) -> np.ndarray:
-    """Create a 2D point cloud for a projection view."""
+    """Create a 2D points for a projection view."""
     # Create a 2D Lissajous curve
     t = np.linspace(0, 4 * np.pi, n_points)
     x = 50 * np.sin(3 * t + np.pi / 4)
@@ -60,8 +60,8 @@ def create_2d_projection(n_points: int = 5000) -> np.ndarray:
 
 
 def main():
-    """Create a scene with mixed-dimensionality point clouds."""
-    aprint("Creating nD point cloud demonstration...")
+    """Create a scene with mixed-dimensionality points."""
+    aprint("Creating nD points demonstration...")
 
     # Create scene
     output_path = Path(__file__).parent / "nd_points_example.zarr"

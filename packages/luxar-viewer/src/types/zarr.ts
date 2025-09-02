@@ -57,7 +57,7 @@ export interface ZarrNodeAttrs {
   depth_test?: boolean;
   depth_write?: boolean;
 
-  /** Point cloud metadata */
+  /** Points metadata */
   num_points?: number;
   max_radius?: number;
 
@@ -122,7 +122,7 @@ export function hasTransform(
  * Type guard to check if attributes are for a points node
  */
 export function isPointsNode(attrs: ZarrNodeAttrs): boolean {
-  return attrs.type === 'points' || attrs.type === 'pointcloud';
+  return attrs.type === 'points' || attrs.type === 'points';
 }
 
 /**

@@ -2,7 +2,7 @@
  * Core type definitions for nD data visualization in Luxar.
  *
  * This module provides the fundamental data structures for managing
- * high-dimensional point cloud data, including dimension metadata,
+ * high-dimensional points data, including dimension metadata,
  * slicing state, and initialization utilities.
  */
 
@@ -39,12 +39,12 @@ export interface DimensionMetadata {
 
 /**
  * State object representing the current position and display configuration
- * for navigating through nD point cloud data.
+ * for navigating through nD points data.
  *
  * This is the core data structure that tracks where we are in the nD space
  * and which dimensions are currently being visualized. The scene-level
  * dimension manager maintains a single instance to ensure consistency
- * across all point clouds in the scene.
+ * across all points in the scene.
  *
  * @interface SimpleDims
  */
@@ -71,7 +71,7 @@ export interface SimpleDims {
 }
 
 /**
- * Initializes a SimpleDims object from point cloud position data.
+ * Initializes a SimpleDims object from points position data.
  *
  * This function creates the initial dimension state for nD visualization,
  * inferring the number of dimensions from the data structure and setting
@@ -136,7 +136,7 @@ export function initializeDims(
 }
 
 /**
- * Computes the min/max bounds for each dimension from point cloud position data.
+ * Computes the min/max bounds for each dimension from points position data.
  *
  * This function analyzes the actual data values to determine the natural bounds
  * of each dimension, which is essential for:

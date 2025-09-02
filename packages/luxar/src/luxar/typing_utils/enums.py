@@ -8,7 +8,7 @@ from enum import Enum
 
 
 class BlendingMode(str, Enum):
-    """Blending modes for point cloud rendering.
+    """Blending modes for points rendering.
 
     These control how overlapping points combine their colors.
     """

@@ -49,7 +49,7 @@ interface SliderConfig {
  * 1. User moves slider → triggers sceneDimsManager.setDimensionValue()
  * 2. sceneDimsManager notifies all listeners → triggers update()
  * 3. update() refreshes slider visuals and status display
- * 4. Point clouds re-slice automatically via their own listeners
+ * 4. Points re-slice automatically via their own listeners
  *
  * @class DimensionSliders
  */

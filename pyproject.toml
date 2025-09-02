@@ -17,7 +17,7 @@ maintainers = [
 keywords = [
     "3d",
     "nd-visualization",
-    "point-cloud",
+    "points",
     "surfaces",
     "volumes", 
     "visualization",

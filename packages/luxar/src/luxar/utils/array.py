@@ -1,7 +1,7 @@
-"""Array utility functions for Luxar point cloud processing.
+"""Array utility functions for Luxar points processing.
 
 This module provides efficient utilities for processing and broadcasting
-arrays commonly used in point cloud operations. The functions handle
+arrays commonly used in points operations. The functions handle
 broadcasting single values to arrays, validation, and type conversions.
 
 Key Functions:

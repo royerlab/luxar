@@ -40,7 +40,7 @@ dimensions = Dimensions([
 with LuxarZarrCompiler("my_dataset.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dimensions)
     
-    # Add 4D point cloud data (time + xyz)
+    # Add 4D points data (time + xyz)
     positions = np.random.randn(1_000_000, 4).astype(np.float32)
     colors = np.random.rand(1_000_000, 3).astype(np.float32)  # HDR colors supported
     radii = np.random.uniform(0.1, 0.5, 1_000_000).astype(np.float32)
@@ -142,7 +142,7 @@ scene = Scene("multidimensional.zarr", dimensions=dimensions)
 
 ### Point Attributes
 
-Enhanced point cloud visualization with per-point attributes:
+Enhanced points visualization with per-point attributes:
 
 ```python
 # Generate 5D data (time, z, x, y, channel) 
@@ -162,7 +162,7 @@ radii = np.random.uniform(0.1, 2.0, n_points).astype(np.float32)
 sharpness = np.random.uniform(0.5, 10.0, n_points).astype(np.float32)
 
 scene.add_points(
-    "PointCloud5D",
+    "Points5D",
     positions,
     colors=colors,
     radii=radii,
@@ -226,7 +226,7 @@ class Scene:
         parent: Optional[Node] = None,
         **attrs
     ) -> Points:
-        """Add a point cloud to the scene.
+        """Add a points to the scene.
         
         Args:
             name: Node name
@@ -549,7 +549,7 @@ scene = Scene("data.zarr", compressor=balanced_compressor)
 ```python
 # Process massive datasets without loading into memory
 def process_in_chunks(scene_path: str, chunk_size: int = 1_000_000):
-    """Example: Apply colormap to huge point cloud."""
+    """Example: Apply colormap to huge points."""
     
     root = zarr.open_group(scene_path, mode='r+')
     positions = root['points/positions']
@@ -626,7 +626,7 @@ scene.add_points("normalized", positions, colors)
 ```python
 import pandas as pd
 
-# Convert DataFrame to point cloud
+# Convert DataFrame to points
 df = pd.read_csv("measurements.csv")
 positions = df[['x', 'y', 'z']].values.astype(np.float32)
 colors = df[['r', 'g', 'b']].values.astype(np.uint8)
@@ -639,7 +639,7 @@ scene.add_points("measurements", positions, colors)
 ```python
 from scipy.spatial import Delaunay
 
-# Future: Triangulated surfaces from point clouds
+# Future: Triangulated surfaces from points
 points = np.random.randn(1000, 3)
 tri = Delaunay(points[:, :2])  # 2D triangulation
 

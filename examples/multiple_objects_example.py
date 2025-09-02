@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Multiple Objects Example - Demonstrates multiple point clouds in one scene.
+"""Multiple Objects Example - Demonstrates multiple points objects in one scene.
 
 This educational example demonstrates:
-- Creating multiple distinct point cloud objects
+- Creating multiple distinct points objects
 - Using different rendering properties per object
 - Spatial arrangement and organization
 - Color coding and visual differentiation
@@ -129,12 +129,12 @@ def create_ring_system(
 
 
 def main():
-    """Create a scene with multiple different point cloud objects."""
+    """Create a scene with multiple different points objects."""
     output_path = Path(__file__).parent / "multiple_objects_example.zarr"
 
     aprint(f"Creating multiple objects demonstration at {output_path}")
     aprint("This example shows:")
-    aprint("- Multiple distinct point cloud objects")
+    aprint("- Multiple distinct points objects")
     aprint("- Different shapes, sizes, and densities")
     aprint("- Varied rendering properties per object")
     aprint("- Spatial organization and composition")
@@ -335,7 +335,7 @@ def main():
         aprint("     - Additive blending for glow")
         aprint("     - Mathematical parametric curve")
 
-        aprint("\nTotal Objects: 6 distinct point clouds")
+        aprint("\nTotal Objects: 6 distinct points objects")
         aprint("Total Points: ~31,000 points")
         aprint("Rendering Modes: Normal and additive blending")
         aprint("Point Sizes: 0.01 to 0.06 radius range")

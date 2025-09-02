@@ -2,7 +2,7 @@
 """Time Series 4D Example - Animated rotating spiral in 3D space over time.
 
 This example demonstrates:
-- 4D point cloud data (time + 3D space)
+- 4D points data (time + 3D space)
 - Scene-level dimension definitions with proper units and ranges
 - Smooth animation through time dimension
 - Color coding by time for visual clarity
@@ -92,7 +92,7 @@ def main():
         aprint(f"Generating {n_times} time steps with {n_points} points each...")
         positions, colors = create_rotating_spiral(n_points, n_times)
 
-        # Add point cloud
+        # Add points
         scene.add_points(
             "RotatingSpiral",
             positions,

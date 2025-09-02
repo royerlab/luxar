@@ -22,7 +22,7 @@ LuxarVersion = Literal["0.1", "0.2", "0.3"]
 # Core Configuration Constants
 # =============================================================================
 
-# Default Zarr chunk size for point clouds
+# Default Zarr chunk size for points
 DEFAULT_CHUNK_SIZE: Final[int] = CHUNK_SIZE_DEFAULT
 
 # Minimum and maximum chunk sizes for validation
@@ -188,7 +188,7 @@ def validate_compression_level(level: int) -> int:
 
 
 def estimate_memory_usage(n_points: int, has_colors: bool = True) -> int:
-    """Estimate memory usage for a point cloud dataset.
+    """Estimate memory usage for a points dataset.
 
     Args:
         n_points: Number of points

@@ -4,7 +4,7 @@ The `io` package handles all input/output operations for Luxar, focusing on prog
 
 ## Overview
 
-This package provides the infrastructure for writing point cloud data progressively to Zarr archives, enabling processing of TB-scale datasets on GB-scale machines.
+This package provides the infrastructure for writing points data progressively to Zarr archives, enabling processing of TB-scale datasets on GB-scale machines.
 
 ## Modules
 

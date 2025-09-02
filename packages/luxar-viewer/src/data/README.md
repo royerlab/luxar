@@ -1,16 +1,16 @@
 # Luxar Data Package
 
-> High-performance Zarr data loading and nD slicing for point cloud visualization
+> High-performance Zarr data loading and nD slicing for points visualization
 
 ## Overview
 
-The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD point cloud datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
+The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD points datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
 
 ### Key Features
 
 - **Spatial Index (Required)**: All datasets MUST have spatial indices for loading
 - **Zarr-Native Loading**: Direct integration with Zarr stores for chunked data access
-- **nD Data Support**: Handle arbitrary-dimensional point clouds with automatic slicing
+- **nD Data Support**: Handle arbitrary-dimensional points with automatic slicing
 - **Hierarchical Scenes**: Load nested scene structures with inheritance
 - **Smart Slicing**: Radius-based hypersphere intersection for smooth navigation
 - **Auto-Broadcasting**: Intelligent replication of point groups across non-displayed dimensions
@@ -101,7 +101,7 @@ const scene = await loadScene(url, config);
 // 2. The loader automatically:
 //    - Extracts scene dimensions from metadata
 //    - Builds hierarchical scene graph
-//    - Loads spatial indices for each point cloud
+//    - Loads spatial indices for each points
 //    - Creates THREE.js geometries and materials
 //    - Handles transforms and attribute inheritance
 
@@ -390,7 +390,7 @@ dataset.zarr/
 ├── .zattrs                # Scene metadata
 ├── .zgroup                # Zarr group marker
 ├── .zmetadata            # Consolidated metadata (recommended)
-└── point_cloud/
+└── points/
     ├── .zattrs           # Node attributes
     ├── .zgroup
     ├── spatial_index/    # Spatial index group - REQUIRED
@@ -736,7 +736,7 @@ location /data/ {
 **Problem: Dataset without spatial index**
 
 ```typescript
-// Error: "[❌] No spatial index found for /point_cloud. Please rebuild the dataset with spatial index support."
+// Error: "[❌] No spatial index found for /points. Please rebuild the dataset with spatial index support."
 // Solution: Regenerate dataset with Python compiler
 
 // Python code:
@@ -838,7 +838,7 @@ location /data/ {
 | Function                                           | Description                                   |
 | -------------------------------------------------- | --------------------------------------------- |
 | `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with spatial index |
-| `updateView(viewState, loaderId?)`                 | Update all point clouds for new view state    |
+| `updateView(viewState, loaderId?)`                 | Update all points for new view state    |
 | `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions       |
 | `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring           |
 | `clearCaches(loaderId?)`                           | Clear caches to free memory                   |
@@ -938,12 +938,12 @@ location /data/ {
 | `normalizeZarrPath(path, baseUrl?)`                 | Normalize path to valid Zarr URL        |
 | `extractDimensionMetadata(attrs)`                   | Extract dimensions from zarr attributes |
 | `inheritRenderingAttributes(attrs, parent)`         | Apply attribute inheritance             |
-| `validatePointCloudData(positions, expected, ndim)` | Validate point cloud data               |
+| `validatePointsData(positions, expected, ndim)` | Validate points data               |
 | `calculateInitialSlicePosition(dims)`               | Calculate initial nD slice position     |
-| `isPointCloudGroup(attrs, name)`                    | Check if group contains point cloud     |
+| `isPointsGroup(attrs, name)`                    | Check if group contains points     |
 | `calculateBoundingBox(positions, ndim)`             | Calculate nD bounding box               |
 | `processTransformAttribute(transform)`              | Process transform from zarr metadata    |
-| `estimatePointCloudMemory(n, ndim, ...)`            | Estimate memory usage in MB             |
+| `estimatePointsMemory(n, ndim, ...)`            | Estimate memory usage in MB             |
 | `validateRenderingAttributes(attrs)`                | Validate and apply defaults             |
 | `determineLoadingStrategy(n, memory)`               | Choose loading strategy based on size   |
 

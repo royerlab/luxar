@@ -4,7 +4,7 @@ The `core` package contains the fundamental data structures and scene graph impl
 
 ## Overview
 
-This package provides the core building blocks for creating and manipulating 3D/nD point cloud scenes with hierarchical structure and transformations.
+This package provides the core building blocks for creating and manipulating 3D/nD points scenes with hierarchical structure and transformations.
 
 ## Modules
 
@@ -32,13 +32,13 @@ Root node of the scene graph.
 - Point cloud creation with automatic validation
 - Group node creation for organization
 - Progressive writing support via writer injection
-- Convenient helper methods for common point cloud patterns
+- Convenient helper methods for common points patterns
 
 ### `points.py`
 Point cloud node implementation.
 
 **Key Classes:**
-- `Points`: Lightweight metadata container for point cloud data
+- `Points`: Lightweight metadata container for points data
 
 **Key Features:**
 - Metadata-only storage (actual data written to Zarr)
@@ -46,7 +46,7 @@ Point cloud node implementation.
 - Integration with progressive writing system
 
 ### `dimensions.py`
-Dimension system for nD point clouds with spatial awareness.
+Dimension system for nD points with spatial awareness.
 
 **Key Classes:**
 - `Dimension`: Single dimension specification with spatial and discrete properties

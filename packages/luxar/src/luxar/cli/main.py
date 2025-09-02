@@ -505,12 +505,12 @@ def info(
         aprint("📊 Summary Statistics:")
         aprint(f"  🗂️  Groups: {info_dict['n_groups']}")
         aprint(f"  📦 Arrays: {info_dict['n_arrays']}")
-        aprint(f"  ⭕ Point clouds: {len(info_dict['point_clouds'])}")
+        aprint(f"  ⭕ Points objects: {len(info_dict['points_objects'])}")
         aprint(f"  ✨ Total points: {info_dict['n_points_total']:,}")
 
-        if stats and info_dict["point_clouds"]:
-            aprint("\n📦 Point Cloud Details:")
-            for pc in info_dict["point_clouds"]:
+        if stats and info_dict["points_objects"]:
+            aprint("\n📦 Points Objects Details:")
+            for pc in info_dict["points_objects"]:
                 aprint(f"  {pc['path']}:")
                 aprint(f"    Points: {pc['n_points']:,}")
                 aprint(f"    Dimensions: {pc['n_dims']}")
