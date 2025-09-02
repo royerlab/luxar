@@ -350,8 +350,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
 
       // Don't automatically center - let the scene designer's positioning take precedence
-      // User can press 'C' to center on bounding box if desired
-      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press C to toggle centering on bounding box.');
+      // User can press 'F' to center on bounding box if desired
+      log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to toggle centering on bounding box.');
     } catch (error) {
       hideLoadingIndicator();
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
