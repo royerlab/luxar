@@ -11,7 +11,7 @@ import { config, type RenderingSettings } from '../config';
 // Extract component configuration
 const controlsConfig = config.ui.components.renderingControls;
 const spacingConfig = config.ui.styles.spacing;
-import type { NavigationControllers } from '../controls/types';
+import type { RenderingControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
 import {
   generateSettingsKey,
@@ -54,7 +54,7 @@ export class RenderingControls {
   private visible: boolean = false;
 
   /** References to GUI controllers for updates */
-  private controllers: NavigationControllers = {};
+  private controllers: RenderingControllers = {};
 
   /** Folder references for visibility control */
   private orbitFolder?: GUI;
@@ -352,6 +352,59 @@ export class RenderingControls {
             this.controllers.fov.setValue(fovValue);
             this.controllers.fov.updateDisplay();
           }
+
+          // Apply corresponding lens distortion preset (if lens distortion is enabled)
+          const lensPreset = config.camera.lensDistortionPresets[presetName];
+          if (lensPreset && this.settings.lensDistortionEnabled) {
+            this.settings.lensDistortionX = lensPreset.distortionX;
+            this.settings.lensDistortionY = lensPreset.distortionY;
+            this.settings.lensPrincipalPointX = lensPreset.principalPointX;
+            this.settings.lensPrincipalPointY = lensPreset.principalPointY;
+            this.settings.lensFocalLengthX = lensPreset.focalLengthX;
+            this.settings.lensFocalLengthY = lensPreset.focalLengthY;
+            this.settings.lensSkew = lensPreset.skew;
+            
+            // Apply lens distortion changes
+            this.postProcessing.updateLensDistortion({
+              distortionX: lensPreset.distortionX,
+              distortionY: lensPreset.distortionY,
+              principalPointX: lensPreset.principalPointX,
+              principalPointY: lensPreset.principalPointY,
+              focalLengthX: lensPreset.focalLengthX,
+              focalLengthY: lensPreset.focalLengthY,
+              skew: lensPreset.skew
+            });
+
+            // Update lens distortion UI controllers to reflect new values
+            if (this.controllers.lensDistortionX) {
+              this.controllers.lensDistortionX.setValue(lensPreset.distortionX);
+              this.controllers.lensDistortionX.updateDisplay();
+            }
+            if (this.controllers.lensDistortionY) {
+              this.controllers.lensDistortionY.setValue(lensPreset.distortionY);
+              this.controllers.lensDistortionY.updateDisplay();
+            }
+            if (this.controllers.lensPrincipalPointX) {
+              this.controllers.lensPrincipalPointX.setValue(lensPreset.principalPointX);
+              this.controllers.lensPrincipalPointX.updateDisplay();
+            }
+            if (this.controllers.lensPrincipalPointY) {
+              this.controllers.lensPrincipalPointY.setValue(lensPreset.principalPointY);
+              this.controllers.lensPrincipalPointY.updateDisplay();
+            }
+            if (this.controllers.lensFocalLengthX) {
+              this.controllers.lensFocalLengthX.setValue(lensPreset.focalLengthX);
+              this.controllers.lensFocalLengthX.updateDisplay();
+            }
+            if (this.controllers.lensFocalLengthY) {
+              this.controllers.lensFocalLengthY.setValue(lensPreset.focalLengthY);
+              this.controllers.lensFocalLengthY.updateDisplay();
+            }
+            if (this.controllers.lensSkew) {
+              this.controllers.lensSkew.setValue(lensPreset.skew);
+              this.controllers.lensSkew.updateDisplay();
+            }
+          }
         }
 
         this.saveSettings();
@@ -365,12 +418,13 @@ export class RenderingControls {
     fovPresetControl.domElement.setAttribute(
       'title',
       'FOV Preset: Professional camera lens equivalents (horizontal FOV)\n' +
-        '• 28mm Wide (75°): Ultra-wide angle for landscapes and large scenes\n' +
-        '• 35mm (63°): Wide angle for environmental shots\n' +
-        '• 50mm Normal (47°): Natural human vision equivalent\n' +
-        '• 85mm Portrait (29°): Telephoto for subject isolation\n' +
-        '• 135mm Tele (18°): Strong telephoto for extreme focus\n' +
-        '• Custom: Manual FOV control via slider or Shift+Wheel'
+        '• 28mm Wide (75°): Ultra-wide angle + barrel distortion\n' +
+        '• 35mm (63°): Wide angle + moderate barrel distortion\n' +
+        '• 50mm Normal (47°): Natural human vision + no distortion\n' +
+        '• 85mm Portrait (29°): Telephoto + slight pincushion\n' +
+        '• 135mm Tele (18°): Strong telephoto + pincushion distortion\n' +
+        '• Custom: Manual FOV control via slider or Shift+Wheel\n' +
+        '• Note: Also applies realistic lens distortion when enabled'
     );
 
     const fovControl = cameraFolder
@@ -1137,6 +1191,9 @@ export class RenderingControls {
         this.triggerAnimation();
       });
 
+    // Store reference for updates
+    this.controllers.lensDistortionX = lensDistortionXControl;
+
     lensDistortionXControl.domElement.setAttribute(
       'title',
       'Radial Distortion X:\n' +
@@ -1153,6 +1210,9 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+
+    // Store reference for updates
+    this.controllers.lensDistortionY = lensDistortionYControl;
 
     lensDistortionYControl.domElement.setAttribute(
       'title',
@@ -1171,6 +1231,9 @@ export class RenderingControls {
         this.triggerAnimation();
       });
 
+    // Store reference for updates
+    this.controllers.lensPrincipalPointX = lensPrincipalPointXControl;
+
     lensPrincipalPointXControl.domElement.setAttribute(
       'title',
       'Principal Point X offset:\n' +
@@ -1187,6 +1250,9 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+
+    // Store reference for updates
+    this.controllers.lensPrincipalPointY = lensPrincipalPointYControl;
 
     lensPrincipalPointYControl.domElement.setAttribute(
       'title',
@@ -1205,6 +1271,9 @@ export class RenderingControls {
         this.triggerAnimation();
       });
 
+    // Store reference for updates
+    this.controllers.lensFocalLengthX = lensFocalLengthXControl;
+
     lensFocalLengthXControl.domElement.setAttribute(
       'title',
       'Focal Length X:\n' +
@@ -1222,6 +1291,9 @@ export class RenderingControls {
         this.triggerAnimation();
       });
 
+    // Store reference for updates
+    this.controllers.lensFocalLengthY = lensFocalLengthYControl;
+
     lensFocalLengthYControl.domElement.setAttribute(
       'title',
       'Focal Length Y:\n' +
@@ -1238,6 +1310,9 @@ export class RenderingControls {
         this.saveSettings();
         this.triggerAnimation();
       });
+
+    // Store reference for updates
+    this.controllers.lensSkew = lensSkewControl;
 
     lensSkewControl.domElement.setAttribute(
       'title',
@@ -1974,6 +2049,28 @@ export class RenderingControls {
 
     this.settings.fov = targetFOV;
     this.settings.fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
+
+    // Apply appropriate lens distortion preset when enabling lens distortion in cinematic mode
+    if (shouldEnableAll) {
+      const lensPreset = config.camera.lensDistortionPresets['35mm'];
+      this.settings.lensDistortionX = lensPreset.distortionX;
+      this.settings.lensDistortionY = lensPreset.distortionY;
+      this.settings.lensPrincipalPointX = lensPreset.principalPointX;
+      this.settings.lensPrincipalPointY = lensPreset.principalPointY;
+      this.settings.lensFocalLengthX = lensPreset.focalLengthX;
+      this.settings.lensFocalLengthY = lensPreset.focalLengthY;
+      this.settings.lensSkew = lensPreset.skew;
+    } else {
+      // Return to 50mm Normal lens distortion when disabling cinematic mode
+      const lensPreset = config.camera.lensDistortionPresets['50mm Normal'];
+      this.settings.lensDistortionX = lensPreset.distortionX;
+      this.settings.lensDistortionY = lensPreset.distortionY;
+      this.settings.lensPrincipalPointX = lensPreset.principalPointX;
+      this.settings.lensPrincipalPointY = lensPreset.principalPointY;
+      this.settings.lensFocalLengthX = lensPreset.focalLengthX;
+      this.settings.lensFocalLengthY = lensPreset.focalLengthY;
+      this.settings.lensSkew = lensPreset.skew;
+    }
 
     // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
     this.postProcessing.startDeferRebuild();
