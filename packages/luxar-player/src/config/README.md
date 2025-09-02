@@ -50,7 +50,7 @@ Controls 3D perspective, navigation, and viewing parameters:
 
 ```typescript
 camera: {
-  fov: 60,                    // Field of view (human-like viewing)
+  fov: 47,                    // Field of view (50mm Normal - natural human vision)
   near: 0.1,                  // Near clipping plane
   far: 1000,                  // Far clipping plane
   initialPosition: { x: 0, y: 0, z: 8 },
