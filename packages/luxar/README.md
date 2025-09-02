@@ -673,7 +673,7 @@ Luxar Core is part of the Luxar project. See the main [LICENSE](../../LICENSE) f
 
 ## 🔗 See Also
 
-- [Luxar Player README](../luxar-player/README.md) - WebGL renderer documentation
+- [Luxar Viewer README](../luxar-viewer/README.md) - WebGL renderer documentation
 - [Main README](../../README.md) - Ecosystem overview
 - [Zarr Documentation](https://zarr.readthedocs.io/) - Storage format details
 - [Examples](../../examples/) - Code examples and tutorials

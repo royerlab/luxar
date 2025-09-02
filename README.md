@@ -14,7 +14,7 @@ Luxar reimagines scientific visualization as a hardware-limited problem, not a s
 │   Scientific Data   │         │   GPU Rendering      │
 │                     │         │                      │
 │ ┌─────────────────┐ │         │ ┌──────────────────┐ │
-│ │  Luxar Core     │ │  Zarr   │ │  Luxar Player    │ │
+│ │  Luxar Core     │ │  Zarr   │ │  Luxar Viewer    │ │
 │ │  (Compiler)     ├─┼────────▶┼─┤  (Renderer)      │ │
 │ └─────────────────┘ │         │ └──────────────────┘ │
 └─────────────────────┘         └──────────────────────┘
@@ -23,7 +23,7 @@ Luxar reimagines scientific visualization as a hardware-limited problem, not a s
 ### 🐍 [Luxar Core](packages/luxar/README.md)
 Python library for compiling n-dimensional scientific datasets into optimized Zarr archives. Handles hierarchical scene organization, coordinate transforms, and efficient chunking strategies.
 
-### 🌐 [Luxar Player](packages/luxar-player/README.md)  
+### 🌐 [Luxar Viewer](packages/luxar-viewer/README.md)  
 GPU-accelerated WebGL renderer with HDR pipeline, real-time effects, and streaming capabilities. Delivers maximum performance through custom shaders and progressive loading.
 
 ## 🚀 Quick Start
@@ -99,7 +99,7 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 
 📚 **For detailed usage, see package-specific documentation:**
 - [Python API Guide](packages/luxar/README.md#-quick-start)
-- [Viewer Setup Guide](packages/luxar-player/README.md#-quick-start)
+- [Viewer Setup Guide](packages/luxar-viewer/README.md#-quick-start)
 
 ## 🏗️ Architecture
 
@@ -113,7 +113,7 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 ### Data Flow
 
 ```
-Your Data → Luxar Core → Zarr Archive → Luxar Player → GPU → Display
+Your Data → Luxar Core → Zarr Archive → Luxar Viewer → GPU → Display
    │            │             │              │
    │            │             │              └─ WebGL 2.0 shaders
    │            │             └─ Chunked, compressed, streamable
@@ -129,7 +129,7 @@ luxar/
 │   ├── luxar/                 # Python scene compiler
 │   │   ├── README.md         # Python package docs
 │   │   └── src/luxar/        # Source code
-│   └── luxar-player/         # WebGL renderer  
+│   └── luxar-viewer/         # WebGL renderer  
 │       ├── README.md         # Viewer docs
 │       └── src/              # TypeScript source
 ├── Makefile                  # Convenient commands
@@ -148,7 +148,7 @@ luxar/
 
 📚 [Full Python Documentation →](packages/luxar/README.md)
 
-### 🌐 Luxar Player
+### 🌐 Luxar Viewer
 - **GPU Acceleration** - WebGL 2.0 with custom shaders
 - **nD Navigation** - Browse through multiple dimensions with keyboard controls
 - **Radius-Based Slicing** - Natural point visibility based on hypersphere intersections
@@ -156,7 +156,7 @@ luxar/
 - **Streaming Ready** - Progressive loading of large datasets
 - **Cross-Platform** - Runs in any modern web browser
 
-📚 [Full Viewer Documentation →](packages/luxar-player/README.md)
+📚 [Full Viewer Documentation →](packages/luxar-viewer/README.md)
 
 ### 🆕 New in Latest Version
 - **Dimension Sliders UI**: Beautiful napari-inspired sliders for navigating nD data
@@ -188,7 +188,7 @@ make help
 ### Development Resources
 
 - 📚 [Python Development Guide](packages/luxar/README.md#-development) - Testing, code style, extending
-- 📚 [Viewer Development Guide](packages/luxar-player/README.md#-development) - TypeScript, WebGL, shaders
+- 📚 [Viewer Development Guide](packages/luxar-viewer/README.md#-development) - TypeScript, WebGL, shaders
 - 📚 [Contributing Guidelines](CONTRIBUTING.md) - How to contribute
 
 ### Key Commands
@@ -425,7 +425,7 @@ For detailed contributing guidelines, development setup, coding standards, and m
 
 ### Getting Started
 1. Run the basic demo: `luxar demo --no-serve --output demo.zarr --points 50000`
-2. Start the viewer: `cd packages/luxar-player && pnpm dev`
+2. Start the viewer: `cd packages/luxar-viewer && pnpm dev`
 3. Load your data: `http://localhost:5173/?src=http://localhost:8000/data/demo.zarr/`
 
 ### Advanced Topics

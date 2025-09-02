@@ -45,12 +45,12 @@ This document outlines the development tools used in the Luxar project for code 
 
 ### Code Formatting
 - **Tool**: `prettier` (v3.6.2+)
-- **Configuration**: `packages/luxar-player/.prettierrc`
+- **Configuration**: `packages/luxar-viewer/.prettierrc`
 - **Command**: `pnpm run format`
 
 ### Linting
 - **Tool**: `eslint` (v9.32.0+) with TypeScript plugins
-- **Configuration**: `packages/luxar-player/.eslintrc.json`
+- **Configuration**: `packages/luxar-viewer/.eslintrc.json`
 - **Plugins**:
   - `@typescript-eslint/parser`
   - `@typescript-eslint/eslint-plugin`
@@ -58,7 +58,7 @@ This document outlines the development tools used in the Luxar project for code 
 
 ### Type Checking
 - **Tool**: `tsc` (TypeScript compiler v5.7+)
-- **Configuration**: `packages/luxar-player/tsconfig.json`
+- **Configuration**: `packages/luxar-viewer/tsconfig.json`
 - **Mode**: Strict mode enabled
 - **Command**: `pnpm run typecheck`
 

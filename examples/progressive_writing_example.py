@@ -117,7 +117,7 @@ def main():
         # Context manager automatically finalizes the store
         aprint("✅ Scene finalized and ready for viewing")
         aprint("\nTo view the scene, run:")
-        aprint("  cd packages/luxar-player && pnpm dev")
+        aprint("  cd packages/luxar-viewer && pnpm dev")
         aprint(f"  # Then open http://localhost:5173/?source=../../{output_path}")
 
 

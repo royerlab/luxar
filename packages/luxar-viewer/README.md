@@ -1,4 +1,4 @@
-# 🌌 Luxar Player
+# 🌌 Luxar Viewer
 
 A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific datasets stored in Zarr format. Delivers maximum visualization performance limited only by your graphics hardware, display resolution, and network bandwidth—not by software constraints. Features advanced HDR rendering, real-time effects, and intuitive navigation controls.
 
@@ -33,7 +33,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd luxar/packages/luxar-player
+cd luxar/packages/luxar-viewer
 
 # Install dependencies
 pnpm install
