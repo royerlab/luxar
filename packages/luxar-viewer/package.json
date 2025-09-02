@@ -1,5 +1,5 @@
 {
-  "name": "luxar-player",
+  "name": "luxar-viewer",
   "version": "0.0.1",
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "private": true,

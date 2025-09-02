@@ -59,9 +59,9 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
     - **Status**: Open
     - **Priority**: LOW (do not fix yet!)
 
-13- Rename luxar-player to luxar-viewer everywhere. 
-    - **Status**: Open
-    - **Priority**: LOW (do not fix yet!)
+13- ✅ Rename luxar-player to luxar-viewer everywhere. 
+    - **Status**: COMPLETED
+    - **Priority**: LOW
 
 14- In the viewer, do not use 'point cloud' terminology, use 'points' instead. A 'Point Cloud' is a 'Points' object in Luxar terminology.  
     - **Status**: Open

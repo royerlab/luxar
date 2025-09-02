@@ -192,7 +192,7 @@ def main():
 
         aprint(f"\n✓ Example scene created successfully at {output_path}")
         aprint("\nTo view the example:")
-        aprint("1. Start the viewer: cd packages/luxar-player && npm run dev")
+        aprint("1. Start the viewer: cd packages/luxar-viewer && npm run dev")
         aprint(f"2. Serve the data: luxar serve {output_path}")
         aprint("3. Open http://localhost:5173 in your browser")
         aprint("\nLook for:")

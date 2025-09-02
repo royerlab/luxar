@@ -151,7 +151,7 @@ def serve(
         if viewer_only:
             if not check_viewer_built():
                 aprint(
-                    "❌ Viewer not built. Run: cd packages/luxar-player && pnpm build"
+                    "❌ Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
                 )
                 raise typer.Exit(1)
             _serve_viewer(host, viewer_port, None, open_browser)
@@ -193,7 +193,7 @@ def serve(
         if viewer:
             if not check_viewer_built():
                 aprint("⚠️  Viewer not built. Skipping viewer serving.")
-                aprint("💡 To build: cd packages/luxar-player && pnpm build")
+                aprint("💡 To build: cd packages/luxar-viewer && pnpm build")
             else:
                 # Start viewer in a separate thread
                 viewer_thread = threading.Thread(

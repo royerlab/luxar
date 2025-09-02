@@ -89,7 +89,7 @@ def get_viewer_dist_path() -> Path:
     current = Path(__file__).parent
     while current != current.parent:
         if (current / "pyproject.toml").exists():
-            viewer_dist = current / "packages" / "luxar-player" / "dist"
+            viewer_dist = current / "packages" / "luxar-viewer" / "dist"
             if viewer_dist.exists():
                 return viewer_dist
         current = current.parent
@@ -98,7 +98,7 @@ def get_viewer_dist_path() -> Path:
     return (
         Path(__file__).parent.parent.parent.parent.parent
         / "packages"
-        / "luxar-player"
+        / "luxar-viewer"
         / "dist"
     )
 

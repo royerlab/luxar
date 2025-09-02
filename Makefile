@@ -34,11 +34,11 @@ format-all:  ## Format all code (Python and TypeScript)
 	@echo "🐍 Formatting Python code..."
 	hatch run format
 	@echo "📘 Formatting TypeScript code..."
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run format
+	cd packages/luxar-viewer && pnpm run format
 
 # Code quality checks (using Hatch)
 lint:  ## Run ruff linting
@@ -64,11 +64,11 @@ test-all:  ## Run all tests (Python and TypeScript)
 	@echo "🐍 Running Python tests..."
 	hatch run test
 	@echo "📘 Running TypeScript tests..."
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm test --run
+	cd packages/luxar-viewer && pnpm test --run
 
 # Pre-commit
 pre-commit-install:  ## Install pre-commit hooks
@@ -82,11 +82,11 @@ check:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
 	hatch run check
 	@echo "📘 Running TypeScript checks..."
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run typecheck && pnpm run lint && pnpm test --run
+	cd packages/luxar-viewer && pnpm run typecheck && pnpm run lint && pnpm test --run
 
 # Clean up
 clean:  ## Clean up temporary files and caches
@@ -102,12 +102,12 @@ clean:  ## Clean up temporary files and caches
 	rm -rf coverage/
 	rm -rf .coverage*
 	@echo "🧹 Cleaning TypeScript/Node.js artifacts..."
-	rm -rf packages/luxar-player/dist/
-	rm -rf packages/luxar-player/node_modules/
-	rm -rf packages/luxar-player/.vite/
-	rm -rf packages/luxar-player/.parcel-cache/
-	rm -f packages/luxar-player/*.tsbuildinfo
-	rm -f packages/luxar-player/vite.config.*.timestamp-*
+	rm -rf packages/luxar-viewer/dist/
+	rm -rf packages/luxar-viewer/node_modules/
+	rm -rf packages/luxar-viewer/.vite/
+	rm -rf packages/luxar-viewer/.parcel-cache/
+	rm -f packages/luxar-viewer/*.tsbuildinfo
+	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
 	@echo "🧹 Cleaning example outputs..."
 	find examples -name "*.zarr" -type d -exec rm -rf {} +
 	rm -rf *.zarr
@@ -131,7 +131,7 @@ dev-setup:  ## Complete development setup with Hatch
 	hatch env create
 	hatch run pre-commit install
 	@echo "📦 Installing TypeScript/viewer dependencies..."
-	cd packages/luxar-player && pnpm install
+	cd packages/luxar-viewer && pnpm install
 	@echo "✅ Development environment setup complete!"
 	@echo "💡 Use 'hatch shell' to activate the environment"
 	@echo "💡 Run 'make check' to verify everything works"
@@ -195,55 +195,55 @@ PORT ?= 8000
 
 # Web viewer
 viewer-install:  ## Install viewer dependencies
-	cd packages/luxar-player && pnpm install
+	cd packages/luxar-viewer && pnpm install
 
 viewer:  ## Start the web viewer development server
-	cd packages/luxar-player && pnpm dev
+	cd packages/luxar-viewer && pnpm dev
 
 viewer-build:  ## Build the viewer for production
-	cd packages/luxar-player && pnpm build
+	cd packages/luxar-viewer && pnpm build
 
 viewer-test:  ## Run TypeScript tests
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm test --run
+	cd packages/luxar-viewer && pnpm test --run
 
 viewer-test-cov:  ## Run TypeScript tests with coverage
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run test:coverage
+	cd packages/luxar-viewer && pnpm run test:coverage
 
 viewer-lint:  ## Run TypeScript linting
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run lint
+	cd packages/luxar-viewer && pnpm run lint
 
 viewer-typecheck:  ## Run TypeScript type checking
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run typecheck
+	cd packages/luxar-viewer && pnpm run typecheck
 
 viewer-format:  ## Format TypeScript code
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run format
+	cd packages/luxar-viewer && pnpm run format
 
 viewer-check:  ## Run all TypeScript checks (typecheck, lint, test)
-	@if [ ! -d "packages/luxar-player/node_modules" ]; then \
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-player && pnpm install; \
+		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-player && pnpm run check
+	cd packages/luxar-viewer && pnpm run check
 
 # Combined workflows
 demo-and-serve: demo  ## Create demo and start both servers

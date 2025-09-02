@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Type checking: `hatch run mypy packages/luxar/src/luxar/`
 
 ### TypeScript/JavaScript Development
-- Use pnpm for the luxar-player package (NOT npm)
+- Use pnpm for the luxar-viewer package (NOT npm)
 - Development server: `pnpm dev`
 - Build: `pnpm build`
 - Tests: `pnpm test --run` (use --run for non-interactive mode)
@@ -49,8 +49,8 @@ Note: When possible, use `make` commands for convenience (see below).
     - `validation/` - Validation functions
     - `utils/` - Utility functions (Array helpers, Demo generators)
   - `/packages/luxar/src/luxar/tests/` - Python tests
-- `/packages/luxar-player/` - TypeScript/WebGL viewer
-  - `/packages/luxar-player/src/` - TypeScript source with per-package documentation
+- `/packages/luxar-viewer/` - TypeScript/WebGL viewer
+  - `/packages/luxar-viewer/src/` - TypeScript source with per-package documentation
   - Each TypeScript package has its own README.md that MUST be kept in sync with code:
     - `/src/controls/README.md` - Control system (orbit, fly, input management)
     - `/src/rendering/README.md` - HDR rendering pipeline and post-processing
@@ -81,7 +81,7 @@ Note: When possible, use `make` commands for convenience (see below).
   - `CONSOLE_OUTPUT_STYLE.md` - **Console logging style guide and standards**
   - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
   - Various technical guides and specifications
-- **TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own comprehensive README.md
+- **TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own comprehensive README.md
 - **Python package READMEs**: Each subpackage in `/packages/luxar/src/luxar/` has its own README.md documenting:
   - Purpose and responsibilities of the package
   - Key classes and functions
@@ -149,7 +149,7 @@ Before committing, ensure overall consistency:
   - Import: `import { log, Modules, LogEmoji } from '../utils/log';`
 
 ### TypeScript Configuration
-- **Configuration**: Unified configuration system in `packages/luxar-player/src/config/`
+- **Configuration**: Unified configuration system in `packages/luxar-viewer/src/config/`
 - All config in `config/index.ts` with types in `config/types.ts`
 - Use camelCase consistently (not UPPER_SNAKE_CASE)
 - Prefix unused variables with underscore to avoid warnings
@@ -207,7 +207,7 @@ luxar info <data.zarr> --stats   # Display with detailed statistics
 
 ### Development Commands
 ```bash
-cd packages/luxar-player && pnpm dev         # Start viewer dev server (port 5173)
+cd packages/luxar-viewer && pnpm dev         # Start viewer dev server (port 5173)
 make viewer-test                             # Run TypeScript tests
 make test-all                                # Run all tests (Python + TypeScript)
 make clean                                   # Clean all artifacts (including TypeScript dist/, node_modules/)
@@ -225,11 +225,11 @@ make demo-and-serve                          # Create demo and start servers
 ### Code Quality Checklist
 When making significant changes:
 1. Run Python tests: `hatch run test-cov` (coverage must be >80%)
-2. Run TypeScript build: `cd packages/luxar-player && pnpm build` (check current folder first!)
+2. Run TypeScript build: `cd packages/luxar-viewer && pnpm build` (check current folder first!)
 3. Check Python linting: `hatch run python -m ruff check .`
 4. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
 5. Fix TypeScript unused warnings by prefixing with underscore
-6. **Update TypeScript package READMEs**: Each package in `/packages/luxar-player/src/` has its own README.md that MUST be updated when code changes
+6. **Update TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own README.md that MUST be updated when code changes
 7. **Update documentation in `/docs/` folder** - check ALL relevant docs for Python changes
 8. Update root README.md if features or usage changes
 9. Update LUXAR_ZARR_FORMAT.md if data structures change
@@ -238,7 +238,7 @@ When making significant changes:
 12. Update this CLAUDE.md file with important learnings
 
 ### TypeScript Quality Checks
-After making changes in luxar-player, run:
+After making changes in luxar-viewer, run:
 - `pnpm run lint` - Check code style
 - `pnpm run typecheck` - Check TypeScript types
 - `pnpm run format` - Auto-fix formatting
