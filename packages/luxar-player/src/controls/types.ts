@@ -55,21 +55,29 @@ export interface FlyState {
  * Type-safe references to GUI controllers
  */
 export interface GuiControllers {
-  navigation: NavigationControllers;
+  navigation: RenderingControllers;
   bloom?: BloomControllers;
   hdr?: HDRControllers;
 }
 
 /**
- * Navigation-specific GUI controllers
+ * Rendering controls GUI controllers for the entire rendering panel
  */
-export interface NavigationControllers {
+export interface RenderingControllers {
   controlType?: Controller;
   // Camera controls
   fov?: Controller;
   fovPreset?: Controller;
   nearPlane?: Controller;
   farPlane?: Controller;
+  // Lens distortion controls
+  lensDistortionX?: Controller;
+  lensDistortionY?: Controller;
+  lensPrincipalPointX?: Controller;
+  lensPrincipalPointY?: Controller;
+  lensFocalLengthX?: Controller;
+  lensFocalLengthY?: Controller;
+  lensSkew?: Controller;
   // Orbit controls
   autoRotate?: Controller;
   autoRotateSpeed?: Controller;

@@ -21,6 +21,15 @@ export interface CameraConfig {
   fovMax: number;
   fovSensitivity: number;
   fovPresets: Record<string, number>;
+  lensDistortionPresets: Record<string, {
+    distortionX: number;
+    distortionY: number;
+    principalPointX: number;
+    principalPointY: number;
+    focalLengthX: number;
+    focalLengthY: number;
+    skew: number;
+  }>;
 }
 
 /**
