@@ -87,48 +87,6 @@ def create_cubic_array(
     return positions, colors, radii, sharpness_array
 
 
-def create_reference_planes(grid_extent: float, spacing: float) -> tuple:
-    """Create reference planes at key depths for DOF calibration.
-
-    Args:
-        grid_extent: Half-extent of the grid
-        spacing: Grid spacing
-
-    Returns:
-        Tuple of (positions, colors, radii, sharpness) for reference markers
-    """
-    positions = []
-    colors = []
-
-    # Create markers at near, middle, and far planes
-    depths = [-grid_extent, 0, grid_extent]
-    marker_colors = [
-        [1.0, 0.0, 0.0],  # Red for near plane
-        [0.0, 1.0, 0.0],  # Green for middle plane
-        [0.0, 0.0, 1.0],  # Blue for far plane
-    ]
-
-    # Place markers at corners and center of each depth plane
-    marker_positions = [
-        [-grid_extent * 1.2, -grid_extent * 1.2],
-        [-grid_extent * 1.2, grid_extent * 1.2],
-        [grid_extent * 1.2, -grid_extent * 1.2],
-        [grid_extent * 1.2, grid_extent * 1.2],
-        [0, 0],  # Center
-    ]
-
-    for depth, color in zip(depths, marker_colors):
-        for x, y in marker_positions:
-            positions.append([x, y, depth])
-            colors.append(color)
-
-    return (
-        np.array(positions, dtype=np.float32),
-        np.array(colors, dtype=np.float32),
-        np.full(len(positions), 0.5, dtype=np.float32),  # Larger radius for visibility
-        np.full(len(positions), 8.0, dtype=np.float32),  # High sharpness
-    )
-
 
 def main():
     """Create a DOF test cubic array scene."""
@@ -140,7 +98,6 @@ def main():
     aprint("Scene features:")
     aprint("- 1,000,000 sharp disc-like points")
     aprint("- Color gradient from warm (near) to cool (far)")
-    aprint("- Reference markers at key depth planes")
     aprint("- Optimized spacing to prevent overlap")
 
     # Create scene
@@ -203,30 +160,44 @@ Performance notes:
 
         aprint(f"✓ Added {len(positions):,} points to cubic array")
 
-        # Create reference markers
-        grid_extent = (100 - 1) * 0.5 / 2  # Half-extent of the grid
-        ref_positions, ref_colors, ref_radii, ref_sharpness = create_reference_planes(
-            grid_extent, 0.5
-        )
+        aprint("Creating background star field...")
+        n_stars = 500000
+        star_positions = np.random.uniform(-500, 500, (n_stars, 3)).astype(np.float32)
 
-        # Add reference markers
+        # Variable star colors and sizes
+        star_colors = []
+        star_radii = []
+        for _ in range(n_stars):
+            # Random star colors (white to yellow to red)
+            temp = np.random.random()
+            if temp < 0.3:
+                color = [1.0, 1.0, 1.0]  # White
+            elif temp < 0.6:
+                color = [1.0, 1.0, 0.78]  # Yellow-white
+            elif temp < 0.8:
+                color = [1.0, 0.86, 0.59]  # Yellow
+            else:
+                color = [1.0, 0.71, 0.47]  # Orange-red
+
+            star_colors.append(color)
+            star_radii.append(np.random.uniform(0.01, 0.05))
+
         scene.add_points(
-            "ReferenceMarkers",
-            ref_positions,
-            colors=ref_colors,
-            radii=ref_radii,
-            sharpness=ref_sharpness,
-            opacity=1.0,
-            blending_mode="additive",  # Make markers stand out
+            "BackgroundStars",
+            star_positions,
+            colors=np.array(star_colors, dtype=np.float32),
+            radii=np.array(star_radii, dtype=np.float32),
+            sharpness=2.0,
+            opacity=0.4,
+            gamma=1.0,
+            blending_mode="normal",
         )
 
-        aprint(f"✓ Added {len(ref_positions)} reference markers")
 
         # Print statistics
         aprint(f"\n✓ Scene created successfully!")
-        aprint(f"  Total points: {len(positions) + len(ref_positions):,}")
+        aprint(f"  Total points: {len(positions):,}")
         aprint(f"  Grid dimensions: 100×100×100")
-        aprint(f"  Grid extent: ±{grid_extent:.1f} units")
         aprint(f"  Point spacing: 0.5 units")
         aprint(f"  Point radius: 0.05 units")
         aprint(f"  Point sharpness: 10.0 (sharp edges)")
