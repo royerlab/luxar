@@ -459,7 +459,7 @@ export class RenderingControls {
       'Field of View: Camera viewing angle in degrees\n' +
         '• Lower values: Telephoto lens effect (narrow view)\n' +
         '• Higher values: Wide-angle lens effect (broader view)\n' +
-        '• 60° provides natural human-like viewing angle\n' +
+        '• 47° (50mm Normal) provides natural human-like viewing angle\n' +
         '• Also controllable with Shift+Wheel for fine adjustment\n' +
         '• Maintains world-space point sizing (points stay same physical size)'
     );
