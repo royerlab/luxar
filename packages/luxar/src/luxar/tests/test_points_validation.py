@@ -176,5 +176,5 @@ def test_sharpness_warning(tmp_path):
             np.float32
         )  # 100 values
 
-        with pytest.warns(UserWarning, match="Values outside typical range"):
+        with pytest.warns(UserWarning, match="Using extreme sharpness values"):
             compiler.write_points("test", positions, sharpness=sharpness)

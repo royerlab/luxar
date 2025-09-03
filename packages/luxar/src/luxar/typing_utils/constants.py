@@ -27,8 +27,9 @@ DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
 # Sharpness constants
 SHARPNESS_MIN: Final[float] = 0.0  # Technical minimum (must be positive)
-SHARPNESS_TYPICAL_MIN: Final[float] = 0.5  # Typical range minimum
-SHARPNESS_TYPICAL_MAX: Final[float] = 10.0  # Typical range maximum
+SHARPNESS_MAX: Final[float] = (
+    15.0  # Maximum allowed value (computer-science friendly, uint8 mapping)
+)
 SHARPNESS_DEFAULT: Final[float] = 2.0
 
 # HDR color constants

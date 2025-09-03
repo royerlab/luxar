@@ -161,18 +161,18 @@ class TestBroadcastSharpnessToPoints:
 
     def test_out_of_range_warning(self):
         """Test warning for out-of-range sharpness."""
-        with pytest.warns(UserWarning, match="outside typical range"):
+        with pytest.warns(UserWarning, match="outside recommended range"):
             result = broadcast_sharpness_to_points(0.1, 100)  # Too low
         assert result is not None
 
-        with pytest.warns(UserWarning, match="outside typical range"):
+        with pytest.warns(UserWarning, match="outside recommended range"):
             result = broadcast_sharpness_to_points(20.0, 100)  # Too high
         assert result is not None
 
     def test_out_of_range_array_warning(self):
         """Test warning for out-of-range values in array."""
         sharpness = np.array([0.1, 5.0, 20.0], dtype=np.float32)
-        with pytest.warns(UserWarning, match="outside typical range"):
+        with pytest.warns(UserWarning, match="outside recommended range"):
             result = broadcast_sharpness_to_points(sharpness, 3)
         assert result is not None
 

@@ -31,7 +31,7 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
 
     # Sharpness increases from left to right
     normalized_x = (positions[:, 0] + 10) / 20  # 0 to 1
-    sharpness = 0.5 + normalized_x * 9.5  # 0.5 to 10.0
+    sharpness = 0.5 + normalized_x * 14.5  # 0.5 to 15.0
     sharpness = sharpness.astype(np.float32)
 
     # All points same size for fair comparison
@@ -55,13 +55,14 @@ def create_sharpness_comparison_example(scene) -> None:
     aprint("Creating sharpness comparison example...")
 
     n_points_per_row = 20
-    sharpness_values = [0.5, 1.0, 2.0, 4.0, 10.0]
+    sharpness_values = [0.5, 1.0, 2.0, 4.0, 8.0, 15.0]
     labels = [
         "Very Soft (0.5)",
         "Linear (1.0)",
         "Quadratic (2.0)",
         "Quartic (4.0)",
-        "Very Sharp (10.0)",
+        "Sharp (8.0)",
+        "Maximum (15.0)",
     ]
 
     for i, (sharp_val, label) in enumerate(zip(sharpness_values, labels)):
@@ -124,18 +125,18 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
     sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(2.0, 4.0, n_points // 3)
     # 1/3 sharp points
     sharpness[2 * n_points // 3 :] = rng.uniform(
-        6.0, 10.0, n_points - 2 * n_points // 3
+        6.0, 15.0, n_points - 2 * n_points // 3
     )
 
     # Shuffle to mix them
     rng.shuffle(sharpness)
 
     # Size varies with sharpness (sharp points are smaller)
-    radii = 0.4 - (sharpness - 0.5) * 0.03  # Larger soft points, smaller sharp points
+    radii = 0.4 - (sharpness - 0.5) * 0.02  # Larger soft points, smaller sharp points
     radii = np.clip(radii, 0.1, 0.4).astype(np.float32)
 
     # Color based on sharpness
-    normalized_sharp = (sharpness - 0.5) / 9.5
+    normalized_sharp = (sharpness - 0.5) / 14.5
     colors = np.zeros((n_points, 3), dtype=np.float32)
     colors[:, 0] = normalized_sharp  # Red for sharp
     colors[:, 1] = 0.5 * (1 - np.abs(normalized_sharp - 0.5) * 2)  # Green for medium
@@ -197,7 +198,7 @@ def main():
 
     aprint(f"Creating sharpness example scene at {output_path}")
     aprint("\nThis example showcases the per-point sharpness feature:")
-    aprint("- Gradient: Smooth transition from soft (0.5) to sharp (10.0)")
+    aprint("- Gradient: Smooth transition from soft (0.5) to sharp (15.0)")
     aprint("- Comparison: Fixed sharpness values side by side")
     aprint("- Mixed cloud: Sphere with varying sharpness values")
     aprint("- Wave: Sinusoidal sharpness variation")

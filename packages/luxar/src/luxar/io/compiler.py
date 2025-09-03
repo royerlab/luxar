@@ -21,6 +21,7 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
+from ..typing_utils.constants import SHARPNESS_MAX
 from ..typing_utils.datatypes import (
     DEFAULT_CONFIG,
     DataTypeConfig,
@@ -543,8 +544,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             # Determine and apply optimal dtype for sharpness
             sharpness_dtype = self.dtype_config.get_sharpness_dtype(sharpness)
+            # Always use [0, 15] range for uint8 sharpness (no more legacy [0,1] behavior)
+            input_range = (
+                (0.0, SHARPNESS_MAX) if sharpness_dtype == np.uint8 else (0.0, 1.0)
+            )
             sharpness_converted = convert_array_dtype(
-                sharpness, sharpness_dtype, normalize=(sharpness_dtype == np.uint8)
+                sharpness,
+                sharpness_dtype,
+                normalize=(sharpness_dtype == np.uint8),
+                input_range=input_range,
             )
 
             sharp_chunks = _calculate_intelligent_chunks(sharpness_converted.shape)

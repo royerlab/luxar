@@ -8,13 +8,7 @@
 import * as zarr from 'zarrita';
 import * as THREE from 'three';
 import { SpatialIndexLoader } from './spatial-index-loader';
-import {
-  DataLoader,
-  ViewState,
-  SceneNode,
-  LoaderConfig,
-  PointsData,
-} from './data-loader-types';
+import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './data-loader-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
 import { DataMonitorManager } from './data-monitor-manager';
@@ -416,14 +410,15 @@ export class SceneLoader {
         // Float16 values are already in world units, no scaling needed
         sharpnessScale = 1.0;
       } else if (data.sharpness instanceof Uint8Array) {
-        // Uint8 sharpness needs scaling from 0-255 to 0-1 (or world units)
+        // Uint8 sharpness needs scaling - check metadata for range
         // Use the normalization flag for proper GPU upload
         geometry.setAttribute(
           'sharpness',
           new THREE.BufferAttribute(data.sharpness, 1, true) // true = normalize on GPU
         );
-        // Since Python stores values multiplied by 255, we need to scale back
-        sharpnessScale = 1.0 / 255.0;
+
+        // GPU normalizes uint8 to [0,1], then scale to [0,15] range
+        sharpnessScale = 15.0;
       } else {
         // Float32 sharpness - no normalization or scaling needed
         geometry.setAttribute(

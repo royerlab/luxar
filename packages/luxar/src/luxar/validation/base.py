@@ -10,8 +10,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.constants import (
-    SHARPNESS_TYPICAL_MAX,
-    SHARPNESS_TYPICAL_MIN,
+    SHARPNESS_MAX,
+    SHARPNESS_MIN,
 )
 
 
@@ -255,23 +255,30 @@ def validate_sharpness_for_writing(
         min_val = np.min(sharpness)
         raise ValidationError(
             f"{context}: Sharpness must be positive. Found minimum value: {min_val:.3f}",
-            f"Use values between {SHARPNESS_TYPICAL_MIN} and {SHARPNESS_TYPICAL_MAX} for best results",
+            f"Use values between {SHARPNESS_MIN} and {SHARPNESS_MAX} for valid range",
         )
 
-    # Warn about out-of-range values
-    out_of_range = np.any(
-        (sharpness < SHARPNESS_TYPICAL_MIN) | (sharpness > SHARPNESS_TYPICAL_MAX)
-    )
-    if out_of_range:
+    # Check for values exceeding the maximum allowed (for uint8 mapping)
+    if np.any(sharpness > SHARPNESS_MAX):
+        max_val = np.max(sharpness)
+        raise ValidationError(
+            f"{context}: Sharpness values exceed maximum allowed value ({SHARPNESS_MAX}). "
+            f"Found maximum: {max_val:.3f}",
+            f"Clip values to valid range: np.clip(sharpness, 0, {SHARPNESS_MAX})",
+        )
+
+    # Optional: Warn about extreme values that might not look good
+    if np.any(sharpness < 0.5) or np.any(sharpness > 10.0):
         import warnings
 
         min_val = np.min(sharpness)
         max_val = np.max(sharpness)
         warnings.warn(
-            f"{context}: Values outside typical range [{SHARPNESS_TYPICAL_MIN}, {SHARPNESS_TYPICAL_MAX}] detected.\n"
+            f"{context}: Using extreme sharpness values.\n"
             f"  Your range: [{min_val:.2f}, {max_val:.2f}]\n"
-            f"  Values < {SHARPNESS_TYPICAL_MIN} create soft, blurry points\n"
-            f"  Values > {SHARPNESS_TYPICAL_MAX} create hard-edged points",
+            f"  Values < 0.5 create very soft, blurry points\n"
+            f"  Values > 10.0 create very hard-edged points\n"
+            f"  Valid range: [{SHARPNESS_MIN}, {SHARPNESS_MAX}]",
             UserWarning,
         )
 
