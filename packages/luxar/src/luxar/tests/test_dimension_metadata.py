@@ -149,11 +149,13 @@ class TestSceneDimensionMetadata:
             assert scene.dimensions is None
 
         # Test scene with dimensions
-        dims = Dimensions([
-            Dimension("x", unit="um", scale=0.5, display=True),
-            Dimension("y", unit="um", scale=0.5, display=True),
-            Dimension("z", unit="um", scale=1.0, display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", scale=0.5, display=True),
+                Dimension("y", unit="um", scale=0.5, display=True),
+                Dimension("z", unit="um", scale=1.0, display=True),
+            ]
+        )
 
         with LuxarZarrCompiler(tmp_path / "test_with_dims.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)

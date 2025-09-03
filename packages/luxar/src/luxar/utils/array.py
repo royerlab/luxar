@@ -36,7 +36,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import ColorArray, RadiusArray, SharpnessArray
-from ..typing_utils.constants import SHARPNESS_TYPICAL_MAX, SHARPNESS_TYPICAL_MIN
+from ..typing_utils.constants import SHARPNESS_MAX, SHARPNESS_MIN
 
 
 def broadcast_color_to_points(
@@ -166,18 +166,16 @@ def broadcast_sharpness_to_points(
     )
 
     if warn_on_out_of_range and result is not None:
-        out_of_range = np.any(
-            (result < SHARPNESS_TYPICAL_MIN) | (result > SHARPNESS_TYPICAL_MAX)
-        )
+        out_of_range = np.any((result < 0.5) | (result > 10.0))
         if out_of_range:
             import warnings
 
             min_val = np.min(result)
             max_val = np.max(result)
             warnings.warn(
-                f"Sharpness values outside typical range "
-                f"[{SHARPNESS_TYPICAL_MIN}, {SHARPNESS_TYPICAL_MAX}]: "
-                f"min={min_val:.2f}, max={max_val:.2f}",
+                f"Sharpness values outside recommended range [0.5, 10.0]: "
+                f"min={min_val:.2f}, max={max_val:.2f}. "
+                f"Valid range: [{SHARPNESS_MIN}, {SHARPNESS_MAX}]",
                 UserWarning,
             )
 

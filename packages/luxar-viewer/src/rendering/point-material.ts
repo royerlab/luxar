@@ -27,6 +27,8 @@ export interface PointMaterialConfig {
 export class PointMaterial extends THREE.ShaderMaterial {
   // Static vertex shader with CORRECT world-space sizing formula
   private static readonly VERTEX_SHADER = /* glsl */ `
+    precision highp float;
+    
     attribute float radius;
     attribute float sharpness;
     uniform float fov;
@@ -77,6 +79,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
 
   // Optimized fragment shader with simple, effective optimizations
   private static readonly FRAGMENT_SHADER = /* glsl */ `
+    precision highp float;
+    
     uniform float hdrMultiplier;
     uniform float opacity;
     uniform float gamma;

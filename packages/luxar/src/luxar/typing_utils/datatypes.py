@@ -150,13 +150,15 @@ class DataTypeConfig:
         elif self.mode == DataTypeMode.PRECISION:
             return np.float32
         elif self.mode == DataTypeMode.MEMORY:
-            return np.uint8  # Will be normalized to 0-1 range
+            return np.uint8  # Will be mapped to [0, 15] range for efficiency
         else:  # AUTO
-            # Sharpness typically has a small range, use similar logic to radius
+            # Sharpness values in range [0, 15] are efficiently stored as uint8
             if data is not None:
+                from .constants import SHARPNESS_MAX
+
                 max_val = np.max(np.abs(data))
-                if max_val <= 1.0:
-                    return np.uint8  # Can use normalized uint8
+                if max_val <= SHARPNESS_MAX:
+                    return np.uint8  # Use uint8 with [0, 15] → [0, 255] mapping
                 elif max_val < 1000:
                     return np.float16  # Float16 has sufficient range
                 else:
@@ -165,7 +167,10 @@ class DataTypeConfig:
 
 
 def convert_array_dtype(
-    array: NDArray, target_dtype: DTypeLike, normalize: bool = False
+    array: NDArray,
+    target_dtype: DTypeLike,
+    normalize: bool = False,
+    input_range: tuple[float, float] = (0.0, 1.0),
 ) -> NDArray:
     """Convert array to target dtype with optional normalization.
 
@@ -173,6 +178,7 @@ def convert_array_dtype(
         array: Input array to convert
         target_dtype: Target numpy dtype
         normalize: Whether to normalize when converting to/from integer types
+        input_range: Range of input values for normalization (min, max)
 
     Returns:
         Converted array with target dtype
@@ -187,8 +193,15 @@ def convert_array_dtype(
     # Float to uint8 conversion (normalize to 0-255)
     if source_dtype.kind == "f" and target_dtype == np.uint8:
         if normalize:
-            # Assume input is 0-1 range, scale to 0-255
-            return np.clip(array * 255, 0, 255).astype(np.uint8)
+            # Map input range to 0-255 range
+            input_min, input_max = input_range
+            input_span = input_max - input_min
+            if input_span == 0:
+                # Handle degenerate case
+                return np.full_like(array, 0, dtype=np.uint8)
+            # Normalize input to 0-1, then scale to 0-255
+            normalized = (array - input_min) / input_span
+            return np.clip(normalized * 255, 0, 255).astype(np.uint8)
         else:
             # Direct conversion, clip to valid range
             return np.clip(array, 0, 255).astype(np.uint8)
@@ -205,8 +218,11 @@ def convert_array_dtype(
     # Uint8 to float conversion
     if source_dtype == np.uint8 and target_dtype.kind == "f":
         if normalize:
-            # Convert 0-255 to 0-1 range
-            return array.astype(target_dtype) / 255.0
+            # Convert 0-255 to specified output range
+            input_min, input_max = input_range
+            # First convert 0-255 to 0-1, then scale to output range
+            normalized = array.astype(target_dtype) / 255.0
+            return normalized * (input_max - input_min) + input_min
         else:
             return array.astype(target_dtype)
 

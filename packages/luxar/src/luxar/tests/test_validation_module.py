@@ -226,12 +226,12 @@ class TestSharpnessValidation:
 
         assert "must be positive" in str(exc_info.value)
         assert "Found minimum value: -1.000" in str(exc_info.value)
-        assert "between 0.5 and 10.0" in str(exc_info.value)
+        assert "between 0.0 and 15.0" in str(exc_info.value)
 
     def test_out_of_range_sharpness_warning(self):
         """Test warning for out-of-range sharpness values."""
-        sharpness = np.array([0.1, 5.0, 20.0] * 33 + [5.0], dtype=np.float32)
-        with pytest.warns(UserWarning, match="Values outside typical range"):
+        sharpness = np.array([0.1, 5.0, 12.0] * 33 + [5.0], dtype=np.float32)
+        with pytest.warns(UserWarning, match="Using extreme sharpness values"):
             validate_sharpness_for_writing(sharpness, 100)
 
 
