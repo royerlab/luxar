@@ -28,7 +28,7 @@ class TestVersionUpdate:
 
             # Read back and check version
             store = zarr.open_group(zarr_path, mode="r")
-            assert store.attrs["luxar_version"] == "0.3"
+            assert store.attrs["luxar_version"] == "0.1"
             assert store.attrs["type"] == "scene"
 
 

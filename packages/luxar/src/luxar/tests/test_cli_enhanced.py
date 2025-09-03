@@ -286,7 +286,7 @@ class TestEnhancedInfoCommand:
         """Test info command with detailed stats."""
         result = runner.invoke(app, ["info", str(complex_scene), "--stats"])
         assert result.exit_code == 0
-        assert "Point Cloud Details" in result.stdout
+        assert "Points Objects Details" in result.stdout
 
     def test_info_json_format(self, runner, complex_scene):
         """Test info command with JSON output."""

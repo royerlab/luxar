@@ -1,11 +1,18 @@
 #!/usr/bin/env python
 """
-Example demonstrating nD points support in Luxar.
+Example demonstrating nD points support in Luxar with scene-level dimensions.
 
 This example shows how to:
 1. Create 5D points with time and channel dimensions
-2. Add dimension metadata for proper interpretation
-3. Mix different dimensionalities in the same scene
+2. Define scene-level dimensions for proper nD visualization
+3. Use non-displayed dimensions for temporal and channel data
+4. Navigate through high-dimensional data in the viewer
+
+Key concepts:
+- Scene-level dimensions replace the old dimension_metadata approach
+- Non-displayed dimensions (time, channel) are discrete and navigable
+- Displayed dimensions (x, y, z) are shown in the 3D viewer
+- Spatial indexing enables efficient nD slicing and navigation
 """
 
 from pathlib import Path
@@ -13,8 +20,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler
-from luxar.types import DimensionMetadata
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def create_5d_time_series(
@@ -48,41 +54,49 @@ def create_5d_time_series(
     return positions
 
 
-def create_2d_projection(n_points: int = 5000) -> np.ndarray:
-    """Create a 2D points for a projection view."""
-    # Create a 2D Lissajous curve
-    t = np.linspace(0, 4 * np.pi, n_points)
-    x = 50 * np.sin(3 * t + np.pi / 4)
-    y = 50 * np.sin(2 * t)
-
-    positions = np.column_stack([x, y]).astype(np.float32)
-    return positions
-
-
 def main():
-    """Create a scene with mixed-dimensionality points."""
-    aprint("Creating nD points demonstration...")
+    """Create a single 5D scene demonstrating nD points with scene-level dimensions."""
+    aprint("Creating 5D nD points demonstration...")
 
-    # Create scene
     output_path = Path(__file__).parent / "nd_points_example.zarr"
 
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        # Define 5D dimensions: time, x, y, z, channel
+        # Only x, y, z are displayed (visualized), time and channel are non-displayed
+        aprint("Defining 5D scene dimensions...")
+        dims_5d = Dimensions([
+            Dimension(
+                "time", 
+                unit="s", 
+                range=(0.0, 1.0), 
+                step=0.1,
+                display=False,
+                discrete=True,  # Non-displayed dimensions must be discrete
+                scale=1.0,
+                description="Time evolution of the system"
+            ),
+            Dimension("x", unit="um", display=True, scale=0.5, description="Spatial X coordinate"),
+            Dimension("y", unit="um", display=True, scale=0.5, description="Spatial Y coordinate"), 
+            Dimension("z", unit="um", display=True, scale=1.0, description="Spatial Z coordinate"),
+            Dimension(
+                "channel", 
+                unit="au", 
+                range=(0, 2), 
+                step=1.0,
+                display=False,
+                discrete=True,
+                scale=1.0,
+                description="Color channel (R=0, G=1, B=2)"
+            ),
+        ])
+        
+        scene = compiler.create_scene(dimensions=dims_5d)
 
         # Create 5D time series data
         aprint("Generating 5D time series data...")
         positions_5d = create_5d_time_series(
             n_timepoints=10, n_channels=3, n_points=500
         )
-
-        # Define dimension metadata for 5D data
-        metadata_5d = [
-            DimensionMetadata(name="time", unit="s", scale=1.0, range=(0.0, 1.0)),
-            DimensionMetadata(name="x", unit="um", scale=0.5),
-            DimensionMetadata(name="y", unit="um", scale=0.5),
-            DimensionMetadata(name="z", unit="um", scale=1.0),
-            DimensionMetadata(name="channel", unit="au", scale=1.0, range=(0, 2)),
-        ]
 
         # Create colors based on time and channel
         n_points_5d = positions_5d.shape[0]
@@ -105,66 +119,67 @@ def main():
             "TimeSeries5D",
             positions_5d,
             colors=colors_5d,
-            dimension_metadata=metadata_5d,
         )
 
-        # Create 2D projection data
-        aprint("Generating 2D projection data...")
-        positions_2d = create_2d_projection(n_points=2000)
-
-        # Define dimension metadata for 2D data
-        metadata_2d = [
-            DimensionMetadata(name="x", unit="px", scale=1.0),
-            DimensionMetadata(name="y", unit="px", scale=1.0),
-        ]
-
-        # Create gradient colors for 2D data
-        n_points_2d = positions_2d.shape[0]
-        colors_2d = np.zeros((n_points_2d, 3), dtype=np.float32)
-        gradient = np.linspace(0, 1, n_points_2d)
-        colors_2d[:, 0] = gradient  # Red gradient
-        colors_2d[:, 1] = 1.0 - gradient  # Inverse green gradient
-        colors_2d[:, 2] = 128  # Constant blue
-
-        # Add 2D points to scene
-        aprint(f"Adding {n_points_2d:,} 2D points to scene...")
+        # Add some reference 5D points with different patterns
+        aprint("Adding reference 5D points with different patterns...")
+        
+        # Create a simple 5D grid pattern
+        n_ref = 200
+        positions_ref = np.zeros((n_ref, 5), dtype=np.float32)
+        
+        # Grid in time and channel dimensions
+        t_vals = np.linspace(0.2, 0.8, 5)  # 5 time points
+        c_vals = np.array([0, 1, 2])  # 3 channels
+        
+        idx = 0
+        for t in t_vals:
+            for c in c_vals:
+                # Create spatial points in a small sphere for this time/channel combo
+                n_spatial = n_ref // (len(t_vals) * len(c_vals))
+                if n_spatial == 0:
+                    continue
+                    
+                # Random points in a sphere
+                theta = np.random.uniform(0, 2*np.pi, n_spatial)
+                phi = np.random.uniform(0, np.pi, n_spatial)
+                r = np.random.uniform(0, 15, n_spatial)
+                
+                x = r * np.sin(phi) * np.cos(theta) + 30  # Offset from main data
+                y = r * np.sin(phi) * np.sin(theta) + 30
+                z = r * np.cos(phi)
+                
+                for i in range(n_spatial):
+                    if idx >= n_ref:
+                        break
+                    positions_ref[idx] = [t, x[i], y[i], z[i], c]
+                    idx += 1
+                    
+        # Truncate if we didn't fill all positions
+        positions_ref = positions_ref[:idx]
+        
+        # Create colors for reference points (white/gray)
+        colors_ref = np.full((positions_ref.shape[0], 3), 0.6, dtype=np.float32)
+        
         scene.add_points(
-            "Projection2D",
-            positions_2d,
-            colors=colors_2d,
-            dimension_metadata=metadata_2d,
+            "Reference5D",
+            positions_ref,
+            colors=colors_ref,
         )
 
-        # Add standard 3D points for reference
-        aprint("Adding 3D reference points...")
-        n_points_3d = 1000
-        positions_3d = np.random.randn(n_points_3d, 3).astype(np.float32) * 20
-
-        metadata_3d = [
-            DimensionMetadata(name="x", unit="um", scale=1.0),
-            DimensionMetadata(name="y", unit="um", scale=1.0),
-            DimensionMetadata(name="z", unit="um", scale=1.0),
-        ]
-
-        # Simple white color for 3D points
-        colors_3d = np.full((n_points_3d, 3), 0.78, dtype=np.float32)
-
-        scene.add_points(
-            "Reference3D",
-            positions_3d,
-            colors=colors_3d,
-            dimension_metadata=metadata_3d,
-        )
-
-        # Finalize scene
-
-        aprint(f"✓ nD demo scene created at {scene.get_store_path()}")
+        aprint(f"✓ 5D nD scene created at {output_path}")
         aprint("\nScene summary:")
-        aprint(f"- 5D time series: {n_points_5d:,} points across time and channels")
-        aprint(f"- 2D projection: {n_points_2d:,} points in a Lissajous pattern")
-        aprint(f"- 3D reference: {n_points_3d:,} randomly distributed points")
+        aprint(f"- Main time series: {n_points_5d:,} 5D points across time and channels")
+        aprint(f"- Reference pattern: {positions_ref.shape[0]:,} 5D reference points")
+        aprint("\n5D Dimensions defined:")
+        aprint("  - time: [0.0, 1.0] s (non-displayed, discrete)")
+        aprint("  - x, y, z: spatial coordinates in μm (displayed)")
+        aprint("  - channel: [0, 1, 2] au (non-displayed, discrete)")
         aprint(
-            "\nDimension metadata has been stored for proper visualization in the viewer."
+            "\nIn the viewer:"
+            "\n  - Use keys 1-5 to select dimension for navigation"
+            "\n  - Use [ and ] to step through non-displayed dimensions"
+            "\n  - Only 3D spatial view is displayed, other dims are sliced"
         )
 
 

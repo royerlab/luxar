@@ -179,7 +179,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "luxar_version": version,
                 "units": units,
                 "type": "scene",
-                "node_type": "scene",  # Also add node_type for consistency
             }
         )
 
@@ -619,7 +618,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "displayed_dimensions": spatial_index_data[
                     "displayed_dimensions"
                 ],  # Which dimensions are displayed
-                "build_version": "0.5",  # Bump version for total_points addition
+                "build_version": "0.1",
             }
 
             # Calculate max points per cell
