@@ -12,7 +12,7 @@ def test_random_demo_roundtrip(tmp_path):
 
     root = zarr.open_group(store, mode="r")
     # ---- root attrs
-    assert root.attrs["luxar_version"] == "0.3"
+    assert root.attrs["luxar_version"] == "0.1"
     assert root.attrs["units"] == "metre"
 
     # ---- hierarchy

@@ -5,7 +5,6 @@
  * eliminating the need for 'as any' type assertions throughout the codebase.
  */
 
-import { DimensionMetadata } from './dims';
 
 /**
  * Scene-level dimension information stored in Zarr attributes
@@ -19,6 +18,9 @@ export interface SceneDimensionAttrs {
     display: boolean;
     discrete?: boolean;
     step?: number;
+    cyclic?: boolean;
+    spatial?: boolean;
+    description?: string;
   }>;
 }
 
@@ -27,13 +29,16 @@ export interface SceneDimensionAttrs {
  */
 export interface ZarrSceneAttrs {
   /** Scene format version */
-  version?: string;
+  luxar_version?: string;
 
   /** Scene-level dimensions */
   scene_dimensions?: SceneDimensionAttrs;
 
   /** Scene type identifier */
   type?: 'scene' | string;
+
+  /** Physical units */
+  units?: string;
 
   /** Any additional metadata */
   [key: string]: unknown;
@@ -63,17 +68,6 @@ export interface ZarrNodeAttrs {
 
   /** Broadcasting dimensions */
   broadcast_dims?: string[];
-
-  /** Dimension metadata (legacy format) */
-  dimensions?: {
-    names?: string[];
-    units?: string[];
-    ranges?: Array<[number, number]>;
-    steps?: number[];
-    displayed?: number[];
-    discrete?: boolean[];
-    metadata?: Record<number, DimensionMetadata>;
-  };
 
   /** Arrays in this group */
   arrays?: string[];
@@ -122,7 +116,7 @@ export function hasTransform(
  * Type guard to check if attributes are for a points node
  */
 export function isPointsNode(attrs: ZarrNodeAttrs): boolean {
-  return attrs.type === 'points' || attrs.type === 'points';
+  return attrs.type === 'points';
 }
 
 /**

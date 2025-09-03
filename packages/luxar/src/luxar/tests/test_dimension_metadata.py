@@ -137,31 +137,38 @@ class TestSceneDimensionMetadata:
     """Test dimension metadata in Scene."""
 
     def test_scene_dimension_metadata(self, tmp_path):
-        """Test setting and getting dimension metadata on scene."""
+        """Test setting and getting scene-level dimensions."""
+        import zarr
+
+        from luxar import Dimension, Dimensions
+
+        # Test scene without dimensions
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
-
             # Initially None
-            assert scene.dimension_metadata is None
+            assert scene.dimensions is None
 
-            # Set metadata
-            metadata = [
-                DimensionMetadata(name="x", unit="um", scale=0.5),
-                DimensionMetadata(name="y", unit="um", scale=0.5),
-                DimensionMetadata(name="z", unit="um", scale=1.0),
-            ]
-            scene.dimension_metadata = metadata
+        # Test scene with dimensions
+        dims = Dimensions([
+            Dimension("x", unit="um", scale=0.5, display=True),
+            Dimension("y", unit="um", scale=0.5, display=True),
+            Dimension("z", unit="um", scale=1.0, display=True),
+        ])
 
-            # Retrieve
-            retrieved = scene.dimension_metadata
-            assert len(retrieved) == 3
-            assert retrieved[0].name == "x"
-            assert retrieved[1].unit == "um"
-            assert retrieved[2].scale == 1.0
+        with LuxarZarrCompiler(tmp_path / "test_with_dims.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
 
-            # Check stored in attrs
-            assert "dimension_metadata" in scene.attrs
-            assert len(scene.attrs["dimension_metadata"]) == 3
+            # Retrieve dimensions
+            retrieved = scene.dimensions
+            assert retrieved is not None
+            assert len(retrieved.dimensions) == 3
+            assert retrieved.dimensions[0].name == "x"
+            assert retrieved.dimensions[1].unit == "um"
+            assert retrieved.dimensions[2].scale == 1.0
+
+            # Check stored in zarr attrs (new format)
+            store = zarr.open_group(tmp_path / "test_with_dims.zarr", mode="r")
+            assert "scene_dimensions" in store.attrs
 
     def test_scene_dimension_persistence(self, tmp_path):
         """Test dimension metadata persists through save/load."""

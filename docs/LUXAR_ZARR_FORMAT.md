@@ -1,11 +1,13 @@
 # Luxar Zarr Format Specification
 
-## Version: 0.3
+## Version: 0.1
 
-**Major Changes in v0.3:**
-- Added spatial index for efficient nD point queries
+**Features in v0.1:**
+- Spatial index for efficient nD point queries
 - Points are reordered during compilation for spatial locality
 - Grid-based sparse index structure for all dimensions
+- HDR color support with float32
+- Transform system with matrix transposition for THREE.js compatibility
 
 This document specifies the Zarr-based storage format used by Luxar for high-performance 3D and nD points visualization.
 
@@ -27,7 +29,7 @@ scene.zarr/
     ├── colors/             # Point colors (optional)
     ├── radii/              # Point radii (optional)
     ├── sharpness/          # Point sharpness (optional)
-    ├── spatial_index/      # Spatial index for efficient nD queries (v0.3+)
+    ├── spatial_index/      # Spatial index for efficient nD queries
     │   ├── .zattrs         # Index metadata
     │   ├── occupied_cells/ # Sparse list of occupied grid cells
     │   └── cell_ranges/    # Point ranges for each occupied cell
@@ -40,10 +42,10 @@ The root `.zattrs` file contains scene-wide configuration:
 
 ```json
 {
-  "luxar_version": "0.2",
+  "luxar_version": "0.1",
   "type": "scene",
   "units": "um",  // Physical units (nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
-  "scene_dimensions": {  // Optional: Scene-level dimension specification
+  "scene_dimensions": {  // Scene-level dimension specification (REQUIRED for nD data)
     "dimensions": [
       {
         "name": "x",
@@ -54,20 +56,12 @@ The root `.zattrs` file contains scene-wide configuration:
         "discrete": false,           // Whether dimension has discrete values
         "cyclic": false,            // Whether dimension wraps around
         "scale": 1.0,               // Physical scale factor
+        "spatial": true,            // Whether points extend through this dimension
         "description": "X axis"     // Optional description
       },
       // ... more dimensions
     ]
-  },
-  "dimension_metadata": [  // Legacy: Deprecated, use scene_dimensions
-    {
-      "name": "x",
-      "unit": "um",
-      "scale": 1.0,
-      "range": [-100.0, 100.0]
-    },
-    // ... more dimensions
-  ]
+  }
 }
 ```
 
@@ -88,9 +82,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
 }
 ```
 
-### 2. Point Cloud Nodes
+### 2. Points Nodes
 
-Point cloud nodes contain the actual point data.
+Points nodes contain the actual point data.
 
 **Attributes (.zattrs):**
 ```json
@@ -100,10 +94,9 @@ Point cloud nodes contain the actual point data.
   "opacity": 1.0,
   "gamma": 1.0,
   "blending_mode": "additive",
-  "dimension_metadata": [  // Optional: Per-node dimension metadata
-    {"name": "x", "unit": "um", "scale": 1.0},
-    // ... for each dimension
-  ]
+  "n_points": 10000,
+  "max_radius": 2.5,
+  "broadcast_dims": ["Time", "Channel"]  // Optional: broadcasting configuration
 }
 ```
 
@@ -146,7 +139,7 @@ Point cloud nodes contain the actual point data.
 - **Default:** 2.0 if not provided
 - **Validation:** All values must be positive
 
-## Spatial Index (v0.3+)
+## Spatial Index
 
 The spatial index enables efficient nD range queries for point visibility determination during slicing operations. Points are reordered during compilation to ensure spatial locality aligns with the index structure.
 
@@ -163,7 +156,7 @@ The spatial index uses a regular grid partitioning of the nD space, stored as a 
   "num_occupied": 234,                   // Number of occupied cells
   "total_cells": 5000,                  // Total possible cells (product of grid_shape)
   "dimensions": 4,                      // Number of dimensions indexed
-  "build_version": "0.3",               // Version of index builder
+  "build_version": "0.1",               // Version of index builder
   "max_points_per_cell": 1024          // Maximum points in any single cell
 }
 ```
@@ -428,7 +421,7 @@ def add_points_with_spatial_index(group, positions, colors=None, radii=None,
         'num_occupied': len(index_data['occupied_cells']),
         'total_cells': int(np.prod(grid_shape)),
         'dimensions': positions.shape[1],
-        'build_version': '0.3',
+        'build_version': '0.1',
         'max_points_per_cell': int(np.max(np.diff(index_data['cell_ranges'], axis=1)))
     })
     
@@ -449,19 +442,21 @@ def add_points_with_spatial_index(group, positions, colors=None, radii=None,
 
 ## Transform System
 
-Transforms are stored as 16-element arrays representing 4x4 homogeneous transformation matrices in row-major order:
+Transforms are stored as 16-element arrays representing 4x4 homogeneous transformation matrices in **column-major order** (THREE.js format):
 
 ```
-[m00, m01, m02, tx,
- m10, m11, m12, ty,
- m20, m21, m22, tz,
- 0,   0,   0,   1]
+[m00, m10, m20, 0,
+ m01, m11, m21, 0,
+ m02, m12, m22, 0,
+ tx,  ty,  tz,  1]
 ```
 
 Where:
-- `m00-m22`: 3x3 rotation/scale matrix
-- `tx, ty, tz`: Translation vector
+- `m00-m22`: 3x3 rotation/scale matrix (transposed)
+- `tx, ty, tz`: Translation vector (at indices 12, 13, 14)
 - Bottom row is always `[0, 0, 0, 1]`
+
+**CRITICAL**: Python transposes matrices from NumPy row-major to THREE.js column-major format before storage. TypeScript consumes them directly using `Matrix4.fromArray()`.
 
 ## Dimension System
 
@@ -510,7 +505,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 - **2D arrays (positions, colors):** Chunk along first dimension only
 - **1D arrays (radii, sharpness):** Simple 1D chunking
 
-### Chunking with Spatial Index (v0.3+)
+### Chunking with Spatial Index
 
 When using spatial indices:
 - **Chunk Alignment**: Zarr chunks should align with spatial index cells when possible
@@ -539,9 +534,7 @@ After scene construction, call `# Context manager handles finalization automatic
 
 ## Version History
 
-- **0.3** (Current): Added spatial index for efficient nD queries, point reordering for spatial locality
-- **0.2**: Added scene dimensions, improved nD support, HDR color support (float32), sharpness attribute, rendering parameters
-- **0.1**: Initial format with positions, colors, radii
+- **0.1** (Current): Complete format with spatial index, nD support, HDR colors, transforms, scene dimensions
 
 ## Best Practices
 
@@ -580,7 +573,7 @@ with LuxarZarrCompiler("output.zarr") as compiler:
     # Context manager handles finalization automatically
 ```
 
-### Example with Spatial Index (v0.3+)
+### Example with Spatial Index
 
 ```python
 import numpy as np

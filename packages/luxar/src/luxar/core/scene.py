@@ -7,7 +7,7 @@ scene hierarchy and provides convenient methods for building points scenes.
 from __future__ import annotations
 
 from os import PathLike
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 from arbol import aprint
@@ -18,9 +18,7 @@ from ..core.points import Points
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.protocols import (
     ColorArray,
-    DimensionMetadata,
     PositionArray,
-    validate_dimension_metadata,
 )
 from ..utils.array import (
     broadcast_color_to_points,
@@ -75,7 +73,6 @@ class Scene(Node):
 
             # Store dimensions
             self._dimensions: Optional[Dimensions] = dimensions
-            self._dimension_metadata: Optional[list[DimensionMetadata]] = None
 
             # Store dimensions in attributes if provided
             if dimensions is not None:
@@ -123,7 +120,6 @@ class Scene(Node):
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
         ] = None,
         parent: Optional[Node] = None,
-        dimension_metadata: Optional[list[DimensionMetadata]] = None,
         broadcast_dims: Optional[Union[List[str], str]] = None,
         grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
@@ -155,7 +151,6 @@ class Scene(Node):
             sharpness: Optional array of shape (N,) for point edge sharpness, or single
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root
-            dimension_metadata: Optional list of DimensionMetadata for each dimension
             broadcast_dims: Controls broadcasting behavior for non-displayed dimensions.
                 - None (default): No broadcasting, points only appear at their defined values
                 - List of dimension names: Broadcast to all values of specified dimensions
@@ -191,11 +186,7 @@ class Scene(Node):
             ndim = positions.shape[1]
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
-            # Skip dimension validation in new API - allow flexible dimensions
-            # self._validate_or_infer_dimensions(positions, dimension_metadata)
-
-            # Skip dimension metadata application - handled at scene level if needed
-            # self._apply_dimension_metadata(attrs, dimension_metadata, ndim)
+            # Dimensions are managed only at scene level - no per-node validation needed
 
             # Handle broadcast dimensions based on user specification
             final_broadcast_dims = []
@@ -262,59 +253,7 @@ class Scene(Node):
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
 
-    def _validate_or_infer_dimensions(
-        self,
-        positions: np.ndarray,
-        dimension_metadata: Optional[list[DimensionMetadata]],
-    ) -> None:
-        """Validate positions against scene dimensions or infer them if not set."""
-        if self._dimensions is not None:
-            self._dimensions.validate_positions(positions, "Points")
-        else:
-            # Infer dimensions from first points if not set
-            if dimension_metadata is None and not hasattr(self, "_inferred_dimensions"):
-                aprint("No scene dimensions defined, inferring from first points")
-                self._dimensions = Dimensions.from_positions(positions)
-                self._inferred_dimensions = True
-                self.attrs["scene_dimensions"] = self._dimensions.to_dict()
 
-    def _apply_dimension_metadata(
-        self,
-        attrs: Dict[str, Any],
-        dimension_metadata: Optional[list[DimensionMetadata]],
-        ndim: int,
-    ) -> None:
-        """Apply dimension metadata to node attributes."""
-        if dimension_metadata is not None:
-            aprint(
-                "Warning: dimension_metadata parameter is deprecated, use scene-level dimensions"
-            )
-            # Validate dimension metadata matches dimensionality
-            validated_metadata = validate_dimension_metadata(dimension_metadata, ndim)
-            # Set scene-wide dimension metadata if not already set
-            if self.dimension_metadata is None:
-                self.dimension_metadata = validated_metadata
-            # Store in node attributes
-            attrs["dimension_metadata"] = [m.to_dict() for m in validated_metadata]
-        elif self.dimension_metadata is not None:
-            # Use scene's dimension metadata if available
-            if len(self.dimension_metadata) == ndim:
-                attrs["dimension_metadata"] = [
-                    m.to_dict() for m in self.dimension_metadata
-                ]
-        elif self._dimensions is not None:
-            # Convert new Dimensions to legacy format for compatibility
-            legacy_metadata = []
-            for dim in self._dimensions.dimensions:
-                legacy_metadata.append(
-                    DimensionMetadata(
-                        name=dim.name,
-                        unit=dim.unit,
-                        scale=dim.scale,
-                        range=dim.range,
-                    )
-                )
-            attrs["dimension_metadata"] = [m.to_dict() for m in legacy_metadata]
 
     def _auto_detect_broadcast_dims(self, positions: np.ndarray) -> List[str]:
         """Auto-detect which dimensions should be broadcast based on data.
@@ -397,41 +336,6 @@ class Scene(Node):
             return self._writer.store_path
         raise ValueError("No store path available without writer")
 
-    @property
-    def dimension_metadata(self) -> Optional[list[DimensionMetadata]]:
-        """Get dimension metadata for the scene.
-
-        Returns:
-            List of DimensionMetadata objects if set, None otherwise
-        """
-        # Try to load from zarr attrs if not cached
-        if self._dimension_metadata is None and "dimension_metadata" in self.attrs:
-            metadata_dicts = self.attrs["dimension_metadata"]
-            if metadata_dicts:
-                ndim = len(metadata_dicts)
-                self._dimension_metadata = validate_dimension_metadata(
-                    metadata_dicts, ndim
-                )
-        return self._dimension_metadata
-
-    @dimension_metadata.setter
-    def dimension_metadata(self, metadata: Optional[list[DimensionMetadata]]) -> None:
-        """Set dimension metadata for the scene.
-
-        Args:
-            metadata: List of DimensionMetadata objects, one per dimension
-
-        Raises:
-            ValueError: If metadata is invalid
-        """
-        if metadata is None:
-            self._dimension_metadata = None
-            if "dimension_metadata" in self.attrs:
-                del self.attrs["dimension_metadata"]
-        else:
-            # Store in attrs for serialization
-            self.attrs["dimension_metadata"] = [m.to_dict() for m in metadata]
-            self._dimension_metadata = metadata
 
     @property
     def dimensions(self) -> Optional[Dimensions]:

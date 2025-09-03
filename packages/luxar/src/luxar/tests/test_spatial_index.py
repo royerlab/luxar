@@ -309,7 +309,7 @@ class TestIntegration:
             1,
             2,
         ]  # x, y, z displayed
-        assert index_group.attrs["build_version"] == "0.5"  # Updated version
+        assert index_group.attrs["build_version"] == "0.1"  # Current version
 
         # Check arrays
         assert "occupied_cells" in index_group
