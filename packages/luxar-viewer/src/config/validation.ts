@@ -295,14 +295,14 @@ export function logValidationResults(result: ValidationResult): void {
   } else {
     log.error(Modules.LUXAR, `Configuration validation failed with ${result.errors.length} errors`);
     result.errors.forEach((error) => {
-      console.error(`  ❌ ${error}`);
+      log.error(Modules.LUXAR, `  ${error}`);
     });
   }
 
   if (result.warnings.length > 0) {
     log.warning(Modules.LUXAR, `Configuration has ${result.warnings.length} warnings`);
     result.warnings.forEach((warning) => {
-      console.warn(`  ⚠️ ${warning}`);
+      log.warning(Modules.LUXAR, `  ${warning}`);
     });
   }
 }

@@ -9,7 +9,7 @@ import zarr
 
 from luxar import LuxarZarrCompiler
 from luxar.core.transforms import prepare_transform_for_zarr, translate
-from luxar.io.spatial_index import build_spatial_index, validate_spatial_index
+from luxar.io.point_spatial_index import build_spatial_index, validate_spatial_index
 from luxar.validation.base import ValidationError, validate_zarr_attributes
 
 

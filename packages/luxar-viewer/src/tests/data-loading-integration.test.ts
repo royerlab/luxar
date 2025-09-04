@@ -191,8 +191,8 @@ vi.mock('../data/scene-loader-manager', () => {
   };
 });
 
-vi.mock('../data/spatial-index-loader', () => ({
-  SpatialIndexLoader: vi.fn().mockImplementation(() => ({
+vi.mock('../data/point-spatial-index-loader', () => ({
+  PointSpatialIndexLoader: vi.fn().mockImplementation(() => ({
     loadPoints: vi.fn().mockResolvedValue({
       positions: new Float32Array([1, 2, 3, 4, 5, 6]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),

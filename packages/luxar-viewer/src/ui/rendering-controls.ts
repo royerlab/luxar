@@ -363,7 +363,7 @@ export class RenderingControls {
             this.settings.lensFocalLengthX = lensPreset.focalLengthX;
             this.settings.lensFocalLengthY = lensPreset.focalLengthY;
             this.settings.lensSkew = lensPreset.skew;
-            
+
             // Apply lens distortion changes
             this.postProcessing.updateLensDistortion({
               distortionX: lensPreset.distortionX,
@@ -372,7 +372,7 @@ export class RenderingControls {
               principalPointY: lensPreset.principalPointY,
               focalLengthX: lensPreset.focalLengthX,
               focalLengthY: lensPreset.focalLengthY,
-              skew: lensPreset.skew
+              skew: lensPreset.skew,
             });
 
             // Update lens distortion UI controllers to reflect new values
@@ -2035,7 +2035,7 @@ export class RenderingControls {
     this.settings.vignetteEnabled = shouldEnableAll;
     this.settings.chromaticAberrationEnabled = shouldEnableAll;
     this.settings.lensDistortionEnabled = shouldEnableAll;
-    
+
     // Enable film grain mode only when turning ON cinematic mode (if not already enabled)
     // Leave film grain unchanged when turning OFF cinematic mode
     if (shouldEnableAll && !this.settings.noisePremultiply) {

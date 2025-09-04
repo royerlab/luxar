@@ -624,11 +624,11 @@ export class DataLoadingMonitor {
         </div>
         
         ${
-  hasSpatialIndex && this.config.showSpatialGrid
-    ? `
+          hasSpatialIndex && this.config.showSpatialGrid
+            ? `
         `
-    : ''
-}
+            : ''
+        }
       </div>
     `;
   }
@@ -865,7 +865,7 @@ export class DataLoadingMonitor {
       totalCacheAccess += metrics.cacheHits + metrics.cacheMisses;
       totalQueryTime += metrics.avgQueryTime * metrics.queries;
 
-      if (metrics.type === 'spatial-index') activeSpatial++;
+      if (metrics.type === 'point-spatial-index') activeSpatial++;
     }
 
     // Use cached QPS calculation instead of filtering events again
@@ -1397,9 +1397,9 @@ export class DataLoadingMonitor {
     // Step 6: Report any errors that occurred during disposal
     if (errors.length > 0) {
       // Log all errors for debugging
-      console.warn('[DataLoadingMonitor] Disposal completed with errors:');
+      log.warning(Modules.DATA_LOADING_MONITOR, 'Disposal completed with errors:');
       errors.forEach((error, index) => {
-        console.warn(`  ${index + 1}. ${error.message}`);
+        log.warning(Modules.DATA_LOADING_MONITOR, `  ${index + 1}. ${error.message}`);
       });
 
       // Optionally throw a composite error if critical failures occurred

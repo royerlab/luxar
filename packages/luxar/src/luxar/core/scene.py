@@ -253,8 +253,6 @@ class Scene(Node):
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
 
-
-
     def _auto_detect_broadcast_dims(self, positions: np.ndarray) -> List[str]:
         """Auto-detect which dimensions should be broadcast based on data.
 
@@ -335,7 +333,6 @@ class Scene(Node):
         if self._writer:
             return self._writer.store_path
         raise ValueError("No store path available without writer")
-
 
     @property
     def dimensions(self) -> Optional[Dimensions]:

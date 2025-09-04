@@ -38,11 +38,11 @@ def main():
                     Dimension(name="Y", unit="μm", range=(-50, 50), display=True),
                     Dimension(name="Z", unit="μm", range=(-50, 50), display=True),
                     Dimension(
-                        name="Time",
-                        unit="s",
+                        name="W",
+                        unit="μm",
                         range=(0, 10),
                         display=False,
-                        discrete=True,  # Time frames are discrete values
+                        spatial=True,
                         step=1.0,
                     ),
                     Dimension(

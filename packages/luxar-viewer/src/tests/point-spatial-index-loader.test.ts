@@ -1,12 +1,12 @@
 /**
- * Comprehensive tests for SpatialIndexLoader
+ * Comprehensive tests for PointSpatialIndexLoader
  *
- * Tests spatial index-based loading, nD queries, caching,
+ * Tests point spatial index-based loading, nD queries, caching,
  * broadcasting, and monitoring integration.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SpatialIndexLoader, type ViewState, type SceneNode } from '../data';
+import { PointSpatialIndexLoader, type ViewState, type SceneNode } from '../data';
 import * as zarr from 'zarrita';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -34,10 +34,10 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock spatial index functions
-vi.mock('../data/spatial-index', () => ({
-  loadSpatialIndex: vi.fn(),
-  querySpatialIndex: vi.fn(),
+// Mock point spatial index functions
+vi.mock('../data/point-spatial-index', () => ({
+  loadPointSpatialIndex: vi.fn(),
+  queryPointSpatialIndex: vi.fn(),
   mergePointRanges: vi.fn(),
 }));
 
@@ -70,10 +70,10 @@ vi.mock('../data/range-cache', () => ({
 }));
 
 // Import mocked modules
-import { loadSpatialIndex, querySpatialIndex, mergePointRanges } from '../data';
+import { loadPointSpatialIndex, queryPointSpatialIndex, mergePointRanges } from '../data';
 
-describe('SpatialIndexLoader', () => {
-  let loader: SpatialIndexLoader;
+describe('PointSpatialIndexLoader', () => {
+  let loader: PointSpatialIndexLoader;
   let mockZarrLocation: any;
   let mockNode: SceneNode;
   let mockSpatialIndex: any;
@@ -138,8 +138,8 @@ describe('SpatialIndexLoader', () => {
     };
 
     // Configure mocks - set default behavior
-    (loadSpatialIndex as any).mockResolvedValue(mockSpatialIndex);
-    (querySpatialIndex as any).mockReturnValue([
+    (loadPointSpatialIndex as any).mockResolvedValue(mockSpatialIndex);
+    (queryPointSpatialIndex as any).mockReturnValue([
       { start: 0, end: 100 },
       { start: 200, end: 300 },
     ]);
@@ -163,7 +163,7 @@ describe('SpatialIndexLoader', () => {
     });
 
     // Create loader instance
-    loader = new SpatialIndexLoader(mockZarrLocation, mockNode);
+    loader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
   });
 
   afterEach(() => {
@@ -182,12 +182,12 @@ describe('SpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(loadSpatialIndex).toHaveBeenCalledWith(mockZarrLocation);
+      expect(loadPointSpatialIndex).toHaveBeenCalledWith(mockZarrLocation);
       expect(zarr.open).toHaveBeenCalledTimes(4); // positions, colors, radii, sharpness
     });
 
     it('should handle missing spatial index gracefully for 3D datasets', async () => {
-      (loadSpatialIndex as any).mockResolvedValue(null);
+      (loadPointSpatialIndex as any).mockResolvedValue(null);
 
       // Mock positions array to determine point count
       (zarr.open as any).mockImplementation((_location: any) => {
@@ -225,7 +225,7 @@ describe('SpatialIndexLoader', () => {
       });
 
       // Create new loader that will use these mocks
-      const testLoader = new SpatialIndexLoader(mockZarrLocation, mockNode);
+      const testLoader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -260,7 +260,7 @@ describe('SpatialIndexLoader', () => {
       await Promise.all(promises);
 
       // Should only initialize once
-      expect(loadSpatialIndex).toHaveBeenCalledTimes(1);
+      expect(loadPointSpatialIndex).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -274,7 +274,7 @@ describe('SpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(querySpatialIndex).toHaveBeenCalledWith(
+      expect(queryPointSpatialIndex).toHaveBeenCalledWith(
         mockSpatialIndex,
         expect.arrayContaining([0, 0, 0, 5.5]),
         expect.any(Array)
@@ -282,7 +282,7 @@ describe('SpatialIndexLoader', () => {
     });
 
     it('should return empty points when no points visible', async () => {
-      (querySpatialIndex as any).mockReturnValue([]);
+      (queryPointSpatialIndex as any).mockReturnValue([]);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -297,7 +297,7 @@ describe('SpatialIndexLoader', () => {
     });
 
     it('should merge adjacent ranges for efficiency', async () => {
-      (querySpatialIndex as any).mockReturnValue([
+      (queryPointSpatialIndex as any).mockReturnValue([
         { start: 0, end: 100 },
         { start: 100, end: 200 }, // Adjacent
         { start: 300, end: 400 },
@@ -342,7 +342,7 @@ describe('SpatialIndexLoader', () => {
         },
       };
 
-      // Should not call querySpatialIndex but return all points
+      // Should not call queryPointSpatialIndex but return all points
       const result = await loader.loadPoints(viewState);
 
       // When broadcasting, returns all points
@@ -368,7 +368,7 @@ describe('SpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(querySpatialIndex).toHaveBeenCalled();
+      expect(queryPointSpatialIndex).toHaveBeenCalled();
     });
   });
 
@@ -421,7 +421,7 @@ describe('SpatialIndexLoader', () => {
   describe('data projection', () => {
     it('should project nD points to 3D correctly', async () => {
       // Update query to return ranges for 2 points
-      (querySpatialIndex as any).mockReturnValue([{ start: 0, end: 2 }]);
+      (queryPointSpatialIndex as any).mockReturnValue([{ start: 0, end: 2 }]);
 
       // Mock 4D data - need proper amount based on ranges
       (zarr.get as any).mockImplementation((array: any, _slices: any) => {
@@ -503,7 +503,7 @@ describe('SpatialIndexLoader', () => {
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'query',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
         })
       );
     });
@@ -569,7 +569,7 @@ describe('SpatialIndexLoader', () => {
       const metrics = loader.getMetrics();
 
       expect(metrics.queries).toBe(1);
-      expect(metrics.type).toBe('spatial-index');
+      expect(metrics.type).toBe('point-spatial-index');
       expect(metrics.path).toBe('/test_points');
     });
 
@@ -604,7 +604,7 @@ describe('SpatialIndexLoader', () => {
       // Create a new loader for this test
       (zarr.open as any).mockRejectedValue(new Error('Failed to open array'));
 
-      const errorLoader = new SpatialIndexLoader(mockZarrLocation, mockNode);
+      const errorLoader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -680,7 +680,7 @@ describe('SpatialIndexLoader', () => {
       const result = await loader.updateView(viewState2);
 
       expect(result).toBeDefined();
-      expect(querySpatialIndex).toHaveBeenCalledTimes(2);
+      expect(queryPointSpatialIndex).toHaveBeenCalledTimes(2);
     });
   });
 

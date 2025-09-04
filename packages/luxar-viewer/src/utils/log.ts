@@ -133,8 +133,8 @@ export const Modules = {
 
   // Data Loading
   SCENE_LOADER: 'SceneLoader',
-  SPATIAL_INDEX_LOADER: 'SpatialIndexLoader',
-  SPATIAL_INDEX: 'SpatialIndex',
+  SPATIAL_INDEX_LOADER: 'PointSpatialIndexLoader',
+  SPATIAL_INDEX: 'PointSpatialIndex',
   DATA_MONITOR: 'DataMonitor',
   ZARR_LOADER: 'ZarrLoader',
   RANGE_CACHE: 'RangeCache',

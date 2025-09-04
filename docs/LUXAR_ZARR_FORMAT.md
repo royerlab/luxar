@@ -139,13 +139,13 @@ Points nodes contain the actual point data.
 - **Default:** 2.0 if not provided
 - **Validation:** All values must be positive
 
-## Spatial Index
+## Point Spatial Index
 
-The spatial index enables efficient nD range queries for point visibility determination during slicing operations. Points are reordered during compilation to ensure spatial locality aligns with the index structure.
+The point spatial index enables efficient nD range queries for point visibility determination during slicing operations. Points are reordered during compilation to ensure spatial locality aligns with the index structure.
 
 ### Index Structure
 
-The spatial index uses a regular grid partitioning of the nD space, stored as a sparse representation containing only occupied cells.
+The point spatial index uses a regular grid partitioning of the nD space, stored as a sparse representation containing only occupied cells.
 
 #### spatial_index/.zattrs
 ```json
@@ -225,7 +225,7 @@ def decode_cell_id(cell_id, grid_shape):
     return list(reversed(coords))
 
 def build_spatial_index(positions, grid_shape):
-    """Build spatial index for nD points."""
+    """Build point spatial index for nD points."""
     D = positions.shape[1]
     N = positions.shape[0]
     
@@ -286,10 +286,10 @@ def build_spatial_index(positions, grid_shape):
 
 ### Integration with Viewer
 
-The TypeScript viewer uses the spatial index for efficient lazy loading:
+The TypeScript viewer uses the point spatial index for efficient lazy loading:
 
 ```typescript
-interface SpatialIndex {
+interface PointSpatialIndex {
   gridShape: number[];
   gridOrigin: number[];
   cellSize: number[];
@@ -298,7 +298,7 @@ interface SpatialIndex {
 }
 
 function queryVisiblePoints(
-  index: SpatialIndex,
+  index: PointSpatialIndex,
   slicePos: number[],
   tolerance: number[]
 ): Array<[number, number]> {

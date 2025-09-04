@@ -219,7 +219,7 @@ describe('Data Monitor Integration', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test1',
           queries: 0,
           loads: 0,
@@ -308,7 +308,7 @@ describe('Data Monitor Integration', () => {
         }) as any,
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 0,
           loads: 0,
@@ -335,14 +335,14 @@ describe('Data Monitor Integration', () => {
       if (eventListener) {
         (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
@@ -367,7 +367,7 @@ describe('Data Monitor Integration', () => {
         }) as any,
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 2,
           loads: 1,
@@ -392,56 +392,56 @@ describe('Data Monitor Integration', () => {
       if (eventListener) {
         (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000, latency: 10 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 1000, latency: 20 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'load',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', points: 2000, memory: 8000, latency: 50 },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-hit',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-miss',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });
 
         (eventListener as (event: MonitorEvent) => void)({
           type: 'cache-miss',
-          loader: 'spatial-index',
+          loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test' },
         });

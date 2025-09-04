@@ -1,14 +1,15 @@
 /**
- * Type definitions for spatial index structures.
+ * Type definitions for point spatial index structures.
  *
- * The spatial index uses a regular grid partitioning of nD space,
+ * The point spatial index uses a regular grid partitioning of nD space,
  * stored as a sparse representation containing only occupied cells.
+ * This implementation is specifically designed for point data.
  */
 
 /**
- * Metadata for a spatial index stored in zarr attributes
+ * Metadata for a point spatial index stored in zarr attributes
  */
-export interface SpatialIndexMetadata {
+export interface PointSpatialIndexMetadata {
   /** Number of cells per dimension (only indexed dims) */
   grid_shape: number[];
 
@@ -47,11 +48,11 @@ export interface SpatialIndexMetadata {
 }
 
 /**
- * Spatial index data loaded from zarr arrays
+ * Point spatial index data loaded from zarr arrays
  */
-export interface SpatialIndex {
+export interface PointSpatialIndex {
   /** Index metadata */
-  metadata: SpatialIndexMetadata;
+  metadata: PointSpatialIndexMetadata;
 
   /** Shape: [numOccupied * D], flattened nD coordinates */
   occupiedCells: Uint32Array;

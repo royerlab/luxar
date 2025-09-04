@@ -173,8 +173,9 @@ export class InputContextManager {
 
     // Check for conflicts
     if (contextBindings.has(bindingKey)) {
-      console.warn(
-        `⚠️ [Luxar] Key binding conflict in ${context}: ${bindingKey} is already registered`
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding conflict in ${context}: ${bindingKey} is already registered`
       );
     }
 
@@ -362,7 +363,7 @@ export class InputContextManager {
     currentContext: InputContext;
     contextStack: InputContext[];
     registeredBindings: Map<InputContext, string[]>;
-    } {
+  } {
     const registeredBindings = new Map<InputContext, string[]>();
 
     this.bindings.forEach((bindings, context) => {

@@ -46,7 +46,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 0,
           loads: 0,
@@ -81,7 +81,7 @@ describe('DataLoadingMonitor', () => {
           // Simulate an event
           const event: MonitorEvent = {
             type: 'query',
-            loader: 'spatial-index',
+            loader: 'point-spatial-index',
             timestamp: Date.now(),
             data: {
               path: '/test',
@@ -94,7 +94,7 @@ describe('DataLoadingMonitor', () => {
         }),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 1,
           loads: 0,
@@ -127,7 +127,7 @@ describe('DataLoadingMonitor', () => {
           for (let i = 0; i < 2000; i++) {
             const event: MonitorEvent = {
               type: 'cache-hit',
-              loader: 'spatial-index',
+              loader: 'point-spatial-index',
               timestamp: Date.now(),
               data: { path: '/test' },
             };
@@ -136,7 +136,7 @@ describe('DataLoadingMonitor', () => {
         }),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 0,
           loads: 0,
@@ -243,7 +243,7 @@ describe('DataLoadingMonitor', () => {
 
   describe('metrics aggregation', () => {
     it('should aggregate metrics from multiple loaders', () => {
-      const createMockLoader = (path: string, type: 'spatial-index'): LoaderMonitor => ({
+      const createMockLoader = (path: string, type: 'point-spatial-index'): LoaderMonitor => ({
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
@@ -266,8 +266,8 @@ describe('DataLoadingMonitor', () => {
         getActiveQueries: vi.fn(() => []),
       });
 
-      monitor.connectLoader('/points1', createMockLoader('/points1', 'spatial-index'));
-      monitor.connectLoader('/points2', createMockLoader('/points2', 'spatial-index'));
+      monitor.connectLoader('/points1', createMockLoader('/points1', 'point-spatial-index'));
+      monitor.connectLoader('/points2', createMockLoader('/points2', 'point-spatial-index'));
 
       const globalStats = monitor.getGlobalStats();
       expect(globalStats.totalQueries).toBe(20);
@@ -285,7 +285,7 @@ describe('DataLoadingMonitor', () => {
           // Simulate query with latency
           const event: MonitorEvent = {
             type: 'query',
-            loader: 'spatial-index',
+            loader: 'point-spatial-index',
             timestamp: Date.now(),
             data: {
               path: '/test',
@@ -298,7 +298,7 @@ describe('DataLoadingMonitor', () => {
         }),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 1,
           loads: 0,
@@ -330,7 +330,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 100,
           loads: 90,
@@ -416,7 +416,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test1',
           queries: 0,
           loads: 0,
@@ -439,7 +439,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test2',
           queries: 0,
           loads: 0,
@@ -486,7 +486,7 @@ describe('DataLoadingMonitor', () => {
           // Simulate an event
           const event: MonitorEvent = {
             type: 'query',
-            loader: 'spatial-index',
+            loader: 'point-spatial-index',
             timestamp: Date.now(),
             data: { path: '/test', points: 100 },
           };
@@ -494,7 +494,7 @@ describe('DataLoadingMonitor', () => {
         }),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 1,
           loads: 0,
@@ -561,7 +561,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test1',
           queries: 10,
           loads: 5,
@@ -595,7 +595,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test2',
           queries: 20,
           loads: 10,
@@ -656,7 +656,7 @@ describe('DataLoadingMonitor', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({
-          type: 'spatial-index' as const,
+          type: 'point-spatial-index' as const,
           path: '/test',
           queries: 10,
           loads: 5,
@@ -801,7 +801,7 @@ describe('DataLoadingMonitor', () => {
         expect.stringContaining('[DataLoadingMonitor] Disposal completed with errors:')
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to disconnect loader \'/failing\'')
+        expect.stringContaining("Failed to disconnect loader '/failing'")
       );
 
       // Verify that the normal loader was still cleaned up

@@ -1,7 +1,9 @@
-"""Spatial index implementation for efficient nD point queries.
+"""Point spatial index implementation for efficient nD point queries.
 
-This module provides functionality to build and query spatial indices for
-nD points, enabling efficient range queries and lazy loading.
+This module provides functionality to build and query point-specific spatial indices for
+nD points, enabling efficient range queries and lazy loading. This implementation is
+specifically designed for point data and will be complemented by other spatial index
+types for lines, meshes, and volumes.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union

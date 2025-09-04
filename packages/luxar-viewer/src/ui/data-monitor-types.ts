@@ -23,7 +23,7 @@ export type MonitorEventType =
 /**
  * Loader types in the system
  */
-export type LoaderType = 'spatial-index';
+export type LoaderType = 'point-spatial-index';
 
 /**
  * Event emitted by data loaders for monitoring
@@ -87,13 +87,13 @@ export interface LoaderMetrics {
   memoryUsed: number;
   memoryLimit: number;
   // Spatial index specific metrics
-  spatialIndex?: SpatialIndexMetrics;
+  spatialIndex?: PointSpatialIndexMetrics;
 }
 
 /**
  * Spatial index specific metrics
  */
-export interface SpatialIndexMetrics {
+export interface PointSpatialIndexMetrics {
   gridShape: number[];
   gridOrigin: number[];
   cellSize: number[];

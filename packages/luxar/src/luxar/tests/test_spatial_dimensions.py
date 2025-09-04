@@ -199,7 +199,7 @@ class TestSpatialIndexIntegration:
 
     def test_spatial_index_with_spatial_extend_dims(self):
         """Test that spatial index builder accepts and uses spatial_extend_dims."""
-        from luxar.io.spatial_index import build_spatial_index
+        from luxar.io.point_spatial_index import build_spatial_index
 
         # Create test data - 5D points
         np.random.seed(42)
@@ -222,7 +222,7 @@ class TestSpatialIndexIntegration:
 
     def test_spatial_index_cell_size_adjustment(self):
         """Test that spatial index adjusts cell size for spatial dimensions."""
-        from luxar.io.spatial_index import build_spatial_index
+        from luxar.io.point_spatial_index import build_spatial_index
 
         # Create test data with known bounds
         positions = np.array(
@@ -253,7 +253,7 @@ class TestSpatialIndexIntegration:
 
     def test_spatial_index_handles_no_spatial_dims(self):
         """Test spatial index when no dimensions are marked as spatial."""
-        from luxar.io.spatial_index import build_spatial_index
+        from luxar.io.point_spatial_index import build_spatial_index
 
         positions = np.random.randn(100, 4).astype(np.float32)
 

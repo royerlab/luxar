@@ -1,23 +1,24 @@
 /**
- * Spatial index functionality for efficient nD point queries.
+ * Point spatial index functionality for efficient nD point queries.
  *
- * The spatial index uses a regular grid partitioning of nD space,
+ * The point spatial index uses a regular grid partitioning of nD space,
  * stored as a sparse representation containing only occupied cells.
+ * This implementation is specifically designed for point data.
  */
 
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
-import { SpatialIndexMetadata, SpatialIndex, PointRange } from '../types/spatial-index';
+import { PointSpatialIndexMetadata, PointSpatialIndex, PointRange } from '../types/point-spatial-index';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
-// Re-export types for backwards compatibility
-export type { SpatialIndexMetadata, SpatialIndex, PointRange };
+// Export types
+export type { PointSpatialIndexMetadata, PointSpatialIndex, PointRange };
 
 /**
- * Load spatial index from zarr group or location
+ * Load point spatial index from zarr group or location
  */
-export async function loadSpatialIndex(groupOrLocation: any): Promise<SpatialIndex | null> {
+export async function loadPointSpatialIndex(groupOrLocation: any): Promise<PointSpatialIndex | null> {
   try {
     // Handle both zarr group and location objects
     let indexGroup;
@@ -71,7 +72,7 @@ export async function loadSpatialIndex(groupOrLocation: any): Promise<SpatialInd
 
     // Load metadata from attributes - validated structure from Python
     // The attrs object from zarr doesn't have strong typing, so we cast to unknown first
-    const metadata = indexGroupOpened.attrs as unknown as SpatialIndexMetadata;
+    const metadata = indexGroupOpened.attrs as unknown as PointSpatialIndexMetadata;
 
     // Check if all dimensions are displayed (no spatial index needed)
     if (!metadata.indexed_dimensions || metadata.indexed_dimensions.length === 0) {
@@ -128,10 +129,10 @@ export async function loadSpatialIndex(groupOrLocation: any): Promise<SpatialInd
 }
 
 /**
- * Query spatial index for points within tolerance of a slice position
+ * Query point spatial index for points within tolerance of a slice position
  */
-export function querySpatialIndex(
-  index: SpatialIndex,
+export function queryPointSpatialIndex(
+  index: PointSpatialIndex,
   slicePos: number[],
   tolerance: number[]
 ): PointRange[] {
@@ -311,9 +312,9 @@ export function estimateMemoryUsage(ranges: PointRange[], bytesPerPoint: number)
 }
 
 /**
- * Create a debug summary of the spatial index
+ * Create a debug summary of the point spatial index
  */
-export function debugSpatialIndex(index: SpatialIndex): string {
+export function debugPointSpatialIndex(index: PointSpatialIndex): string {
   const { metadata } = index;
   const cellsPerDim = metadata.grid_shape.join('×');
   const originStr = metadata.grid_origin.map((v) => v.toFixed(2)).join(', ');

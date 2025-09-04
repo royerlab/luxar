@@ -17,7 +17,7 @@ export {
 
 // Core components
 export { SceneLoader } from './scene-loader';
-export { SpatialIndexLoader } from './spatial-index-loader';
+export { PointSpatialIndexLoader } from './point-spatial-index-loader';
 export { RangeCache, RangeCacheKey } from './range-cache';
 
 // State management
@@ -46,15 +46,15 @@ export type {
 
 // Spatial index utilities
 export {
-  loadSpatialIndex,
-  querySpatialIndex,
+  loadPointSpatialIndex,
+  queryPointSpatialIndex,
   mergePointRanges,
   calculateChunksToLoad,
   estimateMemoryUsage,
-  debugSpatialIndex,
-  type SpatialIndex,
-  type SpatialIndexMetadata,
-} from './spatial-index';
+  debugPointSpatialIndex,
+  type PointSpatialIndex,
+  type PointSpatialIndexMetadata,
+} from './point-spatial-index';
 
 // Directory navigation
 export { DirectoryNavigator } from './directory-navigator';
