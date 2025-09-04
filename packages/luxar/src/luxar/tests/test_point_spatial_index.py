@@ -1,9 +1,9 @@
-"""Tests for spatial index functionality."""
+"""Tests for point spatial index functionality."""
 
 import numpy as np
 import zarr
 
-from luxar.io.spatial_index import (
+from luxar.io.point_spatial_index import (
     apply_sort_order,
     build_spatial_index,
     decode_cell_id,

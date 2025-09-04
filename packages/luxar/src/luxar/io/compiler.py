@@ -38,7 +38,7 @@ from ..validation.base import (
     validate_radii_for_writing,
     validate_sharpness_for_writing,
 )
-from .spatial_index import apply_sort_order, build_spatial_index, validate_spatial_index
+from .point_spatial_index import apply_sort_order, build_spatial_index, validate_spatial_index
 
 
 def _calculate_intelligent_chunks(

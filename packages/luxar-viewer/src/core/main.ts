@@ -17,7 +17,7 @@ import { showError } from '../ui/helpers';
 // Validate configuration at startup
 const configValid = validateAndLog(config);
 if (!configValid) {
-  console.error('[Config] Application starting with invalid configuration - errors may occur');
+  log.error(Modules.MAIN, 'Application starting with invalid configuration - errors may occur');
 }
 
 // Parse URL parameters for scene source

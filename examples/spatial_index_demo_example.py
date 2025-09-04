@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Spatial index demonstration example.
+"""Point spatial index demonstration example.
 
-This example creates a 5D dataset with spatial indexing enabled to demonstrate
+This example creates a 5D dataset with point spatial indexing enabled to demonstrate
 efficient nD points navigation and querying.
 
 The dataset contains multiple clusters of points distributed across a 5D space
-(x, y, z, time, channel), with the spatial index enabling efficient loading
+(x, y, z, time, channel), with the point spatial index enabling efficient loading
 of only the relevant points for any given slice position.
 
 Run with:

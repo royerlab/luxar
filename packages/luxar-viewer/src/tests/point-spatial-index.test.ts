@@ -1,21 +1,21 @@
 /**
- * Tests for spatial index functionality
+ * Tests for point spatial index functionality
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  loadSpatialIndex,
-  querySpatialIndex,
+  loadPointSpatialIndex,
+  queryPointSpatialIndex,
   mergePointRanges,
   calculateChunksToLoad,
   estimateMemoryUsage,
-  debugSpatialIndex,
-  type SpatialIndex,
-  type SpatialIndexMetadata,
+  debugPointSpatialIndex,
+  type PointSpatialIndex,
+  type PointSpatialIndexMetadata,
   type PointRange,
 } from '../data';
 
-describe('Spatial Index', () => {
+describe('Point Spatial Index', () => {
   describe('mergePointRanges', () => {
     it('should merge overlapping ranges', () => {
       const ranges: PointRange[] = [
@@ -145,12 +145,12 @@ describe('Spatial Index', () => {
     });
   });
 
-  describe('querySpatialIndex', () => {
-    let testIndex: SpatialIndex;
+  describe('queryPointSpatialIndex', () => {
+    let testIndex: PointSpatialIndex;
 
     beforeEach(() => {
       // Create a test spatial index for 2D space
-      const metadata: SpatialIndexMetadata = {
+      const metadata: PointSpatialIndexMetadata = {
         grid_shape: [3, 3],
         grid_origin: [0, 0],
         cell_size: [10, 10],
@@ -201,7 +201,7 @@ describe('Spatial Index', () => {
       const slicePos = [5, 5]; // Center of cell (0,0)
       const tolerance = [6, 6]; // Should reach into cell (0,0) and (1,1)
 
-      const ranges = querySpatialIndex(testIndex, slicePos, tolerance);
+      const ranges = queryPointSpatialIndex(testIndex, slicePos, tolerance);
 
       // Should find cells (0,0) and maybe (1,1) depending on exact boundaries
       expect(ranges.length).toBeGreaterThanOrEqual(1);
@@ -214,7 +214,7 @@ describe('Spatial Index', () => {
       const slicePos = [-100, -100];
       const tolerance = [1, 1];
 
-      const ranges = querySpatialIndex(testIndex, slicePos, tolerance);
+      const ranges = queryPointSpatialIndex(testIndex, slicePos, tolerance);
 
       // Due to the implementation, negative positions might still be clamped to grid bounds
       // Let's check if we get results or not - if we do, they should be limited
@@ -232,7 +232,7 @@ describe('Spatial Index', () => {
       const slicePos = [15, 15];
       const tolerance = [100, 100];
 
-      const ranges = querySpatialIndex(testIndex, slicePos, tolerance);
+      const ranges = queryPointSpatialIndex(testIndex, slicePos, tolerance);
 
       expect(ranges).toHaveLength(4); // All 4 occupied cells
     });
@@ -242,7 +242,7 @@ describe('Spatial Index', () => {
       const slicePos = [10, 10]; // Boundary between cells
       const tolerance = [1, 1];
 
-      const ranges = querySpatialIndex(testIndex, slicePos, tolerance);
+      const ranges = queryPointSpatialIndex(testIndex, slicePos, tolerance);
 
       // Should find cells adjacent to the boundary
       expect(ranges.length).toBeGreaterThanOrEqual(1);
@@ -250,7 +250,7 @@ describe('Spatial Index', () => {
 
     it('should work with higher dimensions', () => {
       // Create a 3D spatial index
-      const metadata3D: SpatialIndexMetadata = {
+      const metadata3D: PointSpatialIndexMetadata = {
         grid_shape: [2, 2, 2],
         grid_origin: [0, 0, 0],
         cell_size: [10, 10, 10],
@@ -275,13 +275,13 @@ describe('Spatial Index', () => {
 
       const cellRanges3D = new BigUint64Array([0n, 50n, 50n, 100n]);
 
-      const index3D: SpatialIndex = {
+      const index3D: PointSpatialIndex = {
         metadata: metadata3D,
         occupiedCells: occupiedCells3D,
         cellRanges: cellRanges3D,
       };
 
-      const ranges = querySpatialIndex(index3D, [5, 5, 5], [6, 6, 6]);
+      const ranges = queryPointSpatialIndex(index3D, [5, 5, 5], [6, 6, 6]);
 
       // With these parameters, we might get both cells or just one
       expect(ranges.length).toBeGreaterThanOrEqual(1);
@@ -292,9 +292,9 @@ describe('Spatial Index', () => {
     });
   });
 
-  describe('debugSpatialIndex', () => {
+  describe('debugPointSpatialIndex', () => {
     it('should create readable debug string', () => {
-      const metadata: SpatialIndexMetadata = {
+      const metadata: PointSpatialIndexMetadata = {
         grid_shape: [10, 10, 10],
         grid_origin: [-50, -50, -50],
         cell_size: [10, 10, 10],
@@ -308,13 +308,13 @@ describe('Spatial Index', () => {
         build_version: '0.5',
       };
 
-      const index: SpatialIndex = {
+      const index: PointSpatialIndex = {
         metadata,
         occupiedCells: new Uint32Array(0),
         cellRanges: new BigUint64Array(0),
       };
 
-      const debug = debugSpatialIndex(index);
+      const debug = debugPointSpatialIndex(index);
 
       expect(debug).toContain('10×10×10');
       expect(debug).toContain('234/1000');
@@ -323,13 +323,13 @@ describe('Spatial Index', () => {
     });
   });
 
-  describe('loadSpatialIndex', () => {
+  describe('loadPointSpatialIndex', () => {
     it('should return null when spatial_index group does not exist', async () => {
       const mockGroup = {
         members: new Map(),
       };
 
-      const result = await loadSpatialIndex(mockGroup);
+      const result = await loadPointSpatialIndex(mockGroup);
       expect(result).toBeNull();
     });
 
@@ -341,7 +341,7 @@ describe('Spatial Index', () => {
         },
       };
 
-      const result = await loadSpatialIndex(mockGroup);
+      const result = await loadPointSpatialIndex(mockGroup);
       expect(result).toBeNull();
     });
 

@@ -4,7 +4,7 @@ This file tracks known issues, bugs, and improvements needed in the Luxar projec
 
 ## TODO List:
 
-0- ✅ FIXED: The spatial index-based loading system now correctly handles point radius for slicing. The effective radius calculation takes into account the point radius when determining which points are visible in the current slice. This was addressed by the new SpatialIndexLoader and effective-radius-calculator modules that replaced the lazy loading system.
+0- ✅ FIXED: The point spatial index-based loading system now correctly handles point radius for slicing. The effective radius calculation takes into account the point radius when determining which points are visible in the current slice. This was addressed by the new PointSpatialIndexLoader and effective-radius-calculator modules that replaced the lazy loading system.
    - **Status**: RESOLVED
    - **Priority**: High
 

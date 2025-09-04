@@ -35,35 +35,50 @@ export const config: AppConfig = {
     // Negative distortion = barrel (wide angle), positive = pincushion (telephoto)
     lensDistortionPresets: {
       '28mm Wide': {
-        distortionX: -0.07, distortionY: -0.07, // Barrel distortion from your screenshot
-        principalPointX: 0, principalPointY: 0, // Centered (standard)
-        focalLengthX: 1.075, focalLengthY: 1.08, // Focal length values from your screenshot
-        skew: 0                                 // No skew (perfect optics)
+        distortionX: -0.07,
+        distortionY: -0.07, // Barrel distortion from your screenshot
+        principalPointX: 0,
+        principalPointY: 0, // Centered (standard)
+        focalLengthX: 1.075,
+        focalLengthY: 1.08, // Focal length values from your screenshot
+        skew: 0, // No skew (perfect optics)
       },
       '35mm': {
-        distortionX: -0.05, distortionY: -0.05, // Moderate barrel distortion from your screenshot
-        principalPointX: 0, principalPointY: 0,
-        focalLengthX: 1.054, focalLengthY: 1.055, // Focal length values from your screenshot
-        skew: 0
+        distortionX: -0.05,
+        distortionY: -0.05, // Moderate barrel distortion from your screenshot
+        principalPointX: 0,
+        principalPointY: 0,
+        focalLengthX: 1.054,
+        focalLengthY: 1.055, // Focal length values from your screenshot
+        skew: 0,
       },
       '50mm Normal': {
-        distortionX: 0, distortionY: 0,         // No distortion (ideal normal lens)
-        principalPointX: 0, principalPointY: 0,
-        focalLengthX: 1, focalLengthY: 1,
-        skew: 0
+        distortionX: 0,
+        distortionY: 0, // No distortion (ideal normal lens)
+        principalPointX: 0,
+        principalPointY: 0,
+        focalLengthX: 1,
+        focalLengthY: 1,
+        skew: 0,
       },
       '85mm Portrait': {
-        distortionX: 0.05, distortionY: 0.05,   // Pincushion (telephoto) - similar magnitude to 35mm barrel
-        principalPointX: 0, principalPointY: 0,
-        focalLengthX: 0.91, focalLengthY: 0.91, // Slight compression (opposite of wide angle expansion)
-        skew: 0
+        distortionX: 0.05,
+        distortionY: 0.05, // Pincushion (telephoto) - similar magnitude to 35mm barrel
+        principalPointX: 0,
+        principalPointY: 0,
+        focalLengthX: 0.91,
+        focalLengthY: 0.91, // Slight compression (opposite of wide angle expansion)
+        skew: 0,
       },
       '135mm Tele': {
-        distortionX: 0.07, distortionY: 0.07, // Barrel distortion from your screenshot
-        principalPointX: 0, principalPointY: 0,
-        focalLengthX: 0.882, focalLengthY: 0.883, // Focal length values from your screenshot
-        skew: 0
-      }
+        distortionX: 0.07,
+        distortionY: 0.07, // Barrel distortion from your screenshot
+        principalPointX: 0,
+        principalPointY: 0,
+        focalLengthX: 0.882,
+        focalLengthY: 0.883, // Focal length values from your screenshot
+        skew: 0,
+      },
     },
   },
 

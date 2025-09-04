@@ -5,7 +5,6 @@
  * eliminating the need for 'as any' type assertions throughout the codebase.
  */
 
-
 /**
  * Scene-level dimension information stored in Zarr attributes
  */

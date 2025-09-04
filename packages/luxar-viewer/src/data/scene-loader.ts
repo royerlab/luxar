@@ -7,7 +7,7 @@
 
 import * as zarr from 'zarrita';
 import * as THREE from 'three';
-import { SpatialIndexLoader } from './spatial-index-loader';
+import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './data-loader-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
@@ -169,7 +169,7 @@ export class SceneLoader {
       const group = await zarr.open(loc, { kind: 'group' });
       const attrs = group.attrs as ZarrNodeAttrs;
 
-      // We no longer check for spatial index here - SpatialIndexLoader handles it
+      // We no longer check for spatial index here - PointSpatialIndexLoader handles it
       const node: SceneNode = {
         path: entry.path,
         type: attrs?.type || 'group',
@@ -308,9 +308,9 @@ export class SceneLoader {
     // Resolve the correct location for this node
     const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
 
-    // Use SpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
-    log.query(Modules.SCENE_LOADER, `Using SpatialIndexLoader for ${node.path}`);
-    const loader = new SpatialIndexLoader(nodeLoc, node, this.config);
+    // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
+    log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
+    const loader = new PointSpatialIndexLoader(nodeLoc, node, this.config);
 
     // Connect to monitor if available
     if (this.monitorId) {

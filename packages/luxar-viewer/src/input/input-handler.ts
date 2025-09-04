@@ -425,7 +425,7 @@ export class InputHandler {
         }
         break;
 
-        // 'C' key removed - use 'F' to recenter on bounding box instead
+      // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':
@@ -678,8 +678,9 @@ export class InputHandler {
         `Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`
       );
     } else {
-      console.log(
-        'ℹ️ [Luxar] Inertial mode is only available in fly control mode (press V to switch)'
+      log.info(
+        Modules.INPUT,
+        'Inertial mode is only available in fly control mode (press V to switch)'
       );
     }
   }
@@ -790,7 +791,8 @@ export class InputHandler {
       }
     } else {
       const navigableDims = this.getNavigableDimensionsList(dims);
-      console.log(
+      log.info(
+        Modules.INPUT,
         `Dimension ${index + 1} not available (only ${navigableDims.length} non-displayed dimensions)`
       );
     }

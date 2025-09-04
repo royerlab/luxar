@@ -1,7 +1,7 @@
 /**
- * Spatial index-based data loader for efficient nD points loading.
+ * Point spatial index-based data loader for efficient nD points loading.
  *
- * This loader uses the spatial index built by the Python compiler to load
+ * This loader uses the point spatial index built by the Python compiler to load
  * only the points that are visible in the current nD slice. It ensures
  * all attributes are loaded with the same point ranges for proper alignment.
  */
@@ -24,11 +24,11 @@ import {
 } from './data-loader-types';
 import { RangeCache } from './range-cache';
 import {
-  loadSpatialIndex,
-  querySpatialIndex,
+  loadPointSpatialIndex,
+  queryPointSpatialIndex,
   mergePointRanges,
-  type SpatialIndex,
-} from './spatial-index';
+  type PointSpatialIndex,
+} from './point-spatial-index';
 import {
   calculateEffectiveRadii,
   calculateSpatialQueryTolerance,
@@ -54,9 +54,9 @@ import type {
  * - Projects nD points to 3D display space
  * - Real-time monitoring and performance tracking
  */
-export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
+export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private cache: RangeCache;
-  private spatialIndex: SpatialIndex | null = null;
+  private spatialIndex: PointSpatialIndex | null = null;
   private _effectiveRadiusConfig: EffectiveRadiusConfig | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
@@ -85,7 +85,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Initialize metrics
     this.metrics = {
-      type: 'spatial-index',
+      type: 'point-spatial-index',
       path: node.path,
       queries: 0,
       loads: 0,
@@ -109,7 +109,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
   async initialize(): Promise<void> {
     // Load spatial index
     try {
-      this.spatialIndex = await loadSpatialIndex(this.zarrLocation);
+      this.spatialIndex = await loadPointSpatialIndex(this.zarrLocation);
 
       if (!this.spatialIndex) {
         // For 3D datasets where all dimensions are displayed, create a dummy index
@@ -281,7 +281,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       this.emitEvent({
         type: 'query',
-        loader: 'spatial-index',
+        loader: 'point-spatial-index',
         timestamp: Date.now(),
         data: {
           path: this.node.path,
@@ -296,7 +296,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
       // Track active query
       this.activeQueries.set(queryId, {
         id: queryId,
-        loader: 'spatial-index',
+        loader: 'point-spatial-index',
         path: this.node.path,
         startTime,
         status: 'loading',
@@ -323,29 +323,29 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -380,7 +380,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       this.emitEvent({
         type: 'error',
-        loader: 'spatial-index',
+        loader: 'point-spatial-index',
         timestamp: Date.now(),
         data: {
           path: this.node.path,
@@ -501,7 +501,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
     // log.info(Modules.SPATIAL_INDEX_LOADER, `  Max radius: ${maxRadius}`);
 
     // Query spatial index
-    const ranges = querySpatialIndex(this.spatialIndex, querySlicePos, queryTolerance);
+    const ranges = queryPointSpatialIndex(this.spatialIndex, querySlicePos, queryTolerance);
 
     // Merge adjacent ranges for more efficient loading
     const merged = mergePointRanges(ranges);
@@ -536,7 +536,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       this.emitEvent({
         type: 'cache-hit',
-        loader: 'spatial-index',
+        loader: 'point-spatial-index',
         timestamp: Date.now(),
         data: {
           path: this.node.path,
@@ -554,7 +554,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     this.emitEvent({
       type: 'cache-miss',
-      loader: 'spatial-index',
+      loader: 'point-spatial-index',
       timestamp: Date.now(),
       data: {
         path: this.node.path,
@@ -636,7 +636,7 @@ export class SpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     this.emitEvent({
       type: 'load',
-      loader: 'spatial-index',
+      loader: 'point-spatial-index',
       timestamp: Date.now(),
       data: {
         path: this.node.path,

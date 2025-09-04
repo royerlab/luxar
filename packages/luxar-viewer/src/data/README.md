@@ -25,8 +25,8 @@ data/
 ├── zarr-loader.ts              # Main API entry point for loading scenes
 ├── scene-loader.ts             # Orchestrates hierarchical scene loading
 ├── scene-loader-manager.ts     # Singleton manager for SceneLoader instances
-├── spatial-index-loader.ts     # Loads data using spatial index queries (required)
-├── spatial-index.ts            # Core spatial index query implementation
+├── spatial-index-loader.ts     # Loads data using point spatial index queries (required)
+├── spatial-index.ts            # Core point spatial index query implementation
 ├── range-cache.ts              # Intelligent caching for range-based queries
 ├── data-monitor-manager.ts     # Singleton manager for monitoring UI instances
 ├── directory-navigator.ts      # Multi-strategy server directory browsing
@@ -144,7 +144,7 @@ export async function updateSceneForDimensions(
 
 The `spatial-index.ts` provides efficient nD point queries using grid-based spatial partitioning.
 
-⚠️ **IMPORTANT**: Spatial indices are now MANDATORY for all datasets. The system will throw an error if a dataset lacks a spatial index.
+⚠️ **IMPORTANT**: Spatial indices are now MANDATORY for all datasets. The system will throw an error if a dataset lacks a point spatial index.
 
 **Core Features:**
 
@@ -158,11 +158,11 @@ The `spatial-index.ts` provides efficient nD point queries using grid-based spat
 **How It Works:**
 
 ```typescript
-// 1. Load spatial index from zarr
-const index = await loadSpatialIndex(group);
+// 1. Load point spatial index from zarr
+const index = await loadPointSpatialIndex(group);
 
 // 2. Query for points near slice position
-const ranges = querySpatialIndex(
+const ranges = queryPointSpatialIndex(
   index,
   slicePosition, // Current position in nD space
   tolerance // Search radius per dimension
@@ -183,7 +183,7 @@ for (const range of merged) {
 **Spatial Index Structure:**
 
 ```typescript
-interface SpatialIndex {
+interface PointSpatialIndex {
   metadata: {
     grid_shape: number[]; // Grid dimensions [nx, ny, nz, ...]
     grid_origin: number[]; // Minimum coordinate per dimension
@@ -199,15 +199,15 @@ interface SpatialIndex {
 **Key Functions:**
 
 ```typescript
-export async function loadSpatialIndex(
+export async function loadPointSpatialIndex(
   group: any,
   signal?: AbortSignal
-): Promise<SpatialIndex | null> {
-  // Load spatial index from zarr group
+): Promise<PointSpatialIndex | null> {
+  // Load point spatial index from zarr group
 }
 
-export function querySpatialIndex(
-  index: SpatialIndex,
+export function queryPointSpatialIndex(
+  index: PointSpatialIndex,
   slicePos: number[],
   tolerance: number[]
 ): PointRange[] {
@@ -451,15 +451,15 @@ interface DimensionMetadata {
 
 ### Spatial Index for Efficient Queries (Required)
 
-The spatial index dramatically improves performance for large nD datasets:
+The point spatial index dramatically improves performance for large nD datasets:
 
 ```typescript
 // Spatial index is loaded automatically by SceneLoader
-// If missing, will throw: "[❌] No spatial index found for /path.
-// Please rebuild the dataset with spatial index support."
+// If missing, will throw: "[❌] No point spatial index found for /path.
+// Please rebuild the dataset with point spatial index support."
 
-// The SpatialIndexLoader uses the index internally:
-const ranges = querySpatialIndex(index, slicePos, tolerance);
+// The PointPointSpatialIndexLoader uses the index internally:
+const ranges = queryPointSpatialIndex(index, slicePos, tolerance);
 const visiblePoints = await loadRanges(ranges);
 
 // Query performance:
@@ -495,11 +495,11 @@ scene.add_points(
 
 ⚠️ **IMPORTANT**: All datasets MUST have spatial indices. Datasets without spatial indices will fail to load with an error.
 
-The spatial index enables:
+The point spatial index enables:
 
 ```typescript
 // The SceneLoader automatically uses spatial indices for efficient loading
-// You don't need to interact with the spatial index directly - it's handled internally
+// You don't need to interact with the point spatial index directly - it's handled internally
 
 // When you update the view:
 await updateView({
@@ -507,7 +507,7 @@ await updateView({
   slicePosition: [x, y, z, t],
   tolerance: [0, 0, 0, radius],
 });
-// The loader automatically queries the spatial index and loads only visible points
+// The loader automatically queries the point spatial index and loads only visible points
 ```
 
 **Benefits:**
@@ -519,7 +519,7 @@ await updateView({
 
 **How It Works:**
 
-1. **Initial Load**: Queries spatial index for visible points
+1. **Initial Load**: Queries point spatial index for visible points
 2. **Navigation**: As user navigates, queries update to find new visible points
 3. **Caching**: Recently accessed ranges are cached for fast re-access
 4. **Memory Management**: Automatic eviction of least-recently-used cached ranges
@@ -588,7 +588,7 @@ For very large datasets:
 ```typescript
 import { loadScene, updateView } from '@luxar/player/data';
 
-// Load a Zarr dataset (spatial index required)
+// Load a Zarr dataset (point spatial index required)
 const scene = await loadScene('http://server.com/data/points.zarr');
 
 // Add to THREE.js scene
@@ -733,10 +733,10 @@ location /data/ {
 }
 ```
 
-**Problem: Dataset without spatial index**
+**Problem: Dataset without point spatial index**
 
 ```typescript
-// Error: "[❌] No spatial index found for /points. Please rebuild the dataset with spatial index support."
+// Error: "[❌] No point spatial index found for /points. Please rebuild the dataset with point spatial index support."
 // Solution: Regenerate dataset with Python compiler
 
 // Python code:
@@ -837,8 +837,8 @@ location /data/ {
 
 | Function                                           | Description                                   |
 | -------------------------------------------------- | --------------------------------------------- |
-| `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with spatial index |
-| `updateView(viewState, loaderId?)`                 | Update all points for new view state    |
+| `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with point spatial index |
+| `updateView(viewState, loaderId?)`                 | Update all points for new view state          |
 | `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions       |
 | `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring           |
 | `clearCaches(loaderId?)`                           | Clear caches to free memory                   |
@@ -877,8 +877,8 @@ location /data/ {
 
 | Class/Method                          | Description                              |
 | ------------------------------------- | ---------------------------------------- |
-| `SpatialIndexLoader`                  | Loader using spatial indices             |
-| `constructor(location, node, config)` | Create loader with spatial index support |
+| `PointPointSpatialIndexLoader`                  | Loader using spatial indices             |
+| `constructor(location, node, config)` | Create loader with point spatial index support |
 | `updateView(viewState)`               | Update for new view (reloads currently)  |
 | `getCacheStats()`                     | Get cache statistics                     |
 | `clearCache()`                        | Clear cached data                        |
@@ -888,18 +888,18 @@ location /data/ {
 
 | Function                              | Description                               |
 | ------------------------------------- | ----------------------------------------- |
-| `loadSpatialIndex(group)`             | Load spatial index from zarr group        |
-| `querySpatialIndex(index, pos, tol)`  | Query points within tolerance of position |
+| `loadPointSpatialIndex(group)`             | Load point spatial index from zarr group        |
+| `queryPointSpatialIndex(index, pos, tol)`  | Query points within tolerance of position |
 | `mergePointRanges(ranges)`            | Merge overlapping or adjacent ranges      |
 | `calculateChunksToLoad(ranges, size)` | Calculate which zarr chunks to load       |
 | `estimateMemoryUsage(ranges, bytes)`  | Estimate memory for loading point ranges  |
-| `debugSpatialIndex(index)`            | Create debug summary of spatial index     |
+| `debugPointSpatialIndex(index)`            | Create debug summary of point spatial index     |
 
 ### Range Cache (range-cache.ts)
 
 | Class/Method                   | Description                           |
 | ------------------------------ | ------------------------------------- |
-| `RangeCache`                   | Cache for spatial index range queries |
+| `RangeCache`                   | Cache for point spatial index range queries |
 | `get(arrayPath, ranges)`       | Get cached data if available          |
 | `set(arrayPath, ranges, data)` | Store data in cache                   |
 | `has(arrayPath, ranges)`       | Check if ranges are cached            |
@@ -933,19 +933,19 @@ location /data/ {
 
 ### Utility Functions (zarr-loader-utils.ts)
 
-| Function                                            | Description                             |
-| --------------------------------------------------- | --------------------------------------- |
-| `normalizeZarrPath(path, baseUrl?)`                 | Normalize path to valid Zarr URL        |
-| `extractDimensionMetadata(attrs)`                   | Extract dimensions from zarr attributes |
-| `inheritRenderingAttributes(attrs, parent)`         | Apply attribute inheritance             |
-| `validatePointsData(positions, expected, ndim)` | Validate points data               |
-| `calculateInitialSlicePosition(dims)`               | Calculate initial nD slice position     |
-| `isPointsGroup(attrs, name)`                    | Check if group contains points     |
-| `calculateBoundingBox(positions, ndim)`             | Calculate nD bounding box               |
-| `processTransformAttribute(transform)`              | Process transform from zarr metadata    |
+| Function                                        | Description                             |
+| ----------------------------------------------- | --------------------------------------- |
+| `normalizeZarrPath(path, baseUrl?)`             | Normalize path to valid Zarr URL        |
+| `extractDimensionMetadata(attrs)`               | Extract dimensions from zarr attributes |
+| `inheritRenderingAttributes(attrs, parent)`     | Apply attribute inheritance             |
+| `validatePointsData(positions, expected, ndim)` | Validate points data                    |
+| `calculateInitialSlicePosition(dims)`           | Calculate initial nD slice position     |
+| `isPointsGroup(attrs, name)`                    | Check if group contains points          |
+| `calculateBoundingBox(positions, ndim)`         | Calculate nD bounding box               |
+| `processTransformAttribute(transform)`          | Process transform from zarr metadata    |
 | `estimatePointsMemory(n, ndim, ...)`            | Estimate memory usage in MB             |
-| `validateRenderingAttributes(attrs)`                | Validate and apply defaults             |
-| `determineLoadingStrategy(n, memory)`               | Choose loading strategy based on size   |
+| `validateRenderingAttributes(attrs)`            | Validate and apply defaults             |
+| `determineLoadingStrategy(n, memory)`           | Choose loading strategy based on size   |
 
 ---
 
