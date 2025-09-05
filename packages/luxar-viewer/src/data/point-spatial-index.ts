@@ -8,7 +8,11 @@
 
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
-import { PointSpatialIndexMetadata, PointSpatialIndex, PointRange } from '../types/point-spatial-index';
+import {
+  PointSpatialIndexMetadata,
+  PointSpatialIndex,
+  PointRange,
+} from '../types/point-spatial-index';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
@@ -18,7 +22,9 @@ export type { PointSpatialIndexMetadata, PointSpatialIndex, PointRange };
 /**
  * Load point spatial index from zarr group or location
  */
-export async function loadPointSpatialIndex(groupOrLocation: any): Promise<PointSpatialIndex | null> {
+export async function loadPointSpatialIndex(
+  groupOrLocation: any
+): Promise<PointSpatialIndex | null> {
   try {
     // Handle both zarr group and location objects
     let indexGroup;

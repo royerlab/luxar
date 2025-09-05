@@ -67,11 +67,17 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pre-commit>=3.3.0",
-    "bandit[toml]>=1.7.5"
+    "bandit[toml]>=1.7.5",
+    # GSplats dependencies
+    "scipy>=1.9.0",
+    "torch>=1.12.0"
 ]
 test = [
     "pytest>=7.4.0",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    # GSplats dependencies
+    "scipy>=1.9.0",
+    "torch>=1.12.0"
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -119,12 +125,15 @@ dependencies = [
     "ruff>=0.1.0",
     "mypy>=1.5.0",
     "pre-commit>=3.3.0",
-    "bandit[toml]>=1.7.5"
+    "bandit[toml]>=1.7.5",
+    # GSplats dependencies
+    "scipy>=1.9.0",
+    "torch>=1.12.0"
 ]
 
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:packages/luxar/src/luxar/tests}"
-test-cov = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar/tests}"
+test = "pytest {args:packages/luxar/src/luxar}"
+test-cov = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 format = [
     "ruff format packages/luxar/src",
     "ruff check --fix packages/luxar/src"
@@ -155,15 +164,18 @@ serve = "python -m http.server 8000 --directory docs/_build/html"
 [tool.hatch.envs.test]
 dependencies = [
     "pytest>=7.4.0",
-    "pytest-cov>=4.1.0"
+    "pytest-cov>=4.1.0",
+    # GSplats dependencies
+    "scipy>=1.9.0",
+    "torch>=1.12.0"
 ]
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.test.scripts]
-run = "pytest {args:packages/luxar/src/luxar/tests}"
-cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar/tests}"
+run = "pytest {args:packages/luxar/src/luxar}"
+cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
 # Publishing configuration
 [tool.hatch.publish.index]
@@ -243,7 +255,7 @@ check_untyped_defs = false
 # Linting configuration is in [tool.ruff] section above
 
 [tool.pytest.ini_options]
-testpaths = ["packages/luxar/src/luxar/tests"]
+testpaths = ["packages/luxar/src/luxar"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
