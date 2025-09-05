@@ -4,6 +4,7 @@
 from pathlib import Path
 
 import numpy as np
+from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
@@ -71,7 +72,7 @@ dims = Dimensions(
     ]
 )
 
-print("Creating scene with spatial index...")
+aprint("Creating scene with spatial index...")
 
 # Create scene with spatial index
 with LuxarZarrCompiler(
@@ -90,18 +91,18 @@ with LuxarZarrCompiler(
         opacity=0.9,
     )
 
-print(f"\nTest dataset created: {output_path}")
-print(f"Points: {n_points}")
-print(f"Dimensions: {n_dims} (x, y, z, time, channel)")
-print(f"Time steps: {time_steps} (at t=0, 2, 4, 6, 8)")
-print(f"Channels: {channels} (0, 1, 2)")
-print("\nColors are coded by time (red) and channel (green)")
-print("Radii are larger for t>4")
-print("\nTo test:")
-print(f"1. Run: luxar serve {output_path}")
-print("2. Navigate through time dimension (should see color change)")
-print("3. Navigate through channel dimension (should see color change)")
-print("4. Verify that colors match points (alignment test)")
-print("\nNavigation:")
-print("  - Use [ ] keys to navigate through time")
-print("  - Press 4 then [ ] to navigate channels")
+aprint(f"\nTest dataset created: {output_path}")
+aprint(f"Points: {n_points}")
+aprint(f"Dimensions: {n_dims} (x, y, z, time, channel)")
+aprint(f"Time steps: {time_steps} (at t=0, 2, 4, 6, 8)")
+aprint(f"Channels: {channels} (0, 1, 2)")
+aprint("\nColors are coded by time (red) and channel (green)")
+aprint("Radii are larger for t>4")
+aprint("\nTo test:")
+aprint(f"1. Run: luxar serve {output_path}")
+aprint("2. Navigate through time dimension (should see color change)")
+aprint("3. Navigate through channel dimension (should see color change)")
+aprint("4. Verify that colors match points (alignment test)")
+aprint("\nNavigation:")
+aprint("  - Use [ ] keys to navigate through time")
+aprint("  - Press 4 then [ ] to navigate channels")

@@ -12,12 +12,9 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-try:
-    from scipy import ndimage as ndi
+import importlib.util
 
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
+HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 # Skip all tests if torch is not available
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
@@ -583,9 +580,6 @@ class TestReconstructionQuality:
 
         # More splats should generally have higher total amplitude
         # (since they can better represent the multiple blobs)
-        total_amp_few = np.sum(amps_few)
-        total_amp_many = np.sum(amps_many)
-
         # This isn't guaranteed in all cases, but is a reasonable expectation
         # for this test case with well-separated blobs
         assert len(amps_many) > len(amps_few)  # More splats

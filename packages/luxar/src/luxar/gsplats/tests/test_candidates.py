@@ -2,6 +2,8 @@
 Tests for candidate detection functions in gsplats.
 """
 
+import importlib.util
+
 import numpy as np
 import pytest
 
@@ -12,12 +14,7 @@ from luxar.gsplats.candidates import (
     find_candidates_overcomplete_nd,
 )
 
-try:
-    from scipy import ndimage as ndi
-
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
+HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
 # Skip all tests if scipy is not available
 pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")

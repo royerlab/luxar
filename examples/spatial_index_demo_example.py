@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from arbol import aprint
+from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
@@ -123,95 +123,102 @@ def main():
 
         shutil.rmtree(output_path)
 
-    aprint(f"🎯 Creating spatial index demo with {args.clusters} clusters")
-    aprint(f"   Each cluster has {args.points_per_cluster} points")
-    aprint(f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}")
+    with asection("Spatial Index Demo Setup"):
+        aprint(f"🎯 Creating spatial index demo with {args.clusters} clusters")
+        aprint(f"   Each cluster has {args.points_per_cluster} points")
+        aprint(f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}")
 
-    # Define 5D dimensions
-    dims = Dimensions(
-        [
-            Dimension("x", unit="um", display=True, range=(-60, 60)),
-            Dimension("y", unit="um", display=True, range=(-60, 60)),
-            Dimension("z", unit="um", display=True, range=(-60, 60)),
-            Dimension(
-                "time", unit="s", display=False, range=(0, 10), step=0.5, discrete=True
-            ),
-            Dimension(
-                "channel", unit="ch", display=False, range=(0, 2), step=1, discrete=True
-            ),
-        ]
-    )
+        # Define 5D dimensions
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True, range=(-60, 60)),
+                Dimension("y", unit="um", display=True, range=(-60, 60)),
+                Dimension("z", unit="um", display=True, range=(-60, 60)),
+                Dimension(
+                    "time", unit="s", display=False, range=(0, 10), step=0.5, discrete=True
+                ),
+                Dimension(
+                    "channel", unit="ch", display=False, range=(0, 2), step=1, discrete=True
+                ),
+            ]
+        )
+        aprint(f"Defined {len(dims)} dimensions for 5D navigation")
 
-    # Create 5D clustered data
-    aprint("🔨 Generating 5D clustered point data...")
-    positions, colors, radii = create_5d_clusters(
-        args.clusters, args.points_per_cluster
-    )
-
-    total_points = len(positions)
-    aprint(f"📊 Total points: {total_points:,}")
-    aprint(f"   Position range: [{positions.min():.1f}, {positions.max():.1f}]")
-    aprint(f"   Radii range: [{radii.min():.2f}, {radii.max():.2f}]")
-    aprint(f"   HDR color max: {colors.max():.1f}")
-
-    # Build scene with or without spatial index
-    start_time = time.time()
-
-    with LuxarZarrCompiler(
-        str(output_path), enable_spatial_index=not args.no_spatial_index
-    ) as compiler:
-        scene = compiler.create_scene(dimensions=dims)
-
-        # Add all points as a single cloud
-        # The spatial index will automatically reorder them for efficiency
-        if not args.no_spatial_index:
-            # Use a grid that balances query performance and memory
-            # For 5D data: 8×8×8×5×3 = 7680 potential cells
-            grid_shape = (8, 8, 8, 5, 3)
-            aprint(f"🔍 Using spatial index grid: {grid_shape}")
-        else:
-            grid_shape = None
-
-        scene.add_points(
-            "clustered_points",
-            positions,
-            colors=colors,
-            radii=radii,
-            grid_shape=grid_shape,
-            opacity=0.8,
-            gamma=1.2,
+    with asection("5D Clustered Data Generation"):
+        # Create 5D clustered data
+        aprint("🔨 Generating 5D clustered point data...")
+        positions, colors, radii = create_5d_clusters(
+            args.clusters, args.points_per_cluster
         )
 
-    build_time = time.time() - start_time
+        total_points = len(positions)
+        aprint(f"📊 Total points: {total_points:,}")
+        aprint(f"   Position range: [{positions.min():.1f}, {positions.max():.1f}]")
+        aprint(f"   Radii range: [{radii.min():.2f}, {radii.max():.2f}]")
+        aprint(f"   HDR color max: {colors.max():.1f}")
 
-    # Report statistics
-    file_size = sum(f.stat().st_size for f in output_path.rglob("*") if f.is_file())
-    file_size_mb = file_size / (1024 * 1024)
+    with asection("Scene Construction and Indexing"):
+        # Build scene with or without spatial index
+        start_time = time.time()
 
-    aprint("✅ Dataset created successfully!")
-    aprint(f"   Output: {output_path}")
-    aprint(f"   Build time: {build_time:.2f} seconds")
-    aprint(f"   File size: {file_size_mb:.2f} MB")
-    aprint(f"   Points/MB: {total_points / file_size_mb:.0f}")
+        with LuxarZarrCompiler(
+            str(output_path), enable_spatial_index=not args.no_spatial_index
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
 
-    if not args.no_spatial_index:
-        aprint("\n🔍 Spatial index benefits:")
-        aprint("   - Efficient nD range queries")
-        aprint("   - Only loads relevant point clusters")
-        aprint("   - Smooth navigation through time/channel dims")
-        aprint("   - Better cache utilization")
+            # Add all points as a single cloud
+            # The spatial index will automatically reorder them for efficiency
+            if not args.no_spatial_index:
+                # Use a grid that balances query performance and memory
+                # For 5D data: 8×8×8×5×3 = 7680 potential cells
+                grid_shape = (8, 8, 8, 5, 3)
+                aprint(f"🔍 Using spatial index grid: {grid_shape}")
+            else:
+                grid_shape = None
+                aprint("⚠️ Spatial indexing disabled for comparison")
 
-    aprint("\n📡 To view this dataset:")
-    aprint(f"   luxar serve {output_path}")
-    aprint("\n🎮 Navigation tips:")
-    aprint("   - Use [ ] keys to navigate through time")
-    aprint("   - Press 4 then [ ] to navigate channels")
-    aprint("   - Notice how large-radius points remain visible across slices")
+            scene.add_points(
+                "clustered_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                grid_shape=grid_shape,
+                opacity=0.8,
+                gamma=1.2,
+            )
 
-    if not args.no_spatial_index:
-        aprint("\n💡 Try comparing with non-indexed version:")
-        aprint(f"   python {__file__} --no-spatial-index")
-        aprint("   Then compare loading performance in the viewer!")
+        build_time = time.time() - start_time
+
+    with asection("Performance Results and Statistics"):
+        # Report statistics
+        file_size = sum(f.stat().st_size for f in output_path.rglob("*") if f.is_file())
+        file_size_mb = file_size / (1024 * 1024)
+
+        aprint("✅ Dataset created successfully!")
+        aprint(f"   Output: {output_path}")
+        aprint(f"   Build time: {build_time:.2f} seconds")
+        aprint(f"   File size: {file_size_mb:.2f} MB")
+        aprint(f"   Points/MB: {total_points / file_size_mb:.0f}")
+
+        if not args.no_spatial_index:
+            aprint("Spatial index benefits:")
+            aprint("   - Efficient nD range queries")
+            aprint("   - Only loads relevant point clusters")
+            aprint("   - Smooth navigation through time/channel dims")
+            aprint("   - Better cache utilization")
+
+    with asection("Usage Instructions and Tips"):
+        aprint("📡 To view this dataset:")
+        aprint(f"   luxar serve {output_path}")
+        aprint("🎮 Navigation tips:")
+        aprint("   - Use [ ] keys to navigate through time")
+        aprint("   - Press 4 then [ ] to navigate channels")
+        aprint("   - Notice how large-radius points remain visible across slices")
+
+        if not args.no_spatial_index:
+            aprint("💡 Try comparing with non-indexed version:")
+            aprint(f"   python {__file__} --no-spatial-index")
+            aprint("   Then compare loading performance in the viewer!")
 
 
 if __name__ == "__main__":

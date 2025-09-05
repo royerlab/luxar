@@ -77,10 +77,10 @@ class TestSolveLowerTriangular:
 
     def test_solve_identity_matrix(self):
         """Test solving with identity matrix (should return b unchanged)."""
-        I = torch.eye(3, dtype=torch.float32)
+        identity_matrix = torch.eye(3, dtype=torch.float32)
         b = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float32)
 
-        x = solve_lower_triangular(I, b)
+        x = solve_lower_triangular(identity_matrix, b)
 
         torch.testing.assert_close(x, b, atol=1e-7, rtol=1e-7)
 

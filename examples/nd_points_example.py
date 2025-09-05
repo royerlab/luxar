@@ -66,9 +66,9 @@ def main():
         aprint("Defining 5D scene dimensions...")
         dims_5d = Dimensions([
             Dimension(
-                "time", 
-                unit="s", 
-                range=(0.0, 1.0), 
+                "time",
+                unit="s",
+                range=(0.0, 1.0),
                 step=0.1,
                 display=False,
                 discrete=True,  # Non-displayed dimensions must be discrete
@@ -76,12 +76,12 @@ def main():
                 description="Time evolution of the system"
             ),
             Dimension("x", unit="um", display=True, scale=0.5, description="Spatial X coordinate"),
-            Dimension("y", unit="um", display=True, scale=0.5, description="Spatial Y coordinate"), 
+            Dimension("y", unit="um", display=True, scale=0.5, description="Spatial Y coordinate"),
             Dimension("z", unit="um", display=True, scale=1.0, description="Spatial Z coordinate"),
             Dimension(
-                "channel", 
-                unit="au", 
-                range=(0, 2), 
+                "channel",
+                unit="au",
+                range=(0, 2),
                 step=1.0,
                 display=False,
                 discrete=True,
@@ -89,7 +89,7 @@ def main():
                 description="Color channel (R=0, G=1, B=2)"
             ),
         ])
-        
+
         scene = compiler.create_scene(dimensions=dims_5d)
 
         # Create 5D time series data
@@ -123,15 +123,15 @@ def main():
 
         # Add some reference 5D points with different patterns
         aprint("Adding reference 5D points with different patterns...")
-        
+
         # Create a simple 5D grid pattern
         n_ref = 200
         positions_ref = np.zeros((n_ref, 5), dtype=np.float32)
-        
+
         # Grid in time and channel dimensions
         t_vals = np.linspace(0.2, 0.8, 5)  # 5 time points
         c_vals = np.array([0, 1, 2])  # 3 channels
-        
+
         idx = 0
         for t in t_vals:
             for c in c_vals:
@@ -139,28 +139,28 @@ def main():
                 n_spatial = n_ref // (len(t_vals) * len(c_vals))
                 if n_spatial == 0:
                     continue
-                    
+
                 # Random points in a sphere
                 theta = np.random.uniform(0, 2*np.pi, n_spatial)
                 phi = np.random.uniform(0, np.pi, n_spatial)
                 r = np.random.uniform(0, 15, n_spatial)
-                
+
                 x = r * np.sin(phi) * np.cos(theta) + 30  # Offset from main data
                 y = r * np.sin(phi) * np.sin(theta) + 30
                 z = r * np.cos(phi)
-                
+
                 for i in range(n_spatial):
                     if idx >= n_ref:
                         break
                     positions_ref[idx] = [t, x[i], y[i], z[i], c]
                     idx += 1
-                    
+
         # Truncate if we didn't fill all positions
         positions_ref = positions_ref[:idx]
-        
+
         # Create colors for reference points (white/gray)
         colors_ref = np.full((positions_ref.shape[0], 3), 0.6, dtype=np.float32)
-        
+
         scene.add_points(
             "Reference5D",
             positions_ref,

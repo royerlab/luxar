@@ -18,6 +18,7 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.utils.trils import pack_tril, tril_size
@@ -142,7 +143,7 @@ def fit_gaussian_splats(
         # For uniform images, map to middle of [0,1] range
         V = np.full_like(V, 0.5, dtype=np.float32)
         if verbose:
-            print("Warning: Input image is nearly uniform, using constant value 0.5")
+            aprint("Warning: Input image is nearly uniform, using constant value 0.5")
     else:
         # Normalize image to [0, 1] range for optimization stability
         V = (V - image_min) / (image_max - image_min)
@@ -255,7 +256,7 @@ def fit_gaussian_splats(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
         if verbose and (it % max(1, n_iters // 10) == 0 or it <= 5):
-            print(
+            aprint(
                 f"[{it:4d}/{n_iters}] loss={loss.item():.5g}  relL2={float(rel):.4f}  N={N}"
             )
 

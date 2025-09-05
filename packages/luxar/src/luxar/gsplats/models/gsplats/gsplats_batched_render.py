@@ -32,7 +32,7 @@ def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
     return torch.tensor(s, device=device, dtype=torch.long)  # (d,)
 
 
-def render_gaussians_full_torch_batched(
+def render_gaussians_batched(
     shape: Sequence[int],
     centers: torch.Tensor,  # (N, d) voxel coords
     Ls: torch.Tensor,  # (N, d, d) lower-tri
@@ -47,7 +47,6 @@ def render_gaussians_full_torch_batched(
     Everything is differentiable.
     """
     device = centers.device
-    d = centers.shape[1]
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (d,)

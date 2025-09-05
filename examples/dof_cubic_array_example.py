@@ -109,7 +109,7 @@ def main():
 DOF Cubic Array Test Scene
 ===========================
 
-This scene provides a dense cubic array specifically designed for 
+This scene provides a dense cubic array specifically designed for
 testing depth-of-field post-processing effects:
 
 - 100×100×100 grid = 1,000,000 points
@@ -195,12 +195,12 @@ Performance notes:
 
 
         # Print statistics
-        aprint(f"\n✓ Scene created successfully!")
+        aprint("\n✓ Scene created successfully!")
         aprint(f"  Total points: {len(positions):,}")
-        aprint(f"  Grid dimensions: 100×100×100")
-        aprint(f"  Point spacing: 0.5 units")
-        aprint(f"  Point radius: 0.05 units")
-        aprint(f"  Point sharpness: 10.0 (sharp edges)")
+        aprint("  Grid dimensions: 100×100×100")
+        aprint("  Point spacing: 0.5 units")
+        aprint("  Point radius: 0.05 units")
+        aprint("  Point sharpness: 10.0 (sharp edges)")
 
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")

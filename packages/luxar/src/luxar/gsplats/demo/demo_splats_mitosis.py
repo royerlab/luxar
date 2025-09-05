@@ -1,6 +1,7 @@
 # --- demo_gaussian_splats_full_torch_napari_compression_human_mitosis.py ---
 import napari
 import numpy as np
+from arbol import aprint
 from skimage import color, data, exposure, filters, img_as_float32
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
@@ -53,11 +54,11 @@ centers = find_candidates_overcomplete_nd(
     V,
     scales=(0.8, 1.2, 1.8, 2.6, 3.6, 5.0),
     peaks_per_scale=1200,  # histology has lots of texture; over-generate
-    percentile_thresh=80,  # be a bit stricter for brightfield
+    percentile_thresh=90,  # be a bit stricter for brightfield
     min_dist=2.0,
     add_intensity_grid=True,
 )
-print(f"[human_mitosis] candidate centers: {len(centers)}")
+aprint(f"[human_mitosis] candidate centers: {len(centers)}")
 
 # 3) Fit oriented (full-covariance) Gaussians with PyTorch
 params_full, amps = fit_gaussian_splats(
@@ -212,15 +213,15 @@ def _on_step_change(event=None):
 viewer.dims.events.current_step.connect(_on_step_change)
 
 # Console summary
-print(f"[human_mitosis] Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
+aprint(f"[human_mitosis] Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
 for i, K in enumerate(keep_counts):
-    print(
+    aprint(
         f"Frame {i:02d} | keep {K:4d} | model_bits={int(model_bits_frames[i]):>10,d} "
         f"| bit_compression={bit_compression_pct[i]:6.1f}% | bpp={bpp_frames[i]:6.3f} "
         f"| relL2={rel_err_frames[i]:.4f}"
     )
 
-print(
+aprint(
     "Ready. Use the top slider (axis 0) to move from keeping all splats toward keeping just one."
 )
 napari.run()
