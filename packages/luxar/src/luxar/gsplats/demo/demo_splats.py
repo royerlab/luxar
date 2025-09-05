@@ -62,7 +62,7 @@ centers = find_candidates_overcomplete_nd(
 aprint(f"candidates: {len(centers)}")
 
 # 3) Fit oriented (full-covariance) Gaussians with PyTorch
-params_full, amps = fit_gaussian_splats(
+params_full, amps, stats = fit_gaussian_splats(
     V,
     centers_overcomplete=centers,
     init_sigma_vox=1.6,
@@ -156,11 +156,11 @@ lyr_recon = viewer.add_image(
     contrast_limits=[0, max(1e-12, float(stack_recon.max()))],
 )
 lyr_resid = viewer.add_image(
-    np.maximum(stack_resid, 0),
-    name="residual (clipped ≥0, compression)",
+    np.abs(stack_resid),
+    name="absolute residual",
     colormap="turbo",
     opacity=0.6,
-    contrast_limits=[0, max(1e-12, float(stack_resid.max()))],
+    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
 )
 
 # Shapes & points that update with slider

@@ -104,7 +104,7 @@ if len(centers) == 0:
 
 # 3) Fit oriented (full-covariance) 3D Gaussians with PyTorch
 aprint("Fitting 3D Gaussian splats...")
-params_full, amps = fit_gaussian_splats(
+params_full, amps, stats = fit_gaussian_splats(
     V,
     centers_overcomplete=centers,
     init_sigma_vox=1.4,  # Slightly smaller for 3D
@@ -234,11 +234,11 @@ lyr_recon = viewer.add_image(
 
 # Add residual volume stack
 lyr_resid = viewer.add_image(
-    np.maximum(stack_resid, 0),
-    name="residual (clipped ≥0, compression)",
+    np.abs(stack_resid),
+    name="absolute residual",
     colormap="turbo",
     opacity=0.5,
-    contrast_limits=[0, max(1e-12, float(stack_resid.max()))],
+    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     rendering="mip",
 )
 

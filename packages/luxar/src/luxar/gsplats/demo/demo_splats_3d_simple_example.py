@@ -124,7 +124,7 @@ def main():
 
     # Fit Gaussian splats
     aprint("\n3️⃣ Fitting 3D Gaussian splats...")
-    params_full, amps = fit_gaussian_splats(
+    params_full, amps, stats = fit_gaussian_splats(
         V,
         centers_overcomplete=centers,
         init_sigma_vox=1.2,
