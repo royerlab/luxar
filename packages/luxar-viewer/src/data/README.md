@@ -835,14 +835,14 @@ location /data/ {
 
 ### Main API (zarr-loader.ts)
 
-| Function                                           | Description                                   |
-| -------------------------------------------------- | --------------------------------------------- |
+| Function                                           | Description                                         |
+| -------------------------------------------------- | --------------------------------------------------- |
 | `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with point spatial index |
-| `updateView(viewState, loaderId?)`                 | Update all points for new view state          |
-| `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions       |
-| `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring           |
-| `clearCaches(loaderId?)`                           | Clear caches to free memory                   |
-| `dispose(loaderId?)`                               | Clean up resources (specific or all)          |
+| `updateView(viewState, loaderId?)`                 | Update all points for new view state                |
+| `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions             |
+| `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring                 |
+| `clearCaches(loaderId?)`                           | Clear caches to free memory                         |
+| `dispose(loaderId?)`                               | Clean up resources (specific or all)                |
 
 ### Instance Management (scene-loader-manager.ts)
 
@@ -875,37 +875,37 @@ location /data/ {
 
 ### Spatial Index Loading (spatial-index-loader.ts)
 
-| Class/Method                          | Description                              |
-| ------------------------------------- | ---------------------------------------- |
-| `PointPointSpatialIndexLoader`                  | Loader using spatial indices             |
+| Class/Method                          | Description                                    |
+| ------------------------------------- | ---------------------------------------------- |
+| `PointPointSpatialIndexLoader`        | Loader using spatial indices                   |
 | `constructor(location, node, config)` | Create loader with point spatial index support |
-| `updateView(viewState)`               | Update for new view (reloads currently)  |
-| `getCacheStats()`                     | Get cache statistics                     |
-| `clearCache()`                        | Clear cached data                        |
-| `dispose()`                           | Clean up resources                       |
+| `updateView(viewState)`               | Update for new view (reloads currently)        |
+| `getCacheStats()`                     | Get cache statistics                           |
+| `clearCache()`                        | Clear cached data                              |
+| `dispose()`                           | Clean up resources                             |
 
 ### Spatial Index Functions (spatial-index.ts)
 
-| Function                              | Description                               |
-| ------------------------------------- | ----------------------------------------- |
-| `loadPointSpatialIndex(group)`             | Load point spatial index from zarr group        |
-| `queryPointSpatialIndex(index, pos, tol)`  | Query points within tolerance of position |
-| `mergePointRanges(ranges)`            | Merge overlapping or adjacent ranges      |
-| `calculateChunksToLoad(ranges, size)` | Calculate which zarr chunks to load       |
-| `estimateMemoryUsage(ranges, bytes)`  | Estimate memory for loading point ranges  |
-| `debugPointSpatialIndex(index)`            | Create debug summary of point spatial index     |
+| Function                                  | Description                                 |
+| ----------------------------------------- | ------------------------------------------- |
+| `loadPointSpatialIndex(group)`            | Load point spatial index from zarr group    |
+| `queryPointSpatialIndex(index, pos, tol)` | Query points within tolerance of position   |
+| `mergePointRanges(ranges)`                | Merge overlapping or adjacent ranges        |
+| `calculateChunksToLoad(ranges, size)`     | Calculate which zarr chunks to load         |
+| `estimateMemoryUsage(ranges, bytes)`      | Estimate memory for loading point ranges    |
+| `debugPointSpatialIndex(index)`           | Create debug summary of point spatial index |
 
 ### Range Cache (range-cache.ts)
 
-| Class/Method                   | Description                           |
-| ------------------------------ | ------------------------------------- |
+| Class/Method                   | Description                                 |
+| ------------------------------ | ------------------------------------------- |
 | `RangeCache`                   | Cache for point spatial index range queries |
-| `get(arrayPath, ranges)`       | Get cached data if available          |
-| `set(arrayPath, ranges, data)` | Store data in cache                   |
-| `has(arrayPath, ranges)`       | Check if ranges are cached            |
-| `getStats()`                   | Get cache statistics                  |
-| `clear()`                      | Clear all cached data                 |
-| `getMemoryInfo()`              | Get memory usage information          |
+| `get(arrayPath, ranges)`       | Get cached data if available                |
+| `set(arrayPath, ranges, data)` | Store data in cache                         |
+| `has(arrayPath, ranges)`       | Check if ranges are cached                  |
+| `getStats()`                   | Get cache statistics                        |
+| `clear()`                      | Clear all cached data                       |
+| `getMemoryInfo()`              | Get memory usage information                |
 
 ### Monitoring Management (data-monitor-manager.ts)
 

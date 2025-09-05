@@ -32,13 +32,13 @@ from ..typing_utils.protocols import (
     PhysicalUnit,
     validate_physical_unit,
 )
-from ..validation.base import (
-    validate_colors_for_writing,
-    validate_positions_for_writing,
-    validate_radii_for_writing,
-    validate_sharpness_for_writing,
+
+# Validation functions imported locally to avoid circular imports
+from .point_spatial_index import (
+    apply_sort_order,
+    build_spatial_index,
+    validate_spatial_index,
 )
-from .point_spatial_index import apply_sort_order, build_spatial_index, validate_spatial_index
 
 
 def _calculate_intelligent_chunks(
@@ -277,6 +277,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Metadata dictionary about the written data
         """
+        # Import validation functions locally to avoid circular imports
+        from ..validation.base import (
+            validate_colors_for_writing,
+            validate_positions_for_writing,
+            validate_radii_for_writing,
+            validate_sharpness_for_writing,
+        )
+
         # Remove leading slash and create group
         path = path.lstrip("/")
         group = self.store.require_group(path)
