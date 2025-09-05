@@ -1,4 +1,5 @@
 import torch
+from arbol import aprint
 
 from luxar.gsplats.models.utils.lt_solver import solve_lower_triangular
 
@@ -20,4 +21,4 @@ assert torch.isfinite(y).all(), "NaNs/Infs from triangular solve on MPS"
 expo = (y * y).sum(1).clamp(0, 1e6)
 g = torch.exp(-0.5 * expo)
 assert torch.isfinite(g).all(), "NaNs/Infs from exp on MPS"
-print("MPS path looks good ✅")
+aprint("MPS path looks good ✅")

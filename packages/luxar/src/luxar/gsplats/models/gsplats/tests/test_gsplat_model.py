@@ -7,7 +7,6 @@ import pytest
 
 try:
     import torch
-    import torch.nn.functional as F
 
     HAS_TORCH = True
 except ImportError:
@@ -407,7 +406,6 @@ class TestRendering:
         assert abs(max_idx[1] - 10) <= 1
 
         # Should be symmetric around center (approximately)
-        center_val = output_np[10, 10]
         assert output_np[9, 10] == pytest.approx(output_np[11, 10], rel=0.1)
         assert output_np[10, 9] == pytest.approx(output_np[10, 11], rel=0.1)
 
@@ -458,7 +456,6 @@ class TestGradientFlow:
 
         # Initial loss
         initial_output = model()
-        initial_loss = torch.nn.functional.mse_loss(initial_output, target)
 
         # Optimization step
         optimizer.zero_grad()
@@ -469,7 +466,6 @@ class TestGradientFlow:
 
         # New loss
         new_output = model()
-        new_loss = torch.nn.functional.mse_loss(new_output, target)
 
         # Loss should generally decrease (allow some tolerance for stochastic effects)
         # At minimum, parameters should have changed

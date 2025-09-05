@@ -8,14 +8,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from luxar.gsplats.models.gsplats.gsplats_batched_render import (
-    render_gaussians_full_torch_batched,
+    render_gaussians_batched,
 )
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
 from luxar.gsplats.models.utils.lt_solver import solve_lower_triangular
-
-# -------------------------------
-# Model: oriented Gaussian splats (full covariance via Cholesky)
-# -------------------------------
 
 
 class GaussianSplatModel(nn.Module):
@@ -241,7 +237,7 @@ class GaussianSplatModel(nn.Module):
 
         # Use batched implementation for better performance
         if self.batched:
-            return render_gaussians_full_torch_batched(
+            return render_gaussians_batched(
                 self.shape,
                 centers,
                 Ls,

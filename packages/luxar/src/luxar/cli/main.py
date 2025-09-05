@@ -12,7 +12,7 @@ from typing import Any, MutableMapping, Optional, Tuple
 import typer
 import uvicorn
 import zarr
-from arbol import aprint
+from arbol import aprint, asection
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -369,66 +369,69 @@ def demo(
         viewer_port (int, optional): Viewer port. Defaults to 5173.
     """
     try:
-        # Validate arguments
-        if not serve and output is None:
-            aprint("❌ Error: --output required when using --no-serve")
-            raise typer.Exit(1)
+        with asection("Demo Configuration and Generation"):
+            # Validate arguments
+            if not serve and output is None:
+                aprint("❌ Error: --output required when using --no-serve")
+                raise typer.Exit(1)
 
-        # Determine output path
-        if output is None:
-            # Create temp directory for serving mode
-            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_demo_"))
-            output = temp_dir / f"{demo_type}_demo.zarr"
-            aprint(f"📂 Using temporary directory: {temp_dir}")
+            # Determine output path
+            if output is None:
+                # Create temp directory for serving mode
+                temp_dir = Path(tempfile.mkdtemp(prefix="luxar_demo_"))
+                output = temp_dir / f"{demo_type}_demo.zarr"
+                aprint(f"📂 Using temporary directory: {temp_dir}")
 
-        # Generate demo
-        aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
+            # Generate demo
+            aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
 
-        if demo_type == "lorenz":
-            from luxar.utils.demos import create_lorenz_attractor
+            if demo_type == "lorenz":
+                from luxar.utils.demos import create_lorenz_attractor
 
-            create_lorenz_attractor(output, n_points=n_points, seed=seed)
-        else:
-            aprint(f"❌ Unknown demo type: {demo_type}")
-            aprint("💡 Available types: lorenz")
-            raise typer.Exit(1)
+                create_lorenz_attractor(output, n_points=n_points, seed=seed)
+            else:
+                aprint(f"❌ Unknown demo type: {demo_type}")
+                aprint("💡 Available types: lorenz")
+                raise typer.Exit(1)
 
-        aprint(f"✅ Generated {n_points:,} points → {output}")
+            aprint(f"✅ Generated {n_points:,} points → {output}")
 
         # If not serving, we're done (replaces old 'random' command)
         if not serve:
             return
 
-        # Check viewer is built
-        if not check_viewer_built():
-            aprint("🔨 Building viewer...")
-            if not build_viewer():
-                aprint("❌ Failed to build viewer")
+        with asection("Viewer Setup and Port Management"):
+            # Check viewer is built
+            if not check_viewer_built():
+                aprint("🔨 Building viewer...")
+                if not build_viewer():
+                    aprint("❌ Failed to build viewer")
+                    raise typer.Exit(1)
+
+            # Find available ports
+            actual_port = find_available_port(port)
+            actual_viewer_port = find_available_port(viewer_port)
+
+            if actual_port is None or actual_viewer_port is None:
+                aprint("❌ Could not find available ports")
                 raise typer.Exit(1)
 
-        # Find available ports
-        actual_port = find_available_port(port)
-        actual_viewer_port = find_available_port(viewer_port)
+        with asection("Server Startup"):
+            # Start data server in background
+            data_thread = threading.Thread(
+                target=_serve_data,
+                args=(output, "127.0.0.1", actual_port),
+                daemon=True,
+            )
+            data_thread.start()
+            time.sleep(1)
 
-        if actual_port is None or actual_viewer_port is None:
-            aprint("❌ Could not find available ports")
-            raise typer.Exit(1)
+            # Construct data URL
+            data_url = f"http://127.0.0.1:{actual_port}/{output.name}"
 
-        # Start data server in background
-        data_thread = threading.Thread(
-            target=_serve_data,
-            args=(output, "127.0.0.1", actual_port),
-            daemon=True,
-        )
-        data_thread.start()
-        time.sleep(1)
-
-        # Construct data URL
-        data_url = f"http://127.0.0.1:{actual_port}/{output.name}"
-
-        # Serve viewer (this blocks)
-        aprint("\n🎉 Demo ready! Starting viewer...")
-        _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
+            # Serve viewer (this blocks)
+            aprint("\n🎉 Demo ready! Starting viewer...")
+            _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down demo...")

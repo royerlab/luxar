@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
     from luxar.gsplats.models.gsplats.gsplats_batched_render import (
-        render_gaussians_full_torch_batched,
+        render_gaussians_batched,
     )
     from luxar.gsplats.models.gsplats.gsplats_render import (
         render_gaussians_full_numpy,
@@ -321,7 +321,7 @@ class TestBatchedRendering:
         """Test batched rendering in 2D."""
         params = multi_2d_params
 
-        result = render_gaussians_full_torch_batched(
+        result = render_gaussians_batched(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -342,7 +342,7 @@ class TestBatchedRendering:
         params = multi_2d_params
 
         # Render with batched implementation
-        result_batched = render_gaussians_full_torch_batched(
+        result_batched = render_gaussians_batched(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -372,7 +372,7 @@ class TestBatchedRendering:
         small_amps[1] = 1e-8  # Very small amplitude
 
         # Render with intensity floor
-        result_with_floor = render_gaussians_full_torch_batched(
+        result_with_floor = render_gaussians_batched(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -382,7 +382,7 @@ class TestBatchedRendering:
         )
 
         # Render without intensity floor
-        result_no_floor = render_gaussians_full_torch_batched(
+        result_no_floor = render_gaussians_batched(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -403,7 +403,7 @@ class TestBatchedRendering:
         Ls = torch.zeros((0, 2, 2), dtype=torch.float32)
         amps = torch.zeros((0,), dtype=torch.float32)
 
-        result = render_gaussians_full_torch_batched(
+        result = render_gaussians_batched(
             shape=shape, centers=centers, Ls=Ls, amps=amps, truncate=3.0
         )
 
@@ -414,7 +414,7 @@ class TestBatchedRendering:
         """Test batched rendering with single splat."""
         params = simple_2d_params
 
-        result = render_gaussians_full_torch_batched(
+        result = render_gaussians_batched(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),

@@ -9,7 +9,6 @@ from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
 
 try:
     import torch
-    import torch.nn.functional as F
 
     HAS_TORCH = True
 except ImportError:
@@ -213,11 +212,6 @@ class TestNumericalStability:
 
     def test_stability_comparison(self):
         """Compare stable implementation with naive implementation."""
-        # Test values where naive implementation might be unstable
-        y_values = np.array([1e-7, 1e-5, 1e-3, 0.1, 1.0, 10.0])
-
-        x_stable = stable_inverse_softplus(y_values)
-
         # For most values, both should agree
         for y in [0.1, 1.0, 10.0]:
             x_naive = self.naive_inverse_softplus(np.array([y]))

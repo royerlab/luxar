@@ -1,6 +1,7 @@
 # --- demo_gaussian_splats_full_torch_napari_compression_2d.py ---
 import napari
 import numpy as np
+from arbol import aprint
 from skimage import data, filters
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
@@ -54,11 +55,11 @@ centers = find_candidates_overcomplete_nd(
     V,
     scales=(0.8, 1.2, 1.8, 2.6, 3.6),
     peaks_per_scale=900,
-    percentile_thresh=70,
+    percentile_thresh=90,
     min_dist=2.0,
     add_intensity_grid=False,
 )
-print(f"candidates: {len(centers)}")
+aprint(f"candidates: {len(centers)}")
 
 # 3) Fit oriented (full-covariance) Gaussians with PyTorch
 params_full, amps = fit_gaussian_splats(
@@ -218,15 +219,15 @@ def _on_step_change(event=None):
 viewer.dims.events.current_step.connect(_on_step_change)
 
 # Console summary
-print(f"Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
+aprint(f"Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
 for i, K in enumerate(keep_counts):
-    print(
+    aprint(
         f"Frame {i:02d} | keep {K:4d} | model_bits={int(model_bits_frames[i]):>10,d} "
         f"| bit_compression={bit_compression_pct[i]:6.1f}% | bpp={bpp_frames[i]:6.3f} "
         f"| relL2={rel_err_frames[i]:.4f}"
     )
 
-print(
+aprint(
     "Ready. Use the top slider (axis 0) to move from keeping all splats toward keeping just one."
 )
 napari.run()

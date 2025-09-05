@@ -82,22 +82,26 @@ Note: When possible, use `make` commands for convenience (see below).
   - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
   - Various technical guides and specifications
 - **TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own comprehensive README.md
-- **Python package READMEs**: Each subpackage in `/packages/luxar/src/luxar/` has its own README.md documenting:
+- **Python package READMEs**: **MANDATORY** - Each subpackage in `/packages/luxar/src/luxar/` MUST have its own comprehensive README.md documenting:
   - Purpose and responsibilities of the package
   - Key classes and functions
   - Usage examples
   - Internal architecture notes
+  - Dependencies and requirements
+  - Testing information
 
 **CRITICAL**: 
 1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
 2. When making changes to Python code:
-   - Update the subpackage README.md if functionality changes
+   - **MANDATORY**: Update the subpackage README.md if functionality changes
+   - **MANDATORY**: Ensure all major Python subpackages (core, io, utils, cli, gsplats, typing_utils, validation) have comprehensive README.md files
    - Check if `/docs/` folder documentation needs updating
 3. Keep all documentation synchronized with the implementation!
 4. Python package structure follows best practices:
    - Flat is better than nested (except for logical groupings)
    - Each package has clear separation of concerns
    - Backward compatibility maintained via main `__init__.py`
+   - Every major subpackage MUST have a README.md file
 
 ## Development Workflow
 
@@ -138,7 +142,7 @@ Before committing, ensure overall consistency:
 - Follow modern Python and TypeScript conventions
 - Follow existing code patterns in the codebase when all else is equal
 - Use type hints for all function parameters and return values
-- Use arbol's `aprint` instead of `print` for console output in examples and CLI tools
+- **ALWAYS use Arbol for Python console output** - see [Arbol Usage](#arbol-usage) section below
 - Keep docstrings concise but informative
 - TypeScript code comments should be in JSDoc format
 - Python code is formatted with ruff (88 char line length)
@@ -147,6 +151,60 @@ Before committing, ensure overall consistency:
   - Use the logging utility in `/src/utils/log.ts`
   - Format: `[emoji] [Module] message`
   - Import: `import { log, Modules, LogEmoji } from '../utils/log';`
+
+### Arbol Usage
+**Arbol** is a Python library for organizing print statements in hierarchical, tree-like structures that makes console output readable and well-structured. It is MANDATORY for all Python console output in Luxar.
+
+#### What is Arbol?
+- A lightweight library that replaces `print()` with structured, hierarchical output
+- Provides automatic elapsed time measurement for code sections
+- Offers tree-like visualization of code execution flow
+- Designed to make complex scripts with many print statements comprehensible
+
+#### Key Components:
+- **`aprint()`**: Direct replacement for `print()` that integrates with the tree structure
+- **`asection(context)`**: Context manager that creates hierarchical sections in the output
+- **Automatic timing**: Each section shows elapsed time
+- **Optional colors**: Enhanced visual clarity with color packages
+
+#### When to Use:
+- **aprint()**: Replace ALL `print()` statements with `aprint()` in:
+  - Examples and demo scripts
+  - CLI tools and commands
+  - Test files (where console output is needed)
+  - Debug and development scripts
+- **asection()**: Use for logical code sections where multiple operations occur:
+  - Complex functions with multiple steps
+  - Processing loops with substantial work
+  - File I/O operations
+  - Model training or data processing phases
+  - Any code block where flat logging would be hard to follow
+
+#### Usage Examples:
+```python
+from arbol import aprint, asection
+
+# Simple replacement for print
+aprint("Loading dataset...")
+
+# Hierarchical sections for complex operations
+with asection("Data preprocessing"):
+    aprint("Reading input files...")
+    with asection("Validation"):
+        aprint("Checking data integrity")
+        aprint("Validating dimensions")
+    aprint("Preprocessing complete")
+
+with asection("Model training"):
+    aprint("Initializing model...")
+    # ... training code ...
+```
+
+#### Configuration:
+- Set `Arbol.max_depth = 4` to limit tree depth
+- Use `Arbol.elapsed_time = True` for timing (default)
+- Install `ansicolors` or `colorama` for colored output
+- Configure globally in main entry points
 
 ### TypeScript Configuration
 - **Configuration**: Unified configuration system in `packages/luxar-viewer/src/config/`
