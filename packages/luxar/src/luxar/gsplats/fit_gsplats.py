@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 from arbol import aprint, asection
 
+from luxar.gsplats.fit_gsplats_precision_optimized import fit_gaussian_splats_precision_optimized
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.utils.trils import pack_tril, tril_size
 
@@ -47,10 +48,14 @@ class GaussianSplatFitter:
         compile_model: bool = False,
         use_mixed_precision: bool = False,
     ):
-        self.device = torch.device(
-            device if device is not None
-            else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        # Auto-detect best performing device: CUDA → CPU
+        # Note: MPS is supported but currently slower than CPU for typical workloads
+        if device is not None:
+            self.device = torch.device(device)
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         self.compile_model = compile_model
         self.use_mixed_precision = use_mixed_precision
         # Only create scaler if both mixed precision requested AND CUDA available
@@ -360,26 +365,30 @@ def fit_gaussian_splats(
     verbose: bool = True,
     # Optimization parameters
     early_stopping: bool = True,
-    early_stop_patience: int = 20,
-    convergence_threshold: float = 1e-3,
+    early_stop_patience: int = 50,
+    convergence_threshold: float = 1e-8,
     gradient_clip: Optional[float] = 1.0,
     compile_model: bool = False,
     use_mixed_precision: bool = False,
+    # NEW: Precision matrix parameterization (faster, especially on MPS)
+    use_precision_parameterization: bool = True,
+    max_aspect_ratio: Optional[float] = 2.5,  # Constrain anisotropy (reasonable ellipses)
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
 
-    Now with optional performance optimizations including early stopping,
-    adaptive learning rate, and model compilation.
+    NEW: Now uses precision matrix parameterization by default for significant speedup,
+    especially on MPS devices. This eliminates solve_triangular operations.
 
     This function optimizes a collection of oriented Gaussian splats to approximate
-    the input image. Each splat is parameterized by:
-    - Center position (bounded to image domain via sigmoid)
-    - Full covariance matrix (via Cholesky decomposition for positive definiteness)
-    - Non-negative amplitude (via softplus activation)
+    the input image. Parameterization depends on use_precision_parameterization:
+    - NEW (default): Direct precision matrix M = L @ L^T parameterization  
+    - Traditional: Covariance matrix Σ = L @ L^T parameterization
 
-    The optimization uses Adam optimizer with configurable loss functions,
-    regularization terms, and optional early stopping.
+    Both approaches use:
+    - Center position (bounded to image domain via sigmoid)
+    - Non-negative amplitude (via softplus activation)
+    - Adam optimizer with configurable loss functions and early stopping
 
     Parameters
     ----------
@@ -421,6 +430,10 @@ def fit_gaussian_splats(
         Use torch.compile for model acceleration (PyTorch 2.0+, CUDA only).
     use_mixed_precision : bool, default=False
         Use automatic mixed precision (CUDA only).
+    use_precision_parameterization : bool, default=True
+        Use precision matrix parameterization for better performance.
+        True: Direct M = L @ L^T precision parameterization (faster)
+        False: Traditional Σ = L @ L^T covariance parameterization
 
     Returns
     -------
@@ -442,31 +455,69 @@ def fit_gaussian_splats(
     These optimizations maintain backward compatibility - existing code
     will work without modification and benefit from early stopping by default.
     """
-    # Create fitter with optional advanced features
-    fitter = GaussianSplatFitter(
-        device=device,
-        compile_model=compile_model,
-        use_mixed_precision=use_mixed_precision,
-    )
+    if use_precision_parameterization:
+        # Use new precision matrix parameterization (faster, especially on MPS)
+        from luxar.gsplats.fit_gsplats_precision import fit_gaussian_splats_precision
+        
+        # Convert sigma parameters to precision parameters
+        precision_min_diag = None
+        precision_max_diag = None
+        
+        if sigma_min_diag is not None:
+            # Convert min covariance Cholesky diagonal to max precision Cholesky diagonal
+            precision_max_diag = [1.0 / max(s, 1e-3) for s in sigma_min_diag]
+        if sigma_max_diag is not None:
+            # Convert max covariance Cholesky diagonal to min precision Cholesky diagonal  
+            precision_min_diag = [1.0 / max(s, 1e-3) for s in sigma_max_diag]
+            
+        return fit_gaussian_splats_precision_optimized(
+            V=V,
+            centers_overcomplete=centers_overcomplete,
+            init_sigma_vox=init_sigma_vox,
+            n_iters=n_iters,
+            lr=lr,
+            loss_type=loss_type,
+            l1_amp=l1_amp,
+            precision_min_diag=precision_min_diag,
+            precision_max_diag=precision_max_diag,
+            truncate=truncate,
+            device=device,
+            verbose=verbose,
+            early_stopping=early_stopping,
+            early_stop_patience=early_stop_patience,
+            convergence_threshold=convergence_threshold,
+            gradient_clip=gradient_clip,
+            compile_model=compile_model,
+            use_mixed_precision=use_mixed_precision,
+            max_aspect_ratio=max_aspect_ratio,
+            output_format='covariance',  # Maintain compatibility
+        )
+    else:
+        # Use traditional covariance parameterization
+        fitter = GaussianSplatFitter(
+            device=device,
+            compile_model=compile_model,
+            use_mixed_precision=use_mixed_precision,
+        )
 
-    # Fit and extract results
-    params, amps, stats = fitter.fit(
-        V=V,
-        centers_overcomplete=centers_overcomplete,
-        init_sigma_vox=init_sigma_vox,
-        n_iters=n_iters,
-        lr=lr,
-        loss_type=loss_type,
-        l1_amp=l1_amp,
-        sigma_min_diag=sigma_min_diag,
-        sigma_max_diag=sigma_max_diag,
-        truncate=truncate,
-        verbose=verbose,
-        early_stopping=early_stopping,
-        early_stop_patience=early_stop_patience,
-        convergence_threshold=convergence_threshold,
-        gradient_clip=gradient_clip,
-    )
+        # Fit and extract results
+        params, amps, stats = fitter.fit(
+            V=V,
+            centers_overcomplete=centers_overcomplete,
+            init_sigma_vox=init_sigma_vox,
+            n_iters=n_iters,
+            lr=lr,
+            loss_type=loss_type,
+            l1_amp=l1_amp,
+            sigma_min_diag=sigma_min_diag,
+            sigma_max_diag=sigma_max_diag,
+            truncate=truncate,
+            verbose=verbose,
+            early_stopping=early_stopping,
+            early_stop_patience=early_stop_patience,
+            convergence_threshold=convergence_threshold,
+            gradient_clip=gradient_clip,
+        )
 
     if verbose:
         with asection("Optimization Complete"):
