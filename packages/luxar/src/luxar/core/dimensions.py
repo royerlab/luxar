@@ -174,6 +174,10 @@ class Dimensions:
     def ndim(self) -> int:
         """Number of dimensions."""
         return len(self.dimensions)
+    
+    def __len__(self) -> int:
+        """Return the number of dimensions."""
+        return len(self.dimensions)
 
     @property
     def names(self) -> List[str]:
