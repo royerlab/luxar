@@ -63,9 +63,7 @@ def analyze_compression_performance(V, params_full, amps, n_frames=10):
         idx = order[:K]
 
         # Compute reconstruction
-        Vk = render_gaussians_numpy(
-            V.shape, params_full[idx], amps[idx], truncate=3.0
-        )
+        Vk = render_gaussians_numpy(V.shape, params_full[idx], amps[idx], truncate=3.0)
 
         # Quality metrics
         rel_error = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)

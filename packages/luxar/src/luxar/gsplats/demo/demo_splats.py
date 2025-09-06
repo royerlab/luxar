@@ -76,7 +76,6 @@ params_full, amps, stats = fit_gaussian_splats(
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,
-    use_precision_parameterization = False
 )
 
 if len(amps) == 0:

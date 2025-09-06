@@ -276,9 +276,7 @@ class TestInputValidation:
             )
 
         # Test max < min
-        with pytest.raises(
-            ValueError, match="greater than sigma_min_diag"
-        ):
+        with pytest.raises(ValueError, match="greater than sigma_min_diag"):
             fit_gaussian_splats(
                 simple_2d_blob,
                 simple_candidates_2d,

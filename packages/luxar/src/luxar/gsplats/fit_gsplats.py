@@ -66,7 +66,7 @@ class GaussianSplatFitter:
             return False
 
         recent = loss_history[-window:]
-        older = loss_history[-2*window:-window]
+        older = loss_history[-2 * window : -window]
 
         avg_recent = np.mean(recent)
         avg_older = np.mean(older)
@@ -169,14 +169,20 @@ class GaussianSplatFitter:
         N = int(centers_overcomplete.shape[0])
 
         if N == 0:
-            return np.zeros((0, d + tril_size(d)), np.float32), np.zeros((0,), np.float32), {}
+            return (
+                np.zeros((0, d + tril_size(d)), np.float32),
+                np.zeros((0,), np.float32),
+                {},
+            )
 
         # Initialize parameters
         L0 = np.zeros((N, d, d), dtype=np.float32)
         for i in range(d):
             L0[:, i, i] = init_sigma_vox
 
-        idx = np.clip(np.round(centers_overcomplete).astype(int), 0, np.array(V.shape) - 1)
+        idx = np.clip(
+            np.round(centers_overcomplete).astype(int), 0, np.array(V.shape) - 1
+        )
         amps0 = V[tuple(idx.T)]
 
         if sigma_min_diag is None:
@@ -192,7 +198,9 @@ class GaussianSplatFitter:
                 raise ValueError(f"sigma_max_diag must have length {d}")
             if any(s <= 0 for s in sigma_max_diag):
                 raise ValueError("All sigma_max_diag values must be positive")
-            if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
+            if any(
+                s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)
+            ):
                 raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
 
         # Move to device
@@ -225,7 +233,7 @@ class GaussianSplatFitter:
         # Setup optimizer with adaptive learning rate
         opt = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt, mode='min', factor=0.5, patience=10
+            opt, mode="min", factor=0.5, patience=10
         )
 
         # Loss function
@@ -257,7 +265,11 @@ class GaussianSplatFitter:
             actual_iters = it
 
             # Forward pass with optional mixed precision
-            if self.use_mixed_precision and self.device.type == "cuda" and self.scaler is not None:
+            if (
+                self.use_mixed_precision
+                and self.device.type == "cuda"
+                and self.scaler is not None
+            ):
                 with torch.cuda.amp.autocast():
                     pred = model()
                     loss = loss_fn(pred)
@@ -287,14 +299,18 @@ class GaussianSplatFitter:
 
             if current_loss < best_loss:
                 best_loss = current_loss
-                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                best_state = {
+                    k: v.detach().clone() for k, v in model.state_dict().items()
+                }
                 no_improve_count = 0
             else:
                 no_improve_count += 1
 
             # Early stopping
             if early_stopping:
-                if self._detect_convergence(loss_history, threshold=convergence_threshold):
+                if self._detect_convergence(
+                    loss_history, threshold=convergence_threshold
+                ):
                     if verbose:
                         aprint(f"Converged at iteration {it}")
                     break
@@ -358,7 +374,7 @@ def fit_gaussian_splats(
     convergence_threshold: float = 1e-8,
     gradient_clip: Optional[float] = 1.0,
     compile_model: bool = False,
-    use_mixed_precision: bool = False
+    use_mixed_precision: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
@@ -368,7 +384,7 @@ def fit_gaussian_splats(
 
     This function optimizes a collection of oriented Gaussian splats to approximate
     the input image. Parameterization depends on use_precision_parameterization:
-    - NEW (default): Direct precision matrix M = L @ L^T parameterization  
+    - NEW (default): Direct precision matrix M = L @ L^T parameterization
     - Traditional: Covariance matrix Σ = L @ L^T parameterization
 
     Both approaches use:
@@ -438,39 +454,42 @@ def fit_gaussian_splats(
     will work without modification and benefit from early stopping by default.
     """
 
-    # Use traditional covariance parameterization
-    fitter = GaussianSplatFitter(
-        device=device,
-        compile_model=compile_model,
-        use_mixed_precision=use_mixed_precision,
-    )
+    with asection("Fitting Gaussian Splats"):
+        # Use traditional covariance parameterization
+        fitter = GaussianSplatFitter(
+            device=device,
+            compile_model=compile_model,
+            use_mixed_precision=use_mixed_precision,
+        )
 
-    # Fit and extract results
-    params, amps, stats = fitter.fit(
-        V=V,
-        centers_overcomplete=centers_overcomplete,
-        init_sigma_vox=init_sigma_vox,
-        n_iters=n_iters,
-        lr=lr,
-        loss_type=loss_type,
-        l1_amp=l1_amp,
-        sigma_min_diag=sigma_min_diag,
-        sigma_max_diag=sigma_max_diag,
-        truncate=truncate,
-        verbose=verbose,
-        early_stopping=early_stopping,
-        early_stop_patience=early_stop_patience,
-        convergence_threshold=convergence_threshold,
-        gradient_clip=gradient_clip,
-    )
+        # Fit and extract results
+        params, amps, stats = fitter.fit(
+            V=V,
+            centers_overcomplete=centers_overcomplete,
+            init_sigma_vox=init_sigma_vox,
+            n_iters=n_iters,
+            lr=lr,
+            loss_type=loss_type,
+            l1_amp=l1_amp,
+            sigma_min_diag=sigma_min_diag,
+            sigma_max_diag=sigma_max_diag,
+            truncate=truncate,
+            verbose=verbose,
+            early_stopping=early_stopping,
+            early_stop_patience=early_stop_patience,
+            convergence_threshold=convergence_threshold,
+            gradient_clip=gradient_clip,
+        )
 
-    if verbose:
-        with asection("Optimization Complete"):
-            aprint(f"Time: {stats['time_seconds']:.2f} seconds")
-            aprint(f"Iterations: {stats['iterations']}/{n_iters}")
-            if stats['converged']:
-                aprint(f"✓ Converged (saved {n_iters - stats['iterations']} iterations)")
-            elif early_stopping:
-                aprint("Stopped early (no improvement)")
+        if verbose:
+            with asection("Optimization Complete"):
+                aprint(f"Time: {stats['time_seconds']:.2f} seconds")
+                aprint(f"Iterations: {stats['iterations']}/{n_iters}")
+                if stats["converged"]:
+                    aprint(
+                        f"✓ Converged (saved {n_iters - stats['iterations']} iterations)"
+                    )
+                elif early_stopping:
+                    aprint("Stopped early (no improvement)")
 
-    return params, amps, stats
+        return params, amps, stats

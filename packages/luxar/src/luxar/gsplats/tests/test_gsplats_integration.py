@@ -11,8 +11,10 @@ import torch
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians
-from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import (
+    render_gaussians,
+    render_gaussians_numpy,
+)
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -26,12 +28,12 @@ class TestGaussianSplatsIntegration:
 
         # Add random Gaussian blobs
         for _ in range(n_blobs):
-            center = [np.random.randint(10, s-10) for s in shape]
+            center = [np.random.randint(10, s - 10) for s in shape]
             sigma = np.random.uniform(2, 4)
             amplitude = np.random.uniform(0.5, 1.0)
 
-            grids = np.meshgrid(*[np.arange(s) for s in shape], indexing='ij')
-            dist_sq = sum((g - c)**2 for g, c in zip(grids, center))
+            grids = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
+            dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
             data += amplitude * np.exp(-dist_sq / (2 * sigma**2))
 
         return np.clip(data, 0, 1)
@@ -68,9 +70,7 @@ class TestGaussianSplatsIntegration:
         assert np.all(amps >= 0)  # Amplitudes should be non-negative
 
         # Render reconstruction
-        reconstruction = render_gaussians_numpy(
-            image.shape, params, amps, truncate=3.0
-        )
+        reconstruction = render_gaussians_numpy(image.shape, params, amps, truncate=3.0)
 
         assert reconstruction.shape == image.shape
         assert np.all(np.isfinite(reconstruction))
@@ -126,8 +126,8 @@ class TestGaussianSplatsIntegration:
         # Simple test case that should converge quickly
         image = np.zeros((32, 32), dtype=np.float32)
         # Add single Gaussian blob
-        y, x = np.meshgrid(np.arange(32), np.arange(32), indexing='ij')
-        image = 0.8 * np.exp(-((y-16)**2 + (x-16)**2) / (2 * 4**2))
+        y, x = np.meshgrid(np.arange(32), np.arange(32), indexing="ij")
+        image = 0.8 * np.exp(-((y - 16) ** 2 + (x - 16) ** 2) / (2 * 4**2))
 
         # Find candidates
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=10)
@@ -153,10 +153,10 @@ class TestGaussianSplatsIntegration:
         )
 
         # Early stopping should use fewer iterations (or at least not more)
-        assert stats_early['iterations'] <= stats_full['iterations']
+        assert stats_early["iterations"] <= stats_full["iterations"]
         # If converged, should be less
-        if stats_early['converged']:
-            assert stats_early['iterations'] < 200
+        if stats_early["converged"]:
+            assert stats_early["iterations"] < 200
 
         # But achieve similar quality
         recon_early = render_gaussians_numpy(image.shape, params_early, amps_early)
@@ -196,9 +196,7 @@ class TestGaussianSplatsIntegration:
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(amps, device=device)
 
-        recon_torch = render_gaussians(
-            image.shape, centers, Ls, amps_t, truncate=3.0
-        )
+        recon_torch = render_gaussians(image.shape, centers, Ls, amps_t, truncate=3.0)
         recon_torch_np = recon_torch.cpu().numpy()
 
         # Should be nearly identical
@@ -236,7 +234,9 @@ class TestGaussianSplatsIntegration:
 
         # Both should reconstruct reasonably well
         recon_mse = render_gaussians_numpy(image.shape, params_mse, amps_mse)
-        recon_poisson = render_gaussians_numpy(image.shape, params_poisson, amps_poisson)
+        recon_poisson = render_gaussians_numpy(
+            image.shape, params_poisson, amps_poisson
+        )
 
         mse_mse = np.mean((image - recon_mse) ** 2)
         mse_poisson = np.mean((image - recon_poisson) ** 2)

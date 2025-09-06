@@ -6,7 +6,6 @@ import numpy as np
 from scipy import ndimage as ndi
 
 
-
 def _local_maxima(
     img: np.ndarray, radius: int, thresh: float, top_k: Optional[int]
 ) -> np.ndarray:

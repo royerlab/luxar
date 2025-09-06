@@ -17,10 +17,10 @@ pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
     from luxar.gsplats.models.gsplats.gsplat_model import (
-        render_gaussians_numpy,
         render_gaussians,
-        render_gaussians_pytorch,
         render_gaussians_batched,
+        render_gaussians_numpy,
+        render_gaussians_pytorch,
     )
     from luxar.gsplats.utils.trils import pack_tril
 

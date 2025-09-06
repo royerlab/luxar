@@ -30,7 +30,7 @@ def main():
                 blob_size_fraction=0.06,
                 n_dim=2,
                 volume_fraction=0.18,
-                rng=42
+                rng=42,
             ).astype(float)
             V = filters.gaussian(blobs, sigma=3.25).astype(np.float32)
             aprint(f"Image shape: {V.shape}")
@@ -77,22 +77,22 @@ def main():
             aprint(f"  Final loss: {stats['final_loss']:.5g}")
             aprint(f"  Active splats: {np.sum(amps > 0.01)}/{len(amps)}")
 
-            if stats['converged']:
-                saved_iters = 300 - stats['iterations']
-                time_per_iter = fit_time / stats['iterations']
+            if stats["converged"]:
+                saved_iters = 300 - stats["iterations"]
+                time_per_iter = fit_time / stats["iterations"]
                 time_saved = saved_iters * time_per_iter
-                aprint(f"  ✓ Early stopping saved {saved_iters} iterations (~{time_saved:.1f}s)")
+                aprint(
+                    f"  ✓ Early stopping saved {saved_iters} iterations (~{time_saved:.1f}s)"
+                )
 
         # Prepare visualization
         with asection("Visualization Preparation"):
             # Render reconstruction
-            reconstruction = render_gaussians_numpy(
-                V.shape, params, amps, truncate=3.0
-            )
+            reconstruction = render_gaussians_numpy(V.shape, params, amps, truncate=3.0)
 
             # Compute error metrics
             residual = V - reconstruction
-            mse = np.mean(residual ** 2)
+            mse = np.mean(residual**2)
             rel_l2 = np.linalg.norm(residual) / (np.linalg.norm(V) + 1e-12)
             psnr = 10 * np.log10(1.0 / (mse + 1e-12))
 
@@ -117,10 +117,7 @@ def main():
 
     # Add layers
     viewer.add_image(
-        V,
-        name="Original",
-        colormap="magma",
-        contrast_limits=[0, float(V.max())]
+        V, name="Original", colormap="magma", contrast_limits=[0, float(V.max())]
     )
 
     viewer.add_image(
@@ -146,7 +143,7 @@ def main():
         size=3,
         border_color="cyan",
         face_color="transparent",
-        properties={'amplitude': active_amps},
+        properties={"amplitude": active_amps},
     )
 
     # Add text overlay with stats

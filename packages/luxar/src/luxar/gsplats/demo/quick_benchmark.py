@@ -20,10 +20,10 @@ def create_test_data(size=64):
     data = np.zeros((size, size), dtype=np.float32)
     # Add a few Gaussians
     for _ in range(3):
-        y = np.random.randint(10, size-10)
-        x = np.random.randint(10, size-10)
-        yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing='ij')
-        data += 0.8 * np.exp(-((yy-y)**2 + (xx-x)**2) / (2 * 5**2))
+        y = np.random.randint(10, size - 10)
+        x = np.random.randint(10, size - 10)
+        yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
+        data += 0.8 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 5**2))
     return np.clip(data, 0, 1)
 
 
@@ -72,12 +72,14 @@ def main():
     # Summary
     aprint("\n" + "=" * 50)
     aprint("SUMMARY:")
-    if stats1['iterations'] < stats2['iterations']:
+    if stats1["iterations"] < stats2["iterations"]:
         speedup = time2 / time1
-        saved = stats2['iterations'] - stats1['iterations']
+        saved = stats2["iterations"] - stats1["iterations"]
         aprint("✓ Optimizations working!")
         aprint(f"  Speedup: {speedup:.1f}x")
-        aprint(f"  Iterations saved: {saved} ({saved/stats2['iterations']*100:.0f}%)")
+        aprint(
+            f"  Iterations saved: {saved} ({saved / stats2['iterations'] * 100:.0f}%)"
+        )
     else:
         aprint("Note: Early stopping didn't trigger on this simple case")
         aprint("(This can happen when the optimization converges very late)")
