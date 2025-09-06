@@ -1,4 +1,5 @@
-# --- demo_gaussian_splats_full_torch_napari_compression_2d.py ---
+# demo_splats.py
+
 import napari
 import numpy as np
 from arbol import aprint
@@ -6,12 +7,12 @@ from skimage import data, filters
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # ======= Demo knobs =======
 USE_POISSON = True  # True: Poisson deviance; False: MSE
-L1_AMP = 0.0  # e.g. 1e-3 to encourage sparsity
+L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
 N_ITERS = 550
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -75,6 +76,7 @@ params_full, amps, stats = fit_gaussian_splats(
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,
+    use_precision_parameterization = False
 )
 
 if len(amps) == 0:
@@ -123,7 +125,7 @@ for i, K in enumerate(keep_counts):
     idx = order[:K]
 
     # Reconstruction & residual
-    Vk = render_gaussians_full_numpy(
+    Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )
     stack_recon[i] = Vk

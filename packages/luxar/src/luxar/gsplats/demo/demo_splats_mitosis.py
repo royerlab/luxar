@@ -6,7 +6,7 @@ from skimage import color, data, exposure, filters, img_as_float32
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # ======= Demo knobs =======
@@ -116,7 +116,7 @@ centers_frames = []
 for i, K in enumerate(keep_counts):
     idx = order[:K]
 
-    Vk = render_gaussians_full_numpy(
+    Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )
     stack_recon[i] = Vk

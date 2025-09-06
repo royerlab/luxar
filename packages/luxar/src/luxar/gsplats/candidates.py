@@ -1,12 +1,10 @@
-# ====== dependencies ======
+# candidates.py
+
 from typing import List, Optional, Sequence
 
 import numpy as np
 from scipy import ndimage as ndi
 
-# ==========================
-# 1) Overcomplete candidate centroids in scale-space
-# ==========================
 
 
 def _local_maxima(

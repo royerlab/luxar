@@ -13,7 +13,7 @@ from skimage import data, filters
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 
 # Setup Arbol
 Arbol.max_depth = 3
@@ -86,7 +86,7 @@ def main():
         # Prepare visualization
         with asection("Visualization Preparation"):
             # Render reconstruction
-            reconstruction = render_gaussians_full_numpy(
+            reconstruction = render_gaussians_numpy(
                 V.shape, params, amps, truncate=3.0
             )
 

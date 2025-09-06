@@ -11,8 +11,8 @@ import torch
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_batched_render import render_gaussians_batched
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -68,7 +68,7 @@ class TestGaussianSplatsIntegration:
         assert np.all(amps >= 0)  # Amplitudes should be non-negative
 
         # Render reconstruction
-        reconstruction = render_gaussians_full_numpy(
+        reconstruction = render_gaussians_numpy(
             image.shape, params, amps, truncate=3.0
         )
 
@@ -110,7 +110,7 @@ class TestGaussianSplatsIntegration:
         assert amps.shape == (len(candidates),)
 
         # Render reconstruction
-        reconstruction = render_gaussians_full_numpy(
+        reconstruction = render_gaussians_numpy(
             volume.shape, params, amps, truncate=3.0
         )
 
@@ -159,8 +159,8 @@ class TestGaussianSplatsIntegration:
             assert stats_early['iterations'] < 200
 
         # But achieve similar quality
-        recon_early = render_gaussians_full_numpy(image.shape, params_early, amps_early)
-        recon_full = render_gaussians_full_numpy(image.shape, params_full, amps_full)
+        recon_early = render_gaussians_numpy(image.shape, params_early, amps_early)
+        recon_full = render_gaussians_numpy(image.shape, params_full, amps_full)
 
         mse_early = np.mean((image - recon_early) ** 2)
         mse_full = np.mean((image - recon_full) ** 2)
@@ -185,7 +185,7 @@ class TestGaussianSplatsIntegration:
         )
 
         # Render with numpy
-        recon_numpy = render_gaussians_full_numpy(image.shape, params, amps)
+        recon_numpy = render_gaussians_numpy(image.shape, params, amps)
 
         # Render with batched PyTorch
         device = torch.device("cuda" if torch.cuda.is_available() else "mps")
@@ -196,7 +196,7 @@ class TestGaussianSplatsIntegration:
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(amps, device=device)
 
-        recon_torch = render_gaussians_batched(
+        recon_torch = render_gaussians(
             image.shape, centers, Ls, amps_t, truncate=3.0
         )
         recon_torch_np = recon_torch.cpu().numpy()
@@ -235,8 +235,8 @@ class TestGaussianSplatsIntegration:
         assert np.all(amps_poisson >= 0)
 
         # Both should reconstruct reasonably well
-        recon_mse = render_gaussians_full_numpy(image.shape, params_mse, amps_mse)
-        recon_poisson = render_gaussians_full_numpy(image.shape, params_poisson, amps_poisson)
+        recon_mse = render_gaussians_numpy(image.shape, params_mse, amps_mse)
+        recon_poisson = render_gaussians_numpy(image.shape, params_poisson, amps_poisson)
 
         mse_mse = np.mean((image - recon_mse) ** 2)
         mse_poisson = np.mean((image - recon_poisson) ** 2)

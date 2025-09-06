@@ -14,7 +14,7 @@ from skimage import data
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -63,7 +63,7 @@ def analyze_compression_performance(V, params_full, amps, n_frames=10):
         idx = order[:K]
 
         # Compute reconstruction
-        Vk = render_gaussians_full_numpy(
+        Vk = render_gaussians_numpy(
             V.shape, params_full[idx], amps[idx], truncate=3.0
         )
 
@@ -183,7 +183,7 @@ def main():
 
     # Final reconstruction
     aprint("\n5️⃣ Final reconstruction quality...")
-    V_recon = render_gaussians_full_numpy(V.shape, params_full, amps, truncate=3.0)
+    V_recon = render_gaussians_numpy(V.shape, params_full, amps, truncate=3.0)
 
     final_error = np.linalg.norm(V - V_recon) / np.linalg.norm(V)
     peak_preserved = V_recon.max() / V.max()
