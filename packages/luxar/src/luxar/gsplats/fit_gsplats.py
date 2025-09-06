@@ -249,8 +249,8 @@ class GaussianSplatFitter:
             else:
                 data = F.mse_loss(pred, V_t)
             if l1_amp > 0:
-                _, _, a = model.current_params()
-                data = data + l1_amp * torch.mean(torch.abs(a))
+                # Use raw parameters directly to avoid rebuilding L matrices and centers
+                data = data + l1_amp * torch.mean(torch.abs(F.softplus(model.raw_a)))
             return data
 
         # Tracking
@@ -379,15 +379,12 @@ def fit_gaussian_splats(
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
 
-    NEW: Now uses precision matrix parameterization by default for significant speedup,
-    especially on MPS devices. This eliminates solve_triangular operations.
-
     This function optimizes a collection of oriented Gaussian splats to approximate
-    the input image. Parameterization depends on use_precision_parameterization:
-    - NEW (default): Direct precision matrix M = L @ L^T parameterization
-    - Traditional: Covariance matrix Σ = L @ L^T parameterization
+    the input image using covariance matrix parameterization:
+    - Covariance matrix Σ = L @ L^T where L is the Cholesky factor
+    - Efficient rendering via batched triangular solve (avoids explicit matrix inversion)
 
-    Both approaches use:
+    The optimization uses:
     - Center position (bounded to image domain via sigmoid)
     - Non-negative amplitude (via softplus activation)
     - Adam optimizer with configurable loss functions and early stopping

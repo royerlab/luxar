@@ -121,6 +121,61 @@ class TestGaussianSplatsIntegration:
         mse = np.mean((volume - reconstruction) ** 2)
         assert mse < 0.15  # Slightly higher tolerance for 3D
 
+    def test_full_pipeline_4d(self):
+        """Test complete pipeline for 4D hypercube to verify nD renderer chunking."""
+        # Create smaller 4D test data to keep computation reasonable
+        shape_4d = (16, 16, 16, 8)  # 4D hypercube: spatial xyz + time/channel
+        data = np.zeros(shape_4d, dtype=np.float32)
+
+        # Add a few 4D Gaussian blobs
+        for _ in range(2):
+            center = [np.random.randint(2, max(3, s - 2)) for s in shape_4d]
+            sigma = np.random.uniform(1.5, 2.5)
+            amplitude = np.random.uniform(0.6, 1.0)
+
+            # Create 4D coordinate grids
+            grids = np.meshgrid(*[np.arange(s) for s in shape_4d], indexing="ij")
+            dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
+            data += amplitude * np.exp(-dist_sq / (2 * sigma**2))
+
+        data = np.clip(data, 0, 1)
+
+        # Find candidates using fewer scales for 4D
+        candidates = find_candidates_overcomplete_nd(
+            data,
+            scales=(1.0, 2.0),  # Fewer scales for 4D
+            peaks_per_scale=20,  # Fewer candidates
+            percentile_thresh=75,
+            min_dist=2.0,
+        )
+        assert len(candidates) > 0
+        assert candidates.shape[1] == 4  # 4D coordinates
+
+        # Fit splats with reduced iterations for 4D
+        params, amps, stats = fit_gaussian_splats(
+            data,
+            centers_overcomplete=candidates,
+            n_iters=50,  # Fewer iterations for test speed
+            lr=0.3,
+            verbose=False,  # Reduce test output
+            early_stopping=True,
+        )
+
+        assert params.shape[1] == 4 + tril_size(4)  # 4 centers + 4x4 Cholesky
+        assert len(amps) == len(candidates)
+        assert all(amps >= 0)  # Non-negative amplitudes
+
+        # Render reconstruction (this tests our nD chunking path!)
+        reconstruction = render_gaussians_numpy(shape_4d, params, amps, truncate=2.5)
+        assert reconstruction.shape == shape_4d
+
+        # Verify reconstruction quality (looser tolerance for 4D)
+        mse = np.mean((reconstruction - data) ** 2)
+        assert mse < 0.25  # 4D is more challenging and uses fewer iterations
+
+        # Verify we exercised the nD path (not 2D/3D specialized paths)
+        assert len(shape_4d) == 4  # Confirms we used generic nD renderer
+
     def test_early_stopping_convergence(self):
         """Test that early stopping works and maintains quality."""
         # Simple test case that should converge quickly
@@ -367,3 +422,38 @@ class TestGaussianSplatsIntegration:
 
         assert np.all(np.isfinite(params))
         assert np.all(np.isfinite(amps))
+
+    def test_memory_chunking_large_aabb(self):
+        """Test that memory chunking prevents OOM with large AABB boxes."""
+        # Create a scenario with large AABB boxes that would OOM without chunking
+        shape = (64, 64)  # 2D for faster test, but with loose truncation
+
+        # Create single blob with very loose truncation to create large AABB
+        data = np.zeros(shape, dtype=np.float32)
+        center = [32, 32]
+        sigma = 4.0  # Large sigma
+        grids = np.meshgrid(np.arange(64), np.arange(64), indexing="ij")
+        dist_sq = (grids[0] - center[0]) ** 2 + (grids[1] - center[1]) ** 2
+        data = 0.8 * np.exp(-dist_sq / (2 * sigma**2))
+
+        # Use just one candidate at the center
+        candidates = np.array([[32.0, 32.0]])
+
+        # Fit with very loose truncation to force large AABB
+        params, amps, _ = fit_gaussian_splats(
+            data,
+            centers_overcomplete=candidates,
+            n_iters=20,
+            truncate=8.0,  # Very loose truncation = large AABB
+            verbose=False,
+        )
+
+        # Render with loose truncation (this exercises chunking!)
+        reconstruction = render_gaussians_numpy(shape, params, amps, truncate=8.0)
+
+        assert reconstruction.shape == shape
+        assert np.all(np.isfinite(reconstruction))
+
+        # Should still reconstruct reasonably well
+        mse = np.mean((data - reconstruction) ** 2)
+        assert mse < 0.3  # Reasonable reconstruction

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -10,6 +10,70 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
+
+
+def _calculate_optimal_chunk_size(
+    K: int, d: int, device: torch.device, dtype: torch.dtype
+) -> int:
+    """
+    Calculate optimal P chunk size based on available memory and tensor dimensions.
+
+    This function determines the largest chunk size that can safely fit in memory,
+    considering the actual memory footprint of the (K, d, P_chunk) tensors used
+    in the renderer (delta, y, and intermediate results).
+
+    Parameters
+    ----------
+    K : int
+        Number of splats in the current group
+    d : int
+        Number of dimensions
+    device : torch.device
+        Target device for computation
+    dtype : torch.dtype
+        Data type for tensors
+
+    Returns
+    -------
+    int
+        Optimal chunk size for P dimension, bounded to reasonable range
+    """
+    # Get available memory with safety margin
+    if device.type == "cuda" and torch.cuda.is_available():
+        try:
+            free_mem, _ = torch.cuda.mem_get_info(device)
+            available_mem = int(free_mem * 0.6)  # 60% safety margin for CUDA
+        except Exception:
+            # Fallback if memory info unavailable
+            available_mem = 2 * (1024**3)  # 2GB conservative estimate
+    else:
+        # Conservative estimates for CPU/MPS
+        if device.type == "mps":
+            available_mem = 4 * (1024**3)  # 4GB for Apple Silicon unified memory
+        else:
+            available_mem = 8 * (1024**3)  # 8GB for CPU
+
+    # Calculate memory footprint per P element
+    bytes_per_element = torch.tensor([], dtype=dtype).element_size()
+    # Account for: delta (K,d,P), y (K,d,P), expo (K,P), vals (K,P), plus overhead
+    memory_per_p = K * (2 * d + 2) * bytes_per_element * 1.5  # 1.5x overhead factor
+
+    if memory_per_p <= 0:
+        return 131072  # Fallback default
+
+    # Calculate maximum P_chunk that fits in available memory
+    max_p_chunk = max(1, int(available_mem / memory_per_p))
+
+    # Clamp to reasonable range for performance
+    min_chunk = 1024  # Minimum for kernel efficiency
+    max_chunk = 1024**2  # Maximum to avoid very large kernel launches
+
+    # Use default if calculation seems unreasonable
+    if max_p_chunk < min_chunk:
+        return 131072  # Fallback to current default
+
+    return min(max_chunk, max_p_chunk)
+
 
 # ===== [ADD] Fast-path helpers for 2D/3D =====================================
 
@@ -122,7 +186,7 @@ def _render_gaussians_2d(
     amps: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
-    P_chunk: int = 131072,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
@@ -185,6 +249,10 @@ def _render_gaussians_2d(
         base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
 
         P = base.shape[1]
+        # Calculate optimal chunk size for memory management (2D)
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=2, device=device, dtype=torch.float32
+        )
         for p0 in range(0, P, P_chunk):
             p1 = min(P, p0 + P_chunk)
             # Δ = base + lo - μ
@@ -208,7 +276,7 @@ def _render_gaussians_3d(
     amps: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
-    P_chunk: int = 131072,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     device = centers.device
     out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
@@ -271,6 +339,10 @@ def _render_gaussians_3d(
         base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
 
         P = base.shape[1]
+        # Calculate optimal chunk size for memory management (3D)
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=3, device=device, dtype=torch.float32
+        )
         for p0 in range(0, P, P_chunk):
             p1 = min(P, p0 + P_chunk)
             # Δ = base + lo - μ
@@ -526,18 +598,24 @@ def _group_by_box(
     """
     Group splats by their AABB shape so we can reuse a single base grid per group.
     Returns: dict { box_shape_tuple : idx_tensor }  (CPU tuple keys, GPU indices)
+
+    Optimized to minimize GPU-CPU synchronization by using torch.unique on GPU.
     """
-    sizes = (hi - lo).to(torch.long)  # (N, d)
-    # Move tiny metadata to CPU for hashing
-    sizes_cpu = sizes.cpu().tolist()
-    groups: Dict[Tuple[int, ...], List[int]] = {}
-    for k, s in enumerate(sizes_cpu):
-        key = tuple(int(x) for x in s)
-        groups.setdefault(key, []).append(k)
-    return {
-        k: torch.tensor(v, device=lo.device, dtype=torch.long)
-        for k, v in groups.items()
-    }
+    sizes = (hi - lo).to(torch.int32)  # (N, d)
+
+    # Use torch.unique on GPU to find unique sizes and group indices
+    uniq, inv = torch.unique(sizes, dim=0, return_inverse=True)
+
+    groups: Dict[Tuple[int, ...], torch.Tensor] = {}
+    # Only transfer the small unique array to CPU for dict keys
+    uniq_cpu = uniq.cpu().tolist()
+
+    for g, key in enumerate(map(tuple, uniq_cpu)):
+        # Find indices for this group on GPU
+        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
+        groups[key] = idx
+
+    return groups
 
 
 def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
@@ -556,6 +634,7 @@ def render_gaussians(
     amps: torch.Tensor,  # (N,)
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,  # for amplitude-aware culling (see §2)
+    chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """
     Fast vectorized renderer with 2D/3D fast-paths.
@@ -563,9 +642,13 @@ def render_gaussians(
     """
     d = len(shape)
     if d == 2:
-        return _render_gaussians_2d(shape, centers, Ls, amps, truncate, intensity_floor)
+        return _render_gaussians_2d(
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+        )
     if d == 3:
-        return _render_gaussians_3d(shape, centers, Ls, amps, truncate, intensity_floor)
+        return _render_gaussians_3d(
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+        )
 
     # --- keep existing nD implementation below unchanged ---
     device = centers.device
@@ -635,41 +718,50 @@ def render_gaussians(
             torch.arange(s, device=device, dtype=torch.float32) for s in box_shape
         ]
         grids = torch.meshgrid(*ranges, indexing="ij")
-        P = 1
-        for g in grids:
-            P *= g.numel()
+        P = int(np.prod(box_shape))  # More efficient than loop
         # per-axis base coords flattened (P,)
         base = torch.stack([g.reshape(-1) for g in grids], dim=0)  # (d, P)
 
-        # Per-splat Δ = base + lo - μ   (broadcast to (K, d, P))
+        # Precompute base indices and linear offsets for the group
         lo_f = lo[idx].to(torch.float32)  # (K, d)
-        delta = base[None, :, :] + lo_f[:, :, None] - mu[:, :, None]  # (K, d, P)
-
-        # Solve L y = Δ  (batched lower-tri solve with P RHS per splat)
-        # torch.linalg.solve_triangular supports batch dims: (K, d, d) x (K, d, P) -> (K, d, P)
-        try:
-            y = torch.linalg.solve_triangular(L, delta, upper=False)
-        except Exception:
-            # older PyTorch
-            y, _ = torch.triangular_solve(delta, L, upper=False)
-
-        # Exponent and values: exp(-0.5 * ||y||^2) * a
-        expo = torch.sum(y * y, dim=1)  # (K, P)
-        vals = torch.exp(-0.5 * expo) * a[:, None]  # (K, P)
-
-        # Compute flattened indices once for the group:
-        # lin_offsets = base dot strides  (P,)
         strides_f = strides.to(torch.float32)
         lin_offsets = (base.T @ strides_f).to(torch.long)  # (P,)
-        # base index per splat = lo dot strides
         base_idx = (lo[idx].to(torch.long) * strides).sum(dim=1)  # (K,)
 
-        # Absolute flat indices (K, P) -> (K*P,)
-        idx_flat = (base_idx[:, None] + lin_offsets[None, :]).reshape(-1)
-        vals_flat = vals.reshape(-1)
+        # *** MEMORY OPTIMIZATION: Process P dimension in chunks to prevent OOM ***
+        # Calculate optimal chunk size based on available memory and tensor dimensions
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=d, device=device, dtype=torch.float32
+        )
+        for p0 in range(0, P, P_chunk):
+            p1 = min(P, p0 + P_chunk)
 
-        # One scatter-add per group
-        out_flat.index_add_(0, idx_flat, vals_flat)
+            # Process chunk: base coordinates and indices for this chunk
+            base_chunk = base[:, p0:p1]  # (d, Pc)
+            lin_offsets_chunk = lin_offsets[p0:p1]  # (Pc,)
+
+            # Per-splat Δ = base + lo - μ   (broadcast to (K, d, Pc))
+            delta = (
+                base_chunk[None, :, :] + lo_f[:, :, None] - mu[:, :, None]
+            )  # (K, d, Pc)
+
+            # Solve L y = Δ  (batched lower-tri solve with Pc RHS per splat)
+            try:
+                y = torch.linalg.solve_triangular(L, delta, upper=False)
+            except Exception:
+                # older PyTorch fallback
+                y, _ = torch.triangular_solve(delta, L, upper=False)
+
+            # Exponent and values: exp(-0.5 * ||y||^2) * a
+            expo = torch.sum(y * y, dim=1)  # (K, Pc)
+            vals = torch.exp(-0.5 * expo) * a[:, None]  # (K, Pc)
+
+            # Absolute flat indices (K, Pc) -> (K*Pc,)
+            idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)
+            vals_flat = vals.reshape(-1)
+
+            # Accumulate into output
+            out_flat.index_add_(0, idx_flat, vals_flat)
 
     return out
 
@@ -679,6 +771,7 @@ def render_gaussians_numpy(
     params_full: np.ndarray,
     amps: np.ndarray,
     truncate: float = 3.0,
+    chunk_size: Optional[int] = None,
 ) -> np.ndarray:
     """CPU NumPy output wrapper around torch renderer (no grads)."""
     from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -714,7 +807,12 @@ def render_gaussians_numpy(
     # Render using the PyTorch function
     with torch.no_grad():
         result = render_gaussians(
-            shape, centers_torch, ls_torch, amps_torch, truncate=truncate
+            shape,
+            centers_torch,
+            ls_torch,
+            amps_torch,
+            truncate=truncate,
+            chunk_size=chunk_size,
         )
 
     return result.cpu().numpy()
@@ -726,6 +824,7 @@ def render_gaussians_pytorch(
     amps: np.ndarray,
     truncate: float = 3.0,
     device: str = "cpu",
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """PyTorch wrapper for rendering gaussians with packed parameters."""
     from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -760,7 +859,12 @@ def render_gaussians_pytorch(
 
     # Render using the PyTorch function
     result = render_gaussians(
-        shape, centers_torch, ls_torch, amps_torch, truncate=truncate
+        shape,
+        centers_torch,
+        ls_torch,
+        amps_torch,
+        truncate=truncate,
+        chunk_size=chunk_size,
     )
 
     return result
@@ -773,6 +877,9 @@ def render_gaussians_batched(
     amps: torch.Tensor,
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Batched wrapper for render_gaussians - identical functionality."""
-    return render_gaussians(shape, centers, Ls, amps, truncate, intensity_floor)
+    return render_gaussians(
+        shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+    )

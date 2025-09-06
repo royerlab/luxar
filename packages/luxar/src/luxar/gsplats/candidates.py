@@ -37,13 +37,14 @@ def _local_maxima(
     if radius < 1:
         radius = 1
 
-    # Create hypercube footprint for L∞ neighborhood
-    # Shape: (2*radius+1)^ndim boolean array
-    footprint = np.ones([2 * radius + 1] * img.ndim, dtype=bool)
+    # Use size parameter instead of footprint for better memory efficiency
+    # This avoids creating large boolean arrays: (2*radius+1)^ndim
+    # For 3D with radius=5: footprint would be 11^3 = 1331 elements vs size=[11,11,11]
+    kernel_size = [2 * radius + 1] * img.ndim
 
     # Apply maximum filter to find local maxima
-    # Each voxel is compared with all neighbors in the footprint
-    max_f = ndi.maximum_filter(img, footprint=footprint, mode="nearest")
+    # Each voxel is compared with all neighbors in the hypercube
+    max_f = ndi.maximum_filter(img, size=kernel_size, mode="nearest")
 
     # Peak criteria: voxel equals neighborhood maximum AND exceeds threshold
     peaks_mask = (img == max_f) & (img >= thresh)
@@ -97,12 +98,10 @@ def _dog_response(vol: np.ndarray, sigma: float, k: float = 1.6) -> np.ndarray:
 
 def _dedupe(coords: np.ndarray, min_dist: float) -> np.ndarray:
     """
-    Remove duplicate candidates using greedy spatial deduplication.
+    Remove duplicate candidates using efficient spatial deduplication.
 
-    This function eliminates candidates that are too close to each other using
-    a greedy algorithm. For each unprocessed candidate, it marks all nearby
-    candidates (within min_dist) as used, effectively keeping only spatially
-    well-separated points.
+    Uses KDTree for O(N log N) spatial queries instead of O(N²) brute force.
+    For each candidate in order, eliminates all nearby candidates within min_dist.
 
     Parameters
     ----------
@@ -119,12 +118,61 @@ def _dedupe(coords: np.ndarray, min_dist: float) -> np.ndarray:
     """
     # Handle empty input case
     if len(coords) == 0:
-        return coords
+        return coords.astype(float)
 
+    # For small datasets, use original greedy approach to avoid KDTree overhead
+    if len(coords) < 100:
+        return _dedupe_greedy(coords, min_dist)
+
+    # Use KDTree for efficient spatial queries on larger datasets
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError:
+        # Fallback to greedy if scipy not available
+        return _dedupe_greedy(coords, min_dist)
+
+    # Build spatial index
+    tree = cKDTree(coords)
+    used = np.zeros(len(coords), dtype=bool)
+    out = []
+
+    for i in range(len(coords)):
+        if used[i]:
+            continue
+
+        # Keep this candidate
+        out.append(coords[i])
+
+        # Find all candidates within min_dist and mark as used
+        # query_ball_point returns list of indices of points within distance
+        neighbors = tree.query_ball_point(coords[i], r=min_dist)
+        if neighbors:  # Handle empty neighbor list
+            for neighbor_idx in neighbors:
+                used[neighbor_idx] = True
+
+    return np.array(out, dtype=float)
+
+
+def _dedupe_greedy(coords: np.ndarray, min_dist: float) -> np.ndarray:
+    """
+    Original O(N²) greedy deduplication - kept for small datasets and fallback.
+
+    Parameters
+    ----------
+    coords : np.ndarray
+        Array of shape (N, ndim) containing candidate coordinates.
+    min_dist : float
+        Minimum Euclidean distance required between kept candidates.
+
+    Returns
+    -------
+    np.ndarray
+        Array of deduplicated coordinates, subset of input coords.
+    """
     # Track which candidates have been processed/eliminated
     used = np.zeros(len(coords), dtype=bool)
     out = []  # List to collect kept coordinates
-    # Process candidates sequentially (could be randomized to avoid spatial bias)
+
     for i in range(len(coords)):
         # Skip if this candidate was already marked as too close to a kept one
         if used[i]:
@@ -133,6 +181,7 @@ def _dedupe(coords: np.ndarray, min_dist: float) -> np.ndarray:
         # Keep this candidate
         c = coords[i]
         out.append(c)
+
         # Mark as used all candidates within min_dist (Euclidean) of current candidate c
         diffs = coords - c  # Displacement vectors from c to all candidates
 

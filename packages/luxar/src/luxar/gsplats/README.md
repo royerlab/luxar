@@ -9,8 +9,8 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 ## Key Features
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and higher dimensions
-- **Precision Matrix Parameterization**: NEW! Direct precision matrix approach eliminates solve_triangular bottleneck
-- **Apple Silicon Optimized**: Significant MPS performance improvements via precision parameterization
+- **Efficient Cholesky Parameterization**: Covariance matrices via Cholesky decomposition with batched triangular solve
+- **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Automatic Optimization**: Early stopping saves 20-60% of iterations without quality loss
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
@@ -28,21 +28,17 @@ The system starts by finding initial splat positions using multiscale analysis:
 - **Spatial deduplication** to remove redundant candidates
 
 ### 2. Model Architecture
-Each Gaussian splat can be parameterized using two approaches:
+Each Gaussian splat is parameterized using covariance matrix representation:
 
-**NEW: Precision Matrix Parameterization (Default)**
-- **Centers (μ)**: Sigmoid-bounded to stay within image domain  
-- **Precision (M)**: Direct parameterization `M = L @ L^T` as precision matrix
-- **Amplitudes (a)**: Softplus activation for non-negativity
-
-Mathematical form: `f(x) = a * exp(-0.5 * (x-μ)^T @ M @ (x-μ))`
-
-**Traditional: Covariance Matrix Parameterization**  
+**Covariance Matrix Parameterization**  
 - **Centers (μ)**: Sigmoid-bounded to stay within image domain
 - **Covariance (Σ)**: Cholesky decomposition `Σ = L @ L^T` ensures positive definiteness
 - **Amplitudes (a)**: Softplus activation for non-negativity
 
 Mathematical form: `f(x) = a * exp(-0.5 * (x-μ)^T @ Σ^{-1} @ (x-μ))`
+
+The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)` 
+and computing the quadratic form as `||y||²`.
 
 ### 3. Optimization Process
 The fitting uses PyTorch with Adam optimizer and several enhancements:
@@ -54,15 +50,10 @@ The fitting uses PyTorch with Adam optimizer and several enhancements:
 ### 4. Rendering Pipeline
 Efficient rendering using batched operations with two computational approaches:
 
-**NEW: Direct Matrix Multiplication (Precision Parameterization)**
-- **AABB Truncation**: Each splat rendered only within `truncate * σ` radius
-- **Direct Computation**: `(x-μ)^T @ M @ (x-μ)` with no triangular solve operations
-- **Amplitude-aware Culling**: Reduces computation for weak splats
-- **Scatter-Add Accumulation**: Efficient GPU memory operations
-
-**Traditional: Triangular Solve (Covariance Parameterization)**
+**Efficient Rendering Pipeline:**
 - **AABB Truncation**: Each splat rendered only within `truncate * σ` radius  
 - **Batched Triangular Solve**: Avoids explicit matrix inversion via `L @ y = (x-μ)`
+- **Specialized 2D/3D Paths**: Optimized renderers with explicit forward-substitution
 - **Amplitude-aware Culling**: Reduces computation for weak splats
 - **Scatter-Add Accumulation**: Efficient GPU memory operations
 
@@ -70,10 +61,10 @@ Efficient rendering using batched operations with two computational approaches:
 
 The implementation includes several key optimizations that provide significant speedup:
 
-1. **Precision Matrix Parameterization**: NEW! Eliminates solve_triangular bottleneck (1.2-2.2x speedup)
+1. **2D/3D Specialized Paths**: Optimized renderers with explicit forward-substitution for common cases
 2. **Convergence Detection**: Automatically stops when loss plateaus (saves 20-60% iterations)
-3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
-4. **Apple Silicon Optimization**: Precision parameterization unlocks better MPS performance
+3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence  
+4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > CPU > MPS)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
 6. **Optional Enhancements**: 
    - Model compilation with `torch.compile` (PyTorch 2.0+, CUDA only)
@@ -104,7 +95,6 @@ params, amps, stats = fit_gaussian_splats(
     loss_type="mse",                      # or "poisson" for count data
     l1_amp=0.01,                         # Sparsity regularization
     early_stopping=True,                  # Stop when converged (default)
-    use_precision_parameterization=True,  # NEW! Better performance (default)
 )
 
 # 3. Render reconstruction

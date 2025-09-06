@@ -352,9 +352,7 @@ class TestRendering:
             output2 = model2()
 
         # Results should be identical after state copying
-        torch.testing.assert_close(
-            output1, output2, atol=1e-7, rtol=1e-6
-        )
+        torch.testing.assert_close(output1, output2, atol=1e-7, rtol=1e-6)
 
     def test_empty_model_rendering(self):
         """Test rendering with no splats."""
