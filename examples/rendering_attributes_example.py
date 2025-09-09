@@ -176,7 +176,9 @@ def main():
 
             aprint("\nRuntime Modifications:")
             aprint("- Red points: Modified to normal blending, 70% opacity, gamma=0.8")
-            aprint("- Green points: Chained to additive blending, 40% opacity, gamma=1.3")
+            aprint(
+                "- Green points: Chained to additive blending, 40% opacity, gamma=1.3"
+            )
 
             aprint("\nRendering Properties:")
             aprint("- Opacity: Controls transparency (0.0 = transparent, 1.0 = opaque)")

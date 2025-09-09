@@ -1,17 +1,365 @@
+# gsplat_model.py
+
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from luxar.gsplats.models.gsplats.gsplats_batched_render import (
-    render_gaussians_batched,
-)
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus
-from luxar.gsplats.models.utils.lt_solver import solve_lower_triangular
+
+
+def _calculate_optimal_chunk_size(
+    K: int, d: int, device: torch.device, dtype: torch.dtype
+) -> int:
+    """
+    Calculate optimal P chunk size based on available memory and tensor dimensions.
+
+    This function determines the largest chunk size that can safely fit in memory,
+    considering the actual memory footprint of the (K, d, P_chunk) tensors used
+    in the renderer (delta, y, and intermediate results).
+
+    Parameters
+    ----------
+    K : int
+        Number of splats in the current group
+    d : int
+        Number of dimensions
+    device : torch.device
+        Target device for computation
+    dtype : torch.dtype
+        Data type for tensors
+
+    Returns
+    -------
+    int
+        Optimal chunk size for P dimension, bounded to reasonable range
+    """
+    # Get available memory with safety margin
+    if device.type == "cuda" and torch.cuda.is_available():
+        try:
+            free_mem, _ = torch.cuda.mem_get_info(device)
+            available_mem = int(free_mem * 0.6)  # 60% safety margin for CUDA
+        except Exception:
+            # Fallback if memory info unavailable
+            available_mem = 2 * (1024**3)  # 2GB conservative estimate
+    else:
+        # Conservative estimates for CPU/MPS
+        if device.type == "mps":
+            available_mem = 4 * (1024**3)  # 4GB for Apple Silicon unified memory
+        else:
+            available_mem = 8 * (1024**3)  # 8GB for CPU
+
+    # Calculate memory footprint per P element
+    bytes_per_element = torch.tensor([], dtype=dtype).element_size()
+    # Account for: delta (K,d,P), y (K,d,P), expo (K,P), vals (K,P), plus overhead
+    memory_per_p = K * (2 * d + 2) * bytes_per_element * 1.5  # 1.5x overhead factor
+
+    if memory_per_p <= 0:
+        return 131072  # Fallback default
+
+    # Calculate maximum P_chunk that fits in available memory
+    max_p_chunk = max(1, int(available_mem / memory_per_p))
+
+    # Clamp to reasonable range for performance
+    min_chunk = 1024  # Minimum for kernel efficiency
+    max_chunk = 1024**2  # Maximum to avoid very large kernel launches
+
+    # Use default if calculation seems unreasonable
+    if max_p_chunk < min_chunk:
+        return 131072  # Fallback to current default
+
+    return min(max_chunk, max_p_chunk)
+
+
+# ===== [ADD] Fast-path helpers for 2D/3D =====================================
+
+# Simple process-wide cache for base grids and linear offsets.
+# Keyed by (device, dtype, strides_tuple, box_shape_tuple).
+_GRID_CACHE: Dict[
+    Tuple[str, str, Tuple[int, ...], Tuple[int, ...]], Tuple[torch.Tensor, torch.Tensor]
+] = {}
+
+
+def _cached_base_and_offsets(
+    box_shape: Sequence[int],
+    strides: torch.Tensor,  # (d,), long
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Returns:
+      base: (d, P) float tensor with coordinates [0..h_i-1] mesh, flattened.
+      lin_offsets: (P,) long tensor of row-major flat offsets for this box_shape.
+    """
+    key = (
+        device.type,
+        str(dtype),
+        tuple(int(s) for s in strides.tolist()),
+        tuple(int(s) for s in box_shape),
+    )
+    if key in _GRID_CACHE:
+        return _GRID_CACHE[key]
+
+    ranges = [torch.arange(int(s), device=device, dtype=dtype) for s in box_shape]
+    grids = torch.meshgrid(*ranges, indexing="ij")  # list of d arrays
+    base = torch.stack([g.reshape(-1) for g in grids], dim=0)  # (d, P)
+
+    # Compute row-major offsets once for this box shape.
+    base_l = torch.stack([g.reshape(-1).to(torch.long) for g in grids], dim=0)  # (d, P)
+    lin_offsets = (base_l.T * strides).sum(dim=1)  # (P,)
+
+    _GRID_CACHE[key] = (base, lin_offsets)
+    return _GRID_CACHE[key]
+
+
+@torch.jit.ignore  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
+def _group_by_box_gpu(
+    lo: torch.Tensor, hi: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    GPU-friendly grouping by AABB size.
+    Returns (uniq_sizes, inv), where uniq_sizes is (G, d) and inv is (N,).
+    """
+    sizes = (hi - lo).to(torch.int32)  # (N, d)
+
+    # MPS doesn't support torch.unique with dim argument, fallback to CPU
+    if sizes.device.type == "mps":
+        sizes_cpu = sizes.cpu()
+        uniq, inv = torch.unique(sizes_cpu, dim=0, return_inverse=True)
+        uniq, inv = uniq.to(sizes.device), inv.to(sizes.device)
+    else:
+        uniq, inv = torch.unique(sizes, dim=0, return_inverse=True)
+
+    return uniq, inv
+
+
+# ---- Explicit forward-substitution for 2D/3D (no linalg kernels) ------------
+
+
+def _fwd_norm2_2d(L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor) -> torch.Tensor:
+    """
+    Solve L y = [d0, d1]^T for each splat (batched) and return ||y||^2.
+    L: (K, 2, 2), d0/d1: (K, P)
+    Returns: (K, P)
+    """
+    l11 = L[:, 0, 0].unsqueeze(1)  # (K,1)
+    l21 = L[:, 1, 0].unsqueeze(1)
+    l22 = L[:, 1, 1].unsqueeze(1)
+
+    y0 = d0 / torch.clamp(l11, min=1e-12)
+    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-12)
+    return y0.mul(y0).add_(y1.mul(y1))
+
+
+def _fwd_norm2_3d(
+    L: torch.Tensor, d0: torch.Tensor, d1: torch.Tensor, d2: torch.Tensor
+) -> torch.Tensor:
+    """
+    Solve L y = [d0, d1, d2]^T for each splat (batched) and return ||y||^2.
+    L: (K, 3, 3), d0/d1/d2: (K, P)
+    Returns: (K, P)
+    """
+    l11 = L[:, 0, 0].unsqueeze(1)  # (K,1)
+    l21 = L[:, 1, 0].unsqueeze(1)
+    l22 = L[:, 1, 1].unsqueeze(1)
+    l31 = L[:, 2, 0].unsqueeze(1)
+    l32 = L[:, 2, 1].unsqueeze(1)
+    l33 = L[:, 2, 2].unsqueeze(1)
+
+    y0 = d0 / torch.clamp(l11, min=1e-12)
+    y1 = (d1 - l21 * y0) / torch.clamp(l22, min=1e-12)
+    y2 = (d2 - l31 * y0 - l32 * y1) / torch.clamp(l33, min=1e-12)
+    return y0.mul(y0).add_(y1.mul(y1)).add_(y2.mul(y2))
+
+
+# ---- Specialized renderers ---------------------------------------------------
+
+
+def _render_gaussians_2d(
+    shape: Sequence[int],
+    centers: torch.Tensor,  # (N,2)
+    Ls: torch.Tensor,  # (N,2,2)
+    amps: torch.Tensor,  # (N,)
+    truncate: float,
+    intensity_floor: float,
+    chunk_size: Optional[int] = None,
+) -> torch.Tensor:
+    device = centers.device
+    out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
+    out_flat = out.view(-1)
+    strides = _linear_strides(shape, device)  # (2,)
+
+    # AABB per splat
+    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,2)
+    radii = torch.clamp(
+        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        min=1,
+    )
+    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+    hi = torch.minimum(
+        (centers + radii).ceil().to(torch.long) + 1,
+        torch.tensor(shape, device=device, dtype=torch.long),
+    )
+
+    if intensity_floor is not None and intensity_floor > 0:
+        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
+        a = torch.clamp(amps, min=1e-12)
+        tmax = torch.sqrt(
+            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        )
+        shrink = torch.clamp(
+            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+            .ceil()
+            .to(torch.long),
+            min=1,
+        )
+        radii = torch.minimum(radii, shrink)
+        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+        hi = torch.minimum(
+            (centers + radii).ceil().to(torch.long) + 1,
+            torch.tensor(shape, device=device, dtype=torch.long),
+        )
+
+    valid = (hi > lo).all(1)
+    if not torch.all(valid):
+        centers, Ls, amps = centers[valid], Ls[valid], amps[valid]
+        lo, hi = lo[valid], hi[valid]
+        if centers.numel() == 0:
+            return out
+
+    # Group on GPU
+    uniq, inv = _group_by_box_gpu(lo, hi)
+
+    for g in range(uniq.shape[0]):
+        box_shape = uniq[g].tolist()  # [h0, h1]
+        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
+
+        mu = centers[idx]  # (K,2)
+        L = Ls[idx]  # (K,2,2)
+        a = amps[idx]  # (K,)
+        lo_sel = lo[idx]  # (K,2)
+
+        base, lin_offsets = _cached_base_and_offsets(
+            box_shape, strides, device, dtype=torch.float32
+        )  # (2,P), (P,)
+        base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
+
+        P = base.shape[1]
+        # Calculate optimal chunk size for memory management (2D)
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=2, device=device, dtype=torch.float32
+        )
+        for p0 in range(0, P, P_chunk):
+            p1 = min(P, p0 + P_chunk)
+            # Δ = base + lo - μ
+            d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
+            d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]  # (K,Pc)
+
+            # ||y||^2 via explicit forward-substitution
+            expo = _fwd_norm2_2d(L, d0, d1)  # (K,Pc)
+            vals = torch.exp(-0.5 * expo) * a[:, None]
+
+            idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
+            out_flat.index_add_(0, idx_flat, vals.reshape(-1))
+
+    return out
+
+
+def _render_gaussians_3d(
+    shape: Sequence[int],
+    centers: torch.Tensor,  # (N,3)
+    Ls: torch.Tensor,  # (N,3,3)
+    amps: torch.Tensor,  # (N,)
+    truncate: float,
+    intensity_floor: float,
+    chunk_size: Optional[int] = None,
+) -> torch.Tensor:
+    device = centers.device
+    out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
+    out_flat = out.view(-1)
+    strides = _linear_strides(shape, device)  # (3,)
+
+    # AABB per splat
+    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,3)
+    radii = torch.clamp(
+        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        min=1,
+    )
+    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+    hi = torch.minimum(
+        (centers + radii).ceil().to(torch.long) + 1,
+        torch.tensor(shape, device=device, dtype=torch.long),
+    )
+
+    if intensity_floor is not None and intensity_floor > 0:
+        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
+        a = torch.clamp(amps, min=1e-12)
+        tmax = torch.sqrt(
+            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        )
+        shrink = torch.clamp(
+            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+            .ceil()
+            .to(torch.long),
+            min=1,
+        )
+        radii = torch.minimum(radii, shrink)
+        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+        hi = torch.minimum(
+            (centers + radii).ceil().to(torch.long) + 1,
+            torch.tensor(shape, device=device, dtype=torch.long),
+        )
+
+    valid = (hi > lo).all(1)
+    if not torch.all(valid):
+        centers, Ls, amps = centers[valid], Ls[valid], amps[valid]
+        lo, hi = lo[valid], hi[valid]
+        if centers.numel() == 0:
+            return out
+
+    # Group on GPU
+    uniq, inv = _group_by_box_gpu(lo, hi)
+
+    for g in range(uniq.shape[0]):
+        box_shape = uniq[g].tolist()  # [h0, h1, h2]
+        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
+
+        mu = centers[idx]  # (K,3)
+        L = Ls[idx]  # (K,3,3)
+        a = amps[idx]  # (K,)
+        lo_sel = lo[idx]  # (K,3)
+
+        base, lin_offsets = _cached_base_and_offsets(
+            box_shape, strides, device, dtype=torch.float32
+        )  # (3,P),(P,)
+        base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
+
+        P = base.shape[1]
+        # Calculate optimal chunk size for memory management (3D)
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=3, device=device, dtype=torch.float32
+        )
+        for p0 in range(0, P, P_chunk):
+            p1 = min(P, p0 + P_chunk)
+            # Δ = base + lo - μ
+            d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
+            d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
+            d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
+
+            expo = _fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
+            vals = torch.exp(-0.5 * expo) * a[:, None]
+
+            idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
+            out_flat.index_add_(0, idx_flat, vals.reshape(-1))
+
+    return out
+
+
+# ===== [END ADD] =============================================================
 
 
 class GaussianSplatModel(nn.Module):
@@ -51,8 +399,6 @@ class GaussianSplatModel(nn.Module):
         Truncation radius in standard deviations for computational efficiency.
     device : torch.device, optional
         PyTorch device for computations.
-    batched : bool, default=True
-        Whether to use batched rendering implementation for better performance.
     """
 
     def __init__(
@@ -65,7 +411,6 @@ class GaussianSplatModel(nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
         device: Optional[torch.device] = None,
-        batched: bool = True,
     ):
         super().__init__()
         self.shape = tuple(shape)
@@ -73,13 +418,15 @@ class GaussianSplatModel(nn.Module):
         self.truncate = float(truncate)
         N = centers0.shape[0]
         d = self.dim
-        self.batched = batched
 
-        device = (
-            device
-            if device is not None
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        # Auto-detect best performing device: CUDA → CPU
+        # Note: MPS is supported but currently slower than CPU for typical workloads
+        if device is not None:
+            device = device
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
 
         # ---- Center parameterization: sigmoid ensures centers stay within image bounds ----
         # Transform initial centers to sigmoid parameter space
@@ -215,6 +562,99 @@ class GaussianSplatModel(nn.Module):
 
         return centers, L, amps
 
+    # ===== Dynamic Management Methods =========================================
+
+    @torch.no_grad()
+    def _to_internal_params(
+        self,
+        centers: torch.Tensor,  # (N,d)
+        Ls: torch.Tensor,  # (N,d,d)
+        amps: torch.Tensor,  # (N,)
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Convert external (μ, L, a) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw)."""
+        device = self.raw_mu.device
+        d = centers.shape[1]
+
+        # centers -> raw_mu (logit in [0,1] coords)
+        shape_arr = torch.tensor(self.shape, device=device, dtype=torch.float32)
+        u = torch.clamp(
+            centers / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6
+        )
+        raw_mu = torch.log(u) - torch.log(1.0 - u)
+
+        # L -> diag/off raw (diag via inverse-softplus)
+        diag = torch.diagonal(Ls, dim1=1, dim2=2)  # (N,d)
+        # Avoid zero/neg
+        eps = 1e-6
+        diag = torch.clamp(diag, min=eps)
+        L_diag_raw = torch.tensor(
+            stable_inverse_softplus(diag.detach().cpu().numpy()),
+            device=device,
+            dtype=torch.float32,
+        )
+
+        # Pack off-diagonals (row-major, below diag)
+        off_elems = []
+        for i in range(d):
+            for j in range(i):
+                off_elems.append(Ls[:, i, j])
+        L_off = (
+            torch.stack(off_elems, dim=1)
+            if len(off_elems)
+            else torch.zeros((centers.shape[0], 0), device=device)
+        )
+
+        # amps -> amp_raw
+        amps = torch.clamp(amps, min=0.0)
+        amp_raw = torch.tensor(
+            stable_inverse_softplus(amps.detach().cpu().numpy()),
+            device=device,
+            dtype=torch.float32,
+        )
+        return raw_mu, L_diag_raw, L_off, amp_raw
+
+    @torch.no_grad()
+    def replace_with(
+        self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
+    ) -> None:
+        """Hard replace the whole parameter set."""
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
+        self.raw_mu = torch.nn.Parameter(raw_mu)
+        self.raw_L_diag = torch.nn.Parameter(L_diag_raw)
+        self.L_off = torch.nn.Parameter(L_off)
+        self.raw_a = torch.nn.Parameter(amp_raw)
+
+    @torch.no_grad()
+    def prune_(self, keep_mask: torch.Tensor) -> None:
+        """Keep only indices where keep_mask is True."""
+        self.raw_mu = torch.nn.Parameter(self.raw_mu[keep_mask])
+        self.raw_L_diag = torch.nn.Parameter(self.raw_L_diag[keep_mask])
+        self.L_off = torch.nn.Parameter(self.L_off[keep_mask])
+        self.raw_a = torch.nn.Parameter(self.raw_a[keep_mask])
+
+    @torch.no_grad()
+    def append_(
+        self, centers_new: torch.Tensor, Ls_new: torch.Tensor, amps_new: torch.Tensor
+    ) -> None:
+        """Append new splats to the tail."""
+        if centers_new.numel() == 0:
+            return
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
+            centers_new, Ls_new, amps_new
+        )
+        self.raw_mu = torch.nn.Parameter(torch.cat([self.raw_mu, raw_mu], dim=0))
+        self.raw_L_diag = torch.nn.Parameter(
+            torch.cat([self.raw_L_diag, L_diag_raw], dim=0)
+        )
+        self.L_off = torch.nn.Parameter(torch.cat([self.L_off, L_off], dim=0))
+        self.raw_a = torch.nn.Parameter(torch.cat([self.raw_a, amp_raw], dim=0))
+
+    def n_splats(self) -> int:
+        """Return current number of splats."""
+        return int(self.raw_mu.shape[0])
+
+    # =======================================================================
+
     @staticmethod
     def _sigma_diag_from_L(L: torch.Tensor) -> torch.Tensor:
         """
@@ -232,79 +672,307 @@ class GaussianSplatModel(nn.Module):
         Avoids explicit Σ^{-1} by solving L y = (x-μ) and using ||y||^2.
         """
         device = self.raw_mu.device
-        out = torch.zeros(self.shape, dtype=torch.float32, device=device)
+        torch.zeros(self.shape, dtype=torch.float32, device=device)
         centers, Ls, amps = self.current_params()
 
-        # Use batched implementation for better performance
-        if self.batched:
-            return render_gaussians_batched(
-                self.shape,
-                centers,
-                Ls,
-                amps,
-                truncate=self.truncate,
-                intensity_floor=1e-5,
-            )
+        return render_gaussians(
+            self.shape,
+            centers,
+            Ls,
+            amps,
+            truncate=self.truncate,
+            intensity_floor=1e-5,
+        )
 
-        # Fall back to sequential processing only when batched mode is disabled
-        # Note: Consider enabling batched mode for better performance
-        N, d = centers.shape
-        shape_t = torch.tensor(self.shape, dtype=torch.long, device=device)
 
-        # Pre-compute sigma_diag for all splats to reduce redundant calculations
-        sigma_diag_all = self._sigma_diag_from_L(Ls)  # (N, d)
+def _group_by_box(
+    lo: torch.Tensor, hi: torch.Tensor
+) -> Dict[Tuple[int, ...], torch.Tensor]:
+    """
+    Group splats by their AABB shape so we can reuse a single base grid per group.
+    Returns: dict { box_shape_tuple : idx_tensor }  (CPU tuple keys, GPU indices)
 
-        for k in range(N):
-            mu = centers[k]  # (d,)
-            L = Ls[k]  # (d, d) lower-tri
-            a = amps[k]  # scalar
+    Optimized to minimize GPU-CPU synchronization by using torch.unique on GPU.
+    """
+    sizes = (hi - lo).to(torch.int32)  # (N, d)
 
-            # Use pre-computed sigma_diag to avoid redundant calculations
-            sigma_diag = sigma_diag_all[k]  # (d,)
+    # Use torch.unique on GPU to find unique sizes and group indices
+    uniq, inv = torch.unique(sizes, dim=0, return_inverse=True)
 
-            # AABB radius per axis: r_i = truncate * sqrt(Σ_ii), Σ = L L^T
-            r = torch.clamp(
-                (self.truncate * torch.sqrt(torch.clamp(sigma_diag, min=1e-8)))
-                .ceil()
-                .long(),
-                min=1,
-            )
+    groups: Dict[Tuple[int, ...], torch.Tensor] = {}
+    # Only transfer the small unique array to CPU for dict keys
+    uniq_cpu = uniq.cpu().tolist()
 
-            # Local bounding box [lo, hi) with bounds checking
-            lo = torch.clamp((mu - r).floor().long(), min=0)
-            hi = torch.minimum((mu + r).ceil().long() + 1, shape_t)
+    for g, key in enumerate(map(tuple, uniq_cpu)):
+        # Find indices for this group on GPU
+        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
+        groups[key] = idx
 
-            # Skip degenerate boxes (empty or invalid)
-            if torch.any(hi <= lo):
-                continue  # empty box
+    return groups
 
-            # Build local grid (P points), flatten to (P, d)
-            ranges = [
-                torch.arange(lo[i], hi[i], device=device, dtype=torch.float32)
-                for i in range(d)
-            ]
-            grids = torch.meshgrid(*ranges, indexing="ij")
-            P = 1
-            for g in grids:
-                P *= g.numel()
-            if P == 0:
-                continue
-            pts = torch.stack([g.reshape(-1) for g in grids], dim=1)  # (P, d)
-            delta = pts - mu.unsqueeze(0)  # (P, d)
 
-            # Solve L y = delta^T  -> y has shape (d, P)
-            y = solve_lower_triangular(L, delta.T)
+def _linear_strides(shape: Sequence[int], device) -> torch.Tensor:
+    """Row-major linear strides for an nD tensor with given shape."""
+    d = len(shape)
+    s = [1]
+    for i in range(d - 1, 0, -1):
+        s.insert(0, s[0] * shape[i])
+    return torch.tensor(s, device=device, dtype=torch.long)  # (d,)
 
-            # Mahalanobis exponent = sum of squares per column
-            expo = torch.sum(y * y, dim=0)  # (P,)
-            G = torch.exp(-0.5 * expo) * a  # (P,)
 
-            # Scatter-add into canvas
-            slicer = tuple(
-                slice(int(lo[i].item()), int(hi[i].item())) for i in range(d)
-            )
-            out[slicer] = out[slicer] + G.reshape(
-                [int(hi[i] - lo[i]) for i in range(d)]
-            )
+def render_gaussians(
+    shape: Sequence[int],
+    centers: torch.Tensor,  # (N, d) voxel coords
+    Ls: torch.Tensor,  # (N, d, d) lower-tri
+    amps: torch.Tensor,  # (N,)
+    truncate: float = 3.0,
+    intensity_floor: float = 1e-5,  # for amplitude-aware culling (see §2)
+    chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
+) -> torch.Tensor:
+    """
+    Fast vectorized renderer with 2D/3D fast-paths.
+    Falls back to the generic nD implementation for d != 2 and d != 3.
+    """
+    d = len(shape)
+    if d == 2:
+        return _render_gaussians_2d(
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+        )
+    if d == 3:
+        return _render_gaussians_3d(
+            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+        )
 
+    # --- keep existing nD implementation below unchanged ---
+    device = centers.device
+    out = torch.zeros(tuple(shape), dtype=torch.float32, device=device)
+    out_flat = out.view(-1)
+    strides = _linear_strides(shape, device)  # (d,)
+
+    # --- AABB per splat ---
+    # Σ_ii = row-wise sum(L^2); r_i = ceil(truncate * sqrt(Σ_ii))
+    sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
+    radii = torch.clamp(
+        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        min=1,
+    )
+    lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)  # (N, d)
+    hi = torch.minimum(
+        (centers + radii).ceil().to(torch.long) + 1,
+        torch.tensor(shape, device=device).to(torch.long),
+    )  # (N, d)
+
+    # (Optional) **amplitude-aware shrinking** (see §2) – avoids giant boxes for tiny a
+    if intensity_floor is not None and intensity_floor > 0:
+        # t_max per splat solves: a * exp(-0.5 * t^2) >= intensity_floor  ->  t <= sqrt(2 log(a/eps))
+        eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
+        a = torch.clamp(amps, min=1e-12)
+        tmax = torch.sqrt(
+            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        )  # (N,)
+        # shrink radii = min(current, ceil(tmax * sqrt(Σ_ii)))
+        shrink = torch.clamp(
+            (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+            .ceil()
+            .to(torch.long),
+            min=1,
+        )
+        radii = torch.minimum(radii, shrink)
+        lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
+        hi = torch.minimum(
+            (centers + radii).ceil().to(torch.long) + 1,
+            torch.tensor(shape, device=device).to(torch.long),
+        )
+
+    # Drop empty boxes (rare but safe)
+    valid = (hi > lo).all(1)
+    if not torch.all(valid):
+        centers = centers[valid]
+        Ls = Ls[valid]
+        amps = amps[valid]
+        lo = lo[valid]
+        hi = hi[valid]
+        sigma_diag = sigma_diag[valid]
+
+    if centers.numel() == 0:
         return out
+
+    # --- Group by box size for reuse of base grid ---
+    groups = _group_by_box(lo, hi)  # { (h1,..,hd) : idx }
+    for box_shape, idx in groups.items():
+        # Splat subset
+        mu = centers[idx]  # (K, d)
+        L = Ls[idx]  # (K, d, d)
+        a = amps[idx]  # (K,)
+
+        # Build base grid (one per group, on device)
+        # coords_i = [0, 1, ..., h_i-1]  -> broadcast to P points
+        ranges = [
+            torch.arange(s, device=device, dtype=torch.float32) for s in box_shape
+        ]
+        grids = torch.meshgrid(*ranges, indexing="ij")
+        P = int(np.prod(box_shape))  # More efficient than loop
+        # per-axis base coords flattened (P,)
+        base = torch.stack([g.reshape(-1) for g in grids], dim=0)  # (d, P)
+
+        # Precompute base indices and linear offsets for the group
+        lo_f = lo[idx].to(torch.float32)  # (K, d)
+        strides_f = strides.to(torch.float32)
+        lin_offsets = (base.T @ strides_f).to(torch.long)  # (P,)
+        base_idx = (lo[idx].to(torch.long) * strides).sum(dim=1)  # (K,)
+
+        # *** MEMORY OPTIMIZATION: Process P dimension in chunks to prevent OOM ***
+        # Calculate optimal chunk size based on available memory and tensor dimensions
+        P_chunk = chunk_size or _calculate_optimal_chunk_size(
+            K=len(idx), d=d, device=device, dtype=torch.float32
+        )
+        for p0 in range(0, P, P_chunk):
+            p1 = min(P, p0 + P_chunk)
+
+            # Process chunk: base coordinates and indices for this chunk
+            base_chunk = base[:, p0:p1]  # (d, Pc)
+            lin_offsets_chunk = lin_offsets[p0:p1]  # (Pc,)
+
+            # Per-splat Δ = base + lo - μ   (broadcast to (K, d, Pc))
+            delta = (
+                base_chunk[None, :, :] + lo_f[:, :, None] - mu[:, :, None]
+            )  # (K, d, Pc)
+
+            # Solve L y = Δ  (batched lower-tri solve with Pc RHS per splat)
+            try:
+                y = torch.linalg.solve_triangular(L, delta, upper=False)
+            except Exception:
+                # older PyTorch fallback
+                y, _ = torch.triangular_solve(delta, L, upper=False)
+
+            # Exponent and values: exp(-0.5 * ||y||^2) * a
+            expo = torch.sum(y * y, dim=1)  # (K, Pc)
+            vals = torch.exp(-0.5 * expo) * a[:, None]  # (K, Pc)
+
+            # Absolute flat indices (K, Pc) -> (K*Pc,)
+            idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)
+            vals_flat = vals.reshape(-1)
+
+            # Accumulate into output
+            out_flat.index_add_(0, idx_flat, vals_flat)
+
+    return out
+
+
+def render_gaussians_numpy(
+    shape: Sequence[int],
+    params_full: np.ndarray,
+    amps: np.ndarray,
+    truncate: float = 3.0,
+    chunk_size: Optional[int] = None,
+) -> np.ndarray:
+    """CPU NumPy output wrapper around torch renderer (no grads)."""
+    from luxar.gsplats.utils.trils import tril_size, unpack_tril
+
+    # Input validation
+    if params_full.size == 0:
+        return np.zeros(shape, dtype=np.float32)
+
+    # Determine dimensionality and unpack parameters
+    d = len(shape)
+    tril_elements = tril_size(d)
+
+    if params_full.shape[1] != d + tril_elements:
+        raise ValueError(
+            f"params_full should have {d + tril_elements} columns for {d}D data, "
+            f"got {params_full.shape[1]}"
+        )
+
+    # Split parameters: centers (first d columns) + packed Cholesky (remaining columns)
+    centers = params_full[:, :d].astype(np.float32)
+    packed_L = params_full[:, d:].astype(np.float32)
+
+    # Unpack Cholesky factors
+    ls = unpack_tril(packed_L, d)
+
+    # Convert to PyTorch tensors (CPU, no gradients needed)
+    centers_torch = torch.tensor(centers, dtype=torch.float32, device="cpu")
+    ls_torch = torch.tensor(ls, dtype=torch.float32, device="cpu")
+    amps_torch = torch.tensor(
+        amps.astype(np.float32), dtype=torch.float32, device="cpu"
+    )
+
+    # Render using the PyTorch function
+    with torch.no_grad():
+        result = render_gaussians(
+            shape,
+            centers_torch,
+            ls_torch,
+            amps_torch,
+            truncate=truncate,
+            chunk_size=chunk_size,
+        )
+
+    return result.cpu().numpy()
+
+
+def render_gaussians_pytorch(
+    shape: Sequence[int],
+    params_full: np.ndarray,
+    amps: np.ndarray,
+    truncate: float = 3.0,
+    device: str = "cpu",
+    chunk_size: Optional[int] = None,
+) -> torch.Tensor:
+    """PyTorch wrapper for rendering gaussians with packed parameters."""
+    from luxar.gsplats.utils.trils import tril_size, unpack_tril
+
+    # Input validation
+    if params_full.size == 0:
+        return torch.zeros(shape, dtype=torch.float32, device=device)
+
+    # Determine dimensionality and unpack parameters
+    d = len(shape)
+    tril_elements = tril_size(d)
+
+    if params_full.shape[1] != d + tril_elements:
+        raise ValueError(
+            f"params_full should have {d + tril_elements} columns for {d}D data, "
+            f"got {params_full.shape[1]}"
+        )
+
+    # Split parameters: centers (first d columns) + packed Cholesky (remaining columns)
+    centers = params_full[:, :d].astype(np.float32)
+    packed_L = params_full[:, d:].astype(np.float32)
+
+    # Unpack Cholesky factors
+    ls = unpack_tril(packed_L, d)
+
+    # Convert to PyTorch tensors
+    centers_torch = torch.tensor(centers, dtype=torch.float32, device=device)
+    ls_torch = torch.tensor(ls, dtype=torch.float32, device=device)
+    amps_torch = torch.tensor(
+        amps.astype(np.float32), dtype=torch.float32, device=device
+    )
+
+    # Render using the PyTorch function
+    result = render_gaussians(
+        shape,
+        centers_torch,
+        ls_torch,
+        amps_torch,
+        truncate=truncate,
+        chunk_size=chunk_size,
+    )
+
+    return result
+
+
+def render_gaussians_batched(
+    shape: Sequence[int],
+    centers: torch.Tensor,
+    Ls: torch.Tensor,
+    amps: torch.Tensor,
+    truncate: float = 3.0,
+    intensity_floor: float = 1e-5,
+    chunk_size: Optional[int] = None,
+) -> torch.Tensor:
+    """Batched wrapper for render_gaussians - identical functionality."""
+    return render_gaussians(
+        shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+    )

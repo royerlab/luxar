@@ -336,25 +336,23 @@ class TestRendering:
         assert torch.all(output >= 0)
         assert torch.sum(output) > 0
 
-    def test_batched_vs_sequential_rendering(self, simple_2d_setup):
-        """Test that batched and sequential rendering give similar results."""
+    def test_model_consistency_after_state_copy(self, simple_2d_setup):
+        """Test that models give identical results after state copying."""
         setup = simple_2d_setup
 
-        # Create models with same parameters
-        model_batched = GaussianSplatModel(**setup, batched=True)
-        model_sequential = GaussianSplatModel(**setup, batched=False)
+        # Create two identical models
+        model1 = GaussianSplatModel(**setup)
+        model2 = GaussianSplatModel(**setup)
 
         # Force same parameters by copying state
-        model_sequential.load_state_dict(model_batched.state_dict())
+        model2.load_state_dict(model1.state_dict())
 
         with torch.no_grad():
-            output_batched = model_batched()
-            output_sequential = model_sequential()
+            output1 = model1()
+            output2 = model2()
 
-        # Results should be very similar (allow for small numerical differences)
-        torch.testing.assert_close(
-            output_batched, output_sequential, atol=1e-4, rtol=1e-3
-        )
+        # Results should be identical after state copying
+        torch.testing.assert_close(output1, output2, atol=1e-7, rtol=1e-6)
 
     def test_empty_model_rendering(self):
         """Test rendering with no splats."""

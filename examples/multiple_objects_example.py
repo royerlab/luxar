@@ -186,7 +186,9 @@ def main():
                     gamma=1.2,
                     blending_mode="additive",
                 )
-            aprint(f"  Added {len(cluster_positions)} clusters with {len(cluster_points):,} points each")
+            aprint(
+                f"  Added {len(cluster_positions)} clusters with {len(cluster_points):,} points each"
+            )
 
         with asection("Colorful Nebulae"):
             # 3. Nebula clouds
@@ -213,7 +215,9 @@ def main():
             ]
 
             for nebula in nebula_data:
-                nebula_points = create_nebula_cloud(3000, nebula["center"], nebula["size"])
+                nebula_points = create_nebula_cloud(
+                    3000, nebula["center"], nebula["size"]
+                )
                 scene.add_points(
                     nebula["name"],
                     nebula_points,
@@ -230,7 +234,12 @@ def main():
             # 4. Planetary ring systems
             aprint("Creating planetary ring systems...")
             ring_systems = [
-                {"center": (0, 0, 10), "inner": 2, "outer": 4, "color": [0.78, 0.59, 0.39]},
+                {
+                    "center": (0, 0, 10),
+                    "inner": 2,
+                    "outer": 4,
+                    "color": [0.78, 0.59, 0.39],
+                },
                 {
                     "center": (0, 0, -8),
                     "inner": 1.5,
@@ -253,7 +262,9 @@ def main():
                     gamma=0.9,
                     blending_mode="normal",
                 )
-            aprint(f"  Added {len(ring_systems)} ring systems with variable point densities")
+            aprint(
+                f"  Added {len(ring_systems)} ring systems with variable point densities"
+            )
 
         with asection("Background Star Field"):
             # 5. Scattered star field (background)

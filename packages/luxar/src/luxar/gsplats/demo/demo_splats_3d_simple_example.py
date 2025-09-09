@@ -13,8 +13,9 @@ from scipy import ndimage
 from skimage import data
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -63,9 +64,7 @@ def analyze_compression_performance(V, params_full, amps, n_frames=10):
         idx = order[:K]
 
         # Compute reconstruction
-        Vk = render_gaussians_full_numpy(
-            V.shape, params_full[idx], amps[idx], truncate=3.0
-        )
+        Vk = render_gaussians_numpy(V.shape, params_full[idx], amps[idx], truncate=3.0)
 
         # Quality metrics
         rel_error = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -122,9 +121,20 @@ def main():
         aprint("❌ No candidates found. Try adjusting parameters.")
         return
 
+    # Configure dynamic operations for 3D
+    dynamic_config = DynamicOpsConfig()
+    dynamic_config.step_every = 15  # Less frequent for 3D
+    dynamic_config.max_add_per_step = 30  # Moderate seeding
+    dynamic_config.max_merges_per_step = 20
+    dynamic_config.residual_quantile = 0.95  # Selective seeding
+    dynamic_config.merge_dist_vox = 1.8  # 3D distance threshold
+    dynamic_config.amp_abs_min = 2e-4  # Prune threshold
+    dynamic_config.do_split = True  # Enable splitting
+    dynamic_config.split_eig_thr = 2.2  # 3D split threshold
+
     # Fit Gaussian splats
-    aprint("\n3️⃣ Fitting 3D Gaussian splats...")
-    params_full, amps = fit_gaussian_splats(
+    aprint("\n3️⃣ Fitting 3D Gaussian splats (with dynamic operations)...")
+    params_full, amps, stats = fit_gaussian_splats(
         V,
         centers_overcomplete=centers,
         init_sigma_vox=1.2,
@@ -135,6 +145,9 @@ def main():
         sigma_max_diag=[3.0, 3.0, 3.0],
         truncate=3.0,
         verbose=False,  # Reduce output for demo
+        # Dynamic operations
+        enable_dynamic_ops=True,
+        dynamic_config=dynamic_config,
     )
 
     aprint(f"   Successfully fitted {len(amps)} splats")
@@ -183,7 +196,7 @@ def main():
 
     # Final reconstruction
     aprint("\n5️⃣ Final reconstruction quality...")
-    V_recon = render_gaussians_full_numpy(V.shape, params_full, amps, truncate=3.0)
+    V_recon = render_gaussians_numpy(V.shape, params_full, amps, truncate=3.0)
 
     final_error = np.linalg.norm(V - V_recon) / np.linalg.norm(V)
     peak_preserved = V_recon.max() / V.max()
