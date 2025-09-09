@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from arbol import aprint, asection
 
+from luxar.gsplats.dynamic_ops import DynamicOpsConfig, apply_dynamic_operations
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.utils.trils import pack_tril, tril_size
 
@@ -37,6 +38,8 @@ class GaussianSplatFitter:
         device: Optional[str] = None,
         compile_model: bool = False,
         use_mixed_precision: bool = False,
+        enable_dynamic_ops: bool = False,
+        dynamic_config: Optional[DynamicOpsConfig] = None,
     ):
         # Auto-detect best performing device: CUDA → CPU
         # Note: MPS is supported but currently slower than CPU for typical workloads
@@ -54,6 +57,10 @@ class GaussianSplatFitter:
             if use_mixed_precision and self.device.type == "cuda"
             else None
         )
+
+        # Dynamic operations configuration
+        self.enable_dynamic_ops = enable_dynamic_ops
+        self.dynamic_config = dynamic_config or DynamicOpsConfig()
 
     def _detect_convergence(
         self,
@@ -108,6 +115,9 @@ class GaussianSplatFitter:
         early_stop_patience: int = 20,
         convergence_threshold: float = 1e-3,
         gradient_clip: Optional[float] = 1.0,
+        napari_debug: bool = False,
+        napari_movie: bool = False,
+        movie_every: int = 1,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         """
         Fit Gaussian splats with optional performance optimizations.
@@ -259,6 +269,16 @@ class GaussianSplatFitter:
         loss_history = []
         no_improve_count = 0
 
+        # Movie recording setup (only if enabled)
+        movie_frames = None
+        if napari_movie:
+            movie_frames = {
+                'target': [],
+                'reconstruction': [],
+                'residual': [],
+                'iterations': []
+            }
+
         # Main optimization loop
         actual_iters = 0
         for it in range(1, n_iters + 1):
@@ -290,6 +310,7 @@ class GaussianSplatFitter:
 
                 opt.step()
 
+
             # Learning rate scheduling (detach to avoid warning)
             scheduler.step(loss.detach())
 
@@ -297,11 +318,26 @@ class GaussianSplatFitter:
             current_loss = loss.item()
             loss_history.append(current_loss)
 
+            # Movie frame recording (only if enabled and at specified intervals)
+            if napari_movie and movie_frames is not None and it % movie_every == 0:
+                with torch.no_grad():
+                    # Store frames as numpy arrays (detached from computation graph)
+                    target_frame = V_t.cpu().numpy()
+                    pred_frame = pred.detach().cpu().numpy()
+                    residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
+
+                    movie_frames['target'].append(target_frame)
+                    movie_frames['reconstruction'].append(pred_frame)
+                    movie_frames['residual'].append(residual_frame)
+                    movie_frames['iterations'].append(it)
+
             if current_loss < best_loss:
                 best_loss = current_loss
-                best_state = {
-                    k: v.detach().clone() for k, v in model.state_dict().items()
-                }
+                # Only save state if dynamic ops are disabled (state shape can change)
+                if not self.enable_dynamic_ops:
+                    best_state = {
+                        k: v.detach().clone() for k, v in model.state_dict().items()
+                    }
                 no_improve_count = 0
             else:
                 no_improve_count += 1
@@ -319,7 +355,21 @@ class GaussianSplatFitter:
                         aprint(f"Early stopping at iteration {it} (no improvement)")
                     break
 
-            # Logging
+            # Dynamic operations (prune, seed, merge, split)
+            if self.enable_dynamic_ops and it % self.dynamic_config.step_every == 0:
+                opt, scheduler, ops_occurred = apply_dynamic_operations(
+                    model, opt, scheduler, V_t, self.dynamic_config, lr, self.device, verbose=verbose, napari_debug=napari_debug
+                )
+
+                # Reset early stopping counter if operations occurred
+                # (model topology changed, need time to adapt)
+                if ops_occurred:
+                    no_improve_count = 0
+                    if verbose:
+                        aprint("  → Early stopping counter reset due to dynamic operations")
+
+            # Logging (update N after potential dynamic ops)
+            N = model.n_splats() if hasattr(model, 'n_splats') else N
             if verbose and (it % max(1, n_iters // 10) == 0 or it <= 5):
                 with torch.no_grad():
                     rel = torch.linalg.norm((pred - V_t).reshape(-1)) / (
@@ -330,8 +380,8 @@ class GaussianSplatFitter:
                     f"relL2={float(rel):.4f}  N={N}"
                 )
 
-        # Restore best state
-        if best_state is not None:
+        # Restore best state (only if dynamic ops disabled and state was saved)
+        if best_state is not None and not self.enable_dynamic_ops:
             model.load_state_dict(best_state)
 
         # Extract parameters
@@ -351,6 +401,10 @@ class GaussianSplatFitter:
             "converged": actual_iters < n_iters,
             "n_splats": N,
         }
+
+        # Show optimization movie (only if enabled and frames were recorded)
+        if napari_movie and movie_frames is not None and len(movie_frames['target']) > 0:
+            _show_optimization_movie(movie_frames, V.shape)
 
         return params_full.astype(np.float32), amps_np.astype(np.float32), stats
 
@@ -375,6 +429,12 @@ def fit_gaussian_splats(
     gradient_clip: Optional[float] = 1.0,
     compile_model: bool = False,
     use_mixed_precision: bool = False,
+    # Dynamic operations parameters
+    enable_dynamic_ops: bool = False,
+    dynamic_config: Optional[DynamicOpsConfig] = None,
+    napari_debug: bool = False,
+    napari_movie: bool = True,
+    movie_every: int = 5,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
@@ -457,6 +517,8 @@ def fit_gaussian_splats(
             device=device,
             compile_model=compile_model,
             use_mixed_precision=use_mixed_precision,
+            enable_dynamic_ops=enable_dynamic_ops,
+            dynamic_config=dynamic_config,
         )
 
         # Fit and extract results
@@ -476,6 +538,9 @@ def fit_gaussian_splats(
             early_stop_patience=early_stop_patience,
             convergence_threshold=convergence_threshold,
             gradient_clip=gradient_clip,
+            napari_debug=napari_debug,
+            napari_movie=napari_movie,
+            movie_every=movie_every,
         )
 
         if verbose:
@@ -490,3 +555,76 @@ def fit_gaussian_splats(
                     aprint("Stopped early (no improvement)")
 
         return params, amps, stats
+
+
+def _show_optimization_movie(movie_frames, shape):
+    """
+    Display napari viewer with optimization movie showing target, reconstruction, and residual over time.
+    """
+    try:
+        import napari
+        import numpy as np
+        from arbol import aprint
+
+        aprint("🎬 Creating optimization movie visualization...")
+
+        # Convert lists to 4D arrays (time, y, x) for 2D or (time, z, y, x) for 3D
+        target_stack = np.array(movie_frames['target'])
+        reconstruction_stack = np.array(movie_frames['reconstruction'])
+        residual_stack = np.array(movie_frames['residual'])
+        iterations = movie_frames['iterations']
+
+        # Create napari viewer with time series
+        viewer = napari.Viewer(title=f"Optimization Movie ({len(iterations)} frames)")
+
+        # Add image stacks as layers
+        viewer.add_image(
+            target_stack,
+            name="Target",
+            colormap="viridis",
+            opacity=0.8
+        )
+
+        viewer.add_image(
+            reconstruction_stack,
+            name="Reconstruction",
+            colormap="plasma",
+            opacity=0.8,
+            visible=False  # Start hidden
+        )
+
+        viewer.add_image(
+            residual_stack,
+            name="Residual",
+            colormap="hot",
+            opacity=0.9
+        )
+
+        # Set up the time slider
+        viewer.dims.axis_labels = ['iteration'] + [f'dim_{i}' for i in range(len(shape))]
+
+        # Add text overlay with movie information
+        info_text = "Optimization Movie\n"
+        info_text += f"Frames: {len(iterations)}\n"
+        info_text += f"Iterations: {iterations[0]} → {iterations[-1]}\n"
+        info_text += f"Shape: {shape}\n\n"
+        info_text += "Use time slider to scrub through optimization\n"
+        info_text += "Toggle layers to compare target/reconstruction/residual"
+
+        viewer.text_overlay.text = info_text
+        viewer.text_overlay.visible = True
+
+        aprint(f"🎬 Movie ready: {len(iterations)} frames from iterations {iterations[0]} to {iterations[-1]}")
+        aprint("Use the time slider to scrub through optimization progress!")
+        aprint("Toggle layer visibility to compare target/reconstruction/residual")
+        aprint("Close window to continue...")
+
+        # Run napari - blocks until window is closed
+        napari.run()
+
+    except ImportError:
+        from arbol import aprint
+        aprint("⚠ napari not available for movie visualization")
+    except Exception as e:
+        from arbol import aprint
+        aprint(f"⚠ Movie visualization error: {e}")

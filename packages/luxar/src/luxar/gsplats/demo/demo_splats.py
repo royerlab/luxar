@@ -6,18 +6,20 @@ from arbol import aprint
 from skimage import data, filters
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # ======= Demo knobs =======
-USE_POISSON = True  # True: Poisson deviance; False: MSE
+USE_POISSON = False  # True: Poisson deviance; False: MSE
 L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
-N_ITERS = 550
+N_ITERS = 1000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 SPACING = (1.0, 1.0)  # (row, col); not needed for ranking here
+USE_DYNAMIC_OPS = True  # Enable dynamic operations (prune, seed, merge, split) - set to False to disable
 # ==========================
 
 
@@ -56,19 +58,28 @@ centers = find_candidates_overcomplete_nd(
     V,
     scales=(0.8, 1.2, 1.8, 2.6, 3.6),
     peaks_per_scale=900,
-    percentile_thresh=90,
+    percentile_thresh=95,
     min_dist=2.0,
     add_intensity_grid=False,
 )
 aprint(f"candidates: {len(centers)}")
 
-# 3) Fit oriented (full-covariance) Gaussians with PyTorch
+# 3) Configure dynamic operations (if enabled)
+dynamic_config = None
+if USE_DYNAMIC_OPS:
+    dynamic_config = DynamicOpsConfig()
+    aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
+
+# 4) Fit oriented (full-covariance) Gaussians with PyTorch
 params_full, amps, stats = fit_gaussian_splats(
     V,
     centers_overcomplete=centers,
     init_sigma_vox=1.6,
     n_iters=N_ITERS,
     lr=0.2,
+    early_stopping=True,
+    early_stop_patience=100,
+    convergence_threshold=1e-9,
     loss_type=("poisson" if USE_POISSON else "mse"),
     l1_amp=L1_AMP,
     sigma_min_diag=[0.6, 0.6],  # per-axis Cholesky diag floor (voxel units)
@@ -76,6 +87,11 @@ params_full, amps, stats = fit_gaussian_splats(
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,
+    # Dynamic operations
+    napari_debug=False,
+    enable_dynamic_ops=USE_DYNAMIC_OPS,
+    dynamic_config=dynamic_config,
+    napari_movie=True,
 )
 
 if len(amps) == 0:
