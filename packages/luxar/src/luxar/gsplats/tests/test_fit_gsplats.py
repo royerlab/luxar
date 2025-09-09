@@ -86,7 +86,7 @@ class TestFitGaussianSplatsBasic:
 
     def test_basic_fitting_2d(self, simple_2d_blob, simple_candidates_2d):
         """Test basic splat fitting in 2D."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             init_sigma_vox=1.0,
@@ -117,7 +117,7 @@ class TestFitGaussianSplatsBasic:
 
     def test_basic_fitting_3d(self, simple_3d_blob, simple_candidates_3d):
         """Test basic splat fitting in 3D."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_3d_blob,
             centers_overcomplete=simple_candidates_3d,
             init_sigma_vox=1.2,
@@ -143,7 +143,7 @@ class TestFitGaussianSplatsBasic:
         """Test fitting with no candidate centers."""
         empty_candidates = np.zeros((0, 2), dtype=np.float32)
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=empty_candidates,
             n_iters=10,
@@ -161,7 +161,7 @@ class TestFitGaussianSplatsBasic:
         """Test fitting with single candidate."""
         single_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=single_candidate,
             n_iters=30,
@@ -276,9 +276,7 @@ class TestInputValidation:
             )
 
         # Test max < min
-        with pytest.raises(
-            ValueError, match="greater than corresponding sigma_min_diag"
-        ):
+        with pytest.raises(ValueError, match="greater than sigma_min_diag"):
             fit_gaussian_splats(
                 simple_2d_blob,
                 simple_candidates_2d,
@@ -296,7 +294,7 @@ class TestUniformImageHandling:
         uniform_image = np.ones((21, 21), dtype=np.float32) * 5.0
 
         # Should not crash due to division by zero
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=uniform_image,
             centers_overcomplete=simple_candidates_2d,
             n_iters=10,
@@ -314,7 +312,7 @@ class TestUniformImageHandling:
         nearly_uniform = np.ones((21, 21), dtype=np.float32) * 5.0
         nearly_uniform[10, 10] = 5.0001  # Tiny variation
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=nearly_uniform,
             centers_overcomplete=simple_candidates_2d,
             n_iters=10,
@@ -330,7 +328,7 @@ class TestLossTypes:
 
     def test_mse_loss(self, simple_2d_blob, simple_candidates_2d):
         """Test MSE loss function."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             loss_type="mse",
@@ -344,7 +342,7 @@ class TestLossTypes:
 
     def test_poisson_loss(self, simple_2d_blob, simple_candidates_2d):
         """Test Poisson loss function."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             loss_type="poisson",
@@ -364,7 +362,7 @@ class TestRegularization:
         """Test that L1 regularization affects results."""
 
         # Fit without regularization
-        params_no_reg, amps_no_reg = fit_gaussian_splats(
+        params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
             V=multi_blob_2d,
             centers_overcomplete=simple_candidates_2d,
             l1_amp=0.0,
@@ -373,7 +371,7 @@ class TestRegularization:
         )
 
         # Fit with L1 regularization
-        params_reg, amps_reg = fit_gaussian_splats(
+        params_reg, amps_reg, _ = fit_gaussian_splats(
             V=multi_blob_2d,
             centers_overcomplete=simple_candidates_2d,
             l1_amp=0.01,  # Small regularization
@@ -397,7 +395,7 @@ class TestConstraints:
         """Test that minimum sigma constraint is enforced."""
         sigma_min = [0.8, 1.2]  # Different mins for each axis
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             sigma_min_diag=sigma_min,
@@ -424,7 +422,7 @@ class TestConstraints:
         sigma_min = [0.3, 0.3]
         sigma_max = [1.5, 2.0]  # Different maxes for each axis
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             sigma_min_diag=sigma_min,
@@ -450,7 +448,7 @@ class TestDeviceSupport:
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d):
         """Test explicit CPU device."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             device="cpu",
@@ -464,7 +462,7 @@ class TestDeviceSupport:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_cuda_device(self, simple_2d_blob, simple_candidates_2d):
         """Test CUDA device if available."""
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             device="cuda",
@@ -483,7 +481,7 @@ class TestConvergence:
         """Test that more iterations generally improve convergence."""
 
         # Short optimization
-        params_short, amps_short = fit_gaussian_splats(
+        params_short, amps_short, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             n_iters=5,
@@ -491,7 +489,7 @@ class TestConvergence:
         )
 
         # Longer optimization
-        params_long, amps_long = fit_gaussian_splats(
+        params_long, amps_long, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             n_iters=50,
@@ -505,7 +503,7 @@ class TestConvergence:
     def test_different_learning_rates(self, simple_2d_blob, simple_candidates_2d):
         """Test that different learning rates produce different results."""
 
-        params_low_lr, amps_low_lr = fit_gaussian_splats(
+        params_low_lr, amps_low_lr, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             lr=0.01,  # Low learning rate
@@ -513,7 +511,7 @@ class TestConvergence:
             verbose=False,
         )
 
-        params_high_lr, amps_high_lr = fit_gaussian_splats(
+        params_high_lr, amps_high_lr, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=simple_candidates_2d,
             lr=0.5,  # High learning rate
@@ -533,7 +531,7 @@ class TestReconstructionQuality:
         # Use candidate near the center where the blob peak should be
         center_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
 
-        params_full, amps = fit_gaussian_splats(
+        params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
             centers_overcomplete=center_candidate,
             n_iters=100,  # More iterations for better fit
@@ -555,7 +553,7 @@ class TestReconstructionQuality:
 
         # Fit with few candidates
         few_candidates = np.array([[15.0, 15.0]], dtype=np.float32)
-        params_few, amps_few = fit_gaussian_splats(
+        params_few, amps_few, _ = fit_gaussian_splats(
             V=multi_blob_2d,
             centers_overcomplete=few_candidates,
             n_iters=50,
@@ -571,7 +569,7 @@ class TestReconstructionQuality:
             ],
             dtype=np.float32,
         )
-        params_many, amps_many = fit_gaussian_splats(
+        params_many, amps_many, _ = fit_gaussian_splats(
             V=multi_blob_2d,
             centers_overcomplete=many_candidates,
             n_iters=50,

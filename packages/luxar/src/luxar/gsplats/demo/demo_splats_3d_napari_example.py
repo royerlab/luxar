@@ -7,13 +7,13 @@ from skimage import data
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # ======= Demo knobs =======
 USE_POISSON = True  # True: Poisson deviance; False: MSE
 L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
-N_ITERS = 400  # Reduced for 3D (more expensive)
+N_ITERS = 550  # Reduced for 3D (more expensive)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 30  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
@@ -81,7 +81,7 @@ volume_size = 64  # Size for 3D demo
 blobs = data.binary_blobs(
     length=volume_size, blob_size_fraction=0.08, n_dim=3, volume_fraction=0.15, rng=42
 ).astype(float)
-V = ndimage.gaussian_filter(blobs, sigma=2.5).astype(np.float32)
+V = ndimage.gaussian_filter(blobs, sigma=3.5).astype(np.float32)
 
 aprint(f"Created 3D volume: {V.shape} = {V.size:,} voxels")
 aprint(f"Volume range: [{V.min():.4f}, {V.max():.4f}]")
@@ -104,7 +104,7 @@ if len(centers) == 0:
 
 # 3) Fit oriented (full-covariance) 3D Gaussians with PyTorch
 aprint("Fitting 3D Gaussian splats...")
-params_full, amps = fit_gaussian_splats(
+params_full, amps, stats = fit_gaussian_splats(
     V,
     centers_overcomplete=centers,
     init_sigma_vox=1.4,  # Slightly smaller for 3D
@@ -174,7 +174,7 @@ for i, K in enumerate(keep_counts):
     idx = order[:K]
 
     # Reconstruction & residual
-    Vk = render_gaussians_full_numpy(
+    Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )
     stack_recon[i] = Vk
@@ -234,11 +234,11 @@ lyr_recon = viewer.add_image(
 
 # Add residual volume stack
 lyr_resid = viewer.add_image(
-    np.maximum(stack_resid, 0),
-    name="residual (clipped ≥0, compression)",
+    np.abs(stack_resid),
+    name="absolute residual",
     colormap="turbo",
     opacity=0.5,
-    contrast_limits=[0, max(1e-12, float(stack_resid.max()))],
+    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     rendering="mip",
 )
 

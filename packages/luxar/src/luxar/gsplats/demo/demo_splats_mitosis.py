@@ -6,7 +6,7 @@ from skimage import color, data, exposure, filters, img_as_float32
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplats_render import render_gaussians_full_numpy
+from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # ======= Demo knobs =======
@@ -61,7 +61,7 @@ centers = find_candidates_overcomplete_nd(
 aprint(f"[human_mitosis] candidate centers: {len(centers)}")
 
 # 3) Fit oriented (full-covariance) Gaussians with PyTorch
-params_full, amps = fit_gaussian_splats(
+params_full, amps, stats = fit_gaussian_splats(
     V,
     centers_overcomplete=centers,
     init_sigma_vox=1.6,
@@ -116,7 +116,7 @@ centers_frames = []
 for i, K in enumerate(keep_counts):
     idx = order[:K]
 
-    Vk = render_gaussians_full_numpy(
+    Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )
     stack_recon[i] = Vk
@@ -151,11 +151,11 @@ viewer.add_image(
     contrast_limits=[0, max(1e-12, float(stack_recon.max()))],
 )
 viewer.add_image(
-    np.maximum(stack_resid, 0),
-    name="residual (clipped ≥0, compression)",
+    np.abs(stack_resid),
+    name="absolute residual",
     colormap="turbo",
     opacity=0.6,
-    contrast_limits=[0, max(1e-12, float(stack_resid.max()))],
+    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
 )
 
 # Shapes & points that update with slider

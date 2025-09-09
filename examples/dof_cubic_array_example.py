@@ -87,7 +87,6 @@ def create_cubic_array(
     return positions, colors, radii, sharpness_array
 
 
-
 def main():
     """Create a DOF test cubic array scene."""
     output_path = Path(__file__).parent / "dof_cubic_array_example.zarr"
@@ -192,7 +191,6 @@ Performance notes:
             gamma=1.0,
             blending_mode="normal",
         )
-
 
         # Print statistics
         aprint("\n✓ Scene created successfully!")

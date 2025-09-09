@@ -103,7 +103,9 @@ def main():
                 positions_dataset[total_points:new_total] = batch_positions
 
                 total_points = new_total
-                aprint(f"  ✓ Streamed batch {i + 1}/{n_batches} ({batch_size:,} points)")
+                aprint(
+                    f"  ✓ Streamed batch {i + 1}/{n_batches} ({batch_size:,} points)"
+                )
 
             # Store metadata for streaming points
             compiler.write_group(

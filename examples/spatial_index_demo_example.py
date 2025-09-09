@@ -126,7 +126,9 @@ def main():
     with asection("Spatial Index Demo Setup"):
         aprint(f"🎯 Creating spatial index demo with {args.clusters} clusters")
         aprint(f"   Each cluster has {args.points_per_cluster} points")
-        aprint(f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}")
+        aprint(
+            f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}"
+        )
 
         # Define 5D dimensions
         dims = Dimensions(
@@ -135,10 +137,20 @@ def main():
                 Dimension("y", unit="um", display=True, range=(-60, 60)),
                 Dimension("z", unit="um", display=True, range=(-60, 60)),
                 Dimension(
-                    "time", unit="s", display=False, range=(0, 10), step=0.5, discrete=True
+                    "time",
+                    unit="s",
+                    display=False,
+                    range=(0, 10),
+                    step=0.5,
+                    discrete=True,
                 ),
                 Dimension(
-                    "channel", unit="ch", display=False, range=(0, 2), step=1, discrete=True
+                    "channel",
+                    unit="ch",
+                    display=False,
+                    range=(0, 2),
+                    step=1,
+                    discrete=True,
                 ),
             ]
         )

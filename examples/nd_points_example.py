@@ -64,31 +64,51 @@ def main():
         # Define 5D dimensions: time, x, y, z, channel
         # Only x, y, z are displayed (visualized), time and channel are non-displayed
         aprint("Defining 5D scene dimensions...")
-        dims_5d = Dimensions([
-            Dimension(
-                "time",
-                unit="s",
-                range=(0.0, 1.0),
-                step=0.1,
-                display=False,
-                discrete=True,  # Non-displayed dimensions must be discrete
-                scale=1.0,
-                description="Time evolution of the system"
-            ),
-            Dimension("x", unit="um", display=True, scale=0.5, description="Spatial X coordinate"),
-            Dimension("y", unit="um", display=True, scale=0.5, description="Spatial Y coordinate"),
-            Dimension("z", unit="um", display=True, scale=1.0, description="Spatial Z coordinate"),
-            Dimension(
-                "channel",
-                unit="au",
-                range=(0, 2),
-                step=1.0,
-                display=False,
-                discrete=True,
-                scale=1.0,
-                description="Color channel (R=0, G=1, B=2)"
-            ),
-        ])
+        dims_5d = Dimensions(
+            [
+                Dimension(
+                    "time",
+                    unit="s",
+                    range=(0.0, 1.0),
+                    step=0.1,
+                    display=False,
+                    discrete=True,  # Non-displayed dimensions must be discrete
+                    scale=1.0,
+                    description="Time evolution of the system",
+                ),
+                Dimension(
+                    "x",
+                    unit="um",
+                    display=True,
+                    scale=0.5,
+                    description="Spatial X coordinate",
+                ),
+                Dimension(
+                    "y",
+                    unit="um",
+                    display=True,
+                    scale=0.5,
+                    description="Spatial Y coordinate",
+                ),
+                Dimension(
+                    "z",
+                    unit="um",
+                    display=True,
+                    scale=1.0,
+                    description="Spatial Z coordinate",
+                ),
+                Dimension(
+                    "channel",
+                    unit="au",
+                    range=(0, 2),
+                    step=1.0,
+                    display=False,
+                    discrete=True,
+                    scale=1.0,
+                    description="Color channel (R=0, G=1, B=2)",
+                ),
+            ]
+        )
 
         scene = compiler.create_scene(dimensions=dims_5d)
 
@@ -141,7 +161,7 @@ def main():
                     continue
 
                 # Random points in a sphere
-                theta = np.random.uniform(0, 2*np.pi, n_spatial)
+                theta = np.random.uniform(0, 2 * np.pi, n_spatial)
                 phi = np.random.uniform(0, np.pi, n_spatial)
                 r = np.random.uniform(0, 15, n_spatial)
 
@@ -169,7 +189,9 @@ def main():
 
         aprint(f"✓ 5D nD scene created at {output_path}")
         aprint("\nScene summary:")
-        aprint(f"- Main time series: {n_points_5d:,} 5D points across time and channels")
+        aprint(
+            f"- Main time series: {n_points_5d:,} 5D points across time and channels"
+        )
         aprint(f"- Reference pattern: {positions_ref.shape[0]:,} 5D reference points")
         aprint("\n5D Dimensions defined:")
         aprint("  - time: [0.0, 1.0] s (non-displayed, discrete)")

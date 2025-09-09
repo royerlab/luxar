@@ -16,12 +16,11 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
-    from luxar.gsplats.models.gsplats.gsplats_batched_render import (
+    from luxar.gsplats.models.gsplats.gsplat_model import (
+        render_gaussians,
         render_gaussians_batched,
-    )
-    from luxar.gsplats.models.gsplats.gsplats_render import (
-        render_gaussians_full_numpy,
-        render_gaussians_full_torch,
+        render_gaussians_numpy,
+        render_gaussians_pytorch,
     )
     from luxar.gsplats.utils.trils import pack_tril
 
@@ -117,7 +116,7 @@ class TestRenderGaussiansFullTorch:
         """Test rendering single 2D Gaussian."""
         params = simple_2d_params
 
-        result = render_gaussians_full_torch(
+        result = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -149,7 +148,7 @@ class TestRenderGaussiansFullTorch:
         """Test rendering multiple 2D Gaussians."""
         params = multi_2d_params
 
-        result = render_gaussians_full_torch(
+        result = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -172,7 +171,7 @@ class TestRenderGaussiansFullTorch:
         """Test rendering single 3D Gaussian."""
         params = simple_3d_params
 
-        result = render_gaussians_full_torch(
+        result = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -196,7 +195,7 @@ class TestRenderGaussiansFullTorch:
         params_full = np.zeros((0, 5), dtype=np.float32)  # 2D + 3 tril elements
         amps = np.zeros((0,), dtype=np.float32)
 
-        result = render_gaussians_full_torch(shape, params_full, amps)
+        result = render_gaussians_pytorch(shape, params_full, amps)
 
         # Should be all zeros
         assert result.shape == shape
@@ -207,7 +206,7 @@ class TestRenderGaussiansFullTorch:
         params = simple_2d_params
 
         # Test CPU
-        result_cpu = render_gaussians_full_torch(
+        result_cpu = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -217,7 +216,7 @@ class TestRenderGaussiansFullTorch:
 
         # Test CUDA if available
         if torch.cuda.is_available():
-            result_cuda = render_gaussians_full_torch(
+            result_cuda = render_gaussians_pytorch(
                 shape=params["shape"],
                 params_full=params["params_full"],
                 amps=params["amps"],
@@ -235,7 +234,7 @@ class TestRenderGaussiansFullTorch:
         params = simple_2d_params
 
         # Small truncation (tight support)
-        result_small = render_gaussians_full_torch(
+        result_small = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -243,7 +242,7 @@ class TestRenderGaussiansFullTorch:
         )
 
         # Large truncation (wide support)
-        result_large = render_gaussians_full_torch(
+        result_large = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -271,7 +270,7 @@ class TestRenderGaussiansFullNumpy:
         """Test NumPy wrapper function."""
         params = simple_2d_params
 
-        result = render_gaussians_full_numpy(
+        result = render_gaussians_numpy(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -291,7 +290,7 @@ class TestRenderGaussiansFullNumpy:
         """Test that NumPy and PyTorch versions give same results."""
         params = simple_2d_params
 
-        result_numpy = render_gaussians_full_numpy(
+        result_numpy = render_gaussians_numpy(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -299,7 +298,7 @@ class TestRenderGaussiansFullNumpy:
         )
 
         result_torch = (
-            render_gaussians_full_torch(
+            render_gaussians_pytorch(
                 shape=params["shape"],
                 params_full=params["params_full"],
                 amps=params["amps"],
@@ -321,7 +320,7 @@ class TestBatchedRendering:
         """Test batched rendering in 2D."""
         params = multi_2d_params
 
-        result = render_gaussians_batched(
+        result = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -342,7 +341,7 @@ class TestBatchedRendering:
         params = multi_2d_params
 
         # Render with batched implementation
-        result_batched = render_gaussians_batched(
+        result_batched = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -351,7 +350,7 @@ class TestBatchedRendering:
         )
 
         # Render with non-batched implementation
-        result_sequential = render_gaussians_full_torch(
+        result_sequential = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
             amps=params["amps"],
@@ -372,7 +371,7 @@ class TestBatchedRendering:
         small_amps[1] = 1e-8  # Very small amplitude
 
         # Render with intensity floor
-        result_with_floor = render_gaussians_batched(
+        result_with_floor = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -382,7 +381,7 @@ class TestBatchedRendering:
         )
 
         # Render without intensity floor
-        result_no_floor = render_gaussians_batched(
+        result_no_floor = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -414,7 +413,7 @@ class TestBatchedRendering:
         """Test batched rendering with single splat."""
         params = simple_2d_params
 
-        result = render_gaussians_batched(
+        result = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -449,7 +448,7 @@ class TestRenderingEdgeCases:
 
         amps = np.array([1.0], dtype=np.float32)
 
-        result = render_gaussians_full_torch(shape, params_full, amps, truncate=3.0)
+        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -467,7 +466,7 @@ class TestRenderingEdgeCases:
 
         amps = np.array([0.01], dtype=np.float32)  # Small amplitude to compensate
 
-        result = render_gaussians_full_torch(shape, params_full, amps, truncate=2.0)
+        result = render_gaussians_pytorch(shape, params_full, amps, truncate=2.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -493,7 +492,7 @@ class TestRenderingEdgeCases:
 
         amps = np.ones(3, dtype=np.float32)
 
-        result = render_gaussians_full_torch(shape, params_full, amps, truncate=3.0)
+        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -512,7 +511,7 @@ class TestRenderingEdgeCases:
 
         amps = np.array([1.0], dtype=np.float32)
 
-        result = render_gaussians_full_torch(shape, params_full, amps, truncate=3.0)
+        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -540,7 +539,7 @@ class TestRenderingEdgeCases:
 
         amps = np.array([0.0], dtype=np.float32)  # Zero amplitude
 
-        result = render_gaussians_full_torch(shape, params_full, amps)
+        result = render_gaussians_pytorch(shape, params_full, amps)
 
         # Should be effectively zero (allowing for floating point precision)
         assert torch.all(result < 1e-6)
@@ -571,7 +570,7 @@ class TestPerformanceAndNumericalStability:
         amps = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
 
         # Should not crash or produce invalid results
-        result = render_gaussians_full_torch(shape, params_full, amps, truncate=2.0)
+        result = render_gaussians_pytorch(shape, params_full, amps, truncate=2.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -589,7 +588,7 @@ class TestPerformanceAndNumericalStability:
         params_small = np.concatenate([centers, L_packed_small], axis=1)
         amps_small = np.array([1e-6], dtype=np.float32)
 
-        result_small = render_gaussians_full_torch(shape, params_small, amps_small)
+        result_small = render_gaussians_pytorch(shape, params_small, amps_small)
         assert torch.all(torch.isfinite(result_small))
 
         # Test reasonable large values
@@ -598,7 +597,7 @@ class TestPerformanceAndNumericalStability:
         params_large = np.concatenate([centers, L_packed_large], axis=1)
         amps_large = np.array([0.1], dtype=np.float32)
 
-        result_large = render_gaussians_full_torch(shape, params_large, amps_large)
+        result_large = render_gaussians_pytorch(shape, params_large, amps_large)
         assert torch.all(torch.isfinite(result_large))
 
 
