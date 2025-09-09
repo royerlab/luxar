@@ -273,10 +273,10 @@ class GaussianSplatFitter:
         movie_frames = None
         if napari_movie:
             movie_frames = {
-                'target': [],
-                'reconstruction': [],
-                'residual': [],
-                'iterations': []
+                "target": [],
+                "reconstruction": [],
+                "residual": [],
+                "iterations": [],
             }
 
         # Main optimization loop
@@ -310,7 +310,6 @@ class GaussianSplatFitter:
 
                 opt.step()
 
-
             # Learning rate scheduling (detach to avoid warning)
             scheduler.step(loss.detach())
 
@@ -326,10 +325,10 @@ class GaussianSplatFitter:
                     pred_frame = pred.detach().cpu().numpy()
                     residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
-                    movie_frames['target'].append(target_frame)
-                    movie_frames['reconstruction'].append(pred_frame)
-                    movie_frames['residual'].append(residual_frame)
-                    movie_frames['iterations'].append(it)
+                    movie_frames["target"].append(target_frame)
+                    movie_frames["reconstruction"].append(pred_frame)
+                    movie_frames["residual"].append(residual_frame)
+                    movie_frames["iterations"].append(it)
 
             if current_loss < best_loss:
                 best_loss = current_loss
@@ -358,7 +357,15 @@ class GaussianSplatFitter:
             # Dynamic operations (prune, seed, merge, split)
             if self.enable_dynamic_ops and it % self.dynamic_config.step_every == 0:
                 opt, scheduler, ops_occurred = apply_dynamic_operations(
-                    model, opt, scheduler, V_t, self.dynamic_config, lr, self.device, verbose=verbose, napari_debug=napari_debug
+                    model,
+                    opt,
+                    scheduler,
+                    V_t,
+                    self.dynamic_config,
+                    lr,
+                    self.device,
+                    verbose=verbose,
+                    napari_debug=napari_debug,
                 )
 
                 # Reset early stopping counter if operations occurred
@@ -366,10 +373,12 @@ class GaussianSplatFitter:
                 if ops_occurred:
                     no_improve_count = 0
                     if verbose:
-                        aprint("  → Early stopping counter reset due to dynamic operations")
+                        aprint(
+                            "  → Early stopping counter reset due to dynamic operations"
+                        )
 
             # Logging (update N after potential dynamic ops)
-            N = model.n_splats() if hasattr(model, 'n_splats') else N
+            N = model.n_splats() if hasattr(model, "n_splats") else N
             if verbose and (it % max(1, n_iters // 10) == 0 or it <= 5):
                 with torch.no_grad():
                     rel = torch.linalg.norm((pred - V_t).reshape(-1)) / (
@@ -403,7 +412,11 @@ class GaussianSplatFitter:
         }
 
         # Show optimization movie (only if enabled and frames were recorded)
-        if napari_movie and movie_frames is not None and len(movie_frames['target']) > 0:
+        if (
+            napari_movie
+            and movie_frames is not None
+            and len(movie_frames["target"]) > 0
+        ):
             _show_optimization_movie(movie_frames, V.shape)
 
         return params_full.astype(np.float32), amps_np.astype(np.float32), stats
@@ -569,39 +582,31 @@ def _show_optimization_movie(movie_frames, shape):
         aprint("🎬 Creating optimization movie visualization...")
 
         # Convert lists to 4D arrays (time, y, x) for 2D or (time, z, y, x) for 3D
-        target_stack = np.array(movie_frames['target'])
-        reconstruction_stack = np.array(movie_frames['reconstruction'])
-        residual_stack = np.array(movie_frames['residual'])
-        iterations = movie_frames['iterations']
+        target_stack = np.array(movie_frames["target"])
+        reconstruction_stack = np.array(movie_frames["reconstruction"])
+        residual_stack = np.array(movie_frames["residual"])
+        iterations = movie_frames["iterations"]
 
         # Create napari viewer with time series
         viewer = napari.Viewer(title=f"Optimization Movie ({len(iterations)} frames)")
 
         # Add image stacks as layers
-        viewer.add_image(
-            target_stack,
-            name="Target",
-            colormap="viridis",
-            opacity=0.8
-        )
+        viewer.add_image(target_stack, name="Target", colormap="viridis", opacity=0.8)
 
         viewer.add_image(
             reconstruction_stack,
             name="Reconstruction",
             colormap="plasma",
             opacity=0.8,
-            visible=False  # Start hidden
+            visible=False,  # Start hidden
         )
 
-        viewer.add_image(
-            residual_stack,
-            name="Residual",
-            colormap="hot",
-            opacity=0.9
-        )
+        viewer.add_image(residual_stack, name="Residual", colormap="hot", opacity=0.9)
 
         # Set up the time slider
-        viewer.dims.axis_labels = ['iteration'] + [f'dim_{i}' for i in range(len(shape))]
+        viewer.dims.axis_labels = ["iteration"] + [
+            f"dim_{i}" for i in range(len(shape))
+        ]
 
         # Add text overlay with movie information
         info_text = "Optimization Movie\n"
@@ -614,7 +619,9 @@ def _show_optimization_movie(movie_frames, shape):
         viewer.text_overlay.text = info_text
         viewer.text_overlay.visible = True
 
-        aprint(f"🎬 Movie ready: {len(iterations)} frames from iterations {iterations[0]} to {iterations[-1]}")
+        aprint(
+            f"🎬 Movie ready: {len(iterations)} frames from iterations {iterations[0]} to {iterations[-1]}"
+        )
         aprint("Use the time slider to scrub through optimization progress!")
         aprint("Toggle layer visibility to compare target/reconstruction/residual")
         aprint("Close window to continue...")
@@ -624,7 +631,9 @@ def _show_optimization_movie(movie_frames, shape):
 
     except ImportError:
         from arbol import aprint
+
         aprint("⚠ napari not available for movie visualization")
     except Exception as e:
         from arbol import aprint
+
         aprint(f"⚠ Movie visualization error: {e}")

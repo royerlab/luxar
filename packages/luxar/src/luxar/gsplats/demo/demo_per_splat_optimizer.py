@@ -24,8 +24,8 @@ from luxar.gsplats.utils.trils import pack_tril
 # ======= Demo Configuration =======
 N_ITERS = 500
 USE_DYNAMIC_OPS = True  # Enable dynamic operations with per-splat optimizer
-RECORD_MOVIE = True     # Record optimization movie for napari visualization
-MOVIE_EVERY = 5         # Record every N iterations
+RECORD_MOVIE = True  # Record optimization movie for napari visualization
+MOVIE_EVERY = 5  # Record every N iterations
 # ==================================
 
 
@@ -93,15 +93,13 @@ def main():
 
         # Create per-splat optimizer setup
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
-            model,
-            lr=0.2,
-            scheduler_type='plateau',
-            patience=10,
-            factor=0.5
+            model, lr=0.2, scheduler_type="plateau", patience=10, factor=0.5
         )
 
         aprint(f"✓ Per-splat optimizer for {model.n_splats()} splats")
-        aprint(f"✓ Individual learning rates: mean={optimizer.get_effective_learning_rates().mean():.6f}")
+        aprint(
+            f"✓ Individual learning rates: mean={optimizer.get_effective_learning_rates().mean():.6f}"
+        )
 
     # Configure dynamic operations
     dynamic_config = None
@@ -119,10 +117,10 @@ def main():
         movie_frames = None
         if RECORD_MOVIE:
             movie_frames = {
-                'target': [],
-                'reconstruction': [],
-                'residual': [],
-                'iterations': []
+                "target": [],
+                "reconstruction": [],
+                "residual": [],
+                "iterations": [],
             }
             aprint(f"🎬 Recording optimization movie (every {MOVIE_EVERY} iterations)")
 
@@ -146,18 +144,29 @@ def main():
                     pred_frame = pred.detach().cpu().numpy()
                     residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
-                    movie_frames['target'].append(target_frame)
-                    movie_frames['reconstruction'].append(pred_frame)
-                    movie_frames['residual'].append(residual_frame)
-                    movie_frames['iterations'].append(it)
+                    movie_frames["target"].append(target_frame)
+                    movie_frames["reconstruction"].append(pred_frame)
+                    movie_frames["residual"].append(residual_frame)
+                    movie_frames["iterations"].append(it)
 
             # Dynamic operations (the key difference - no momentum loss!)
-            if USE_DYNAMIC_OPS and dynamic_config and it % dynamic_config.step_every == 0:
+            if (
+                USE_DYNAMIC_OPS
+                and dynamic_config
+                and it % dynamic_config.step_every == 0
+            ):
                 old_n = model.n_splats()
 
                 _, _, operations_occurred = apply_dynamic_operations(
-                    model, optimizer, scheduler, V_t, dynamic_config,
-                    lr=0.2, device=torch.device("cpu"), verbose=True, napari_debug=False
+                    model,
+                    optimizer,
+                    scheduler,
+                    V_t,
+                    dynamic_config,
+                    lr=0.2,
+                    device=torch.device("cpu"),
+                    verbose=True,
+                    napari_debug=False,
                 )
 
                 if operations_occurred:
@@ -166,14 +175,20 @@ def main():
 
                     # Show per-splat optimizer benefits
                     lrs = optimizer.get_effective_learning_rates()
-                    aprint(f"  → LR stats: mean={lrs.mean():.6f}, std={lrs.std():.6f}, range=[{lrs.min():.6f}, {lrs.max():.6f}]")
+                    aprint(
+                        f"  → LR stats: mean={lrs.mean():.6f}, std={lrs.std():.6f}, range=[{lrs.min():.6f}, {lrs.max():.6f}]"
+                    )
                     aprint("  ✅ No global momentum loss - smooth continuation!")
 
             # Progress logging
             if it % max(1, N_ITERS // 10) == 0 or it <= 5:
                 with torch.no_grad():
-                    rel = torch.linalg.norm((pred - V_t).flatten()) / torch.linalg.norm(V_t.flatten())
-                aprint(f"[{it:4d}/{N_ITERS}] loss={current_loss:.5g}  relL2={float(rel):.4f}  N={model.n_splats()}")
+                    rel = torch.linalg.norm((pred - V_t).flatten()) / torch.linalg.norm(
+                        V_t.flatten()
+                    )
+                aprint(
+                    f"[{it:4d}/{N_ITERS}] loss={current_loss:.5g}  relL2={float(rel):.4f}  N={model.n_splats()}"
+                )
 
     with asection("Extracting final results"):
         # Extract final parameters in correct format
@@ -196,12 +211,14 @@ def main():
 
         aprint(f"Final parameters shape: {params_full.shape}")
         aprint(f"Final amplitudes shape: {amps_final.shape}")
-        aprint(f"Final MSE: {np.mean((V - V_recon)**2):.6f}")
+        aprint(f"Final MSE: {np.mean((V - V_recon) ** 2):.6f}")
 
         # Prepare movie data if recorded
         if RECORD_MOVIE and movie_frames:
-            n_frames = len(movie_frames['iterations'])
-            aprint(f"🎬 Movie ready: {n_frames} frames from iterations {movie_frames['iterations'][0]} to {movie_frames['iterations'][-1]}")
+            n_frames = len(movie_frames["iterations"])
+            aprint(
+                f"🎬 Movie ready: {n_frames} frames from iterations {movie_frames['iterations'][0]} to {movie_frames['iterations'][-1]}"
+            )
 
     with asection("Napari visualization"):
         # Create napari viewer
@@ -210,9 +227,9 @@ def main():
         # Add optimization movie if recorded
         if RECORD_MOVIE and movie_frames:
             # Stack frames into time series arrays
-            target_stack = np.stack(movie_frames['target'])  # (n_frames, H, W)
-            recon_stack = np.stack(movie_frames['reconstruction'])  # (n_frames, H, W)
-            residual_stack = np.stack(movie_frames['residual'])  # (n_frames, H, W)
+            target_stack = np.stack(movie_frames["target"])  # (n_frames, H, W)
+            recon_stack = np.stack(movie_frames["reconstruction"])  # (n_frames, H, W)
+            residual_stack = np.stack(movie_frames["residual"])  # (n_frames, H, W)
 
             # Add as time series images
             viewer.add_image(
@@ -220,28 +237,30 @@ def main():
                 name="🎬 Target Movie",
                 colormap="viridis",
                 opacity=0.8,
-                scale=(MOVIE_EVERY, 1, 1)  # Scale time axis for proper spacing
+                scale=(MOVIE_EVERY, 1, 1),  # Scale time axis for proper spacing
             )
             viewer.add_image(
                 recon_stack,
                 name="🎬 Reconstruction Movie",
                 colormap="plasma",
                 opacity=0.8,
-                scale=(MOVIE_EVERY, 1, 1)
+                scale=(MOVIE_EVERY, 1, 1),
             )
             viewer.add_image(
                 residual_stack,
                 name="🎬 Residual Movie",
                 colormap="hot",
                 opacity=0.8,
-                scale=(MOVIE_EVERY, 1, 1)
+                scale=(MOVIE_EVERY, 1, 1),
             )
 
             aprint("🎬 Use the time slider to scrub through optimization progress!")
 
         # Add final static images
         viewer.add_image(V, name="Final Target", colormap="viridis", opacity=0.7)
-        viewer.add_image(V_recon, name="Final Reconstruction", colormap="plasma", opacity=0.7)
+        viewer.add_image(
+            V_recon, name="Final Reconstruction", colormap="plasma", opacity=0.7
+        )
         viewer.add_image(np.abs(V - V_recon), name="Final Residual", colormap="hot")
 
         # Add splat centers
@@ -252,7 +271,7 @@ def main():
             face_color="cyan",
             size=3,
             border_color="white",
-            border_width=0.5
+            border_width=0.5,
         )
 
         # Add ellipses for splat shapes (sample of first 50 for performance)
@@ -271,18 +290,20 @@ def main():
                 L_recon[1, 1] = packed_L[2]  # L11
 
                 # Generate ellipse polygon
-                ellipse_pts = ellipse_polygon_from_L(center_yx, L_recon, t=2.0, n_pts=32)
+                ellipse_pts = ellipse_polygon_from_L(
+                    center_yx, L_recon, t=2.0, n_pts=32
+                )
                 ellipse_data.append(ellipse_pts)
 
         if ellipse_data:
             viewer.add_shapes(
                 ellipse_data,
-                shape_type='polygon',
+                shape_type="polygon",
                 name=f"Splat Ellipses (top {len(ellipse_data)})",
-                face_color='transparent',
-                edge_color='yellow',
+                face_color="transparent",
+                edge_color="yellow",
                 edge_width=1,
-                opacity=0.6
+                opacity=0.6,
             )
 
         aprint(f"✓ Napari viewer with {len(centers_np)} splat centers")
@@ -291,7 +312,7 @@ def main():
         # Add text info
         movie_info = ""
         if RECORD_MOVIE and movie_frames:
-            n_frames = len(movie_frames['iterations'])
+            n_frames = len(movie_frames["iterations"])
             movie_info = f"""
 🎬 Optimization Movie: {n_frames} frames
 📹 Use time slider to see progress!
@@ -301,8 +322,8 @@ def main():
         info_text = f"""Per-Splat Optimizer Demo
 Target: {V.shape} image
 Splats: {len(amps_final)}
-Final MSE: {np.mean((V - V_recon)**2):.6f}
-Dynamic ops: {'Enabled' if USE_DYNAMIC_OPS else 'Disabled'}{movie_info}
+Final MSE: {np.mean((V - V_recon) ** 2):.6f}
+Dynamic ops: {"Enabled" if USE_DYNAMIC_OPS else "Disabled"}{movie_info}
 ✅ No momentum loss during dynamic operations!
 ✅ Individual learning rates per splat
 ✅ Smooth optimization trajectory
@@ -313,8 +334,12 @@ Dynamic ops: {'Enabled' if USE_DYNAMIC_OPS else 'Disabled'}{movie_info}
 
         aprint("🎉 Per-splat optimizer demo complete!")
         if RECORD_MOVIE and movie_frames:
-            aprint("🎬 Movie recorded - use the time slider to watch optimization progress!")
-            aprint("📹 Toggle layer visibility to compare target/reconstruction/residual")
+            aprint(
+                "🎬 Movie recorded - use the time slider to watch optimization progress!"
+            )
+            aprint(
+                "📹 Toggle layer visibility to compare target/reconstruction/residual"
+            )
         aprint("Napari viewer opened - explore the results!")
 
         # Run napari

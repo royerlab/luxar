@@ -14,34 +14,34 @@ from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 def create_dynamic_config_2d():
     """Recommended dynamic operations config for 2D data."""
     config = DynamicOpsConfig()
-    config.step_every = 10          # Run every 10 iterations
-    config.max_add_per_step = 40    # Allow moderate seeding
-    config.max_merges_per_step = 30 # Allow moderate merging
-    config.residual_quantile = 0.94 # Selective seeding (higher = more selective)
-    config.merge_dist_vox = 2.0     # Merge distance threshold in voxels
-    config.amp_abs_min = 1e-4       # Prune splats below this amplitude
-    config.do_prune = True          # Enable pruning
-    config.do_seed = True           # Enable seeding
-    config.do_merge = True          # Enable merging
-    config.do_split = True          # Enable splitting
-    config.split_eig_thr = 2.5      # Split threshold (higher = less splitting)
+    config.step_every = 10  # Run every 10 iterations
+    config.max_add_per_step = 40  # Allow moderate seeding
+    config.max_merges_per_step = 30  # Allow moderate merging
+    config.residual_quantile = 0.94  # Selective seeding (higher = more selective)
+    config.merge_dist_vox = 2.0  # Merge distance threshold in voxels
+    config.amp_abs_min = 1e-4  # Prune splats below this amplitude
+    config.do_prune = True  # Enable pruning
+    config.do_seed = True  # Enable seeding
+    config.do_merge = True  # Enable merging
+    config.do_split = True  # Enable splitting
+    config.split_eig_thr = 2.5  # Split threshold (higher = less splitting)
     return config
 
 
 def create_dynamic_config_3d():
     """Recommended dynamic operations config for 3D data."""
     config = DynamicOpsConfig()
-    config.step_every = 15          # Less frequent for 3D (more expensive)
-    config.max_add_per_step = 25    # Conservative seeding
-    config.max_merges_per_step = 20 # Conservative merging
-    config.residual_quantile = 0.95 # More selective seeding
-    config.merge_dist_vox = 1.8     # 3D distance threshold
-    config.amp_abs_min = 2e-4       # Slightly higher threshold for 3D
+    config.step_every = 15  # Less frequent for 3D (more expensive)
+    config.max_add_per_step = 25  # Conservative seeding
+    config.max_merges_per_step = 20  # Conservative merging
+    config.residual_quantile = 0.95  # More selective seeding
+    config.merge_dist_vox = 1.8  # 3D distance threshold
+    config.amp_abs_min = 2e-4  # Slightly higher threshold for 3D
     config.do_prune = True
     config.do_seed = True
     config.do_merge = True
     config.do_split = True
-    config.split_eig_thr = 2.2      # 3D split threshold
+    config.split_eig_thr = 2.2  # 3D split threshold
     return config
 
 

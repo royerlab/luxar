@@ -7,9 +7,9 @@ from .per_splat_adam import PerSplatAdam
 from .per_splat_scheduler import PerSplatExponentialLR, PerSplatReduceLROnPlateau
 
 __all__ = [
-    'PerSplatAdam',
-    'PerSplatReduceLROnPlateau',
-    'PerSplatExponentialLR',
-    'ModelOptimizerCoordinator',
-    'create_per_splat_optimizer_setup'
+    "PerSplatAdam",
+    "PerSplatReduceLROnPlateau",
+    "PerSplatExponentialLR",
+    "ModelOptimizerCoordinator",
+    "create_per_splat_optimizer_setup",
 ]

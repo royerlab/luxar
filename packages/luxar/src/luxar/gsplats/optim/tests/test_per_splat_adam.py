@@ -31,7 +31,7 @@ def test_per_splat_adam():
         L0=L0,
         amps0=amps0,
         sigma_min_diag=[0.5, 0.5],
-        device=torch.device("cpu")
+        device=torch.device("cpu"),
     )
 
     # Create per-splat optimizer
@@ -52,7 +52,7 @@ def test_per_splat_adam():
         optimizer.step()
         scheduler.step(loss.item())
 
-        print(f"Step {i+1}: loss={loss.item():.6f}")
+        print(f"Step {i + 1}: loss={loss.item():.6f}")
 
     print(f"✓ Final learning rates: {optimizer.get_effective_learning_rates()}")
 
@@ -72,7 +72,9 @@ def test_per_splat_adam():
 
     # Test removing splats
     print("\n🔧 Testing splat removal...")
-    keep_mask = torch.tensor([True, False, True, False, True, True, True])  # Remove 2nd and 4th
+    keep_mask = torch.tensor(
+        [True, False, True, False, True, True, True]
+    )  # Remove 2nd and 4th
     model.prune_(keep_mask)
     optimizer.remove_splats(keep_mask)
     scheduler.remove_splats(keep_mask)
@@ -90,7 +92,7 @@ def test_per_splat_adam():
         optimizer.step()
         scheduler.step(loss.item())
 
-        print(f"Post-topology step {i+1}: loss={loss.item():.6f}")
+        print(f"Post-topology step {i + 1}: loss={loss.item():.6f}")
 
     print("✅ Per-splat Adam test passed!")
 
@@ -113,10 +115,12 @@ def test_factory_function():
     )
 
     optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
-        model, lr=0.02, scheduler_type='plateau'
+        model, lr=0.02, scheduler_type="plateau"
     )
 
-    print(f"✓ Factory created optimizer with {len(optimizer.splat_states)} splat states")
+    print(
+        f"✓ Factory created optimizer with {len(optimizer.splat_states)} splat states"
+    )
     print(f"✓ Coordinator status: {coordinator.get_status()}")
 
     # Test coordinated operations

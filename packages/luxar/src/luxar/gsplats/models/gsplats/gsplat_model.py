@@ -565,18 +565,21 @@ class GaussianSplatModel(nn.Module):
     # ===== Dynamic Management Methods =========================================
 
     @torch.no_grad()
-    def _to_internal_params(self,
-                            centers: torch.Tensor,   # (N,d)
-                            Ls: torch.Tensor,        # (N,d,d)
-                            amps: torch.Tensor       # (N,)
-                           ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _to_internal_params(
+        self,
+        centers: torch.Tensor,  # (N,d)
+        Ls: torch.Tensor,  # (N,d,d)
+        amps: torch.Tensor,  # (N,)
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Convert external (μ, L, a) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw)."""
         device = self.raw_mu.device
         d = centers.shape[1]
 
         # centers -> raw_mu (logit in [0,1] coords)
         shape_arr = torch.tensor(self.shape, device=device, dtype=torch.float32)
-        u = torch.clamp(centers / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6)
+        u = torch.clamp(
+            centers / torch.clamp(shape_arr - 1.0, min=1.0), 1e-6, 1.0 - 1e-6
+        )
         raw_mu = torch.log(u) - torch.log(1.0 - u)
 
         # L -> diag/off raw (diag via inverse-softplus)
@@ -584,24 +587,36 @@ class GaussianSplatModel(nn.Module):
         # Avoid zero/neg
         eps = 1e-6
         diag = torch.clamp(diag, min=eps)
-        L_diag_raw = torch.tensor(stable_inverse_softplus(diag.detach().cpu().numpy()),
-                                  device=device, dtype=torch.float32)
+        L_diag_raw = torch.tensor(
+            stable_inverse_softplus(diag.detach().cpu().numpy()),
+            device=device,
+            dtype=torch.float32,
+        )
 
         # Pack off-diagonals (row-major, below diag)
         off_elems = []
         for i in range(d):
             for j in range(i):
                 off_elems.append(Ls[:, i, j])
-        L_off = torch.stack(off_elems, dim=1) if len(off_elems) else torch.zeros((centers.shape[0], 0), device=device)
+        L_off = (
+            torch.stack(off_elems, dim=1)
+            if len(off_elems)
+            else torch.zeros((centers.shape[0], 0), device=device)
+        )
 
         # amps -> amp_raw
         amps = torch.clamp(amps, min=0.0)
-        amp_raw = torch.tensor(stable_inverse_softplus(amps.detach().cpu().numpy()),
-                               device=device, dtype=torch.float32)
+        amp_raw = torch.tensor(
+            stable_inverse_softplus(amps.detach().cpu().numpy()),
+            device=device,
+            dtype=torch.float32,
+        )
         return raw_mu, L_diag_raw, L_off, amp_raw
 
     @torch.no_grad()
-    def replace_with(self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor) -> None:
+    def replace_with(
+        self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
+    ) -> None:
         """Hard replace the whole parameter set."""
         raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
         self.raw_mu = torch.nn.Parameter(raw_mu)
@@ -618,13 +633,19 @@ class GaussianSplatModel(nn.Module):
         self.raw_a = torch.nn.Parameter(self.raw_a[keep_mask])
 
     @torch.no_grad()
-    def append_(self, centers_new: torch.Tensor, Ls_new: torch.Tensor, amps_new: torch.Tensor) -> None:
+    def append_(
+        self, centers_new: torch.Tensor, Ls_new: torch.Tensor, amps_new: torch.Tensor
+    ) -> None:
         """Append new splats to the tail."""
         if centers_new.numel() == 0:
             return
-        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers_new, Ls_new, amps_new)
+        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
+            centers_new, Ls_new, amps_new
+        )
         self.raw_mu = torch.nn.Parameter(torch.cat([self.raw_mu, raw_mu], dim=0))
-        self.raw_L_diag = torch.nn.Parameter(torch.cat([self.raw_L_diag, L_diag_raw], dim=0))
+        self.raw_L_diag = torch.nn.Parameter(
+            torch.cat([self.raw_L_diag, L_diag_raw], dim=0)
+        )
         self.L_off = torch.nn.Parameter(torch.cat([self.L_off, L_off], dim=0))
         self.raw_a = torch.nn.Parameter(torch.cat([self.raw_a, amp_raw], dim=0))
 

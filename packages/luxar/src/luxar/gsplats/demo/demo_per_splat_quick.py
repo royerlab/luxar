@@ -32,7 +32,7 @@ def demo_momentum_preservation():
         L0=L0,
         amps0=amps0,
         sigma_min_diag=[0.5, 0.5],
-        device=torch.device("cpu")
+        device=torch.device("cpu"),
     )
 
     # Create target for optimization
@@ -52,15 +52,20 @@ def demo_momentum_preservation():
             losses.append(loss.item())
 
             if step % 3 == 0:
-                aprint(f"  Step {step+1}: loss={loss.item():.6f}")
+                aprint(f"  Step {step + 1}: loss={loss.item():.6f}")
 
         aprint(f"✓ Built momentum over {len(losses)} steps")
         aprint("✓ All splats have accumulated momentum in optimizer")
 
         # Show that splats have momentum
-        n_with_momentum = sum(1 for state in optimizer.splat_states.values()
-                             if torch.any(state['exp_avg_mu'].abs() > 1e-8))
-        aprint(f"✓ {n_with_momentum}/{len(optimizer.splat_states)} splats have non-zero momentum")
+        n_with_momentum = sum(
+            1
+            for state in optimizer.splat_states.values()
+            if torch.any(state["exp_avg_mu"].abs() > 1e-8)
+        )
+        aprint(
+            f"✓ {n_with_momentum}/{len(optimizer.splat_states)} splats have non-zero momentum"
+        )
 
     with asection("Phase 2: Add new splats (dynamic operation)"):
         # Simulate adding 2 new splats (like seeding operation)
@@ -75,18 +80,26 @@ def demo_momentum_preservation():
         aprint(f"✓ Added 2 new splats: {old_n} → {model.n_splats()}")
 
         # Check momentum preservation
-        n_preserved = sum(1 for i, state in optimizer.splat_states.items()
-                         if i < old_n and torch.any(state['exp_avg_mu'].abs() > 1e-8))
+        n_preserved = sum(
+            1
+            for i, state in optimizer.splat_states.items()
+            if i < old_n and torch.any(state["exp_avg_mu"].abs() > 1e-8)
+        )
         aprint(f"✓ {n_preserved}/{old_n} original splats preserved momentum")
 
         # Check new splats start with zero momentum (correct)
-        n_new_zero = sum(1 for i, state in optimizer.splat_states.items()
-                        if i >= old_n and torch.all(state['exp_avg_mu'].abs() < 1e-8))
+        n_new_zero = sum(
+            1
+            for i, state in optimizer.splat_states.items()
+            if i >= old_n and torch.all(state["exp_avg_mu"].abs() < 1e-8)
+        )
         aprint(f"✓ {n_new_zero}/2 new splats start with zero momentum (correct)")
 
         # Show different learning rates
         lrs = optimizer.get_effective_learning_rates()
-        aprint(f"✓ Learning rates: old splats={lrs[:old_n].mean():.3f}, new splats={lrs[old_n:].mean():.3f}")
+        aprint(
+            f"✓ Learning rates: old splats={lrs[:old_n].mean():.3f}, new splats={lrs[old_n:].mean():.3f}"
+        )
 
     with asection("Phase 3: Continue optimization (5 steps)"):
         # Continue optimizing - old splats should resume smoothly
@@ -97,7 +110,9 @@ def demo_momentum_preservation():
             loss.backward()
             optimizer.step()
 
-            aprint(f"  Step {step+1}: loss={loss.item():.6f}, splats={model.n_splats()}")
+            aprint(
+                f"  Step {step + 1}: loss={loss.item():.6f}, splats={model.n_splats()}"
+            )
 
         aprint("✅ Optimization continued smoothly with preserved momentum!")
 
@@ -140,7 +155,7 @@ def demo_individual_learning_rates():
         # Set different learning rates for different splats
         optimizer.set_learning_rate(0, 0.01)  # Slow learner
         optimizer.set_learning_rate(1, 0.05)  # Fast learner
-        optimizer.set_learning_rate(2, 0.001) # Very slow learner
+        optimizer.set_learning_rate(2, 0.001)  # Very slow learner
 
         lrs = optimizer.get_effective_learning_rates()
         aprint(f"✓ Set individual LRs: {lrs}")
@@ -154,7 +169,7 @@ def demo_individual_learning_rates():
             loss.backward()
             optimizer.step()
 
-            aprint(f"  Step {step+1}: loss={loss.item():.6f}")
+            aprint(f"  Step {step + 1}: loss={loss.item():.6f}")
 
         aprint("✅ Each splat optimizes at its own pace!")
 

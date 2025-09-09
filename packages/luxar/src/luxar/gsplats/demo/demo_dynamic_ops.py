@@ -32,7 +32,9 @@ def create_test_image(size=64, n_blobs=5, add_noise=False):
         amplitude = np.random.uniform(0.4, 0.9)
 
         yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
-        blob = amplitude * np.exp(-((yy - center_y)**2 + (xx - center_x)**2) / (2 * sigma**2))
+        blob = amplitude * np.exp(
+            -((yy - center_y) ** 2 + (xx - center_x) ** 2) / (2 * sigma**2)
+        )
         data += blob
 
     if add_noise:
@@ -61,17 +63,17 @@ def benchmark_fitting_methods(image, candidates, n_iters=150, verbose=True):
 
         # Compute reconstruction
         recon_std = render_gaussians_numpy(image.shape, params_std, amps_std)
-        mse_std = np.mean((image - recon_std)**2)
+        mse_std = np.mean((image - recon_std) ** 2)
 
-        results['standard'] = {
-            'time': std_time,
-            'iterations': stats_std['iterations'],
-            'converged': stats_std['converged'],
-            'n_splats': len(amps_std),
-            'mse': mse_std,
-            'params': params_std,
-            'amps': amps_std,
-            'reconstruction': recon_std
+        results["standard"] = {
+            "time": std_time,
+            "iterations": stats_std["iterations"],
+            "converged": stats_std["converged"],
+            "n_splats": len(amps_std),
+            "mse": mse_std,
+            "params": params_std,
+            "amps": amps_std,
+            "reconstruction": recon_std,
         }
 
         if verbose:
@@ -106,17 +108,17 @@ def benchmark_fitting_methods(image, candidates, n_iters=150, verbose=True):
 
         # Compute reconstruction
         recon_dyn = render_gaussians_numpy(image.shape, params_dyn, amps_dyn)
-        mse_dyn = np.mean((image - recon_dyn)**2)
+        mse_dyn = np.mean((image - recon_dyn) ** 2)
 
-        results['dynamic'] = {
-            'time': dyn_time,
-            'iterations': stats_dyn['iterations'],
-            'converged': stats_dyn['converged'],
-            'n_splats': len(amps_dyn),
-            'mse': mse_dyn,
-            'params': params_dyn,
-            'amps': amps_dyn,
-            'reconstruction': recon_dyn
+        results["dynamic"] = {
+            "time": dyn_time,
+            "iterations": stats_dyn["iterations"],
+            "converged": stats_dyn["converged"],
+            "n_splats": len(amps_dyn),
+            "mse": mse_dyn,
+            "params": params_dyn,
+            "amps": amps_dyn,
+            "reconstruction": recon_dyn,
         }
 
         if verbose:
@@ -130,13 +132,13 @@ def benchmark_fitting_methods(image, candidates, n_iters=150, verbose=True):
 
 def analyze_results(results, verbose=True):
     """Analyze and report comparison results."""
-    std = results['standard']
-    dyn = results['dynamic']
+    std = results["standard"]
+    dyn = results["dynamic"]
 
     if verbose:
         with asection("Performance Analysis"):
             # Time comparison
-            speedup = std['time'] / dyn['time'] if dyn['time'] > 0 else float('inf')
+            speedup = std["time"] / dyn["time"] if dyn["time"] > 0 else float("inf")
             aprint(f"Time speedup: {speedup:.2f}x")
             if speedup > 1:
                 aprint("✓ Dynamic ops are faster")
@@ -144,12 +146,14 @@ def analyze_results(results, verbose=True):
                 aprint("⚠ Dynamic ops are slower (may indicate need for tuning)")
 
             # Iteration comparison
-            iter_saved = std['iterations'] - dyn['iterations']
-            iter_pct = 100 * iter_saved / std['iterations'] if std['iterations'] > 0 else 0
+            iter_saved = std["iterations"] - dyn["iterations"]
+            iter_pct = (
+                100 * iter_saved / std["iterations"] if std["iterations"] > 0 else 0
+            )
             aprint(f"Iterations saved: {iter_saved} ({iter_pct:.1f}%)")
 
             # Quality comparison
-            mse_improvement = (std['mse'] - dyn['mse']) / std['mse'] * 100
+            mse_improvement = (std["mse"] - dyn["mse"]) / std["mse"] * 100
             aprint(f"MSE change: {mse_improvement:+.2f}%")
             if mse_improvement > 0:
                 aprint("✓ Dynamic ops achieve better reconstruction")
@@ -159,7 +163,7 @@ def analyze_results(results, verbose=True):
                 aprint("⚠ Standard method achieved better reconstruction")
 
             # Efficiency comparison
-            splat_efficiency = dyn['n_splats'] / std['n_splats']
+            splat_efficiency = dyn["n_splats"] / std["n_splats"]
             aprint(f"Splat count ratio: {splat_efficiency:.2f}")
             if splat_efficiency < 1:
                 aprint("✓ Dynamic ops use fewer splats for similar quality")
@@ -167,10 +171,10 @@ def analyze_results(results, verbose=True):
                 aprint("⚠ Dynamic ops use more splats")
 
     return {
-        'speedup': speedup,
-        'iterations_saved': iter_saved,
-        'mse_improvement_pct': mse_improvement,
-        'splat_efficiency': splat_efficiency
+        "speedup": speedup,
+        "iterations_saved": iter_saved,
+        "mse_improvement_pct": mse_improvement,
+        "splat_efficiency": splat_efficiency,
     }
 
 
@@ -206,15 +210,21 @@ def main():
     # Summary
     with asection("Summary"):
         aprint("Key Benefits of Dynamic Operations:")
-        if analysis['speedup'] > 1.1:
+        if analysis["speedup"] > 1.1:
             aprint(f"• {analysis['speedup']:.1f}x faster convergence")
-        if analysis['iterations_saved'] > 5:
-            pct = 100 * analysis['iterations_saved'] / 120
-            aprint(f"• {analysis['iterations_saved']} fewer iterations ({pct:.0f}% reduction)")
-        if analysis['mse_improvement_pct'] > 2:
-            aprint(f"• {analysis['mse_improvement_pct']:.1f}% better reconstruction quality")
-        if analysis['splat_efficiency'] < 0.9:
-            aprint(f"• {100*(1-analysis['splat_efficiency']):.0f}% fewer splats needed")
+        if analysis["iterations_saved"] > 5:
+            pct = 100 * analysis["iterations_saved"] / 120
+            aprint(
+                f"• {analysis['iterations_saved']} fewer iterations ({pct:.0f}% reduction)"
+            )
+        if analysis["mse_improvement_pct"] > 2:
+            aprint(
+                f"• {analysis['mse_improvement_pct']:.1f}% better reconstruction quality"
+            )
+        if analysis["splat_efficiency"] < 0.9:
+            aprint(
+                f"• {100 * (1 - analysis['splat_efficiency']):.0f}% fewer splats needed"
+            )
 
         aprint("\nDynamic operations provide:")
         aprint("• Automatic pruning of weak/redundant splats")

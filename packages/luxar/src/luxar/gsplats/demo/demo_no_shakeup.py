@@ -49,7 +49,9 @@ def demo_no_shakeup():
 
         # Configure dynamic ops (same as original)
         dynamic_config = DynamicOpsConfig()
-        dynamic_config.step_every = 20  # Trigger every 20 iterations (like original 100 but scaled)
+        dynamic_config.step_every = (
+            20  # Trigger every 20 iterations (like original 100 but scaled)
+        )
         dynamic_config.do_seed = True
         dynamic_config.max_add_per_step = 1
         aprint(f"Dynamic operations every {dynamic_config.step_every} iterations")
@@ -76,13 +78,15 @@ def demo_no_shakeup():
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             model,
             lr=0.1,  # Base learning rate
-            scheduler_type='plateau',
+            scheduler_type="plateau",
             patience=8,
-            factor=0.7
+            factor=0.7,
         )
 
         aprint(f"✓ Created per-splat optimizer for {model.n_splats()} splats")
-        aprint(f"✓ Initial learning rates: mean={optimizer.get_effective_learning_rates().mean():.6f}")
+        aprint(
+            f"✓ Initial learning rates: mean={optimizer.get_effective_learning_rates().mean():.6f}"
+        )
 
     # === Optimization with Smooth Dynamic Operations ===
     with asection("Optimization (No Shakeup Expected)"):
@@ -109,8 +113,15 @@ def demo_no_shakeup():
 
                 # Apply dynamic operations
                 _, _, operations_occurred = apply_dynamic_operations(
-                    model, optimizer, scheduler, V_t, dynamic_config,
-                    lr=0.1, device=torch.device("cpu"), verbose=True, napari_debug=False
+                    model,
+                    optimizer,
+                    scheduler,
+                    V_t,
+                    dynamic_config,
+                    lr=0.1,
+                    device=torch.device("cpu"),
+                    verbose=True,
+                    napari_debug=False,
                 )
 
                 if operations_occurred:
@@ -120,26 +131,44 @@ def demo_no_shakeup():
                     # Check for shakeup in loss
                     if len(loss_history) > 5:
                         recent_losses = loss_history[-5:]
-                        loss_jump = (loss_history[-1] - min(recent_losses)) / min(recent_losses)
+                        loss_jump = (loss_history[-1] - min(recent_losses)) / min(
+                            recent_losses
+                        )
 
                         if loss_jump > 0.1:  # 10% jump indicates disruption
-                            aprint(f"  ⚠ Potential disruption detected: {loss_jump:.1%} loss jump")
+                            aprint(
+                                f"  ⚠ Potential disruption detected: {loss_jump:.1%} loss jump"
+                            )
                         else:
-                            aprint(f"  ✅ Smooth transition: {loss_jump:.1%} loss change")
+                            aprint(
+                                f"  ✅ Smooth transition: {loss_jump:.1%} loss change"
+                            )
 
             # Logging
             if it % 10 == 0 or it in [1, 5]:
-                rel_error = torch.linalg.norm((pred - V_t).flatten()) / torch.linalg.norm(V_t.flatten())
+                rel_error = torch.linalg.norm(
+                    (pred - V_t).flatten()
+                ) / torch.linalg.norm(V_t.flatten())
                 lrs = optimizer.get_effective_learning_rates()
-                aprint(f"[{it:2d}/{n_iters}] loss={loss.item():.5f}  relL2={rel_error:.4f}  "
-                      f"N={model.n_splats()}  LR={lrs.mean():.5f}±{lrs.std():.5f}")
+                aprint(
+                    f"[{it:2d}/{n_iters}] loss={loss.item():.5f}  relL2={rel_error:.4f}  "
+                    f"N={model.n_splats()}  LR={lrs.mean():.5f}±{lrs.std():.5f}"
+                )
 
     # === Analysis ===
     with asection("Results Analysis"):
         if disruption_points:
-            aprint(f"Dynamic operations occurred at iterations: {[p[0] for p in disruption_points]}")
+            aprint(
+                f"Dynamic operations occurred at iterations: {[p[0] for p in disruption_points]}"
+            )
             for it, old_n, new_n in disruption_points:
-                change = "seeded" if new_n > old_n else "pruned" if new_n < old_n else "no change"
+                change = (
+                    "seeded"
+                    if new_n > old_n
+                    else "pruned"
+                    if new_n < old_n
+                    else "no change"
+                )
                 aprint(f"  Iteration {it}: {old_n} → {new_n} splats ({change})")
         else:
             aprint("No dynamic operations were triggered")
@@ -147,8 +176,8 @@ def demo_no_shakeup():
         # Check loss trajectory smoothness
         smooth_trajectory = True
         for i in range(1, len(loss_history)):
-            if abs(loss_history[i] - loss_history[i-1]) / loss_history[i-1] > 0.5:
-                aprint(f"  ⚠ Large loss jump at iteration {i+1}")
+            if abs(loss_history[i] - loss_history[i - 1]) / loss_history[i - 1] > 0.5:
+                aprint(f"  ⚠ Large loss jump at iteration {i + 1}")
                 smooth_trajectory = False
 
         if smooth_trajectory:
@@ -158,13 +187,15 @@ def demo_no_shakeup():
 
         # Final quality
         final_pred = model().detach().numpy()
-        final_mse = np.mean((V - final_pred)**2)
+        final_mse = np.mean((V - final_pred) ** 2)
         aprint(f"Final MSE: {final_mse:.6f}")
         aprint(f"Final splat count: {model.n_splats()}")
 
         # Learning rate distribution
         final_lrs = optimizer.get_effective_learning_rates()
-        aprint(f"Final LR stats: mean={final_lrs.mean():.6f}, std={final_lrs.std():.6f}")
+        aprint(
+            f"Final LR stats: mean={final_lrs.mean():.6f}, std={final_lrs.std():.6f}"
+        )
         aprint(f"LR range: [{final_lrs.min():.6f}, {final_lrs.max():.6f}]")
 
     aprint("\n🎉 Per-splat optimizer successfully eliminates the shakeup problem!")
