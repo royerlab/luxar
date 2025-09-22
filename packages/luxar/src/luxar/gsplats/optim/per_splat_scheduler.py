@@ -100,14 +100,21 @@ class PerSplatReduceLROnPlateau:
                 n_splats = self.optimizer.model.n_splats()
                 splat_metrics = {i: float(metrics) for i in range(n_splats)}
             elif isinstance(metrics, torch.Tensor):
-                if len(metrics.shape) != 1:
+                if len(metrics.shape) == 0:
+                    # Scalar tensor - convert to float and treat as global metric
+                    if not torch.isfinite(metrics):
+                        raise ValueError("Metric value must be finite")
+                    n_splats = self.optimizer.model.n_splats()
+                    splat_metrics = {i: float(metrics) for i in range(n_splats)}
+                elif len(metrics.shape) == 1:
+                    # Per-splat tensor
+                    if not torch.all(torch.isfinite(metrics)):
+                        raise ValueError("All metric values must be finite")
+                    splat_metrics = {i: float(metrics[i]) for i in range(len(metrics))}
+                else:
                     raise ValueError(
-                        f"Metrics tensor must be 1D, got shape {metrics.shape}"
+                        f"Metrics tensor must be scalar or 1D, got shape {metrics.shape}"
                     )
-                if not torch.all(torch.isfinite(metrics)):
-                    raise ValueError("All metric values must be finite")
-                # Per-splat tensor
-                splat_metrics = {i: float(metrics[i]) for i in range(len(metrics))}
             elif isinstance(metrics, dict):
                 # Validate dict values
                 for k, v in metrics.items():
@@ -125,8 +132,12 @@ class PerSplatReduceLROnPlateau:
             raise RuntimeError(f"Error processing metrics: {e}") from e
 
         # Update global state
-        if isinstance(metrics, (float, int)):
-            global_metric = metrics
+        if isinstance(metrics, (float, int)) or (
+            isinstance(metrics, torch.Tensor) and len(metrics.shape) == 0
+        ):
+            global_metric = (
+                float(metrics) if isinstance(metrics, torch.Tensor) else metrics
+            )
         elif isinstance(metrics, torch.Tensor):
             global_metric = float(torch.mean(metrics))
         else:

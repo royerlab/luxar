@@ -10,8 +10,8 @@ I've successfully integrated dynamic Gaussian splat operations into the existing
 - **`demo_splats.py`** - Main 2D demo now includes dynamic operations with optimized 2D parameters
 - **`demo_splats_3d_simple_example.py`** - 3D demo updated with 3D-optimized dynamic operations
 
-### 2. Integration Guide Created
-- **`enable_dynamic_ops_guide.py`** - Comprehensive guide showing how to enable dynamic operations in any demo
+### 2. Integration Complete
+- **All demos updated** - Dynamic operations now enabled by default in all demo scripts
 
 ## How to Enable Dynamic Operations
 
@@ -109,16 +109,17 @@ All functionality has been thoroughly tested:
 
 ## Backward Compatibility
 
-Dynamic operations are **completely optional**:
-- Default behavior: `enable_dynamic_ops=False` (no change to existing code)
-- Existing scripts work exactly as before
-- Only enabled when explicitly requested
+Dynamic operations are now **enabled by default** in all demos:
+- Default behavior: `enable_dynamic_ops=True` (recommended for optimal results)
+- Can be disabled by setting `enable_dynamic_ops=False` if needed
+- All demo scripts use dynamic operations by default
 
 ## Usage Examples
 
-See `enable_dynamic_ops_guide.py` for complete examples of:
-- 2D configuration
-- 3D configuration  
+See the demo scripts for complete examples of dynamic operations:
+- `demo_splats_fit.py` - 2D configuration with synthetic blobs
+- `demo_splats_3d_napari.py` - 3D configuration with volumetric data
+- `demo_performance.py` - Performance testing with dynamic operations  
 - Conditional enable/disable
 - Parameter tuning guidelines
 

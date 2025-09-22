@@ -12,32 +12,31 @@ from arbol import aprint, asection
 
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig, apply_dynamic_operations
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.optim import create_per_splat_optimizer_setup
 from luxar.gsplats.utils.trils import pack_tril, tril_size
 
 
 class GaussianSplatFitter:
     """
-    Advanced Gaussian splat fitter with performance optimizations.
+    Advanced Gaussian splat fitter with per-splat optimizer.
 
-    This class provides fine-grained control over the fitting process
-    with optional performance enhancements like early stopping,
-    adaptive learning rate, and model compilation.
+    This class uses the per-splat Adam optimizer to maintain momentum
+    for individual splats during dynamic operations, providing smooth
+    optimization without global disruption.
 
     Parameters
     ----------
     device : str, optional
         PyTorch device ('cpu', 'cuda', 'mps'). Auto-detects if None.
-    compile_model : bool, default=False
-        Use torch.compile for model acceleration (PyTorch 2.0+, CUDA only).
-    use_mixed_precision : bool, default=False
-        Use automatic mixed precision for memory efficiency (CUDA only).
+    enable_dynamic_ops : bool, default=False
+        Enable dynamic operations (seeding, splitting, pruning).
+    dynamic_config : DynamicOpsConfig, optional
+        Configuration for dynamic operations.
     """
 
     def __init__(
         self,
         device: Optional[str] = None,
-        compile_model: bool = False,
-        use_mixed_precision: bool = False,
         enable_dynamic_ops: bool = False,
         dynamic_config: Optional[DynamicOpsConfig] = None,
     ):
@@ -49,78 +48,37 @@ class GaussianSplatFitter:
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
-        self.compile_model = compile_model
-        self.use_mixed_precision = use_mixed_precision
-        # Only create scaler if both mixed precision requested AND CUDA available
-        self.scaler = (
-            torch.cuda.amp.GradScaler()
-            if use_mixed_precision and self.device.type == "cuda"
-            else None
-        )
 
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
         self.dynamic_config = dynamic_config or DynamicOpsConfig()
 
-    def _detect_convergence(
-        self,
-        loss_history: list[float],
-        window: int = 10,
-        threshold: float = 1e-3,
-    ) -> bool:
-        """Check if optimization has converged based on loss history."""
-        if len(loss_history) < window * 2:
-            return False
-
-        recent = loss_history[-window:]
-        older = loss_history[-2 * window : -window]
-
-        avg_recent = np.mean(recent)
-        avg_older = np.mean(older)
-
-        # Check if loss is essentially zero (converged to minimum)
-        if avg_recent < 1e-6:
-            return True
-
-        # Avoid division by zero for relative calculations
-        if avg_older <= 1e-10:
-            return False
-
-        # Relative improvement between windows
-        rel_improvement = abs(avg_older - avg_recent) / avg_older
-
-        # Normalized variance (more robust calculation)
-        # Use max of avg_recent and a reasonable epsilon to avoid explosion
-        variance_norm = float(np.var(recent)) / max(float(avg_recent**2), 1e-6)
-
-        # Check both relative improvement and stability
-        converged = bool(rel_improvement < threshold and variance_norm < threshold)
-
-        return converged
 
     def fit(
         self,
         V: np.ndarray,
         centers_overcomplete: np.ndarray,
         init_sigma_vox: float = 1.5,
-        n_iters: int = 300,
+        n_iters: int = 1000,
         lr: float = 0.2,
         loss_type: str = "mse",
+        asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: float = 0.0,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
         verbose: bool = True,
-        early_stopping: bool = True,
-        early_stop_patience: int = 20,
-        convergence_threshold: float = 1e-3,
+        max_abs_error: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
-        napari_debug: bool = False,
         napari_movie: bool = False,
         movie_every: int = 1,
+        scheduler_type: str = "plateau",
+        patience: int = 10,
+        factor: float = 0.5,
+        dynamic_ops_verbose: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         """
-        Fit Gaussian splats with optional performance optimizations.
+        Fit Gaussian splats using per-splat Adam optimizer.
 
         See fit_gaussian_splats() for full parameter documentation.
 
@@ -163,6 +121,8 @@ class GaussianSplatFitter:
             raise ValueError("l1_amp must be non-negative")
         if truncate <= 0:
             raise ValueError("truncate must be positive")
+        if max_abs_error is not None and max_abs_error <= 0:
+            raise ValueError("max_abs_error must be positive if specified")
 
         # Robust normalization
         image_min = np.percentile(V, 1)
@@ -228,22 +188,13 @@ class GaussianSplatFitter:
             device=self.device,
         )
 
-        # Optional model compilation (CUDA only for stability)
-        if self.compile_model and self.device.type == "cuda":
-            try:
-                model = torch.compile(model, mode="reduce-overhead")
-                if verbose:
-                    aprint("Model compiled with torch.compile")
-            except Exception as e:
-                if verbose:
-                    aprint(f"Could not compile model: {e}")
-        elif self.compile_model and verbose:
-            aprint(f"Skipping compilation (not supported on {self.device.type})")
-
-        # Setup optimizer with adaptive learning rate
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt, mode="min", factor=0.5, patience=10
+        # Setup per-splat optimizer
+        opt, scheduler, coordinator = create_per_splat_optimizer_setup(
+            model,
+            lr=lr,
+            scheduler_type=scheduler_type,
+            patience=patience,
+            factor=factor,
         )
 
         # Loss function
@@ -256,8 +207,34 @@ class GaussianSplatFitter:
                     Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps))
                 )
                 data = dev / V_t.numel()
+
+                # Apply asymmetric penalty if specified
+                if asymmetric_penalty is not None:
+                    over_prediction_mask = pred > V_t
+                    # Compute additional penalty for over-prediction regions only
+                    # This penalizes regions where we predict more intensity than target
+                    over_prediction_dev = 2.0 * torch.sum(
+                        over_prediction_mask * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
+                    )
+                    # Add (F-1) times the over-prediction loss to get total F times penalty
+                    data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / V_t.numel()
             else:
-                data = F.mse_loss(pred, V_t)
+                # MSE loss
+                squared_error = (pred - V_t) ** 2
+                if asymmetric_penalty is not None:
+                    # Asymmetric MSE: heavily penalize over-prediction (pred > target)
+                    # This addresses the fundamental asymmetry in additive Gaussian models:
+                    # - Under-prediction (pred < target): Easy to fix by adding more Gaussians
+                    # - Over-prediction (pred > target): Hard to fix, requires reducing/moving splats
+                    over_prediction_mask = pred > V_t
+                    data = torch.mean(
+                        torch.where(over_prediction_mask,
+                                   asymmetric_penalty * squared_error,  # F times penalty
+                                   squared_error)  # Normal penalty
+                    )
+                else:
+                    data = F.mse_loss(pred, V_t)
+
             if l1_amp > 0:
                 # Use raw parameters directly to avoid rebuilding L matrices and centers
                 data = data + l1_amp * torch.mean(torch.abs(F.softplus(model.raw_a)))
@@ -265,9 +242,6 @@ class GaussianSplatFitter:
 
         # Tracking
         best_loss = float("inf")
-        best_state = None
-        loss_history = []
-        no_improve_count = 0
 
         # Movie recording setup (only if enabled)
         movie_frames = None
@@ -277,6 +251,7 @@ class GaussianSplatFitter:
                 "reconstruction": [],
                 "residual": [],
                 "iterations": [],
+                "splat_centers": [],
             }
 
         # Main optimization loop
@@ -284,38 +259,23 @@ class GaussianSplatFitter:
         for it in range(1, n_iters + 1):
             actual_iters = it
 
-            # Forward pass with optional mixed precision
-            if (
-                self.use_mixed_precision
-                and self.device.type == "cuda"
-                and self.scaler is not None
-            ):
-                with torch.cuda.amp.autocast():
-                    pred = model()
-                    loss = loss_fn(pred)
+            # Forward pass with per-splat optimizer
+            opt.zero_grad()
+            pred = model()
+            loss = loss_fn(pred)
+            loss.backward()
 
-                self.scaler.scale(loss).backward()
-                self.scaler.step(opt)
-                self.scaler.update()
-                opt.zero_grad(set_to_none=True)
-            else:
-                opt.zero_grad(set_to_none=True)
-                pred = model()
-                loss = loss_fn(pred)
-                loss.backward()
+            # Gradient clipping for stability
+            if gradient_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
 
-                # Gradient clipping for stability
-                if gradient_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
-
-                opt.step()
+            opt.step()
 
             # Learning rate scheduling (detach to avoid warning)
             scheduler.step(loss.detach())
 
             # Tracking
             current_loss = loss.item()
-            loss_history.append(current_loss)
 
             # Movie frame recording (only if enabled and at specified intervals)
             if napari_movie and movie_frames is not None and it % movie_every == 0:
@@ -325,57 +285,43 @@ class GaussianSplatFitter:
                     pred_frame = pred.detach().cpu().numpy()
                     residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
+                    # Record current splat centers
+                    centers, _, _ = model.current_params()
+                    centers_frame = centers.detach().cpu().numpy()
+
                     movie_frames["target"].append(target_frame)
                     movie_frames["reconstruction"].append(pred_frame)
                     movie_frames["residual"].append(residual_frame)
+                    movie_frames["splat_centers"].append(centers_frame)
                     movie_frames["iterations"].append(it)
 
+            # Update best loss tracking
             if current_loss < best_loss:
                 best_loss = current_loss
-                # Only save state if dynamic ops are disabled (state shape can change)
-                if not self.enable_dynamic_ops:
-                    best_state = {
-                        k: v.detach().clone() for k, v in model.state_dict().items()
-                    }
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
 
-            # Early stopping
-            if early_stopping:
-                if self._detect_convergence(
-                    loss_history, threshold=convergence_threshold
-                ):
-                    if verbose:
-                        aprint(f"Converged at iteration {it}")
-                    break
-                if no_improve_count >= early_stop_patience:
-                    if verbose:
-                        aprint(f"Early stopping at iteration {it} (no improvement)")
-                    break
+            # Convergence check using maximum absolute error
+            if max_abs_error is not None:
+                with torch.no_grad():
+                    current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
+                    if current_max_abs_error < max_abs_error:
+                        if verbose:
+                            aprint(f"Converged at iteration {it} (max_abs_error={current_max_abs_error:.6f} < {max_abs_error})")
+                        break
 
-            # Dynamic operations (prune, seed, merge, split)
+            # Dynamic operations (seeding, splitting, pruning)
             if self.enable_dynamic_ops and it % self.dynamic_config.step_every == 0:
-                opt, scheduler, ops_occurred = apply_dynamic_operations(
+                opt, scheduler, topology_changed = apply_dynamic_operations(
                     model,
                     opt,
                     scheduler,
-                    V_t,
+                    V_t,  # target
+                    pred,  # current prediction
                     self.dynamic_config,
                     lr,
-                    self.device,
-                    verbose=verbose,
-                    napari_debug=napari_debug,
+                    max_abs_error_threshold=max_abs_error or float('inf'),
+                    device=self.device,
+                    verbose=dynamic_ops_verbose,
                 )
-
-                # Reset early stopping counter if operations occurred
-                # (model topology changed, need time to adapt)
-                if ops_occurred:
-                    no_improve_count = 0
-                    if verbose:
-                        aprint(
-                            "  → Early stopping counter reset due to dynamic operations"
-                        )
 
             # Logging (update N after potential dynamic ops)
             N = model.n_splats() if hasattr(model, "n_splats") else N
@@ -384,14 +330,14 @@ class GaussianSplatFitter:
                     rel = torch.linalg.norm((pred - V_t).reshape(-1)) / (
                         torch.linalg.norm(V_t.reshape(-1)) + 1e-12
                     )
+                    # Calculate max absolute error for display
+                    current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
                 aprint(
                     f"[{it:4d}/{n_iters}] loss={current_loss:.5g}  "
-                    f"relL2={float(rel):.4f}  N={N}"
+                    f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
                 )
 
-        # Restore best state (only if dynamic ops disabled and state was saved)
-        if best_state is not None and not self.enable_dynamic_ops:
-            model.load_state_dict(best_state)
+        # No need to restore state with per-splat optimizer
 
         # Extract parameters
         with torch.no_grad():
@@ -419,6 +365,10 @@ class GaussianSplatFitter:
         ):
             _show_optimization_movie(movie_frames, V.shape)
 
+        # Calculate and display compression ratio
+        if verbose:
+            _display_compression_analysis(V, params_full, amps_np)
+
         return params_full.astype(np.float32), amps_np.astype(np.float32), stats
 
 
@@ -426,9 +376,10 @@ def fit_gaussian_splats(
     V: np.ndarray,
     centers_overcomplete: np.ndarray,
     init_sigma_vox: float = 1.5,
-    n_iters: int = 300,
+    n_iters: int = 1000,
     lr: float = 0.2,
     loss_type: str = "mse",
+    asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: float = 0.0,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
@@ -436,31 +387,32 @@ def fit_gaussian_splats(
     device: Optional[str] = None,
     verbose: bool = True,
     # Optimization parameters
-    early_stopping: bool = True,
-    early_stop_patience: int = 50,
-    convergence_threshold: float = 1e-8,
+    max_abs_error: Optional[float] = None,
     gradient_clip: Optional[float] = 1.0,
-    compile_model: bool = False,
-    use_mixed_precision: bool = False,
+    # Per-splat optimizer parameters
+    scheduler_type: str = "plateau",
+    patience: int = 10,
+    factor: float = 0.9,
     # Dynamic operations parameters
-    enable_dynamic_ops: bool = False,
+    enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
-    napari_debug: bool = False,
+    dynamic_ops_verbose: bool = False,
     napari_movie: bool = True,
-    movie_every: int = 5,
+    movie_every: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
 
-    This function optimizes a collection of oriented Gaussian splats to approximate
-    the input image using covariance matrix parameterization:
-    - Covariance matrix Σ = L @ L^T where L is the Cholesky factor
-    - Efficient rendering via batched triangular solve (avoids explicit matrix inversion)
+    This function uses the per-splat Adam optimizer to maintain momentum
+    for individual splats during dynamic operations, providing smooth
+    optimization without global disruption.
 
     The optimization uses:
+    - Per-splat Adam optimizer with individual learning rates
     - Center position (bounded to image domain via sigmoid)
     - Non-negative amplitude (via softplus activation)
-    - Adam optimizer with configurable loss functions and early stopping
+    - Covariance matrix Σ = L @ L^T where L is the Cholesky factor
+    - Efficient rendering via batched triangular solve
 
     Parameters
     ----------
@@ -471,12 +423,18 @@ def fit_gaussian_splats(
         Typically from find_candidates_overcomplete_nd().
     init_sigma_vox : float, default=1.5
         Initial isotropic standard deviation for Gaussian splats (in voxels).
-    n_iters : int, default=300
-        Maximum number of optimization iterations.
+    n_iters : int, default=1000
+        Maximum number of optimization iterations. Default is generous to allow 
+        max_abs_error convergence criterion to work effectively.
     lr : float, default=0.2
         Learning rate for Adam optimizer.
     loss_type : str, default="mse"
         Loss function: "mse" or "poisson" (better for count/photon data).
+    asymmetric_penalty : float, default=10.0
+        Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
+        where pred > target by this factor. Set to None to disable asymmetric loss.
+        Default 10.0 heavily penalizes over-prediction since non-negative Gaussian sums
+        cannot easily reduce intensity, making under-prediction easier to correct.
     l1_amp : float, default=0.0
         L1 regularization coefficient on splat amplitudes for sparsity.
     sigma_min_diag : Sequence[float], optional
@@ -490,18 +448,29 @@ def fit_gaussian_splats(
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
     verbose : bool, default=True
         Whether to print optimization progress.
-    early_stopping : bool, default=True
-        Enable automatic convergence detection to stop early.
-    early_stop_patience : int, default=20
-        Iterations without improvement before early stopping.
-    convergence_threshold : float, default=1e-3
-        Threshold for convergence detection (relative improvement).
+    max_abs_error : float or None, default=None
+        Maximum absolute error threshold for convergence. If specified, 
+        optimization stops when max(|prediction - target|) < max_abs_error.
+        If None, only n_iters limit applies.
     gradient_clip : float or None, default=1.0
         Maximum gradient norm for clipping. None disables clipping.
-    compile_model : bool, default=False
-        Use torch.compile for model acceleration (PyTorch 2.0+, CUDA only).
-    use_mixed_precision : bool, default=False
-        Use automatic mixed precision (CUDA only).
+    scheduler_type : str, default="plateau"
+        Type of learning rate scheduler ("plateau" or "exponential").
+    patience : int, default=10
+        Scheduler patience for plateau scheduler.
+    factor : float, default=0.5
+        Learning rate reduction factor for scheduler.
+    enable_dynamic_ops : bool, default=True
+        Enable dynamic operations (seeding, splitting, pruning).
+    dynamic_config : DynamicOpsConfig, optional
+        Configuration for dynamic operations. Uses defaults if None.
+    dynamic_ops_verbose : bool, default=False
+        Enable detailed console logging for dynamic operations. Shows residual analysis,
+        seeding attempts, splitting decisions, and pruning operations.
+    napari_movie : bool, default=True
+        Record optimization movie for napari visualization.
+    movie_every : int, default=5
+        Record movie frame every N iterations.
 
     Returns
     -------
@@ -514,22 +483,21 @@ def fit_gaussian_splats(
 
     Notes
     -----
-    The optimization now includes several performance enhancements:
-    - Early stopping saves 40-60% of iterations typically
-    - Adaptive learning rate improves convergence
-    - Model compilation provides additional speedup on compatible hardware
-    - Mixed precision reduces memory usage on CUDA
+    The optimization uses per-splat Adam optimizer which provides:
+    - Individual learning rates per splat
+    - Momentum preservation during dynamic operations
+    - Smooth optimization trajectory without global disruption
+    - Early stopping for improved efficiency
+    - Adaptive learning rate scheduling
 
-    These optimizations maintain backward compatibility - existing code
-    will work without modification and benefit from early stopping by default.
+    This approach is particularly beneficial when dynamic operations
+    (prune, seed, merge, split) are enabled.
     """
 
     with asection("Fitting Gaussian Splats"):
-        # Use traditional covariance parameterization
+        # Use per-splat optimizer
         fitter = GaussianSplatFitter(
             device=device,
-            compile_model=compile_model,
-            use_mixed_precision=use_mixed_precision,
             enable_dynamic_ops=enable_dynamic_ops,
             dynamic_config=dynamic_config,
         )
@@ -542,18 +510,20 @@ def fit_gaussian_splats(
             n_iters=n_iters,
             lr=lr,
             loss_type=loss_type,
+            asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
+            dynamic_ops_verbose=dynamic_ops_verbose,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             truncate=truncate,
             verbose=verbose,
-            early_stopping=early_stopping,
-            early_stop_patience=early_stop_patience,
-            convergence_threshold=convergence_threshold,
+            max_abs_error=max_abs_error,
             gradient_clip=gradient_clip,
-            napari_debug=napari_debug,
             napari_movie=napari_movie,
             movie_every=movie_every,
+            scheduler_type=scheduler_type,
+            patience=patience,
+            factor=factor,
         )
 
         if verbose:
@@ -564,10 +534,49 @@ def fit_gaussian_splats(
                     aprint(
                         f"✓ Converged (saved {n_iters - stats['iterations']} iterations)"
                     )
-                elif early_stopping:
-                    aprint("Stopped early (no improvement)")
+
+        # Calculate and display compression ratio
+        if verbose:
+            _display_compression_analysis(V, params, amps)
 
         return params, amps, stats
+
+
+def _display_compression_analysis(V: np.ndarray, params: np.ndarray, amps: np.ndarray):
+    """
+    Calculate and display compression ratio analysis.
+
+    Compares the storage requirements of the original image vs the Gaussian splat representation.
+    """
+    from arbol import aprint, asection
+
+    with asection("Compression Analysis"):
+        # Original image storage (assuming float32)
+        original_bytes = V.size * 4  # 4 bytes per float32
+        original_bits = original_bytes * 8
+
+        # Gaussian splat representation storage
+        # params contains: centers (d floats) + packed L matrix (tril_size(d) floats)
+        # amps contains: amplitudes (1 float per splat)
+        n_splats = len(amps)
+        d = len(V.shape)
+
+        from luxar.gsplats.utils.trils import tril_size
+        floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
+        splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
+        splat_bits = splat_bytes * 8
+
+        # Calculate compression metrics
+        compression_ratio = original_bytes / splat_bytes if splat_bytes > 0 else float('inf')
+        compression_percent = (1.0 - splat_bytes / original_bytes) * 100.0 if original_bytes > 0 else 0.0
+        bits_per_pixel = splat_bits / V.size
+
+        aprint(f"Original image: {original_bytes:,} bytes ({original_bits:,} bits)")
+        aprint(f"Splat representation: {splat_bytes:,} bytes ({splat_bits:,} bits)")
+        aprint(f"Compression ratio: {compression_ratio:.2f}:1")
+        aprint(f"Space savings: {compression_percent:.1f}%")
+        aprint(f"Bits per pixel: {bits_per_pixel:.3f} (original: 32.000)")
+        aprint(f"Storage efficiency: {n_splats} splats ({floats_per_splat} floats each)")
 
 
 def _show_optimization_movie(movie_frames, shape):
@@ -585,23 +594,45 @@ def _show_optimization_movie(movie_frames, shape):
         target_stack = np.array(movie_frames["target"])
         reconstruction_stack = np.array(movie_frames["reconstruction"])
         residual_stack = np.array(movie_frames["residual"])
+        splat_centers_list = movie_frames["splat_centers"]
         iterations = movie_frames["iterations"]
 
         # Create napari viewer with time series
         viewer = napari.Viewer(title=f"Optimization Movie ({len(iterations)} frames)")
 
         # Add image stacks as layers
-        viewer.add_image(target_stack, name="Target", colormap="viridis", opacity=0.8)
+        viewer.add_image(target_stack, name="Target", colormap="magma")
 
         viewer.add_image(
             reconstruction_stack,
             name="Reconstruction",
-            colormap="plasma",
-            opacity=0.8,
-            visible=False,  # Start hidden
+            colormap="magma",
         )
 
-        viewer.add_image(residual_stack, name="Residual", colormap="hot", opacity=0.9)
+        viewer.add_image(residual_stack, name="Residual", colormap="hot")
+
+        # Add splat centers as points that change over time
+        # Create a stack of points data for napari (time, n_points, n_dims)
+        # Pad all frames to have the same number of points (use max)
+        max_splats = max(len(centers) for centers in splat_centers_list)
+        d = len(shape)
+
+        # Create padded points array: (n_frames, max_splats, d)
+        points_stack = np.full((len(splat_centers_list), max_splats, d), np.nan)
+        for i, centers in enumerate(splat_centers_list):
+            n_centers = len(centers)
+            if n_centers > 0:
+                points_stack[i, :n_centers, :] = centers
+
+        # # Add points layer (napari will handle NaN values automatically)
+        # viewer.add_points(
+        #     points_stack,
+        #     name="Splat Centers",
+        #     size=3,
+        #     face_color="cyan",
+        #     border_color="white",
+        #     border_width=1,
+        # )
 
         # Set up the time slider
         viewer.dims.axis_labels = ["iteration"] + [
