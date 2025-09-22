@@ -311,11 +311,10 @@ gsplats/
 ├── utils/
 │   └── trils.py               # Triangular matrix packing/unpacking
 ├── demo/
-│   ├── demo_performance.py    # Performance showcase
-│   ├── demo_splats.py         # Compression visualization
-│   ├── demo_per_splat_quick.py # Per-splat optimizer demonstration
-│   ├── enable_dynamic_ops_guide.py # Guide for adding dynamic ops to existing demos
-│   └── demo_splats_3d_*.py    # 3D examples
+│   ├── demo_performance.py    # Performance showcase with dynamic ops
+│   ├── demo_splats_fit.py     # Main fitting demo with dynamic ops
+│   ├── demo_splats_mitosis.py # Biological data demo with dynamic ops
+│   └── demo_splats_3d_*.py    # 3D examples with dynamic ops
 └── tests/
     └── test_gsplats_integration.py  # Comprehensive tests
 ```
@@ -338,8 +337,8 @@ python -m luxar.gsplats.demo.quick_benchmark
 # 3D volume visualization
 python -m luxar.gsplats.demo.demo_splats_3d_napari_example
 
-# Dynamic operations integration guide
-python -m luxar.gsplats.demo.enable_dynamic_ops_guide
+# Dynamic operations are enabled by default in all demos
+python -m luxar.gsplats.demos.demo_performance
 ```
 
 ## Testing
