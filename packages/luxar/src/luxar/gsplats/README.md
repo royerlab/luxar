@@ -12,11 +12,12 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 - **Efficient Cholesky Parameterization**: Covariance matrices via Cholesky decomposition with batched triangular solve
 - **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
-- **Dynamic Operations**: Adaptive splat management with pruning, seeding, merging, and splitting during optimization
+- **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding, splitting, and pruning
+- **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints (MSE and Poisson)
 - **Per-Splat Optimization**: Individual learning rates and momentum preservation for each Gaussian splat
+- **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
 - **Automatic Optimization**: Early stopping saves 20-60% of iterations without quality loss
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
-- **Multiple Loss Functions**: MSE for general data, Poisson for photon/count data
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering, optional mixed precision, pre-allocated buffers
 
@@ -45,10 +46,11 @@ and computing the quadratic form as `||y||²`.
 ### 3. Optimization Process
 The fitting uses PyTorch with advanced optimization strategies:
 - **Per-Splat Optimization**: Individual learning rates and momentum for each Gaussian
-- **Dynamic Operations**: Adaptive model topology with automatic pruning, seeding, merging, and splitting
-- **Early Stopping**: Monitors loss history to detect convergence
-- **Adaptive Learning Rate**: ReduceLROnPlateau scheduler
-- **Best State Tracking**: Restores optimal parameters if loss increases
+- **Convergence-Based Dynamic Operations**: Residual-driven splat management with seeding, splitting, and pruning
+- **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints
+- **Adaptive Amplitude Thresholds**: Scale with local residual magnitude to prevent plateaus
+- **Early Stopping**: Maximum absolute error convergence criterion
+- **Adaptive Learning Rate**: ReduceLROnPlateau scheduler with per-splat rates
 - **Regularization**: Optional L1 penalty on amplitudes for sparsity
 
 ### 4. Rendering Pipeline
@@ -90,16 +92,17 @@ candidates = find_candidates_overcomplete_nd(
     min_dist=2.0                   # Minimum separation
 )
 
-# 2. Fit Gaussian splats (precision parameterization by default)
+# 2. Fit Gaussian splats with dynamic operations and asymmetric loss
 params, amps, stats = fit_gaussian_splats(
     image,
     centers_overcomplete=candidates,
     n_iters=300,                          # Maximum iterations
-    lr=0.2,                               # Learning rate
+    lr=0.05,                              # Reduced learning rate for stability
+    asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
+    enable_dynamic_ops=True,              # Enable convergence-based dynamic operations (default)
     loss_type="mse",                      # or "poisson" for count data
     l1_amp=0.01,                         # Sparsity regularization
-    early_stopping=True,                  # Stop when converged (default)
-    enable_dynamic_ops=True,              # Enable adaptive topology (optional)
+    max_abs_error=0.01,                  # Convergence threshold
     dynamic_config=None,                  # Use default config or provide custom
 )
 
@@ -109,16 +112,44 @@ reconstruction = render_gaussians_numpy(
 )
 ```
 
+## Asymmetric Loss Functions
+
+The implementation includes asymmetric loss functions that address the fundamental constraints of additive Gaussian models:
+
+### Why Asymmetric Loss?
+
+**The Problem**: Gaussian splatting uses non-negative additive models: `prediction = Σ(positive_gaussians)`
+- **Under-prediction** (`pred < target`): Easy to fix by adding more Gaussians
+- **Over-prediction** (`pred > target`): Hard to fix, requires reducing/moving existing splats
+
+**The Solution**: Asymmetric loss with 10x penalty for over-prediction
+- **MSE**: `mean(where(pred > target, 10 * (pred - target)², (pred - target)²))`
+- **Poisson**: Similar 10x penalty applied to Poisson deviance
+
+### Benefits
+
+- **Better Optimization**: Avoids hard-to-correct over-prediction errors
+- **Stable Convergence**: Reduces oscillations and improves trajectory
+- **Model Alignment**: Reflects additive nature of Gaussian splatting
+- **Enhanced Quality**: Enables better late-stage reconstruction improvements
+
 ## Dynamic Operations
 
-The implementation supports adaptive model topology through dynamic operations that automatically adjust the number and properties of Gaussian splats during optimization:
+The implementation features convergence-driven dynamic operations that automatically adjust splat topology based on reconstruction quality and convergence criteria:
 
-### Dynamic Operations Overview
+### Convergence-Based Operations
 
-- **Pruning**: Remove weak splats with low amplitude
-- **Seeding**: Add new splats in high-error regions  
-- **Merging**: Combine nearby similar splats to reduce redundancy
-- **Splitting**: Divide large anisotropic splats for better detail capture
+- **Seeding**: Add new splats where residual exceeds convergence thresholds
+- **Splitting**: Divide large elongated splats with poor geometric properties
+- **Pruning**: Remove stagnant splats with minimal contribution
+- **Adaptive Thresholds**: Validation scales with local residual magnitude
+
+### Key Improvements
+
+- **Convergence Alignment**: Operations directly serve optimization goals
+- **Plateau Prevention**: Adaptive thresholds eliminate optimization plateaus
+- **Stable Evolution**: Reduced learning rates prevent splat migration
+- **Quality Focus**: Continuous improvement throughout optimization
 
 ### Enabling Dynamic Operations
 
