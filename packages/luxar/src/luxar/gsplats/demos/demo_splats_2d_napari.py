@@ -89,7 +89,7 @@ params_full, amps, stats = fit_gaussian_splats(
     centers_overcomplete=centers,
     init_sigma_vox=1.6,
     n_iters=N_ITERS,
-    lr=0.2,
+    lr=0.01,
     loss_type=("poisson" if USE_POISSON else "mse"),
     l1_amp=L1_AMP,
     sigma_min_diag=[0.6, 0.6],  # per-axis Cholesky diag floor (voxel units)
@@ -101,6 +101,7 @@ params_full, amps, stats = fit_gaussian_splats(
     enable_dynamic_ops=USE_DYNAMIC_OPS,
     dynamic_config=dynamic_config,
     napari_movie=True,
+    movie_every=1,
 )
 
 if len(amps) == 0:

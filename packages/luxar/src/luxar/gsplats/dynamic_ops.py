@@ -558,7 +558,12 @@ def _seed_new_splat(
 
         return True
 
-    except Exception:
+    except (RuntimeError, IndexError, ValueError) as e:
+        # Handle expected errors gracefully (device mismatches, invalid coordinates, etc.)
+        return False
+    except Exception as e:
+        # Log unexpected errors for debugging
+        print(f"Unexpected seeding error: {type(e).__name__}: {e}")
         return False
 
 
@@ -642,7 +647,12 @@ def _split_problematic_splat(
 
         return True
 
-    except Exception:
+    except (RuntimeError, IndexError, ValueError):
+        # Handle expected errors gracefully (invalid indices, device issues, etc.)
+        return False
+    except Exception as e:
+        # Log unexpected errors for debugging
+        print(f"Unexpected splitting error: {type(e).__name__}: {e}")
         return False
 
 

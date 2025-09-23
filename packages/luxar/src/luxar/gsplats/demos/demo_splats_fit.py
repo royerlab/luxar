@@ -77,7 +77,7 @@ def main():
             centers_overcomplete=np.array(centers, dtype=np.float32),
             init_sigma_vox=1.6,
             n_iters=args.n_iters,
-            lr=0.05,  # Reduced LR to prevent splat migration
+            lr=0.01,  # Reduced LR to prevent splat migration
             loss_type="mse",
             # asymmetric_penalty defaults to 10.0
             verbose=True,

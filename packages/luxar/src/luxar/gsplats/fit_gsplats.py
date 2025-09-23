@@ -72,6 +72,7 @@ class GaussianSplatFitter:
         gradient_clip: Optional[float] = 1.0,
         napari_movie: bool = False,
         movie_every: int = 1,
+        movie_max_frames: Optional[int] = None,
         scheduler_type: str = "plateau",
         patience: int = 10,
         factor: float = 0.5,
@@ -92,6 +93,10 @@ class GaussianSplatFitter:
             Optimization statistics (time, iterations, convergence).
         """
         start_time = time.time()
+
+        # Movie frame limit
+        if movie_max_frames is None:
+            movie_max_frames = float('inf')  # No limit
 
         # Input validation and normalization
         V = np.asarray(V, dtype=np.float32)
@@ -123,6 +128,8 @@ class GaussianSplatFitter:
             raise ValueError("truncate must be positive")
         if max_abs_error is not None and max_abs_error <= 0:
             raise ValueError("max_abs_error must be positive if specified")
+        elif movie_max_frames <= 0:
+            raise ValueError("movie_max_frames must be positive or None")
 
         # Robust normalization
         image_min = np.percentile(V, 1)
@@ -280,6 +287,12 @@ class GaussianSplatFitter:
             # Movie frame recording (only if enabled and at specified intervals)
             if napari_movie and movie_frames is not None and it % movie_every == 0:
                 with torch.no_grad():
+                    # Memory-bounded recording: remove oldest frames if limit exceeded
+                    if len(movie_frames["target"]) >= movie_max_frames:
+                        # Remove oldest frame (FIFO)
+                        for key in ["target", "reconstruction", "residual", "splat_centers", "iterations"]:
+                            movie_frames[key].pop(0)
+
                     # Store frames as numpy arrays (detached from computation graph)
                     target_frame = V_t.cpu().numpy()
                     pred_frame = pred.detach().cpu().numpy()
@@ -399,6 +412,7 @@ def fit_gaussian_splats(
     dynamic_ops_verbose: bool = False,
     napari_movie: bool = True,
     movie_every: int = 1,
+    movie_max_frames: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
@@ -469,8 +483,11 @@ def fit_gaussian_splats(
         seeding attempts, splitting decisions, and pruning operations.
     napari_movie : bool, default=True
         Record optimization movie for napari visualization.
-    movie_every : int, default=5
+    movie_every : int, default=1
         Record movie frame every N iterations.
+    movie_max_frames : int, default=None (infinite)
+        Maximum number of movie frames to store in memory. Older frames are automatically
+        removed when this limit is exceeded, preventing memory exhaustion during long optimizations.
 
     Returns
     -------
@@ -521,6 +538,7 @@ def fit_gaussian_splats(
             gradient_clip=gradient_clip,
             napari_movie=napari_movie,
             movie_every=movie_every,
+            movie_max_frames=movie_max_frames,
             scheduler_type=scheduler_type,
             patience=patience,
             factor=factor,
