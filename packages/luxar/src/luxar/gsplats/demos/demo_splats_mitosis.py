@@ -31,8 +31,9 @@ if NO_NAPARI and len(sys.argv) > 1:
 USE_POISSON = (
     True  # True: Poisson deviance; False: MSE (recommended for brightfield histology)
 )
-L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
-N_ITERS = 500  # Number of optimization iterations
+LR = 0.02  # Learning rate for fitting
+L1_AMP = 0.01  # L1 regularization strength to encourage sparsity
+N_ITERS = 1000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
@@ -69,11 +70,13 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             img = color.rgb2gray(img)  # -> float in [0, 1]
         V = img_as_float32(img)
 
-        # Optional: mild contrast normalization & smoothing (helps candidate detection)
-        V = exposure.rescale_intensity(V, in_range="image", out_range=(0.0, 1.0)).astype(
-            np.float32
-        )
-        V = filters.gaussian(V, sigma=1.0).astype(np.float32)
+        # Crop the image to a smaller region for faster demo
+        V = V[100:356, 100:356]  # Crop to 256x256
+
+        # # Optional: mild contrast normalization & smoothing (helps candidate detection)
+        # V = exposure.rescale_intensity(V, in_range="image", out_range=(0.0, 1.0)).astype(
+        #     np.float32
+        # )
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
@@ -85,7 +88,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             peaks_per_scale=1200,  # histology has lots of texture; over-generate
             percentile_thresh=90,  # be a bit stricter for brightfield
             min_dist=2.0,
-            add_intensity_grid=True,
+            add_intensity_grid=False,
         )
         aprint(f"Found {len(centers)} candidate centers")
 
@@ -100,7 +103,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             centers_overcomplete=centers,
             init_sigma_vox=1.6,
             n_iters=N_ITERS,
-            lr=0.2,
+            lr=LR,
             loss_type=("poisson" if USE_POISSON else "mse"),
             l1_amp=L1_AMP,
             sigma_min_diag=[0.6, 0.6],  # Cholesky diag floor (voxel units)
@@ -111,7 +114,10 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             # Dynamic operations
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,
-            max_abs_error=0.1
+            max_abs_error=0.1,
+            napari_movie=True,
+            movie_every=1,
+            movie_max_frames=None
         )
         if len(amps) == 0:
             raise RuntimeError(
