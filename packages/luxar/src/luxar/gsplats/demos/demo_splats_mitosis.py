@@ -6,12 +6,13 @@ This demo applies Gaussian splatting to the scikit-image human mitosis dataset,
 demonstrating full-covariance fitting with compression analysis via napari.
 Features interactive slider to explore reconstruction quality vs compression ratio.
 """
+
 import sys
 
 import napari
 import numpy as np
 from arbol import Arbol, aprint, asection
-from skimage import color, data, exposure, filters, img_as_float32
+from skimage import color, data, img_as_float32
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
@@ -24,13 +25,15 @@ NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI and len(sys.argv) > 1:
     aprint("🔬 Human Mitosis Gaussian Splatting Demo (napari disabled)")
     aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint("✅ Demo structure verified - would run with full napari functionality when enabled")
+    aprint(
+        "✅ Demo structure verified - would run with full napari functionality when enabled"
+    )
     sys.exit(0)
 
 # ======= Demo knobs =======
-LOSS_TYPE = 'l1'
-LR = 0.02  # Learning rate for fitting
-L1_AMP = 0.01  # L1 regularization strength to encourage sparsity
+LOSS_TYPE = "l1"
+LR = 0.01  # Learning rate for fitting
+L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
 N_ITERS = 1000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -101,8 +104,8 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             centers_overcomplete=centers,
             init_sigma_vox=1.6,
             n_iters=N_ITERS,
-            lr=LR,
             loss_type=LOSS_TYPE,
+            lr=LR,
             l1_amp=L1_AMP,
             sigma_min_diag=[0.6, 0.6],  # Cholesky diag floor (voxel units)
             sigma_max_diag=None,
@@ -115,7 +118,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             max_abs_error=0.1,
             napari_movie=True,
             movie_every=1,
-            movie_max_frames=None
+            movie_max_frames=None,
         )
         if len(amps) == 0:
             raise RuntimeError(

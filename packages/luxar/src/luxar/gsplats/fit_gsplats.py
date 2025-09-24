@@ -53,7 +53,6 @@ class GaussianSplatFitter:
         self.enable_dynamic_ops = enable_dynamic_ops
         self.dynamic_config = dynamic_config or DynamicOpsConfig()
 
-
     def fit(
         self,
         V: np.ndarray,
@@ -96,7 +95,7 @@ class GaussianSplatFitter:
 
         # Movie frame limit
         if movie_max_frames is None:
-            movie_max_frames = float('inf')  # No limit
+            movie_max_frames = float("inf")  # No limit
 
         # Input validation and normalization
         V = np.asarray(V, dtype=np.float32)
@@ -141,6 +140,14 @@ class GaussianSplatFitter:
                 aprint("Warning: Input image is nearly uniform")
         else:
             V = np.clip((V - image_min) / (image_max - image_min), 0.0, 1.0)
+
+        # Auto-convergence threshold: set sensible default if not provided
+        if max_abs_error is None:
+            max_abs_error = 0.01  # 1% of normalized [0,1] dynamic range
+            if verbose:
+                aprint(
+                    f"Auto-convergence threshold: {max_abs_error:.3f} (1% of normalized range)"
+                )
 
         d = V.ndim
         N = int(centers_overcomplete.shape[0])
@@ -221,10 +228,14 @@ class GaussianSplatFitter:
                     # Compute additional penalty for over-prediction regions only
                     # This penalizes regions where we predict more intensity than target
                     over_prediction_dev = 2.0 * torch.sum(
-                        over_prediction_mask * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
+                        over_prediction_mask
+                        * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
                     )
                     # Add (F-1) times the over-prediction loss to get total F times penalty
-                    data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / V_t.numel()
+                    data = (
+                        data
+                        + (asymmetric_penalty - 1.0) * over_prediction_dev / V_t.numel()
+                    )
             elif loss_type.lower() == "l1":
                 # L1 loss (Mean Absolute Error)
                 l1_error = torch.abs(pred - V_t)
@@ -233,9 +244,12 @@ class GaussianSplatFitter:
                     # L1 + asymmetric penalty provides excellent robustness and stability
                     over_prediction_mask = pred > V_t
                     data = torch.mean(
-                        torch.where(over_prediction_mask,
-                                   asymmetric_penalty * l1_error,  # F times penalty for over-prediction
-                                   l1_error)  # Normal penalty for under-prediction
+                        torch.where(
+                            over_prediction_mask,
+                            asymmetric_penalty
+                            * l1_error,  # F times penalty for over-prediction
+                            l1_error,
+                        )  # Normal penalty for under-prediction
                     )
                 else:
                     data = F.l1_loss(pred, V_t)
@@ -249,9 +263,11 @@ class GaussianSplatFitter:
                     # - Over-prediction (pred > target): Hard to fix, requires reducing/moving splats
                     over_prediction_mask = pred > V_t
                     data = torch.mean(
-                        torch.where(over_prediction_mask,
-                                   asymmetric_penalty * squared_error,  # F times penalty
-                                   squared_error)  # Normal penalty
+                        torch.where(
+                            over_prediction_mask,
+                            asymmetric_penalty * squared_error,  # F times penalty
+                            squared_error,
+                        )  # Normal penalty
                     )
                 else:
                     data = F.mse_loss(pred, V_t)
@@ -304,7 +320,13 @@ class GaussianSplatFitter:
                     # Memory-bounded recording: remove oldest frames if limit exceeded
                     if len(movie_frames["target"]) >= movie_max_frames:
                         # Remove oldest frame (FIFO)
-                        for key in ["target", "reconstruction", "residual", "splat_centers", "iterations"]:
+                        for key in [
+                            "target",
+                            "reconstruction",
+                            "residual",
+                            "splat_centers",
+                            "iterations",
+                        ]:
                             movie_frames[key].pop(0)
 
                     # Store frames as numpy arrays (detached from computation graph)
@@ -326,14 +348,15 @@ class GaussianSplatFitter:
             if current_loss < best_loss:
                 best_loss = current_loss
 
-            # Convergence check using maximum absolute error
-            if max_abs_error is not None:
-                with torch.no_grad():
-                    current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
-                    if current_max_abs_error < max_abs_error:
-                        if verbose:
-                            aprint(f"Converged at iteration {it} (max_abs_error={current_max_abs_error:.6f} < {max_abs_error})")
-                        break
+            # Convergence check using maximum absolute error (always enabled with auto-threshold)
+            with torch.no_grad():
+                current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
+                if current_max_abs_error < max_abs_error:
+                    if verbose:
+                        aprint(
+                            f"Converged at iteration {it} (max_abs_error={current_max_abs_error:.6f} < {max_abs_error})"
+                        )
+                    break
 
             # Dynamic operations (seeding, splitting, pruning)
             if self.enable_dynamic_ops and it % self.dynamic_config.step_every == 0:
@@ -345,7 +368,7 @@ class GaussianSplatFitter:
                     pred,  # current prediction
                     self.dynamic_config,
                     lr,
-                    max_abs_error_threshold=max_abs_error or float('inf'),
+                    max_abs_error_threshold=max_abs_error,  # Now always has a sensible value
                     device=self.device,
                     verbose=dynamic_ops_verbose,
                 )
@@ -424,7 +447,7 @@ def fit_gaussian_splats(
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
     dynamic_ops_verbose: bool = False,
-    napari_movie: bool = True,
+    napari_movie: bool = False,
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
@@ -452,7 +475,7 @@ def fit_gaussian_splats(
     init_sigma_vox : float, default=1.5
         Initial isotropic standard deviation for Gaussian splats (in voxels).
     n_iters : int, default=1000
-        Maximum number of optimization iterations. Default is generous to allow 
+        Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
     lr : float, default=0.2
         Learning rate for Adam optimizer.
@@ -476,10 +499,11 @@ def fit_gaussian_splats(
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
     verbose : bool, default=True
         Whether to print optimization progress.
-    max_abs_error : float or None, default=None
-        Maximum absolute error threshold for convergence. If specified, 
+    max_abs_error : float or None, default=None (auto: 0.01)
+        Maximum absolute error threshold for convergence. If specified,
         optimization stops when max(|prediction - target|) < max_abs_error.
-        If None, only n_iters limit applies.
+        If None, automatically set to 0.01 (1% of normalized [0,1] range) for
+        sensible convergence behavior. Auto-threshold usage is logged.
     gradient_clip : float or None, default=1.0
         Maximum gradient norm for clipping. None disables clipping.
     scheduler_type : str, default="plateau"
@@ -594,13 +618,18 @@ def _display_compression_analysis(V: np.ndarray, params: np.ndarray, amps: np.nd
         d = len(V.shape)
 
         from luxar.gsplats.utils.trils import tril_size
+
         floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
         splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
         splat_bits = splat_bytes * 8
 
         # Calculate compression metrics
-        compression_ratio = original_bytes / splat_bytes if splat_bytes > 0 else float('inf')
-        compression_percent = (1.0 - splat_bytes / original_bytes) * 100.0 if original_bytes > 0 else 0.0
+        compression_ratio = (
+            original_bytes / splat_bytes if splat_bytes > 0 else float("inf")
+        )
+        compression_percent = (
+            (1.0 - splat_bytes / original_bytes) * 100.0 if original_bytes > 0 else 0.0
+        )
         bits_per_pixel = splat_bits / V.size
 
         aprint(f"Original image: {original_bytes:,} bytes ({original_bits:,} bits)")
@@ -608,7 +637,9 @@ def _display_compression_analysis(V: np.ndarray, params: np.ndarray, amps: np.nd
         aprint(f"Compression ratio: {compression_ratio:.2f}:1")
         aprint(f"Space savings: {compression_percent:.1f}%")
         aprint(f"Bits per pixel: {bits_per_pixel:.3f} (original: 32.000)")
-        aprint(f"Storage efficiency: {n_splats} splats ({floats_per_splat} floats each)")
+        aprint(
+            f"Storage efficiency: {n_splats} splats ({floats_per_splat} floats each)"
+        )
 
 
 def _show_optimization_movie(movie_frames, shape):

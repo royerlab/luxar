@@ -93,6 +93,8 @@ class TestFitGaussianSplatsBasic:
             n_iters=50,  # Keep short for testing
             lr=0.1,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for predictable test results
+            napari_movie=False,  # Disable movie for testing
         )
 
         # Check output shapes
@@ -124,6 +126,8 @@ class TestFitGaussianSplatsBasic:
             n_iters=30,  # Keep short for testing
             lr=0.15,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for predictable test results
+            napari_movie=False,  # Disable movie for testing
         )
 
         # Check output shapes
@@ -148,6 +152,8 @@ class TestFitGaussianSplatsBasic:
             centers_overcomplete=empty_candidates,
             n_iters=10,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for predictable test results
+            napari_movie=False,  # Disable movie for testing
         )
 
         # Should return empty arrays with correct shapes
@@ -166,6 +172,8 @@ class TestFitGaussianSplatsBasic:
             centers_overcomplete=single_candidate,
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for predictable test results
+            napari_movie=False,  # Disable movie for testing
         )
 
         assert params_full.shape == (1, 5)  # 2D + 3 tril elements
@@ -317,6 +325,8 @@ class TestUniformImageHandling:
             centers_overcomplete=simple_candidates_2d,
             n_iters=10,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert np.all(np.isfinite(params_full))
@@ -334,6 +344,8 @@ class TestLossTypes:
             loss_type="mse",
             n_iters=20,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params_full.shape == (3, 5)
@@ -348,6 +360,24 @@ class TestLossTypes:
             loss_type="poisson",
             n_iters=20,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        assert params_full.shape == (3, 5)
+        assert amps.shape == (3,)
+        assert np.all(amps >= 0)
+
+    def test_l1_loss(self, simple_2d_blob, simple_candidates_2d):
+        """Test L1 loss function."""
+        params_full, amps, _ = fit_gaussian_splats(
+            V=simple_2d_blob,
+            centers_overcomplete=simple_candidates_2d,
+            loss_type="l1",
+            n_iters=20,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params_full.shape == (3, 5)
@@ -368,6 +398,8 @@ class TestRegularization:
             l1_amp=0.0,
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Fit with L1 regularization
@@ -377,6 +409,8 @@ class TestRegularization:
             l1_amp=0.01,  # Small regularization
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Results should be different
@@ -401,6 +435,8 @@ class TestConstraints:
             sigma_min_diag=sigma_min,
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Extract Cholesky factors and check diagonal elements
@@ -429,6 +465,8 @@ class TestConstraints:
             sigma_max_diag=sigma_max,
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Extract and check constraints
@@ -454,6 +492,8 @@ class TestDeviceSupport:
             device="cpu",
             n_iters=10,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params_full.shape == (3, 5)
@@ -468,6 +508,8 @@ class TestDeviceSupport:
             device="cuda",
             n_iters=10,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params_full.shape == (3, 5)
@@ -476,6 +518,22 @@ class TestDeviceSupport:
 
 class TestConvergence:
     """Test optimization convergence properties."""
+
+    def test_auto_convergence_threshold(self, simple_2d_blob, simple_candidates_2d):
+        """Test automatic convergence threshold setting."""
+        params, amps, stats = fit_gaussian_splats(
+            V=simple_2d_blob,
+            centers_overcomplete=simple_candidates_2d,
+            n_iters=100,
+            max_abs_error=None,  # Should auto-set to 0.01
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Should converge with auto-threshold
+        assert "converged" in stats
+        assert params.shape[0] > 0
 
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
@@ -486,6 +544,8 @@ class TestConvergence:
             centers_overcomplete=simple_candidates_2d,
             n_iters=5,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for consistent topology
+            napari_movie=False,
         )
 
         # Longer optimization
@@ -494,6 +554,8 @@ class TestConvergence:
             centers_overcomplete=simple_candidates_2d,
             n_iters=50,
             verbose=False,
+            enable_dynamic_ops=False,  # Disable for consistent topology
+            napari_movie=False,
         )
 
         # Results should be different (optimization should progress)
@@ -509,6 +571,8 @@ class TestConvergence:
             lr=0.01,  # Low learning rate
             n_iters=20,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         params_high_lr, amps_high_lr, _ = fit_gaussian_splats(
@@ -517,6 +581,8 @@ class TestConvergence:
             lr=0.5,  # High learning rate
             n_iters=20,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Different learning rates should produce different results
@@ -536,6 +602,8 @@ class TestReconstructionQuality:
             centers_overcomplete=center_candidate,
             n_iters=100,  # More iterations for better fit
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Check that fitted center is reasonably close to blob center
@@ -558,6 +626,8 @@ class TestReconstructionQuality:
             centers_overcomplete=few_candidates,
             n_iters=50,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Fit with more candidates
@@ -574,6 +644,8 @@ class TestReconstructionQuality:
             centers_overcomplete=many_candidates,
             n_iters=50,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # More splats should generally have higher total amplitude

@@ -21,11 +21,14 @@ NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI and len(sys.argv) > 1:
     aprint("🎯 2D Gaussian Splatting Demo (napari disabled)")
     aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint("✅ Demo structure verified - would run with full napari functionality when enabled")
+    aprint(
+        "✅ Demo structure verified - would run with full napari functionality when enabled"
+    )
     sys.exit(0)
 
 # ======= Demo knobs =======
-USE_POISSON = False  # True: Poisson deviance; False: MSE
+LOSS_TYPE = "l1"  # True: Poisson deviance; False: MSE
+LR = 0.01  # e.g. 0.01-0.03 works well
 L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
 N_ITERS = 1000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
@@ -89,10 +92,10 @@ params_full, amps, stats = fit_gaussian_splats(
     centers_overcomplete=centers,
     init_sigma_vox=1.6,
     n_iters=N_ITERS,
-    lr=0.01,
-    loss_type=("poisson" if USE_POISSON else "mse"),
+    lr=LR,
+    loss_type=LOSS_TYPE,
     l1_amp=L1_AMP,
-    sigma_min_diag=[0.6, 0.6],  # per-axis Cholesky diag floor (voxel units)
+    sigma_min_diag=[0.2, 0.2],  # per-axis Cholesky diag floor (voxel units)
     sigma_max_diag=None,
     truncate=TRUNCATE_SIG,
     device=DEVICE,

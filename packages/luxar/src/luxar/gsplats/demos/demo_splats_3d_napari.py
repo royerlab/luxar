@@ -26,15 +26,16 @@ NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI and len(sys.argv) > 1:
     aprint("🧊 3D Gaussian Splatting Demo (napari disabled)")
     aprint("Note: This demo is designed for interactive 3D napari visualization.")
-    aprint("✅ Demo structure verified - would run with full napari functionality when enabled")
+    aprint(
+        "✅ Demo structure verified - would run with full napari functionality when enabled"
+    )
     sys.exit(0)
 
 # ======= Demo knobs =======
-USE_POISSON = (
-    True  # True: Poisson deviance; False: MSE (recommended for volumetric data)
-)
+LOSS_TYPE = "l1"
+LR = 0.01
 L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
-N_ITERS = 550  # Number of optimization iterations (reduced for 3D computational cost)
+N_ITERS = 1000  # Number of optimization iterations (reduced for 3D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 30  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
@@ -100,13 +101,19 @@ def ellipsoid_wireframe_from_L(
 
 
 with asection("3D Gaussian Splatting Demo"):
-    aprint("🧊 Interactive 3D volumetric compression analysis with wireframe visualization")
+    aprint(
+        "🧊 Interactive 3D volumetric compression analysis with wireframe visualization"
+    )
 
     with asection("Creating 3D test data"):
         # Create 3D volumetric "blobs" data (same approach as 2D version)
         volume_size = 64  # Size for 3D demo
         blobs = data.binary_blobs(
-            length=volume_size, blob_size_fraction=0.08, n_dim=3, volume_fraction=0.15, rng=42
+            length=volume_size,
+            blob_size_fraction=0.08,
+            n_dim=3,
+            volume_fraction=0.15,
+            rng=42,
         ).astype(float)
         V = ndimage.gaussian_filter(blobs, sigma=3.5).astype(np.float32)
 
@@ -140,8 +147,8 @@ with asection("3D Gaussian Splatting Demo"):
             centers_overcomplete=centers,
             init_sigma_vox=1.4,  # Slightly smaller for 3D
             n_iters=N_ITERS,
-            lr=0.15,  # Lower LR for stability in 3D
-            loss_type=("poisson" if USE_POISSON else "mse"),
+            loss_type=LOSS_TYPE,
+            lr=LR,
             l1_amp=L1_AMP,
             sigma_min_diag=[0.5, 0.5, 0.5],  # 3D minimum sigma constraints
             sigma_max_diag=[32.0, 32.0, 32.0],  # Maximum sigma to prevent huge splats

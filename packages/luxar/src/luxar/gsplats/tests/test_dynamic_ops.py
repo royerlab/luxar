@@ -28,7 +28,8 @@ class TestDynamicOpsConfig:
         assert cfg.nms_radius_vox == 2.0
         assert cfg.min_contribution_threshold == 0.05
         assert cfg.relative_contribution_factor == 0.1
-        assert cfg.learning_rate_threshold == 1e-6
+        assert cfg.pruning_percentile == 5.0
+        assert cfg.min_splats_to_keep == 10
         assert cfg.init_sigma_vox == 1.5
         assert cfg.split_size_threshold == 3.0
         assert cfg.split_elongation_threshold == 4.0
@@ -52,9 +53,9 @@ class TestResidualPeakFinding:
         """Test finding residual peaks in 2D images."""
         # Create a synthetic residual with clear peaks
         residual = torch.zeros((20, 20))
-        residual[5, 5] = 1.0   # Peak 1
-        residual[15, 15] = 0.8 # Peak 2
-        residual[10, 10] = 0.6 # Peak 3
+        residual[5, 5] = 1.0  # Peak 1
+        residual[15, 15] = 0.8  # Peak 2
+        residual[10, 10] = 0.6  # Peak 3
 
         peaks = _find_residual_peaks(residual, k_max_residuals=3, nms_radius_vox=2.0)
 
@@ -70,8 +71,8 @@ class TestResidualPeakFinding:
         """Test finding residual peaks in 3D volumes."""
         # Create a synthetic 3D residual
         residual = torch.zeros((10, 10, 10))
-        residual[5, 5, 5] = 1.0   # Peak 1
-        residual[2, 2, 2] = 0.7   # Peak 2
+        residual[5, 5, 5] = 1.0  # Peak 1
+        residual[2, 2, 2] = 0.7  # Peak 2
 
         peaks = _find_residual_peaks(residual, k_max_residuals=2, nms_radius_vox=1.5)
 
@@ -136,7 +137,7 @@ class TestGaussianSplatModel:
             centers0=centers,
             L0=L0,
             amps0=amps0,
-            sigma_min_diag=[0.5, 0.5]
+            sigma_min_diag=[0.5, 0.5],
         )
         assert model.n_splats() == 2
 
@@ -151,7 +152,7 @@ class TestGaussianSplatModel:
             centers0=centers,
             L0=L0,
             amps0=amps0,
-            sigma_min_diag=[0.5, 0.5]
+            sigma_min_diag=[0.5, 0.5],
         )
 
         centers_t, Ls_t, amps_t = model.current_params()
@@ -180,7 +181,7 @@ class TestDynamicOperationsIntegration:
             centers0=centers,
             L0=L0,
             amps0=amps0,
-            sigma_min_diag=[0.5, 0.5]
+            sigma_min_diag=[0.5, 0.5],
         )
 
         # Create dummy optimizer and scheduler
@@ -207,7 +208,7 @@ class TestDynamicOperationsIntegration:
             cfg=cfg,
             current_lr=0.1,
             max_abs_error_threshold=0.1,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
             verbose=False,
         )
 
@@ -252,7 +253,7 @@ class TestDynamicOperationsIntegration:
         # Check that we got valid results
         assert params.shape[0] > 0  # Should have some splats
         assert amps.shape[0] == params.shape[0]
-        assert 'final_loss' in stats  # Check for stats that actually exist
+        assert "final_loss" in stats  # Check for stats that actually exist
 
     def test_fit_without_dynamic_ops(self):
         """Test fitting without dynamic operations for comparison."""
@@ -284,4 +285,142 @@ class TestDynamicOperationsIntegration:
         # Check that we got valid results
         assert params.shape[0] > 0
         assert amps.shape[0] == params.shape[0]
-        assert 'final_loss' in stats  # Check for stats that actually exist
+        assert "final_loss" in stats  # Check for stats that actually exist
+
+    def test_principled_pruning_functionality(self):
+        """Test the new principled pruning algorithm."""
+        from luxar.gsplats.dynamic_ops import _calculate_splat_importance, _select_pruning_candidates
+
+        # Create test model with varying importance splats
+        V = np.random.random((32, 32)).astype(np.float32)
+        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=50)
+
+        # Create model with many splats to trigger pruning
+        L0 = np.eye(2)[None, :, :] * 1.0
+        L0 = np.repeat(L0, len(centers), axis=0)
+        amps0 = np.random.uniform(0.01, 1.0, len(centers)).astype(np.float32)  # Varying amplitudes
+
+        model = GaussianSplatModel(
+            shape=(32, 32),
+            centers0=centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=[0.5, 0.5],
+        )
+
+        # Test importance calculation
+        importance = _calculate_splat_importance(model)
+        assert importance.shape == (len(centers),)
+        assert torch.all(importance >= 0)
+
+        # Test candidate selection
+        candidates = _select_pruning_candidates(importance, 10.0)  # Top 10%
+        expected_candidates = max(1, int(len(centers) * 0.1))
+        assert len(candidates) == expected_candidates
+
+        # Verify candidates are actually least important
+        sorted_importance = torch.sort(importance)[0]
+        candidate_importance = importance[candidates]
+        assert torch.all(candidate_importance <= sorted_importance[expected_candidates])
+
+    def test_asymmetric_penalty_with_all_loss_types(self):
+        """Test asymmetric penalty works with all loss functions."""
+        V = np.random.random((24, 24)).astype(np.float32)
+        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=20)
+
+        for loss_type in ["mse", "poisson", "l1"]:
+            params, amps, stats = fit_gaussian_splats(
+                V, centers,
+                n_iters=10,
+                loss_type=loss_type,
+                asymmetric_penalty=5.0,  # Test with asymmetric penalty
+                verbose=False,
+                enable_dynamic_ops=False,
+                napari_movie=False,
+            )
+
+            assert len(amps) > 0, f"{loss_type} with asymmetric penalty failed"
+            assert all(amps >= 0), f"{loss_type} produced negative amplitudes"
+
+    def test_local_convergence_based_pruning(self):
+        """Test the local convergence-based pruning algorithm."""
+        # Create test data where some splats should be removable
+        V = np.ones((32, 32), dtype=np.float32) * 0.5  # Uniform background
+        centers = np.array([[10, 10], [15, 15], [20, 20]], dtype=np.float32)
+
+        # Create model with varying importance
+        L0 = np.stack([np.eye(2) * 2.0, np.eye(2) * 0.5, np.eye(2) * 1.0])  # Different sizes
+        amps0 = np.array([0.8, 0.001, 0.5])  # Very different amplitudes
+
+        model = GaussianSplatModel(
+            shape=(32, 32),
+            centers0=centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=[0.1, 0.1],
+        )
+
+        from luxar.gsplats.optim import PerSplatAdam, PerSplatReduceLROnPlateau
+        from luxar.gsplats.dynamic_ops import apply_dynamic_operations, DynamicOpsConfig
+
+        optimizer = PerSplatAdam(model, lr=0.1)
+        scheduler = PerSplatReduceLROnPlateau(optimizer)
+
+        V_target = torch.tensor(V, dtype=torch.float32)
+        V_pred = model()
+
+        cfg = DynamicOpsConfig()
+        cfg.min_splats_to_keep = 1  # Allow more aggressive pruning for test
+
+        # Test pruning with verbose output
+        opt_new, sched_new, topology_changed = apply_dynamic_operations(
+            model, optimizer, scheduler,
+            V_target, V_pred, cfg,
+            current_lr=0.1,
+            max_abs_error_threshold=0.01,
+            device=torch.device("cpu"),
+            verbose=True,  # Test verbose output
+        )
+
+        # Verify function returned successfully
+        assert opt_new is not None
+        assert sched_new is not None
+        assert isinstance(topology_changed, bool)
+
+    def test_auto_convergence_threshold_behavior(self):
+        """Test auto-convergence threshold integration with dynamic operations."""
+        V = np.random.random((24, 24)).astype(np.float32)
+        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=30)
+
+        # Test that auto-threshold works with dynamic operations
+        params, amps, stats = fit_gaussian_splats(
+            V, centers,
+            n_iters=50,
+            max_abs_error=None,  # Should auto-set to 0.01
+            loss_type="l1",
+            enable_dynamic_ops=True,  # Enable to test interaction
+            dynamic_ops_verbose=True,  # Test verbose output
+            verbose=True,  # Should log auto-threshold
+            napari_movie=False,
+        )
+
+        assert "converged" in stats
+        assert len(amps) > 0
+
+    def test_compression_analysis_functionality(self):
+        """Test compression ratio analysis functionality."""
+        from luxar.gsplats.fit_gsplats import _display_compression_analysis
+
+        # Create simple test data
+        V = np.random.random((16, 16)).astype(np.float32)
+        params = np.random.random((10, 5)).astype(np.float32)  # 10 splats, 2D + packed L + amp
+        amps = np.random.uniform(0.1, 1.0, 10).astype(np.float32)
+
+        # Test compression analysis (should not raise exceptions)
+        try:
+            _display_compression_analysis(V, params, amps)
+            compression_test_passed = True
+        except Exception:
+            compression_test_passed = False
+
+        assert compression_test_passed, "Compression analysis failed"

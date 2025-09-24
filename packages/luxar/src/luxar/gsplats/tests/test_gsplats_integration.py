@@ -61,7 +61,8 @@ class TestGaussianSplatsIntegration:
             n_iters=50,
             lr=0.2,
             verbose=False,
-            early_stopping=True,
+            enable_dynamic_ops=False,  # Disable for predictable test results
+            napari_movie=False,  # Disable napari windows in tests
         )
 
         assert params.shape[0] == len(candidates)
@@ -102,7 +103,8 @@ class TestGaussianSplatsIntegration:
             n_iters=30,  # Fewer for speed
             lr=0.2,
             verbose=False,
-            early_stopping=True,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params.shape[0] == len(candidates)
@@ -158,7 +160,8 @@ class TestGaussianSplatsIntegration:
             n_iters=50,  # Fewer iterations for test speed
             lr=0.3,
             verbose=False,  # Reduce test output
-            early_stopping=True,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params.shape[1] == 4 + tril_size(4)  # 4 centers + 4x4 Cholesky
@@ -188,14 +191,14 @@ class TestGaussianSplatsIntegration:
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=10)
 
         # Fit with early stopping (more iterations to allow convergence)
-        fitter = GaussianSplatFitter()
+        fitter = GaussianSplatFitter(enable_dynamic_ops=False)
         params_early, amps_early, stats_early = fitter.fit(
             image,
             centers_overcomplete=candidates,
             n_iters=200,  # More iterations
-            early_stopping=True,
-            early_stop_patience=15,
+            max_abs_error=0.001,  # Use convergence threshold instead of early_stopping
             verbose=False,
+            napari_movie=False,
         )
 
         # Fit without early stopping
@@ -203,8 +206,8 @@ class TestGaussianSplatsIntegration:
             image,
             centers_overcomplete=candidates,
             n_iters=200,  # Same number
-            early_stopping=False,
             verbose=False,
+            napari_movie=False,
         )
 
         # Early stopping should use fewer iterations (or at least not more)
@@ -237,6 +240,8 @@ class TestGaussianSplatsIntegration:
             centers_overcomplete=candidates,
             n_iters=30,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Render with numpy
@@ -270,6 +275,8 @@ class TestGaussianSplatsIntegration:
             n_iters=30,
             loss_type="mse",
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Test Poisson loss
@@ -279,6 +286,8 @@ class TestGaussianSplatsIntegration:
             n_iters=30,
             loss_type="poisson",
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Both should produce valid results
@@ -311,6 +320,8 @@ class TestGaussianSplatsIntegration:
             n_iters=50,
             l1_amp=0.0,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # With strong regularization
@@ -320,6 +331,8 @@ class TestGaussianSplatsIntegration:
             n_iters=50,
             l1_amp=0.1,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Regularization should produce sparser solution
@@ -344,6 +357,8 @@ class TestGaussianSplatsIntegration:
             sigma_min_diag=sigma_min,
             sigma_max_diag=sigma_max,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Extract and check Cholesky factors
@@ -369,6 +384,8 @@ class TestGaussianSplatsIntegration:
             n_iters=20,
             device="cpu",
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
         assert np.all(np.isfinite(params_cpu))
 
@@ -404,6 +421,8 @@ class TestGaussianSplatsIntegration:
             image,
             centers_overcomplete=empty_candidates,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert params.shape == (0, 2 + tril_size(2))
@@ -418,6 +437,8 @@ class TestGaussianSplatsIntegration:
             centers_overcomplete=candidates,
             n_iters=20,
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         assert np.all(np.isfinite(params))
@@ -446,6 +467,8 @@ class TestGaussianSplatsIntegration:
             n_iters=20,
             truncate=8.0,  # Very loose truncation = large AABB
             verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Render with loose truncation (this exercises chunking!)
