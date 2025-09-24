@@ -100,7 +100,7 @@ params, amps, stats = fit_gaussian_splats(
     lr=0.05,                              # Reduced learning rate for stability
     asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
     enable_dynamic_ops=True,              # Enable convergence-based dynamic operations (default)
-    loss_type="mse",                      # or "poisson" for count data
+    loss_type="mse",                      # "mse", "poisson" for count data, or "l1" for sharp features
     l1_amp=0.01,                         # Sparsity regularization
     max_abs_error=0.01,                  # Convergence threshold
     dynamic_config=None,                  # Use default config or provide custom
@@ -132,6 +132,28 @@ The implementation includes asymmetric loss functions that address the fundament
 - **Stable Convergence**: Reduces oscillations and improves trajectory
 - **Model Alignment**: Reflects additive nature of Gaussian splatting
 - **Enhanced Quality**: Enables better late-stage reconstruction improvements
+
+## Loss Function Selection
+
+The package supports three loss functions, each optimized for different data characteristics:
+
+### **MSE (Mean Squared Error)** - Default
+- **Best for**: Smooth data with Gaussian noise, general-purpose reconstruction
+- **Characteristics**: Fast convergence, well-behaved gradients, penalizes large errors heavily
+- **Use when**: Working with natural images, smooth volumetric data, or when in doubt
+
+### **Poisson**
+- **Best for**: Count/photon data, fluorescence microscopy, low-light imaging
+- **Characteristics**: Optimal for Poisson noise statistics, handles non-negative intensities naturally
+- **Use when**: Working with camera data, microscopy images, or any counting processes
+
+### **L1 (Mean Absolute Error)**
+- **Best for**: Data with outliers, sharp features, challenging datasets requiring robustness
+- **Characteristics**: Robust to outliers, preserves edges, encourages sparse residuals
+- **Use when**: Images with sharp boundaries, noisy data, or when MSE over-smooths features
+- **Special synergy**: L1 + asymmetric penalty provides exceptional stability
+
+**All loss functions support asymmetric penalties** for optimal performance with additive Gaussian models.
 
 ## Dynamic Operations
 

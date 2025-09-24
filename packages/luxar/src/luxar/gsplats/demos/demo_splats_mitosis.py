@@ -28,9 +28,7 @@ if NO_NAPARI and len(sys.argv) > 1:
     sys.exit(0)
 
 # ======= Demo knobs =======
-USE_POISSON = (
-    True  # True: Poisson deviance; False: MSE (recommended for brightfield histology)
-)
+LOSS_TYPE = 'l1'
 LR = 0.02  # Learning rate for fitting
 L1_AMP = 0.01  # L1 regularization strength to encourage sparsity
 N_ITERS = 1000  # Number of optimization iterations
@@ -104,7 +102,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             init_sigma_vox=1.6,
             n_iters=N_ITERS,
             lr=LR,
-            loss_type=("poisson" if USE_POISSON else "mse"),
+            loss_type=LOSS_TYPE,
             l1_amp=L1_AMP,
             sigma_min_diag=[0.6, 0.6],  # Cholesky diag floor (voxel units)
             sigma_max_diag=None,

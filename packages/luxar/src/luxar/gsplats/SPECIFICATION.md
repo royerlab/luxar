@@ -287,13 +287,21 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Asymmetric MSE**: `mean(where(pred > target, F * (pred - target)², (pred - target)²))` where F is over-prediction penalty factor
 - Poisson: `mean(2 * (pred - target + target * log(target/pred)))`
 - **Asymmetric Poisson**: Apply same over-prediction penalty to Poisson deviance
-- Optional L1: `+ l1_amp * mean(|softplus(raw_a)|)`
+- **L1 (Mean Absolute Error)**: `mean(|pred - target|)`
+- **Asymmetric L1**: `mean(where(pred > target, F * |pred - target|, |pred - target|))` where F is over-prediction penalty factor
+- Optional L1 Regularization: `+ l1_amp * mean(|softplus(raw_a)|)`
+
+**Loss Function Selection Guide:**
+- **MSE**: Best for smooth data with Gaussian noise, fast convergence, well-behaved gradients
+- **Poisson**: Optimal for count/photon data, fluorescence microscopy, low-light imaging
+- **L1**: Robust to outliers, preserves sharp features, encourages sparse residuals, excellent with asymmetric penalty
 
 **Asymmetric Loss Rationale:**
 - **Over-prediction** (`pred > target`, negative residual): Heavily penalized by factor F (**default 10x**) since non-negative Gaussian sums cannot easily reduce intensity
 - **Under-prediction** (`pred < target`, positive residual): Normal penalty since additional Gaussians can easily add intensity
 - **Model alignment**: Reflects the additive constraint of Gaussian splatting where reducing intensity is harder than adding it
 - **Default enabled**: `asymmetric_penalty=10.0` by default for optimal results with additive Gaussian models
+- **L1 synergy**: L1 + asymmetric penalty provides exceptional robustness and stability for challenging datasets
 
 ### GaussianSplatFitter Class
 Object-oriented interface with identical functionality to functional API.
