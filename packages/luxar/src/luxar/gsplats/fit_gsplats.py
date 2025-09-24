@@ -120,8 +120,8 @@ class GaussianSplatFitter:
             raise ValueError("n_iters must be positive")
         if lr <= 0:
             raise ValueError("lr must be positive")
-        if loss_type not in ["mse", "poisson"]:
-            raise ValueError("loss_type must be 'mse' or 'poisson'")
+        if loss_type not in ["mse", "poisson", "l1"]:
+            raise ValueError("loss_type must be 'mse', 'poisson', or 'l1'")
         if l1_amp < 0:
             raise ValueError("l1_amp must be non-negative")
         if truncate <= 0:
@@ -225,8 +225,22 @@ class GaussianSplatFitter:
                     )
                     # Add (F-1) times the over-prediction loss to get total F times penalty
                     data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / V_t.numel()
+            elif loss_type.lower() == "l1":
+                # L1 loss (Mean Absolute Error)
+                l1_error = torch.abs(pred - V_t)
+                if asymmetric_penalty is not None:
+                    # Asymmetric L1: heavily penalize over-prediction (pred > target)
+                    # L1 + asymmetric penalty provides excellent robustness and stability
+                    over_prediction_mask = pred > V_t
+                    data = torch.mean(
+                        torch.where(over_prediction_mask,
+                                   asymmetric_penalty * l1_error,  # F times penalty for over-prediction
+                                   l1_error)  # Normal penalty for under-prediction
+                    )
+                else:
+                    data = F.l1_loss(pred, V_t)
             else:
-                # MSE loss
+                # MSE loss (default)
                 squared_error = (pred - V_t) ** 2
                 if asymmetric_penalty is not None:
                     # Asymmetric MSE: heavily penalize over-prediction (pred > target)
@@ -443,7 +457,7 @@ def fit_gaussian_splats(
     lr : float, default=0.2
         Learning rate for Adam optimizer.
     loss_type : str, default="mse"
-        Loss function: "mse" or "poisson" (better for count/photon data).
+        Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features).
     asymmetric_penalty : float, default=10.0
         Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
