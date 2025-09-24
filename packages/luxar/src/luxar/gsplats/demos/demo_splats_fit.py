@@ -77,10 +77,12 @@ def main():
             centers_overcomplete=np.array(centers, dtype=np.float32),
             init_sigma_vox=1.6,
             n_iters=args.n_iters,
-            lr=0.01,  # Reduced LR to prevent splat migration
-            loss_type="mse",
+            lr=0.01,
+            l1_amp=0.001,
+            loss_type="l1",
             # asymmetric_penalty defaults to 10.0
             verbose=True,
+            dynamic_ops_verbose=True,
             enable_dynamic_ops=enable_dynamic_ops,
             dynamic_config=dynamic_config,
             napari_movie=not args.no_napari,  # Record movie unless disabled

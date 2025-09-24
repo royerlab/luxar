@@ -155,7 +155,10 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 - `nms_radius_vox=2.0`: Minimum distance between detected residual peaks (non-maximum suppression)
 - `min_contribution_threshold=0.05`: Fixed threshold for influence detection in splitting decisions
 - `relative_contribution_factor=0.1`: Adaptive threshold factor for amplitude validation (threshold = local_residual × factor)
-- `learning_rate_threshold=1e-6`: Learning rate below which splats are considered "stagnant"
+
+**Principled Pruning Parameters**:
+- `pruning_percentile=5.0`: Percentage of least important splats to consider for removal
+- `min_splats_to_keep=10`: Minimum number of splats to retain regardless of importance
 
 ### Core Function: `apply_dynamic_operations(model, optimizer, scheduler, V_target, V_pred, cfg, current_lr, max_abs_error_threshold, device, verbose=False)`
 
@@ -199,25 +202,77 @@ For each detected residual peak location, determine if coverage is sufficient us
   - Distribute amplitude: `a_children = 0.6 * a_parent` each
 - **Replace**: Remove parent splat and add two children
 
-### **Step 3: Global Pruning Analysis**
-Independent of residual peaks, analyze all splats for minimal contribution:
+### **Step 3: Principled Splat Pruning Analysis**
+Independent of residual peaks, identify and remove splats that do not meaningfully contribute to reconstruction quality:
 
-**Stagnant Splat Detection**:
-- **Learning rate criterion**: Current per-splat learning rate < `learning_rate_threshold`
-- **Impact assessment**: Calculate maximum possible change in reconstruction:
-  - `max_change = current_lr * max_gradient * amplitude * max_gaussian_value`
-  - Compare against local residual: `local_residual = mean(|residual|)` in splat's 2σ region
-- **Removal criterion**: `max_change < min_contribution_threshold AND max_change < 0.1 * local_residual`
-- **Additional check**: Ensure splat contributes less than 1% to overall reconstruction quality
+**Importance-Based Pre-filtering**:
+1. **Calculate splat importance**: For each splat k, compute `importance_k = amplitude_k × volume_k`
+   - `amplitude_k = a_k` (splat amplitude)
+   - `volume_k = prod(diag(L_k))` (approximates `sqrt(det(Σ_k))` for computational efficiency)
+   - This approximates splat "mass": `∫ f_k(x) dx ≈ a_k × (2π)^(d/2) × sqrt(det(Σ_k))`
 
-**Pruning Logic**:
+2. **Select pruning candidates**: Identify the `p%` least important splats (default `p=5%`)
+   - Rank all splats by importance in ascending order
+   - Select bottom `p% × N_splats` splats as removal candidates
+   - Pre-filtering reduces computational cost by ~20x (only test 5% of splats)
+
+**Local Convergence-Based Removal Validation**:
+For each candidate splat k in the low-importance set:
+
+1. **Define influence region**:
+   - Compute 3σ elliptical region around splat center: `region_k = {x : (x - μ_k)^T Σ_k^{-1} (x - μ_k) ≤ 9}`
+   - This defines the spatial area where splat k has significant contribution
+
+2. **Local removal test**:
+   - Render prediction without splat k in influence region only: `pred_local_without_k`
+   - Extract local target values: `target_local = target[region_k]`
+   - Compute local residual: `local_residual = |pred_local_without_k - target_local|`
+
+3. **Local convergence validation**:
+   - Find maximum local residual: `max_local_residual = max(local_residual)`
+   - **If convergence threshold set**: Compare with threshold directly
+   - **If no convergence threshold**: Use adaptive tolerance based on current local error
+
+4. **Local convergence decision**:
+   - **Remove** if: `max_local_residual ≤ max_abs_error_threshold`
+   - **Keep** if: `max_local_residual > max_abs_error_threshold`
+   - **Conservative**: Only remove if local convergence is guaranteed to be maintained
+
+**Pruning Configuration**:
+- `pruning_percentile = 5.0`: Percentage of least important splats to consider for removal
+- `min_splats_to_keep = 10`: Minimum number of splats to retain regardless of importance
+
+**Local Convergence-Based Pruning Algorithm**:
 ```
-for each splat:
-    if (learning_rate < lr_threshold AND
-        max_possible_change < min_contribution AND
-        max_possible_change < 0.1 * local_residual AND
-        splat_contribution < 0.01 * total_reconstruction_energy):
-        mark_for_removal(splat)
+importance = [amplitude_k * prod(diag(L_k)) for all splats k]
+candidates = bottom_percentile(importance, pruning_percentile)
+removal_list = []
+
+for splat_k in candidates:
+    # Define local influence region (3σ ellipse)
+    influence_region = compute_elliptical_region(splat_k.center, splat_k.covariance, radius=3.0)
+
+    # Render locally without splat k
+    pred_local_without_k = render_region_without_splat(influence_region, model, exclude=splat_k)
+    target_local = target[influence_region]
+
+    # Check local convergence impact
+    local_residual = abs(pred_local_without_k - target_local)
+    max_local_residual = max(local_residual)
+
+    # Local convergence-based decision
+    if max_abs_error_threshold != inf:
+        can_remove = max_local_residual <= max_abs_error_threshold
+    else:
+        current_local_max = max(abs(pred_current[influence_region] - target_local))
+        tolerance = current_local_max * quality_tolerance_factor
+        can_remove = max_local_residual <= current_local_max + tolerance
+
+    if can_remove:
+        removal_list.append(splat_k)
+
+if len(removal_list) > 0 and (total_splats - len(removal_list)) >= min_splats_to_keep:
+    remove_splats(removal_list)
 ```
 
 ### **Mathematical Foundations**
@@ -254,7 +309,13 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - Ensure V is non-empty with valid dimensions
 - Validate centers_overcomplete shape matches V.ndim
 - Check all hyperparameters are positive/valid
-- Validate `max_abs_error` is positive if specified (None means no convergence threshold)
+- Validate `max_abs_error` is positive if specified
+
+**Auto-Convergence Threshold:**
+- **Default behavior**: If `max_abs_error=None`, automatically set threshold to 1% of normalized image dynamic range
+- **Calculation**: `auto_threshold = 0.01` (since images are normalized to [0,1] using robust 1%-99% percentile range)
+- **Rationale**: Provides sensible convergence criteria for all datasets without user configuration
+- **Logging**: Auto-threshold usage is logged for transparency
 
 **Initialization:**
 - Normalize V to [0,1] using robust percentiles (1st, 99th)

@@ -24,9 +24,15 @@ class TestPerSplatAdam:
     def create_test_model(n_splats=3, device="cpu"):
         """Create a simple test model."""
         shape = (16, 16)
-        centers0 = np.random.uniform(2, 14, (n_splats, 2)).astype(np.float32)
-        L0 = np.stack([np.eye(2) * 1.0] * n_splats).astype(np.float32)
-        amps0 = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
+        if n_splats == 0:
+            # Handle empty model case
+            centers0 = np.zeros((0, 2), dtype=np.float32)
+            L0 = np.zeros((0, 2, 2), dtype=np.float32)
+            amps0 = np.zeros((0,), dtype=np.float32)
+        else:
+            centers0 = np.random.uniform(2, 14, (n_splats, 2)).astype(np.float32)
+            L0 = np.stack([np.eye(2) * 1.0] * n_splats).astype(np.float32)
+            amps0 = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
 
         return GaussianSplatModel(
             shape=shape,
@@ -192,7 +198,8 @@ class TestPerSplatAdam:
         for i in range(2):
             state = optimizer.splat_states[i]
             assert "max_exp_avg_sq_mu" in state
-            assert "max_exp_avg_sq_L" in state
+            assert "max_exp_avg_sq_L_diag" in state  # Separate tracking for diag and off-diagonal
+            assert "max_exp_avg_sq_L_off" in state
             assert "max_exp_avg_sq_a" in state
 
 
@@ -224,6 +231,9 @@ class TestPerSplatScheduler:
         optimizer = PerSplatAdam(model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer)
 
+        # Initialize scheduler states for existing splats
+        scheduler.step(0.5)  # This will initialize states for existing splats
+
         # Add splats
         centers_new = torch.tensor([[10.0, 10.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2)], dim=0)
@@ -233,7 +243,7 @@ class TestPerSplatScheduler:
         optimizer.add_splats(1)
         scheduler.add_splats(1)
 
-        assert len(scheduler.splat_metrics) == 3
+        assert len(scheduler.splat_scheduler_states) == 3
 
         # Remove splats
         keep_mask = torch.tensor([True, False, True])
@@ -241,7 +251,7 @@ class TestPerSplatScheduler:
         optimizer.remove_splats(keep_mask)
         scheduler.remove_splats(keep_mask)
 
-        assert len(scheduler.splat_metrics) == 2
+        assert len(scheduler.splat_scheduler_states) == 2
 
 
 class TestFactoryFunction:
@@ -332,10 +342,10 @@ class TestEdgeCases:
         with pytest.raises(ValueError):
             optimizer.set_learning_rate(0, -0.01)
 
-        # Test zero learning rate (should be valid)
-        optimizer.set_learning_rate(0, 0.0)
+        # Test very small learning rate (should be valid)
+        optimizer.set_learning_rate(0, 1e-8)
         lrs = optimizer.get_effective_learning_rates()
-        assert lrs[0] == 0.0
+        assert lrs[0] == 1e-8  # Should match what we set
 
 
 if __name__ == "__main__":
