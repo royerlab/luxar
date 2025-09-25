@@ -162,7 +162,7 @@ params, amps, _ = fit_gaussian_splats(image, norm_percentile=5.0)
 
 ### Comprehensive Logging
 
-The system provides detailed optimization progress logging:
+The system provides detailed optimization progress logging with best state tracking:
 
 ```
 Convergence criterion: max absolute error < 0.010000
@@ -171,13 +171,23 @@ Auto-generating candidates: 131 peaks/scale for 65,536 pixels
 Generated 212 candidate centers
 
 [   1/1000] loss=0.078185  relL2=0.7969  maxAbsErr=1.1798  N=212
+    ★ New best state: iteration 1, max_abs_error=0.978093
 [  10/1000] loss=0.056279  relL2=0.7099  maxAbsErr=0.99667  N=212
+    ★ New best state: iteration 8, max_abs_error=0.045821
 ...
 ✓ CONVERGENCE ACHIEVED at iteration 127
   Max absolute error: 0.009854 < threshold: 0.010000
 
+★ Restored best state from iteration 125 (improved from 0.010123 to 0.009854)
 Rescaled amplitudes to original intensity range (factor: 0.9075)
 ```
+
+### Quality Guarantee Features
+
+- **Best state tracking**: Always returns the splat configuration with lowest max absolute error
+- **Smart logging**: Reports significant improvements and early progress
+- **State restoration**: Uses best quality achieved, not potentially suboptimal final state
+- **Non-monotonic protection**: Handles optimization fluctuations and dynamic operations gracefully
 
 ## Asymmetric Loss Functions
 
