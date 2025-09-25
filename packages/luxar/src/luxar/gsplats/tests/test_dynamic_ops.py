@@ -28,6 +28,8 @@ class TestDynamicOpsConfig:
         assert cfg.nms_radius_vox == 2.0
         assert cfg.min_contribution_threshold == 0.05
         assert cfg.relative_contribution_factor == 0.1
+        assert cfg.lr_boost_factor == 1.5
+        assert cfg.boost_influence_threshold == 0.05
         assert cfg.pruning_percentile == 5.0
         assert cfg.min_splats_to_keep == 10
         assert cfg.init_sigma_vox == 1.5
@@ -424,3 +426,41 @@ class TestDynamicOperationsIntegration:
             compression_test_passed = False
 
         assert compression_test_passed, "Compression analysis failed"
+
+    def test_adaptive_learning_rate_boosting(self):
+        """Test adaptive learning rate boosting for problematic regions."""
+        from luxar.gsplats.dynamic_ops import _boost_splat_learning_rate, DynamicOpsConfig
+        from luxar.gsplats.optim import PerSplatAdam
+
+        # Create test model
+        centers = np.array([[10, 10], [15, 15]], dtype=np.float32)
+        L0 = np.stack([np.eye(2) * 1.0, np.eye(2) * 1.0])
+        amps0 = np.array([0.5, 0.3])
+
+        model = GaussianSplatModel(
+            shape=(32, 32),
+            centers0=centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=[0.1, 0.1],
+        )
+
+        # Create optimizer
+        optimizer = PerSplatAdam(model, lr=0.1)
+
+        # Reduce learning rate for splat 0 to simulate scheduler effect
+        optimizer.set_learning_rate(0, 0.05)  # Reduced from base 0.1
+
+        # Get initial learning rates
+        initial_lrs = optimizer.get_effective_learning_rates()
+
+        # Test LR boosting
+        cfg = DynamicOpsConfig()
+        base_lr = 0.1  # Original starting rate
+        boosted_lr = _boost_splat_learning_rate(optimizer, 0, base_lr, cfg)
+
+        # Verify boosting worked
+        new_lrs = optimizer.get_effective_learning_rates()
+        assert boosted_lr > initial_lrs[0]  # Should be boosted from 0.05
+        assert boosted_lr <= base_lr  # Should not exceed base rate (0.1)
+        assert new_lrs[0] == boosted_lr  # Should be applied to splat 0

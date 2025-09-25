@@ -156,6 +156,10 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 - `min_contribution_threshold=0.05`: Fixed threshold for influence detection in splitting decisions
 - `relative_contribution_factor=0.1`: Adaptive threshold factor for amplitude validation (threshold = local_residual × factor)
 
+**Adaptive Learning Rate Parameters**:
+- `lr_boost_factor=1.5`: Multiplication factor for problematic region learning rates
+- `boost_influence_threshold=0.05`: Minimum influence to consider splat as "covering" problematic region
+
 **Principled Pruning Parameters**:
 - `pruning_percentile=5.0`: Percentage of least important splats to consider for removal
 - `min_splats_to_keep=10`: Minimum number of splats to retain regardless of importance
@@ -172,7 +176,7 @@ The dynamic operations algorithm runs every `step_every` iterations and performs
 5. **Convergence guard**: If a finite convergence threshold is set (`max_abs_error_threshold != inf`) and the strongest residual peak is below this threshold, skip all dynamic operations to avoid adding splats just before convergence
 
 ### **Step 2: Adaptive Splat Operations**
-For each detected residual peak location, determine if coverage is sufficient using convergence criteria:
+For each detected residual peak location, determine if coverage is sufficient using convergence criteria, and adaptively boost learning rates for problematic regions:
 
 **Case A: Missing Coverage (Seeding)**
 - **Detection criterion**: Coverage at the peak location is insufficient based on convergence criteria:
@@ -187,13 +191,23 @@ For each detected residual peak location, determine if coverage is sufficient us
 - **Validation**: **Adaptive amplitude threshold** - only add if `estimated_amplitude ≥ local_residual × relative_contribution_factor`
   - **Rationale**: Threshold scales with problem magnitude, preventing plateau issues from fixed thresholds
 
-**Case B: Problematic Existing Splat (Splitting)**
+**Case B: Problematic Existing Splat (Adaptive Learning Rate + Splitting)**
 - **Detection criterion**: Existing splat coverage is present but inadequate, requiring refinement:
   - **Coverage exists**: Find splat with highest influence at the peak location (using existing influence calculation)
-  - **Splitting criteria**: The dominant splat meets geometric criteria for splitting:
-    - Principal axis length: `sqrt(λ_max) > split_size_threshold` (where `λ_max` is largest eigenvalue of covariance)
-    - Elongation ratio: `λ_max / λ_min > split_elongation_threshold`
   - **Convergence criteria**: Same as Case A - residual magnitude indicates insufficient coverage
+
+**Action 1: Adaptive Learning Rate Boosting**
+- **Purpose**: "Unfreeze" splats covering problematic regions to help them adapt
+- **Target identification**: Splat with highest influence at the residual peak location
+- **Boost calculation**: `new_lr = min(current_lr × boost_factor, base_lr)`
+- **Default boost factor**: 1.5 (50% increase)
+- **Safety cap**: Never exceed original starting learning rate (`base_lr`)
+- **Rationale**: Give existing splats better chance to fix problems before adding new splats
+
+**Action 2: Geometric Splitting (if criteria met)**
+- **Splitting criteria**: The dominant splat meets geometric criteria for splitting:
+  - Principal axis length: `sqrt(λ_max) > split_size_threshold` (where `λ_max` is largest eigenvalue of covariance)
+  - Elongation ratio: `λ_max / λ_min > split_elongation_threshold`
 - **Action**: Split the problematic splat along its principal eigenvector
 - **Split procedure**:
   - Compute principal eigenvector `v1` corresponding to `λ_max`

@@ -237,7 +237,8 @@ The implementation features convergence-driven dynamic operations that automatic
 
 - **Convergence Alignment**: Operations directly serve optimization goals
 - **Plateau Prevention**: Adaptive thresholds eliminate optimization plateaus
-- **Stable Evolution**: Reduced learning rates prevent splat migration
+- **Adaptive Learning Rates**: Boost learning rates for splats covering problematic regions to "unfreeze" adaptation
+- **Stable Evolution**: Reduced base learning rates prevent splat migration while targeted boosting enables local adaptation
 - **Quality Focus**: Continuous improvement throughout optimization
 
 ### Enabling Dynamic Operations

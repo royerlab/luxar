@@ -72,6 +72,10 @@ class DynamicOpsConfig:
             0.1  # Adaptive threshold: fraction of local residual
         )
 
+        # Adaptive Learning Rate Boosting
+        self.lr_boost_factor: float = 1.5  # Multiplication factor for problematic regions
+        self.boost_influence_threshold: float = 0.05  # Minimum influence to boost LR
+
         # Step 3: Principled Pruning Parameters
         self.pruning_percentile: float = (
             5.0  # Percentage of least important splats to consider for removal
@@ -404,7 +408,18 @@ def apply_dynamic_operations(
 
                 if (
                     influential_splat_idx != -1
-                ):  # Existing Coverage - Check if SPLITTING is appropriate
+                ):  # Existing Coverage - boost LR and check splitting
+                    # Action 1: Boost learning rate to "unfreeze" problematic splat
+                    if influence_value >= cfg.boost_influence_threshold:
+                        boosted_lr = _boost_splat_learning_rate(
+                            optimizer, influential_splat_idx, current_lr, cfg
+                        )
+                        if verbose:
+                            aprint(
+                                f"      → Boosted LR for splat {influential_splat_idx}: {boosted_lr:.6f} (factor: {cfg.lr_boost_factor})"
+                            )
+
+                    # Action 2: Check if geometric splitting is appropriate
                     if verbose:
                         aprint(
                             f"      → Checking if splat {influential_splat_idx} should be split..."
@@ -503,6 +518,33 @@ def apply_dynamic_operations(
             aprint("Dynamic ops: No operations performed")
 
     return optimizer, scheduler, topology_changed
+
+
+def _boost_splat_learning_rate(
+    optimizer, splat_idx: int, current_lr: float, cfg: DynamicOpsConfig
+) -> float:
+    """
+    Boost learning rate for a splat covering a problematic region.
+
+    Args:
+        optimizer: PerSplatAdam optimizer
+        splat_idx: Index of splat to boost
+        current_lr: Current base learning rate
+        cfg: Dynamic operations configuration
+
+    Returns:
+        float: New boosted learning rate (capped at base rate)
+    """
+    # Get current learning rate for this splat
+    current_splat_lr = optimizer.get_effective_learning_rates()[splat_idx]
+
+    # Calculate boosted learning rate with safety cap
+    boosted_lr = min(current_splat_lr * cfg.lr_boost_factor, current_lr)
+
+    # Apply the boost
+    optimizer.set_learning_rate(splat_idx, boosted_lr)
+
+    return boosted_lr
 
 
 def _is_coverage_sufficient(
