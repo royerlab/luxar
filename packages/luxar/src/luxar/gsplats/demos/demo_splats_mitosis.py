@@ -94,8 +94,6 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_amp=L1_AMP,
-            sigma_min_diag=[0.2, 0.2],  # Cholesky diag floor (voxel units)
-            sigma_max_diag=None,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,

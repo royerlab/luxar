@@ -303,7 +303,7 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
-### Primary Function: `fit_gaussian_splats(V, centers_overcomplete=None, init_sigma_vox=1.5, n_iters=1000, lr=0.2, loss_type="mse", asymmetric_penalty=10.0, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, centers_overcomplete=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, max_abs_error=None, ...)`
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
@@ -326,8 +326,12 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Logging**: Auto-threshold usage is logged for transparency
 
 **Initialization:**
-- Normalize V to [0,1] using robust percentiles (1st, 99th): `V_norm = (V - V_min) / (V_max - V_min)`
-- Store normalization parameters: `V_min = percentile(V, 1)`, `V_max = percentile(V, 99)`
+- **Configurable normalization** using `norm_percentile` parameter:
+  - **Full range** (`norm_percentile=0`): `V_min = min(V)`, `V_max = max(V)` - uses complete dynamic range
+  - **Percentile clipping** (`norm_percentile>0`): `V_min = percentile(V, p)`, `V_max = percentile(V, 100-p)` - robust to outliers
+  - **Default**: `norm_percentile=0.0` for full range normalization (maximum dynamic range utilization)
+- Normalize V to [0,1]: `V_norm = (V - V_min) / (V_max - V_min)`
+- Store normalization parameters for intensity rescaling
 - Create `GaussianSplatModel` with candidate centers
 - Initialize with isotropic covariances: `L0[i,i] = init_sigma_vox`
 - Sample initial amplitudes from normalized image at center locations
