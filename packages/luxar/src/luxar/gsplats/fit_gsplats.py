@@ -173,6 +173,9 @@ class GaussianSplatFitter:
                 aprint(
                     f"Auto-convergence threshold: {max_abs_error:.3f} (1% of normalized range)"
                 )
+        else:
+            if verbose:
+                aprint(f"Convergence threshold: {max_abs_error:.6f} (user-specified)")
 
         d = V.ndim
         N = int(centers_overcomplete.shape[0])
@@ -316,7 +319,13 @@ class GaussianSplatFitter:
                 "splat_centers": [],
             }
 
+        # Log convergence criteria before starting optimization
+        if verbose:
+            aprint(f"Convergence criterion: max absolute error < {max_abs_error:.6f}")
+            aprint(f"Maximum iterations: {n_iters}")
+
         # Main optimization loop
+        converged_early = False
         actual_iters = 0
         for it in range(1, n_iters + 1):
             actual_iters = it
@@ -377,9 +386,13 @@ class GaussianSplatFitter:
             with torch.no_grad():
                 current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
                 if current_max_abs_error < max_abs_error:
+                    converged_early = True
                     if verbose:
                         aprint(
-                            f"Converged at iteration {it} (max_abs_error={current_max_abs_error:.6f} < {max_abs_error})"
+                            f"✓ CONVERGENCE ACHIEVED at iteration {it}"
+                        )
+                        aprint(
+                            f"  Max absolute error: {current_max_abs_error:.6f} < threshold: {max_abs_error:.6f}"
                         )
                     break
 
@@ -411,6 +424,16 @@ class GaussianSplatFitter:
                     f"[{it:4d}/{n_iters}] loss={current_loss:.5g}  "
                     f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
                 )
+
+        # Log termination reason
+        if verbose:
+            if converged_early:
+                aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
+            else:
+                with torch.no_grad():
+                    final_max_abs_error = torch.max(torch.abs(model() - V_t)).item()
+                aprint("⚠ Optimization terminated: ITERATION LIMIT REACHED")
+                aprint(f"  Final max absolute error: {final_max_abs_error:.6f} (threshold: {max_abs_error:.6f})")
 
         # No need to restore state with per-splat optimizer
 
@@ -458,10 +481,10 @@ def fit_gaussian_splats(
     centers_overcomplete: Optional[np.ndarray] = None,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
-    lr: float = 0.2,
-    loss_type: str = "mse",
+    lr: float = 0.01,
+    loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
-    l1_amp: float = 0.0,
+    l1_amp: float = 0.001,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
