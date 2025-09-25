@@ -222,6 +222,29 @@ The package supports three loss functions, each optimized for different data cha
 
 **All loss functions support asymmetric penalties** for optimal performance with additive Gaussian models.
 
+## Splat Proliferation Prevention
+
+The system prevents runaway splat multiplication through sophisticated parameter-type-specific learning rates:
+
+### **Problem**: Splat Migration and Proliferation
+- Newly seeded splats migrate away from problematic regions during optimization
+- Regions become uncovered again, triggering more seeding
+- Results in splat proliferation without quality improvement
+
+### **Solution**: Parameter-Type-Specific Learning Rates
+```python
+# Hard-coded in PerSplatAdam optimizer:
+Position parameters (μ):     ×0.1  # Slow movement, keeps splats spatially stable
+Variance parameters (L):     ×1.0  # Normal adaptation for shape and orientation
+Amplitude parameters (a):    ×2.0  # Fast intensity matching for better convergence
+```
+
+### **Benefits**
+- **Spatial stability**: Splats stay near seeded locations (×0.1 position updates)
+- **Shape optimization**: Normal covariance evolution for local structure fitting
+- **Fast convergence**: Accelerated amplitude adaptation reduces estimation failures
+- **Proliferation prevention**: Eliminates runaway seeding cycles
+
 ## Dynamic Operations
 
 The implementation features convergence-driven dynamic operations that automatically adjust splat topology based on reconstruction quality and convergence criteria:
@@ -238,7 +261,8 @@ The implementation features convergence-driven dynamic operations that automatic
 - **Convergence Alignment**: Operations directly serve optimization goals
 - **Plateau Prevention**: Adaptive thresholds eliminate optimization plateaus
 - **Adaptive Learning Rates**: Boost learning rates for splats covering problematic regions to "unfreeze" adaptation
-- **Stable Evolution**: Reduced base learning rates prevent splat migration while targeted boosting enables local adaptation
+- **Parameter-Type-Specific Learning Rates**: Different rates for position (×0.1), variance (×1.0), and amplitude (×2.0) parameters
+- **Stable Evolution**: Slow position updates prevent splat migration while fast amplitude updates improve convergence
 - **Quality Focus**: Continuous improvement throughout optimization
 
 ### Enabling Dynamic Operations

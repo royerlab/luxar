@@ -492,7 +492,7 @@ def fit_gaussian_splats(
     V: np.ndarray,
     centers_overcomplete: Optional[np.ndarray] = None,
     norm_percentile: float = 0.0,
-    init_sigma_vox: float = 1.5,
+    init_sigma_vox: float = 0.5,
     n_iters: int = 1000,
     lr: float = 0.01,
     loss_type: str = "l1",
