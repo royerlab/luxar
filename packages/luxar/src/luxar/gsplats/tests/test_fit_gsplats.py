@@ -592,6 +592,32 @@ class TestConvergence:
         assert len(amps_small) > 0
         assert len(amps_large) >= len(amps_small)  # Should be at least as many
 
+    def test_intensity_rescaling(self):
+        """Test that amplitudes are correctly rescaled to original intensity range."""
+        # Create image with realistic intensity distribution
+        V = np.random.uniform(100, 300, (24, 24)).astype(np.float32)
+        # This ensures 1st and 99th percentiles will span most of the [100,300] range
+
+        # Store original range for comparison
+        original_min, original_max = np.percentile(V, [1, 99])
+        expected_scale_factor = original_max - original_min
+
+        params, amps, stats = fit_gaussian_splats(
+            V,
+            n_iters=10,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Amplitudes should be rescaled to original intensity scale
+        assert len(amps) > 0
+        assert np.all(amps >= 0)  # Should remain non-negative
+
+        # With realistic intensity range (~200), amplitudes should be much larger than [0,1]
+        if expected_scale_factor > 10:  # Only test if we have significant intensity range
+            assert np.max(amps) > 5.0  # Should be substantially larger than normalized range
+
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
 

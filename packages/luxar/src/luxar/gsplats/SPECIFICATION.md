@@ -326,10 +326,23 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Logging**: Auto-threshold usage is logged for transparency
 
 **Initialization:**
-- Normalize V to [0,1] using robust percentiles (1st, 99th)
+- Normalize V to [0,1] using robust percentiles (1st, 99th): `V_norm = (V - V_min) / (V_max - V_min)`
+- Store normalization parameters: `V_min = percentile(V, 1)`, `V_max = percentile(V, 99)`
 - Create `GaussianSplatModel` with candidate centers
 - Initialize with isotropic covariances: `L0[i,i] = init_sigma_vox`
 - Sample initial amplitudes from normalized image at center locations
+
+**Intensity Rescaling:**
+- **After optimization**: Rescale amplitudes to original intensity range
+- **Formula**: `amps_original = amps_normalized × (V_max - V_min)`
+- **Rationale**: Ensures Gaussian splat representation directly reconstructs original image intensities
+- **Benefit**: Users can render splats directly without manual intensity scaling
+
+**Important Limitation:**
+- **DC component removal**: Gaussian splatting cannot represent constant (uniform) background intensities
+- **Rationale**: Gaussians have finite support and integrate to finite values, unlike infinite uniform fields
+- **Implication**: The method approximates variations and structures, not absolute baseline intensities
+- **Reconstruction**: Resulting image may have different baseline than original, but preserves relative structure
 
 **Optimization loop:**
 1. Setup per-splat optimizer and scheduler
