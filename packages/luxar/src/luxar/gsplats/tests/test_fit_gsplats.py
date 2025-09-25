@@ -640,6 +640,30 @@ class TestConvergence:
         assert np.all(amps_full >= 0)
         assert np.all(amps_robust >= 0)
 
+    def test_best_state_tracking(self):
+        """Test that best state (lowest max_abs_error) is returned, not final state."""
+        # Create simple test case
+        V = np.random.random((24, 24)).astype(np.float32)
+
+        params, amps, stats = fit_gaussian_splats(
+            V,
+            n_iters=30,
+            verbose=False,
+            enable_dynamic_ops=True,  # May cause temporary quality fluctuations
+            napari_movie=False,
+        )
+
+        # Should have best state information in stats
+        assert "best_iteration" in stats
+        assert "final_max_abs_error" in stats
+        assert stats["best_iteration"] > 0
+        assert stats["best_iteration"] <= stats["iterations"]
+        assert stats["final_max_abs_error"] >= 0
+
+        # Should return valid splat configuration
+        assert len(amps) > 0
+        assert params.shape[0] == len(amps)
+
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
 

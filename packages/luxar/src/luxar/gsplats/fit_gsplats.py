@@ -336,6 +336,11 @@ class GaussianSplatFitter:
             aprint(f"Convergence criterion: max absolute error < {max_abs_error:.6f}")
             aprint(f"Maximum iterations: {n_iters}")
 
+        # Initialize best state tracking for quality guarantee
+        best_max_abs_error = float('inf')
+        best_state = None
+        best_iteration = 0
+
         # Main optimization loop
         converged_early = False
         actual_iters = 0
@@ -394,9 +399,31 @@ class GaussianSplatFitter:
             if current_loss < best_loss:
                 best_loss = current_loss
 
-            # Convergence check using maximum absolute error (always enabled with auto-threshold)
+            # Convergence check and best state tracking using maximum absolute error
             with torch.no_grad():
                 current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
+
+                # Track best state based on max absolute error (quality guarantee)
+                if current_max_abs_error < best_max_abs_error:
+                    best_max_abs_error = current_max_abs_error
+                    best_iteration = it
+
+                    # Save current best state (deep copy to avoid mutations)
+                    centers, Ls, amps = model.current_params()
+                    best_state = {
+                        'centers': centers.detach().clone(),
+                        'Ls': Ls.detach().clone(),
+                        'amps': amps.detach().clone(),
+                        'iteration': it,
+                        'max_abs_error': current_max_abs_error,
+                        'loss': current_loss,
+                    }
+
+                    # Smart logging: significant improvements or early iterations
+                    if verbose and (it <= 10 or current_max_abs_error < best_max_abs_error * 0.95):
+                        aprint(f"    ★ New best state: iteration {it}, max_abs_error={current_max_abs_error:.6f}")
+
+                # Check for convergence
                 if current_max_abs_error < max_abs_error:
                     converged_early = True
                     if verbose:
@@ -437,40 +464,54 @@ class GaussianSplatFitter:
                     f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
                 )
 
+        # Restore best state for quality guarantee
+        if best_state is not None:
+            if verbose:
+                improvement = f" (improved from {best_max_abs_error:.6f} to {best_state['max_abs_error']:.6f})" if best_iteration != actual_iters else ""
+                aprint(f"★ Restored best state from iteration {best_iteration}{improvement}")
+
+            # Use best state parameters instead of final state
+            centers_np = best_state['centers'].cpu().numpy()
+            Ls_np = best_state['Ls'].cpu().numpy()
+            amps_np = best_state['amps'].cpu().numpy()
+
+            # Update statistics to reflect best state
+            best_loss = best_state['loss']
+            best_max_abs_error_final = best_state['max_abs_error']
+        else:
+            # Fallback to final state if no best state saved
+            with torch.no_grad():
+                centers, Ls, amps = model.current_params()
+                centers_np = centers.cpu().numpy()
+                Ls_np = Ls.cpu().numpy()
+                amps_np = amps.cpu().numpy()
+                best_max_abs_error_final = torch.max(torch.abs(model() - V_t)).item()
+
         # Log termination reason
         if verbose:
             if converged_early:
                 aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
             else:
-                with torch.no_grad():
-                    final_max_abs_error = torch.max(torch.abs(model() - V_t)).item()
                 aprint("⚠ Optimization terminated: ITERATION LIMIT REACHED")
-                aprint(f"  Final max absolute error: {final_max_abs_error:.6f} (threshold: {max_abs_error:.6f})")
+                aprint(f"  Final max absolute error: {best_max_abs_error_final:.6f} (threshold: {max_abs_error:.6f})")
 
-        # No need to restore state with per-splat optimizer
+        # Rescale amplitudes to original intensity range
+        amps_np = amps_np * intensity_range
+        if verbose:
+            aprint(f"Rescaled amplitudes to original intensity range (factor: {intensity_range:.4f})")
 
-        # Extract parameters
-        with torch.no_grad():
-            centers, Ls, amps = model.current_params()
-            centers_np = centers.cpu().numpy()
-            Ls_np = Ls.cpu().numpy()
-            amps_np = amps.cpu().numpy()
+        params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
 
-            # Rescale amplitudes to original intensity range
-            amps_np = amps_np * intensity_range
-            if verbose:
-                aprint(f"Rescaled amplitudes to original intensity range (factor: {intensity_range:.4f})")
-
-            params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
-
-        # Compute statistics
+        # Compute statistics reflecting best state (not final state)
         end_time = time.time()
         stats = {
             "time_seconds": end_time - start_time,
             "iterations": actual_iters,
+            "best_iteration": best_iteration,  # Iteration that achieved best quality
             "final_loss": best_loss,
+            "final_max_abs_error": best_max_abs_error_final,
             "converged": actual_iters < n_iters,
-            "n_splats": N,
+            "n_splats": len(amps_np),  # Final splat count from best state
         }
 
         # Show optimization movie (only if enabled and frames were recorded)
@@ -607,12 +648,15 @@ def fit_gaussian_splats(
     params_full : np.ndarray, shape (N, d + d*(d+1)//2), dtype=float32
         Concatenated parameters for each splat: [center_coords, packed_cholesky_L].
         Centers remain in voxel coordinates, covariances in voxel units.
+        Represents the BEST state encountered during optimization (lowest max_abs_error).
     amps : np.ndarray, shape (N,), dtype=float32
         Non-negative amplitude values for each splat, rescaled to original image
         intensity range. Can be used directly to reconstruct original image intensities.
+        Represents the BEST state encountered during optimization.
         Note: Gaussian splatting cannot represent uniform DC components - only variations.
     stats : dict
         Optimization statistics including time, iterations, convergence status.
+        Reflects the best state iteration, not the final iteration.
 
     Notes
     -----
