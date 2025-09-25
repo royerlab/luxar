@@ -787,15 +787,26 @@ def _show_optimization_movie(movie_frames, shape):
         viewer = napari.Viewer(title=f"Optimization Movie ({len(iterations)} frames)")
 
         # Add image stacks as layers
-        viewer.add_image(target_stack, name="Target", colormap="magma")
+        viewer.add_image(
+            target_stack,
+            name="Target",
+            colormap="magma",
+            contrast_limits=[0, float(target_stack.max())],
+        )
 
         viewer.add_image(
             reconstruction_stack,
             name="Reconstruction",
             colormap="magma",
+            contrast_limits=[0, float(target_stack.max())],  # Same as target for fair comparison
         )
 
-        viewer.add_image(residual_stack, name="Residual", colormap="hot")
+        viewer.add_image(
+            residual_stack,
+            name="Residual",
+            colormap="inferno",  # Better visibility than hot
+            contrast_limits=[0, max(1e-12, float(residual_stack.max()))],
+        )
 
         # Add splat centers as points that change over time
         # Create a stack of points data for napari (time, n_points, n_dims)
