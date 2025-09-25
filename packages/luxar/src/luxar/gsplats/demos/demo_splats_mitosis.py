@@ -178,13 +178,12 @@ viewer.add_image(
     stack_recon,
     name="reconstruction (compression, oriented)",
     colormap="magma",
-    contrast_limits=[0, max(1e-12, float(stack_recon.max()))],
+    contrast_limits=[0, float(V.max())],
 )
 viewer.add_image(
     np.abs(stack_resid),
     name="absolute residual",
-    colormap="turbo",
-    opacity=0.6,
+    colormap="inferno",
     contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
 )
 

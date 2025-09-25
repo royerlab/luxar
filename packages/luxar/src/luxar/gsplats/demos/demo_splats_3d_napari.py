@@ -242,7 +242,7 @@ viewer.add_image(
     name="input_volume",
     colormap="viridis",
     contrast_limits=[0, float(V.max())],
-    opacity=0.8,
+    opacity=1.0,  # Full opacity for clear comparison
     rendering="mip",  # Maximum intensity projection for better 3D visualization
 )
 
@@ -250,9 +250,9 @@ viewer.add_image(
 lyr_recon = viewer.add_image(
     stack_recon,
     name="reconstruction (compression, 3D)",
-    colormap="plasma",
-    opacity=0.7,
-    contrast_limits=[0, max(1e-12, float(stack_recon.max()))],
+    colormap="viridis",  # Match input colormap for consistency
+    opacity=1.0,  # Full opacity for clear comparison
+    contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
     rendering="mip",
 )
 
@@ -260,8 +260,8 @@ lyr_recon = viewer.add_image(
 lyr_resid = viewer.add_image(
     np.abs(stack_resid),
     name="absolute residual",
-    colormap="turbo",
-    opacity=0.5,
+    colormap="inferno",  # Better visibility than turbo
+    opacity=1.0,  # Full opacity for clear visualization
     contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     rendering="mip",
 )

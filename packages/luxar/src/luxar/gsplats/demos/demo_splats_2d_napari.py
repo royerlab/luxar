@@ -162,20 +162,24 @@ for i, K in enumerate(keep_counts):
 
 # 4) Napari viewer with "compression" slider
 viewer = napari.Viewer()
-viewer.add_image(V, name="input", colormap="magma", contrast_limits=[0, float(V.max())])
+viewer.add_image(
+    V,
+    name="input",
+    colormap="magma",
+    contrast_limits=[0, float(V.max())],
+)
 
 lyr_recon = viewer.add_image(
     stack_recon,
     name="reconstruction (compression, oriented)",
     colormap="magma",
-    opacity=1.0,
-    contrast_limits=[0, max(1e-12, float(stack_recon.max()))],
+    contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
 )
 lyr_resid = viewer.add_image(
     np.abs(stack_resid),
     name="absolute residual",
-    colormap="turbo",
-    opacity=0.6,
+    colormap="inferno",  # Better visibility than turbo
+    opacity=1.0,  # Full opacity for clear visualization
     contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
 )
 
