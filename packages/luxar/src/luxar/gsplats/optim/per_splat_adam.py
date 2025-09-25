@@ -27,10 +27,16 @@ class PerSplatAdam:
 
     Key Features:
     - Individual learning rates per splat (enables splat-specific adaptation)
+    - Parameter-type-specific learning rate multipliers (prevents splat proliferation)
     - Per-splat momentum preservation during topology changes
     - Efficient handling of splat addition/removal
     - Zero momentum disruption for unchanged splats
     - Compatible with AMSGrad variant
+
+    Parameter-Type Learning Rate Multipliers (Hard-coded):
+    - Position parameters (μ): ×0.1 (slow movement, prevents migration)
+    - Variance parameters (L_diag, L_off): ×1.0 (normal adaptation)
+    - Amplitude parameters (a): ×2.0 (fast intensity convergence)
 
     Performance Optimizations:
     - Lazy initialization: only creates state when topology changes
@@ -49,6 +55,11 @@ class PerSplatAdam:
         ...     loss.backward()
         ...     optimizer.step()
     """
+
+    # Parameter-type learning rate multipliers (hard-coded for splat proliferation prevention)
+    _POS_LR_MULTIPLIER = 0.1    # Position parameters (slow movement)
+    _VAR_LR_MULTIPLIER = 1.0    # Variance parameters (normal adaptation)
+    _AMP_LR_MULTIPLIER = 2.0    # Amplitude parameters (fast intensity matching)
 
     def __init__(
         self,
@@ -310,7 +321,7 @@ class PerSplatAdam:
                 max_exp_avg_sq=state.get("max_exp_avg_sq_mu"),  # AMSGrad (optional)
                 beta1=beta1,
                 beta2=beta2,
-                lr=lr,
+                lr=lr * self._POS_LR_MULTIPLIER,  # Slow position updates (×0.1)
                 bias_correction1=bias_correction1,
                 bias_correction2=bias_correction2,
             )
@@ -327,7 +338,7 @@ class PerSplatAdam:
                 max_exp_avg_sq=state.get("max_exp_avg_sq_L_diag"),  # AMSGrad (optional)
                 beta1=beta1,
                 beta2=beta2,
-                lr=lr,
+                lr=lr * self._VAR_LR_MULTIPLIER,  # Normal variance adaptation (×1.0)
                 bias_correction1=bias_correction1,
                 bias_correction2=bias_correction2,
             )
@@ -342,7 +353,7 @@ class PerSplatAdam:
                 max_exp_avg_sq=state.get("max_exp_avg_sq_L_off"),  # AMSGrad (optional)
                 beta1=beta1,
                 beta2=beta2,
-                lr=lr,
+                lr=lr * self._VAR_LR_MULTIPLIER,  # Normal variance adaptation (×1.0)
                 bias_correction1=bias_correction1,
                 bias_correction2=bias_correction2,
             )
@@ -359,7 +370,7 @@ class PerSplatAdam:
                 max_exp_avg_sq=state.get("max_exp_avg_sq_a"),  # AMSGrad (optional)
                 beta1=beta1,
                 beta2=beta2,
-                lr=lr,
+                lr=lr * self._AMP_LR_MULTIPLIER,  # Fast amplitude convergence (×2.0)
                 bias_correction1=bias_correction1,
                 bias_correction2=bias_correction2,
             )

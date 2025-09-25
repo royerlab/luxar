@@ -122,7 +122,18 @@ Maintain separate momentum buffers for each parameter type (�, L_diag, L_off, 
 2. Update momentum: `exp_avg = �� * exp_avg + (1-��) * grad`
 3. Update second moment: `exp_avg_sq = �� * exp_avg_sq + (1-��) * grad�`
 4. Apply bias correction and compute step
-5. Update parameters in-place
+5. **Apply parameter-type-specific learning rates**: `effective_lr = base_lr × parameter_multiplier`
+6. Update parameters in-place with type-specific rates
+
+**Parameter-Type-Specific Learning Rate Multipliers (Hard-coded):**
+- **Position parameters (μ)**: `×0.1` - Prevents splat migration and proliferation
+- **Variance parameters (L_diag, L_off)**: `×1.0` - Normal covariance adaptation
+- **Amplitude parameters (a)**: `×2.0` - Fast intensity convergence
+
+**Anti-Proliferation Rationale:**
+- **Root cause**: Splats migrating away from seeded locations causes runaway seeding cycles
+- **Solution**: Slow position updates (×0.1) keep splats spatially stable while accelerating intensity adaptation (×2.0)
+- **Result**: Eliminates splat proliferation while improving convergence quality
 
 ### Per-Splat Schedulers
 
