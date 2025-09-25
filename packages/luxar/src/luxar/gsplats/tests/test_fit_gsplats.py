@@ -618,6 +618,28 @@ class TestConvergence:
         if expected_scale_factor > 10:  # Only test if we have significant intensity range
             assert np.max(amps) > 5.0  # Should be substantially larger than normalized range
 
+    def test_configurable_normalization(self):
+        """Test configurable percentile normalization."""
+        # Create image with outliers
+        V = np.random.uniform(10, 20, (24, 24)).astype(np.float32)
+        V[0, 0] = 1000.0  # Extreme outlier
+
+        # Test full range normalization
+        params_full, amps_full, _ = fit_gaussian_splats(
+            V, norm_percentile=0.0, n_iters=5, verbose=False, napari_movie=False
+        )
+
+        # Test percentile normalization (should be more robust to outlier)
+        params_robust, amps_robust, _ = fit_gaussian_splats(
+            V, norm_percentile=1.0, n_iters=5, verbose=False, napari_movie=False
+        )
+
+        # Both should work but potentially with different characteristics
+        assert len(amps_full) > 0
+        assert len(amps_robust) > 0
+        assert np.all(amps_full >= 0)
+        assert np.all(amps_robust >= 0)
+
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
 

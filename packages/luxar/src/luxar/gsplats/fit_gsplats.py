@@ -57,12 +57,13 @@ class GaussianSplatFitter:
         self,
         V: np.ndarray,
         centers_overcomplete: Optional[np.ndarray] = None,
+        norm_percentile: float = 0.0,
         init_sigma_vox: float = 1.5,
         n_iters: int = 1000,
-        lr: float = 0.2,
-        loss_type: str = "mse",
+        lr: float = 0.01,
+        loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
-        l1_amp: float = 0.0,
+        l1_amp: float = 0.001,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
@@ -153,9 +154,20 @@ class GaussianSplatFitter:
         elif movie_max_frames <= 0:
             raise ValueError("movie_max_frames must be positive or None")
 
-        # Robust normalization - store parameters for intensity rescaling
-        image_min = np.percentile(V, 1)
-        image_max = np.percentile(V, 99)
+        # Configurable normalization - store parameters for intensity rescaling
+        if norm_percentile == 0.0:
+            # Full range normalization
+            image_min = np.min(V)
+            image_max = np.max(V)
+            if verbose:
+                aprint("Normalization: full min-max range")
+        else:
+            # Percentile-based robust normalization
+            image_min = np.percentile(V, norm_percentile)
+            image_max = np.percentile(V, 100.0 - norm_percentile)
+            if verbose:
+                aprint(f"Normalization: {norm_percentile:.1f}%-{100.0-norm_percentile:.1f}% percentile range")
+
         intensity_range = image_max - image_min
 
         if np.abs(intensity_range) < 1e-12:
@@ -198,7 +210,7 @@ class GaussianSplatFitter:
         amps0 = V[tuple(idx.T)]
 
         if sigma_min_diag is None:
-            sigma_min_diag = [0.5] * d
+            sigma_min_diag = [0.1] * d
         else:
             if len(sigma_min_diag) != d:
                 raise ValueError(f"sigma_min_diag must have length {d}")
@@ -479,6 +491,7 @@ class GaussianSplatFitter:
 def fit_gaussian_splats(
     V: np.ndarray,
     centers_overcomplete: Optional[np.ndarray] = None,
+    norm_percentile: float = 0.0,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
     lr: float = 0.01,
@@ -529,6 +542,11 @@ def fit_gaussian_splats(
         - Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
         - Volume-proportional density: ~0.2% of pixels as candidates
         - Inclusive threshold: percentile_thresh=70 for broad feature coverage
+    norm_percentile : float, default=0.0
+        Normalization method for handling outliers and noise:
+        - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
+        - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
+        Higher values provide more outlier robustness but may clip important data.
     init_sigma_vox : float, default=1.5
         Initial isotropic standard deviation for Gaussian splats (in voxels).
     n_iters : int, default=1000
@@ -621,6 +639,7 @@ def fit_gaussian_splats(
         params, amps, stats = fitter.fit(
             V=V,
             centers_overcomplete=centers_overcomplete,
+            norm_percentile=norm_percentile,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
             lr=lr,

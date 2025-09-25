@@ -64,10 +64,9 @@ def main():
                 # centers_overcomplete auto-generated with intelligent defaults
                 init_sigma_vox=1.6,
                 n_iters=args.n_iters,
-                lr=0.2,
-                loss_type="poisson",
-                l1_amp=0.01,
-                sigma_min_diag=[0.6, 0.6],
+                lr=0.01,
+                loss_type="l1",
+                l1_amp=0.001,
                 truncate=3.0,
                 verbose=True,
                 max_abs_error=0.01,  # Stop when max absolute error < 0.01

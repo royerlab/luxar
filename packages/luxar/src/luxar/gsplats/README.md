@@ -91,8 +91,9 @@ from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 params, amps, stats = fit_gaussian_splats(
     image,
     # centers_overcomplete auto-generated with volume-proportional scaling
+    # norm_percentile=0.0 by default (full range normalization)
     n_iters=300,                          # Maximum iterations
-    lr=0.05,                              # Stable learning rate
+    lr=0.01,                              # Stable learning rate
     asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
     loss_type="l1",                       # "mse", "poisson", or "l1" for robust features
     # max_abs_error auto-set to 0.01 (1% of normalized range)
@@ -132,6 +133,26 @@ params_custom, amps_custom, _ = fit_gaussian_splats(
 - **Volume-proportional density**: Automatically scales candidate count with image size (~0.2% of pixels)
 - **Inclusive detection**: 70% percentile threshold for comprehensive feature coverage
 - **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and higher dimensions
+
+### Outlier-Robust Normalization
+
+Control how outliers and noise are handled during normalization:
+
+```python
+# Full range (default) - maximum dynamic range
+params, amps, _ = fit_gaussian_splats(image, norm_percentile=0.0)
+
+# Robust to mild outliers - ignore bottom/top 1%
+params, amps, _ = fit_gaussian_splats(image, norm_percentile=1.0)
+
+# Very robust to noise - ignore bottom/top 5%
+params, amps, _ = fit_gaussian_splats(image, norm_percentile=5.0)
+```
+
+**When to use:**
+- **norm_percentile=0.0**: Clean data without outliers (maximum sensitivity)
+- **norm_percentile=1.0**: Typical datasets with occasional outliers
+- **norm_percentile=5.0**: Noisy data or datasets with many outliers
 
 ### Important Limitations
 

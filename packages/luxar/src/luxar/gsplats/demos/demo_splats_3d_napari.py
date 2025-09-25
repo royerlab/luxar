@@ -133,7 +133,7 @@ with asection("3D Gaussian Splatting Demo"):
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_amp=L1_AMP,
-            sigma_min_diag=[0.5, 0.5, 0.5],  # 3D minimum sigma constraints
+            sigma_min_diag=[0.1, 0.1, 0.1],  # 3D minimum sigma constraints
             sigma_max_diag=[32.0, 32.0, 32.0],  # Maximum sigma to prevent huge splats
             truncate=TRUNCATE_SIG,
             device=DEVICE,
