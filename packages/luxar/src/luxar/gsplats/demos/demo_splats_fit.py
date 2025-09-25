@@ -13,7 +13,6 @@ import numpy as np
 from arbol import aprint, asection
 from skimage import data, filters
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 
@@ -49,17 +48,6 @@ def main():
         V = filters.gaussian(blobs, sigma=3.25).astype(np.float32)
         aprint(f"Target image shape: {V.shape}")
 
-    with asection("Finding candidates"):
-        # Find overcomplete candidate centers
-        centers = find_candidates_overcomplete_nd(
-            V,
-            scales=(0.8, 1.2, 1.8, 2.6, 3.6),
-            peaks_per_scale=900,
-            percentile_thresh=95,
-            min_dist=2.0,
-            add_intensity_grid=False,
-        )
-        aprint(f"Found {len(centers)} candidates")
 
     # Configure dynamic operations (enabled by default)
     dynamic_config = None
@@ -74,7 +62,7 @@ def main():
         # Use the high-level fit function with per-splat optimizer
         params_full, amps, stats = fit_gaussian_splats(
             V=V,
-            centers_overcomplete=np.array(centers, dtype=np.float32),
+            # centers_overcomplete auto-generated with intelligent defaults
             init_sigma_vox=1.6,
             n_iters=args.n_iters,
             lr=0.01,

@@ -15,7 +15,6 @@ from arbol import Arbol, aprint, asection
 from scipy import ndimage
 from skimage import data
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
@@ -120,31 +119,15 @@ with asection("3D Gaussian Splatting Demo"):
         aprint(f"Created 3D volume: {V.shape} = {V.size:,} voxels")
         aprint(f"Volume range: [{V.min():.4f}, {V.max():.4f}]")
 
-    with asection("Finding 3D candidates"):
-        # Overcomplete candidate centers (n-D generic)
-        centers = find_candidates_overcomplete_nd(
-            V,
-            scales=(0.6, 1.0, 1.5, 2.2, 3.0),  # Scales for 3D
-            peaks_per_scale=500,  # Fewer candidates for 3D efficiency
-            percentile_thresh=50,  # Slightly higher threshold
-            min_dist=2.5,  # Larger spacing for 3D
-            add_intensity_grid=False,  # Include grid sampling
-            grid_step=[3, 3, 3],  # 3D grid step
-        )
-        aprint(f"Found {len(centers)} candidates")
-
-        if len(centers) == 0:
-            raise RuntimeError("No candidates found; try lowering thresholds.")
-
     # Configure dynamic operations
     dynamic_config = DynamicOpsConfig()
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
-        # Fit oriented (full-covariance) 3D Gaussians with PyTorch
+        # Fit oriented (full-covariance) 3D Gaussians with auto-candidate generation
         params_full, amps, stats = fit_gaussian_splats(
             V,
-            centers_overcomplete=centers,
+            # centers_overcomplete auto-generated with intelligent defaults
             init_sigma_vox=1.4,  # Slightly smaller for 3D
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,

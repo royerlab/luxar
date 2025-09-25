@@ -79,38 +79,59 @@ The implementation includes several key optimizations that provide significant s
 
 ## Quick Start
 
+### Simple One-Step API
+
+The easiest way to use Gaussian splatting with intelligent defaults:
+
 ```python
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 
-# 1. Generate candidate centers
-candidates = find_candidates_overcomplete_nd(
-    image,
-    scales=(0.8, 1.2, 1.8, 2.6),  # Multiscale detection
-    peaks_per_scale=500,           # Max peaks per scale
-    min_dist=2.0                   # Minimum separation
-)
-
-# 2. Fit Gaussian splats with dynamic operations and asymmetric loss
+# 1. One-step fitting with intelligent defaults
 params, amps, stats = fit_gaussian_splats(
     image,
-    centers_overcomplete=candidates,
+    # centers_overcomplete auto-generated with volume-proportional scaling
     n_iters=300,                          # Maximum iterations
-    lr=0.05,                              # Reduced learning rate for stability
+    lr=0.05,                              # Stable learning rate
     asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
-    enable_dynamic_ops=True,              # Enable convergence-based dynamic operations (default)
-    loss_type="mse",                      # "mse", "poisson" for count data, or "l1" for sharp features
-    l1_amp=0.01,                         # Sparsity regularization
-    max_abs_error=0.01,                  # Convergence threshold
-    dynamic_config=None,                  # Use default config or provide custom
+    loss_type="l1",                       # "mse", "poisson", or "l1" for robust features
+    # max_abs_error auto-set to 0.01 (1% of normalized range)
+    # enable_dynamic_ops=True by default for optimal results
 )
 
-# 3. Render reconstruction
+# 2. Render reconstruction
 reconstruction = render_gaussians_numpy(
     image.shape, params, amps, truncate=3.0
 )
+
 ```
+
+### Advanced Usage: Custom Candidates
+
+For specialized use cases requiring custom candidate generation:
+
+```python
+from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+
+# Custom candidate generation with specific parameters
+custom_candidates = find_candidates_overcomplete_nd(
+    image,
+    scales=(1.0, 2.0, 4.0),      # Custom scales
+    peaks_per_scale=1000,        # Custom density
+    percentile_thresh=95,        # Custom selectivity
+)
+
+params_custom, amps_custom, _ = fit_gaussian_splats(
+    image, centers_overcomplete=custom_candidates
+)
+```
+
+### Auto-Candidate Generation Features
+
+- **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) detect features from fine details to large structures
+- **Volume-proportional density**: Automatically scales candidate count with image size (~0.2% of pixels)
+- **Inclusive detection**: 70% percentile threshold for comprehensive feature coverage
+- **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and higher dimensions
 
 ## Asymmetric Loss Functions
 

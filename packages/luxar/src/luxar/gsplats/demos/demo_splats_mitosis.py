@@ -14,7 +14,6 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
@@ -81,33 +80,21 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
-    with asection("Finding candidates"):
-        # Overcomplete candidate centers (n-D generic; here 2D)
-        centers = find_candidates_overcomplete_nd(
-            V,
-            scales=(0.8, 1.2, 1.8, 2.6, 3.6, 5.0),
-            peaks_per_scale=1200,  # histology has lots of texture; over-generate
-            percentile_thresh=90,  # be a bit stricter for brightfield
-            min_dist=2.0,
-            add_intensity_grid=False,
-        )
-        aprint(f"Found {len(centers)} candidate centers")
-
     # Configure dynamic operations
     dynamic_config = DynamicOpsConfig()
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
-        # Fit oriented (full-covariance) Gaussians with PyTorch
+        # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         params_full, amps, stats = fit_gaussian_splats(
             V,
-            centers_overcomplete=centers,
+            # centers_overcomplete auto-generated with intelligent defaults
             init_sigma_vox=1.6,
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_amp=L1_AMP,
-            sigma_min_diag=[0.6, 0.6],  # Cholesky diag floor (voxel units)
+            sigma_min_diag=[0.2, 0.2],  # Cholesky diag floor (voxel units)
             sigma_max_diag=None,
             truncate=TRUNCATE_SIG,
             device=DEVICE,

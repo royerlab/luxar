@@ -12,7 +12,6 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 from skimage import data, filters
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
@@ -51,17 +50,6 @@ def main():
             aprint(f"Image shape: {V.shape}")
             aprint(f"Data range: [{V.min():.3f}, {V.max():.3f}]")
 
-        # Find candidates
-        with asection("Candidate Generation"):
-            candidates = find_candidates_overcomplete_nd(
-                V,
-                scales=(0.8, 1.2, 1.8, 2.6, 3.6),
-                peaks_per_scale=900,
-                percentile_thresh=90,
-                min_dist=2.0,
-            )
-            aprint(f"Found {len(candidates)} candidate centers")
-
         # Configure dynamic operations
         dynamic_config = DynamicOpsConfig()
         aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
@@ -70,10 +58,10 @@ def main():
         with asection("Per-Splat Optimizer Fitting"):
             start_time = time.time()
 
-            # Use high-level fit function with per-splat optimizer
+            # Use simplified one-step API with auto-candidate generation
             params, amps, stats = fit_gaussian_splats(
                 V,
-                centers_overcomplete=candidates,
+                # centers_overcomplete auto-generated with intelligent defaults
                 init_sigma_vox=1.6,
                 n_iters=args.n_iters,
                 lr=0.2,
@@ -175,7 +163,7 @@ def main():
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
             f"Per-Splat Optimizer: {stats['iterations']} iterations in {fit_time:.1f}s | "
-            f"Active splats: {len(active_centers)}/{len(candidates)} | "
+            f"Active splats: {len(active_centers)}/{len(amps)} total | "
             f"MSE: {mse:.5f} | Rel L2: {rel_l2:.4f} | PSNR: {psnr:.1f} dB"
         )
 
@@ -190,7 +178,7 @@ def main():
         aprint(
             f"Per-splat optimizer: {stats['iterations']} iterations in {fit_time:.1f}s"
         )
-        aprint(f"Active splats: {len(active_centers)}/{len(candidates)}")
+        aprint(f"Active splats: {len(active_centers)}/{len(amps)} total")
         aprint(f"Quality: MSE={mse:.5f}, Rel L2={rel_l2:.4f}, PSNR={psnr:.1f} dB")
 
 

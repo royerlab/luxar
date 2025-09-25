@@ -56,7 +56,7 @@ class GaussianSplatFitter:
     def fit(
         self,
         V: np.ndarray,
-        centers_overcomplete: np.ndarray,
+        centers_overcomplete: Optional[np.ndarray] = None,
         init_sigma_vox: float = 1.5,
         n_iters: int = 1000,
         lr: float = 0.2,
@@ -104,6 +104,29 @@ class GaussianSplatFitter:
         if V.ndim == 0:
             raise ValueError("Input image V must have at least 1 dimension")
 
+        # Auto-candidate generation if not provided
+        if centers_overcomplete is None:
+            from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+
+            # Volume-proportional candidate density (~0.2% of pixels)
+            peaks_per_scale = max(50, int(V.size * 0.002))
+
+            if verbose:
+                aprint(f"Auto-generating candidates: {peaks_per_scale} peaks/scale for {V.size:,} pixels")
+
+            centers_overcomplete = find_candidates_overcomplete_nd(
+                V,
+                scales=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),  # Universal scale series
+                peaks_per_scale=peaks_per_scale,  # Volume-proportional
+                percentile_thresh=70.0,  # Inclusive threshold
+                min_dist=2.0,  # Standard spacing
+                add_intensity_grid=False,  # Clean peak-based detection
+            )
+
+            if verbose:
+                aprint(f"Generated {len(centers_overcomplete)} candidate centers")
+
+        # Validate provided or generated candidates
         centers_overcomplete = np.asarray(centers_overcomplete, dtype=np.float32)
         if centers_overcomplete.ndim != 2:
             raise ValueError("centers_overcomplete must be a 2D array")
@@ -424,7 +447,7 @@ class GaussianSplatFitter:
 
 def fit_gaussian_splats(
     V: np.ndarray,
-    centers_overcomplete: np.ndarray,
+    centers_overcomplete: Optional[np.ndarray] = None,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
     lr: float = 0.2,
@@ -469,9 +492,12 @@ def fit_gaussian_splats(
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to reconstruct. Will be normalized to [0,1].
-    centers_overcomplete : np.ndarray, shape (N, d)
+    centers_overcomplete : np.ndarray, shape (N, d), optional
         Initial candidate center positions in voxel coordinates (float).
-        Typically from find_candidates_overcomplete_nd().
+        If None, automatically generated using dimension-aware intelligent defaults:
+        - Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
+        - Volume-proportional density: ~0.2% of pixels as candidates
+        - Inclusive threshold: percentile_thresh=70 for broad feature coverage
     init_sigma_vox : float, default=1.5
         Initial isotropic standard deviation for Gaussian splats (in voxels).
     n_iters : int, default=1000

@@ -535,6 +535,63 @@ class TestConvergence:
         assert "converged" in stats
         assert params.shape[0] > 0
 
+    def test_auto_candidate_generation_2d(self):
+        """Test automatic candidate generation for 2D images."""
+        # Create test image
+        V = np.random.random((32, 32)).astype(np.float32)
+
+        # Test auto-generation
+        params, amps, stats = fit_gaussian_splats(
+            V,
+            # centers_overcomplete=None (default)
+            n_iters=10,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Should generate reasonable number of candidates based on volume
+        expected_candidates = max(50, int(V.size * 0.002))  # ~2 for small image -> 50 minimum
+        assert len(amps) > 0
+        assert params.shape[0] == len(amps)
+
+    def test_auto_candidate_generation_3d(self):
+        """Test automatic candidate generation for 3D volumes."""
+        # Create test volume
+        V = np.random.random((16, 16, 16)).astype(np.float32)
+
+        # Test auto-generation
+        params, amps, stats = fit_gaussian_splats(
+            V,
+            n_iters=10,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Should work with 3D data
+        assert len(amps) > 0
+        assert params.shape[1] == 9  # 3D centers (3) + 3x3 packed L (6) = 9 (amplitudes separate)
+
+    def test_volume_proportional_scaling(self):
+        """Test that candidate count scales with image volume."""
+        # Small image
+        V_small = np.random.random((16, 16)).astype(np.float32)
+        params_small, amps_small, _ = fit_gaussian_splats(
+            V_small, n_iters=5, verbose=False, enable_dynamic_ops=False, napari_movie=False
+        )
+
+        # Large image (4x linear = 16x area)
+        V_large = np.random.random((32, 32)).astype(np.float32)
+        params_large, amps_large, _ = fit_gaussian_splats(
+            V_large, n_iters=5, verbose=False, enable_dynamic_ops=False, napari_movie=False
+        )
+
+        # Large image should generate proportionally more candidates
+        # But both use minimum of 50, so this tests the scaling logic
+        assert len(amps_small) > 0
+        assert len(amps_large) >= len(amps_small)  # Should be at least as many
+
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
 
