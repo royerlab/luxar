@@ -303,13 +303,21 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
-### Primary Function: `fit_gaussian_splats(V, centers_overcomplete, init_sigma_vox=1.5, n_iters=1000, lr=0.2, loss_type="mse", asymmetric_penalty=10.0, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, centers_overcomplete=None, init_sigma_vox=1.5, n_iters=1000, lr=0.2, loss_type="mse", asymmetric_penalty=10.0, max_abs_error=None, ...)`
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
-- Validate centers_overcomplete shape matches V.ndim
+- Validate centers_overcomplete shape matches V.ndim (if provided)
 - Check all hyperparameters are positive/valid
 - Validate `max_abs_error` is positive if specified
+
+**Auto-Candidate Generation:**
+- **Default behavior**: If `centers_overcomplete=None`, automatically generate candidates using dimension-aware defaults
+- **Universal scale series**: `(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)` works optimally for all dimensions from fine details to large structures
+- **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales candidate count with image size (~0.2% of pixels)
+- **Inclusive detection**: `percentile_thresh=70` for comprehensive feature coverage
+- **Standard parameters**: `min_dist=2.0, add_intensity_grid=False` for robust detection
+- **Logging**: Auto-generation usage is logged for transparency
 
 **Auto-Convergence Threshold:**
 - **Default behavior**: If `max_abs_error=None`, automatically set threshold to 1% of normalized image dynamic range

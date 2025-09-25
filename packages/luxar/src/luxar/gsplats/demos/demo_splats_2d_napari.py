@@ -10,7 +10,6 @@ import numpy as np
 from arbol import aprint
 from skimage import data, filters
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
@@ -69,27 +68,16 @@ blobs = data.binary_blobs(
 ).astype(float)
 V = filters.gaussian(blobs, sigma=3.25).astype(np.float32)
 
-# 2) Overcomplete candidate centers (n-D generic)
-centers = find_candidates_overcomplete_nd(
-    V,
-    scales=(0.8, 1.2, 1.8, 2.6, 3.6),
-    peaks_per_scale=900,
-    percentile_thresh=95,
-    min_dist=2.0,
-    add_intensity_grid=False,
-)
-aprint(f"candidates: {len(centers)}")
-
-# 3) Configure dynamic operations (if enabled)
+# 2) Configure dynamic operations (if enabled)
 dynamic_config = None
 if USE_DYNAMIC_OPS:
     dynamic_config = DynamicOpsConfig()
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
-# 4) Fit oriented (full-covariance) Gaussians with PyTorch
+# 3) Fit oriented (full-covariance) Gaussians with auto-candidate generation
 params_full, amps, stats = fit_gaussian_splats(
     V,
-    centers_overcomplete=centers,
+    # centers_overcomplete auto-generated with intelligent defaults
     init_sigma_vox=1.6,
     n_iters=N_ITERS,
     lr=LR,
