@@ -153,16 +153,18 @@ class GaussianSplatFitter:
         elif movie_max_frames <= 0:
             raise ValueError("movie_max_frames must be positive or None")
 
-        # Robust normalization
+        # Robust normalization - store parameters for intensity rescaling
         image_min = np.percentile(V, 1)
         image_max = np.percentile(V, 99)
+        intensity_range = image_max - image_min
 
-        if np.abs(image_max - image_min) < 1e-12:
+        if np.abs(intensity_range) < 1e-12:
             V = np.full_like(V, 0.5, dtype=np.float32)
+            intensity_range = 1.0  # Avoid division by zero in rescaling
             if verbose:
                 aprint("Warning: Input image is nearly uniform")
         else:
-            V = np.clip((V - image_min) / (image_max - image_min), 0.0, 1.0)
+            V = np.clip((V - image_min) / intensity_range, 0.0, 1.0)
 
         # Auto-convergence threshold: set sensible default if not provided
         if max_abs_error is None:
@@ -418,6 +420,12 @@ class GaussianSplatFitter:
             centers_np = centers.cpu().numpy()
             Ls_np = Ls.cpu().numpy()
             amps_np = amps.cpu().numpy()
+
+            # Rescale amplitudes to original intensity range
+            amps_np = amps_np * intensity_range
+            if verbose:
+                aprint(f"Rescaled amplitudes to original intensity range (factor: {intensity_range:.4f})")
+
             params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
 
         # Compute statistics
@@ -557,8 +565,11 @@ def fit_gaussian_splats(
     -------
     params_full : np.ndarray, shape (N, d + d*(d+1)//2), dtype=float32
         Concatenated parameters for each splat: [center_coords, packed_cholesky_L].
+        Centers remain in voxel coordinates, covariances in voxel units.
     amps : np.ndarray, shape (N,), dtype=float32
-        Non-negative amplitude values for each splat.
+        Non-negative amplitude values for each splat, rescaled to original image
+        intensity range. Can be used directly to reconstruct original image intensities.
+        Note: Gaussian splatting cannot represent uniform DC components - only variations.
     stats : dict
         Optimization statistics including time, iterations, convergence status.
 

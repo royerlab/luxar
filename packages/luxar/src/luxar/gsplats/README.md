@@ -133,6 +133,12 @@ params_custom, amps_custom, _ = fit_gaussian_splats(
 - **Inclusive detection**: 70% percentile threshold for comprehensive feature coverage
 - **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and higher dimensions
 
+### Important Limitations
+
+- **DC Component**: Gaussian splatting cannot represent uniform background intensities (DC components)
+- **Focus**: The method excels at approximating variations, structures, and patterns, not constant baselines
+- **Reconstruction**: Results preserve relative intensity relationships but may have different absolute baseline
+
 ## Asymmetric Loss Functions
 
 The implementation includes asymmetric loss functions that address the fundamental constraints of additive Gaussian models:
