@@ -346,7 +346,8 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 **Optimization loop:**
 1. Setup per-splat optimizer and scheduler
-2. For each iteration:
+2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
+3. For each iteration:
    - Forward pass: `pred = model()`
    - Loss computation: MSE or Poisson + optional L1 regularization
    - Backward pass: compute gradients
@@ -354,15 +355,19 @@ This approach ensures that dynamic operations are directly driven by reconstruct
    - Optimizer step with per-splat learning rates
    - Scheduler step for learning rate adaptation
    - Dynamic operations if enabled and scheduled
-   - Convergence check: compute `max_abs_error = max(|pred - target|)` and stop if below threshold.
-   - Display max abs error during training in addition to losses.
+   - Convergence check: compute `max_abs_error = max(|pred - target|)` and stop if below threshold
+   - Display max abs error during training in addition to losses
+4. **Log termination reason**: Explicitly state why optimization ended (convergence achieved or iteration limit reached)
 
 **Convergence detection:**
-- Primary criterion: Maximum absolute error `max_abs_error = max(|prediction - target|)` 
-- Stop when `max_abs_error < threshold` if `max_abs_error` parameter is specified
-- Always stop when reaching `n_iters` maximum iterations
+- Primary criterion: Maximum absolute error `max_abs_error = max(|prediction - target|)`
+- Stop when `max_abs_error < threshold` with explicit logging of convergence achievement
+- Always stop when reaching `n_iters` maximum iterations with explicit iteration limit notification
 - Default `n_iters=1000` provides generous limit when using `max_abs_error` convergence
-- Remove complex loss window comparison and early stopping patience logic
+- **Logging requirements**:
+  - State convergence threshold at optimization start
+  - Report current max absolute error during training
+  - Explicitly state termination reason (convergence vs iteration limit)
 
 **Loss functions:**
 - MSE: `mean((pred - target)²)`

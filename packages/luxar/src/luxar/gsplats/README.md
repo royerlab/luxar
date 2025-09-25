@@ -139,6 +139,25 @@ params_custom, amps_custom, _ = fit_gaussian_splats(
 - **Focus**: The method excels at approximating variations, structures, and patterns, not constant baselines
 - **Reconstruction**: Results preserve relative intensity relationships but may have different absolute baseline
 
+### Comprehensive Logging
+
+The system provides detailed optimization progress logging:
+
+```
+Convergence criterion: max absolute error < 0.010000
+Maximum iterations: 1000
+Auto-generating candidates: 131 peaks/scale for 65,536 pixels
+Generated 212 candidate centers
+
+[   1/1000] loss=0.078185  relL2=0.7969  maxAbsErr=1.1798  N=212
+[  10/1000] loss=0.056279  relL2=0.7099  maxAbsErr=0.99667  N=212
+...
+✓ CONVERGENCE ACHIEVED at iteration 127
+  Max absolute error: 0.009854 < threshold: 0.010000
+
+Rescaled amplitudes to original intensity range (factor: 0.9075)
+```
+
 ## Asymmetric Loss Functions
 
 The implementation includes asymmetric loss functions that address the fundamental constraints of additive Gaussian models:

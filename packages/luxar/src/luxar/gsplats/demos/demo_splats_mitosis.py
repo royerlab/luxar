@@ -33,7 +33,7 @@ if NO_NAPARI and len(sys.argv) > 1:
 LOSS_TYPE = "l1"
 LR = 0.01  # Learning rate for fitting
 L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
-N_ITERS = 1000  # Number of optimization iterations
+N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
@@ -67,7 +67,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         # Load human_mitosis and prepare a soft grayscale target
         img = data.human_mitosis()  # likely RGB
         if img.ndim == 3 and img.shape[-1] in (3, 4):
-            img = color.rgb2gray(img)  # -> float in [0, 1]
+            img = color.rgb2gray(img)*100  # -> float in [0, 100]
         V = img_as_float32(img)
 
         # Crop the image to a smaller region for faster demo
