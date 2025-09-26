@@ -473,11 +473,32 @@ Object-oriented interface with identical functionality to functional API.
 - Support for headless operation (disable napari with flags)
 
 
+### 4D Validation Demo (`demos/demo_splats_4d_napari.py`)
+
+**Purpose**: Comprehensive validation of nD capabilities with 4-dimensional hypercube data
+
+**4D Data Structure**:
+- **Dimensions**: (time/spectral, z, y, x) with moderate size (32×32×32×8) for efficiency
+- **Synthetic content**: Multiple 4D Gaussian blobs varying across all dimensions
+- **Validation target**: Test auto-candidate generation and nD dynamic operations
+
+**4D Visualization**:
+- **napari 4D support**: Native 4D visualization with dimension sliders
+- **Axis labels**: ["time/spectral", "z", "y", "x"] for intuitive navigation
+- **Compression analysis**: 4D-specific storage efficiency calculations
+- **Interactive exploration**: Full 4D navigation and quality assessment
+
+**nD Algorithm Validation**:
+- **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) tested in 4D space
+- **Volume-proportional scaling**: Candidate density adapts to 4D volume size
+- **Dynamic operations**: Convergence-based seeding, splitting, pruning in 4D
+- **Parameter efficiency**: 4×4 covariance matrices (15 parameters per splat)
+
 ### Main Exports
 Export primary user-facing functions and classes:
 - `fit_gaussian_splats`
-- `GaussianSplatFitter` 
+- `GaussianSplatFitter`
 - `DynamicOpsConfig`
 
-This specification provides complete implementation details for a mathematically rigorous, computationally efficient, and feature-rich Gaussian splatting system with dynamic optimization capabilities.
+This specification provides complete implementation details for a mathematically rigorous, computationally efficient, and feature-rich Gaussian splatting system with dynamic optimization capabilities validated from 2D to 4D and beyond.
 
