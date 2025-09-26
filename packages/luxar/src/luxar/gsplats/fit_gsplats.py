@@ -193,6 +193,30 @@ class GaussianSplatFitter:
         d = V.ndim
         N = int(centers_overcomplete.shape[0])
 
+        # Enhanced gradient dilution compensation: targeted for 4D+ challenges
+        params_2d = 2 + tril_size(2)  # 5 parameters (baseline)
+        params_current = d + tril_size(d)  # Current dimension parameters
+
+        if d <= 3:
+            # Conservative scaling for 2D/3D (maintain existing quality)
+            gradient_dilution_factor = params_current / params_2d
+            dimensional_complexity = None
+            parameter_complexity = gradient_dilution_factor
+        else:
+            # More aggressive scaling for 4D+ (address empirical findings)
+            dimensional_complexity = d ** 0.8  # Spatial complexity scaling
+            parameter_complexity = params_current / params_2d  # Parameter dilution
+            gradient_dilution_factor = dimensional_complexity * parameter_complexity
+
+        effective_lr = lr * gradient_dilution_factor
+
+        if verbose:
+            if d <= 3:
+                aprint(f"Gradient dilution compensation: {d}D uses {gradient_dilution_factor:.1f}× learning rate ({lr:.3f} → {effective_lr:.3f})")
+            else:
+                aprint(f"Enhanced gradient dilution compensation: {d}D uses {gradient_dilution_factor:.1f}× learning rate ({lr:.3f} → {effective_lr:.3f})")
+                aprint(f"  Dimensional complexity: {dimensional_complexity:.1f}×, Parameter complexity: {parameter_complexity:.1f}×")
+
         if N == 0:
             return (
                 np.zeros((0, d + tril_size(d)), np.float32),
@@ -246,7 +270,7 @@ class GaussianSplatFitter:
         # Setup per-splat optimizer
         opt, scheduler, coordinator = create_per_splat_optimizer_setup(
             model,
-            lr=lr,
+            lr=effective_lr,  # Use gradient dilution compensated learning rate
             scheduler_type=scheduler_type,
             patience=patience,
             factor=factor,
@@ -445,7 +469,7 @@ class GaussianSplatFitter:
                     V_t,  # target
                     pred,  # current prediction
                     self.dynamic_config,
-                    lr,
+                    effective_lr,  # Use gradient dilution compensated learning rate
                     max_abs_error_threshold=max_abs_error,  # Now always has a sensible value
                     device=self.device,
                     verbose=dynamic_ops_verbose,
@@ -687,7 +711,7 @@ def fit_gaussian_splats(
             norm_percentile=norm_percentile,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
-            lr=lr,
+            lr=lr,  # Note: gradient dilution compensation applied automatically in fit() method
             loss_type=loss_type,
             asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
