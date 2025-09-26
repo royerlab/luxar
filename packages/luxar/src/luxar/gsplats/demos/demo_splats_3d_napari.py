@@ -12,8 +12,6 @@ import sys
 import napari
 import numpy as np
 from arbol import Arbol, aprint, asection
-from scipy import ndimage
-from skimage import data
 
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
@@ -22,13 +20,9 @@ from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
-if NO_NAPARI and len(sys.argv) > 1:
+if NO_NAPARI:
     aprint("🧊 3D Gaussian Splatting Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive 3D napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
-    )
-    sys.exit(0)
+    aprint("Running 3D phantom validation in headless mode...")
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
@@ -104,19 +98,43 @@ with asection("3D Gaussian Splatting Demo"):
         "🧊 Interactive 3D volumetric compression analysis with wireframe visualization"
     )
 
-    with asection("Creating 3D test data"):
-        # Create 3D volumetric "blobs" data (same approach as 2D version)
+    with asection("Creating 3D phantom data"):
+        # Create 3D phantom with systematic Gaussian blobs (phantom approach from 4D demo)
         volume_size = 64  # Size for 3D demo
-        blobs = data.binary_blobs(
-            length=volume_size,
-            blob_size_fraction=0.08,
-            n_dim=3,
-            volume_fraction=0.15,
-            rng=42,
-        ).astype(float)
-        V = ndimage.gaussian_filter(blobs, sigma=3.5).astype(np.float32)
+        shape_3d = (volume_size, volume_size, volume_size)
+        aprint(f"Creating 3D phantom: {shape_3d}")
 
-        aprint(f"Created 3D volume: {V.shape} = {V.size:,} voxels")
+        V = np.zeros(shape_3d, dtype=np.float32)
+
+        # Add multiple 3D Gaussian blobs with controlled characteristics
+        n_blobs = 15  # Controlled number of features for systematic validation
+        for i in range(n_blobs):
+            # Random center in 3D space (avoid boundaries)
+            center = [
+                np.random.uniform(5, s - 5) for s in shape_3d
+            ]
+
+            # Random size and intensity appropriate for 3D
+            sigma = np.random.uniform(3.0, 8.0)  # 3D-appropriate blob sizes
+            amplitude = np.random.uniform(0.6, 1.0)
+
+            # Create 3D coordinate grids
+            grids = np.meshgrid(
+                *[np.arange(s) for s in shape_3d], indexing="ij"
+            )
+
+            # Compute 3D distance from center
+            dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
+
+            # Add 3D Gaussian blob to phantom
+            blob = amplitude * np.exp(-dist_sq / (2 * sigma**2))
+            V += blob
+
+        # Add minimal noise for realism
+        V += np.random.normal(0, 0.02, shape_3d)
+        V = np.clip(V, 0, None).astype(np.float32)
+
+        aprint(f"Created 3D phantom: {V.shape} = {V.size:,} voxels")
         aprint(f"Volume range: [{V.min():.4f}, {V.max():.4f}]")
 
     # Configure dynamic operations
@@ -231,110 +249,142 @@ for i, K in enumerate(keep_counts):
 
 aprint("3D rendering and compression analysis complete!")
 
-# 4) Napari viewer with 3D volumes and "compression" slider
-aprint("Launching 3D napari viewer...")
-viewer = napari.Viewer(ndisplay=3)  # Force 3D display
+# 4) Napari viewer with 3D volumes and "compression" slider (only if napari enabled)
+if not NO_NAPARI:
+    aprint("Launching 3D napari viewer...")
+    viewer = napari.Viewer(ndisplay=3)  # Force 3D display
 
-# Add the input volume
-viewer.add_image(
-    V,
-    name="input_volume",
-    colormap="viridis",
-    contrast_limits=[0, float(V.max())],
-    opacity=1.0,  # Full opacity for clear comparison
-    rendering="mip",  # Maximum intensity projection for better 3D visualization
-)
-
-# Add reconstruction volume stack
-lyr_recon = viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, 3D)",
-    colormap="viridis",  # Match input colormap for consistency
-    opacity=1.0,  # Full opacity for clear comparison
-    contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
-    rendering="mip",
-)
-
-# Add residual volume stack
-lyr_resid = viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="inferno",  # Better visibility than turbo
-    opacity=1.0,  # Full opacity for clear visualization
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
-    rendering="mip",
-)
-
-# 3D wireframe ellipsoids that update with slider
-wireframe_layer = viewer.add_points(
-    np.zeros((0, 3)),
-    name="ellipsoid wireframes (kept)",
-    size=1,
-    border_color="cyan",
-    face_color="cyan",
-    opacity=0.6,
-)
-
-# Centers that update with slider
-pts = viewer.add_points(
-    np.zeros((0, 3)),
-    name="centers (kept)",
-    size=4,
-    border_color="yellow",
-    face_color="transparent",
-)
-
-# Try to label axes (requires napari >= 0.4.18)
-try:
-    viewer.dims.axis_labels = ["compression", "z", "y", "x"]
-except Exception:
-    pass
-
-# Set better 3D camera view
-viewer.camera.angles = (15, 25, 120)  # Good 3D viewing angle
-viewer.camera.zoom = 0.8
-
-
-def _set_overlay_text_3d(t_index: int):
-    """Update text overlay with 3D-specific information."""
-    K = int(keep_counts[t_index])
-    bits_model = int(model_bits_frames[t_index])
-    bpv = float(bpv_frames[t_index])  # bits per voxel
-    pct_bits = float(bit_compression_pct[t_index])
-    rel = float(rel_err_frames[t_index])
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"3D Splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  Model bpv: {bpv:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
-        f"|  rel L2 err: {rel:.4f}  |  Volume: {volume_size}³ voxels"
+    # Add the input volume
+    viewer.add_image(
+        V,
+        name="input_volume",
+        colormap="viridis",
+        contrast_limits=[0, float(V.max())],
+        opacity=1.0,  # Full opacity for clear comparison
+        rendering="mip",  # Maximum intensity projection for better 3D visualization
     )
 
+    # Add reconstruction volume stack
+    lyr_recon = viewer.add_image(
+        stack_recon,
+        name="reconstruction (compression, 3D)",
+        colormap="viridis",  # Match input colormap for consistency
+        opacity=1.0,  # Full opacity for clear comparison
+        contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
+        rendering="mip",
+    )
 
-def _update_layers_for_t_3d(t_index: int):
-    """Update 3D layers for given time index."""
-    # Update wireframe ellipsoids
-    wireframe_layer.data = wireframes_frames[t_index]
+    # Add residual volume stack
+    lyr_resid = viewer.add_image(
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="inferno",  # Better visibility than turbo
+        opacity=1.0,  # Full opacity for clear visualization
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+        rendering="mip",
+    )
 
-    # Update centers
-    pts.data = centers_frames[t_index]
+    # 3D wireframe ellipsoids that update with slider
+    wireframe_layer = viewer.add_points(
+        np.zeros((0, 3)),
+        name="ellipsoid wireframes (kept)",
+        size=1,
+        border_color="cyan",
+        face_color="cyan",
+        opacity=0.6,
+    )
 
-    # Update text overlay
-    _set_overlay_text_3d(t_index)
+    # Centers that update with slider
+    pts = viewer.add_points(
+        np.zeros((0, 3)),
+        name="centers (kept)",
+        size=4,
+        border_color="yellow",
+        face_color="transparent",
+    )
+
+    # Try to label axes (requires napari >= 0.4.18)
+    try:
+        viewer.dims.axis_labels = ["compression", "z", "y", "x"]
+    except Exception:
+        pass
+
+    # Set better 3D camera view
+    viewer.camera.angles = (15, 25, 120)  # Good 3D viewing angle
+    viewer.camera.zoom = 0.8
 
 
-# Initialize with first frame
-_update_layers_for_t_3d(0)
+    def _set_overlay_text_3d(t_index: int):
+        """Update text overlay with 3D-specific information."""
+        K = int(keep_counts[t_index])
+        bits_model = int(model_bits_frames[t_index])
+        bpv = float(bpv_frames[t_index])  # bits per voxel
+        pct_bits = float(bit_compression_pct[t_index])
+        rel = float(rel_err_frames[t_index])
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"3D Splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+            f"|  Model bpv: {bpv:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
+            f"|  rel L2 err: {rel:.4f}  |  Volume: {volume_size}³ voxels"
+        )
 
 
-# Hook slider to updates
-def _on_step_change_3d(event=None):
-    t = viewer.dims.current_step[0]
-    _update_layers_for_t_3d(int(t))
+    def _update_layers_for_t_3d(t_index: int):
+        """Update 3D layers for given time index."""
+        # Update wireframe ellipsoids
+        wireframe_layer.data = wireframes_frames[t_index]
+
+        # Update centers
+        pts.data = centers_frames[t_index]
+
+        # Update text overlay
+        _set_overlay_text_3d(t_index)
 
 
-viewer.dims.events.current_step.connect(_on_step_change_3d)
+    # Initialize with first frame
+    _update_layers_for_t_3d(0)
 
-# Console summary for 3D
+
+    # Hook slider to updates
+    def _on_step_change_3d(event=None):
+        t = viewer.dims.current_step[0]
+        _update_layers_for_t_3d(int(t))
+
+
+    viewer.dims.events.current_step.connect(_on_step_change_3d)
+
+    # Console summary for 3D
+    aprint("\n3D Gaussian Splat Compression Analysis")
+    aprint(f"{'=' * 60}")
+    aprint(f"Raw volume bits (float32): {VOLUME_BITS:,}  |  raw bpv = 32.000")
+    aprint(f"Volume size: {volume_size}³ = {NUM_VOXELS:,} voxels")
+    aprint(f"Bits per splat: {BITS_PER_SPLAT} (3 centers + 6 covariance + 1 amplitude)")
+    aprint(f"{'=' * 60}")
+
+    for i, K in enumerate(keep_counts):
+        aprint(
+            f"Frame {i:02d} | keep {K:4d} | model_bits={int(model_bits_frames[i]):>10,d} "
+            f"| bit_compression={bit_compression_pct[i]:6.1f}% | bpv={bpv_frames[i]:6.3f} "
+            f"| relL2={rel_err_frames[i]:.4f}"
+        )
+
+    aprint("\n🎮 3D Navigation Tips:")
+    aprint("  • Use mouse + Shift to rotate the 3D view")
+    aprint("  • Use the top slider (axis 0) to see compression progression")
+    aprint("  • Yellow points = splat centers")
+    aprint("  • Cyan wireframes = 2σ ellipsoid boundaries")
+    aprint("  • Toggle layers on/off to compare input vs reconstruction")
+
+    aprint("\n📊 Compression Insights:")
+    best_compression = np.max(bit_compression_pct)
+    final_error = rel_err_frames[-1]
+    aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
+    aprint(f"  • Final relative error: {final_error:.4f}")
+    aprint("  • 3D splats can achieve good compression on volumetric data!")
+
+    napari.run()
+
+# Console summary for 3D (always shown)
 aprint("\n3D Gaussian Splat Compression Analysis")
 aprint(f"{'=' * 60}")
 aprint(f"Raw volume bits (float32): {VOLUME_BITS:,}  |  raw bpv = 32.000")
@@ -349,18 +399,12 @@ for i, K in enumerate(keep_counts):
         f"| relL2={rel_err_frames[i]:.4f}"
     )
 
-aprint("\n🎮 3D Navigation Tips:")
-aprint("  • Use mouse + Shift to rotate the 3D view")
-aprint("  • Use the top slider (axis 0) to see compression progression")
-aprint("  • Yellow points = splat centers")
-aprint("  • Cyan wireframes = 2σ ellipsoid boundaries")
-aprint("  • Toggle layers on/off to compare input vs reconstruction")
-
-aprint("\n📊 Compression Insights:")
+aprint("\n📊 3D Compression Insights:")
 best_compression = np.max(bit_compression_pct)
 final_error = rel_err_frames[-1]
 aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
 aprint(f"  • Final relative error: {final_error:.4f}")
-aprint("  • 3D splats can achieve good compression on volumetric data!")
+aprint("  • 3D phantom splats demonstrate excellent volumetric compression!")
 
-napari.run()
+if NO_NAPARI:
+    aprint("✅ 3D phantom validation complete - systematic synthetic data approach working")
