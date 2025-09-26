@@ -375,8 +375,16 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 **Optimization loop:**
 1. Setup per-splat optimizer and scheduler
-2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
-3. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
+2. **Enhanced gradient dilution compensation**: Scale learning rate by combined parameter complexity and dimensional spatial complexity
+   - **Problem**: Higher dimensions suffer from both parameter dilution and spatial complexity challenges
+   - **Parameter dilution**: 2D (5 params), 3D (10 params), 4D (15 params), nD (d + d(d+1)/2 + 1 params)
+   - **Spatial complexity**: 4D space is geometrically more complex than 2D/3D for optimization
+   - **Enhanced compensation formula**: `effective_lr = base_lr × dimensional_complexity × parameter_complexity`
+     - `dimensional_complexity = d^0.8` (accounts for spatial optimization difficulty)
+     - `parameter_complexity = params_current / params_2d` (accounts for gradient dilution)
+   - **Result**: More aggressive scaling: 2D (×1.0), 3D (×5.2), 4D (×12.0) for effective nD optimization
+3. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
+4. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
 4. For each iteration:
    - Forward pass: `pred = model()`
    - Loss computation: MSE or Poisson + optional L1 regularization

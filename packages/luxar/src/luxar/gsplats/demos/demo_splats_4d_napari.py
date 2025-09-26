@@ -27,7 +27,7 @@ if NO_NAPARI:
 # ======= Demo knobs =======
 SIZE = 64
 LOSS_TYPE = "l1"
-LR = 0.05
+LR = 0.01
 L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
 N_ITERS = 200  # Number of optimization iterations (reduced for 4D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
@@ -91,7 +91,6 @@ with asection("4D Gaussian Splatting Demo"):
         params_full, amps, stats = fit_gaussian_splats(
             V,
             # centers_overcomplete auto-generated with 4D-aware intelligent defaults
-            init_sigma_vox=1.0,  # Smaller for 4D efficiency
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,

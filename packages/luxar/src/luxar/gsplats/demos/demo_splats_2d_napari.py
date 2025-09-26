@@ -78,7 +78,6 @@ if USE_DYNAMIC_OPS:
 params_full, amps, stats = fit_gaussian_splats(
     V,
     # centers_overcomplete auto-generated with intelligent defaults
-    init_sigma_vox=1.6,
     n_iters=N_ITERS,
     lr=LR,
     loss_type=LOSS_TYPE,

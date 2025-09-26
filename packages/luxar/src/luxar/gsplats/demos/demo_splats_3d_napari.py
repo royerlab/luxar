@@ -128,7 +128,6 @@ with asection("3D Gaussian Splatting Demo"):
         params_full, amps, stats = fit_gaussian_splats(
             V,
             # centers_overcomplete auto-generated with intelligent defaults
-            init_sigma_vox=1.4,  # Slightly smaller for 3D
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
