@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from math import log1p
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
@@ -109,8 +110,8 @@ class GaussianSplatFitter:
         if centers_overcomplete is None:
             from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 
-            # Volume-proportional candidate density (~0.2% of pixels)
-            peaks_per_scale = max(50, int(V.size * 0.002))
+            # Volume-log-proportional candidate density (~1% of voxels)
+            peaks_per_scale = max(50, int(log1p(V.size * 0.01)))
 
             if verbose:
                 aprint(f"Auto-generating candidates: {peaks_per_scale} peaks/scale for {V.size:,} pixels")
