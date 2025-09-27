@@ -27,7 +27,7 @@ if NO_NAPARI and len(sys.argv) > 1:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"  # True: Poisson deviance; False: MSE
-LR = 0.01  # e.g. 0.01-0.03 works well
+LR = 0.04  # e.g. 0.01-0.03 works well
 L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
 N_ITERS = 1000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"

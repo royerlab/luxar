@@ -289,7 +289,7 @@ The implementation features convergence-driven dynamic operations that automatic
 
 ### Convergence-Based Operations
 
-- **Seeding**: Add new splats where residual exceeds convergence thresholds
+- **Seeding**: Add new splats where residual exceeds convergence thresholds (ultra-simple: amplitude = residual value, isotropic shape)
 - **Splitting**: Divide large elongated splats with poor geometric properties
 - **Pruning**: Remove ineffective splats using importance-based analysis and quality validation
 - **Adaptive Thresholds**: Validation scales with local residual magnitude
