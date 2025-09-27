@@ -460,7 +460,7 @@ class GaussianSplatFitter:
                         )
                     break
 
-            # Dynamic operations (seeding, splitting, pruning)
+            # Dynamic operations (seeding and pruning)
             if self.enable_dynamic_ops and it % self.dynamic_config.step_every == 0:
                 opt, scheduler, topology_changed = apply_dynamic_operations(
                     model,
@@ -654,12 +654,12 @@ def fit_gaussian_splats(
     factor : float, default=0.5
         Learning rate reduction factor for scheduler.
     enable_dynamic_ops : bool, default=True
-        Enable dynamic operations (seeding, splitting, pruning).
+        Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional
         Configuration for dynamic operations. Uses defaults if None.
     dynamic_ops_verbose : bool, default=False
         Enable detailed console logging for dynamic operations. Shows residual analysis,
-        seeding attempts, splitting decisions, and pruning operations.
+        seeding attempts and pruning operations.
     napari_movie : bool, default=True
         Record optimization movie for napari visualization.
     movie_every : int, default=1

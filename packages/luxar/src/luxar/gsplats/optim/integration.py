@@ -105,7 +105,7 @@ class ModelOptimizerCoordinator:
         """
         Replace all splats (complete model reset).
 
-        This is used for operations like splitting where the entire
+        This is used for operations where the entire
         splat population changes structure.
         """
         n_new = centers.shape[0]

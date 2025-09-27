@@ -158,7 +158,7 @@ Maintain separate momentum buffers for each parameter type (�, L_diag, L_off, 
 ## 4. Dynamic Operations (`dynamic_ops.py`)
 
 ### Philosophy
-Dynamic operations address reconstruction deficiencies by analyzing the residual image (target - prediction) to identify where the current Gaussian splat representation fails. The approach focuses on three core operations: **seeding** new splats where coverage is missing, **splitting** problematic splats that are too large or elongated, and **pruning** splats that contribute minimally to reconstruction quality.
+Dynamic operations address reconstruction deficiencies by analyzing the residual image (target - prediction) to identify where the current Gaussian splat representation fails. The approach focuses on two core operations: **seeding** new splats where coverage is missing and **pruning** splats that contribute minimally to reconstruction quality.
 
 ### Configuration: `DynamicOpsConfig`
 - `step_every=50`: Run operations every N iterations during optimization
@@ -177,7 +177,7 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 
 ### Core Function: `apply_dynamic_operations(model, optimizer, scheduler, V_target, V_pred, cfg, current_lr, max_abs_error_threshold, device, verbose=False)`
 
-The dynamic operations algorithm runs every `step_every` iterations and performs three sequential operations:
+The dynamic operations algorithm runs every `step_every` iterations and performs two core operations:
 
 ### **Step 1: Residual Peak Analysis**
 1. **Compute residual image**: `residual = V_target - V_pred`
@@ -204,30 +204,15 @@ For each detected residual peak location, determine if coverage is sufficient us
 - **Validation**: **Adaptive amplitude threshold** - only add if `estimated_amplitude ≥ local_residual × relative_contribution_factor`
   - **Rationale**: Threshold scales with problem magnitude, preventing plateau issues from fixed thresholds
 
-**Case B: Problematic Existing Splat (Adaptive Learning Rate + Splitting)**
-- **Detection criterion**: Existing splat coverage is present but inadequate, requiring refinement:
-  - **Coverage exists**: Find splat with highest influence at the peak location (using existing influence calculation)
-  - **Convergence criteria**: Same as Case A - residual magnitude indicates insufficient coverage
-
-**Action 1: Adaptive Learning Rate Boosting**
-- **Purpose**: "Unfreeze" splats covering problematic regions to help them adapt
-- **Target identification**: Splat with highest influence at the residual peak location
-- **Boost calculation**: `new_lr = min(current_lr × boost_factor, base_lr)`
-- **Default boost factor**: 1.5 (50% increase)
-- **Safety cap**: Never exceed original starting learning rate (`base_lr`)
-- **Rationale**: Give existing splats better chance to fix problems before adding new splats
-
-**Action 2: Geometric Splitting (if criteria met)**
-- **Splitting criteria**: The dominant splat meets geometric criteria for splitting:
-  - Principal axis length: `sqrt(λ_max) > split_size_threshold` (where `λ_max` is largest eigenvalue of covariance)
-  - Elongation ratio: `λ_max / λ_min > split_elongation_threshold`
-- **Action**: Split the problematic splat along its principal eigenvector
-- **Split procedure**:
-  - Compute principal eigenvector `v1` corresponding to `λ_max`
-  - Create two child splats: `μ_children = μ_parent ± 0.3 * sqrt(λ_max) * v1`
-  - Scale down covariances: `Σ_children = 0.6 * Σ_parent`
-  - Distribute amplitude: `a_children = 0.6 * a_parent` each
-- **Replace**: Remove parent splat and add two children
+**Case B: Existing Coverage with Inadequate Quality**
+- **Detection criterion**: Existing splat coverage is present but insufficient based on convergence criteria
+- **Action**: Adaptive Learning Rate Boosting only (splitting removed for simplicity)
+  - **Purpose**: "Unfreeze" splats covering problematic regions to help them adapt
+  - **Target identification**: Splat with highest influence at the residual peak location
+  - **Boost calculation**: `new_lr = min(current_lr × boost_factor, base_lr)`
+  - **Default boost factor**: 1.5 (50% increase)
+  - **Safety cap**: Never exceed original starting learning rate (`base_lr`)
+  - **Rationale**: Give existing splats chance to fix problems; if ineffective, seeding will occur next iteration
 
 ### **Step 3: Principled Splat Pruning Analysis**
 Independent of residual peaks, identify and remove splats that do not meaningfully contribute to reconstruction quality:

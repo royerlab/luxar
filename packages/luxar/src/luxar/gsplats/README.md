@@ -12,7 +12,7 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 - **Efficient Cholesky Parameterization**: Covariance matrices via Cholesky decomposition with batched triangular solve
 - **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
-- **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding, splitting, and pruning
+- **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
 - **Asymmetric Loss Functions**: 10x penalty for over-prediction addresses additive model constraints (MSE and Poisson)
 - **Per-Splat Optimization**: Individual learning rates and momentum preservation for each Gaussian splat
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
@@ -290,7 +290,6 @@ The implementation features convergence-driven dynamic operations that automatic
 ### Convergence-Based Operations
 
 - **Seeding**: Add new splats where residual exceeds convergence thresholds (ultra-simple: amplitude = residual value, isotropic shape)
-- **Splitting**: Divide large elongated splats with poor geometric properties
 - **Pruning**: Remove ineffective splats using importance-based analysis and quality validation
 - **Adaptive Thresholds**: Validation scales with local residual magnitude
 

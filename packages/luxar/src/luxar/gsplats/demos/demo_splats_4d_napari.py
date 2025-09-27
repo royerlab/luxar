@@ -27,7 +27,7 @@ if NO_NAPARI:
 # ======= Demo knobs =======
 SIZE = 64
 LOSS_TYPE = "l1"
-LR = 0.04
+LR = 0.01
 L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
 N_ITERS = 400  # Number of optimization iterations (reduced for 4D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
