@@ -28,7 +28,6 @@ if NO_NAPARI:
 SIZE = 64
 LOSS_TYPE = "l1"
 LR = 0.01
-L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
 N_ITERS = 400  # Number of optimization iterations (reduced for 4D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 20  # number of compression steps (<= #splats)
@@ -94,7 +93,7 @@ with asection("4D Gaussian Splatting Demo"):
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
-            l1_amp=L1_AMP,
+            # l1_amp auto-set to 0.1 * lr = 0.001
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,

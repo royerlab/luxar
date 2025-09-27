@@ -315,7 +315,7 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
-### Primary Function: `fit_gaussian_splats(V, centers_overcomplete=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, centers_overcomplete=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, max_abs_error=None, ...)`
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
@@ -411,7 +411,10 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Asymmetric Poisson**: Apply same over-prediction penalty to Poisson deviance
 - **L1 (Mean Absolute Error)**: `mean(|pred - target|)`
 - **Asymmetric L1**: `mean(where(pred > target, F * |pred - target|, |pred - target|))` where F is over-prediction penalty factor
-- Optional L1 Regularization: `+ l1_amp * mean(|softplus(raw_a)|)`
+- **Proportional L1 Regularization**: `+ l1_amp * mean(|softplus(raw_a)|)` where `l1_amp = 0.1 * lr` by default
+  - **Rationale**: L1 regularization should scale with optimization strength for consistent sparsity pressure
+  - **Dimensional scaling**: Works correctly with gradient dilution compensation (higher LR → higher L1)
+  - **Auto-tuning**: Eliminates need for manual L1 adjustment when changing learning rates
 
 **Loss Function Selection Guide:**
 - **MSE**: Best for smooth data with Gaussian noise, fast convergence, well-behaved gradients

@@ -31,8 +31,7 @@ if NO_NAPARI and len(sys.argv) > 1:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
-LR = 0.01  # Learning rate for fitting
-L1_AMP = 0.001  # L1 regularization strength to encourage sparsity
+LR = 0.02  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -93,7 +92,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
-            l1_amp=L1_AMP,
+            # l1_amp auto-set to 0.1 * lr = 0.002
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
