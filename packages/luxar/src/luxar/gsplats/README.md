@@ -477,9 +477,19 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 
 ```
 gsplats/
-├── fit_gsplats.py              # Main fitting implementation with optimizations
+├── fit_gsplats.py              # Main fitting interface (refactored to use modular pipeline)
 ├── candidates.py               # Multiscale candidate detection
 ├── dynamic_ops.py              # Adaptive topology operations (prune, seed, merge, split)
+├── fitting/                    # Modular fitting pipeline (NEW - refactored components)
+│   ├── __init__.py            # Exports for main interface
+│   ├── config.py              # Configuration dataclasses (FitConfig, PreprocessedData, etc.)
+│   ├── validation.py          # Input validation and parameter checking
+│   ├── preprocessing.py       # Data normalization and candidate generation
+│   ├── initialization.py      # Model and optimizer initialization
+│   ├── losses.py              # Loss function creation (MSE, Poisson, L1)
+│   ├── optimization.py        # Main optimization loop and convergence logic
+│   ├── results.py             # Result finalization and statistics
+│   └── visualization.py       # Movie recording and compression analysis
 ├── optim/                      # Per-splat optimization algorithms
 │   ├── per_splat_adam.py      # Per-splat Adam optimizer with momentum preservation
 │   └── per_splat_scheduler.py # Individual learning rate scheduling
@@ -503,6 +513,17 @@ gsplats/
 └── tests/
     └── test_gsplats_integration.py  # Comprehensive tests
 ```
+
+### Refactored Architecture
+
+The fitting pipeline has been refactored from a monolithic 480+ line method into focused, maintainable modules:
+
+- **fit_gsplats.py**: Now contains a clean orchestration method that coordinates the pipeline
+- **fitting/ modules**: Each handles a specific aspect of the fitting process
+  - Improved testability with individual components
+  - Better separation of concerns
+  - Enhanced maintainability and readability
+  - Type-safe configuration objects
 
 ## Running Demos
 

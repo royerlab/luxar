@@ -551,7 +551,7 @@ class TestConvergence:
         )
 
         # Should generate reasonable number of candidates based on volume
-        expected_candidates = max(50, int(V.size * 0.002))  # ~2 for small image -> 50 minimum
+        # Expected at least 50 candidates for any image size
         assert len(amps) > 0
         assert params.shape[0] == len(amps)
 

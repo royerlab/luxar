@@ -289,7 +289,10 @@ class TestDynamicOperationsIntegration:
 
     def test_principled_pruning_functionality(self):
         """Test the new principled pruning algorithm."""
-        from luxar.gsplats.dynamic_ops import _calculate_splat_importance, _select_pruning_candidates
+        from luxar.gsplats.dynamic_ops import (
+            _calculate_splat_importance,
+            _select_pruning_candidates,
+        )
 
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
@@ -360,8 +363,8 @@ class TestDynamicOperationsIntegration:
             sigma_min_diag=[0.1, 0.1],
         )
 
+        from luxar.gsplats.dynamic_ops import DynamicOpsConfig, apply_dynamic_operations
         from luxar.gsplats.optim import PerSplatAdam, PerSplatReduceLROnPlateau
-        from luxar.gsplats.dynamic_ops import apply_dynamic_operations, DynamicOpsConfig
 
         optimizer = PerSplatAdam(model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer)
@@ -409,7 +412,7 @@ class TestDynamicOperationsIntegration:
 
     def test_compression_analysis_functionality(self):
         """Test compression ratio analysis functionality."""
-        from luxar.gsplats.fit_gsplats import _display_compression_analysis
+        from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         # Create simple test data
         V = np.random.random((16, 16)).astype(np.float32)
@@ -418,7 +421,7 @@ class TestDynamicOperationsIntegration:
 
         # Test compression analysis (should not raise exceptions)
         try:
-            _display_compression_analysis(V, params, amps)
+            display_compression_analysis(V, params, amps)
             compression_test_passed = True
         except Exception:
             compression_test_passed = False
@@ -427,7 +430,10 @@ class TestDynamicOperationsIntegration:
 
     def test_adaptive_learning_rate_boosting(self):
         """Test adaptive learning rate boosting for problematic regions."""
-        from luxar.gsplats.dynamic_ops import _boost_splat_learning_rate, DynamicOpsConfig
+        from luxar.gsplats.dynamic_ops import (
+            DynamicOpsConfig,
+            _boost_splat_learning_rate,
+        )
         from luxar.gsplats.optim import PerSplatAdam
 
         # Create test model
