@@ -64,7 +64,7 @@ class GaussianSplatFitter:
         lr: float = 0.01,
         loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
-        l1_amp: float = 0.001,
+        l1_amp: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
@@ -136,6 +136,10 @@ class GaussianSplatFitter:
             raise ValueError(
                 f"centers_overcomplete must have {V.ndim} columns to match image dimensions"
             )
+
+        # Set proportional L1 regularization default before validation
+        if l1_amp is None:
+            l1_amp = 0.1 * lr  # 10% of learning rate
 
         # Validate hyperparameters
         if init_sigma_vox <= 0:
@@ -209,6 +213,10 @@ class GaussianSplatFitter:
             gradient_dilution_factor = dimensional_complexity * parameter_complexity
 
         effective_lr = lr * gradient_dilution_factor
+
+        # Log L1 regularization setting
+        if verbose:
+            aprint(f"Proportional L1 regularization: {l1_amp:.4f} (10% of lr={lr:.3f})")
 
         if verbose:
             if d <= 3:
@@ -563,7 +571,7 @@ def fit_gaussian_splats(
     lr: float = 0.01,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
-    l1_amp: float = 0.001,
+    l1_amp: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -627,8 +635,10 @@ def fit_gaussian_splats(
         where pred > target by this factor. Set to None to disable asymmetric loss.
         Default 10.0 heavily penalizes over-prediction since non-negative Gaussian sums
         cannot easily reduce intensity, making under-prediction easier to correct.
-    l1_amp : float, default=0.0
+    l1_amp : float, default=None (auto: 0.1 * lr)
         L1 regularization coefficient on splat amplitudes for sparsity.
+        If None, automatically set to 10% of learning rate for consistent
+        sparsity pressure that scales with optimization strength.
     sigma_min_diag : Sequence[float], optional
         Minimum diagonal values for Cholesky factor L along each axis.
         Defaults to [0.5]*d to prevent degenerate splats.

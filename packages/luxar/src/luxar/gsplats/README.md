@@ -97,6 +97,7 @@ params, amps, stats = fit_gaussian_splats(
     asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
     loss_type="l1",                       # "mse", "poisson", or "l1" for robust features
     # max_abs_error auto-set to 0.01 (1% of normalized range)
+    # l1_amp auto-set to 0.1 * lr for proportional sparsity regularization
     # enable_dynamic_ops=True by default for optimal results
 )
 

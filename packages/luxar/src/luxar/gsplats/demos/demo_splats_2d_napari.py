@@ -26,9 +26,8 @@ if NO_NAPARI and len(sys.argv) > 1:
     sys.exit(0)
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"  # True: Poisson deviance; False: MSE
-LR = 0.04  # e.g. 0.01-0.03 works well
-L1_AMP = 0.001  # e.g. 1e-3 to encourage sparsity
+LOSS_TYPE = "l1"  # L1 loss for robust features
+LR = 0.04  # Learning rate
 N_ITERS = 1000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -81,7 +80,7 @@ params_full, amps, stats = fit_gaussian_splats(
     n_iters=N_ITERS,
     lr=LR,
     loss_type=LOSS_TYPE,
-    l1_amp=L1_AMP,
+    # l1_amp auto-set to 0.1 * lr = 0.004
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,

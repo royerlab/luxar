@@ -66,7 +66,7 @@ def main():
             init_sigma_vox=1.6,
             n_iters=args.n_iters,
             lr=0.01,
-            l1_amp=0.001,
+            # l1_amp auto-set to 0.1 * lr = 0.001
             loss_type="l1",
             # asymmetric_penalty defaults to 10.0
             verbose=True,
