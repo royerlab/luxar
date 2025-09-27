@@ -9,9 +9,8 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 
 ## Core Philosophy
 
-The approach focuses on three core operations driven by convergence requirements:
+The approach focuses on two core operations driven by convergence requirements:
 - **Seeding**: Create new splats where residual exceeds convergence thresholds
-- **Splitting**: Divide problematic splats that are too large or elongated
 - **Pruning**: Remove splats that contribute minimally to reconstruction quality
 
 ## Implementation Approach
@@ -24,7 +23,7 @@ The approach focuses on three core operations driven by convergence requirements
 ### Step 2: Convergence-Based Splat Operations
 - For each peak, determine if coverage is sufficient using convergence criteria
 - **Seeding**: Coverage insufficient (residual > convergence threshold or no threshold set)
-- **Splitting**: Existing splat has influence but geometric criteria suggest refinement needed
+- **Adaptive learning rate boosting**: "Unfreeze" existing splats covering problematic regions
 - **Adaptive thresholds**: Amplitude validation scales with local residual magnitude
 
 ### Step 3: Principled Pruning Analysis
@@ -86,10 +85,6 @@ class DynamicOpsConfig:
 
         # Seeding parameters
         self.init_sigma_vox: float = 1.5  # Initial covariance for new splats
-
-        # Splitting parameters
-        self.split_size_threshold: float = 3.0  # sqrt(λ_max) threshold for splitting
-        self.split_elongation_threshold: float = 4.0  # λ_max/λ_min ratio for splitting
 
 
 def _find_residual_peaks(
@@ -270,8 +265,8 @@ def apply_dynamic_operations(
 
                 if (
                     influential_splat_idx != -1
-                ):  # Existing Coverage - boost LR and check splitting
-                    # Action 1: Boost learning rate to "unfreeze" problematic splat
+                ):  # Existing Coverage - boost LR (splitting removed)
+                    # Boost learning rate to "unfreeze" problematic splat
                     if influence_value >= cfg.boost_influence_threshold:
                         boosted_lr = _boost_splat_learning_rate(
                             optimizer, influential_splat_idx, current_lr, cfg
@@ -281,46 +276,7 @@ def apply_dynamic_operations(
                                 f"      → Boosted LR for splat {influential_splat_idx}: {boosted_lr:.6f} (factor: {cfg.lr_boost_factor})"
                             )
 
-                    # Action 2: Check if geometric splitting is appropriate
-                    if verbose:
-                        aprint(
-                            f"      → Checking if splat {influential_splat_idx} should be split..."
-                        )
-
-                    if _should_split_splat(
-                        model,
-                        influential_splat_idx,
-                        local_residual,
-                        cfg,
-                        max_abs_error_threshold,
-                    ):
-                        if verbose:
-                            aprint(
-                                f"      → Attempting to split splat {influential_splat_idx}"
-                            )
-                        success = _split_problematic_splat(
-                            coordinator, model, influential_splat_idx, cfg
-                        )
-                        if success:
-                            topology_changed = True
-                            operations_performed.append(
-                                f"Split splat {influential_splat_idx} at {peak_coords}"
-                            )
-                            if verbose:
-                                aprint(
-                                    f"      ✓ Successfully split splat {influential_splat_idx}"
-                                )
-                            continue
-                        elif verbose:
-                            aprint(
-                                f"      ✗ Failed to split splat {influential_splat_idx}"
-                            )
-                    elif verbose:
-                        aprint(
-                            f"      → Splat {influential_splat_idx} does not meet splitting criteria"
-                        )
-
-                # Either no existing coverage OR splitting failed/inappropriate - SEED new splat
+                # No coverage or inadequate coverage - SEED new splat
                 # Use new adaptive approach - always attempt seeding since convergence check passed
                 if verbose:
                     aprint(
@@ -542,98 +498,7 @@ def _seed_new_splat(
         return False
 
 
-def _should_split_splat(
-    model,
-    splat_idx: int,
-    local_residual: float,
-    cfg: DynamicOpsConfig,
-    max_abs_error_threshold: float,
-) -> bool:
-    """
-    Determine if a splat should be split based on size and residual criteria.
-    """
-    centers, Ls, amps = model.current_params()
-
-    # Check size criterion (principal axis length)
-    Sigma = Ls[splat_idx] @ Ls[splat_idx].T
-    eigvals = torch.linalg.eigvals(Sigma).real
-    lambda_max = torch.max(eigvals)
-    lambda_min = torch.min(eigvals)
-
-    principal_axis_length = torch.sqrt(lambda_max)
-    elongation_ratio = lambda_max / (lambda_min + 1e-12)
-
-    # Check criteria
-    size_criterion = principal_axis_length > cfg.split_size_threshold
-    elongation_criterion = elongation_ratio > cfg.split_elongation_threshold
-
-    # Residual criterion: if no convergence threshold set, use a reasonable default
-    if max_abs_error_threshold == float("inf"):
-        residual_criterion = local_residual > cfg.min_contribution_threshold
-    else:
-        residual_criterion = local_residual > 0.5 * max_abs_error_threshold
-
-    return size_criterion and elongation_criterion and residual_criterion
-
-
-def _split_problematic_splat(
-    coordinator, model, splat_idx: int, cfg: DynamicOpsConfig
-) -> bool:
-    """
-    Split a problematic splat along its principal axis.
-
-    Returns:
-        bool: True if splitting was successful
-    """
-    try:
-        centers, Ls, amps = model.current_params()
-
-        parent_center = centers[splat_idx]
-        parent_L = Ls[splat_idx]
-        parent_amp = amps[splat_idx]
-
-        # Compute principal eigenvector
-        Sigma = parent_L @ parent_L.T
-        eigvals, eigvecs = torch.linalg.eigh(Sigma)
-        v1 = eigvecs[:, -1]  # Principal eigenvector
-        lambda_max = eigvals[-1]
-
-        # Compute offset along principal axis
-        offset = 0.3 * torch.sqrt(lambda_max) * v1
-
-        # Create two child splats
-        child1_center = parent_center - offset
-        child2_center = parent_center + offset
-
-        # Scale down covariances
-        child_L = 0.6 * parent_L
-
-        # Distribute amplitude
-        child_amp = 0.6 * parent_amp
-
-        # Remove parent splat
-        keep_mask = torch.ones(
-            model.n_splats(), dtype=torch.bool, device=parent_center.device
-        )
-        keep_mask[splat_idx] = False
-        coordinator.prune_splats(keep_mask)
-
-        # Add child splats
-        child_centers = torch.stack([child1_center, child2_center], dim=0)
-        child_Ls = torch.stack([child_L, child_L], dim=0)
-        child_amps = torch.stack([child_amp, child_amp], dim=0)
-
-        coordinator.add_splats(child_centers, child_Ls, child_amps)
-
-        return True
-
-    except (RuntimeError, IndexError, ValueError):
-        # Handle expected errors gracefully (invalid indices, device issues, etc.)
-        return False
-    except Exception as e:
-        # Log unexpected errors for debugging
-        print(f"Unexpected splitting error: {type(e).__name__}: {e}")
-        return False
+# Note: Splat splitting functionality removed - rarely used and added unnecessary complexity
 
 
 def _calculate_splat_importance(model) -> torch.Tensor:

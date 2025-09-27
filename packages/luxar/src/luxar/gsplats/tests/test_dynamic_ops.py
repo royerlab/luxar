@@ -32,8 +32,6 @@ class TestDynamicOpsConfig:
         assert cfg.pruning_percentile == 5.0
         assert cfg.min_splats_to_keep == 10
         assert cfg.init_sigma_vox == 1.5
-        assert cfg.split_size_threshold == 3.0
-        assert cfg.split_elongation_threshold == 4.0
 
     def test_config_modification(self):
         """Test that config values can be modified."""
