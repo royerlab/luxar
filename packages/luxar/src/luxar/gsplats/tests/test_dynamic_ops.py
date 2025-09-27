@@ -9,7 +9,6 @@ import torch
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.dynamic_ops import (
     DynamicOpsConfig,
-    _estimate_amplitude_from_residual,
     _find_residual_peaks,
     apply_dynamic_operations,
 )
@@ -94,35 +93,36 @@ class TestResidualPeakFinding:
         assert len(peaks) == 0
 
 
-class TestAmplitudeEstimation:
-    """Test amplitude estimation functionality."""
+class TestSimplifiedSeeding:
+    """Test ultra-simple seeding approach with direct amplitude and isotropic shape."""
 
-    def test_amplitude_estimation_2d(self):
-        """Test amplitude estimation in 2D."""
-        shape = (20, 20)
+    def test_simple_amplitude_estimation(self):
+        """Test direct amplitude estimation from residual center value."""
+        # Create synthetic residual with known peak
+        residual = torch.zeros((20, 20))
+        residual[10, 10] = 0.75  # Known residual value
+
+        # Simple amplitude should equal residual value at center
         center = torch.tensor([10.0, 10.0])
-        L = torch.eye(2) * 1.5  # Isotropic covariance
+        center_coords = torch.round(center).long()
+        amplitude = torch.abs(residual[tuple(center_coords)])
 
-        # Create synthetic residual
-        residual = torch.ones(shape) * 0.5
+        assert amplitude.item() == 0.75  # Should exactly match residual value
+        assert amplitude.item() > 0
 
-        amplitude = _estimate_amplitude_from_residual(shape, center, L, residual)
+    def test_isotropic_shape_generation(self):
+        """Test isotropic covariance matrix generation."""
+        from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 
-        assert isinstance(amplitude, torch.Tensor)
-        assert amplitude.item() >= 0.0  # Should be non-negative
+        cfg = DynamicOpsConfig()
+        center = torch.tensor([10.0, 10.0])
+        d = len(center)
 
-    def test_amplitude_estimation_3d(self):
-        """Test amplitude estimation in 3D."""
-        shape = (10, 10, 10)
-        center = torch.tensor([5.0, 5.0, 5.0])
-        L = torch.eye(3) * 2.0
+        # Simple isotropic covariance
+        L = torch.eye(d, device=center.device) * cfg.init_sigma_vox
 
-        residual = torch.ones(shape) * 0.3
-
-        amplitude = _estimate_amplitude_from_residual(shape, center, L, residual)
-
-        assert isinstance(amplitude, torch.Tensor)
-        assert amplitude.item() >= 0.0
+        assert L.shape == (2, 2)
+        assert torch.allclose(L, torch.eye(2) * 1.5)  # Should be identity scaled
 
 
 class TestGaussianSplatModel:

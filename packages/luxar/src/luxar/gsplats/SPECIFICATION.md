@@ -195,10 +195,12 @@ For each detected residual peak location, determine if coverage is sufficient us
   - **If no convergence threshold** (`max_abs_error_threshold == inf`): Always seed (minimize error as much as possible)
 - **Action**: Create new Gaussian splat fitted to local residual
 - **Rationale**: Uses convergence-based detection to directly align with optimization goals, not arbitrary influence thresholds
-- **Initialization**:
+- **Initialization** (Ultra-Simple Approach):
   - Center: Peak location coordinates
-  - Covariance: **Adaptive sizing** - estimated from local residual structure analysis (weighted covariance of residual distribution)
-  - Amplitude: Estimated via least-squares fitting `a = <local_residual, gaussian> / <gaussian, gaussian>`
+  - Covariance: **Isotropic** - `L = eye(d) × init_sigma_vox` (simple spherical/circular splats)
+  - Amplitude: **Direct residual value** - `amplitude = |residual[center_coordinates]|`
+  - **Rationale**: Simple, fast, robust approach that relies on optimization to evolve optimal shapes
+  - **Benefits**: Eliminates complex rendering and covariance analysis, always numerically stable
 - **Validation**: **Adaptive amplitude threshold** - only add if `estimated_amplitude ≥ local_residual × relative_contribution_factor`
   - **Rationale**: Threshold scales with problem magnitude, preventing plateau issues from fixed thresholds
 

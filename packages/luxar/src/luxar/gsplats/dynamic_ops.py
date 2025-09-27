@@ -150,146 +150,8 @@ def _find_residual_peaks(
     return [tuple(peak.tolist()) for peak in selected_peaks]
 
 
-def _estimate_covariance_from_local_residual(
-    residual: torch.Tensor, center: torch.Tensor, window_size: int = 7
-) -> torch.Tensor:
-    """
-    Estimate covariance matrix by analyzing local residual structure.
-
-    Args:
-        residual: Full residual image
-        center: Peak location (d,)
-        window_size: Size of analysis window around peak
-
-    Returns:
-        L: Lower triangular matrix for covariance (d, d)
-    """
-    d = len(center)
-    device = center.device
-
-    # Extract local window around peak
-    half_window = window_size // 2
-    center_int = torch.round(center).long()
-
-    # Get window bounds (clamped to image bounds)
-    bounds = []
-    for i in range(d):
-        start = max(0, center_int[i] - half_window)
-        end = min(residual.shape[i], center_int[i] + half_window + 1)
-        bounds.append((start, end))
-
-    # Extract local residual window
-    if d == 2:
-        local_residual = residual[
-            bounds[0][0] : bounds[0][1], bounds[1][0] : bounds[1][1]
-        ]
-    elif d == 3:
-        local_residual = residual[
-            bounds[0][0] : bounds[0][1],
-            bounds[1][0] : bounds[1][1],
-            bounds[2][0] : bounds[2][1],
-        ]
-    else:
-        # For higher dimensions, use a more general approach
-        local_residual = residual  # Fallback to full image
-
-    # Create coordinate grids for the local window
-    coords = []
-    for i, (start, end) in enumerate(bounds):
-        coords.append(
-            torch.arange(start, end, dtype=torch.float32, device=device) - center[i]
-        )
-
-    if d == 2:
-        y_coords, x_coords = torch.meshgrid(coords[0], coords[1], indexing="ij")
-        coord_stack = torch.stack([y_coords, x_coords], dim=-1)  # (H, W, 2)
-    elif d == 3:
-        z_coords, y_coords, x_coords = torch.meshgrid(
-            coords[0], coords[1], coords[2], indexing="ij"
-        )
-        coord_stack = torch.stack(
-            [z_coords, y_coords, x_coords], dim=-1
-        )  # (D, H, W, 3)
-    else:
-        # Fallback for higher dimensions
-        return torch.eye(d, device=device) * 2.0  # Default to reasonable size
-
-    # Flatten for analysis - use ABSOLUTE residual to avoid sign issues
-    flat_coords = coord_stack.reshape(-1, d)  # (N, d)
-    flat_weights = torch.abs(local_residual).flatten()  # (N,) - ABSOLUTE values
-
-    # Remove zero weights
-    non_zero_mask = flat_weights > 1e-8
-    if torch.sum(non_zero_mask) < 3:  # Need at least 3 points for covariance
-        return torch.eye(d, device=device) * 1.5  # Fallback to default
-
-    flat_coords = flat_coords[non_zero_mask]
-    flat_weights = flat_weights[non_zero_mask]
-
-    # Normalize weights
-    flat_weights = flat_weights / torch.sum(flat_weights)
-
-    # Compute weighted covariance matrix
-    weighted_mean = torch.sum(flat_coords * flat_weights.unsqueeze(1), dim=0)  # (d,)
-    centered_coords = flat_coords - weighted_mean.unsqueeze(0)  # (N, d)
-
-    # Weighted covariance: C = sum(w_i * (x_i - mean) * (x_i - mean)^T)
-    weighted_centered = centered_coords * flat_weights.unsqueeze(1).sqrt()  # (N, d)
-    covariance = torch.mm(weighted_centered.T, weighted_centered)  # (d, d)
-
-    # Add regularization to prevent singular matrices
-    covariance += torch.eye(d, device=device) * 0.25
-
-    # Ensure minimum size
-    eigenvals, eigenvecs = torch.linalg.eigh(covariance)
-    eigenvals = torch.clamp(eigenvals, min=0.8)  # Minimum std of ~0.9 voxels
-    covariance = eigenvecs @ torch.diag(eigenvals) @ eigenvecs.T
-
-    # Return Cholesky decomposition (lower triangular L such that LL^T = Σ)
-    try:
-        L = torch.linalg.cholesky(covariance)
-        return L
-    except RuntimeError:
-        # Fallback if Cholesky fails
-        return torch.eye(d, device=device) * 1.5
-
-
-def _estimate_amplitude_from_residual(
-    shape: Tuple[int, ...],
-    center: torch.Tensor,
-    L: torch.Tensor,
-    residual: torch.Tensor,
-    truncate: float = 3.0,
-) -> torch.Tensor:
-    """
-    Estimate amplitude for a Gaussian splat using least-squares fitting.
-
-    Args:
-        shape: Shape of the target volume/image
-        center: Center of the Gaussian (d,)
-        L: Lower triangular matrix for covariance (d, d)
-        residual: Current residual image
-        truncate: Truncation parameter for rendering
-
-    Returns:
-        Estimated amplitude as tensor scalar
-    """
-    from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians
-
-    centers = center[None]  # (1, d)
-    Ls = L[None]  # (1, d, d)
-    amps = torch.ones((1,), device=center.device, dtype=torch.float32)
-
-    # Render unit-amplitude Gaussian
-    g = render_gaussians(shape, centers, Ls, amps, truncate=truncate)
-
-    # Least squares: a = <|residual|, g> / <g, g> - use ABSOLUTE residual to avoid sign issues
-    abs_residual = torch.abs(residual)
-    numerator = torch.sum(abs_residual * g)
-    denominator = torch.sum(g * g) + 1e-12
-    amplitude = torch.clamp(numerator / denominator, min=0.0)
-
-    return amplitude
+# Note: Complex covariance and amplitude estimation functions removed
+# Replaced with ultra-simple approach: amplitude = residual[center], shape = isotropic
 
 
 def apply_dynamic_operations(
@@ -631,24 +493,31 @@ def _seed_new_splat(
     lr: float,
 ) -> bool:
     """
-    Seed a new Gaussian splat at the specified location with adaptive sizing.
+    Seed a new Gaussian splat with ultra-simple amplitude and shape estimation.
+
+    Uses direct residual value at center for amplitude and isotropic covariance.
+    Optimization will evolve optimal shapes during training.
 
     Returns:
         bool: True if seeding was successful
     """
     try:
-        # Estimate covariance from local residual structure (ADAPTIVE SIZING)
-        L = _estimate_covariance_from_local_residual(residual, center, window_size=7)
+        # Ultra-simple amplitude: residual value at center
+        center_coords = torch.round(center).long()
 
-        # Estimate amplitude
-        amplitude = _estimate_amplitude_from_residual(shape, center, L, residual)
+        # Clamp coordinates to valid range
+        for i in range(len(center_coords)):
+            center_coords[i] = torch.clamp(center_coords[i], 0, residual.shape[i] - 1)
+
+        amplitude = torch.abs(residual[tuple(center_coords)])
+
+        # Ultra-simple shape: isotropic splat
+        d = len(shape)
+        L = torch.eye(d, device=center.device) * cfg.init_sigma_vox
 
         # ADAPTIVE THRESHOLD: Check amplitude relative to local residual
         amplitude_value = amplitude.item()
-        local_residual_value = torch.abs(
-            residual[tuple(torch.round(center).long())]
-        ).item()
-        adaptive_threshold = local_residual_value * cfg.relative_contribution_factor
+        adaptive_threshold = amplitude_value * cfg.relative_contribution_factor
 
         # Validate amplitude against adaptive threshold
         if amplitude_value < adaptive_threshold:
