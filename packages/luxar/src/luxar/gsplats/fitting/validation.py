@@ -26,6 +26,8 @@ def prepare_fit_config(
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
+    l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
+    sharpness_lr_scale: float = 0.1,  # Learning rate scale for sharpness (10x slower)
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -90,6 +92,10 @@ def prepare_fit_config(
         l1_amp = 0.1 * lr  # 10% of learning rate
     if l1_diag is None:
         l1_diag = 0.01 * lr  # 1% of learning rate
+    if l1_sharpness is None:
+        l1_sharpness = (
+            0.0  # No sharpness regularization by default (s=2 standard Gaussian)
+        )
 
     # Validate hyperparameters
     if init_sigma_vox <= 0:
@@ -147,6 +153,8 @@ def prepare_fit_config(
         asymmetric_penalty=asymmetric_penalty,
         l1_amp=l1_amp,
         l1_diag=l1_diag,
+        l1_sharpness=l1_sharpness,
+        sharpness_lr_scale=sharpness_lr_scale,
         scheduler_type=scheduler_type,
         patience=patience,
         factor=factor,
