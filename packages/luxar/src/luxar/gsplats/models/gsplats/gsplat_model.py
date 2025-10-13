@@ -184,6 +184,7 @@ def _render_gaussians_2d(
     centers: torch.Tensor,  # (N,2)
     Ls: torch.Tensor,  # (N,2,2)
     amps: torch.Tensor,  # (N,)
+    sharpness: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
     chunk_size: Optional[int] = None,
@@ -226,7 +227,12 @@ def _render_gaussians_2d(
 
     valid = (hi > lo).all(1)
     if not torch.all(valid):
-        centers, Ls, amps = centers[valid], Ls[valid], amps[valid]
+        centers, Ls, amps, sharpness = (
+            centers[valid],
+            Ls[valid],
+            amps[valid],
+            sharpness[valid],
+        )
         lo, hi = lo[valid], hi[valid]
         if centers.numel() == 0:
             return out
@@ -241,6 +247,7 @@ def _render_gaussians_2d(
         mu = centers[idx]  # (K,2)
         L = Ls[idx]  # (K,2,2)
         a = amps[idx]  # (K,)
+        s = sharpness[idx]  # (K,)
         lo_sel = lo[idx]  # (K,2)
 
         base, lin_offsets = _cached_base_and_offsets(
@@ -261,7 +268,10 @@ def _render_gaussians_2d(
 
             # ||y||^2 via explicit forward-substitution
             expo = _fwd_norm2_2d(L, d0, d1)  # (K,Pc)
-            vals = torch.exp(-0.5 * expo) * a[:, None]
+
+            # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
+            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
+            vals = torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -274,6 +284,7 @@ def _render_gaussians_3d(
     centers: torch.Tensor,  # (N,3)
     Ls: torch.Tensor,  # (N,3,3)
     amps: torch.Tensor,  # (N,)
+    sharpness: torch.Tensor,  # (N,)
     truncate: float,
     intensity_floor: float,
     chunk_size: Optional[int] = None,
@@ -316,7 +327,12 @@ def _render_gaussians_3d(
 
     valid = (hi > lo).all(1)
     if not torch.all(valid):
-        centers, Ls, amps = centers[valid], Ls[valid], amps[valid]
+        centers, Ls, amps, sharpness = (
+            centers[valid],
+            Ls[valid],
+            amps[valid],
+            sharpness[valid],
+        )
         lo, hi = lo[valid], hi[valid]
         if centers.numel() == 0:
             return out
@@ -331,6 +347,7 @@ def _render_gaussians_3d(
         mu = centers[idx]  # (K,3)
         L = Ls[idx]  # (K,3,3)
         a = amps[idx]  # (K,)
+        s = sharpness[idx]  # (K,)
         lo_sel = lo[idx]  # (K,3)
 
         base, lin_offsets = _cached_base_and_offsets(
@@ -351,7 +368,10 @@ def _render_gaussians_3d(
             d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
 
             expo = _fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
-            vals = torch.exp(-0.5 * expo) * a[:, None]
+
+            # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
+            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
+            vals = torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -494,6 +514,15 @@ class GaussianSplatModel(nn.Module):
             torch.tensor(raw_a0, dtype=torch.float32, device=device)
         )
 
+        # ---- Sharpness parameterization: exponential mapping s = 2 * exp(s') ----
+        # Initialize to 0, which gives s = 2 * exp(0) = 2 (standard Gaussian)
+        # s' > 0 → sharper edges, s' < 0 → softer edges
+        # This allows symmetric exploration around standard Gaussian with L1 regularization
+        sharpness_offsets0 = np.zeros(N, dtype=np.float32)
+        self.sharpness_offsets_raw = nn.Parameter(
+            torch.tensor(sharpness_offsets0, dtype=torch.float32, device=device)
+        )
+
     def _build_L(self) -> torch.Tensor:
         """
         Reconstruct lower-triangular Cholesky factors from learnable parameters.
@@ -531,7 +560,9 @@ class GaussianSplatModel(nn.Module):
                 k += 1
         return L
 
-    def current_params(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def current_params(
+        self,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Extract current parameter values from the model's learnable parameters.
 
@@ -539,6 +570,7 @@ class GaussianSplatModel(nn.Module):
         - Centers: sigmoid transformation to ensure bounds
         - Cholesky factors: reconstruction from diagonal/off-diagonal components
         - Amplitudes: softplus transformation to ensure non-negativity
+        - Sharpness: exponential mapping s = 2 * exp(s') to ensure positivity
 
         Returns
         -------
@@ -548,6 +580,9 @@ class GaussianSplatModel(nn.Module):
             Lower-triangular Cholesky factors where covariance Σ = L @ L^T.
         amps : torch.Tensor, shape (N,)
             Non-negative amplitude values for each splat.
+        sharpness : torch.Tensor, shape (N,)
+            Sharpness values for each splat (s = 2 * exp(s')).
+            s = 2 is standard Gaussian, s > 2 is sharper, s < 2 is softer.
         """
         # Transform raw parameters to normalized coordinates [0,1]
         u = torch.sigmoid(self.raw_mu)
@@ -560,7 +595,11 @@ class GaussianSplatModel(nn.Module):
         L = self._build_L()
         amps = F.softplus(self.raw_a)  # Ensures non-negative amplitudes
 
-        return centers, L, amps
+        # Apply exponential mapping for sharpness: s = 2 * exp(s')
+        # This ensures s > 0 always, with s = 2 when s' = 0 (standard Gaussian)
+        sharpness = 2.0 * torch.exp(self.sharpness_offsets_raw)
+
+        return centers, L, amps, sharpness
 
     # ===== Dynamic Management Methods =========================================
 
@@ -570,8 +609,9 @@ class GaussianSplatModel(nn.Module):
         centers: torch.Tensor,  # (N,d)
         Ls: torch.Tensor,  # (N,d,d)
         amps: torch.Tensor,  # (N,)
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Convert external (μ, L, a) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw)."""
+        sharpness: Optional[torch.Tensor] = None,  # (N,) optional
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Convert external (μ, L, a, s) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw)."""
         device = self.raw_mu.device
         d = centers.shape[1]
 
@@ -611,18 +651,37 @@ class GaussianSplatModel(nn.Module):
             device=device,
             dtype=torch.float32,
         )
-        return raw_mu, L_diag_raw, L_off, amp_raw
+
+        # sharpness -> sharpness_raw (inverse of s = 2 * exp(s'))
+        # s' = log(s / 2)
+        if sharpness is None:
+            # Default to standard Gaussian (s = 2, s' = 0)
+            sharpness_raw = torch.zeros(
+                centers.shape[0], device=device, dtype=torch.float32
+            )
+        else:
+            sharpness = torch.clamp(sharpness, min=1e-6)  # Avoid log(0)
+            sharpness_raw = torch.log(sharpness / 2.0)
+
+        return raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw
 
     @torch.no_grad()
     def replace_with(
-        self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
+        self,
+        centers: torch.Tensor,
+        Ls: torch.Tensor,
+        amps: torch.Tensor,
+        sharpness: Optional[torch.Tensor] = None,
     ) -> None:
         """Hard replace the whole parameter set."""
-        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
+        raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw = self._to_internal_params(
+            centers, Ls, amps, sharpness
+        )
         self.raw_mu = torch.nn.Parameter(raw_mu)
         self.raw_L_diag = torch.nn.Parameter(L_diag_raw)
         self.L_off = torch.nn.Parameter(L_off)
         self.raw_a = torch.nn.Parameter(amp_raw)
+        self.sharpness_offsets_raw = torch.nn.Parameter(sharpness_raw)
 
     @torch.no_grad()
     def prune_(self, keep_mask: torch.Tensor) -> None:
@@ -631,16 +690,23 @@ class GaussianSplatModel(nn.Module):
         self.raw_L_diag = torch.nn.Parameter(self.raw_L_diag[keep_mask])
         self.L_off = torch.nn.Parameter(self.L_off[keep_mask])
         self.raw_a = torch.nn.Parameter(self.raw_a[keep_mask])
+        self.sharpness_offsets_raw = torch.nn.Parameter(
+            self.sharpness_offsets_raw[keep_mask]
+        )
 
     @torch.no_grad()
     def append_(
-        self, centers_new: torch.Tensor, Ls_new: torch.Tensor, amps_new: torch.Tensor
+        self,
+        centers_new: torch.Tensor,
+        Ls_new: torch.Tensor,
+        amps_new: torch.Tensor,
+        sharpness_new: Optional[torch.Tensor] = None,
     ) -> None:
         """Append new splats to the tail."""
         if centers_new.numel() == 0:
             return
-        raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(
-            centers_new, Ls_new, amps_new
+        raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw = self._to_internal_params(
+            centers_new, Ls_new, amps_new, sharpness_new
         )
         self.raw_mu = torch.nn.Parameter(torch.cat([self.raw_mu, raw_mu], dim=0))
         self.raw_L_diag = torch.nn.Parameter(
@@ -648,6 +714,9 @@ class GaussianSplatModel(nn.Module):
         )
         self.L_off = torch.nn.Parameter(torch.cat([self.L_off, L_off], dim=0))
         self.raw_a = torch.nn.Parameter(torch.cat([self.raw_a, amp_raw], dim=0))
+        self.sharpness_offsets_raw = torch.nn.Parameter(
+            torch.cat([self.sharpness_offsets_raw, sharpness_raw], dim=0)
+        )
 
     def n_splats(self) -> int:
         """Return current number of splats."""
@@ -670,16 +739,18 @@ class GaussianSplatModel(nn.Module):
         """
         Render all splats using AABB truncation at 'truncate' sigmas.
         Avoids explicit Σ^{-1} by solving L y = (x-μ) and using ||y||^2.
+        Applies per-splat sharpness via generalized Gaussian: exp(-0.5 * ||y||^s).
         """
         device = self.raw_mu.device
         torch.zeros(self.shape, dtype=torch.float32, device=device)
-        centers, Ls, amps = self.current_params()
+        centers, Ls, amps, sharpness = self.current_params()
 
         return render_gaussians(
             self.shape,
             centers,
             Ls,
             amps,
+            sharpness,
             truncate=self.truncate,
             intensity_floor=1e-5,
         )
@@ -725,22 +796,26 @@ def render_gaussians(
     centers: torch.Tensor,  # (N, d) voxel coords
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
+    sharpness: torch.Tensor,  # (N,) sharpness values (s = 2 * exp(s'))
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,  # for amplitude-aware culling (see §2)
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """
-    Fast vectorized renderer with 2D/3D fast-paths.
+    Fast vectorized renderer with 2D/3D fast-paths and per-splat sharpness.
     Falls back to the generic nD implementation for d != 2 and d != 3.
+
+    Renders Gaussians with generalized falloff: exp(-0.5 * ||y||^s) where s is sharpness.
+    s = 2 is standard Gaussian, s > 2 is sharper, s < 2 is softer.
     """
     d = len(shape)
     if d == 2:
         return _render_gaussians_2d(
-            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+            shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
         )
     if d == 3:
         return _render_gaussians_3d(
-            shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+            shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
         )
 
     # --- keep existing nD implementation below unchanged ---
@@ -790,6 +865,7 @@ def render_gaussians(
         centers = centers[valid]
         Ls = Ls[valid]
         amps = amps[valid]
+        sharpness = sharpness[valid]
         lo = lo[valid]
         hi = hi[valid]
         sigma_diag = sigma_diag[valid]
@@ -804,6 +880,7 @@ def render_gaussians(
         mu = centers[idx]  # (K, d)
         L = Ls[idx]  # (K, d, d)
         a = amps[idx]  # (K,)
+        s = sharpness[idx]  # (K,)
 
         # Build base grid (one per group, on device)
         # coords_i = [0, 1, ..., h_i-1]  -> broadcast to P points
@@ -845,9 +922,12 @@ def render_gaussians(
                 # older PyTorch fallback
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 
-            # Exponent and values: exp(-0.5 * ||y||^2) * a
+            # Exponent and values: exp(-0.5 * ||y||^s) * a where s is sharpness
+            # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
             expo = torch.sum(y * y, dim=1)  # (K, Pc)
-            vals = torch.exp(-0.5 * expo) * a[:, None]  # (K, Pc)
+            vals = (
+                torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
+            )  # (K, Pc)
 
             # Absolute flat indices (K, Pc) -> (K*Pc,)
             idx_flat = (base_idx[:, None] + lin_offsets_chunk[None, :]).reshape(-1)
@@ -968,11 +1048,20 @@ def render_gaussians_batched(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
+    sharpness: Optional[torch.Tensor] = None,
     truncate: float = 3.0,
     intensity_floor: float = 1e-5,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Batched wrapper for render_gaussians - identical functionality."""
+    # Default to standard Gaussian (s = 2.0) if sharpness not provided
+    if sharpness is None:
+        sharpness = torch.full(
+            (centers.shape[0],),
+            2.0,
+            dtype=torch.float32,
+            device=centers.device,
+        )
     return render_gaussians(
-        shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
+        shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size
     )

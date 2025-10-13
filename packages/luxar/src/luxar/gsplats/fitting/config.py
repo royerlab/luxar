@@ -45,6 +45,12 @@ class FitConfig:
     asymmetric_penalty: Optional[float]
     l1_amp: Optional[float]
     l1_diag: Optional[float]
+    l1_sharpness: Optional[float]  # L1 regularization on sharpness offsets (s')
+
+    # Optimizer parameters
+    sharpness_lr_scale: (
+        float  # Learning rate scale for sharpness (e.g., 0.01 for 100x slower)
+    )
 
     # Scheduler parameters
     scheduler_type: str

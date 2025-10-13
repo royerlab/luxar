@@ -40,6 +40,7 @@ def create_loss_function(
     asymmetric_penalty = config.asymmetric_penalty
     l1_amp = config.l1_amp
     l1_diag = config.l1_diag
+    l1_sharpness = config.l1_sharpness
 
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
@@ -64,15 +65,24 @@ def create_loss_function(
             data = _compute_mse_loss(pred, V_t, asymmetric_penalty)
 
         # Add L1 regularization on amplitudes if specified
-        if l1_amp > 0:
+        if l1_amp is not None and l1_amp > 0:
             # Use raw parameters directly to avoid rebuilding L matrices and centers
             data = data + l1_amp * torch.mean(torch.abs(F.softplus(model.raw_a)))
 
         # Add L1 regularization on diagonal elements if specified
-        if l1_diag > 0:
+        if l1_diag is not None and l1_diag > 0:
             # Regularize the raw diagonal parameters (before softplus transformation)
             # This encourages smaller, more isotropic splats
             data = data + l1_diag * torch.mean(torch.abs(F.softplus(model.raw_L_diag)))
+
+        # Add L1 regularization on sharpness offsets if specified
+        if l1_sharpness is not None and l1_sharpness > 0:
+            # Regularize sharpness offsets (s') directly
+            # This encourages splats to stay at standard Gaussian (s' = 0, s = 2)
+            # Only deviate from standard Gaussian when truly beneficial
+            data = data + l1_sharpness * torch.mean(
+                torch.abs(model.sharpness_offsets_raw)
+            )
 
         return data
 
