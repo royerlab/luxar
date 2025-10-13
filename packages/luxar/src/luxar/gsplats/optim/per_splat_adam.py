@@ -57,9 +57,9 @@ class PerSplatAdam:
     """
 
     # Parameter-type learning rate multipliers (hard-coded for splat proliferation prevention)
-    _POS_LR_MULTIPLIER = 0.1    # Position parameters (slow movement)
-    _VAR_LR_MULTIPLIER = 1.0    # Variance parameters (normal adaptation)
-    _AMP_LR_MULTIPLIER = 2.0    # Amplitude parameters (fast intensity matching)
+    _POS_LR_MULTIPLIER = 0.1  # Position parameters (slow movement)
+    _VAR_LR_MULTIPLIER = 1.0  # Variance parameters (normal adaptation)
+    _AMP_LR_MULTIPLIER = 2.0  # Amplitude parameters (fast intensity matching)
 
     def __init__(
         self,

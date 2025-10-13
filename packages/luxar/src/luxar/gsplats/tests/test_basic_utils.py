@@ -13,7 +13,7 @@ from luxar.gsplats.utils.trils import pack_tril, tril_size, unpack_tril
 class TestTrilOperations:
     """Test triangular matrix operations."""
 
-    def test_tril_basic_functionality(self):
+    def test_tril_basic_functionality(self) -> None:
         """Test basic pack/unpack functionality."""
         # Create a simple 2x2 lower triangular matrix
         L = np.array([[[1.0, 0.0], [2.0, 3.0]]], dtype=np.float32)
@@ -27,7 +27,7 @@ class TestTrilOperations:
         unpacked = unpack_tril(packed, d=2)
         np.testing.assert_array_equal(unpacked, L)
 
-    def test_tril_size_calculation(self):
+    def test_tril_size_calculation(self) -> None:
         """Test tril_size calculation."""
         assert tril_size(1) == 1
         assert tril_size(2) == 3
@@ -38,7 +38,7 @@ class TestTrilOperations:
 class TestInverseSoftplusBasic:
     """Test inverse softplus with numpy only."""
 
-    def test_inverse_softplus_basic_functionality(self):
+    def test_inverse_softplus_basic_functionality(self) -> None:
         """Test basic inverse softplus without torch dependency."""
         y = np.array([1.0, 2.0, 5.0], dtype=np.float32)
         x = stable_inverse_softplus(y)
@@ -48,7 +48,7 @@ class TestInverseSoftplusBasic:
         softplus_x = np.log1p(np.exp(x))
         np.testing.assert_array_almost_equal(softplus_x, y, decimal=5)
 
-    def test_inverse_softplus_edge_cases(self):
+    def test_inverse_softplus_edge_cases(self) -> None:
         """Test edge cases."""
         # Small values
         y_small = np.array([1e-3, 1e-2], dtype=np.float32)
@@ -64,7 +64,7 @@ class TestInverseSoftplusBasic:
 class TestValidationHelpers:
     """Test validation functions that can work without external dependencies."""
 
-    def test_array_shape_validation(self):
+    def test_array_shape_validation(self) -> None:
         """Test basic array shape validation patterns."""
         # These patterns appear in the gsplats code
         arr_2d = np.random.randn(5, 3)
@@ -76,7 +76,7 @@ class TestValidationHelpers:
         assert arr_2d.shape[1] == 3
         assert arr_3d.shape[1] == arr_3d.shape[2]  # Square matrices
 
-    def test_numeric_stability_patterns(self):
+    def test_numeric_stability_patterns(self) -> None:
         """Test numeric stability patterns used in the code."""
         # Test patterns like the ones used in fit_gsplats
         values = np.array([1.0, 1.0, 1.0])  # Uniform array
@@ -101,7 +101,7 @@ class TestValidationHelpers:
 class TestInputValidationPatterns:
     """Test input validation patterns."""
 
-    def test_empty_array_detection(self):
+    def test_empty_array_detection(self) -> None:
         """Test empty array detection patterns."""
         empty_1d = np.array([])
         empty_2d = np.zeros((0, 3))
@@ -111,7 +111,7 @@ class TestInputValidationPatterns:
         assert empty_2d.size == 0
         assert valid_array.size > 0
 
-    def test_dimension_validation(self):
+    def test_dimension_validation(self) -> None:
         """Test dimension validation patterns."""
         scalar = np.array(5.0)
         vector = np.array([1, 2, 3])
@@ -121,7 +121,7 @@ class TestInputValidationPatterns:
         assert vector.ndim == 1
         assert matrix.ndim == 2
 
-    def test_positive_value_validation(self):
+    def test_positive_value_validation(self) -> None:
         """Test positive value validation patterns."""
         positive_values = np.array([0.1, 1.0, 5.0])
         mixed_values = np.array([-1.0, 0.0, 1.0])
@@ -130,7 +130,7 @@ class TestInputValidationPatterns:
         assert not np.all(mixed_values > 0)
         assert np.any(mixed_values <= 0)
 
-    def test_percentile_range_validation(self):
+    def test_percentile_range_validation(self) -> None:
         """Test percentile validation patterns."""
         valid_percentiles = [0.0, 50.0, 100.0]
         invalid_percentiles = [-10.0, 150.0]
@@ -145,7 +145,7 @@ class TestInputValidationPatterns:
 class TestCommonAlgorithmicPatterns:
     """Test common algorithmic patterns used in gsplats."""
 
-    def test_distance_calculation_patterns(self):
+    def test_distance_calculation_patterns(self) -> None:
         """Test distance calculation patterns like those in _dedupe."""
         points = np.array([[0, 0], [3, 4], [1, 1]], dtype=float)
 
@@ -160,7 +160,7 @@ class TestCommonAlgorithmicPatterns:
                 if i == 0 and j == 1:  # (0,0) to (3,4)
                     assert np.isclose(dist, 5.0)  # 3-4-5 triangle
 
-    def test_coordinate_bounds_checking(self):
+    def test_coordinate_bounds_checking(self) -> None:
         """Test coordinate bounds checking patterns."""
         image_shape = (10, 15)  # Height=10, Width=15
         coords = np.array([[5, 7], [0, 0], [9, 14]], dtype=float)
@@ -170,7 +170,7 @@ class TestCommonAlgorithmicPatterns:
             assert 0 <= coord[0] < image_shape[0]  # Y coordinate
             assert 0 <= coord[1] < image_shape[1]  # X coordinate
 
-    def test_array_concatenation_patterns(self):
+    def test_array_concatenation_patterns(self) -> None:
         """Test array concatenation patterns like in find_candidates_overcomplete_nd."""
         arrays = [
             np.array([[1, 2], [3, 4]]),
@@ -187,7 +187,7 @@ class TestCommonAlgorithmicPatterns:
         expected = np.array([[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]])
         np.testing.assert_array_equal(result, expected)
 
-    def test_dtype_handling_patterns(self):
+    def test_dtype_handling_patterns(self) -> None:
         """Test data type handling patterns."""
         # Test float32 conversion patterns
         input_int = np.array([1, 2, 3], dtype=int)

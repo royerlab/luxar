@@ -88,7 +88,7 @@ class TestFitGaussianSplatsBasic:
         """Test basic splat fitting in 2D."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             init_sigma_vox=1.0,
             n_iters=50,  # Keep short for testing
             lr=0.1,
@@ -121,7 +121,7 @@ class TestFitGaussianSplatsBasic:
         """Test basic splat fitting in 3D."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_3d_blob,
-            centers_overcomplete=simple_candidates_3d,
+            seeds=simple_candidates_3d,
             init_sigma_vox=1.2,
             n_iters=30,  # Keep short for testing
             lr=0.15,
@@ -149,7 +149,7 @@ class TestFitGaussianSplatsBasic:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=empty_candidates,
+            seeds=empty_candidates,
             n_iters=10,
             verbose=False,
             enable_dynamic_ops=False,  # Disable for predictable test results
@@ -169,7 +169,7 @@ class TestFitGaussianSplatsBasic:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=single_candidate,
+            seeds=single_candidate,
             n_iters=30,
             verbose=False,
             enable_dynamic_ops=False,  # Disable for predictable test results
@@ -304,7 +304,7 @@ class TestUniformImageHandling:
         # Should not crash due to division by zero
         params_full, amps, _ = fit_gaussian_splats(
             V=uniform_image,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             n_iters=10,
             verbose=False,  # Suppress warning message
         )
@@ -322,7 +322,7 @@ class TestUniformImageHandling:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=nearly_uniform,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             n_iters=10,
             verbose=False,
             enable_dynamic_ops=False,
@@ -340,7 +340,7 @@ class TestLossTypes:
         """Test MSE loss function."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             loss_type="mse",
             n_iters=20,
             verbose=False,
@@ -356,7 +356,7 @@ class TestLossTypes:
         """Test Poisson loss function."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             loss_type="poisson",
             n_iters=20,
             verbose=False,
@@ -372,7 +372,7 @@ class TestLossTypes:
         """Test L1 loss function."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             loss_type="l1",
             n_iters=20,
             verbose=False,
@@ -394,7 +394,7 @@ class TestRegularization:
         # Fit without regularization
         params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
             V=multi_blob_2d,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             l1_amp=0.0,
             n_iters=30,
             verbose=False,
@@ -405,7 +405,7 @@ class TestRegularization:
         # Fit with L1 regularization
         params_reg, amps_reg, _ = fit_gaussian_splats(
             V=multi_blob_2d,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             l1_amp=0.01,  # Small regularization
             n_iters=30,
             verbose=False,
@@ -421,6 +421,38 @@ class TestRegularization:
         assert np.all(amps_reg >= 0)
         assert np.all(amps_no_reg >= 0)
 
+    def test_l1_diag_regularization(self, multi_blob_2d, simple_candidates_2d):
+        """Test that L1 diagonal regularization affects results."""
+        # Fit without diagonal regularization
+        params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
+            V=multi_blob_2d,
+            seeds=simple_candidates_2d,
+            l1_amp=0.0,
+            l1_diag=0.0,
+            n_iters=30,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Fit with L1 diagonal regularization
+        params_reg, amps_reg, _ = fit_gaussian_splats(
+            V=multi_blob_2d,
+            seeds=simple_candidates_2d,
+            l1_amp=0.0,  # Only diagonal regularization
+            l1_diag=0.01,  # Small diagonal regularization
+            n_iters=30,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
+        )
+
+        # Results should be different due to diagonal regularization
+        assert not np.allclose(params_no_reg, params_reg, atol=1e-3)
+        # Both should still have valid shapes
+        assert params_no_reg.shape == params_reg.shape
+        assert amps_no_reg.shape == amps_reg.shape
+
 
 class TestConstraints:
     """Test sigma constraints."""
@@ -431,7 +463,7 @@ class TestConstraints:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             sigma_min_diag=sigma_min,
             n_iters=30,
             verbose=False,
@@ -460,7 +492,7 @@ class TestConstraints:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             sigma_min_diag=sigma_min,
             sigma_max_diag=sigma_max,
             n_iters=30,
@@ -488,7 +520,7 @@ class TestDeviceSupport:
         """Test explicit CPU device."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             device="cpu",
             n_iters=10,
             verbose=False,
@@ -504,7 +536,7 @@ class TestDeviceSupport:
         """Test CUDA device if available."""
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             device="cuda",
             n_iters=10,
             verbose=False,
@@ -523,7 +555,7 @@ class TestConvergence:
         """Test automatic convergence threshold setting."""
         params, amps, stats = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             n_iters=100,
             max_abs_error=None,  # Should auto-set to 0.01
             verbose=False,
@@ -535,7 +567,7 @@ class TestConvergence:
         assert "converged" in stats
         assert params.shape[0] > 0
 
-    def test_auto_candidate_generation_2d(self):
+    def test_auto_candidate_generation_2d(self) -> None:
         """Test automatic candidate generation for 2D images."""
         # Create test image
         V = np.random.random((32, 32)).astype(np.float32)
@@ -543,7 +575,7 @@ class TestConvergence:
         # Test auto-generation
         params, amps, stats = fit_gaussian_splats(
             V,
-            # centers_overcomplete=None (default)
+            # seeds=None (default)
             n_iters=10,
             verbose=False,
             enable_dynamic_ops=False,
@@ -555,7 +587,7 @@ class TestConvergence:
         assert len(amps) > 0
         assert params.shape[0] == len(amps)
 
-    def test_auto_candidate_generation_3d(self):
+    def test_auto_candidate_generation_3d(self) -> None:
         """Test automatic candidate generation for 3D volumes."""
         # Create test volume
         V = np.random.random((16, 16, 16)).astype(np.float32)
@@ -571,20 +603,30 @@ class TestConvergence:
 
         # Should work with 3D data
         assert len(amps) > 0
-        assert params.shape[1] == 9  # 3D centers (3) + 3x3 packed L (6) = 9 (amplitudes separate)
+        assert (
+            params.shape[1] == 9
+        )  # 3D centers (3) + 3x3 packed L (6) = 9 (amplitudes separate)
 
-    def test_volume_proportional_scaling(self):
+    def test_volume_proportional_scaling(self) -> None:
         """Test that candidate count scales with image volume."""
         # Small image
         V_small = np.random.random((16, 16)).astype(np.float32)
         params_small, amps_small, _ = fit_gaussian_splats(
-            V_small, n_iters=5, verbose=False, enable_dynamic_ops=False, napari_movie=False
+            V_small,
+            n_iters=5,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Large image (4x linear = 16x area)
         V_large = np.random.random((32, 32)).astype(np.float32)
         params_large, amps_large, _ = fit_gaussian_splats(
-            V_large, n_iters=5, verbose=False, enable_dynamic_ops=False, napari_movie=False
+            V_large,
+            n_iters=5,
+            verbose=False,
+            enable_dynamic_ops=False,
+            napari_movie=False,
         )
 
         # Large image should generate proportionally more candidates
@@ -592,7 +634,7 @@ class TestConvergence:
         assert len(amps_small) > 0
         assert len(amps_large) >= len(amps_small)  # Should be at least as many
 
-    def test_intensity_rescaling(self):
+    def test_intensity_rescaling(self) -> None:
         """Test that amplitudes are correctly rescaled to original intensity range."""
         # Create image with realistic intensity distribution
         V = np.random.uniform(100, 300, (24, 24)).astype(np.float32)
@@ -615,10 +657,14 @@ class TestConvergence:
         assert np.all(amps >= 0)  # Should remain non-negative
 
         # With realistic intensity range (~200), amplitudes should be much larger than [0,1]
-        if expected_scale_factor > 10:  # Only test if we have significant intensity range
-            assert np.max(amps) > 5.0  # Should be substantially larger than normalized range
+        if (
+            expected_scale_factor > 10
+        ):  # Only test if we have significant intensity range
+            assert (
+                np.max(amps) > 5.0
+            )  # Should be substantially larger than normalized range
 
-    def test_configurable_normalization(self):
+    def test_configurable_normalization(self) -> None:
         """Test configurable percentile normalization."""
         # Create image with outliers
         V = np.random.uniform(10, 20, (24, 24)).astype(np.float32)
@@ -640,7 +686,7 @@ class TestConvergence:
         assert np.all(amps_full >= 0)
         assert np.all(amps_robust >= 0)
 
-    def test_best_state_tracking(self):
+    def test_best_state_tracking(self) -> None:
         """Test that best state (lowest max_abs_error) is returned, not final state."""
         # Create simple test case
         V = np.random.random((24, 24)).astype(np.float32)
@@ -670,7 +716,7 @@ class TestConvergence:
         # Short optimization
         params_short, amps_short, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             n_iters=5,
             verbose=False,
             enable_dynamic_ops=False,  # Disable for consistent topology
@@ -680,7 +726,7 @@ class TestConvergence:
         # Longer optimization
         params_long, amps_long, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             n_iters=50,
             verbose=False,
             enable_dynamic_ops=False,  # Disable for consistent topology
@@ -696,7 +742,7 @@ class TestConvergence:
 
         params_low_lr, amps_low_lr, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             lr=0.01,  # Low learning rate
             n_iters=20,
             verbose=False,
@@ -706,7 +752,7 @@ class TestConvergence:
 
         params_high_lr, amps_high_lr, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=simple_candidates_2d,
+            seeds=simple_candidates_2d,
             lr=0.5,  # High learning rate
             n_iters=20,
             verbose=False,
@@ -728,7 +774,7 @@ class TestReconstructionQuality:
 
         params_full, amps, _ = fit_gaussian_splats(
             V=simple_2d_blob,
-            centers_overcomplete=center_candidate,
+            seeds=center_candidate,
             n_iters=100,  # More iterations for better fit
             verbose=False,
             enable_dynamic_ops=False,
@@ -752,7 +798,7 @@ class TestReconstructionQuality:
         few_candidates = np.array([[15.0, 15.0]], dtype=np.float32)
         params_few, amps_few, _ = fit_gaussian_splats(
             V=multi_blob_2d,
-            centers_overcomplete=few_candidates,
+            seeds=few_candidates,
             n_iters=50,
             verbose=False,
             enable_dynamic_ops=False,
@@ -770,7 +816,7 @@ class TestReconstructionQuality:
         )
         params_many, amps_many, _ = fit_gaussian_splats(
             V=multi_blob_2d,
-            centers_overcomplete=many_candidates,
+            seeds=many_candidates,
             n_iters=50,
             verbose=False,
             enable_dynamic_ops=False,

@@ -10,7 +10,9 @@ import numpy as np
 from arbol import aprint, asection
 
 
-def display_compression_analysis(V: np.ndarray, params: np.ndarray, amps: np.ndarray) -> None:
+def display_compression_analysis(
+    V: np.ndarray, params: np.ndarray, amps: np.ndarray
+) -> None:
     """
     Calculate and display compression ratio analysis.
 
@@ -99,7 +101,10 @@ def show_optimization_movie(movie_frames: Dict[str, Any], shape: tuple) -> None:
             reconstruction_stack,
             name="Reconstruction",
             colormap="magma",
-            contrast_limits=[0, float(target_stack.max())],  # Same as target for fair comparison
+            contrast_limits=[
+                0,
+                float(target_stack.max()),
+            ],  # Same as target for fair comparison
         )
 
         viewer.add_image(
@@ -153,9 +158,10 @@ def show_optimization_movie(movie_frames: Dict[str, Any], shape: tuple) -> None:
         )
         aprint("Use the time slider to scrub through optimization progress!")
         aprint("Toggle layer visibility to compare target/reconstruction/residual")
-        aprint("Close window to continue...")
+        aprint("Close napari window to continue...")
 
         # Run napari - blocks until window is closed
+        # Note: Timing is shown BEFORE this call to avoid confusion from blocking
         napari.run()
 
     except ImportError:

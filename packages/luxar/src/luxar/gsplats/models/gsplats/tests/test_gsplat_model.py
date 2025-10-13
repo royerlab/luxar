@@ -127,7 +127,7 @@ class TestGaussianSplatModelInitialization:
         expected_off_diag = 3  # (1,0), (2,0), (2,1) per matrix
         assert model.L_off.shape == (2, expected_off_diag)
 
-    def test_empty_model(self):
+    def test_empty_model(self) -> None:
         """Test model creation with no splats."""
         shape = (5, 5)
         centers0 = np.zeros((0, 2), dtype=np.float32)
@@ -147,7 +147,7 @@ class TestGaussianSplatModelInitialization:
         assert model.raw_L_diag.shape == (0, 2)
         assert model.raw_a.shape == (0,)
 
-    def test_single_splat_1d(self):
+    def test_single_splat_1d(self) -> None:
         """Test model with single 1D splat."""
         shape = (20,)
         centers0 = np.array([[10.0]], dtype=np.float32)
@@ -181,7 +181,7 @@ class TestGaussianSplatModelInitialization:
             model_cuda = GaussianSplatModel(**setup, device=torch.device("cuda"))
             assert model_cuda.raw_mu.device.type == "cuda"
 
-    def test_parameter_validation(self):
+    def test_parameter_validation(self) -> None:
         """Test parameter validation during initialization."""
         shape = (10, 10)
         centers0 = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -354,7 +354,7 @@ class TestRendering:
         # Results should be identical after state copying
         torch.testing.assert_close(output1, output2, atol=1e-7, rtol=1e-6)
 
-    def test_empty_model_rendering(self):
+    def test_empty_model_rendering(self) -> None:
         """Test rendering with no splats."""
         shape = (5, 5)
         centers0 = np.zeros((0, 2), dtype=np.float32)
@@ -377,7 +377,7 @@ class TestRendering:
         assert output.shape == shape
         assert torch.all(output == 0)
 
-    def test_single_gaussian_properties(self):
+    def test_single_gaussian_properties(self) -> None:
         """Test properties of a single well-defined Gaussian."""
         shape = (21, 21)  # Odd size for clear center
         center = np.array([[10.0, 10.0]], dtype=np.float32)  # Exactly in center
@@ -473,7 +473,7 @@ class TestGradientFlow:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_very_small_splats(self):
+    def test_very_small_splats(self) -> None:
         """Test with very small splat sizes."""
         shape = (10, 10)
         centers0 = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -496,7 +496,7 @@ class TestEdgeCases:
         assert torch.all(torch.isfinite(output))
         assert torch.sum(output) > 0  # Should still produce some output
 
-    def test_very_large_splats(self):
+    def test_very_large_splats(self) -> None:
         """Test with very large splat sizes."""
         shape = (10, 10)
         centers0 = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -520,7 +520,7 @@ class TestEdgeCases:
         # Large splats should affect most of the image
         assert torch.sum(output > 1e-6) > shape[0] * shape[1] * 0.5
 
-    def test_boundary_centers(self):
+    def test_boundary_centers(self) -> None:
         """Test with centers at image boundaries."""
         shape = (10, 10)
         centers0 = np.array(

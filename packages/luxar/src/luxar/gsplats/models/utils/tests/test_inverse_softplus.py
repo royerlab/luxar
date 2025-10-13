@@ -18,7 +18,7 @@ except ImportError:
 class TestInverseSoftplus:
     """Test stable_inverse_softplus function."""
 
-    def test_inverse_softplus_basic(self):
+    def test_inverse_softplus_basic(self) -> None:
         """Test basic inverse softplus functionality."""
         y = np.array([1.0, 2.0, 3.0, 5.0], dtype=np.float32)
         x = stable_inverse_softplus(y)
@@ -27,7 +27,7 @@ class TestInverseSoftplus:
         softplus_x = np.log1p(np.exp(x))  # softplus implementation
         np.testing.assert_array_almost_equal(softplus_x, y, decimal=5)
 
-    def test_inverse_softplus_with_beta(self):
+    def test_inverse_softplus_with_beta(self) -> None:
         """Test inverse softplus with different beta values."""
         y = np.array([1.0, 2.0], dtype=np.float32)
 
@@ -40,7 +40,7 @@ class TestInverseSoftplus:
                 softplus_x, y, decimal=5, err_msg=f"Failed for beta={beta}"
             )
 
-    def test_inverse_softplus_small_values(self):
+    def test_inverse_softplus_small_values(self) -> None:
         """Test numerical stability for small y values."""
         y = np.array([1e-6, 1e-4, 1e-2, 0.1], dtype=np.float32)
         x = stable_inverse_softplus(y)
@@ -52,7 +52,7 @@ class TestInverseSoftplus:
         softplus_x = np.log1p(np.exp(x))
         np.testing.assert_array_almost_equal(softplus_x, y, decimal=5)
 
-    def test_inverse_softplus_large_values(self):
+    def test_inverse_softplus_large_values(self) -> None:
         """Test for large y values."""
         y = np.array([10.0, 50.0, 100.0], dtype=np.float32)
         x = stable_inverse_softplus(y)
@@ -63,7 +63,7 @@ class TestInverseSoftplus:
         # For large y, inverse should be approximately y (since softplus(y) ≈ y for large y)
         np.testing.assert_array_almost_equal(x, y, decimal=1)
 
-    def test_inverse_softplus_single_value(self):
+    def test_inverse_softplus_single_value(self) -> None:
         """Test with single scalar value."""
         y = 2.5
         x = stable_inverse_softplus(y)
@@ -74,7 +74,7 @@ class TestInverseSoftplus:
         softplus_x = float(np.log1p(np.exp(x)))
         np.testing.assert_almost_equal(softplus_x, y, decimal=5)
 
-    def test_inverse_softplus_array_shapes(self):
+    def test_inverse_softplus_array_shapes(self) -> None:
         """Test with various array shapes."""
         shapes_to_test = [
             (5,),  # 1D
@@ -95,7 +95,7 @@ class TestInverseSoftplus:
             softplus_x = np.log1p(np.exp(x))
             np.testing.assert_array_almost_equal(softplus_x, y, decimal=4)
 
-    def test_inverse_softplus_dtype_preservation(self):
+    def test_inverse_softplus_dtype_preservation(self) -> None:
         """Test that output dtype matches input dtype."""
         y_float32 = np.array([1.0, 2.0], dtype=np.float32)
         y_float64 = np.array([1.0, 2.0], dtype=np.float64)
@@ -107,7 +107,7 @@ class TestInverseSoftplus:
         assert x_64.dtype == np.float64
 
     @pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
-    def test_inverse_softplus_vs_pytorch(self):
+    def test_inverse_softplus_vs_pytorch(self) -> None:
         """Test consistency with PyTorch's inverse softplus when available."""
         y = np.array([0.5, 1.0, 2.0, 5.0], dtype=np.float32)
         x_ours = stable_inverse_softplus(y)
@@ -118,7 +118,7 @@ class TestInverseSoftplus:
 
         np.testing.assert_array_almost_equal(x_ours, x_torch.numpy(), decimal=5)
 
-    def test_monotonicity(self):
+    def test_monotonicity(self) -> None:
         """Test that inverse softplus is monotonically increasing."""
         y = np.linspace(0.1, 10.0, 100)
         x = stable_inverse_softplus(y)
@@ -128,7 +128,7 @@ class TestInverseSoftplus:
             "Inverse softplus should be monotonically increasing"
         )
 
-    def test_asymptotic_behavior(self):
+    def test_asymptotic_behavior(self) -> None:
         """Test asymptotic behavior for extreme values."""
         # For very small y, inverse should be approximately log(y)
         y_small = np.array([1e-8, 1e-6, 1e-4])
@@ -148,7 +148,7 @@ class TestInverseSoftplus:
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
-    def test_negative_values_error(self):
+    def test_negative_values_error(self) -> None:
         """Test behavior with negative input values (should still work but may not be meaningful)."""
         # Inverse softplus is only mathematically defined for positive y
         # But numerically, let's see what happens
@@ -161,7 +161,7 @@ class TestErrorHandling:
             # Should produce NaN for negative inputs
             assert np.any(np.isnan(x))
 
-    def test_zero_input(self):
+    def test_zero_input(self) -> None:
         """Test edge case of zero input."""
         y = np.array([0.0])
         x = stable_inverse_softplus(y)
@@ -169,7 +169,7 @@ class TestErrorHandling:
         # Should be -inf since softplus(x) = 0 implies x = -inf
         assert np.isinf(x) and x < 0
 
-    def test_very_small_beta(self):
+    def test_very_small_beta(self) -> None:
         """Test edge case with very small beta."""
         y = np.array([1.0, 2.0])
         x = stable_inverse_softplus(y, beta=1e-10)
@@ -177,7 +177,7 @@ class TestErrorHandling:
         # Should still be finite
         assert np.all(np.isfinite(x))
 
-    def test_large_beta(self):
+    def test_large_beta(self) -> None:
         """Test with large beta values."""
         # Use smaller input values to avoid overflow in verification
         y = np.array([0.1, 0.2])  # Smaller values to prevent overflow
@@ -210,7 +210,7 @@ class TestNumericalStability:
         """Naive implementation that may be numerically unstable."""
         return np.log(np.exp(beta * y) - 1) / beta
 
-    def test_stability_comparison(self):
+    def test_stability_comparison(self) -> None:
         """Compare stable implementation with naive implementation."""
         # For most values, both should agree
         for y in [0.1, 1.0, 10.0]:

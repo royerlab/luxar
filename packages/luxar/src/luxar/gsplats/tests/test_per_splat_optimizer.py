@@ -43,7 +43,7 @@ class TestPerSplatAdam:
             device=torch.device(device),
         )
 
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test optimizer initialization."""
         model = self.create_test_model(5)
         optimizer = PerSplatAdam(model, lr=0.01)
@@ -59,7 +59,7 @@ class TestPerSplatAdam:
             assert "exp_avg_mu" in state
             assert "exp_avg_sq_mu" in state
 
-    def test_optimization_step(self):
+    def test_optimization_step(self) -> None:
         """Test basic optimization step."""
         model = self.create_test_model(3)
         optimizer = PerSplatAdam(model, lr=0.05)
@@ -85,7 +85,7 @@ class TestPerSplatAdam:
         # Loss should be finite
         assert torch.isfinite(loss).all()
 
-    def test_add_splats(self):
+    def test_add_splats(self) -> None:
         """Test adding new splats to the optimizer."""
         model = self.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.02)
@@ -106,7 +106,7 @@ class TestPerSplatAdam:
         assert len(lrs) == 3
         assert lrs[2] == 0.1  # New splat with different LR
 
-    def test_remove_splats(self):
+    def test_remove_splats(self) -> None:
         """Test removing splats from the optimizer."""
         model = self.create_test_model(4)
         optimizer = PerSplatAdam(model, lr=0.02)
@@ -125,7 +125,7 @@ class TestPerSplatAdam:
         assert 2 not in optimizer.splat_states
         assert 3 not in optimizer.splat_states
 
-    def test_momentum_preservation(self):
+    def test_momentum_preservation(self) -> None:
         """Test that momentum is preserved when topology changes."""
         model = self.create_test_model(3)
         optimizer = PerSplatAdam(model, lr=0.05)
@@ -165,7 +165,7 @@ class TestPerSplatAdam:
             new_state["exp_avg_mu"], torch.zeros_like(new_state["exp_avg_mu"])
         )
 
-    def test_individual_learning_rates(self):
+    def test_individual_learning_rates(self) -> None:
         """Test setting individual learning rates."""
         model = self.create_test_model(3)
         optimizer = PerSplatAdam(model, lr=0.02)
@@ -180,7 +180,7 @@ class TestPerSplatAdam:
         assert lrs[1] == 0.05
         assert lrs[2] == 0.001
 
-    def test_amsgrad_variant(self):
+    def test_amsgrad_variant(self) -> None:
         """Test AMSGrad variant."""
         model = self.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.02, amsgrad=True)
@@ -198,7 +198,9 @@ class TestPerSplatAdam:
         for i in range(2):
             state = optimizer.splat_states[i]
             assert "max_exp_avg_sq_mu" in state
-            assert "max_exp_avg_sq_L_diag" in state  # Separate tracking for diag and off-diagonal
+            assert (
+                "max_exp_avg_sq_L_diag" in state
+            )  # Separate tracking for diag and off-diagonal
             assert "max_exp_avg_sq_L_off" in state
             assert "max_exp_avg_sq_a" in state
 
@@ -206,7 +208,7 @@ class TestPerSplatAdam:
 class TestPerSplatScheduler:
     """Test per-splat learning rate scheduler."""
 
-    def test_plateau_scheduler(self):
+    def test_plateau_scheduler(self) -> None:
         """Test ReduceLROnPlateau scheduler."""
         model = TestPerSplatAdam.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.1)
@@ -225,7 +227,7 @@ class TestPerSplatScheduler:
             for final_lr, initial_lr in zip(final_lrs, initial_lrs)
         )
 
-    def test_scheduler_with_topology_changes(self):
+    def test_scheduler_with_topology_changes(self) -> None:
         """Test scheduler behavior with topology changes."""
         model = TestPerSplatAdam.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.1)
@@ -257,7 +259,7 @@ class TestPerSplatScheduler:
 class TestFactoryFunction:
     """Test the factory function for creating optimizer setups."""
 
-    def test_create_optimizer_setup(self):
+    def test_create_optimizer_setup(self) -> None:
         """Test factory function creates all components."""
         model = TestPerSplatAdam.create_test_model(3)
 
@@ -273,7 +275,7 @@ class TestFactoryFunction:
         status = coordinator.get_status()
         assert status["model_splats"] == 3
 
-    def test_factory_with_different_scheduler(self):
+    def test_factory_with_different_scheduler(self) -> None:
         """Test factory with different scheduler type."""
         model = TestPerSplatAdam.create_test_model(2)
 
@@ -285,7 +287,7 @@ class TestFactoryFunction:
         assert scheduler is None
         assert isinstance(optimizer, PerSplatAdam)
 
-    def test_coordinated_operations(self):
+    def test_coordinated_operations(self) -> None:
         """Test coordinated operations through the coordinator."""
         model = TestPerSplatAdam.create_test_model(2)
 
@@ -306,7 +308,7 @@ class TestFactoryFunction:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_empty_model(self):
+    def test_empty_model(self) -> None:
         """Test optimizer with empty model."""
         model = TestPerSplatAdam.create_test_model(0)
         optimizer = PerSplatAdam(model, lr=0.01)
@@ -317,7 +319,7 @@ class TestEdgeCases:
         optimizer.zero_grad()
         optimizer.step()
 
-    def test_large_model_performance(self):
+    def test_large_model_performance(self) -> None:
         """Test with larger model to check performance."""
         model = TestPerSplatAdam.create_test_model(50)
         optimizer = PerSplatAdam(model, lr=0.01)
@@ -333,7 +335,7 @@ class TestEdgeCases:
 
         assert torch.isfinite(loss)
 
-    def test_invalid_learning_rates(self):
+    def test_invalid_learning_rates(self) -> None:
         """Test handling of invalid learning rates."""
         model = TestPerSplatAdam.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.01)

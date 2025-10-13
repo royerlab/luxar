@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")
 class TestLocalMaxima:
     """Test _local_maxima function."""
 
-    def test_local_maxima_2d_simple(self):
+    def test_local_maxima_2d_simple(self) -> None:
         """Test local maxima detection on simple 2D image."""
         # Create simple 2D image with known peaks
         img = np.array(
@@ -41,7 +41,7 @@ class TestLocalMaxima:
         expected = np.array([[1, 1]])
         np.testing.assert_array_equal(coords, expected)
 
-    def test_local_maxima_multiple_peaks(self):
+    def test_local_maxima_multiple_peaks(self) -> None:
         """Test detection of multiple peaks."""
         # Create image with two separated peaks
         img = np.zeros((7, 7))
@@ -56,7 +56,7 @@ class TestLocalMaxima:
         assert (1, 1) in peak_locations
         assert (5, 5) in peak_locations
 
-    def test_local_maxima_threshold_filtering(self):
+    def test_local_maxima_threshold_filtering(self) -> None:
         """Test that threshold properly filters peaks."""
         img = np.array([[1, 2, 1], [2, 5, 2], [1, 2, 1]], dtype=float)
 
@@ -68,7 +68,7 @@ class TestLocalMaxima:
         coords_low = _local_maxima(img, radius=1, thresh=1.0, top_k=None)
         assert len(coords_low) > 0
 
-    def test_local_maxima_top_k_limiting(self):
+    def test_local_maxima_top_k_limiting(self) -> None:
         """Test top_k parameter limits number of peaks."""
         # Create image with multiple peaks of different strengths
         img = np.zeros((9, 9))
@@ -86,7 +86,7 @@ class TestLocalMaxima:
         assert 10 in values  # Strongest peak
         assert 8 in values  # Second strongest
 
-    def test_local_maxima_radius_effect(self):
+    def test_local_maxima_radius_effect(self) -> None:
         """Test that radius affects peak detection."""
         # Create image where peaks are close together
         img = np.zeros((5, 5))
@@ -101,7 +101,7 @@ class TestLocalMaxima:
         coords_large = _local_maxima(img, radius=2, thresh=1.0, top_k=None)
         assert len(coords_large) == 1
 
-    def test_local_maxima_3d(self):
+    def test_local_maxima_3d(self) -> None:
         """Test local maxima detection in 3D."""
         img = np.zeros((5, 5, 5))
         img[2, 2, 2] = 10  # Central peak
@@ -111,7 +111,7 @@ class TestLocalMaxima:
         expected = np.array([[2, 2, 2]])
         np.testing.assert_array_equal(coords, expected)
 
-    def test_local_maxima_minimum_radius(self):
+    def test_local_maxima_minimum_radius(self) -> None:
         """Test that radius < 1 is corrected to 1."""
         img = np.array([[1, 2, 1], [2, 5, 2], [1, 2, 1]], dtype=float)
 
@@ -123,7 +123,7 @@ class TestLocalMaxima:
         np.testing.assert_array_equal(coords_neg, coords_one)
         np.testing.assert_array_equal(coords_zero, coords_one)
 
-    def test_local_maxima_empty_result(self):
+    def test_local_maxima_empty_result(self) -> None:
         """Test handling of no peaks found."""
         # Uniform image should have no peaks above threshold
         img = np.ones((3, 3)) * 5.0
@@ -136,7 +136,7 @@ class TestLocalMaxima:
 class TestDogResponse:
     """Test _dog_response function."""
 
-    def test_dog_response_basic(self):
+    def test_dog_response_basic(self) -> None:
         """Test basic DoG response computation."""
         # Create simple blob-like image
         x, y = np.meshgrid(np.linspace(-3, 3, 21), np.linspace(-3, 3, 21))
@@ -151,7 +151,7 @@ class TestDogResponse:
         # Should have same shape as input
         assert dog.shape == img.shape
 
-    def test_dog_response_different_k_values(self):
+    def test_dog_response_different_k_values(self) -> None:
         """Test DoG with different k values."""
         img = np.ones((10, 10))  # Constant image
 
@@ -162,7 +162,7 @@ class TestDogResponse:
         np.testing.assert_allclose(dog1, 0.0, atol=1e-10)
         np.testing.assert_allclose(dog2, 0.0, atol=1e-10)
 
-    def test_dog_response_various_sigmas(self):
+    def test_dog_response_various_sigmas(self) -> None:
         """Test DoG with various sigma values."""
         x, y = np.meshgrid(np.linspace(-2, 2, 15), np.linspace(-2, 2, 15))
         img = np.exp(-(x**2 + y**2))  # Gaussian blob
@@ -176,7 +176,7 @@ class TestDogResponse:
             # Should have meaningful range (not all zeros)
             assert np.std(dog) > 1e-6
 
-    def test_dog_response_3d(self):
+    def test_dog_response_3d(self) -> None:
         """Test DoG response in 3D."""
         # Simple 3D Gaussian blob
         x, y, z = np.meshgrid(
@@ -190,7 +190,7 @@ class TestDogResponse:
         assert np.any(dog > 0)
         assert np.any(dog < 0)
 
-    def test_dog_response_default_k(self):
+    def test_dog_response_default_k(self) -> None:
         """Test that default k=1.6 is used."""
         img = np.random.randn(10, 10)
 
@@ -203,7 +203,7 @@ class TestDogResponse:
 class TestDedupe:
     """Test _dedupe function."""
 
-    def test_dedupe_basic(self):
+    def test_dedupe_basic(self) -> None:
         """Test basic deduplication functionality."""
         # Points that are close together
         coords = np.array(
@@ -225,7 +225,7 @@ class TestDedupe:
         # Check if [5, 5] is in the result
         assert np.any([np.allclose(row, [5, 5], atol=0.1) for row in deduped])
 
-    def test_dedupe_no_duplicates(self):
+    def test_dedupe_no_duplicates(self) -> None:
         """Test deduplication when points are already well separated."""
         coords = np.array([[0, 0], [5, 5], [10, 10]], dtype=float)
 
@@ -234,7 +234,7 @@ class TestDedupe:
         # Should keep all points
         assert len(deduped) == 3
 
-    def test_dedupe_all_duplicates(self):
+    def test_dedupe_all_duplicates(self) -> None:
         """Test when all points are too close together."""
         coords = np.array([[0, 0], [0.1, 0.1], [0.2, 0.2]], dtype=float)
 
@@ -243,7 +243,7 @@ class TestDedupe:
         # Should keep only one point
         assert len(deduped) == 1
 
-    def test_dedupe_1d(self):
+    def test_dedupe_1d(self) -> None:
         """Test deduplication in 1D."""
         coords = np.array(
             [
@@ -259,7 +259,7 @@ class TestDedupe:
         # Should keep first and last
         assert len(deduped) == 2
 
-    def test_dedupe_3d(self):
+    def test_dedupe_3d(self) -> None:
         """Test deduplication in 3D."""
         coords = np.array(
             [
@@ -282,7 +282,7 @@ class TestDedupe:
                 dist = np.linalg.norm(deduped[i] - deduped[j])
                 assert dist >= min_dist - 1e-6
 
-    def test_dedupe_empty_input(self):
+    def test_dedupe_empty_input(self) -> None:
         """Test deduplication with empty input."""
         coords = np.zeros((0, 2))
 
@@ -291,7 +291,7 @@ class TestDedupe:
         assert len(deduped) == 0
         assert deduped.shape == (0, 2)
 
-    def test_dedupe_single_point(self):
+    def test_dedupe_single_point(self) -> None:
         """Test deduplication with single point."""
         coords = np.array([[1, 2]], dtype=float)
 
@@ -299,7 +299,7 @@ class TestDedupe:
 
         np.testing.assert_array_equal(deduped, coords)
 
-    def test_dedupe_returns_float(self):
+    def test_dedupe_returns_float(self) -> None:
         """Test that deduplication returns float coordinates."""
         coords = np.array([[0, 0], [5, 5]], dtype=int)
 
@@ -311,7 +311,7 @@ class TestDedupe:
 class TestFindCandidatesOvercompleteNd:
     """Test find_candidates_overcomplete_nd main function."""
 
-    def test_find_candidates_2d_basic(self):
+    def test_find_candidates_2d_basic(self) -> None:
         """Test basic candidate finding in 2D."""
         # Create simple 2D image with known structures
         x, y = np.meshgrid(np.linspace(-5, 5, 31), np.linspace(-5, 5, 31))
@@ -329,7 +329,7 @@ class TestFindCandidatesOvercompleteNd:
         assert np.all(candidates >= 0)
         assert np.all(candidates < np.array(V.shape))
 
-    def test_find_candidates_3d_basic(self):
+    def test_find_candidates_3d_basic(self) -> None:
         """Test basic candidate finding in 3D."""
         # Simple 3D blob
         x, y, z = np.meshgrid(
@@ -342,7 +342,7 @@ class TestFindCandidatesOvercompleteNd:
         assert len(candidates) > 0
         assert candidates.shape[1] == 3  # 3D coordinates
 
-    def test_find_candidates_different_scales(self):
+    def test_find_candidates_different_scales(self) -> None:
         """Test that different scales affect candidate detection."""
         V = np.random.randn(20, 20) + 2  # Noisy image
 
@@ -359,7 +359,7 @@ class TestFindCandidatesOvercompleteNd:
         assert len(candidates_fine) > 0
         assert len(candidates_coarse) > 0
 
-    def test_find_candidates_parameter_effects(self):
+    def test_find_candidates_parameter_effects(self) -> None:
         """Test effects of various parameters."""
         V = np.random.randn(25, 25) + 1
 
@@ -377,7 +377,7 @@ class TestFindCandidatesOvercompleteNd:
         # Larger min_dist should reduce number of candidates
         assert len(candidates_far) <= len(candidates_close)
 
-    def test_find_candidates_without_grid(self):
+    def test_find_candidates_without_grid(self) -> None:
         """Test candidate finding without intensity grid."""
         V = np.random.randn(15, 15)
 
@@ -392,7 +392,7 @@ class TestFindCandidatesOvercompleteNd:
         assert len(candidates_with_grid) > 0
         assert len(candidates_no_grid) > 0
 
-    def test_find_candidates_custom_grid_step(self):
+    def test_find_candidates_custom_grid_step(self) -> None:
         """Test custom grid step parameter."""
         V = np.ones((20, 20)) + 0.1 * np.random.randn(20, 20)
 
@@ -403,7 +403,7 @@ class TestFindCandidatesOvercompleteNd:
         assert len(candidates) > 0
         assert candidates.shape[1] == 2
 
-    def test_find_candidates_1d(self):
+    def test_find_candidates_1d(self) -> None:
         """Test candidate finding in 1D."""
         x = np.linspace(-3, 3, 101)
         V = np.exp(-(x**2)) + 0.3 * np.exp(-((x - 1) ** 2))  # Two Gaussians
@@ -413,7 +413,7 @@ class TestFindCandidatesOvercompleteNd:
         assert len(candidates) > 0
         assert candidates.shape[1] == 1  # 1D coordinates
 
-    def test_find_candidates_uniform_image(self):
+    def test_find_candidates_uniform_image(self) -> None:
         """Test candidate finding on uniform image."""
         V = np.ones((10, 10)) * 5.0  # Completely uniform
 
@@ -423,7 +423,7 @@ class TestFindCandidatesOvercompleteNd:
         # May find few or no candidates, but shouldn't crash
         assert candidates.shape[1] == 2
 
-    def test_find_candidates_empty_result(self):
+    def test_find_candidates_empty_result(self) -> None:
         """Test handling when no candidates are found."""
         # Very noisy image with high threshold
         V = 0.01 * np.random.randn(10, 10)
@@ -440,7 +440,7 @@ class TestFindCandidatesOvercompleteNd:
 class TestInputValidation:
     """Test input validation for all functions."""
 
-    def test_find_candidates_input_validation(self):
+    def test_find_candidates_input_validation(self) -> None:
         """Test input validation in find_candidates_overcomplete_nd."""
         V = np.random.randn(10, 10)
 
@@ -476,7 +476,7 @@ class TestInputValidation:
         with pytest.raises(ValueError, match="positive"):
             find_candidates_overcomplete_nd(V, grid_step=[2, -1])
 
-    def test_local_maxima_edge_cases(self):
+    def test_local_maxima_edge_cases(self) -> None:
         """Test edge cases for _local_maxima."""
         img = np.ones((3, 3))
 
@@ -489,7 +489,7 @@ class TestInputValidation:
         coords = _local_maxima(img, radius=1, thresh=1.5, top_k=100)
         assert len(coords) <= 100  # Should not crash
 
-    def test_dedupe_edge_cases(self):
+    def test_dedupe_edge_cases(self) -> None:
         """Test edge cases for _dedupe."""
         # Test very small min_dist
         coords = np.array([[0, 0], [10, 10]], dtype=float)

@@ -8,6 +8,7 @@ import torch
 
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -28,7 +29,7 @@ def mock_config_2d():
 
     return FitConfig(
         V=V,
-        centers_overcomplete=centers,
+        seeds=centers,
         norm_percentile=0.0,
         init_sigma_vox=1.5,
         sigma_min_diag=[0.1, 0.1],
@@ -41,6 +42,7 @@ def mock_config_2d():
         loss_type="l1",
         asymmetric_penalty=10.0,
         l1_amp=0.001,
+        l1_diag=0.0001,
         scheduler_type="plateau",
         patience=10,
         factor=0.5,
@@ -51,7 +53,7 @@ def mock_config_2d():
         movie_every=1,
         movie_max_frames=100,
         device=torch.device("cpu"),
-        verbose=False
+        verbose=False,
     )
 
 
@@ -63,7 +65,7 @@ class TestPreprocessData:
         result = preprocess_data(mock_config_2d)
 
         assert result.V_normalized.shape == mock_config_2d.V.shape
-        assert result.centers_overcomplete.shape == (10, 2)
+        assert result.seed_centers.shape == (10, 2)
         assert result.d == 2
         assert result.N == 10
         assert result.intensity_range > 0
@@ -111,12 +113,12 @@ class TestPreprocessData:
 
     def test_auto_candidate_generation(self, mock_config_2d):
         """Test automatic candidate generation."""
-        mock_config_2d.centers_overcomplete = None  # Trigger auto-generation
+        mock_config_2d.seed_centers = None  # Trigger auto-generation
 
         result = preprocess_data(mock_config_2d)
 
-        assert result.centers_overcomplete is not None
-        assert result.centers_overcomplete.shape[1] == 2  # 2D centers
+        assert result.seed_centers is not None
+        assert result.seed_centers.shape[1] == 2  # 2D centers
         assert result.N > 0
 
     def test_gradient_dilution_2d(self, mock_config_2d):
@@ -126,7 +128,9 @@ class TestPreprocessData:
         # 2D should have minimal scaling
         assert result.gradient_dilution_factor == pytest.approx(1.0, rel=0.1)
         assert result.dimensional_complexity is None  # Not used for 2D
-        assert result.effective_lr == result.gradient_dilution_factor * mock_config_2d.lr
+        assert (
+            result.effective_lr == result.gradient_dilution_factor * mock_config_2d.lr
+        )
 
     def test_gradient_dilution_4d(self, mock_config_2d):
         """Test gradient dilution for 4D (should be significant)."""
@@ -135,7 +139,7 @@ class TestPreprocessData:
         centers_4d = np.random.rand(10, 4).astype(np.float32)
 
         mock_config_2d.V = V_4d
-        mock_config_2d.centers_overcomplete = centers_4d
+        mock_config_2d.seed_centers = centers_4d
         mock_config_2d.sigma_min_diag = [0.1] * 4
 
         result = preprocess_data(mock_config_2d)

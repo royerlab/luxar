@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
-    centers_overcomplete: Optional[np.ndarray] = None,
+    seeds: Optional[np.ndarray | float] = None,
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
@@ -25,6 +25,7 @@ def prepare_fit_config(
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
+    l1_diag: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -68,19 +69,27 @@ def prepare_fit_config(
     if V.ndim == 0:
         raise ValueError("Input image V must have at least 1 dimension")
 
-    # Validate candidates if provided
-    if centers_overcomplete is not None:
-        centers_overcomplete = np.asarray(centers_overcomplete, dtype=np.float32)
-        if centers_overcomplete.ndim != 2:
-            raise ValueError("centers_overcomplete must be a 2D array")
-        if centers_overcomplete.shape[1] != V.ndim:
-            raise ValueError(
-                f"centers_overcomplete must have {V.ndim} columns to match image dimensions"
-            )
+    # Validate seeds if provided
+    if seeds is not None:
+        if isinstance(seeds, (int, float)):
+            # Float proportion of voxels
+            if seeds <= 0 or seeds > 1.0:
+                raise ValueError("seeds as float must be in range (0, 1.0]")
+        else:
+            # Array of seed centers
+            seeds = np.asarray(seeds, dtype=np.float32)
+            if seeds.ndim != 2:
+                raise ValueError("seeds must be a 2D array (N, ndim)")
+            if seeds.shape[1] != V.ndim:
+                raise ValueError(
+                    f"seeds must have {V.ndim} columns to match image dimensions"
+                )
 
-    # Set proportional L1 regularization default before validation
+    # Set proportional L1 regularization defaults before validation
     if l1_amp is None:
         l1_amp = 0.1 * lr  # 10% of learning rate
+    if l1_diag is None:
+        l1_diag = 0.01 * lr  # 1% of learning rate
 
     # Validate hyperparameters
     if init_sigma_vox <= 0:
@@ -119,14 +128,12 @@ def prepare_fit_config(
             raise ValueError(f"sigma_max_diag must have length {d}")
         if any(s <= 0 for s in sigma_max_diag):
             raise ValueError("All sigma_max_diag values must be positive")
-        if any(
-            s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)
-        ):
+        if any(s_max <= s_min for s_max, s_min in zip(sigma_max_diag, sigma_min_diag)):
             raise ValueError("sigma_max_diag must be greater than sigma_min_diag")
 
     return FitConfig(
         V=V,
-        centers_overcomplete=centers_overcomplete,
+        seeds=seeds,
         norm_percentile=norm_percentile,
         init_sigma_vox=init_sigma_vox,
         sigma_min_diag=sigma_min_diag,
@@ -139,6 +146,7 @@ def prepare_fit_config(
         loss_type=loss_type,
         asymmetric_penalty=asymmetric_penalty,
         l1_amp=l1_amp,
+        l1_diag=l1_diag,
         scheduler_type=scheduler_type,
         patience=patience,
         factor=factor,

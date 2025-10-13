@@ -72,7 +72,9 @@ class DynamicOpsConfig:
         )
 
         # Adaptive Learning Rate Boosting
-        self.lr_boost_factor: float = 1.5  # Multiplication factor for problematic regions
+        self.lr_boost_factor: float = (
+            1.5  # Multiplication factor for problematic regions
+        )
         self.boost_influence_threshold: float = 0.05  # Minimum influence to boost LR
 
         # Step 3: Principled Pruning Parameters

@@ -10,7 +10,7 @@ from luxar.gsplats.utils.trils import pack_tril, tril_size, unpack_tril
 class TestTrilSize:
     """Test tril_size function."""
 
-    def test_tril_size_valid_dimensions(self):
+    def test_tril_size_valid_dimensions(self) -> None:
         """Test tril_size for various valid dimensions."""
         # Test cases: (dimension, expected_size)
         test_cases = [
@@ -24,13 +24,13 @@ class TestTrilSize:
         for d, expected in test_cases:
             assert tril_size(d) == expected, f"Failed for dimension {d}"
 
-    def test_tril_size_formula_consistency(self):
+    def test_tril_size_formula_consistency(self) -> None:
         """Test that tril_size follows the mathematical formula d*(d+1)/2."""
         for d in range(1, 10):
             expected = d * (d + 1) // 2
             assert tril_size(d) == expected
 
-    def test_tril_size_zero_dimension(self):
+    def test_tril_size_zero_dimension(self) -> None:
         """Test edge case of zero dimension."""
         assert tril_size(0) == 0
 
@@ -38,7 +38,7 @@ class TestTrilSize:
 class TestPackTril:
     """Test pack_tril function."""
 
-    def test_pack_tril_2d_single_matrix(self):
+    def test_pack_tril_2d_single_matrix(self) -> None:
         """Test packing a single 2x2 matrix."""
         L = np.array([[[1.0, 0.0], [2.0, 3.0]]])  # Shape (1, 2, 2)
 
@@ -48,7 +48,7 @@ class TestPackTril:
         np.testing.assert_array_equal(packed, expected)
         assert packed.shape == (1, 3)
 
-    def test_pack_tril_3d_single_matrix(self):
+    def test_pack_tril_3d_single_matrix(self) -> None:
         """Test packing a single 3x3 matrix."""
         L = np.array(
             [[[1.0, 0.0, 0.0], [2.0, 3.0, 0.0], [4.0, 5.0, 6.0]]]
@@ -60,7 +60,7 @@ class TestPackTril:
         np.testing.assert_array_equal(packed, expected)
         assert packed.shape == (1, 6)
 
-    def test_pack_tril_batch_matrices(self):
+    def test_pack_tril_batch_matrices(self) -> None:
         """Test packing a batch of matrices."""
         L = np.array(
             [[[1.0, 0.0], [2.0, 3.0]], [[4.0, 0.0], [5.0, 6.0]]]
@@ -72,7 +72,7 @@ class TestPackTril:
         np.testing.assert_array_equal(packed, expected)
         assert packed.shape == (2, 3)
 
-    def test_pack_tril_ignores_upper_triangle(self):
+    def test_pack_tril_ignores_upper_triangle(self) -> None:
         """Test that upper triangular elements are ignored."""
         L = np.array(
             [
@@ -88,7 +88,7 @@ class TestPackTril:
 
         np.testing.assert_array_equal(packed, expected)
 
-    def test_pack_tril_dtype_preservation(self):
+    def test_pack_tril_dtype_preservation(self) -> None:
         """Test that data type is preserved."""
         L_float32 = np.array([[[1.0, 0.0], [2.0, 3.0]]], dtype=np.float32)
         L_float64 = np.array([[[1.0, 0.0], [2.0, 3.0]]], dtype=np.float64)
@@ -99,7 +99,7 @@ class TestPackTril:
         assert packed_32.dtype == np.float32
         assert packed_64.dtype == np.float64
 
-    def test_pack_tril_empty_batch(self):
+    def test_pack_tril_empty_batch(self) -> None:
         """Test packing empty batch."""
         L = np.zeros((0, 2, 2))
         packed = pack_tril(L)
@@ -109,7 +109,7 @@ class TestPackTril:
 class TestUnpackTril:
     """Test unpack_tril function."""
 
-    def test_unpack_tril_2d_single_matrix(self):
+    def test_unpack_tril_2d_single_matrix(self) -> None:
         """Test unpacking to a single 2x2 matrix."""
         v = np.array([[1.0, 2.0, 3.0]])
 
@@ -119,7 +119,7 @@ class TestUnpackTril:
         np.testing.assert_array_equal(L, expected)
         assert L.shape == (1, 2, 2)
 
-    def test_unpack_tril_3d_single_matrix(self):
+    def test_unpack_tril_3d_single_matrix(self) -> None:
         """Test unpacking to a single 3x3 matrix."""
         v = np.array([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
 
@@ -129,7 +129,7 @@ class TestUnpackTril:
         np.testing.assert_array_equal(L, expected)
         assert L.shape == (1, 3, 3)
 
-    def test_unpack_tril_batch_matrices(self):
+    def test_unpack_tril_batch_matrices(self) -> None:
         """Test unpacking a batch of matrices."""
         v = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
@@ -139,7 +139,7 @@ class TestUnpackTril:
         np.testing.assert_array_equal(L, expected)
         assert L.shape == (2, 2, 2)
 
-    def test_unpack_tril_dtype_preservation(self):
+    def test_unpack_tril_dtype_preservation(self) -> None:
         """Test that data type is preserved."""
         v_float32 = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
         v_float64 = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
@@ -150,7 +150,7 @@ class TestUnpackTril:
         assert L_32.dtype == np.float32
         assert L_64.dtype == np.float64
 
-    def test_unpack_tril_empty_batch(self):
+    def test_unpack_tril_empty_batch(self) -> None:
         """Test unpacking empty batch."""
         v = np.zeros((0, 3))
         L = unpack_tril(v, d=2)
@@ -160,7 +160,7 @@ class TestUnpackTril:
 class TestPackUnpackRoundTrip:
     """Test that pack_tril and unpack_tril are inverse operations."""
 
-    def test_roundtrip_various_sizes(self):
+    def test_roundtrip_various_sizes(self) -> None:
         """Test pack/unpack roundtrip for various matrix sizes."""
         np.random.seed(42)
 
@@ -188,7 +188,7 @@ class TestPackUnpackRoundTrip:
                 assert packed.shape == (n_batch, tril_size(d))
                 assert L_recovered.shape == (n_batch, d, d)
 
-    def test_roundtrip_preserves_zeros_above_diagonal(self):
+    def test_roundtrip_preserves_zeros_above_diagonal(self) -> None:
         """Test that upper triangular elements remain zero after roundtrip."""
         L_orig = np.array(
             [
@@ -217,7 +217,7 @@ class TestPackUnpackRoundTrip:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_dimension_one_matrices(self):
+    def test_dimension_one_matrices(self) -> None:
         """Test 1x1 matrices (scalars)."""
         L = np.array([[[5.0]]])  # Shape (1, 1, 1)
         packed = pack_tril(L)
@@ -226,7 +226,7 @@ class TestEdgeCases:
         np.testing.assert_array_equal(L, L_recovered)
         assert packed.shape == (1, 1)
 
-    def test_consistency_with_numpy_tril_indices(self):
+    def test_consistency_with_numpy_tril_indices(self) -> None:
         """Test consistency with numpy's tril_indices."""
         np.random.seed(42)
 

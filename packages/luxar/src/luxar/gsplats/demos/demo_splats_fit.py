@@ -48,7 +48,6 @@ def main():
         V = filters.gaussian(blobs, sigma=3.25).astype(np.float32)
         aprint(f"Target image shape: {V.shape}")
 
-
     # Configure dynamic operations (enabled by default)
     dynamic_config = None
     enable_dynamic_ops = not args.disable_dynamic
@@ -62,7 +61,7 @@ def main():
         # Use the high-level fit function with per-splat optimizer
         params_full, amps, stats = fit_gaussian_splats(
             V=V,
-            # centers_overcomplete auto-generated with intelligent defaults
+            # seeds auto-generated with intelligent defaults
             init_sigma_vox=1.6,
             n_iters=args.n_iters,
             lr=0.01,

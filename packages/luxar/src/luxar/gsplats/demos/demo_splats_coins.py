@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Human mitosis image Gaussian splatting demo with interactive compression analysis.
+Coins image Gaussian splatting demo with interactive compression analysis.
 
-This demo applies Gaussian splatting to the scikit-image human mitosis dataset,
+This demo applies Gaussian splatting to the classic scikit-image coins dataset,
 demonstrating full-covariance fitting with compression analysis via napari.
-Features interactive slider to explore reconstruction quality vs compression ratio.
+Features interactive slider to explore reconstruction quality vs compression ratio
+on metallic textures with circular objects and varying illumination gradients.
 """
 
 import sys
@@ -12,7 +13,7 @@ import sys
 import napari
 import numpy as np
 from arbol import Arbol, aprint, asection
-from skimage import color, data, img_as_float32
+from skimage import data, img_as_float32
 
 from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
@@ -22,7 +23,7 @@ from luxar.gsplats.utils.trils import tril_size, unpack_tril
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI and len(sys.argv) > 1:
-    aprint("🔬 Human Mitosis Gaussian Splatting Demo (napari disabled)")
+    aprint("🪙 Coins Gaussian Splatting Demo (napari disabled)")
     aprint("Note: This demo is designed for interactive napari visualization.")
     aprint(
         "✅ Demo structure verified - would run with full napari functionality when enabled"
@@ -31,10 +32,10 @@ if NO_NAPARI and len(sys.argv) > 1:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
-LR = 0.02  # Learning rate for fitting
-N_ITERS = 2000  # Number of optimization iterations
+LR = 0.02  # Learning rate (same as mitosis/astronaut)
+N_ITERS = 2000  # Same as mitosis/astronaut
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
-N_FRAMES = 40  # number of compression steps (<= #splats)
+N_FRAMES = 45  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 # ==========================
 
@@ -59,27 +60,26 @@ def ellipse_polygon_from_L(
     return pts.astype(np.float32)
 
 
-with asection("Human Mitosis Gaussian Splatting Demo"):
-    aprint("🔬 Interactive compression analysis on biological histology data")
+with asection("Coins Gaussian Splatting Demo"):
+    aprint("🪙 Interactive compression analysis on classic coins image")
+    aprint("💰 Metallic textures, circular objects, and illumination gradients")
 
     with asection("Loading and preprocessing data"):
-        # Load human_mitosis and prepare a soft grayscale target
-        img = data.human_mitosis()  # likely RGB
-        if img.ndim == 3 and img.shape[-1] in (3, 4):
-            img = color.rgb2gray(img) * 100  # -> float in [0, 100]
-        V = img_as_float32(img)
+        # Load coins image (already grayscale)
+        img = data.coins()  # Grayscale (303, 384)
+        aprint(f"Original coins image: {img.shape}, range=[{img.min()}, {img.max()}]")
 
-        # Crop the image to a smaller region for faster demo
-        V = V[100:356, 100:356]  # Crop to 256x256
+        # Convert to float32 and normalize to good working range
+        V = img_as_float32(img) * 100.0  # Scale to [0, 100] (same as mitosis/astronaut)
 
-        # # Optional: mild contrast normalization & smoothing (helps candidate detection)
-        # V = exposure.rescale_intensity(V, in_range="image", out_range=(0.0, 1.0)).astype(
-        #     np.float32
-        # )
-        aprint(f"Preprocessed human mitosis image: {V.shape}")
+        # No cropping - use the full image to show all coins
+        # The image is already a good size (303x384) for demo purposes
+
+        aprint(f"Preprocessed coins image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
+        aprint("🎯 Full image with multiple coins and metallic surface textures")
 
-    # Configure dynamic operations
+    # Configure dynamic operations (use defaults like mitosis/astronaut)
     dynamic_config = DynamicOpsConfig()
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
@@ -87,27 +87,29 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
         params_full, amps, stats = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
-            init_sigma_vox=0.5,
+            seeds=0.05,
+            init_sigma_vox=0.5,  # Same as mitosis/astronaut
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
-            l1_diag=0,
+            l1_diag=0,  # Same as mitosis/astronaut (no diagonal regularization)
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
             # Dynamic operations
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,
-            max_abs_error=0.1,
+            max_abs_error=0.1,  # Same as mitosis/astronaut
             napari_movie=True,
-            movie_every=1,
-            movie_max_frames=None,
+            movie_every=1,  # Same as mitosis/astronaut
+            movie_max_frames=None,  # Same as mitosis/astronaut
         )
         if len(amps) == 0:
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
+
+        aprint(f"🎉 Fitted {len(amps)} splats to reconstruct coins image")
 
 # ----- Compression ranking by approximate L2 energy -----
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))
@@ -117,6 +119,8 @@ L_full = unpack_tril(L_packed, d)  # (N, 2, 2)
 diag_prod = L_full[:, 0, 0] * L_full[:, 1, 1]  # ∏ diag(L) in 2D
 energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
+
+aprint(f"📊 Ranking {len(amps)} splats by L2 energy contribution")
 
 # ----- Precompute reconstructions/residuals + oriented polygons per frame -----
 N = len(amps)
@@ -142,63 +146,77 @@ bit_compression_pct = np.zeros(len(keep_counts), dtype=np.float64)
 polygons_frames = []
 centers_frames = []
 
-for i, K in enumerate(keep_counts):
-    idx = order[:K]
+aprint("🎬 Precomputing compression frames...")
+with asection("Computing reconstruction quality at different compression levels"):
+    for i, K in enumerate(keep_counts):
+        idx = order[:K]
 
-    Vk = render_gaussians_numpy(
-        V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
-    )
-    stack_recon[i] = Vk
-    stack_resid[i] = V - Vk
-    rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
+        Vk = render_gaussians_numpy(
+            V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
+        )
+        stack_recon[i] = Vk
+        stack_resid[i] = V - Vk
+        rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
 
-    model_bits_frames[i] = int(K) * BITS_PER_SPLAT
-    bpp_frames[i] = model_bits_frames[i] / NUM_PIXELS
-    bit_compression_pct[i] = 100.0 * (1.0 - (model_bits_frames[i] / IMAGE_BITS))
+        model_bits_frames[i] = int(K) * BITS_PER_SPLAT
+        bpp_frames[i] = model_bits_frames[i] / NUM_PIXELS
+        bit_compression_pct[i] = 100.0 * (1.0 - (model_bits_frames[i] / IMAGE_BITS))
 
-    Lk = L_full[idx]  # (K, 2, 2)
-    Ck = params_full[idx, :2]  # (K, 2)
-    polys = [
-        ellipse_polygon_from_L(Ck[j], Lk[j], t=2.0, n_pts=64) for j in range(len(idx))
-    ]
-    polygons_frames.append(polys)
-    centers_frames.append(Ck)
+        Lk = L_full[idx]  # (K, 2, 2)
+        Ck = params_full[idx, :2]  # (K, 2)
+        polys = [
+            ellipse_polygon_from_L(Ck[j], Lk[j], t=2.0, n_pts=64)
+            for j in range(len(idx))
+        ]
+        polygons_frames.append(polys)
+        centers_frames.append(Ck)
+
+        if (i + 1) % 10 == 0:
+            aprint(
+                f"Frame {i + 1:02d}/{len(keep_counts)}: {K} splats, {bit_compression_pct[i]:.1f}% compression"
+            )
 
 # 4) Napari viewer with "compression" slider
-viewer = napari.Viewer()
+aprint("🔬 Launching interactive napari viewer...")
+viewer = napari.Viewer(title="Coins Gaussian Splatting Demo")
+
+# Add original image
 viewer.add_image(
     V,
-    name="human_mitosis (input)",
-    colormap="magma",
+    name="coins (input)",
+    colormap="gray",
     contrast_limits=[0, float(V.max())],
 )
 
+# Add reconstruction stack
 viewer.add_image(
     stack_recon,
     name="reconstruction (compression, oriented)",
-    colormap="magma",
+    colormap="gray",
     contrast_limits=[0, float(V.max())],
 )
+
+# Add residual stack with copper colormap for metallic theme
 viewer.add_image(
     np.abs(stack_resid),
     name="absolute residual",
-    colormap="inferno",
+    colormap="copper",
     contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
 )
 
-# Shapes & points that update with slider
+# Shapes & points that update with slider - use gold colors for coin theme
 shapes = viewer.add_shapes(
     name="oriented 2σ ellipses (kept)",
     shape_type="polygon",
-    edge_color="cyan",
-    edge_width=1,
+    edge_color="gold",
+    edge_width=1.3,
     face_color=[0, 0, 0, 0],
 )
 pts = viewer.add_points(
     np.zeros((0, 2)),
     name="centers (kept)",
-    size=3,
-    border_color="cyan",
+    size=2.8,
+    border_color="gold",
     face_color="transparent",
 )
 
@@ -217,9 +235,9 @@ def _set_overlay_text(t_index: int):
     rel = float(rel_err_frames[t_index])
     viewer.text_overlay.visible = True
     viewer.text_overlay.text = (
-        f"Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  Model bpp: {bpp:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
-        f"|  rel L2 err: {rel:.4f}"
+        f"🪙 Coins Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+        f"|  bpp: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
+        f"|  rel L2 error: {rel:.4f}"
     )
 
 
@@ -241,15 +259,29 @@ def _on_step_change(event=None):
 viewer.dims.events.current_step.connect(_on_step_change)
 
 # Console summary
+aprint("📈 Compression Analysis Results:")
 aprint(f"Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
-for i, K in enumerate(keep_counts):
-    aprint(
-        f"Frame {i:02d} | keep {K:4d} | model_bits={int(model_bits_frames[i]):>10,d} "
-        f"| bit_compression={bit_compression_pct[i]:6.1f}% | bpp={bpp_frames[i]:6.3f} "
-        f"| relL2={rel_err_frames[i]:.4f}"
-    )
+for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame to avoid spam
+    idx = i * 5
+    if idx < len(keep_counts):
+        aprint(
+            f"Frame {idx:02d} | keep {K:4d} | model_bits={int(model_bits_frames[idx]):>10,d} "
+            f"| compression={bit_compression_pct[idx]:6.1f}% | bpp={bpp_frames[idx]:6.3f} "
+            f"| relL2={rel_err_frames[idx]:.4f}"
+        )
 
-aprint(
-    "Ready. Use the top slider (axis 0) to move from keeping all splats toward keeping just one."
-)
+aprint("")
+aprint("🎛️  Controls:")
+aprint("   • Use the top slider (axis 0) to explore compression levels")
+aprint("   • Move from keeping all splats toward keeping just the most important ones")
+aprint("   • Watch how coin details and metallic textures degrade with fewer splats")
+aprint("   • Observe the gold ellipse overlays showing splat orientations and sizes")
+aprint("")
+aprint("🔍 What to notice:")
+aprint("   • How circular coin shapes are preserved at different compression levels")
+aprint("   • Metallic surface gradients and how they're reconstructed")
+aprint("   • The efficiency of oriented ellipses in capturing coin boundaries")
+aprint("   • Impact of l1_diag regularization on splat shapes for metallic textures")
+aprint("   • Trade-off between model complexity and reconstruction fidelity")
+
 napari.run()

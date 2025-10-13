@@ -189,7 +189,7 @@ class TestRenderGaussiansFullTorch:
         for i in range(3):
             assert abs(max_idx[i] - 4) <= 1
 
-    def test_empty_params(self):
+    def test_empty_params(self) -> None:
         """Test rendering with no Gaussians."""
         shape = (5, 5)
         params_full = np.zeros((0, 5), dtype=np.float32)  # 2D + 3 tril elements
@@ -395,7 +395,7 @@ class TestBatchedRendering:
         assert torch.all(result_with_floor >= 0)
         assert torch.all(result_no_floor >= 0)
 
-    def test_empty_batched_rendering(self):
+    def test_empty_batched_rendering(self) -> None:
         """Test batched rendering with no splats."""
         shape = (5, 5)
         centers = torch.zeros((0, 2), dtype=torch.float32)
@@ -436,7 +436,7 @@ class TestBatchedRendering:
 class TestRenderingEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_very_small_gaussians(self):
+    def test_very_small_gaussians(self) -> None:
         """Test rendering very small Gaussians."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -454,7 +454,7 @@ class TestRenderingEdgeCases:
         assert np.all(np.isfinite(result_np))
         assert np.sum(result_np) > 0  # Should still have some output
 
-    def test_very_large_gaussians(self):
+    def test_very_large_gaussians(self) -> None:
         """Test rendering very large Gaussians."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -473,7 +473,7 @@ class TestRenderingEdgeCases:
         # Large Gaussian should affect most of the image
         assert np.sum(result_np > 1e-8) > shape[0] * shape[1] * 0.5
 
-    def test_boundary_centers(self):
+    def test_boundary_centers(self) -> None:
         """Test Gaussians centered at image boundaries."""
         shape = (10, 10)
         centers = np.array(
@@ -498,7 +498,7 @@ class TestRenderingEdgeCases:
         assert np.all(np.isfinite(result_np))
         assert np.sum(result_np) > 0
 
-    def test_anisotropic_gaussians(self):
+    def test_anisotropic_gaussians(self) -> None:
         """Test highly anisotropic Gaussians."""
         shape = (15, 15)
         centers = np.array([[7.0, 7.0]], dtype=np.float32)
@@ -529,7 +529,7 @@ class TestRenderingEdgeCases:
             f"Expected anisotropic behavior, got h_spread={h_spread}, v_spread={v_spread}"
         )
 
-    def test_zero_amplitude(self):
+    def test_zero_amplitude(self) -> None:
         """Test Gaussians with zero amplitude."""
         shape = (5, 5)
         centers = np.array([[2.0, 2.0]], dtype=np.float32)
@@ -548,7 +548,7 @@ class TestRenderingEdgeCases:
 class TestPerformanceAndNumericalStability:
     """Test performance characteristics and numerical stability."""
 
-    def test_large_number_of_splats(self):
+    def test_large_number_of_splats(self) -> None:
         """Test rendering with many splats."""
         shape = (20, 20)
         n_splats = 50
@@ -577,7 +577,7 @@ class TestPerformanceAndNumericalStability:
         assert np.all(result_np >= 0)
         assert np.sum(result_np) > 0
 
-    def test_numerical_precision(self):
+    def test_numerical_precision(self) -> None:
         """Test numerical precision with extreme values."""
         shape = (5, 5)
         centers = np.array([[2.0, 2.0]], dtype=np.float32)

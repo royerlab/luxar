@@ -60,7 +60,7 @@ class GaussianSplatFitter:
     def fit(
         self,
         V: np.ndarray,
-        centers_overcomplete: Optional[np.ndarray] = None,
+        seeds: Optional[np.ndarray | float] = None,
         norm_percentile: float = 0.0,
         init_sigma_vox: float = 1.5,
         n_iters: int = 1000,
@@ -68,6 +68,7 @@ class GaussianSplatFitter:
         loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
+        l1_diag: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
@@ -99,11 +100,30 @@ class GaussianSplatFitter:
         """
         # Step 1: Validate and prepare configuration
         config = prepare_fit_config(
-            self, V, centers_overcomplete, norm_percentile, init_sigma_vox,
-            n_iters, lr, loss_type, asymmetric_penalty, l1_amp,
-            sigma_min_diag, sigma_max_diag, truncate, verbose,
-            max_abs_error, gradient_clip, napari_movie, movie_every,
-            movie_max_frames, scheduler_type, patience, factor, dynamic_ops_verbose
+            self,
+            V,
+            seeds,
+            norm_percentile,
+            init_sigma_vox,
+            n_iters,
+            lr,
+            loss_type,
+            asymmetric_penalty,
+            l1_amp,
+            l1_diag,
+            sigma_min_diag,
+            sigma_max_diag,
+            truncate,
+            verbose,
+            max_abs_error,
+            gradient_clip,
+            napari_movie,
+            movie_every,
+            movie_max_frames,
+            scheduler_type,
+            patience,
+            factor,
+            dynamic_ops_verbose,
         )
 
         # Step 2: Preprocess data and generate candidates
@@ -112,7 +132,10 @@ class GaussianSplatFitter:
         # Handle edge case of no candidates
         if preprocessed_data.N == 0:
             return (
-                np.zeros((0, preprocessed_data.d + tril_size(preprocessed_data.d)), np.float32),
+                np.zeros(
+                    (0, preprocessed_data.d + tril_size(preprocessed_data.d)),
+                    np.float32,
+                ),
                 np.zeros((0,), np.float32),
                 {},
             )
@@ -134,7 +157,7 @@ class GaussianSplatFitter:
 
 def fit_gaussian_splats(
     V: np.ndarray,
-    centers_overcomplete: Optional[np.ndarray] = None,
+    seeds: Optional[np.ndarray | float] = None,
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 0.5,
     n_iters: int = 1000,
@@ -142,6 +165,7 @@ def fit_gaussian_splats(
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
+    l1_diag: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -180,12 +204,14 @@ def fit_gaussian_splats(
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to reconstruct. Will be normalized to [0,1].
-    centers_overcomplete : np.ndarray, shape (N, d), optional
-        Initial candidate center positions in voxel coordinates (float).
-        If None, automatically generated using dimension-aware intelligent defaults:
-        - Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
-        - Volume-proportional density: ~0.2% of pixels as candidates
-        - Inclusive threshold: percentile_thresh=70 for broad feature coverage
+    seeds : np.ndarray, shape (N, d) or float, optional
+        Initial seed center positions or proportion of voxels to use as seeds.
+        - If np.ndarray: Explicit seed centers in voxel coordinates (float)
+        - If float (0 < seeds <= 1.0): Proportion of voxels to use as seeds
+        - If None: Auto-generated using dimension-aware intelligent defaults:
+          * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
+          * Volume-proportional density: ~1% of voxels as seeds
+          * Inclusive threshold: percentile_thresh=70 for broad feature coverage
     norm_percentile : float, default=0.0
         Normalization method for handling outliers and noise:
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
@@ -209,6 +235,10 @@ def fit_gaussian_splats(
         L1 regularization coefficient on splat amplitudes for sparsity.
         If None, automatically set to 10% of learning rate for consistent
         sparsity pressure that scales with optimization strength.
+    l1_diag : float, default=None (auto: 0.01 * lr)
+        L1 regularization coefficient on diagonal elements of Cholesky factors.
+        Encourages smaller, more isotropic splats. If None, automatically set
+        to 1% of learning rate for mild shape regularization.
     sigma_min_diag : Sequence[float], optional
         Minimum diagonal values for Cholesky factor L along each axis.
         Defaults to [0.5]*d to prevent degenerate splats.
@@ -287,7 +317,7 @@ def fit_gaussian_splats(
         # Fit and extract results
         params, amps, stats = fitter.fit(
             V=V,
-            centers_overcomplete=centers_overcomplete,
+            seeds=seeds,
             norm_percentile=norm_percentile,
             init_sigma_vox=init_sigma_vox,
             n_iters=n_iters,
@@ -295,6 +325,7 @@ def fit_gaussian_splats(
             loss_type=loss_type,
             asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
+            l1_diag=l1_diag,
             dynamic_ops_verbose=dynamic_ops_verbose,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
@@ -310,21 +341,27 @@ def fit_gaussian_splats(
             factor=factor,
         )
 
-        if verbose:
-            from arbol import aprint
-            with asection("Optimization Complete"):
-                aprint(f"Time: {stats['time_seconds']:.2f} seconds")
-                aprint(f"Iterations: {stats['iterations']}/{n_iters}")
-                if stats["converged"]:
-                    aprint(
-                        f"✓ Converged (saved {n_iters - stats['iterations']} iterations)"
-                    )
+    # After fitting section closes, show summary and movie
+    if verbose:
+        from arbol import aprint
+
+        with asection("Optimization Complete"):
+            aprint(f"Time: {stats['time_seconds']:.2f} seconds")
+            aprint(f"Iterations: {stats['iterations']}/{n_iters}")
+            if stats["converged"]:
+                aprint(
+                    f"✓ Converged (saved {n_iters - stats['iterations']} iterations)"
+                )
 
         # Calculate and display compression ratio
-        if verbose:
-            from luxar.gsplats.fitting.visualization import display_compression_analysis
-            display_compression_analysis(V, params, amps)
+        from luxar.gsplats.fitting.visualization import display_compression_analysis
 
-        return params, amps, stats
+        display_compression_analysis(V, params, amps)
 
+    # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
+    if stats.get("movie_frames") is not None:
+        from luxar.gsplats.fitting.visualization import show_optimization_movie
 
+        show_optimization_movie(stats["movie_frames"], stats["movie_shape"])
+
+    return params, amps, stats
