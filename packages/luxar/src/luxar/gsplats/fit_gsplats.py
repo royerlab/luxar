@@ -69,6 +69,7 @@ class GaussianSplatFitter:
         asymmetric_penalty: Optional[float] = 10.0,
         l1_amp: Optional[float] = None,
         l1_diag: Optional[float] = None,
+        l1_sharpness: Optional[float] = None,
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
@@ -111,6 +112,7 @@ class GaussianSplatFitter:
             asymmetric_penalty,
             l1_amp,
             l1_diag,
+            l1_sharpness,
             sigma_min_diag,
             sigma_max_diag,
             truncate,
@@ -166,6 +168,7 @@ def fit_gaussian_splats(
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
+    l1_sharpness: Optional[float] = None,
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -239,6 +242,12 @@ def fit_gaussian_splats(
         L1 regularization coefficient on diagonal elements of Cholesky factors.
         Encourages smaller, more isotropic splats. If None, automatically set
         to 1% of learning rate for mild shape regularization.
+    l1_sharpness : float, default=None (auto: 0.01 * lr)
+        L1 regularization coefficient on sharpness offset parameters (s').
+        Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
+        beneficial to deviate. If None, automatically set to 1% of learning rate.
+        Higher values promote standard Gaussians, lower values allow more sharpness learning.
+        Note: Sharpness learning rate is hard-coded to 0.5× the base effective learning rate.
     sigma_min_diag : Sequence[float], optional
         Minimum diagonal values for Cholesky factor L along each axis.
         Defaults to [0.5]*d to prevent degenerate splats.
@@ -326,6 +335,7 @@ def fit_gaussian_splats(
             asymmetric_penalty=asymmetric_penalty,
             l1_amp=l1_amp,
             l1_diag=l1_diag,
+            l1_sharpness=l1_sharpness,
             dynamic_ops_verbose=dynamic_ops_verbose,
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
@@ -357,6 +367,23 @@ def fit_gaussian_splats(
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         display_compression_analysis(V, params, amps)
+
+        # Display sharpness statistics
+        with asection("Sharpness Statistics"):
+            aprint(
+                f"Range: [{stats['sharpness_min']:.2f}, {stats['sharpness_max']:.2f}]  "
+                f"Mean: {stats['sharpness_mean']:.2f} ± {stats['sharpness_std']:.2f}  "
+                f"Median: {stats['sharpness_median']:.2f}"
+            )
+            # Provide interpretation
+            if stats["sharpness_mean"] < 1.5:
+                aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
+            elif stats["sharpness_mean"] < 2.5:
+                aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
+            elif stats["sharpness_mean"] < 4.0:
+                aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
+            else:
+                aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if stats.get("movie_frames") is not None:

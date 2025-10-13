@@ -13,7 +13,6 @@ import torch
 from arbol import aprint
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
-from luxar.gsplats.utils.trils import tril_size
 
 
 def preprocess_data(config: FitConfig) -> PreprocessedData:
@@ -54,24 +53,38 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # Set auto-convergence threshold
     max_abs_error = _set_convergence_threshold(config.max_abs_error, config.verbose)
 
-    # Calculate gradient dilution compensation
+    # Get dimensions
     d = V.ndim
     N = int(seed_centers.shape[0])
 
-    (
-        effective_lr,
-        gradient_dilution_factor,
-        dimensional_complexity,
-        parameter_complexity,
-    ) = _calculate_gradient_dilution_compensation(d, config.lr, config.verbose)
+    # Set L1 regularization defaults based on parameter type learning rate multipliers
+    # These scale with the learning rates used by the optimizer for each parameter type
+    if config.l1_amp is None:
+        # Amplitude learns at 2.0× base lr, so L1 should be ~5% of that
+        config.l1_amp = 0.1 * config.lr  # 10% of base LR = 5% of amplitude LR (2.0×)
+    if config.l1_diag is None:
+        # Diagonal/variance learns at 1.0× base lr (with gradient dilution), so L1 should be ~1%
+        config.l1_diag = 0.01 * config.lr  # 1% of base LR
+    if config.l1_sharpness is None:
+        # Sharpness learns at 0.5× base lr (no gradient dilution), so L1 should be ~10% of that
+        config.l1_sharpness = (
+            0.05 * config.lr
+        )  # 5% of base LR = 10% of sharpness LR (0.5×)
 
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
 
-    # Log L1 regularization setting
+    # Log L1 regularization settings
     if config.verbose:
+        aprint("L1 regularization (as % of parameter type LR):")
         aprint(
-            f"Proportional L1 regularization: {config.l1_amp:.4f} (10% of lr={config.lr:.3f})"
+            f"  Amplitude: {config.l1_amp:.4f} (5% of amp LR: {config.lr:.3f} × 2.0)"
+        )
+        aprint(
+            f"  Diagonal: {config.l1_diag:.5f} (1% of diag LR: {config.lr:.3f} × 1.0)"
+        )
+        aprint(
+            f"  Sharpness: {config.l1_sharpness:.5f} (10% of sharpness LR: {config.lr:.3f} × 0.5)"
         )
 
     return PreprocessedData(
@@ -81,10 +94,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         image_min=image_min,
         image_max=image_max,
         intensity_range=intensity_range,
-        effective_lr=effective_lr,
-        gradient_dilution_factor=gradient_dilution_factor,
-        dimensional_complexity=dimensional_complexity,
-        parameter_complexity=parameter_complexity,
         d=d,
         N=N,
         max_abs_error=max_abs_error,
@@ -199,45 +208,3 @@ def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> fl
             aprint(f"Convergence threshold: {max_abs_error:.6f} (user-specified)")
 
     return max_abs_error
-
-
-def _calculate_gradient_dilution_compensation(
-    d: int, lr: float, verbose: bool
-) -> tuple[float, float, float | None, float]:
-    """Calculate gradient dilution compensation for higher dimensions."""
-    # Enhanced gradient dilution compensation: targeted for 4D+ challenges
-    params_2d = 2 + tril_size(2)  # 5 parameters (baseline)
-    params_current = d + tril_size(d)  # Current dimension parameters
-
-    if d <= 3:
-        # Conservative scaling for 2D/3D (maintain existing quality)
-        gradient_dilution_factor = params_current / params_2d
-        dimensional_complexity = None
-        parameter_complexity = gradient_dilution_factor
-    else:
-        # More aggressive scaling for 4D+ (address empirical findings)
-        dimensional_complexity = d**0.8  # Spatial complexity scaling
-        parameter_complexity = params_current / params_2d  # Parameter dilution
-        gradient_dilution_factor = dimensional_complexity * parameter_complexity
-
-    effective_lr = lr * gradient_dilution_factor
-
-    if verbose:
-        if d <= 3:
-            aprint(
-                f"Gradient dilution compensation: {d}D uses {gradient_dilution_factor:.1f}× learning rate ({lr:.3f} → {effective_lr:.3f})"
-            )
-        else:
-            aprint(
-                f"Enhanced gradient dilution compensation: {d}D uses {gradient_dilution_factor:.1f}× learning rate ({lr:.3f} → {effective_lr:.3f})"
-            )
-            aprint(
-                f"  Dimensional complexity: {dimensional_complexity:.1f}×, Parameter complexity: {parameter_complexity:.1f}×"
-            )
-
-    return (
-        effective_lr,
-        gradient_dilution_factor,
-        dimensional_complexity,
-        parameter_complexity,
-    )

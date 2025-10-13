@@ -155,7 +155,7 @@ class TestGaussianSplatModel:
             sigma_min_diag=[0.5, 0.5],
         )
 
-        centers_t, Ls_t, amps_t = model.current_params()
+        centers_t, Ls_t, amps_t, sharpness_t = model.current_params()
 
         assert centers_t.shape == (2, 2)
         assert Ls_t.shape == (2, 2, 2)

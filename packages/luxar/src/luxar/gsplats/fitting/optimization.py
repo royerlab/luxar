@@ -145,11 +145,12 @@ def run_optimization_loop(
                 best_iteration = it
 
                 # Save current best state (deep copy to avoid mutations)
-                centers, Ls, amps = model.current_params()
+                centers, Ls, amps, sharpness = model.current_params()
                 best_state = {
                     "centers": centers.detach().clone(),
                     "Ls": Ls.detach().clone(),
                     "amps": amps.detach().clone(),
+                    "sharpness": sharpness.detach().clone(),
                     "iteration": it,
                     "max_abs_error": current_max_abs_error,
                     "loss": current_loss,
@@ -182,7 +183,7 @@ def run_optimization_loop(
                 V_t,  # target
                 pred,  # current prediction
                 config.dynamic_config,
-                preprocessed_data.effective_lr,  # Use gradient dilution compensated learning rate
+                config.lr,  # Base learning rate (optimizer applies gradient dilution internally)
                 max_abs_error_threshold=preprocessed_data.max_abs_error,  # Now always has a sensible value
                 device=config.device,
                 verbose=config.dynamic_ops_verbose,
@@ -229,18 +230,20 @@ def run_optimization_loop(
         centers = best_state["centers"]
         Ls = best_state["Ls"]
         amps = best_state["amps"]
+        sharpness = best_state["sharpness"]
         best_loss = best_state["loss"]
         best_max_abs_error = best_state["max_abs_error"]
     else:
         # Fallback to final state if no best state saved
         with torch.no_grad():
-            centers, Ls, amps = model.current_params()
+            centers, Ls, amps, sharpness = model.current_params()
             best_max_abs_error = _compute_max_abs_error(model(), V_t)
 
     return OptimizationResults(
         centers=centers,
         Ls=Ls,
         amps=amps,
+        sharpness=sharpness,
         converged_early=converged_early,
         actual_iters=actual_iters,
         best_iteration=best_iteration,
@@ -280,7 +283,7 @@ def _record_movie_frame(
         residual_frame = torch.abs(V_t - pred.detach()).cpu().numpy()
 
         # Record current splat centers
-        centers, _, _ = model.current_params()
+        centers, _, _, _ = model.current_params()
         centers_frame = centers.detach().cpu().numpy()
 
         movie_frames["target"].append(target_frame)

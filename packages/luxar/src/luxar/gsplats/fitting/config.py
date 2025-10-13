@@ -47,11 +47,6 @@ class FitConfig:
     l1_diag: Optional[float]
     l1_sharpness: Optional[float]  # L1 regularization on sharpness offsets (s')
 
-    # Optimizer parameters
-    sharpness_lr_scale: (
-        float  # Learning rate scale for sharpness (e.g., 0.01 for 100x slower)
-    )
-
     # Scheduler parameters
     scheduler_type: str
     patience: int
@@ -92,12 +87,6 @@ class PreprocessedData:
     image_max: float
     intensity_range: float
 
-    # Gradient dilution compensation
-    effective_lr: float
-    gradient_dilution_factor: float
-    dimensional_complexity: Optional[float]
-    parameter_complexity: float
-
     # Dimensions
     d: int
     N: int  # number of candidates
@@ -118,6 +107,7 @@ class OptimizationResults:
     centers: torch.Tensor
     Ls: torch.Tensor
     amps: torch.Tensor
+    sharpness: torch.Tensor
 
     # Optimization metadata
     converged_early: bool

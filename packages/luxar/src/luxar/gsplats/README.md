@@ -33,12 +33,13 @@ The system starts by finding initial splat positions using multiscale analysis:
 ### 2. Model Architecture
 Each Gaussian splat is parameterized using covariance matrix representation:
 
-**Covariance Matrix Parameterization**  
+**Covariance Matrix Parameterization**
 - **Centers (μ)**: Sigmoid-bounded to stay within image domain
 - **Covariance (Σ)**: Cholesky decomposition `Σ = L @ L^T` ensures positive definiteness
 - **Amplitudes (a)**: Softplus activation for non-negativity
+- **Sharpness (s)**: Exponential mapping `s = 2 * exp(s')` controls edge falloff (default s=2 for standard Gaussian)
 
-Mathematical form: `f(x) = a * exp(-0.5 * (x-μ)^T @ Σ^{-1} @ (x-μ))`
+Mathematical form: `f(x) = a * exp(-0.5 * ||y||^s)` where `y = Σ^(-1/2) @ (x-μ)` and s controls edge sharpness
 
 The implementation avoids explicit matrix inversion by solving the triangular system `L @ y = (x-μ)` 
 and computing the quadratic form as `||y||²`.
@@ -99,6 +100,7 @@ params, amps, stats = fit_gaussian_splats(
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
+    # l1_sharpness auto-set to 0.01 * lr for standard Gaussian regularization
     # enable_dynamic_ops=True by default for optimal results
 )
 

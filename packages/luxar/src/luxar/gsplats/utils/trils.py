@@ -29,6 +29,44 @@ def tril_size(d: int) -> int:
     return d * (d + 1) // 2
 
 
+def calculate_gradient_dilution_factor(d: int) -> float:
+    """
+    Calculate gradient dilution compensation factor for higher dimensions.
+
+    Gradient dilution occurs because higher dimensions have more parameters per splat,
+    spreading gradients thinner. This function computes the compensation factor.
+
+    Parameters
+    ----------
+    d : int
+        Dimensionality
+
+    Returns
+    -------
+    float
+        Gradient dilution compensation factor (multiply base learning rate by this)
+
+    Notes
+    -----
+    - 2D/3D: Conservative scaling based on parameter count
+    - 4D+: More aggressive scaling combining spatial and parameter complexity
+    """
+    # Calculate number of parameters per splat
+    params_2d = 2 + tril_size(2)  # 5 parameters (baseline)
+    params_current = d + tril_size(d)  # Current dimension parameters
+
+    if d <= 3:
+        # Conservative scaling for 2D/3D (maintain existing quality)
+        gradient_dilution_factor = params_current / params_2d
+    else:
+        # More aggressive scaling for 4D+ (address empirical findings)
+        dimensional_complexity = d**0.8  # Spatial complexity scaling
+        parameter_complexity = params_current / params_2d  # Parameter dilution
+        gradient_dilution_factor = dimensional_complexity * parameter_complexity
+
+    return gradient_dilution_factor
+
+
 def pack_tril(L: np.ndarray) -> np.ndarray:
     """
     Pack lower-triangular portion of matrices into compact vector representation.

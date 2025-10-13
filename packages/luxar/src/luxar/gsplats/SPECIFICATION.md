@@ -54,41 +54,52 @@ Generate overcomplete candidate locations using three complementary methods:
 
 **Parameters:**
 - `raw_mu`: Unconstrained center parameters, shape (N, d)
-- `raw_L_diag`: Unconstrained diagonal parameters, shape (N, d)  
+- `raw_L_diag`: Unconstrained diagonal parameters, shape (N, d)
 - `L_off`: Off-diagonal elements, shape (N, tril_size(d)-d)
 - `raw_a`: Unconstrained amplitude parameters, shape (N,)
+- `sharpness_offsets_raw`: Sharpness offset parameters, shape (N,) - controls edge falloff
 
 **Parameterization:**
 - Centers: `� = sigmoid(raw_�) * clamp(shape - 1, min=1)`
 - Diagonal: `L_diag = �_min_diag + softplus(raw_L_diag)`
 - Off-diagonal: `L_off = raw_L_off` (unconstrained)
 - Amplitudes: `a = softplus(raw_a)`
+- Sharpness: `s = 2 * exp(sharpness_offsets_raw)` (exponential mapping, default s=2)
 
 **Initialization:**
 - Transform initial centers to logit space: `raw_� = log(u) - log(1-u)` where `u = centers/max(shape-1, 1)`
 - Use `stable_inverse_softplus` for diagonal and amplitude initialization
 - Clamp normalized coordinates to [1e-6, 1-1e-6] to avoid sigmoid saturation
+- Initialize sharpness offsets to 0: `sharpness_offsets_raw = 0` (gives s = 2, standard Gaussian)
 
 **Key Methods:**
-- `current_params()`: Return transformed (centers, L_matrices, amplitudes)
+- `current_params()`: Return transformed (centers, L_matrices, amplitudes, sharpness) as 4-tuple
 - `_build_L()`: Reconstruct lower-triangular matrices from parameters
-- `forward()`: Render all splats using main rendering function
+- `forward()`: Render all splats using main rendering function with sharpness
 - `n_splats()`: Return current number of splats
-- `prune_(keep_mask)`: Remove splats by boolean mask
-- `append_(centers, Ls, amps)`: Add new splats
-- `replace_with(centers, Ls, amps)`: Replace all parameters
+- `prune_(keep_mask)`: Remove splats by boolean mask (including sharpness)
+- `append_(centers, Ls, amps, sharpness=None)`: Add new splats (defaults to s=2 if None)
+- `replace_with(centers, Ls, amps, sharpness=None)`: Replace all parameters
+- `_to_internal_params(centers, Ls, amps, sharpness=None)`: Convert external to internal parameterization
 
-### Rendering Function: `render_gaussians(shape, centers, Ls, amps, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+### Rendering Function: `render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
 
 **Algorithm:**
-1. Compute AABB per splat: `radii = ceil(truncate * sqrt(diag(�)))`
-2. Optional amplitude-aware shrinking: if `a * exp(-0.5 * t�) < intensity_floor`, reduce radius
+1. **Compute sharpness-adjusted AABB per splat**:
+   - For generalized Gaussian `exp(-0.5 * ||y||^s)`, the effective radius is adjusted: `effective_truncate = truncate^(2/s)`
+   - **Rationale**: For same threshold as standard Gaussian (s=2), solve `r^s = truncate²` → `r = truncate^(2/s)`
+   - Compute radii: `radii = ceil(effective_truncate * sqrt(diag(Σ)))`
+   - **Examples**: s=2.0 → 3^1 = 3 (unchanged), s=1.5 → 3^1.33 ≈ 4.73 (larger for soft splats), s=3.0 → 3^0.67 ≈ 2.08 (smaller for sharp splats)
+2. **Optional amplitude-aware shrinking**: if `a * exp(-0.5 * t^s) < intensity_floor`, reduce radius using sharpness-adjusted threshold
 3. Group splats by box dimensions for grid reuse: `{(h1,h2,...): [indices]}`
 4. For each group:
    - Generate coordinate grid using `meshgrid`
    - Process in memory chunks to prevent OOM
    - Solve `L * y = (x - �)` for all points (avoid matrix inversion)
-   - Compute `exp(-0.5 * ||y||�) * amplitude`
+   - **Apply generalized Gaussian**: Compute `exp(-0.5 * ||y||�^(s/2)) * amplitude`
+     - Standard case (s=2): `exp(-0.5 * ||y||�)`
+     - Sharper case (s>2): `exp(-0.5 * ||y||�^(s/2))` - faster decay, sharper edges
+     - Softer case (s<2): `exp(-0.5 * ||y||�^(s/2))` - slower decay, heavier tails
    - Accumulate into output using `index_add_`
 
 **Fast paths for 2D/3D:**
@@ -101,6 +112,114 @@ Generate overcomplete candidate locations using three complementary methods:
 - CUDA: use 60% of `torch.cuda.mem_get_info()`, fallback 2GB
 - Account for tensor memory: `K * (2*d + 2) * bytes_per_element * 1.5`
 - Clamp chunk sizes to [1024, 1048576]
+
+### 2.1 Per-Splat Sharpness Feature
+
+**Overview:**
+Per-splat sharpness extends standard Gaussian splatting to **generalized Gaussian distributions**, enabling adaptive edge control for better sparse approximations. Each splat can learn its optimal sharpness parameter independently.
+
+**Mathematical Formulation:**
+- **Standard Gaussian**: `I(x) = a * exp(-0.5 * ||y||²)`
+- **Generalized Gaussian**: `I(x) = a * exp(-0.5 * ||y||^s)` where s is sharpness
+- **Computational form**: `exp(-0.5 * expo^(s/2))` where `expo = ||y||²` (Mahalanobis distance squared)
+
+**Sharpness Parameter s:**
+- `s = 2`: Standard Gaussian (smooth exponential falloff, infinite support)
+- `s > 2`: Sharper edges, more compact support → **better sparse representations**
+- `s < 2`: Softer edges, heavier tails (Laplacian-like for s=1)
+- `s → ∞`: Approaches box function (hard edges)
+- `s → 0`: Approaches uniform (very soft)
+
+**Exponential Parameterization:**
+```
+s = 2 * exp(s')
+```
+where `s'` is the learned **sharpness offset** parameter.
+
+**Benefits of exponential parameterization:**
+1. **Zero-centered learning**: `s' = 0` → `s = 2` (standard Gaussian is natural default)
+2. **Symmetric exploration**: Can increase/decrease sharpness from sensible baseline
+3. **Always positive**: `s > 0` guaranteed for all `s' ∈ ℝ`
+4. **L1 regularization friendly**: Pushing `s' → 0` encourages standard Gaussians
+5. **Smooth gradients**: Exponential provides stable optimization dynamics
+
+**Inverse transformation:**
+```
+s' = log(s / 2)
+```
+Used when initializing from existing sharpness values.
+
+**Optimization Strategy:**
+1. **Initialization**: All splats start at `s' = 0` (standard Gaussian, s=2)
+2. **L1 regularization**: `loss += l1_sharpness * mean(|s'|)`
+   - Encourages splats to remain at standard Gaussian unless beneficial
+   - Promotes sparsity in sharpness parameter space
+   - Default: `l1_sharpness = 0.05 * lr` (5% of base LR)
+3. **Differential learning rate**: Sharpness parameters use fixed slower learning rate
+   - Fixed: `sharpness_lr = 0.5 * base_lr` (hardcoded, not gradient-dilution-compensated)
+   - Rationale: Sharpness is dimensionality-independent (always 1 scalar), so no gradient dilution applied
+   - Moderate learning speed (0.5×) for conservative shape parameter updates
+   - Prevents instability from rapid sharpness changes
+4. **Adaptive learning**: Splats learn optimal sharpness based on local structure
+   - Sharp features → learn s > 2
+   - Smooth regions → stay near s = 2
+   - Noisy areas → may learn s < 2 for robustness
+
+**Implementation Details:**
+
+**Model parameter:**
+```python
+self.sharpness_offsets_raw = nn.Parameter(
+    torch.zeros(N, dtype=torch.float32, device=device)
+)
+```
+
+**Forward transformation:**
+```python
+sharpness = 2.0 * torch.exp(self.sharpness_offsets_raw)  # s = 2 * exp(s')
+```
+
+**Rendering integration:**
+```python
+# Compute Mahalanobis distance squared
+expo = torch.sum(y * y, dim=1)  # ||y||² where y = L^(-1) * (x - μ)
+
+# Apply generalized Gaussian falloff
+vals = torch.exp(-0.5 * torch.pow(expo, sharpness[:, None] / 2.0)) * amplitude[:, None]
+```
+
+**Dynamic operations:**
+- `prune_()`: Remove sharpness parameters for pruned splats
+- `append_()`: Initialize new splats with `s' = 0` (or inherit from parent)
+- `replace_with()`: Accept optional sharpness parameter
+
+**Benefits for Gaussian Splatting:**
+1. **Better sparse approximations**: Sharper splats reduce overlap, fewer splats needed
+2. **Sharp feature preservation**: Edges and boundaries represented more accurately
+3. **Adaptive support**: Each splat learns optimal spatial extent
+4. **Improved compression**: More efficient tiling of spatial domain
+5. **Backward compatible**: Default `s=2` recovers standard Gaussian behavior
+
+**Configuration Parameters:**
+- `l1_sharpness`: L1 regularization strength on `s'` (default 0.05 * lr, 5% of base learning rate)
+
+**Example sharpness values:**
+- Smooth blobs: `s ≈ 1.5-2.0` (soft Gaussian-like)
+- Medium features: `s ≈ 2.0-3.0` (standard to slightly sharp)
+- Sharp edges: `s ≈ 3.0-6.0` (compact, efficient)
+- Very sharp boundaries: `s ≈ 6.0+` (nearly box-like)
+
+**Visualization of falloff:**
+For 1D profile at distance r from center:
+- `s=1`: Linear-like decay, heavy tails
+- `s=2`: Classic Gaussian bell curve
+- `s=4`: Flatter center, rapid edge decay
+- `s=8`: Nearly flat center, very sharp drop
+
+**Trade-offs:**
+- Higher sharpness → sharper reconstruction, but harder optimization
+- Lower sharpness → smoother reconstruction, more robust to noise
+- L1 regularization balances these by encouraging standard Gaussian unless needed
 
 ## 3. Per-Splat Optimization (`optim/`)
 
@@ -125,10 +244,11 @@ Maintain separate momentum buffers for each parameter type (�, L_diag, L_off, 
 5. **Apply parameter-type-specific learning rates**: `effective_lr = base_lr × parameter_multiplier`
 6. Update parameters in-place with type-specific rates
 
-**Parameter-Type-Specific Learning Rate Multipliers (Hard-coded):**
-- **Position parameters (μ)**: `×0.1` - Prevents splat migration and proliferation
-- **Variance parameters (L_diag, L_off)**: `×1.0` - Normal covariance adaptation
-- **Amplitude parameters (a)**: `×2.0` - Fast intensity convergence
+**Parameter-Type-Specific Learning Rate Multipliers:**
+- **Position parameters (μ)**: `×0.1` (hardcoded) - Prevents splat migration and proliferation
+- **Variance parameters (L_diag, L_off)**: `×1.0` (hardcoded, with gradient dilution compensation) - Normal covariance adaptation
+- **Amplitude parameters (a)**: `×2.0` (hardcoded) - Fast intensity convergence
+- **Sharpness parameters (s')**: `×0.5` (hardcoded, no gradient dilution) - Conservative shape parameter updates
 
 **Anti-Proliferation Rationale:**
 - **Root cause**: Splats migrating away from seeded locations causes runaway seeding cycles
@@ -199,6 +319,7 @@ For each detected residual peak location, determine if coverage is sufficient us
   - Center: Peak location coordinates
   - Covariance: **Isotropic** - `L = eye(d) × init_sigma_vox` (simple spherical/circular splats)
   - Amplitude: **Direct residual value** - `amplitude = |residual[center_coordinates]|`
+  - Sharpness: **Standard Gaussian** - `s' = 0` (gives `s = 2`, standard Gaussian falloff)
   - **Rationale**: Simple, fast, robust approach that relies on optimization to evolve optimal shapes
   - **Benefits**: Eliminates complex rendering and covariance analysis, always numerically stable
 - **Validation**: **Adaptive amplitude threshold** - only add if `estimated_amplitude ≥ local_residual × relative_contribution_factor`
@@ -315,7 +436,7 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, ...)`
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
@@ -362,16 +483,15 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 **Optimization loop:**
 1. Setup per-splat optimizer and scheduler
-2. **Enhanced gradient dilution compensation**: Scale learning rate by combined parameter complexity and dimensional spatial complexity
-   - **Problem**: Higher dimensions suffer from both parameter dilution and spatial complexity challenges
-   - **Parameter dilution**: 2D (5 params), 3D (10 params), 4D (15 params), nD (d + d(d+1)/2 + 1 params)
-   - **Spatial complexity**: 4D space is geometrically more complex than 2D/3D for optimization
-   - **Enhanced compensation formula**: `effective_lr = base_lr × dimensional_complexity × parameter_complexity`
-     - `dimensional_complexity = d^0.8` (accounts for spatial optimization difficulty)
-     - `parameter_complexity = params_current / params_2d` (accounts for gradient dilution)
-   - **Result**: More aggressive scaling: 2D (×1.0), 3D (×5.2), 4D (×12.0) for effective nD optimization
-3. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
-4. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
+   - **Gradient dilution compensation**: Optimizer internally applies gradient dilution compensation to learning rate
+     - **Problem**: Higher dimensions have more parameters per splat, diluting gradients
+     - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (10 params: 3 pos + 6 cov), 4D (15 params: 4 pos + 10 cov), nD (d + d(d+1)/2 params)
+     - **Compensation formula** (for d ≤ 3): `effective_lr = base_lr × (params_current / params_2d)`
+     - **Enhanced formula** (for d > 3): `effective_lr = base_lr × d^0.8 × (params_current / params_2d)`
+     - **Result**: Learning rate scaling - 2D (×1.0), 3D (×2.0), 4D (×7.1)
+     - **Sharpness exception**: Sharpness always uses base_lr (no gradient dilution) since it's a single scalar regardless of dimension
+2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
+3. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
 4. For each iteration:
    - Forward pass: `pred = model()`
    - Loss computation: MSE or Poisson + optional L1 regularization
@@ -411,10 +531,14 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Asymmetric Poisson**: Apply same over-prediction penalty to Poisson deviance
 - **L1 (Mean Absolute Error)**: `mean(|pred - target|)`
 - **Asymmetric L1**: `mean(where(pred > target, F * |pred - target|, |pred - target|))` where F is over-prediction penalty factor
-- **Proportional L1 Regularization**: `+ l1_amp * mean(|softplus(raw_a)|)` where `l1_amp = 0.1 * lr` by default
+- **Proportional L1 Regularization**:
+  - **Amplitude regularization**: `+ l1_amp * mean(|softplus(raw_a)|)` where `l1_amp = 0.1 * lr` by default (10% of base LR = 5% of amplitude LR 2.0×)
+  - **Diagonal regularization**: `+ l1_diag * mean(|softplus(raw_L_diag)|)` where `l1_diag = 0.01 * lr` by default (1% of base LR)
+  - **Sharpness regularization**: `+ l1_sharpness * mean(|sharpness_offsets_raw|)` where `l1_sharpness = 0.05 * lr` by default (5% of base LR = 10% of sharpness LR 0.5×)
   - **Rationale**: L1 regularization should scale with optimization strength for consistent sparsity pressure
   - **Dimensional scaling**: Works correctly with gradient dilution compensation (higher LR → higher L1)
   - **Auto-tuning**: Eliminates need for manual L1 adjustment when changing learning rates
+  - **Sharpness sparsity**: Optional L1 on sharpness offsets encourages standard Gaussians (`s' = 0`, `s = 2`) unless beneficial to deviate
 
 **Loss Function Selection Guide:**
 - **MSE**: Best for smooth data with Gaussian noise, fast convergence, well-behaved gradients

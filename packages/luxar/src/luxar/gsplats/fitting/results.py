@@ -14,10 +14,6 @@ from luxar.gsplats.fitting.config import (
     OptimizationResults,
     PreprocessedData,
 )
-from luxar.gsplats.fitting.visualization import (
-    display_compression_analysis,
-    show_optimization_movie,
-)
 from luxar.gsplats.utils.trils import pack_tril
 
 
@@ -51,6 +47,7 @@ def finalize_results(
     centers_np = optimization_results.centers.cpu().numpy()
     Ls_np = optimization_results.Ls.cpu().numpy()
     amps_np = optimization_results.amps.cpu().numpy()
+    sharpness_np = optimization_results.sharpness.cpu().numpy()
 
     # Rescale amplitudes to original intensity range
     amps_np = amps_np * preprocessed_data.intensity_range
@@ -62,6 +59,15 @@ def finalize_results(
     # Pack parameters
     params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
 
+    # Compute sharpness statistics
+    sharpness_stats = {
+        "sharpness_min": float(np.min(sharpness_np)),
+        "sharpness_max": float(np.max(sharpness_np)),
+        "sharpness_mean": float(np.mean(sharpness_np)),
+        "sharpness_std": float(np.std(sharpness_np)),
+        "sharpness_median": float(np.median(sharpness_np)),
+    }
+
     # Compute statistics reflecting best state (not final state)
     stats = {
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
@@ -71,6 +77,7 @@ def finalize_results(
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "converged": optimization_results.actual_iters < config.n_iters,
         "n_splats": len(amps_np),  # Final splat count from best state
+        **sharpness_stats,  # Include sharpness statistics
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)
