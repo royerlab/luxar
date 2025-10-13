@@ -51,7 +51,7 @@ The fitting uses PyTorch with advanced optimization strategies:
 - **Adaptive Amplitude Thresholds**: Scale with local residual magnitude to prevent plateaus
 - **Early Stopping**: Maximum absolute error convergence criterion
 - **Adaptive Learning Rate**: ReduceLROnPlateau scheduler with per-splat rates
-- **Regularization**: Optional L1 penalty on amplitudes for sparsity
+- **Regularization**: Optional L1 penalties on amplitudes and diagonal elements for sparsity and shape control
 
 ### 4. Rendering Pipeline
 Efficient rendering using batched operations with two computational approaches:
@@ -90,14 +90,15 @@ from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
 # 1. One-step fitting with intelligent defaults
 params, amps, stats = fit_gaussian_splats(
     image,
-    # centers_overcomplete auto-generated with volume-proportional scaling
+    # seeds auto-generated with volume-proportional scaling
     # norm_percentile=0.0 by default (full range normalization)
     n_iters=300,                          # Maximum iterations
     lr=0.01,                              # Stable learning rate
     asymmetric_penalty=10.0,              # 10x penalty for over-prediction (default)
     loss_type="l1",                       # "mse", "poisson", or "l1" for robust features
     # max_abs_error auto-set to 0.01 (1% of normalized range)
-    # l1_amp auto-set to 0.1 * lr for proportional sparsity regularization
+    # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
+    # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
     # enable_dynamic_ops=True by default for optimal results
 )
 
@@ -124,7 +125,7 @@ custom_candidates = find_candidates_overcomplete_nd(
 )
 
 params_custom, amps_custom, _ = fit_gaussian_splats(
-    image, centers_overcomplete=custom_candidates
+    image, seeds=custom_candidates
 )
 ```
 
@@ -233,6 +234,39 @@ The package supports three loss functions, each optimized for different data cha
 
 **All loss functions support asymmetric penalties** for optimal performance with additive Gaussian models.
 
+## Regularization Controls
+
+The system includes two types of L1 regularization to control model complexity and shape characteristics:
+
+### **Amplitude Regularization (`l1_amp`)**
+- **Purpose**: Promotes sparsity by penalizing splat amplitudes
+- **Default**: `0.1 * lr` (10% of learning rate)
+- **Effect**: Encourages fewer, higher-quality splats by suppressing weak contributions
+- **Use when**: You want to reduce the number of active splats for efficiency or interpretability
+
+### **Diagonal Regularization (`l1_diag`)**
+- **Purpose**: Encourages smaller, more isotropic (circular/spherical) splats
+- **Default**: `0.01 * lr` (1% of learning rate)
+- **Effect**: Regularizes the Cholesky diagonal elements, promoting smaller, rounder splats
+- **Mathematical insight**: When diagonal parameters → 0, splats become small and axis-aligned
+
+### **Combined Usage**
+```python
+params, amps, stats = fit_gaussian_splats(
+    image,
+    l1_amp=0.02,      # Strong amplitude sparsity (2% of lr)
+    l1_diag=0.005,    # Mild shape regularization (0.5% of lr)
+    lr=0.01,
+    n_iters=300
+)
+```
+
+**Benefits:**
+- **Model parsimony**: Fewer, cleaner splats with controlled shapes
+- **Overfitting prevention**: Regularization prevents excessive model complexity
+- **Interpretable results**: Simpler splat shapes are easier to understand
+- **Automatic scaling**: Both regularization terms scale proportionally with learning rate
+
 ## Splat Proliferation Prevention
 
 The system prevents runaway splat multiplication through sophisticated parameter-type-specific learning rates:
@@ -324,7 +358,7 @@ config.do_split = True
 # Fit with dynamic operations
 params, amps, stats = fit_gaussian_splats(
     image,
-    centers_overcomplete=candidates,
+    seeds=candidates,
     enable_dynamic_ops=True,
     dynamic_config=config,
     n_iters=300
@@ -367,7 +401,7 @@ The per-splat optimizer is automatically used when dynamic operations are enable
 # Per-splat optimizer is used automatically with dynamic operations
 params, amps, stats = fit_gaussian_splats(
     image,
-    centers_overcomplete=candidates,
+    seeds=candidates,
     enable_dynamic_ops=True,  # Automatically uses per-splat optimizer
     n_iters=300
 )
@@ -397,7 +431,7 @@ fitter = GaussianSplatFitter(
 # Fit with detailed statistics
 params, amps, stats = fitter.fit(
     image,
-    centers_overcomplete=candidates,
+    seeds=candidates,
     n_iters=500,
     early_stopping=True,
     early_stop_patience=20,
@@ -416,16 +450,17 @@ print(f"Final loss: {stats['final_loss']:.5g}")
 
 ### Main Functions
 
-#### `fit_gaussian_splats(V, centers_overcomplete, **kwargs)`
+#### `fit_gaussian_splats(V, seeds, **kwargs)`
 Main fitting function with automatic optimizations.
 
 **Key Parameters:**
 - `V`: Input n-dimensional array to reconstruct
-- `centers_overcomplete`: Initial candidate positions (N, d)
+- `seeds`: Initial candidate positions (N, d)
 - `n_iters`: Maximum iterations (default: 300)
 - `lr`: Learning rate (default: 0.2)
 - `loss_type`: "mse" or "poisson" (default: "mse")
-- `l1_amp`: L1 regularization strength (default: 0.0)
+- `l1_amp`: L1 regularization on amplitudes (default: 0.1 * lr)
+- `l1_diag`: L1 regularization on diagonal elements (default: 0.01 * lr)
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
 - `early_stopping`: Enable convergence detection (default: True)
@@ -630,6 +665,43 @@ Tests cover:
 - Detects both plateaus and oscillations
 - Adaptive learning rate on plateaus
 - Best state tracking with restoration
+
+## Interactive Demos
+
+The package includes several interactive napari demos that showcase Gaussian splatting on real-world data:
+
+### **Biological Imaging: Mitosis Demo**
+```bash
+python demo_splats_mitosis.py
+```
+- **Dataset**: Human mitosis histology from scikit-image
+- **Focus**: Biological cell structures and morphology
+- **Features**: Optimized for microscopy data with fine cellular details
+
+### **Photography: Astronaut Demo**
+```bash
+python demo_splats_astronaut.py
+```
+- **Dataset**: Classic astronaut photograph from scikit-image
+- **Focus**: Complex photographic content with faces, textures, and spatial details
+- **Features**: Demonstrates regularization effects (`l1_diag` parameter) on natural images
+
+### **Metallic Textures: Coins Demo**
+```bash
+python demo_splats_coins.py
+```
+- **Dataset**: Classic coins image from scikit-image
+- **Focus**: Metallic surface textures, circular objects, and illumination gradients
+- **Features**: Gold-themed UI, optimized parameters for metallic surfaces and coin boundaries
+
+### **What the Demos Show**
+- **Interactive compression analysis**: Slider to explore quality vs file size trade-offs
+- **Oriented ellipse visualization**: See how splats capture image structure
+- **Real-time statistics**: Bits per pixel, compression ratios, and reconstruction errors
+- **Regularization effects**: Compare different L1 penalty settings
+- **Dynamic operations**: Watch splat management during optimization
+
+**Usage**: Each demo supports `--no-napari` flag for testing without the GUI.
 
 ## Citation
 

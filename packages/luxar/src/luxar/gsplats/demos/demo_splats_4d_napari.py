@@ -39,9 +39,7 @@ Arbol.max_depth = 3
 
 
 with asection("4D Gaussian Splatting Demo"):
-    aprint(
-        "🌌 Interactive 4D hypercube analysis with nD algorithm validation"
-    )
+    aprint("🌌 Interactive 4D hypercube analysis with nD algorithm validation")
 
     with asection("Creating 4D test data"):
         # Create 4D hypercube data: (time/spectral, z, y, x)
@@ -54,18 +52,14 @@ with asection("4D Gaussian Splatting Demo"):
         n_blobs = 100
         for i in range(n_blobs):
             # Random center in 4D space
-            center = [
-                np.random.uniform(1, s - 1) for s in shape_4d
-            ]
+            center = [np.random.uniform(1, s - 1) for s in shape_4d]
 
             # Random size and intensity
             sigma = np.random.uniform(1.0, 6.0)
             amplitude = np.random.uniform(0.5, 1.0)
 
             # Create 4D coordinate grids
-            grids = np.meshgrid(
-                *[np.arange(s) for s in shape_4d], indexing="ij"
-            )
+            grids = np.meshgrid(*[np.arange(s) for s in shape_4d], indexing="ij")
 
             # Compute 4D distance from center
             dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
@@ -89,7 +83,7 @@ with asection("4D Gaussian Splatting Demo"):
         # Test complete nD pipeline with auto-candidate generation
         params_full, amps, stats = fit_gaussian_splats(
             V,
-            # centers_overcomplete auto-generated with 4D-aware intelligent defaults
+            # seeds auto-generated with 4D-aware intelligent defaults
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,

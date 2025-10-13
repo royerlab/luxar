@@ -76,7 +76,7 @@ if USE_DYNAMIC_OPS:
 # 3) Fit oriented (full-covariance) Gaussians with auto-candidate generation
 params_full, amps, stats = fit_gaussian_splats(
     V,
-    # centers_overcomplete auto-generated with intelligent defaults
+    # seeds auto-generated with intelligent defaults
     n_iters=N_ITERS,
     lr=LR,
     loss_type=LOSS_TYPE,

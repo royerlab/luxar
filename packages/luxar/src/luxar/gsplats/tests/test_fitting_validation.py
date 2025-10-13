@@ -8,6 +8,7 @@ import torch
 
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -31,7 +32,7 @@ class MockGaussianSplatFitter:
 class TestPrepareConfig:
     """Test configuration preparation and validation."""
 
-    def test_basic_config_preparation(self):
+    def test_basic_config_preparation(self) -> None:
         """Test basic configuration preparation."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
@@ -44,7 +45,7 @@ class TestPrepareConfig:
         assert config.n_iters == 1000  # default
         assert config.lr == 0.01  # default
 
-    def test_input_validation_empty_image(self):
+    def test_input_validation_empty_image(self) -> None:
         """Test validation of empty image."""
         fitter = MockGaussianSplatFitter()
         V = np.array([], dtype=np.float32)
@@ -52,33 +53,37 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="Input image V cannot be empty"):
             prepare_fit_config(fitter, V)
 
-    def test_input_validation_scalar_image(self):
+    def test_input_validation_scalar_image(self) -> None:
         """Test validation of scalar image."""
         fitter = MockGaussianSplatFitter()
         V = np.array(5.0, dtype=np.float32)
 
-        with pytest.raises(ValueError, match="Input image V must have at least 1 dimension"):
+        with pytest.raises(
+            ValueError, match="Input image V must have at least 1 dimension"
+        ):
             prepare_fit_config(fitter, V)
 
-    def test_candidates_validation_wrong_dimensions(self):
+    def test_candidates_validation_wrong_dimensions(self) -> None:
         """Test validation of candidate centers with wrong dimensions."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
-        centers = np.random.rand(10, 3).astype(np.float32)  # Wrong: 3D centers for 2D image
+        centers = np.random.rand(10, 3).astype(
+            np.float32
+        )  # Wrong: 3D centers for 2D image
 
-        with pytest.raises(ValueError, match="centers_overcomplete must have 2 columns"):
-            prepare_fit_config(fitter, V, centers_overcomplete=centers)
+        with pytest.raises(ValueError, match="seeds must have 2 columns"):
+            prepare_fit_config(fitter, V, seeds=centers)
 
-    def test_candidates_validation_wrong_shape(self):
+    def test_candidates_validation_wrong_shape(self) -> None:
         """Test validation of candidate centers with wrong shape."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
         centers = np.random.rand(10).astype(np.float32)  # Wrong: 1D array
 
-        with pytest.raises(ValueError, match="centers_overcomplete must be a 2D array"):
-            prepare_fit_config(fitter, V, centers_overcomplete=centers)
+        with pytest.raises(ValueError, match="seeds must be a 2D array"):
+            prepare_fit_config(fitter, V, seeds=centers)
 
-    def test_parameter_validation_negative_sigma(self):
+    def test_parameter_validation_negative_sigma(self) -> None:
         """Test validation of negative sigma."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
@@ -86,7 +91,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="init_sigma_vox must be positive"):
             prepare_fit_config(fitter, V, init_sigma_vox=-1.0)
 
-    def test_parameter_validation_negative_iterations(self):
+    def test_parameter_validation_negative_iterations(self) -> None:
         """Test validation of negative iterations."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
@@ -94,7 +99,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="n_iters must be positive"):
             prepare_fit_config(fitter, V, n_iters=-10)
 
-    def test_parameter_validation_negative_lr(self):
+    def test_parameter_validation_negative_lr(self) -> None:
         """Test validation of negative learning rate."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
@@ -102,43 +107,49 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="lr must be positive"):
             prepare_fit_config(fitter, V, lr=-0.01)
 
-    def test_parameter_validation_invalid_loss_type(self):
+    def test_parameter_validation_invalid_loss_type(self) -> None:
         """Test validation of invalid loss type."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
-        with pytest.raises(ValueError, match="loss_type must be 'mse', 'poisson', or 'l1'"):
+        with pytest.raises(
+            ValueError, match="loss_type must be 'mse', 'poisson', or 'l1'"
+        ):
             prepare_fit_config(fitter, V, loss_type="invalid")
 
-    def test_sigma_constraints_validation_wrong_length(self):
+    def test_sigma_constraints_validation_wrong_length(self) -> None:
         """Test validation of sigma constraints with wrong length."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
         with pytest.raises(ValueError, match="sigma_min_diag must have length 2"):
-            prepare_fit_config(fitter, V, sigma_min_diag=[0.1, 0.1, 0.1])  # Wrong: 3 values for 2D
+            prepare_fit_config(
+                fitter, V, sigma_min_diag=[0.1, 0.1, 0.1]
+            )  # Wrong: 3 values for 2D
 
-    def test_sigma_constraints_validation_negative_values(self):
+    def test_sigma_constraints_validation_negative_values(self) -> None:
         """Test validation of negative sigma constraints."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
-        with pytest.raises(ValueError, match="All sigma_min_diag values must be positive"):
+        with pytest.raises(
+            ValueError, match="All sigma_min_diag values must be positive"
+        ):
             prepare_fit_config(fitter, V, sigma_min_diag=[0.1, -0.1])
 
-    def test_sigma_max_less_than_min(self):
+    def test_sigma_max_less_than_min(self) -> None:
         """Test validation when sigma_max is less than sigma_min."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
-        with pytest.raises(ValueError, match="sigma_max_diag must be greater than sigma_min_diag"):
+        with pytest.raises(
+            ValueError, match="sigma_max_diag must be greater than sigma_min_diag"
+        ):
             prepare_fit_config(
-                fitter, V,
-                sigma_min_diag=[1.0, 1.0],
-                sigma_max_diag=[0.5, 0.5]
+                fitter, V, sigma_min_diag=[1.0, 1.0], sigma_max_diag=[0.5, 0.5]
             )
 
-    def test_l1_regularization_default(self):
+    def test_l1_regularization_default(self) -> None:
         """Test that L1 regularization defaults to 10% of learning rate."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
@@ -146,24 +157,35 @@ class TestPrepareConfig:
         config = prepare_fit_config(fitter, V, lr=0.02)
 
         assert config.l1_amp == 0.002  # 10% of 0.02
+        assert config.l1_diag == 0.0002  # 1% of 0.02
 
-    def test_custom_parameters_preserved(self):
+    def test_l1_diag_regularization_custom(self) -> None:
+        """Test custom L1 diagonal regularization parameter."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        config = prepare_fit_config(fitter, V, lr=0.01, l1_diag=0.005)
+
+        assert config.l1_diag == 0.005  # Custom value preserved
+
+    def test_custom_parameters_preserved(self) -> None:
         """Test that custom parameters are preserved correctly."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
         centers = np.random.rand(5, 2).astype(np.float32)
 
         config = prepare_fit_config(
-            fitter, V,
-            centers_overcomplete=centers,
+            fitter,
+            V,
+            seeds=centers,
             n_iters=500,
             lr=0.05,
             loss_type="mse",
             truncate=2.5,
-            verbose=False
+            verbose=False,
         )
 
-        assert config.centers_overcomplete.shape == (5, 2)
+        assert config.seeds.shape == (5, 2)
         assert config.n_iters == 500
         assert config.lr == 0.05
         assert config.loss_type == "mse"

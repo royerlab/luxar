@@ -55,7 +55,9 @@ def finalize_results(
     # Rescale amplitudes to original intensity range
     amps_np = amps_np * preprocessed_data.intensity_range
     if config.verbose:
-        aprint(f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})")
+        aprint(
+            f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})"
+        )
 
     # Pack parameters
     params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
@@ -71,16 +73,15 @@ def finalize_results(
         "n_splats": len(amps_np),  # Final splat count from best state
     }
 
-    # Show optimization movie (only if enabled and frames were recorded)
+    # Store movie frames in stats for later display (don't show here to avoid timing issues)
     if (
         config.napari_movie
         and optimization_results.movie_frames is not None
         and len(optimization_results.movie_frames["target"]) > 0
     ):
-        show_optimization_movie(optimization_results.movie_frames, config.V.shape)
-
-    # Calculate and display compression ratio
-    if config.verbose:
-        display_compression_analysis(config.V, params_full, amps_np)
+        stats["movie_frames"] = optimization_results.movie_frames
+        stats["movie_shape"] = config.V.shape
+    else:
+        stats["movie_frames"] = None
 
     return params_full.astype(np.float32), amps_np.astype(np.float32), stats

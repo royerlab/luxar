@@ -524,7 +524,7 @@ In your `fit_gaussian_splats(...)`, after constructing `fitter = FitGaussianSpla
 ```python
 params, amps, stats = fitter.fit(
     V=V,
-    centers_overcomplete=centers_overcomplete,
+    seeds=seeds,
     n_iters=n_iters,
     lr=lr,
     loss_type=loss_type,

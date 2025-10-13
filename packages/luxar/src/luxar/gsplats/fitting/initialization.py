@@ -47,9 +47,9 @@ def initialize_optimization(
     for i in range(d):
         L0[:, i, i] = config.init_sigma_vox
 
-    # Extract amplitudes from image at candidate locations
+    # Extract amplitudes from image at seed locations
     idx = np.clip(
-        np.round(preprocessed_data.centers_overcomplete).astype(int),
+        np.round(preprocessed_data.seed_centers).astype(int),
         0,
         np.array(config.V.shape) - 1,
     )
@@ -58,7 +58,7 @@ def initialize_optimization(
     # Build model
     model = GaussianSplatModel(
         shape=config.V.shape,
-        centers0=preprocessed_data.centers_overcomplete,
+        centers0=preprocessed_data.seed_centers,
         L0=L0,
         amps0=amps0,
         sigma_min_diag=config.sigma_min_diag,

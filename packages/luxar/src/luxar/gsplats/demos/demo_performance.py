@@ -61,7 +61,7 @@ def main():
             # Use simplified one-step API with auto-candidate generation
             params, amps, stats = fit_gaussian_splats(
                 V,
-                # centers_overcomplete auto-generated with intelligent defaults
+                # seeds auto-generated with intelligent defaults
                 init_sigma_vox=1.6,
                 n_iters=args.n_iters,
                 lr=0.01,

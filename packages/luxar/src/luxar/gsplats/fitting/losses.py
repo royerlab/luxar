@@ -39,6 +39,7 @@ def create_loss_function(
     loss_type = config.loss_type
     asymmetric_penalty = config.asymmetric_penalty
     l1_amp = config.l1_amp
+    l1_diag = config.l1_diag
 
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
@@ -67,6 +68,12 @@ def create_loss_function(
             # Use raw parameters directly to avoid rebuilding L matrices and centers
             data = data + l1_amp * torch.mean(torch.abs(F.softplus(model.raw_a)))
 
+        # Add L1 regularization on diagonal elements if specified
+        if l1_diag > 0:
+            # Regularize the raw diagonal parameters (before softplus transformation)
+            # This encourages smaller, more isotropic splats
+            data = data + l1_diag * torch.mean(torch.abs(F.softplus(model.raw_L_diag)))
+
         return data
 
     return loss_fn
@@ -79,9 +86,7 @@ def _compute_poisson_loss(
     eps = 1e-8
     Vc = torch.clamp(target, min=0.0)
     Pc = torch.clamp(pred, min=eps)
-    dev = 2.0 * torch.sum(
-        Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps))
-    )
+    dev = 2.0 * torch.sum(Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
     data = dev / target.numel()
 
     # Apply asymmetric penalty if specified
@@ -94,10 +99,7 @@ def _compute_poisson_loss(
             * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
         )
         # Add (F-1) times the over-prediction loss to get total F times penalty
-        data = (
-            data
-            + (asymmetric_penalty - 1.0) * over_prediction_dev / target.numel()
-        )
+        data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / target.numel()
 
     return data
 

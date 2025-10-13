@@ -20,9 +20,10 @@ class FitConfig:
 
     Contains all parameters and settings needed for the fitting process.
     """
+
     # Input data
     V: np.ndarray
-    centers_overcomplete: Optional[np.ndarray]
+    seeds: Optional[np.ndarray | float]  # Can be array of centers or float proportion
 
     # Normalization
     norm_percentile: float
@@ -43,6 +44,7 @@ class FitConfig:
     loss_type: str
     asymmetric_penalty: Optional[float]
     l1_amp: Optional[float]
+    l1_diag: Optional[float]
 
     # Scheduler parameters
     scheduler_type: str
@@ -69,14 +71,15 @@ class PreprocessedData:
     """
     Data that has been preprocessed and is ready for optimization.
 
-    Contains normalized data, candidates, and preprocessing metadata.
+    Contains normalized data, seed centers, and preprocessing metadata.
     """
+
     # Preprocessed input data
     V_normalized: np.ndarray
     V_tensor: torch.Tensor
 
-    # Candidates
-    centers_overcomplete: np.ndarray
+    # Seed centers for initialization
+    seed_centers: np.ndarray
 
     # Normalization metadata
     image_min: float
@@ -104,6 +107,7 @@ class OptimizationResults:
 
     Contains final parameters, optimization statistics, and metadata.
     """
+
     # Model parameters (from best state)
     centers: torch.Tensor
     Ls: torch.Tensor
@@ -131,6 +135,7 @@ class ModelComponents:
 
     Contains model, optimizer, scheduler, and coordinator.
     """
+
     model: Any  # GaussianSplatModel
     optimizer: torch.optim.Optimizer
     scheduler: Any  # Learning rate scheduler

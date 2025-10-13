@@ -19,7 +19,7 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 class TestDynamicOpsConfig:
     """Test dynamic operations configuration."""
 
-    def test_default_config(self):
+    def test_default_config(self) -> None:
         """Test default configuration values."""
         cfg = DynamicOpsConfig()
         assert cfg.step_every == 50
@@ -33,7 +33,7 @@ class TestDynamicOpsConfig:
         assert cfg.min_splats_to_keep == 10
         assert cfg.init_sigma_vox == 1.5
 
-    def test_config_modification(self):
+    def test_config_modification(self) -> None:
         """Test that config values can be modified."""
         cfg = DynamicOpsConfig()
         cfg.step_every = 25
@@ -48,7 +48,7 @@ class TestDynamicOpsConfig:
 class TestResidualPeakFinding:
     """Test residual peak finding functionality."""
 
-    def test_find_residual_peaks_2d(self):
+    def test_find_residual_peaks_2d(self) -> None:
         """Test finding residual peaks in 2D images."""
         # Create a synthetic residual with clear peaks
         residual = torch.zeros((20, 20))
@@ -66,7 +66,7 @@ class TestResidualPeakFinding:
         assert (5, 5) in peak_locations
         assert (15, 15) in peak_locations
 
-    def test_find_residual_peaks_3d(self):
+    def test_find_residual_peaks_3d(self) -> None:
         """Test finding residual peaks in 3D volumes."""
         # Create a synthetic 3D residual
         residual = torch.zeros((10, 10, 10))
@@ -82,7 +82,7 @@ class TestResidualPeakFinding:
         for peak in peaks:
             assert len(peak) == 3
 
-    def test_find_residual_peaks_empty(self):
+    def test_find_residual_peaks_empty(self) -> None:
         """Test behavior with no significant peaks."""
         residual = torch.zeros((10, 10))
         peaks = _find_residual_peaks(residual, k_max_residuals=5, nms_radius_vox=2.0)
@@ -94,7 +94,7 @@ class TestResidualPeakFinding:
 class TestSimplifiedSeeding:
     """Test ultra-simple seeding approach with direct amplitude and isotropic shape."""
 
-    def test_simple_amplitude_estimation(self):
+    def test_simple_amplitude_estimation(self) -> None:
         """Test direct amplitude estimation from residual center value."""
         # Create synthetic residual with known peak
         residual = torch.zeros((20, 20))
@@ -108,7 +108,7 @@ class TestSimplifiedSeeding:
         assert amplitude.item() == 0.75  # Should exactly match residual value
         assert amplitude.item() > 0
 
-    def test_isotropic_shape_generation(self):
+    def test_isotropic_shape_generation(self) -> None:
         """Test isotropic covariance matrix generation."""
         from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 
@@ -126,7 +126,7 @@ class TestSimplifiedSeeding:
 class TestGaussianSplatModel:
     """Test basic Gaussian splat model operations required for dynamic ops."""
 
-    def test_n_splats(self):
+    def test_n_splats(self) -> None:
         """Test counting splats."""
         centers = np.array([[5.0, 5.0], [10.0, 10.0]])
         L0 = np.eye(2)[None, :, :] * 1.0  # (1, 2, 2)
@@ -141,7 +141,7 @@ class TestGaussianSplatModel:
         )
         assert model.n_splats() == 2
 
-    def test_current_params(self):
+    def test_current_params(self) -> None:
         """Test retrieving current parameters."""
         centers = np.array([[5.0, 5.0], [10.0, 10.0]])
         L0 = np.eye(2)[None, :, :] * 1.0  # (1, 2, 2)
@@ -165,7 +165,7 @@ class TestGaussianSplatModel:
 class TestDynamicOperationsIntegration:
     """Test the full dynamic operations pipeline."""
 
-    def test_dynamic_ops_with_simple_model(self):
+    def test_dynamic_ops_with_simple_model(self) -> None:
         """Test dynamic operations on a simple model."""
         # Create simple synthetic data
         V_target = torch.zeros((16, 16))
@@ -217,7 +217,7 @@ class TestDynamicOperationsIntegration:
         assert sched_new is not None
         assert isinstance(topology_changed, bool)
 
-    def test_fit_with_dynamic_ops(self):
+    def test_fit_with_dynamic_ops(self) -> None:
         """Test full fitting pipeline with dynamic operations enabled."""
         # Create simple test data
         blob = np.zeros((32, 32))
@@ -240,7 +240,7 @@ class TestDynamicOperationsIntegration:
         # Run fitting with dynamic operations
         params, amps, stats = fit_gaussian_splats(
             V,
-            centers_overcomplete=centers,
+            seeds=centers,
             init_sigma_vox=1.5,
             n_iters=20,  # Short run for testing
             lr=0.1,
@@ -255,7 +255,7 @@ class TestDynamicOperationsIntegration:
         assert amps.shape[0] == params.shape[0]
         assert "final_loss" in stats  # Check for stats that actually exist
 
-    def test_fit_without_dynamic_ops(self):
+    def test_fit_without_dynamic_ops(self) -> None:
         """Test fitting without dynamic operations for comparison."""
         # Create simple test data
         blob = np.zeros((32, 32))
@@ -273,7 +273,7 @@ class TestDynamicOperationsIntegration:
         # Run fitting without dynamic operations
         params, amps, stats = fit_gaussian_splats(
             V,
-            centers_overcomplete=centers,
+            seeds=centers,
             init_sigma_vox=1.5,
             n_iters=10,
             lr=0.1,
@@ -287,7 +287,7 @@ class TestDynamicOperationsIntegration:
         assert amps.shape[0] == params.shape[0]
         assert "final_loss" in stats  # Check for stats that actually exist
 
-    def test_principled_pruning_functionality(self):
+    def test_principled_pruning_functionality(self) -> None:
         """Test the new principled pruning algorithm."""
         from luxar.gsplats.dynamic_ops import (
             _calculate_splat_importance,
@@ -301,7 +301,9 @@ class TestDynamicOperationsIntegration:
         # Create model with many splats to trigger pruning
         L0 = np.eye(2)[None, :, :] * 1.0
         L0 = np.repeat(L0, len(centers), axis=0)
-        amps0 = np.random.uniform(0.01, 1.0, len(centers)).astype(np.float32)  # Varying amplitudes
+        amps0 = np.random.uniform(0.01, 1.0, len(centers)).astype(
+            np.float32
+        )  # Varying amplitudes
 
         model = GaussianSplatModel(
             shape=(32, 32),
@@ -326,14 +328,15 @@ class TestDynamicOperationsIntegration:
         candidate_importance = importance[candidates]
         assert torch.all(candidate_importance <= sorted_importance[expected_candidates])
 
-    def test_asymmetric_penalty_with_all_loss_types(self):
+    def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
         V = np.random.random((24, 24)).astype(np.float32)
         centers = find_candidates_overcomplete_nd(V, peaks_per_scale=20)
 
         for loss_type in ["mse", "poisson", "l1"]:
             params, amps, stats = fit_gaussian_splats(
-                V, centers,
+                V,
+                centers,
                 n_iters=10,
                 loss_type=loss_type,
                 asymmetric_penalty=5.0,  # Test with asymmetric penalty
@@ -345,14 +348,16 @@ class TestDynamicOperationsIntegration:
             assert len(amps) > 0, f"{loss_type} with asymmetric penalty failed"
             assert all(amps >= 0), f"{loss_type} produced negative amplitudes"
 
-    def test_local_convergence_based_pruning(self):
+    def test_local_convergence_based_pruning(self) -> None:
         """Test the local convergence-based pruning algorithm."""
         # Create test data where some splats should be removable
         V = np.ones((32, 32), dtype=np.float32) * 0.5  # Uniform background
         centers = np.array([[10, 10], [15, 15], [20, 20]], dtype=np.float32)
 
         # Create model with varying importance
-        L0 = np.stack([np.eye(2) * 2.0, np.eye(2) * 0.5, np.eye(2) * 1.0])  # Different sizes
+        L0 = np.stack(
+            [np.eye(2) * 2.0, np.eye(2) * 0.5, np.eye(2) * 1.0]
+        )  # Different sizes
         amps0 = np.array([0.8, 0.001, 0.5])  # Very different amplitudes
 
         model = GaussianSplatModel(
@@ -377,8 +382,12 @@ class TestDynamicOperationsIntegration:
 
         # Test pruning with verbose output
         opt_new, sched_new, topology_changed = apply_dynamic_operations(
-            model, optimizer, scheduler,
-            V_target, V_pred, cfg,
+            model,
+            optimizer,
+            scheduler,
+            V_target,
+            V_pred,
+            cfg,
             current_lr=0.1,
             max_abs_error_threshold=0.01,
             device=torch.device("cpu"),
@@ -390,14 +399,15 @@ class TestDynamicOperationsIntegration:
         assert sched_new is not None
         assert isinstance(topology_changed, bool)
 
-    def test_auto_convergence_threshold_behavior(self):
+    def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
         V = np.random.random((24, 24)).astype(np.float32)
         centers = find_candidates_overcomplete_nd(V, peaks_per_scale=30)
 
         # Test that auto-threshold works with dynamic operations
         params, amps, stats = fit_gaussian_splats(
-            V, centers,
+            V,
+            centers,
             n_iters=50,
             max_abs_error=None,  # Should auto-set to 0.01
             loss_type="l1",
@@ -410,13 +420,15 @@ class TestDynamicOperationsIntegration:
         assert "converged" in stats
         assert len(amps) > 0
 
-    def test_compression_analysis_functionality(self):
+    def test_compression_analysis_functionality(self) -> None:
         """Test compression ratio analysis functionality."""
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         # Create simple test data
         V = np.random.random((16, 16)).astype(np.float32)
-        params = np.random.random((10, 5)).astype(np.float32)  # 10 splats, 2D + packed L + amp
+        params = np.random.random((10, 5)).astype(
+            np.float32
+        )  # 10 splats, 2D + packed L + amp
         amps = np.random.uniform(0.1, 1.0, 10).astype(np.float32)
 
         # Test compression analysis (should not raise exceptions)
@@ -428,7 +440,7 @@ class TestDynamicOperationsIntegration:
 
         assert compression_test_passed, "Compression analysis failed"
 
-    def test_adaptive_learning_rate_boosting(self):
+    def test_adaptive_learning_rate_boosting(self) -> None:
         """Test adaptive learning rate boosting for problematic regions."""
         from luxar.gsplats.dynamic_ops import (
             DynamicOpsConfig,

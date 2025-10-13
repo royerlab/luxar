@@ -38,7 +38,7 @@ class TestGaussianSplatsIntegration:
 
         return np.clip(data, 0, 1)
 
-    def test_full_pipeline_2d(self):
+    def test_full_pipeline_2d(self) -> None:
         """Test complete pipeline for 2D image."""
         # Create test data
         image = self.create_test_image((64, 64), n_blobs=3)
@@ -57,7 +57,7 @@ class TestGaussianSplatsIntegration:
         # Fit splats
         params, amps, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=50,
             lr=0.2,
             verbose=False,
@@ -80,7 +80,7 @@ class TestGaussianSplatsIntegration:
         mse = np.mean((image - reconstruction) ** 2)
         assert mse < 0.1  # Reasonable reconstruction error
 
-    def test_full_pipeline_3d(self):
+    def test_full_pipeline_3d(self) -> None:
         """Test complete pipeline for 3D volume."""
         # Create test data
         volume = self.create_test_image((32, 32, 32), n_blobs=3)
@@ -99,7 +99,7 @@ class TestGaussianSplatsIntegration:
         # Fit splats
         params, amps, _ = fit_gaussian_splats(
             volume,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=30,  # Fewer for speed
             lr=0.2,
             verbose=False,
@@ -123,7 +123,7 @@ class TestGaussianSplatsIntegration:
         mse = np.mean((volume - reconstruction) ** 2)
         assert mse < 0.15  # Maintain 3D quality standards
 
-    def test_full_pipeline_4d(self):
+    def test_full_pipeline_4d(self) -> None:
         """Test complete pipeline for 4D hypercube to verify nD renderer chunking."""
         # Create smaller 4D test data to keep computation reasonable
         shape_4d = (16, 16, 16, 8)  # 4D hypercube: spatial xyz + time/channel
@@ -156,7 +156,7 @@ class TestGaussianSplatsIntegration:
         # Fit splats with reduced iterations for 4D
         params, amps, stats = fit_gaussian_splats(
             data,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=50,  # Fewer iterations for test speed
             lr=0.3,
             verbose=False,  # Reduce test output
@@ -174,12 +174,14 @@ class TestGaussianSplatsIntegration:
 
         # Verify reconstruction quality (looser tolerance for 4D)
         mse = np.mean((reconstruction - data) ** 2)
-        assert mse < 12.0  # 4D is very challenging, focus on functionality not precision
+        assert (
+            mse < 12.0
+        )  # 4D is very challenging, focus on functionality not precision
 
         # Verify we exercised the nD path (not 2D/3D specialized paths)
         assert len(shape_4d) == 4  # Confirms we used generic nD renderer
 
-    def test_early_stopping_convergence(self):
+    def test_early_stopping_convergence(self) -> None:
         """Test that early stopping works and maintains quality."""
         # Simple test case that should converge quickly
         image = np.zeros((32, 32), dtype=np.float32)
@@ -194,7 +196,7 @@ class TestGaussianSplatsIntegration:
         fitter = GaussianSplatFitter(enable_dynamic_ops=False)
         params_early, amps_early, stats_early = fitter.fit(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=200,  # More iterations
             max_abs_error=0.001,  # Use convergence threshold instead of early_stopping
             verbose=False,
@@ -204,7 +206,7 @@ class TestGaussianSplatsIntegration:
         # Fit without early stopping
         params_full, amps_full, stats_full = fitter.fit(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=200,  # Same number
             verbose=False,
             napari_movie=False,
@@ -226,7 +228,7 @@ class TestGaussianSplatsIntegration:
         # Quality should be within 10%
         assert abs(mse_early - mse_full) / mse_full < 0.1
 
-    def test_batched_renderer_equivalence(self):
+    def test_batched_renderer_equivalence(self) -> None:
         """Test that batched renderer produces same results as numpy version."""
         if not torch.cuda.is_available() and not torch.backends.mps.is_available():
             pytest.skip("Requires GPU for batched renderer test")
@@ -237,7 +239,7 @@ class TestGaussianSplatsIntegration:
         # Fit splats
         params, amps, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=30,
             verbose=False,
             enable_dynamic_ops=False,
@@ -263,7 +265,7 @@ class TestGaussianSplatsIntegration:
         max_diff = np.max(np.abs(recon_numpy - recon_torch_np))
         assert max_diff < 1e-5
 
-    def test_loss_functions(self):
+    def test_loss_functions(self) -> None:
         """Test both MSE and Poisson loss functions."""
         image = self.create_test_image((32, 32), n_blobs=2)
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=20)
@@ -271,7 +273,7 @@ class TestGaussianSplatsIntegration:
         # Test MSE loss
         params_mse, amps_mse, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=30,
             loss_type="mse",
             verbose=False,
@@ -282,7 +284,7 @@ class TestGaussianSplatsIntegration:
         # Test Poisson loss
         params_poisson, amps_poisson, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=30,
             loss_type="poisson",
             verbose=False,
@@ -308,7 +310,7 @@ class TestGaussianSplatsIntegration:
         assert mse_mse < 0.1
         assert mse_poisson < 0.1
 
-    def test_regularization(self):
+    def test_regularization(self) -> None:
         """Test L1 regularization on amplitudes."""
         image = self.create_test_image((32, 32), n_blobs=5)
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=50)
@@ -316,7 +318,7 @@ class TestGaussianSplatsIntegration:
         # Without regularization
         params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=50,
             l1_amp=0.0,
             verbose=False,
@@ -327,7 +329,7 @@ class TestGaussianSplatsIntegration:
         # With strong regularization
         params_reg, amps_reg, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=50,
             l1_amp=0.1,
             verbose=False,
@@ -341,7 +343,7 @@ class TestGaussianSplatsIntegration:
 
         assert n_active_reg <= n_active_no_reg
 
-    def test_sigma_constraints(self):
+    def test_sigma_constraints(self) -> None:
         """Test that sigma constraints are respected."""
         image = self.create_test_image((32, 32), n_blobs=2)
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=10)
@@ -352,7 +354,7 @@ class TestGaussianSplatsIntegration:
 
         params, amps, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=50,
             sigma_min_diag=sigma_min,
             sigma_max_diag=sigma_max,
@@ -372,7 +374,7 @@ class TestGaussianSplatsIntegration:
             assert np.all(diag >= sigma_min)
             assert np.all(diag <= sigma_max)
 
-    def test_device_compatibility(self):
+    def test_device_compatibility(self) -> None:
         """Test that fitting works on different devices."""
         image = self.create_test_image((32, 32), n_blobs=2)
         candidates = find_candidates_overcomplete_nd(image, peaks_per_scale=10)
@@ -380,7 +382,7 @@ class TestGaussianSplatsIntegration:
         # Test CPU
         params_cpu, amps_cpu, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=20,
             device="cpu",
             verbose=False,
@@ -393,7 +395,7 @@ class TestGaussianSplatsIntegration:
         if torch.cuda.is_available():
             params_cuda, amps_cuda, _ = fit_gaussian_splats(
                 image,
-                centers_overcomplete=candidates,
+                seeds=candidates,
                 n_iters=20,
                 device="cuda",
                 verbose=False,
@@ -404,14 +406,14 @@ class TestGaussianSplatsIntegration:
         if torch.backends.mps.is_available():
             params_mps, amps_mps, _ = fit_gaussian_splats(
                 image,
-                centers_overcomplete=candidates,
+                seeds=candidates,
                 n_iters=20,
                 device="mps",
                 verbose=False,
             )
             assert np.all(np.isfinite(params_mps))
 
-    def test_empty_input_handling(self):
+    def test_empty_input_handling(self) -> None:
         """Test handling of edge cases and empty inputs."""
         # Empty candidates
         image = self.create_test_image((32, 32), n_blobs=1)
@@ -419,7 +421,7 @@ class TestGaussianSplatsIntegration:
 
         params, amps, _ = fit_gaussian_splats(
             image,
-            centers_overcomplete=empty_candidates,
+            seeds=empty_candidates,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
@@ -434,7 +436,7 @@ class TestGaussianSplatsIntegration:
 
         params, amps, _ = fit_gaussian_splats(
             uniform_image,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=20,
             verbose=False,
             enable_dynamic_ops=False,
@@ -444,7 +446,7 @@ class TestGaussianSplatsIntegration:
         assert np.all(np.isfinite(params))
         assert np.all(np.isfinite(amps))
 
-    def test_memory_chunking_large_aabb(self):
+    def test_memory_chunking_large_aabb(self) -> None:
         """Test that memory chunking prevents OOM with large AABB boxes."""
         # Create a scenario with large AABB boxes that would OOM without chunking
         shape = (64, 64)  # 2D for faster test, but with loose truncation
@@ -463,7 +465,7 @@ class TestGaussianSplatsIntegration:
         # Fit with very loose truncation to force large AABB
         params, amps, _ = fit_gaussian_splats(
             data,
-            centers_overcomplete=candidates,
+            seeds=candidates,
             n_iters=20,
             truncate=8.0,  # Very loose truncation = large AABB
             verbose=False,

@@ -109,18 +109,14 @@ with asection("3D Gaussian Splatting Demo"):
         n_blobs = 15  # Controlled number of features for systematic validation
         for i in range(n_blobs):
             # Random center in 3D space (avoid boundaries)
-            center = [
-                np.random.uniform(5, s - 5) for s in shape_3d
-            ]
+            center = [np.random.uniform(5, s - 5) for s in shape_3d]
 
             # Random size and intensity appropriate for 3D
             sigma = np.random.uniform(3.0, 8.0)  # 3D-appropriate blob sizes
             amplitude = np.random.uniform(0.6, 1.0)
 
             # Create 3D coordinate grids
-            grids = np.meshgrid(
-                *[np.arange(s) for s in shape_3d], indexing="ij"
-            )
+            grids = np.meshgrid(*[np.arange(s) for s in shape_3d], indexing="ij")
 
             # Compute 3D distance from center
             dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
@@ -144,7 +140,7 @@ with asection("3D Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-candidate generation
         params_full, amps, stats = fit_gaussian_splats(
             V,
-            # centers_overcomplete auto-generated with intelligent defaults
+            # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
@@ -312,7 +308,6 @@ if not NO_NAPARI:
     viewer.camera.angles = (15, 25, 120)  # Good 3D viewing angle
     viewer.camera.zoom = 0.8
 
-
     def _set_overlay_text_3d(t_index: int):
         """Update text overlay with 3D-specific information."""
         K = int(keep_counts[t_index])
@@ -327,7 +322,6 @@ if not NO_NAPARI:
             f"|  rel L2 err: {rel:.4f}  |  Volume: {volume_size}³ voxels"
         )
 
-
     def _update_layers_for_t_3d(t_index: int):
         """Update 3D layers for given time index."""
         # Update wireframe ellipsoids
@@ -339,16 +333,13 @@ if not NO_NAPARI:
         # Update text overlay
         _set_overlay_text_3d(t_index)
 
-
     # Initialize with first frame
     _update_layers_for_t_3d(0)
-
 
     # Hook slider to updates
     def _on_step_change_3d(event=None):
         t = viewer.dims.current_step[0]
         _update_layers_for_t_3d(int(t))
-
 
     viewer.dims.events.current_step.connect(_on_step_change_3d)
 
@@ -406,4 +397,6 @@ aprint(f"  • Final relative error: {final_error:.4f}")
 aprint("  • 3D phantom splats demonstrate excellent volumetric compression!")
 
 if NO_NAPARI:
-    aprint("✅ 3D phantom validation complete - systematic synthetic data approach working")
+    aprint(
+        "✅ 3D phantom validation complete - systematic synthetic data approach working"
+    )

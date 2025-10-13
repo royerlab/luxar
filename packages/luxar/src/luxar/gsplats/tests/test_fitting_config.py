@@ -8,6 +8,7 @@ import torch
 
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -27,7 +28,7 @@ if HAS_TORCH:
 class TestFitConfig:
     """Test FitConfig dataclass."""
 
-    def test_fit_config_creation(self):
+    def test_fit_config_creation(self) -> None:
         """Test basic FitConfig creation."""
         V = np.random.rand(32, 32).astype(np.float32)
         device = torch.device("cpu")
@@ -35,7 +36,7 @@ class TestFitConfig:
 
         config = FitConfig(
             V=V,
-            centers_overcomplete=None,
+            seeds=None,
             norm_percentile=0.0,
             init_sigma_vox=1.5,
             sigma_min_diag=[0.1, 0.1],
@@ -48,6 +49,7 @@ class TestFitConfig:
             loss_type="l1",
             asymmetric_penalty=10.0,
             l1_amp=0.001,
+            l1_diag=0.0001,
             scheduler_type="plateau",
             patience=10,
             factor=0.5,
@@ -58,7 +60,7 @@ class TestFitConfig:
             movie_every=1,
             movie_max_frames=100,
             device=device,
-            verbose=True
+            verbose=True,
         )
 
         assert config.V.shape == (32, 32)
@@ -70,7 +72,7 @@ class TestFitConfig:
 class TestPreprocessedData:
     """Test PreprocessedData dataclass."""
 
-    def test_preprocessed_data_creation(self):
+    def test_preprocessed_data_creation(self) -> None:
         """Test basic PreprocessedData creation."""
         V_normalized = np.random.rand(16, 16).astype(np.float32)
         V_tensor = torch.tensor(V_normalized)
@@ -79,7 +81,7 @@ class TestPreprocessedData:
         data = PreprocessedData(
             V_normalized=V_normalized,
             V_tensor=V_tensor,
-            centers_overcomplete=centers,
+            seed_centers=centers,
             image_min=0.0,
             image_max=1.0,
             intensity_range=1.0,
@@ -89,11 +91,11 @@ class TestPreprocessedData:
             parameter_complexity=1.0,
             d=2,
             N=10,
-            max_abs_error=0.01
+            max_abs_error=0.01,
         )
 
         assert data.V_normalized.shape == (16, 16)
-        assert data.centers_overcomplete.shape == (10, 2)
+        assert data.seed_centers.shape == (10, 2)
         assert data.d == 2
         assert data.N == 10
 
@@ -101,7 +103,7 @@ class TestPreprocessedData:
 class TestOptimizationResults:
     """Test OptimizationResults dataclass."""
 
-    def test_optimization_results_creation(self):
+    def test_optimization_results_creation(self) -> None:
         """Test basic OptimizationResults creation."""
         centers = torch.rand(5, 2)
         Ls = torch.rand(5, 2, 2)
@@ -118,7 +120,7 @@ class TestOptimizationResults:
             best_max_abs_error=0.005,
             movie_frames=None,
             start_time=0.0,
-            end_time=1.0
+            end_time=1.0,
         )
 
         assert results.centers.shape == (5, 2)
@@ -130,18 +132,18 @@ class TestOptimizationResults:
 class TestModelComponents:
     """Test ModelComponents dataclass."""
 
-    def test_model_components_creation(self):
+    def test_model_components_creation(self) -> None:
         """Test basic ModelComponents creation."""
         # Create mock components
         components = ModelComponents(
             model=None,  # Would be GaussianSplatModel in real usage
             optimizer=None,  # Would be torch optimizer
             scheduler=None,  # Would be LR scheduler
-            coordinator=None  # Would be ModelOptimizerCoordinator
+            coordinator=None,  # Would be ModelOptimizerCoordinator
         )
 
         # Test that structure is correct
-        assert hasattr(components, 'model')
-        assert hasattr(components, 'optimizer')
-        assert hasattr(components, 'scheduler')
-        assert hasattr(components, 'coordinator')
+        assert hasattr(components, "model")
+        assert hasattr(components, "optimizer")
+        assert hasattr(components, "scheduler")
+        assert hasattr(components, "coordinator")

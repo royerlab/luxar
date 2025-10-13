@@ -47,7 +47,7 @@ dynamic_config.residual_quantile = 0.95 # More selective
 ```python
 params_full, amps, stats = fit_gaussian_splats(
     V,
-    centers_overcomplete=centers,
+    seeds=centers,
     # ... your existing parameters ...
     # ADD these two lines:
     enable_dynamic_ops=True,

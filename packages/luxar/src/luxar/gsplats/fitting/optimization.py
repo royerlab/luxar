@@ -22,6 +22,25 @@ from luxar.gsplats.fitting.config import (
 )
 
 
+def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """
+    Compute maximum absolute error between prediction and target.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Model prediction
+    target : torch.Tensor
+        Target values
+
+    Returns
+    -------
+    float
+        Maximum absolute error across all elements
+    """
+    return torch.max(torch.abs(pred - target)).item()
+
+
 def run_optimization_loop(
     components: ModelComponents,
     loss_fn: Callable[[torch.Tensor], torch.Tensor],
@@ -70,11 +89,13 @@ def run_optimization_loop(
 
     # Log convergence criteria before starting optimization
     if config.verbose:
-        aprint(f"Convergence criterion: max absolute error < {preprocessed_data.max_abs_error:.6f}")
+        aprint(
+            f"Convergence criterion: max absolute error < {preprocessed_data.max_abs_error:.6f}"
+        )
         aprint(f"Maximum iterations: {config.n_iters}")
 
     # Initialize best state tracking for quality guarantee
-    best_max_abs_error = float('inf')
+    best_max_abs_error = float("inf")
     best_state = None
     best_iteration = 0
 
@@ -103,7 +124,11 @@ def run_optimization_loop(
         current_loss = loss.item()
 
         # Movie frame recording (only if enabled and at specified intervals)
-        if config.napari_movie and movie_frames is not None and it % config.movie_every == 0:
+        if (
+            config.napari_movie
+            and movie_frames is not None
+            and it % config.movie_every == 0
+        ):
             _record_movie_frame(model, pred, V_t, movie_frames, config, it)
 
         # Update best loss tracking
@@ -112,7 +137,7 @@ def run_optimization_loop(
 
         # Convergence check and best state tracking using maximum absolute error
         with torch.no_grad():
-            current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
+            current_max_abs_error = _compute_max_abs_error(pred, V_t)
 
             # Track best state based on max absolute error (quality guarantee)
             if current_max_abs_error < best_max_abs_error:
@@ -122,24 +147,30 @@ def run_optimization_loop(
                 # Save current best state (deep copy to avoid mutations)
                 centers, Ls, amps = model.current_params()
                 best_state = {
-                    'centers': centers.detach().clone(),
-                    'Ls': Ls.detach().clone(),
-                    'amps': amps.detach().clone(),
-                    'iteration': it,
-                    'max_abs_error': current_max_abs_error,
-                    'loss': current_loss,
+                    "centers": centers.detach().clone(),
+                    "Ls": Ls.detach().clone(),
+                    "amps": amps.detach().clone(),
+                    "iteration": it,
+                    "max_abs_error": current_max_abs_error,
+                    "loss": current_loss,
                 }
 
                 # Smart logging: significant improvements or early iterations
-                if config.verbose and (it <= 10 or current_max_abs_error < best_max_abs_error * 0.95):
-                    aprint(f"    ★ New best state: iteration {it}, max_abs_error={current_max_abs_error:.6f}")
+                if config.verbose and (
+                    it <= 10 or current_max_abs_error < best_max_abs_error * 0.95
+                ):
+                    aprint(
+                        f"    ★ New best state: iteration {it}, max_abs_error={current_max_abs_error:.6f}"
+                    )
 
             # Check for convergence
             if current_max_abs_error < preprocessed_data.max_abs_error:
                 converged_early = True
                 if config.verbose:
                     aprint(f"✓ CONVERGENCE ACHIEVED at iteration {it}")
-                    aprint(f"  Max absolute error: {current_max_abs_error:.6f} < threshold: {preprocessed_data.max_abs_error:.6f}")
+                    aprint(
+                        f"  Max absolute error: {current_max_abs_error:.6f} < threshold: {preprocessed_data.max_abs_error:.6f}"
+                    )
                 break
 
         # Dynamic operations (seeding and pruning)
@@ -165,7 +196,7 @@ def run_optimization_loop(
                     torch.linalg.norm(V_t.reshape(-1)) + 1e-12
                 )
                 # Calculate max absolute error for display
-                current_max_abs_error = torch.max(torch.abs(pred - V_t)).item()
+                current_max_abs_error = _compute_max_abs_error(pred, V_t)
             aprint(
                 f"[{it:4d}/{config.n_iters}] loss={current_loss:.5g}  "
                 f"relL2={float(rel):.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
@@ -179,24 +210,32 @@ def run_optimization_loop(
             aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
         else:
             aprint("⚠ Optimization terminated: ITERATION LIMIT REACHED")
-            aprint(f"  Final max absolute error: {best_max_abs_error:.6f} (threshold: {preprocessed_data.max_abs_error:.6f})")
+            aprint(
+                f"  Final max absolute error: {best_max_abs_error:.6f} (threshold: {preprocessed_data.max_abs_error:.6f})"
+            )
 
     # Get final parameters (will be overwritten by best state if available)
     if best_state is not None:
         if config.verbose:
-            improvement = f" (improved from {best_max_abs_error:.6f} to {best_state['max_abs_error']:.6f})" if best_iteration != actual_iters else ""
-            aprint(f"★ Restored best state from iteration {best_iteration}{improvement}")
+            improvement = (
+                f" (improved from {best_max_abs_error:.6f} to {best_state['max_abs_error']:.6f})"
+                if best_iteration != actual_iters
+                else ""
+            )
+            aprint(
+                f"★ Restored best state from iteration {best_iteration}{improvement}"
+            )
 
-        centers = best_state['centers']
-        Ls = best_state['Ls']
-        amps = best_state['amps']
-        best_loss = best_state['loss']
-        best_max_abs_error = best_state['max_abs_error']
+        centers = best_state["centers"]
+        Ls = best_state["Ls"]
+        amps = best_state["amps"]
+        best_loss = best_state["loss"]
+        best_max_abs_error = best_state["max_abs_error"]
     else:
         # Fallback to final state if no best state saved
         with torch.no_grad():
             centers, Ls, amps = model.current_params()
-            best_max_abs_error = torch.max(torch.abs(model() - V_t)).item()
+            best_max_abs_error = _compute_max_abs_error(model(), V_t)
 
     return OptimizationResults(
         centers=centers,
