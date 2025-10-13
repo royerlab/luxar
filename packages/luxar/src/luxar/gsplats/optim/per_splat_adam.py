@@ -33,10 +33,11 @@ class PerSplatAdam:
     - Zero momentum disruption for unchanged splats
     - Compatible with AMSGrad variant
 
-    Parameter-Type Learning Rate Multipliers (Hard-coded):
-    - Position parameters (μ): ×0.1 (slow movement, prevents migration)
-    - Variance parameters (L_diag, L_off): ×1.0 (normal adaptation)
-    - Amplitude parameters (a): ×2.0 (fast intensity convergence)
+    Parameter-Type Learning Rate Multipliers:
+    - Position parameters (μ): ×0.1 (hard-coded, slow movement, prevents migration)
+    - Variance parameters (L_diag, L_off): ×1.0 (hard-coded, normal adaptation)
+    - Amplitude parameters (a): ×2.0 (hard-coded, fast intensity convergence)
+    - Sharpness parameters (s'): ×0.5 (hard-coded, moderate shape adaptation)
 
     Performance Optimizations:
     - Lazy initialization: only creates state when topology changes
@@ -60,6 +61,7 @@ class PerSplatAdam:
     _POS_LR_MULTIPLIER = 0.1  # Position parameters (slow movement)
     _VAR_LR_MULTIPLIER = 1.0  # Variance parameters (normal adaptation)
     _AMP_LR_MULTIPLIER = 2.0  # Amplitude parameters (fast intensity matching)
+    _SHARPNESS_LR_MULTIPLIER = 0.5  # Sharpness parameters (moderate shape adaptation)
 
     def __init__(
         self,
@@ -75,7 +77,7 @@ class PerSplatAdam:
 
         Args:
             model: GaussianSplatModel to optimize
-            lr: Base learning rate (applied to all new splats)
+            lr: Base learning rate (automatically compensated for gradient dilution in higher dimensions)
             betas: Coefficients for computing running averages
             eps: Term added for numerical stability
             weight_decay: L2 penalty coefficient
@@ -83,6 +85,13 @@ class PerSplatAdam:
         """
         self.model = model
         self.base_lr = lr
+
+        # Calculate gradient dilution compensation based on dimensionality
+        # This compensates for the fact that higher dimensions have more parameters
+        # per splat, which dilutes gradients across more values
+        d = len(model.shape)
+        self.effective_lr = self._calculate_effective_lr(d, lr)
+
         self.betas = betas
         self.eps = eps
         self.weight_decay = weight_decay
@@ -98,6 +107,28 @@ class PerSplatAdam:
 
         # Initialize state for current splats
         self._initialize_all_splats()
+
+    def _calculate_effective_lr(self, d: int, base_lr: float) -> float:
+        """
+        Calculate effective learning rate with gradient dilution compensation.
+
+        Gradient dilution occurs because higher dimensions have more parameters per splat,
+        spreading gradients thinner. We compensate by scaling the learning rate.
+
+        This compensation applies to position/variance/amplitude parameters.
+        Sharpness is NOT affected because it's always a single scalar regardless of dimension.
+
+        Args:
+            d: Dimensionality of the model
+            base_lr: Base learning rate
+
+        Returns:
+            Effective learning rate with gradient dilution compensation
+        """
+        from luxar.gsplats.utils.trils import calculate_gradient_dilution_factor
+
+        gradient_dilution_factor = calculate_gradient_dilution_factor(d)
+        return base_lr * gradient_dilution_factor
 
     def _initialize_all_splats(self):
         """
@@ -132,7 +163,7 @@ class PerSplatAdam:
             raise RuntimeError("Model has no parameters to optimize")
 
         if lr is None:
-            lr = self.base_lr
+            lr = self.effective_lr  # Use effective_lr for new splats by default
 
         # Validate learning rate
         if lr <= 0:
@@ -148,7 +179,8 @@ class PerSplatAdam:
 
             # Per-splat state: separate momentum for each parameter type
             state = {
-                "lr": lr,
+                "lr": lr,  # Gradient-dilution-compensated LR (used for position/variance/amplitude)
+                "base_lr": self.base_lr,  # Base LR without gradient dilution (used for sharpness)
                 "step": 0,
                 # Momentum for mu (center): shape (d,)
                 "exp_avg_mu": torch.zeros(len(self.model.shape), device=device),
@@ -164,6 +196,9 @@ class PerSplatAdam:
                 # Momentum for amplitude: shape ()
                 "exp_avg_a": torch.tensor(0.0, device=device),
                 "exp_avg_sq_a": torch.tensor(0.0, device=device),
+                # Momentum for sharpness: shape ()
+                "exp_avg_sharpness": torch.tensor(0.0, device=device),
+                "exp_avg_sq_sharpness": torch.tensor(0.0, device=device),
             }
 
             # AMSGrad variant: track maximum of squared gradients
@@ -178,6 +213,9 @@ class PerSplatAdam:
                             state["exp_avg_sq_L_off"]
                         ),
                         "max_exp_avg_sq_a": torch.zeros_like(state["exp_avg_sq_a"]),
+                        "max_exp_avg_sq_sharpness": torch.zeros_like(
+                            state["exp_avg_sq_sharpness"]
+                        ),
                     }
                 )
 
@@ -264,11 +302,18 @@ class PerSplatAdam:
 
         # Unpack hyperparameters for this splat
         beta1, beta2 = self.betas  # Momentum decay rates
-        lr = state["lr"]  # Individual learning rate for this splat
+        lr = state[
+            "lr"
+        ]  # Gradient-dilution-compensated LR (for position/variance/amplitude)
+        base_lr = state["base_lr"]  # Base LR without gradient dilution (for sharpness)
 
         # Validate hyperparameters to catch configuration errors early
         if lr <= 0:
             raise ValueError(f"Invalid learning rate {lr} for splat {splat_idx}")
+        if base_lr <= 0:
+            raise ValueError(
+                f"Invalid base learning rate {base_lr} for splat {splat_idx}"
+            )
         if not (0 <= beta1 < 1 and 0 <= beta2 < 1):
             raise ValueError(f"Invalid beta values: beta1={beta1}, beta2={beta2}")
 
@@ -283,6 +328,7 @@ class PerSplatAdam:
         grad_L_diag = None  # Gradient w.r.t. Cholesky diagonal elements
         grad_L_off = None  # Gradient w.r.t. Cholesky off-diagonal elements
         grad_a = None  # Gradient w.r.t. amplitude
+        grad_sharpness = None  # Gradient w.r.t. sharpness offset
 
         try:
             # Extract gradients with bounds checking to handle dynamic model changes
@@ -306,6 +352,13 @@ class PerSplatAdam:
                 and splat_idx < self.model.raw_a.grad.shape[0]
             ):
                 grad_a = self.model.raw_a.grad[splat_idx]  # Shape: scalar
+            if (
+                self.model.sharpness_offsets_raw.grad is not None
+                and splat_idx < self.model.sharpness_offsets_raw.grad.shape[0]
+            ):
+                grad_sharpness = self.model.sharpness_offsets_raw.grad[
+                    splat_idx
+                ]  # Shape: scalar
         except IndexError as e:
             raise IndexError(
                 f"Failed to extract gradients for splat {splat_idx}: {e}"
@@ -371,6 +424,28 @@ class PerSplatAdam:
                 beta1=beta1,
                 beta2=beta2,
                 lr=lr * self._AMP_LR_MULTIPLIER,  # Fast amplitude convergence (×2.0)
+                bias_correction1=bias_correction1,
+                bias_correction2=bias_correction2,
+            )
+
+        # Update sharpness offset (controls edge falloff profile)
+        if grad_sharpness is not None:
+            self._update_parameter(
+                param=self.model.sharpness_offsets_raw.data[
+                    splat_idx
+                ],  # Raw parameter (s')
+                grad=grad_sharpness,  # ∂L/∂s'
+                exp_avg=state["exp_avg_sharpness"],  # First moment estimate (scalar)
+                exp_avg_sq=state[
+                    "exp_avg_sq_sharpness"
+                ],  # Second moment estimate (scalar)
+                max_exp_avg_sq=state.get(
+                    "max_exp_avg_sq_sharpness"
+                ),  # AMSGrad (optional)
+                beta1=beta1,
+                beta2=beta2,
+                lr=base_lr
+                * self._SHARPNESS_LR_MULTIPLIER,  # Use base LR (no gradient dilution for single-value parameter)
                 bias_correction1=bias_correction1,
                 bias_correction2=bias_correction2,
             )

@@ -169,7 +169,7 @@ def create_per_splat_optimizer_setup(
 
     Args:
         model: GaussianSplatModel
-        lr: Base learning rate
+        lr: Base learning rate (automatically compensated for gradient dilution)
         scheduler_type: 'plateau', 'exponential', or None
 
         # Optimizer args

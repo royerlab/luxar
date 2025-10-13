@@ -405,7 +405,7 @@ def _find_splat_with_significant_influence_at_location(
     if model.n_splats() == 0:
         return -1, 0.0
 
-    centers, Ls, amps = model.current_params()
+    centers, Ls, amps, sharpness = model.current_params()
 
     # Compute influence of each splat at the given location
     influences = []
@@ -513,7 +513,7 @@ def _calculate_splat_importance(model) -> torch.Tensor:
     Returns:
         torch.Tensor: Importance values for all splats, shape (N,)
     """
-    centers, Ls, amps = model.current_params()
+    centers, Ls, amps, sharpness = model.current_params()
 
     # Compute volume approximation: prod(diag(L_k)) for each splat
     # This approximates sqrt(det(Σ)) where Σ = L @ L^T
@@ -626,7 +626,7 @@ def _test_local_removal_impact(
 
     with torch.no_grad():
         # Get current parameters
-        centers, Ls, amps = model.current_params()
+        centers, Ls, amps, sharpness = model.current_params()
 
         if torch.sum(torch.ones(model.n_splats())) <= 1:
             return False  # Don't remove if it's the last splat
@@ -651,10 +651,16 @@ def _test_local_removal_impact(
         temp_centers = centers[keep_mask]
         temp_Ls = Ls[keep_mask]
         temp_amps = amps[keep_mask]
+        temp_sharpness = sharpness[keep_mask]
 
         # Render full prediction without the target splat
         pred_without_splat = render_gaussians(
-            V_target.shape, temp_centers, temp_Ls, temp_amps, truncate=3.0
+            V_target.shape,
+            temp_centers,
+            temp_Ls,
+            temp_amps,
+            temp_sharpness,
+            truncate=3.0,
         )
 
         # Extract local regions for comparison

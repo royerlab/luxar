@@ -194,10 +194,15 @@ def _render_gaussians_2d(
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (2,)
 
-    # AABB per splat
+    # AABB per splat (sharpness-adjusted for generalized Gaussian exp(-0.5 * r^s))
     sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,2)
+    effective_truncate = truncate ** (
+        2.0 / sharpness
+    )  # (N,) - sharpness-adjusted radius
     radii = torch.clamp(
-        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+        .ceil()
+        .to(torch.long),
         min=1,
     )
     lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
@@ -209,9 +214,10 @@ def _render_gaussians_2d(
     if intensity_floor is not None and intensity_floor > 0:
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
-        tmax = torch.sqrt(
-            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        )
+        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        tmax = torch.pow(
+            log_ratio, 1.0 / sharpness
+        )  # (N,) - sharpness-adjusted threshold
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
             .ceil()
@@ -271,7 +277,9 @@ def _render_gaussians_2d(
 
             # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
             # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
-            vals = torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
+            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
+            expo_safe = torch.clamp(expo, min=1e-10)
+            vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -294,10 +302,15 @@ def _render_gaussians_3d(
     out_flat = out.view(-1)
     strides = _linear_strides(shape, device)  # (3,)
 
-    # AABB per splat
+    # AABB per splat (sharpness-adjusted for generalized Gaussian exp(-0.5 * r^s))
     sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N,3)
+    effective_truncate = truncate ** (
+        2.0 / sharpness
+    )  # (N,) - sharpness-adjusted radius
     radii = torch.clamp(
-        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+        .ceil()
+        .to(torch.long),
         min=1,
     )
     lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)
@@ -309,9 +322,10 @@ def _render_gaussians_3d(
     if intensity_floor is not None and intensity_floor > 0:
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
-        tmax = torch.sqrt(
-            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        )
+        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        tmax = torch.pow(
+            log_ratio, 1.0 / sharpness
+        )  # (N,) - sharpness-adjusted threshold
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
             .ceil()
@@ -371,7 +385,9 @@ def _render_gaussians_3d(
 
             # Apply sharpness: exp(-0.5 * ||y||^s) where s = sharpness
             # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
-            vals = torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
+            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
+            expo_safe = torch.clamp(expo, min=1e-10)
+            vals = torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
 
             idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
             out_flat.index_add_(0, idx_flat, vals.reshape(-1))
@@ -597,7 +613,10 @@ class GaussianSplatModel(nn.Module):
 
         # Apply exponential mapping for sharpness: s = 2 * exp(s')
         # This ensures s > 0 always, with s = 2 when s' = 0 (standard Gaussian)
-        sharpness = 2.0 * torch.exp(self.sharpness_offsets_raw)
+        # Clamp s' to [-2.5, 2.5] for numerical stability: gives s in range [0.16, 24.5]
+        # This provides wide sharpness variation while preventing numerical overflow
+        sharpness_clamped = torch.clamp(self.sharpness_offsets_raw, min=-2.5, max=2.5)
+        sharpness = 2.0 * torch.exp(sharpness_clamped)
 
         return centers, L, amps, sharpness
 
@@ -826,9 +845,16 @@ def render_gaussians(
 
     # --- AABB per splat ---
     # Σ_ii = row-wise sum(L^2); r_i = ceil(truncate * sqrt(Σ_ii))
+    # Adjust truncate for sharpness: for generalized Gaussian exp(-0.5 * r^s),
+    # to reach same threshold as truncate*σ for s=2, we need: r = (truncate^2)^(1/s) * σ
     sigma_diag = torch.sum(Ls * Ls, dim=2)  # (N, d)
+    effective_truncate = truncate ** (
+        2.0 / sharpness
+    )  # (N,) - sharpness-adjusted radius
     radii = torch.clamp(
-        (truncate * torch.sqrt(torch.clamp(sigma_diag, 1e-8))).ceil().to(torch.long),
+        (effective_truncate[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
+        .ceil()
+        .to(torch.long),
         min=1,
     )
     lo = torch.clamp((centers - radii).floor().to(torch.long), min=0)  # (N, d)
@@ -839,12 +865,14 @@ def render_gaussians(
 
     # (Optional) **amplitude-aware shrinking** (see §2) – avoids giant boxes for tiny a
     if intensity_floor is not None and intensity_floor > 0:
-        # t_max per splat solves: a * exp(-0.5 * t^2) >= intensity_floor  ->  t <= sqrt(2 log(a/eps))
+        # t_max per splat solves: a * exp(-0.5 * t^s) >= intensity_floor  ->  t <= (2 log(a/eps))^(1/s)
+        # For s=2: t <= sqrt(2 log(a/eps)) (original formula)
         eps = torch.tensor(intensity_floor, device=device, dtype=torch.float32)
         a = torch.clamp(amps, min=1e-12)
-        tmax = torch.sqrt(
-            torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
-        )  # (N,)
+        log_ratio = torch.clamp(2.0 * torch.log(torch.clamp(a / eps, min=1.0)), min=0.0)
+        tmax = torch.pow(
+            log_ratio, 1.0 / sharpness
+        )  # (N,) - sharpness-adjusted threshold
         # shrink radii = min(current, ceil(tmax * sqrt(Σ_ii)))
         shrink = torch.clamp(
             (tmax[:, None] * torch.sqrt(torch.clamp(sigma_diag, 1e-8)))
@@ -925,8 +953,10 @@ def render_gaussians(
             # Exponent and values: exp(-0.5 * ||y||^s) * a where s is sharpness
             # ||y||^s = (||y||^2)^(s/2) = expo^(s/2)
             expo = torch.sum(y * y, dim=1)  # (K, Pc)
+            # Clamp expo to avoid log(0) in gradients of pow(expo, s/2)
+            expo_safe = torch.clamp(expo, min=1e-10)
             vals = (
-                torch.exp(-0.5 * torch.pow(expo, s[:, None] / 2.0)) * a[:, None]
+                torch.exp(-0.5 * torch.pow(expo_safe, s[:, None] / 2.0)) * a[:, None]
             )  # (K, Pc)
 
             # Absolute flat indices (K, Pc) -> (K*Pc,)
@@ -976,6 +1006,10 @@ def render_gaussians_numpy(
     amps_torch = torch.tensor(
         amps.astype(np.float32), dtype=torch.float32, device="cpu"
     )
+    # Default to standard Gaussian sharpness (s = 2.0) for packed parameter wrapper
+    sharpness_torch = torch.full(
+        (centers_torch.shape[0],), 2.0, dtype=torch.float32, device="cpu"
+    )
 
     # Render using the PyTorch function
     with torch.no_grad():
@@ -984,6 +1018,7 @@ def render_gaussians_numpy(
             centers_torch,
             ls_torch,
             amps_torch,
+            sharpness_torch,
             truncate=truncate,
             chunk_size=chunk_size,
         )
@@ -1029,6 +1064,10 @@ def render_gaussians_pytorch(
     amps_torch = torch.tensor(
         amps.astype(np.float32), dtype=torch.float32, device=device
     )
+    # Default to standard Gaussian sharpness (s = 2.0) for packed parameter wrapper
+    sharpness_torch = torch.full(
+        (centers_torch.shape[0],), 2.0, dtype=torch.float32, device=device
+    )
 
     # Render using the PyTorch function
     result = render_gaussians(
@@ -1036,6 +1075,7 @@ def render_gaussians_pytorch(
         centers_torch,
         ls_torch,
         amps_torch,
+        sharpness_torch,
         truncate=truncate,
         chunk_size=chunk_size,
     )

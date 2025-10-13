@@ -68,9 +68,10 @@ def initialize_optimization(
     )
 
     # Setup per-splat optimizer
+    # Note: Gradient dilution compensation is handled internally by the optimizer
     optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
         model,
-        lr=preprocessed_data.effective_lr,  # Use gradient dilution compensated learning rate
+        lr=config.lr,  # Base learning rate (optimizer handles gradient dilution internally)
         scheduler_type=config.scheduler_type,
         patience=config.patience,
         factor=config.factor,

@@ -125,6 +125,9 @@ class TestGaussianSplatsIntegration:
 
     def test_full_pipeline_4d(self) -> None:
         """Test complete pipeline for 4D hypercube to verify nD renderer chunking."""
+        # Set random seed for reproducibility (4D optimization can be sensitive to initialization)
+        np.random.seed(42)
+
         # Create smaller 4D test data to keep computation reasonable
         shape_4d = (16, 16, 16, 8)  # 4D hypercube: spatial xyz + time/channel
         data = np.zeros(shape_4d, dtype=np.float32)
@@ -257,8 +260,12 @@ class TestGaussianSplatsIntegration:
         L_full = unpack_tril(L_packed, d)
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(amps, device=device)
+        # Use standard Gaussian sharpness for this test
+        sharpness = torch.full((amps_t.shape[0],), 2.0, device=device)
 
-        recon_torch = render_gaussians(image.shape, centers, Ls, amps_t, truncate=3.0)
+        recon_torch = render_gaussians(
+            image.shape, centers, Ls, amps_t, sharpness, truncate=3.0
+        )
         recon_torch_np = recon_torch.cpu().numpy()
 
         # Should be nearly identical

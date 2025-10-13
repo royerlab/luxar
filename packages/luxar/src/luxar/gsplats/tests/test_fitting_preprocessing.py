@@ -43,6 +43,7 @@ def mock_config_2d():
         asymmetric_penalty=10.0,
         l1_amp=0.001,
         l1_diag=0.0001,
+        l1_sharpness=0.0,
         scheduler_type="plateau",
         patience=10,
         factor=0.5,
@@ -69,7 +70,7 @@ class TestPreprocessData:
         assert result.d == 2
         assert result.N == 10
         assert result.intensity_range > 0
-        assert result.effective_lr > 0
+        assert result.max_abs_error > 0
 
     def test_normalization_full_range(self, mock_config_2d):
         """Test full range normalization."""
@@ -120,34 +121,6 @@ class TestPreprocessData:
         assert result.seed_centers is not None
         assert result.seed_centers.shape[1] == 2  # 2D centers
         assert result.N > 0
-
-    def test_gradient_dilution_2d(self, mock_config_2d):
-        """Test gradient dilution for 2D (should be minimal)."""
-        result = preprocess_data(mock_config_2d)
-
-        # 2D should have minimal scaling
-        assert result.gradient_dilution_factor == pytest.approx(1.0, rel=0.1)
-        assert result.dimensional_complexity is None  # Not used for 2D
-        assert (
-            result.effective_lr == result.gradient_dilution_factor * mock_config_2d.lr
-        )
-
-    def test_gradient_dilution_4d(self, mock_config_2d):
-        """Test gradient dilution for 4D (should be significant)."""
-        # Create 4D configuration
-        V_4d = np.random.rand(8, 8, 8, 8).astype(np.float32)
-        centers_4d = np.random.rand(10, 4).astype(np.float32)
-
-        mock_config_2d.V = V_4d
-        mock_config_2d.seed_centers = centers_4d
-        mock_config_2d.sigma_min_diag = [0.1] * 4
-
-        result = preprocess_data(mock_config_2d)
-
-        assert result.d == 4
-        assert result.gradient_dilution_factor > 1.0  # Should be scaled up
-        assert result.dimensional_complexity is not None  # Should be set for 4D
-        assert result.effective_lr > mock_config_2d.lr  # Should be boosted
 
     def test_convergence_threshold_auto(self, mock_config_2d):
         """Test automatic convergence threshold setting."""

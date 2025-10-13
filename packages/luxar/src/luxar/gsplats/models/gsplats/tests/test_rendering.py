@@ -325,6 +325,7 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
+            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 
@@ -346,10 +347,11 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
+            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 
-        # Render with non-batched implementation
+        # Render with non-batched implementation (uses default sharpness=2.0)
         result_sequential = render_gaussians_pytorch(
             shape=params["shape"],
             params_full=params["params_full"],
@@ -376,6 +378,7 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(small_amps),
+            sharpness=torch.full((len(small_amps),), 2.0),
             truncate=3.0,
             intensity_floor=1e-6,  # Should cull the tiny amplitude splat
         )
@@ -386,6 +389,7 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(small_amps),
+            sharpness=torch.full((len(small_amps),), 2.0),
             truncate=3.0,
             intensity_floor=None,
         )
@@ -418,6 +422,7 @@ class TestBatchedRendering:
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
             amps=torch.from_numpy(params["amps"]),
+            sharpness=torch.full((len(params["amps"]),), 2.0),
             truncate=3.0,
         )
 

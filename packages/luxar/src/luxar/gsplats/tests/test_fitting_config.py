@@ -50,6 +50,7 @@ class TestFitConfig:
             asymmetric_penalty=10.0,
             l1_amp=0.001,
             l1_diag=0.0001,
+            l1_sharpness=0.0,
             scheduler_type="plateau",
             patience=10,
             factor=0.5,
@@ -85,10 +86,6 @@ class TestPreprocessedData:
             image_min=0.0,
             image_max=1.0,
             intensity_range=1.0,
-            effective_lr=0.01,
-            gradient_dilution_factor=1.0,
-            dimensional_complexity=1.0,
-            parameter_complexity=1.0,
             d=2,
             N=10,
             max_abs_error=0.01,
@@ -108,11 +105,13 @@ class TestOptimizationResults:
         centers = torch.rand(5, 2)
         Ls = torch.rand(5, 2, 2)
         amps = torch.rand(5)
+        sharpness = torch.full((5,), 2.0)  # Standard Gaussian sharpness
 
         results = OptimizationResults(
             centers=centers,
             Ls=Ls,
             amps=amps,
+            sharpness=sharpness,
             converged_early=True,
             actual_iters=50,
             best_iteration=45,
@@ -125,6 +124,7 @@ class TestOptimizationResults:
 
         assert results.centers.shape == (5, 2)
         assert results.amps.shape == (5,)
+        assert results.sharpness.shape == (5,)
         assert results.converged_early
         assert results.actual_iters == 50
 

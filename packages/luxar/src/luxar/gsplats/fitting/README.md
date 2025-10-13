@@ -33,7 +33,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ preprocessing.py: preprocess_data()                             │ │
 │ │ • Normalizes input data to [0, 1] range                         │ │
 │ │ • Generates seed centers (auto or from user input)              │ │
-│ │ • Calculates gradient dilution compensation                     │ │
+│ │ • Sets L1 regularization defaults (proportional to base lr)    │ │
 │ │ • Sets convergence thresholds                                   │ │
 │ │ • Creates PreprocessedData dataclass                            │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
@@ -61,6 +61,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Applies asymmetric penalty (10× for over-prediction)          │ │
 │ │ • Adds L1 regularization on amplitudes (sparsity)               │ │
 │ │ • Adds L1 regularization on diagonals (shape control)           │ │
+│ │ • Adds L1 regularization on sharpness (standard Gaussian bias)  │ │
 │ │ • Returns closure that computes total loss                      │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
@@ -137,10 +138,10 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Operations:**
 1. **Normalization**: Converts input to [0, 1] range (percentile-based or full range)
 2. **Seed Generation**: Creates initial splat positions (auto or user-provided)
-3. **Gradient Dilution Compensation**: Scales learning rate for higher dimensions
+3. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
 4. **Convergence Threshold**: Sets sensible default if not specified
 
-**Key Insight:** Gradient dilution compensation enables dimension-agnostic learning rates.
+**Key Insight:** L1 regularization is proportional to learning rate for consistent sparsity pressure across different learning rate choices.
 
 ### `initialization.py` - Model Setup
 **Purpose:** Initializes the optimization components.
@@ -171,6 +172,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Regularization:**
 - **L1 on amplitudes**: Encourages sparsity (fewer active splats)
 - **L1 on diagonal**: Encourages smaller, more isotropic splats
+- **L1 on sharpness**: Encourages standard Gaussian (s=2) unless sharper edges improve fit
 
 ### `optimization.py` - Training Loop
 **Purpose:** Runs the main optimization loop.
@@ -280,6 +282,8 @@ Optimization always returns the best state encountered, not the final state. Thi
 ### Gradient Dilution Compensation
 **Problem:** Higher dimensions have more parameters per splat, diluting gradients.
 
+**Where Applied:** Optimizer (`per_splat_adam.py`) automatically applies gradient dilution compensation internally.
+
 **Solution:** Scale learning rate based on dimensional and parameter complexity:
 ```python
 # For d ≤ 3: Conservative scaling
@@ -290,10 +294,12 @@ dimensional_complexity = d ** 0.8  # Spatial complexity
 parameter_complexity = params_current / params_2d  # Parameter dilution
 gradient_dilution_factor = dimensional_complexity * parameter_complexity
 
-effective_lr = lr * gradient_dilution_factor
+effective_lr = base_lr * gradient_dilution_factor
 ```
 
 **Impact:** 2D: 1.0×, 3D: 2.0×, 4D: 7.1× learning rate multiplier.
+
+**Sharpness Exception:** Sharpness parameters always use `base_lr` without gradient dilution, since sharpness is a single scalar value regardless of dimension (no parameter dilution occurs).
 
 ### Best State Tracking
 **Problem:** Optimization may not be monotonic, especially with dynamic operations.

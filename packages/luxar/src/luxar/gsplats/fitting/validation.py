@@ -27,7 +27,6 @@ def prepare_fit_config(
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,  # L1 regularization on sharpness offsets
-    sharpness_lr_scale: float = 0.1,  # Learning rate scale for sharpness (10x slower)
     sigma_min_diag: Optional[Sequence[float]] = None,
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
@@ -87,15 +86,8 @@ def prepare_fit_config(
                     f"seeds must have {V.ndim} columns to match image dimensions"
                 )
 
-    # Set proportional L1 regularization defaults before validation
-    if l1_amp is None:
-        l1_amp = 0.1 * lr  # 10% of learning rate
-    if l1_diag is None:
-        l1_diag = 0.01 * lr  # 1% of learning rate
-    if l1_sharpness is None:
-        l1_sharpness = (
-            0.0  # No sharpness regularization by default (s=2 standard Gaussian)
-        )
+    # L1 regularization defaults will be set in preprocessing.py after gradient dilution
+    # is calculated, to ensure they scale properly with effective learning rates
 
     # Validate hyperparameters
     if init_sigma_vox <= 0:
@@ -106,8 +98,12 @@ def prepare_fit_config(
         raise ValueError("lr must be positive")
     if loss_type not in ["mse", "poisson", "l1"]:
         raise ValueError("loss_type must be 'mse', 'poisson', or 'l1'")
-    if l1_amp < 0:
-        raise ValueError("l1_amp must be non-negative")
+    if l1_amp is not None and l1_amp < 0:
+        raise ValueError("l1_amp must be non-negative if specified")
+    if l1_diag is not None and l1_diag < 0:
+        raise ValueError("l1_diag must be non-negative if specified")
+    if l1_sharpness is not None and l1_sharpness < 0:
+        raise ValueError("l1_sharpness must be non-negative if specified")
     if truncate <= 0:
         raise ValueError("truncate must be positive")
     if max_abs_error is not None and max_abs_error <= 0:
@@ -154,7 +150,6 @@ def prepare_fit_config(
         l1_amp=l1_amp,
         l1_diag=l1_diag,
         l1_sharpness=l1_sharpness,
-        sharpness_lr_scale=sharpness_lr_scale,
         scheduler_type=scheduler_type,
         patience=patience,
         factor=factor,
