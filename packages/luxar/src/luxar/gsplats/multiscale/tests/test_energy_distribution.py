@@ -163,7 +163,6 @@ class TestEnergyDistribution:
 
         # Extract energy distribution over time
         scale_0_energy = [h['energy_scale_0'] for h in history]
-        scale_2_energy = [h['energy_scale_2'] for h in history]
 
         # Check that early iterations differ more than late iterations
         early_variance = np.var(scale_0_energy[:50])

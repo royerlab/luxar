@@ -16,15 +16,11 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
-try:
-    from scipy.ndimage import zoom
-
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    aprint("Warning: scipy not available for upsampling")
-
-from luxar.gsplats.multiscale import decompose_image, show_optimization_movie
+from luxar.gsplats.multiscale import (
+    decompose_image,
+    show_optimization_movie,
+    upsample_for_visualization,
+)
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
@@ -48,16 +44,6 @@ TIME_POINT = 0  # Use first time point
 
 # Setup Arbol
 Arbol.max_depth = 3
-
-
-def upsample_to_shape(img: np.ndarray, target_shape: tuple) -> np.ndarray:
-    """Upsample image to target shape using scipy zoom."""
-    if not SCIPY_AVAILABLE:
-        raise RuntimeError("scipy is required for upsampling")
-    if img.shape == target_shape:
-        return img
-    zoom_factors = [t / s for t, s in zip(target_shape, img.shape)]
-    return zoom(img, zoom_factors, order=1)
 
 
 with asection("3D DAPI Multi-Scale Decomposition Demo"):
@@ -218,13 +204,16 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
 
     with asection("Preparing visualization data"):
         # Upsample all scales to original resolution for visualization
+        # Use same interpolation as optimization
         scales_upsampled = []
+        interpolation_mode = stats.get('interpolation', 'cubic')
+        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
         for i, (scale, vol_scale) in enumerate(zip(SCALES, scales_list)):
             if vol_scale.shape != V.shape:
                 aprint(
                     f"  Upsampling scale {scale}x from {vol_scale.shape} to {V.shape}"
                 )
-                vol_upsampled = upsample_to_shape(vol_scale, V.shape)
+                vol_upsampled = upsample_for_visualization(vol_scale, V.shape, interpolation_mode)
             else:
                 vol_upsampled = vol_scale
             scales_upsampled.append(vol_upsampled)
@@ -396,7 +385,9 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
     # Show optimization convergence movie
     if stats['movie_frames'] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
-        show_optimization_movie(stats['movie_frames'], V.shape)
+        # Pass interpolation mode from stats to ensure movie matches optimization
+        interpolation_mode = stats.get('interpolation', 'cubic')
+        show_optimization_movie(stats['movie_frames'], V.shape, interpolation=interpolation_mode)
 
 # Console summary
 aprint("\n" + "=" * 60)

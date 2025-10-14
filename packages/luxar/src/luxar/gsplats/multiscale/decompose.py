@@ -1004,6 +1004,7 @@ def decompose_image(
         - 'scales': Scale factors used
         - 'time_seconds': Total optimization time
         - 'movie_frames': Dictionary with movie data (if napari_movie=True), or None
+        - 'interpolation': Interpolation mode used ('nearest', 'linear', or 'cubic')
 
     Examples
     --------
@@ -1325,10 +1326,61 @@ def decompose_image(
         "scales": scales,
         "time_seconds": elapsed,
         "movie_frames": movie_frames,
+        "interpolation": interpolation,  # Store interpolation mode for visualization
     }
 
 
-def show_optimization_movie(movie_frames: Dict[str, Any], shape: Tuple[int, ...]) -> None:
+def upsample_for_visualization(
+    img: np.ndarray,
+    target_shape: Tuple[int, ...],
+    interpolation: str = 'cubic'
+) -> np.ndarray:
+    """
+    Upsample numpy array to target shape for visualization purposes.
+
+    Uses the same interpolation methods as the optimization to ensure
+    visual consistency between optimization and visualization.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Input image of any dimensionality
+    target_shape : Tuple[int, ...]
+        Target shape to upsample to
+    interpolation : str, default='cubic'
+        Interpolation method: 'nearest', 'linear', or 'cubic'.
+        Should match the interpolation used during optimization.
+
+    Returns
+    -------
+    np.ndarray
+        Upsampled image of shape target_shape
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from luxar.gsplats.multiscale import upsample_for_visualization
+    >>> img = np.random.rand(64, 64)
+    >>> upsampled = upsample_for_visualization(img, (256, 256), 'cubic')
+    >>> upsampled.shape
+    (256, 256)
+    """
+    if img.shape == target_shape:
+        return img
+
+    # Convert to torch, upsample using same logic as optimization, convert back
+    img_torch = torch.from_numpy(img)
+    interp_mode = _get_interpolation_mode(len(target_shape), interpolation)
+    upsampled_torch = _upsample_to_shape(img_torch, target_shape, interp_mode)
+
+    return upsampled_torch.cpu().numpy()
+
+
+def show_optimization_movie(
+    movie_frames: Dict[str, Any],
+    shape: Tuple[int, ...],
+    interpolation: str = 'cubic'
+) -> None:
     """
     Display napari viewer with optimization movie showing target, reconstruction, residual, and all scales over time.
 
@@ -1343,19 +1395,15 @@ def show_optimization_movie(movie_frames: Dict[str, Any], shape: Tuple[int, ...]
         - 'iterations': List of iteration numbers
     shape : tuple
         Shape of the original data
+    interpolation : str, default='cubic'
+        Interpolation method for upsampling scale components: 'nearest', 'linear', or 'cubic'.
+        Should match the interpolation used during optimization for accurate visualization.
     """
     try:
         import napari
-        from scipy.ndimage import zoom
-
-        def upsample_to_shape(img: np.ndarray, target_shape: tuple) -> np.ndarray:
-            """Upsample image to target shape using scipy zoom."""
-            if img.shape == target_shape:
-                return img
-            zoom_factors = [t / s for t, s in zip(target_shape, img.shape)]
-            return zoom(img, zoom_factors, order=1)
 
         aprint("🎬 Creating multi-scale decomposition movie visualization...")
+        aprint(f"  Using '{interpolation}' interpolation for upsampling")
 
         # Convert lists to stacks (time, spatial_dims...)
         target_stack = np.array(movie_frames["target"])
@@ -1377,9 +1425,9 @@ def show_optimization_movie(movie_frames: Dict[str, Any], shape: Tuple[int, ...]
             scale_frames = []
             for frame_idx in range(n_frames):
                 scale_component = movie_frames["scales"][frame_idx][scale_idx]
-                # Upsample to target shape if needed
+                # Upsample to target shape if needed using same interpolation as optimization
                 if scale_component.shape != shape:
-                    scale_upsampled = upsample_to_shape(scale_component, shape)
+                    scale_upsampled = upsample_for_visualization(scale_component, shape, interpolation)
                 else:
                     scale_upsampled = scale_component
                 scale_frames.append(scale_upsampled)

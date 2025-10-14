@@ -238,7 +238,7 @@ def plot_ascii_energy_bars(
 
 with asection("Multi-Scale Initialization Method Comparison"):
     aprint("Comparing 4 initialization methods: pyramid, uniform, coarse, finest")
-    aprint(f"Test image: Astronaut (scikit-image)")
+    aprint("Test image: Astronaut (scikit-image)")
     aprint(f"Scales: {SCALES}")
     aprint(f"Iterations: {N_ITERS}")
 

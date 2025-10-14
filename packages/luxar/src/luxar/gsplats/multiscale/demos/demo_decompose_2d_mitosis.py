@@ -14,15 +14,11 @@ import numpy as np
 from arbol import aprint, asection
 from skimage import color, data, img_as_float32
 
-try:
-    from scipy.ndimage import zoom
-
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    aprint("Warning: scipy not available")
-
-from luxar.gsplats.multiscale import decompose_image, show_optimization_movie
+from luxar.gsplats.multiscale import (
+    decompose_image,
+    show_optimization_movie,
+    upsample_for_visualization,
+)
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
@@ -39,14 +35,6 @@ SCALES = [1, 2, 4, 8, 16]  # Scale factors to use
 N_ITERS = 5000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
 # ==========================
-
-
-def upsample_to_shape(img: np.ndarray, target_shape: tuple) -> np.ndarray:
-    """Upsample image to target shape using scipy zoom."""
-    if img.shape == target_shape:
-        return img
-    zoom_factors = [t / s for t, s in zip(target_shape, img.shape)]
-    return zoom(img, zoom_factors, order=1)
 
 
 with asection("Human Mitosis Multi-Scale Decomposition Demo"):
@@ -83,19 +71,22 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
             verbose=True,
         )
 
-        aprint(f"Decomposition complete!")
+        aprint("Decomposition complete!")
         aprint(f"Final reconstruction error: {stats['final_error']:.6e}")
         aprint(f"Time elapsed: {stats['time_seconds']:.2f} seconds")
 
     with asection("Preparing visualization data"):
         # Upsample all scales to original resolution for visualization
+        # Use same interpolation as optimization
         scales_upsampled = []
+        interpolation_mode = stats.get('interpolation', 'cubic')
+        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
         for i, (scale, img_scale) in enumerate(zip(SCALES, scales_list)):
             aprint(
                 f"  Upsampling scale {scale}x from {img_scale.shape} to {V.shape}"
             )
             if img_scale.shape != V.shape:
-                img_upsampled = upsample_to_shape(img_scale, V.shape)
+                img_upsampled = upsample_for_visualization(img_scale, V.shape, interpolation_mode)
             else:
                 img_upsampled = img_scale
             scales_upsampled.append(img_upsampled)
@@ -207,7 +198,7 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
     if coarse_energy > 0.5:
         aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
         aprint(
-            f"    → Low-frequency cellular structures captured at coarse resolution"
+            "    → Low-frequency cellular structures captured at coarse resolution"
         )
     elif fine_energy > 0.5:
         aprint(
@@ -242,4 +233,6 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
     # Show optimization convergence movie
     if stats['movie_frames'] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
-        show_optimization_movie(stats['movie_frames'], V.shape)
+        # Pass interpolation mode from stats to ensure movie matches optimization
+        interpolation_mode = stats.get('interpolation', 'cubic')
+        show_optimization_movie(stats['movie_frames'], V.shape, interpolation=interpolation_mode)
