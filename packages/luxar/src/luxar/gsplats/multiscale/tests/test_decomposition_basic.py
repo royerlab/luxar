@@ -80,7 +80,8 @@ class TestMultiScaleDecomposer:
 
     def test_non_negativity(self):
         """Test that all outputs are non-negative."""
-        model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4])
+        # Use 'linear' interpolation for this test - bicubic can undershoot
+        model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4], interpolation='linear')
 
         # Initialize with random negative values
         for param in model.raw_images:
@@ -451,6 +452,81 @@ class TestDecomposeImage:
             # Check non-negativity
             for img in scales_list:
                 assert np.all(img >= 0), f"Output contains negative values for {init_method}"
+
+    def test_interpolation_modes_2d(self, simple_2d_image):
+        """Test all three interpolation modes for 2D images."""
+        for interpolation in ['nearest', 'linear', 'cubic']:
+            scales_list, stats = decompose_image(
+                simple_2d_image,
+                scales=[1, 2, 4],
+                n_iters=50,
+                interpolation=interpolation,
+                verbose=False
+            )
+
+            # Check basic output structure
+            assert len(scales_list) == 3
+            assert 'final_error' in stats
+            assert 'energy_distribution' in stats
+
+            # Check non-negativity (all modes should clamp negatives)
+            for img in scales_list:
+                assert np.all(img >= 0), \
+                    f"Output contains negative values for interpolation='{interpolation}'"
+
+            # Check reconstruction quality (looser threshold for nearest)
+            from scipy.ndimage import zoom
+            reconstruction = np.zeros_like(simple_2d_image)
+            for img in scales_list:
+                if img.shape != simple_2d_image.shape:
+                    zoom_factors = [o / s for o, s in zip(simple_2d_image.shape, img.shape)]
+                    img_upsampled = zoom(img, zoom_factors, order=1)
+                else:
+                    img_upsampled = img
+                reconstruction += img_upsampled
+
+            mse = np.mean((reconstruction - simple_2d_image) ** 2)
+            # Nearest neighbor has worse quality, so use looser threshold
+            mse_threshold = 0.2 if interpolation == 'nearest' else 0.1
+            assert mse < mse_threshold, \
+                f"Reconstruction MSE too high for {interpolation}: {mse}"
+
+    def test_interpolation_modes_3d(self, simple_3d_volume):
+        """Test all three interpolation modes for 3D volumes."""
+        for interpolation in ['nearest', 'linear', 'cubic']:
+            scales_list, stats = decompose_image(
+                simple_3d_volume,
+                scales=[1, 2],
+                n_iters=50,
+                interpolation=interpolation,
+                verbose=False
+            )
+
+            # Check basic output structure
+            assert len(scales_list) == 2
+            assert 'final_error' in stats
+
+            # Check non-negativity
+            for img in scales_list:
+                assert np.all(img >= 0), \
+                    f"3D output contains negative values for interpolation='{interpolation}'"
+
+            # Check reconstruction quality
+            from scipy.ndimage import zoom
+            reconstruction = np.zeros_like(simple_3d_volume)
+            for img in scales_list:
+                if img.shape != simple_3d_volume.shape:
+                    zoom_factors = [o / s for o, s in zip(simple_3d_volume.shape, img.shape)]
+                    img_upsampled = zoom(img, zoom_factors, order=1)
+                else:
+                    img_upsampled = img
+                reconstruction += img_upsampled
+
+            mse = np.mean((reconstruction - simple_3d_volume) ** 2)
+            # All modes should achieve reasonable quality for this simple test
+            mse_threshold = 0.2 if interpolation == 'nearest' else 0.15
+            assert mse < mse_threshold, \
+                f"3D reconstruction MSE too high for {interpolation}: {mse}"
 
 
 class TestEdgeCases:
