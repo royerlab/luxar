@@ -110,11 +110,11 @@ with asection("3D Multi-Scale Decomposition Demo"):
         aprint(
             f"Parameters: n_iters={N_ITERS}"
         )
-        aprint("Note: Using stronger penalties for 3D to favor coarse scales")
 
         # Decompose with movie recording enabled
         scales_list, stats = decompose_image(
             volume,
+            interpolation='nearest',  # Fastest option (cubic is also practical for 3D now with Keys cubic)
             scales=SCALES,
             n_iters=N_ITERS,
             napari_movie=True,
@@ -124,7 +124,7 @@ with asection("3D Multi-Scale Decomposition Demo"):
             verbose=True,
         )
 
-        aprint(f"Decomposition complete!")
+        aprint("Decomposition complete!")
         aprint(f"Final reconstruction error: {stats['final_error']:.6e}")
         aprint(f"Time elapsed: {stats['time_seconds']:.2f} seconds")
 
@@ -266,7 +266,7 @@ with asection("3D Multi-Scale Decomposition Demo"):
         fine_energy = energy_dist[0]
         if coarse_energy > 0.5:
             aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
-            aprint(f"    → Low-frequency 3D features captured at coarse resolution")
+            aprint("    → Low-frequency 3D features captured at coarse resolution")
         elif fine_energy > 0.5:
             aprint(
                 f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"

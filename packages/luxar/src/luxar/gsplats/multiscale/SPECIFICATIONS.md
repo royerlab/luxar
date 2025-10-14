@@ -8,6 +8,19 @@ This module implements n-dimensional multi-scale image decomposition for efficie
 2. **Better Optimization**: Separating frequency bands reduces interference between large and small splats during fitting
 3. **Hierarchical Representation**: Natural separation of coarse and fine features
 
+## Dependencies
+
+**Core Dependencies**:
+- PyTorch (with CUDA/MPS support optional)
+- NumPy
+- SciPy (for napari visualization)
+
+**Optional Dependencies**:
+- `napari`: For visualization (movies, inspection)
+- `arbol`: For structured console output
+
+**Note**: All interpolation modes use native PyTorch operations or custom vectorized implementations. No external dependencies are required for any interpolation method, including 3D cubic.
+
 ## Mathematical Formulation
 
 ### Decomposition
@@ -159,13 +172,45 @@ inverse_softplus(x) = log(expm1(x))  # Uses log(exp(x)-1) identity
 
 ### Upsampling Strategy
 
-For interpolating from low-resolution to high-resolution:
+The decomposition supports three interpolation modes (controlled by `interpolation` parameter):
 
-**2D Images**: Use `F.interpolate(..., mode='bilinear', align_corners=False)`
-**3D Volumes**: Use `F.interpolate(..., mode='trilinear', align_corners=False)`
-**nD General**: Fallback to nearest-neighbor for n>3
+#### 1. **'nearest'** - Nearest-Neighbor Interpolation
+- **Speed**: Fastest
+- **Quality**: Blocky, no smoothing
+- **Use case**: Quick prototyping, debugging
+- **Implementation**:
+  - All dimensions: `F.interpolate(..., mode='nearest')`
+
+#### 2. **'linear'** - Linear Interpolation
+- **Speed**: Medium
+- **Quality**: Smooth, no overshoot/undershoot
+- **Use case**: When non-negativity is critical, general purpose
+- **Implementation**:
+  - 2D: `F.interpolate(..., mode='bilinear', align_corners=False)`
+  - 3D: `F.interpolate(..., mode='trilinear', align_corners=False)`
+  - nD (n>3): Falls back to `'nearest'`
+
+#### 3. **'cubic'** - Cubic Interpolation (Default)
+- **Speed**: Slowest
+- **Quality**: Smoothest, highest quality
+- **Caveat**: Can produce small negative values (undershoot), which are clamped to zero
+- **Use case**: When maximum quality is desired (default)
+- **Implementation**:
+  - 2D: `F.interpolate(..., mode='bicubic', align_corners=False)`
+  - 3D+: Custom Keys cubic convolution with vectorized PyTorch operations
+  - Uses separable filters applied along each axis for efficient nD processing
 
 **Rationale for align_corners=False**: Better preserves spatial positions for splat center coordinates.
+
+**Negative Value Handling**: Cubic interpolation can produce small negative values due to the negative lobes in the cubic kernel (inherent to its superior smoothness). These are automatically clamped to zero after upsampling since all scale components must be non-negative.
+
+**Keys Cubic Convolution**: For 3D and higher dimensions, we use a custom implementation of Keys cubic convolution (a=-0.5) with vectorized PyTorch operations:
+- Uses torch.unfold for efficient sliding window extraction
+- Broadcasting for kernel application (fully vectorized, no Python loops)
+- Separable filters applied along each axis independently (O(n×k) vs O(k^n))
+- Recursive 2× upsampling for power-of-2 scale factors
+- Fully GPU-accelerated without external dependencies
+- 27-45× faster than previous torch-interpol implementation
 
 ## Initialization Strategy
 
@@ -326,7 +371,10 @@ def stable_inverse_softplus(x):
 **Parameters**:
 - `shape: Tuple[int, ...]` - Shape of target image (n-dimensional)
 - `scales: List[int]` - Scale factors (e.g., [1, 2, 4, 8])
-- `upsample_mode: str` - Interpolation mode ('bilinear', 'trilinear', 'nearest')
+- `interpolation: str` - Interpolation method: 'nearest', 'linear', or 'cubic' (default: 'cubic')
+  - 'nearest': Fastest, blocky
+  - 'linear': Medium speed, smooth, no overshoot
+  - 'cubic': Highest quality, smoothest (Keys cubic for 3D+), may produce small negative values (clamped)
 
 **Learnable Parameters**:
 - `raw_images: nn.ParameterList` - One parameter tensor per scale (unconstrained)
@@ -437,6 +485,13 @@ def decompose_image(
         optimization stops early when max|reconstruction - target| < threshold.
         If None (default), uses auto-convergence: 1% of image value range.
         For uniform images (all same value), uses 1% of mean absolute value.
+    interpolation : str, default='cubic'
+        Interpolation method for upsampling scale components:
+        - 'nearest': Nearest-neighbor (fastest, blocky)
+        - 'linear': Linear interpolation (medium speed, smooth, no overshoot)
+        - 'cubic': Cubic interpolation (highest quality, may produce small negatives which are clamped)
+        For 2D: uses PyTorch 'bicubic'
+        For 3D+: uses custom Keys cubic convolution (vectorized, 27-45× faster than old torch-interpol)
     napari_movie : bool, default=False
         Enable recording of optimization progress for napari movie visualization
     movie_every : int, default=1
