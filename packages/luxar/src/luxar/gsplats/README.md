@@ -600,20 +600,34 @@ The `demo_splats_4d_napari.py` demonstrates complete nD algorithm validation:
 
 ## Testing
 
-Run comprehensive tests to verify correctness:
+The gsplats package has comprehensive test coverage with 314 tests organized into unit tests (per subpackage) and integration tests:
 
 ```bash
-pytest packages/luxar/src/luxar/gsplats/tests/test_gsplats_integration.py -v
+# Run all gsplats tests
+hatch run pytest packages/luxar/src/luxar/gsplats/ -v
+
+# Run integration tests only
+hatch run pytest packages/luxar/src/luxar/gsplats/tests/ -v
+
+# Run fitting pipeline unit tests
+hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
 ```
 
-Tests cover:
-- 2D/3D reconstruction pipelines
-- Early stopping convergence
-- Loss functions (MSE, Poisson)
-- Regularization effects
-- Sigma constraints
-- Device compatibility
+**Test Organization:**
+- `fitting/tests/` - 84 tests for modular fitting pipeline (100% module coverage)
+- `optim/tests/` - 17 tests for per-splat optimizer
+- `models/*/tests/` - 53 tests for model and utility functions
+- `multiscale/tests/` - 30 tests for multiscale decomposition
+- `tests/` - 120 integration tests for complete pipelines
+
+**Coverage:**
+- Unit tests for all pipeline components (validation, preprocessing, losses, optimization, etc.)
+- 2D/3D/nD reconstruction pipelines
+- Loss functions (MSE, Poisson, L1) with asymmetric penalties
+- Dynamic operations (seeding, pruning, merging, splitting)
+- Device compatibility (CPU, CUDA, MPS)
 - Edge cases and error handling
+- No interactive windows during tests (napari properly mocked)
 
 ## Performance Tips
 
