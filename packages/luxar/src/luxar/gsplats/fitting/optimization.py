@@ -141,6 +141,9 @@ def run_optimization_loop(
 
             # Track best state based on max absolute error (quality guarantee)
             if current_max_abs_error < best_max_abs_error:
+                # Save previous best for logging comparison
+                previous_best = best_max_abs_error
+
                 best_max_abs_error = current_max_abs_error
                 best_iteration = it
 
@@ -158,7 +161,7 @@ def run_optimization_loop(
 
                 # Smart logging: significant improvements or early iterations
                 if config.verbose and (
-                    it <= 10 or current_max_abs_error < best_max_abs_error * 0.95
+                    it <= 10 or current_max_abs_error < previous_best * 0.95
                 ):
                     aprint(
                         f"    ★ New best state: iteration {it}, max_abs_error={current_max_abs_error:.6f}"
