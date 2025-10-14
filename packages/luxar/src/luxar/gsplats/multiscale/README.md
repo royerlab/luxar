@@ -218,7 +218,9 @@ scales_list, stats = decompose_image(
 
 # Display convergence movie in napari
 if stats['movie_frames'] is not None:
-    show_optimization_movie(stats['movie_frames'], image.shape)
+    # Pass interpolation mode from stats to ensure movie matches optimization
+    interpolation = stats.get('interpolation', 'cubic')
+    show_optimization_movie(stats['movie_frames'], image.shape, interpolation=interpolation)
     # Use time slider to scrub through optimization
     # Compare target, reconstruction, all scales, and residual over time
     # Toggle scale layers to see energy evolution across scales
@@ -471,6 +473,7 @@ decompose_image(
   - `'energy_distribution'`: Energy fraction per scale
   - `'history'`: Per-iteration statistics
   - `'time_seconds'`: Total optimization time
+  - `'interpolation'`: Interpolation mode used ('nearest', 'linear', or 'cubic')
   - `'movie_frames'`: Movie data (if napari_movie=True), or None
 
 ### Model Class
@@ -515,13 +518,16 @@ decomposition_loss(
 ```python
 show_optimization_movie(
     movie_frames: Dict[str, Any],
-    shape: Tuple[int, ...]
+    shape: Tuple[int, ...],
+    interpolation: str = 'cubic'
 ) -> None
 ```
 
 Display napari viewer with optimization movie showing convergence progress including target, reconstruction, all individual scale components, and residual over time. The `movie_frames` dictionary should come from `decompose_image()` with `napari_movie=True`.
 
-Individual scale components are hidden by default to avoid visual clutter - toggle their visibility to see how energy evolves across scales during optimization.
+The `interpolation` parameter should match the mode used during optimization (available from `stats['interpolation']`) to ensure the movie visualization matches what was optimized.
+
+Individual scale components are all visible by default - toggle their visibility to reduce clutter if needed. This allows you to see how energy evolves across scales during optimization.
 
 ## Performance
 

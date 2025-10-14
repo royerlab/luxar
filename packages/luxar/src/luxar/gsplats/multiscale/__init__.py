@@ -31,6 +31,7 @@ from luxar.gsplats.multiscale.decompose import (
     decompose_image,
     decomposition_loss,
     show_optimization_movie,
+    upsample_for_visualization,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "MultiScaleDecomposer",
     "decomposition_loss",
     "show_optimization_movie",
+    "upsample_for_visualization",
 ]

@@ -520,6 +520,7 @@ def decompose_image(
         - 'energy_distribution': Fraction of total energy per scale
         - 'scales': Scale factors used
         - 'time_seconds': Total optimization time
+        - 'interpolation': Interpolation mode used ('nearest', 'linear', or 'cubic')
         - 'movie_frames': Dict with movie data (if napari_movie=True), or None
             - 'target': List of target frames
             - 'reconstruction': List of reconstruction frames
@@ -950,7 +951,9 @@ scales_list, stats = decompose_image(
 
 # Display movie in napari
 if stats['movie_frames'] is not None:
-    show_optimization_movie(stats['movie_frames'], V.shape)
+    # Pass interpolation mode from stats to ensure movie matches optimization
+    interpolation = stats.get('interpolation', 'cubic')
+    show_optimization_movie(stats['movie_frames'], V.shape, interpolation=interpolation)
 ```
 
 ### Movie Data Structure

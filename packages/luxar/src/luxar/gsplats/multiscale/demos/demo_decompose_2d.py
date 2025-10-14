@@ -14,15 +14,18 @@ import numpy as np
 from arbol import aprint, asection
 
 try:
-    from skimage import data, color
-    from scipy.ndimage import zoom
+    from skimage import color, data
 
     DEPS_AVAILABLE = True
 except ImportError:
     DEPS_AVAILABLE = False
-    aprint("Warning: scikit-image or scipy not available")
+    aprint("Warning: scikit-image not available")
 
-from luxar.gsplats.multiscale import decompose_image, show_optimization_movie
+from luxar.gsplats.multiscale import (
+    decompose_image,
+    show_optimization_movie,
+    upsample_for_visualization,
+)
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
@@ -65,14 +68,6 @@ def create_test_image_2d(size: int = 256) -> np.ndarray:
     return image.astype(np.float32)
 
 
-def upsample_to_shape(img: np.ndarray, target_shape: tuple) -> np.ndarray:
-    """Upsample image to target shape using scipy zoom."""
-    if img.shape == target_shape:
-        return img
-    zoom_factors = [t / s for t, s in zip(target_shape, img.shape)]
-    return zoom(img, zoom_factors, order=1)
-
-
 with asection("2D Multi-Scale Decomposition Demo"):
     aprint("🎨 Interactive 2D image decomposition with scale separation")
 
@@ -112,16 +107,19 @@ with asection("2D Multi-Scale Decomposition Demo"):
             verbose=True,
         )
 
-        aprint(f"Decomposition complete!")
+        aprint("Decomposition complete!")
         aprint(f"Final reconstruction error: {stats['final_error']:.6e}")
 
     with asection("Preparing visualization data"):
         # Upsample all scales to original resolution for visualization
+        # Use cubic interpolation to match optimization
         scales_upsampled = []
+        interpolation_mode = stats.get('interpolation', 'cubic')  # Get from stats or default to cubic
+        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
         for i, (scale, img_scale) in enumerate(zip(SCALES, scales_list)):
             aprint(f"  Upsampling scale {scale}x from {img_scale.shape} to {image.shape}")
             if img_scale.shape != image.shape:
-                img_upsampled = upsample_to_shape(img_scale, image.shape)
+                img_upsampled = upsample_for_visualization(img_scale, image.shape, interpolation_mode)
             else:
                 img_upsampled = img_scale
             scales_upsampled.append(img_upsampled)
@@ -242,4 +240,6 @@ with asection("2D Multi-Scale Decomposition Demo"):
     # Show optimization convergence movie
     if stats['movie_frames'] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
-        show_optimization_movie(stats['movie_frames'], image.shape)
+        # Pass interpolation mode from stats to ensure movie matches optimization
+        interpolation_mode = stats.get('interpolation', 'cubic')
+        show_optimization_movie(stats['movie_frames'], image.shape, interpolation=interpolation_mode)
