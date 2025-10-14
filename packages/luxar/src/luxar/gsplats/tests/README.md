@@ -4,16 +4,33 @@ This directory contains comprehensive tests for the GSplats package, following t
 
 ## Test Structure
 
-The tests are organized to mirror the package structure:
+The tests are organized following the "in-subpackage" pattern, where each subpackage has its own tests/ directory for unit tests, and integration tests remain in the main gsplats/tests/:
 
 ```
 gsplats/
-├── tests/                          # Main gsplats tests
+├── tests/                          # Integration tests
 │   ├── __init__.py
-│   ├── test_basic_utils.py         # Basic utilities (numpy-only tests)
 │   ├── test_candidates.py          # Candidate detection (requires scipy)
-│   ├── test_fit_gsplats.py         # Gaussian splat fitting (requires torch/scipy)
+│   ├── test_dynamic_ops.py         # Dynamic operations integration
+│   ├── test_fit_gsplats.py         # Full fitting pipeline (requires torch/scipy)
+│   ├── test_gsplats_integration.py # Integration tests
 │   └── README.md                   # This file
+├── fitting/
+│   └── tests/                      # Fitting pipeline unit tests
+│       ├── __init__.py
+│       ├── test_fitting_config.py      # Configuration validation
+│       ├── test_fitting_preprocessing.py # Data preprocessing
+│       ├── test_fitting_validation.py   # Input validation
+│       ├── test_initialization.py       # Model initialization
+│       ├── test_losses.py               # Loss functions
+│       ├── test_optimization.py         # Optimization loop
+│       ├── test_results.py              # Result finalization
+│       └── test_visualization.py        # Visualization helpers
+├── optim/
+│   └── tests/                      # Optimizer tests
+│       ├── __init__.py
+│       ├── test_per_splat_adam.py       # Per-splat Adam optimizer
+│       └── test_per_splat_optimizer.py  # Optimizer factory
 ├── utils/
 │   └── tests/                      # Utils-specific tests
 │       ├── __init__.py
@@ -25,8 +42,13 @@ gsplats/
 │   │   └── test_lt_solver.py       # Lower triangular solver
 │   └── gsplats/tests/              # GSplat model tests
 │       ├── __init__.py
-│       ├── test_gsplat_model.py    # GaussianSplatModel class tests (requires torch)
-│       └── test_rendering.py       # Rendering function tests (requires torch)
+│       ├── test_gsplat_model.py    # GaussianSplatModel class
+│       └── test_rendering.py       # Rendering functions
+└── multiscale/
+    └── tests/                      # Multiscale decomposition tests
+        ├── __init__.py
+        ├── test_decomposition_basic.py
+        └── test_energy_distribution.py
 ```
 
 ## Dependencies and Test Execution
@@ -37,9 +59,6 @@ These tests only require numpy and can be run in any environment:
 ```bash
 # Test triangular matrix utilities
 hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
-
-# Test basic utility patterns
-hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_basic_utils.py
 ```
 
 ### Optional Dependency Tests
@@ -62,13 +81,13 @@ hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ### Run Core Tests Only
 ```bash
 # Run only the tests that don't require external dependencies
-hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py packages/luxar/src/luxar/gsplats/tests/test_basic_utils.py -v
+hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py -v
 ```
 
 ### Run with Coverage
 ```bash
 # Generate coverage report
-hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/tests/test_basic_utils.py packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py --cov-report=html
+hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-report=html
 ```
 
 ## Test Categories
@@ -84,16 +103,17 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/tests/test
 
 **Coverage**: 18 test cases covering all functions in `trils.py`
 
-### 2. Basic Utility Tests (`tests/test_basic_utils.py`)
+### 2. Fitting Pipeline Tests (`fitting/tests/`)
 
-**Core Pattern Tests** - Tests for common algorithmic patterns:
-- Array shape and dimension validation
-- Distance calculations and coordinate bounds
-- Data type handling and conversion patterns
-- Input validation patterns used throughout gsplats
-- Numerical stability patterns
-
-**Coverage**: 14 test cases covering validation patterns, algorithmic patterns, and utility functions
+**Unit Tests for Modular Fitting Pipeline** (57 tests, 100% module coverage):
+- `test_fitting_config.py` - Configuration dataclass validation
+- `test_fitting_preprocessing.py` - Data preprocessing and normalization
+- `test_fitting_validation.py` - Input validation at API boundaries
+- `test_initialization.py` - Model and optimizer initialization (9 tests)
+- `test_losses.py` - Loss functions and regularization (12 tests)
+- `test_optimization.py` - Optimization loop and convergence (15 tests)
+- `test_results.py` - Result finalization and statistics (12 tests)
+- `test_visualization.py` - Visualization helpers (9 tests, napari mocked)
 
 ### 3. Advanced Function Tests (Optional Dependencies)
 
@@ -156,19 +176,36 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/tests/test
 ```
 # Core tests (always available)
 packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py .................. [18 tests]
-packages/luxar/src/luxar/gsplats/tests/test_basic_utils.py ................ [14 tests]
 
-================================ 32 passed in 0.11s ===============================
+# Full test suite (when torch/scipy available) - 314 tests total:
+fitting/tests/ ........................................................ [84 tests]
+  - test_fitting_config.py ......................................... [4 tests]
+  - test_fitting_preprocessing.py .................................. [8 tests]
+  - test_fitting_validation.py ..................................... [16 tests]
+  - test_initialization.py ......................................... [9 tests]
+  - test_losses.py ................................................. [12 tests]
+  - test_optimization.py ........................................... [15 tests]
+  - test_results.py ................................................ [12 tests]
+  - test_visualization.py .......................................... [9 tests]
+models/gsplats/tests/ ................................................. [20 tests]
+  - test_gsplat_model.py ........................................... [20 tests]
+  - test_rendering.py .............................................. [25 tests]
+models/utils/tests/ ................................................... [25 tests]
+  - test_inverse_softplus.py ....................................... [15 tests]
+  - test_lt_solver.py .............................................. [18 tests]
+optim/tests/ .......................................................... [17 tests]
+  - test_per_splat_adam.py ......................................... [2 tests]
+  - test_per_splat_optimizer.py .................................... [15 tests]
+multiscale/tests/ ..................................................... [30 tests]
+  - test_decomposition_basic.py .................................... [21 tests]
+  - test_energy_distribution.py .................................... [9 tests]
+tests/ (integration) .................................................. [120 tests]
+  - test_candidates.py ............................................. [31 tests]
+  - test_dynamic_ops.py ............................................ [18 tests]
+  - test_fit_gsplats.py ............................................ [23 tests]
+  - test_gsplats_integration.py .................................... [11 tests]
 
-# Extended tests (when torch/scipy available)
-test_gsplat_model.py .................................................... [35+ tests]
-test_fit_gsplats.py .................................................... [25+ tests] 
-test_rendering.py ..................................................... [25+ tests]
-test_candidates.py .................................................... [30+ tests]
-test_lt_solver.py ..................................................... [15+ tests]
-test_inverse_softplus.py .............................................. [10+ tests]
-
-# Total: 130+ comprehensive tests across all components
+================== 312 passed, 2 skipped in 12.14s ===================
 ```
 
 ## Adding New Tests

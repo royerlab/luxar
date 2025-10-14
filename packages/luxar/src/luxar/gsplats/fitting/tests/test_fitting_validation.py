@@ -150,13 +150,13 @@ class TestPrepareConfig:
             )
 
     def test_l1_regularization_default(self) -> None:
-        """Test that L1 regularization is None by default (set later in preprocessing)."""
+        """Test that L1 regularization is None by default."""
         fitter = MockGaussianSplatFitter()
         V = np.random.rand(16, 16).astype(np.float32)
 
         config = prepare_fit_config(fitter, V, lr=0.02)
 
-        # L1 defaults are now set in preprocessing.py after gradient dilution calculation
+        # L1 defaults set in preprocessing.py after gradient dilution calc
         assert config.l1_amp is None
         assert config.l1_diag is None
         assert config.l1_sharpness is None

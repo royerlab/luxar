@@ -358,23 +358,51 @@ Key extension points in `optimization.py`:
 
 ## Testing Strategy
 
-### Unit Tests
-Each module should have tests for:
-- Input validation (edge cases, invalid inputs)
-- Correct output format
-- Expected behavior on sample data
+The fitting pipeline has comprehensive test coverage in `fitting/tests/` (84 tests, 100% module coverage).
 
-### Integration Tests
-Test complete pipeline flow:
-- Simple synthetic data (known ground truth)
-- Edge cases (empty input, single splat, huge data)
-- Convergence behavior
+### Unit Tests (`fitting/tests/`)
+
+**Configuration & Validation:**
+- `test_fitting_config.py` (4 tests) - Dataclass creation and validation
+- `test_fitting_preprocessing.py` (8 tests) - Data normalization and seed generation
+- `test_fitting_validation.py` (16 tests) - Input validation and error handling
+
+**Pipeline Components:**
+- `test_initialization.py` (9 tests) - Model, optimizer, and scheduler initialization
+- `test_losses.py` (12 tests) - Loss functions, asymmetric penalties, L1 regularization
+- `test_optimization.py` (15 tests) - Training loop, convergence, dynamic operations
+- `test_results.py` (12 tests) - Result finalization, amplitude rescaling, statistics
+- `test_visualization.py` (9 tests) - Compression analysis, napari movie (mocked)
+
+**Test Coverage:**
+- All modules tested with normal cases, edge cases, and error conditions
+- 2D, 3D, and nD scenarios covered
+- Device compatibility (CPU, CUDA, MPS when available)
+- Gradient flow and numerical stability verified
+- No interactive windows opened during tests (napari mocked)
+
+**Running Tests:**
+```bash
+# Run all fitting tests
+hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/ -v
+
+# Run specific test file
+hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/test_losses.py -v
+```
+
+### Integration Tests (`../tests/`)
+See `../tests/test_fit_gsplats.py` and `../tests/test_gsplats_integration.py` for:
+- Complete pipeline flow with known ground truth
+- Edge cases (empty input, single splat, uniform images)
+- Convergence behavior across loss types
+- Dynamic operations integration
 
 ### Property Tests
 Verify mathematical invariants:
 - Normalized data is in [0, 1]
 - Best state has lowest error
 - Gradient dilution formula is correct
+- Amplitude rescaling preserves relative magnitudes
 
 ## Performance Considerations
 
