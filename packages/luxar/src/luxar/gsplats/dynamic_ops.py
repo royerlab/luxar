@@ -622,7 +622,7 @@ def _test_local_removal_impact(
     Returns:
         bool: True if splat can be safely removed, False if it should be kept
     """
-    from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians
+    from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
     with torch.no_grad():
         # Get current parameters
