@@ -11,7 +11,7 @@ import torch
 
 from luxar.gsplats.candidates import find_candidates_overcomplete_nd
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplat_model import (
+from luxar.gsplats.models.gsplats import (
     render_gaussians,
     render_gaussians_numpy,
 )
