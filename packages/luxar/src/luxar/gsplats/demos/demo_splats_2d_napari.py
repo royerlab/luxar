@@ -100,7 +100,10 @@ if len(amps) == 0:
 # For a general Gaussian, ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ).
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 2
-L_packed = params_full[:, d:]  # (N, 3) in 2D
+
+# params_full includes sharpness in last column: [centers, packed_L, sharpness]
+# Extract L for energy ranking (exclude sharpness from the end)
+L_packed = params_full[:, d:-1]  # (N, 3) in 2D - centers excluded, sharpness excluded
 L_full = unpack_tril(L_packed, d)  # (N, 2, 2)
 diag_prod = np.prod(
     np.stack([L_full[:, 0, 0], L_full[:, 1, 1]], axis=1), axis=1
@@ -120,7 +123,7 @@ rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
 # Bit accounting (float32 for all params + amps)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1  # centers(d) + packed L + amplitude
+FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(d) + packed L + sharpness + amplitude
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_PIXELS = V.size
@@ -136,7 +139,7 @@ centers_frames = []
 for i, K in enumerate(keep_counts):
     idx = order[:K]
 
-    # Reconstruction & residual
+    # Reconstruction & residual with auto-extraction of all parameters
     Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )

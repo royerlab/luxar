@@ -299,7 +299,10 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 # For a 3D Gaussian, ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ).
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 3
-L_packed = params_full[:, d:]  # (N, 6) in 3D (triangular matrix has 6 elements)
+
+# params_full includes sharpness in last column: [centers, packed_L, sharpness]
+# Extract L for energy ranking (exclude sharpness from the end)
+L_packed = params_full[:, d:-1]  # (N, 6) in 3D - centers excluded, sharpness excluded
 L_full = unpack_tril(L_packed, d)  # (N, 3, 3)
 diag_prod = np.prod(
     np.stack([L_full[:, 0, 0], L_full[:, 1, 1], L_full[:, 2, 2]], axis=1), axis=1
@@ -319,9 +322,9 @@ stack_recon = np.zeros((len(keep_counts),) + V.shape, dtype=np.float32)
 stack_resid = np.zeros_like(stack_recon)
 rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
-# Bit accounting (float32 for centers + packed L + amplitude)
+# Bit accounting (float32 for centers + packed L + sharpness + amplitude)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1  # centers(3) + packed L(6) + amp(1) = 10
+FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(3) + packed L(6) + sharpness(1) + amp(1) = 11
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_VOXELS = V.size
@@ -338,6 +341,7 @@ with asection("Computing 3D reconstruction quality at different compression leve
     for i, K in enumerate(keep_counts):
         idx = order[:K]
 
+        # Render with auto-extraction of all parameters from params_full
         Vk = render_gaussians_numpy(
             V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
         )

@@ -92,8 +92,9 @@ class GaussianSplatFitter:
 
         Returns
         -------
-        params_full : np.ndarray
-            Splat parameters [centers, packed_L].
+        params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1)
+            Splat parameters [centers, packed_L, sharpness].
+            Last column contains per-splat sharpness values.
         amps : np.ndarray
             Splat amplitudes.
         stats : dict
@@ -135,7 +136,7 @@ class GaussianSplatFitter:
         if preprocessed_data.N == 0:
             return (
                 np.zeros(
-                    (0, preprocessed_data.d + tril_size(preprocessed_data.d)),
+                    (0, preprocessed_data.d + tril_size(preprocessed_data.d) + 1),  # Include sharpness
                     np.float32,
                 ),
                 np.zeros((0,), np.float32),
@@ -289,9 +290,12 @@ def fit_gaussian_splats(
 
     Returns
     -------
-    params_full : np.ndarray, shape (N, d + d*(d+1)//2), dtype=float32
-        Concatenated parameters for each splat: [center_coords, packed_cholesky_L].
-        Centers remain in voxel coordinates, covariances in voxel units.
+    params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1), dtype=float32
+        Concatenated parameters for each splat: [center_coords, packed_cholesky_L, sharpness].
+        Column structure:
+        - First d columns: center coordinates (voxel units)
+        - Next d*(d+1)//2 columns: packed lower-triangular Cholesky factors
+        - Last column: per-splat sharpness values (s = 2.0 is standard Gaussian)
         Represents the BEST state encountered during optimization (lowest max_abs_error).
     amps : np.ndarray, shape (N,), dtype=float32
         Non-negative amplitude values for each splat, rescaled to original image
@@ -301,6 +305,7 @@ def fit_gaussian_splats(
     stats : dict
         Optimization statistics including time, iterations, convergence status.
         Reflects the best state iteration, not the final iteration.
+        Includes per-splat sharpness statistics (min, max, mean, std, median).
 
     Notes
     -----

@@ -36,8 +36,9 @@ def finalize_results(
 
     Returns
     -------
-    params_full : np.ndarray
-        Concatenated parameters [centers, packed_cholesky]
+    params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1)
+        Concatenated parameters [centers, packed_cholesky, sharpness]
+        Last column contains per-splat sharpness values
     amps : np.ndarray
         Amplitudes rescaled to original intensity range
     stats : dict
@@ -56,8 +57,11 @@ def finalize_results(
             f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})"
         )
 
-    # Pack parameters
-    params_full = np.concatenate([centers_np, pack_tril(Ls_np)], axis=1)
+    # Pack parameters INCLUDING sharpness
+    # Shape: (N, d + d*(d+1)//2 + 1) where last column is sharpness
+    params_full = np.concatenate(
+        [centers_np, pack_tril(Ls_np), sharpness_np[:, None]], axis=1
+    )
 
     # Compute sharpness statistics
     sharpness_stats = {

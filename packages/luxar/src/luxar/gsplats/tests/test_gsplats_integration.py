@@ -66,12 +66,14 @@ class TestGaussianSplatsIntegration:
         )
 
         assert params.shape[0] == len(candidates)
-        assert params.shape[1] == 2 + tril_size(2)  # centers + packed L
+        assert params.shape[1] == 2 + tril_size(2) + 1  # centers + packed L + sharpness
         assert amps.shape == (len(candidates),)
         assert np.all(amps >= 0)  # Amplitudes should be non-negative
 
-        # Render reconstruction
-        reconstruction = render_gaussians_numpy(image.shape, params, amps, truncate=3.0)
+        # Render reconstruction (auto-extraction of all parameters)
+        reconstruction = render_gaussians_numpy(
+            image.shape, params, amps, truncate=3.0
+        )
 
         assert reconstruction.shape == image.shape
         assert np.all(np.isfinite(reconstruction))
@@ -108,10 +110,10 @@ class TestGaussianSplatsIntegration:
         )
 
         assert params.shape[0] == len(candidates)
-        assert params.shape[1] == 3 + tril_size(3)  # centers + packed L
+        assert params.shape[1] == 3 + tril_size(3) + 1  # centers + packed L + sharpness
         assert amps.shape == (len(candidates),)
 
-        # Render reconstruction
+        # Render reconstruction (auto-extraction of all parameters)
         reconstruction = render_gaussians_numpy(
             volume.shape, params, amps, truncate=3.0
         )
@@ -167,12 +169,14 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
 
-        assert params.shape[1] == 4 + tril_size(4)  # 4 centers + 4x4 Cholesky
+        assert params.shape[1] == 4 + tril_size(4) + 1  # 4 centers + 4x4 Cholesky + sharpness
         assert len(amps) == len(candidates)
         assert all(amps >= 0)  # Non-negative amplitudes
 
         # Render reconstruction (this tests our nD chunking path!)
-        reconstruction = render_gaussians_numpy(shape_4d, params, amps, truncate=2.5)
+        reconstruction = render_gaussians_numpy(
+            shape_4d, params, amps, truncate=2.5
+        )
         assert reconstruction.shape == shape_4d
 
         # Verify reconstruction quality (looser tolerance for 4D)
@@ -221,7 +225,7 @@ class TestGaussianSplatsIntegration:
         if stats_early["converged"]:
             assert stats_early["iterations"] < 200
 
-        # But achieve similar quality
+        # But achieve similar quality (auto-extraction of all parameters)
         recon_early = render_gaussians_numpy(image.shape, params_early, amps_early)
         recon_full = render_gaussians_numpy(image.shape, params_full, amps_full)
 
@@ -249,19 +253,21 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
 
-        # Render with numpy
+        # Render with numpy (auto-extraction of all parameters)
         recon_numpy = render_gaussians_numpy(image.shape, params, amps)
 
         # Render with batched PyTorch
         device = torch.device("cuda" if torch.cuda.is_available() else "mps")
         d = 2
+        # Extract parameters manually for PyTorch rendering
+        sharpness_np = params[:, -1]
         centers = torch.tensor(params[:, :d], device=device)
-        L_packed = params[:, d:]
+        L_packed = params[:, d:-1]  # Exclude sharpness
         L_full = unpack_tril(L_packed, d)
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(amps, device=device)
-        # Use standard Gaussian sharpness for this test
-        sharpness = torch.full((amps_t.shape[0],), 2.0, device=device)
+        # Use fitted sharpness values
+        sharpness = torch.tensor(sharpness_np, device=device)
 
         recon_torch = render_gaussians(
             image.shape, centers, Ls, amps_t, sharpness, truncate=3.0
@@ -305,11 +311,9 @@ class TestGaussianSplatsIntegration:
         assert np.all(amps_mse >= 0)
         assert np.all(amps_poisson >= 0)
 
-        # Both should reconstruct reasonably well
+        # Both should reconstruct reasonably well (auto-extraction of all parameters)
         recon_mse = render_gaussians_numpy(image.shape, params_mse, amps_mse)
-        recon_poisson = render_gaussians_numpy(
-            image.shape, params_poisson, amps_poisson
-        )
+        recon_poisson = render_gaussians_numpy(image.shape, params_poisson, amps_poisson)
 
         mse_mse = np.mean((image - recon_mse) ** 2)
         mse_poisson = np.mean((image - recon_poisson) ** 2)
@@ -434,7 +438,7 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
 
-        assert params.shape == (0, 2 + tril_size(2))
+        assert params.shape == (0, 2 + tril_size(2) + 1)  # Include sharpness
         assert amps.shape == (0,)
 
         # Uniform image
@@ -481,7 +485,9 @@ class TestGaussianSplatsIntegration:
         )
 
         # Render with loose truncation (this exercises chunking!)
-        reconstruction = render_gaussians_numpy(shape, params, amps, truncate=8.0)
+        reconstruction = render_gaussians_numpy(
+            shape, params, amps, truncate=8.0
+        )
 
         assert reconstruction.shape == shape
         assert np.all(np.isfinite(reconstruction))

@@ -109,7 +109,10 @@ with asection("4D Gaussian Splatting Demo"):
 # For a 4D Gaussian, ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ).
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 4
-L_packed = params_full[:, d:]  # (N, 10) in 4D (triangular matrix has 10 elements)
+
+# params_full includes sharpness in last column: [centers, packed_L, sharpness]
+# Extract L for energy ranking (exclude sharpness from the end)
+L_packed = params_full[:, d:-1]  # (N, 10) in 4D - centers excluded, sharpness excluded
 L_full = unpack_tril(L_packed, d)  # (N, 4, 4)
 diag_prod = np.prod(
     np.stack([L_full[:, i, i] for i in range(d)], axis=1), axis=1
@@ -133,7 +136,7 @@ rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
 # 4D bit accounting (float32 for all params + amps)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1  # centers(4) + packed L(10) + amplitude(1) = 15
+FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(4) + packed L(10) + sharpness(1) + amplitude(1) = 16
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 HYPERCUBE_BITS = V.size * FLOAT_BITS
 NUM_HYPERVOXELS = V.size
@@ -151,7 +154,7 @@ for i, K in enumerate(keep_counts):
 
     idx = order[:K]
 
-    # Reconstruction & residual
+    # Reconstruction & residual with auto-extraction of all parameters
     Vk = render_gaussians_numpy(
         V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
     )

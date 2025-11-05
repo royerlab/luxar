@@ -100,7 +100,7 @@ class TestFitGaussianSplatsBasic:
         # Check output shapes
         d = 2
         N = len(simple_candidates_2d)
-        expected_param_size = d + tril_size(d)  # centers + packed Cholesky
+        expected_param_size = d + tril_size(d) + 1  # centers + packed Cholesky + sharpness
 
         assert params_full.shape == (N, expected_param_size)
         assert amps.shape == (N,)
@@ -133,7 +133,7 @@ class TestFitGaussianSplatsBasic:
         # Check output shapes
         d = 3
         N = len(simple_candidates_3d)
-        expected_param_size = d + tril_size(d)  # 3 + 6 = 9
+        expected_param_size = d + tril_size(d) + 1  # 3 + 6 + 1 = 10
 
         assert params_full.shape == (N, expected_param_size)
         assert amps.shape == (N,)
@@ -158,7 +158,7 @@ class TestFitGaussianSplatsBasic:
 
         # Should return empty arrays with correct shapes
         d = 2
-        expected_param_size = d + tril_size(d)
+        expected_param_size = d + tril_size(d) + 1  # Include sharpness
 
         assert params_full.shape == (0, expected_param_size)
         assert amps.shape == (0,)
@@ -176,7 +176,7 @@ class TestFitGaussianSplatsBasic:
             napari_movie=False,  # Disable movie for testing
         )
 
-        assert params_full.shape == (1, 5)  # 2D + 3 tril elements
+        assert params_full.shape == (1, 6)  # 2D + 3 tril elements + sharpness
         assert amps.shape == (1,)
         assert amps[0] > 0  # Should have positive amplitude
 
@@ -310,7 +310,7 @@ class TestUniformImageHandling:
         )
 
         # Should return valid results
-        assert params_full.shape == (3, 5)  # 2D + 3 tril elements
+        assert params_full.shape == (3, 6)  # 2D + 3 tril elements + sharpness
         assert amps.shape == (3,)
         assert np.all(np.isfinite(params_full))
         assert np.all(np.isfinite(amps))
@@ -348,7 +348,7 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 5)
+        assert params_full.shape == (3, 6)  # Include sharpness
         assert amps.shape == (3,)
         assert np.all(amps >= 0)
 
@@ -364,7 +364,7 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 5)
+        assert params_full.shape == (3, 6)  # Include sharpness
         assert amps.shape == (3,)
         assert np.all(amps >= 0)
 
@@ -380,7 +380,7 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 5)
+        assert params_full.shape == (3, 6)  # Include sharpness
         assert amps.shape == (3,)
         assert np.all(amps >= 0)
 
@@ -528,7 +528,7 @@ class TestDeviceSupport:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 5)
+        assert params_full.shape == (3, 6)  # Include sharpness
         assert amps.shape == (3,)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -544,7 +544,7 @@ class TestDeviceSupport:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 5)
+        assert params_full.shape == (3, 6)  # Include sharpness
         assert amps.shape == (3,)
 
 
@@ -604,8 +604,8 @@ class TestConvergence:
         # Should work with 3D data
         assert len(amps) > 0
         assert (
-            params.shape[1] == 9
-        )  # 3D centers (3) + 3x3 packed L (6) = 9 (amplitudes separate)
+            params.shape[1] == 10
+        )  # 3D centers (3) + 3x3 packed L (6) + sharpness (1) = 10
 
     def test_volume_proportional_scaling(self) -> None:
         """Test that candidate count scales with image volume."""
