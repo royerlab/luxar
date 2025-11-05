@@ -118,7 +118,10 @@ with asection("Astronaut Gaussian Splatting Demo"):
 # ----- Compression ranking by approximate L2 energy -----
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))
 d = 2
-L_packed = params_full[:, d:]  # (N, 3) in 2D
+
+# params_full includes sharpness in last column: [centers, packed_L, sharpness]
+# Extract L for energy ranking (exclude sharpness from the end)
+L_packed = params_full[:, d:-1]  # (N, 3) in 2D - centers excluded, sharpness excluded
 L_full = unpack_tril(L_packed, d)  # (N, 2, 2)
 diag_prod = L_full[:, 0, 0] * L_full[:, 1, 1]  # ∏ diag(L) in 2D
 energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
@@ -136,9 +139,9 @@ stack_recon = np.zeros((len(keep_counts),) + V.shape, dtype=np.float32)
 stack_resid = np.zeros_like(stack_recon)
 rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
-# Bit accounting (float32 for centers + packed L + amplitude)
+# Bit accounting (float32 for centers + packed L + sharpness + amplitude)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1  # centers(d) + packed L + amp
+FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(d) + packed L + sharpness + amp
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_PIXELS = V.size
@@ -155,6 +158,7 @@ with asection("Computing reconstruction quality at different compression levels"
     for i, K in enumerate(keep_counts):
         idx = order[:K]
 
+        # Render with auto-extraction of all parameters from params_full
         Vk = render_gaussians_numpy(
             V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
         )

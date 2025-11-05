@@ -106,11 +106,11 @@ def test_finalize_results_basic(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    # Check params shape: [N, d + tril_size(d)]
+    # Check params shape: [N, d + tril_size(d) + 1] (includes sharpness)
     N = basic_optimization_results.centers.shape[0]
     d = basic_optimization_results.centers.shape[1]
     tril_size = d * (d + 1) // 2
-    expected_param_cols = d + tril_size
+    expected_param_cols = d + tril_size + 1  # +1 for sharpness
 
     assert params.shape == (N, expected_param_cols)
     assert amps.shape == (N,)
@@ -149,10 +149,15 @@ def test_parameter_packing(
 
     assert np.allclose(centers_from_params, expected_centers, rtol=1e-5)
 
-    # Remaining columns should be packed Cholesky
+    # Middle columns should be packed Cholesky, last column is sharpness
     tril_size = d * (d + 1) // 2
-    packed_L = params[:, d:]
+    packed_L = params[:, d:-1]  # Exclude sharpness
     assert packed_L.shape == (N, tril_size)
+
+    # Last column should be sharpness
+    sharpness_from_params = params[:, -1]
+    expected_sharpness = basic_optimization_results.sharpness.cpu().numpy()
+    assert np.allclose(sharpness_from_params, expected_sharpness, rtol=1e-5)
 
 
 def test_sharpness_statistics(
@@ -320,9 +325,9 @@ def test_3d_data(basic_config, basic_preprocessed_data):
         optimization_results, basic_config, basic_preprocessed_data
     )
 
-    # Check params shape for 3D
+    # Check params shape for 3D (includes sharpness)
     tril_size = 3 * (3 + 1) // 2  # 6 for 3D
-    expected_param_cols = 3 + tril_size  # 9 total
+    expected_param_cols = 3 + tril_size + 1  # 9 + 1 = 10 total (includes sharpness)
 
     assert params.shape == (N, expected_param_cols)
     assert amps_out.shape == (N,)

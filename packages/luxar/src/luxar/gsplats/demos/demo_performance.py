@@ -97,8 +97,10 @@ def main():
 
         # Prepare visualization
         with asection("Visualization Preparation"):
-            # Render reconstruction
-            reconstruction = render_gaussians_numpy(V.shape, params, amps, truncate=3.0)
+            # Render reconstruction with auto-extraction of all parameters
+            reconstruction = render_gaussians_numpy(
+                V.shape, params, amps, truncate=3.0
+            )
 
             # Compute error metrics
             residual = V - reconstruction

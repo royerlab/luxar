@@ -622,40 +622,20 @@ V_quarter = scales_list[2]   # Quarter resolution: (64, 64, 32)
 V_eighth = scales_list[3]    # Eighth resolution: (32, 32, 16)
 ```
 
-### Pattern 2: Multi-Scale Splat Fitting
+### Pattern 2: Multi-Scale Gaussian Splat Fitting
 
-```python
-from luxar.gsplats.multiscale import decompose_image
-from luxar.gsplats import fit_gaussian_splats
+**Note**: Multi-scale Gaussian splat fitting is now specified in the main gsplats package. Please refer to:
 
-# Step 1: Decompose
-scales_list, _ = decompose_image(V, scales=[1, 2, 4, 8])
+**`/packages/luxar/src/luxar/gsplats/SPECIFICATIONS.md`** → Section 6: Multi-Scale Gaussian Splat Fitting
 
-# Step 2: Fit splats at each scale independently
-all_params = []
-all_amps = []
+This section provides comprehensive specification for:
+- Mathematical formulation and parameter scaling rules
+- Complete API design for `fit_multiscale_gaussian_splats()`
+- Thin wrapper architecture using `fit_gaussian_splats()` as building block
+- Computational complexity analysis and expected speedups
+- Implementation details and usage examples
 
-for scale_idx, (scale_factor, V_scale) in enumerate(zip([1, 2, 4, 8], scales_list)):
-    # Fit with scale-appropriate parameters
-    params, amps, _ = fit_gaussian_splats(
-        V_scale,
-        init_sigma_vox=1.5 * scale_factor,  # Larger splats for coarser scales
-        n_iters=1000
-    )
-
-    # Scale parameters back to full resolution
-    d = V.ndim
-    if scale_factor > 1:
-        params[:, :d] *= scale_factor  # Scale centers
-        params[:, d:] *= scale_factor  # Scale Cholesky factors
-
-    all_params.append(params)
-    all_amps.append(amps)
-
-# Combine all scales
-params_combined = np.vstack(all_params)
-amps_combined = np.concatenate(all_amps)
-```
+The multi-scale decomposition provided by this package (`decompose_image()`) is used as a building block for the multi-scale fitting feature in the main gsplats package.
 
 ### Pattern 3: Custom Loss Weights
 

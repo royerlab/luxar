@@ -198,11 +198,15 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 
 **Operations:**
 1. Extracts parameters from best state (not final state)
-2. Rescales amplitudes to original intensity range
-3. Compiles comprehensive statistics
-4. Stores movie frames for visualization
+2. Packs parameters: `params = [centers | packed_Cholesky | sharpness]`
+   - Shape: `(N, d + d*(d+1)//2 + 1)` where last column is per-splat sharpness
+3. Rescales amplitudes to original intensity range
+4. Compiles comprehensive statistics (including sharpness statistics)
+5. Stores movie frames for visualization
 
-**Critical Detail:** Amplitudes are rescaled using the original intensity range, allowing direct comparison with input data.
+**Critical Details:**
+- Amplitudes are rescaled using the original intensity range, allowing direct comparison with input data
+- Sharpness values (last column of params) preserve per-splat learned sharpness variation
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.
