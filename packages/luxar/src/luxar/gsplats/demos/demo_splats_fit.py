@@ -84,7 +84,7 @@ def main():
     if not args.no_napari:
         with asection("Napari visualization"):
             # Reconstruct final image for display
-            from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
+            from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 
             # Render with auto-extraction of all parameters
             V_recon = render_gaussians_numpy(V.shape, params_full, amps)
