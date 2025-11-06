@@ -264,7 +264,15 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 
     # Configure dynamic operations
     dynamic_config = DynamicOpsConfig()
-    aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
+    dynamic_config.k_max_residuals = 40  # Total budget for seeding per cycle
+    dynamic_config.density_seeding_fraction = 0.5  # 50% density-based, 50% residual-based
+    dynamic_config.density_use_log1p_intensity = True  # Compress intensity for fair coverage
+    dynamic_config.density_grid_size = 8  # Grid cell size for density estimation
+    aprint(f"Dynamic operations enabled:")
+    aprint(f"  step_every={dynamic_config.step_every}")
+    aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
+    aprint(f"  density_seeding_fraction={dynamic_config.density_seeding_fraction} (50-50 hybrid)")
+    aprint(f"  density_grid_size={dynamic_config.density_grid_size} voxels")
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
@@ -439,7 +447,7 @@ def _update_3d_layers(t_index: int):
         name="splat centers (kept)",
         size=2.0,
         face_color="lime",
-        border_color="lime",
+    border_color="lime",
         opacity=0.8,
     )
 
