@@ -53,6 +53,7 @@ class DynamicOpsConfig:
     - Convergence-based detection aligns operations with optimization goals
     - Adaptive thresholds prevent plateau issues
     - Asymmetric loss awareness for additive Gaussian models
+    - Hybrid seeding: combines error-driven and density-driven approaches
     """
 
     def __init__(self):
@@ -62,6 +63,11 @@ class DynamicOpsConfig:
         # Step 1: Residual Peak Analysis
         self.k_max_residuals: int = 10  # Number of strongest residual peaks to analyze
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
+
+        # Hybrid Seeding Strategy (NEW)
+        self.density_seeding_fraction: float = 0.0  # Fraction of seeds from density-based (0.0 = disabled, 0.5 = 50-50)
+        self.density_use_log1p_intensity: bool = True  # Use log1p to compress intensity dynamic range
+        self.density_grid_size: int = 8  # Voxels per grid cell for density estimation
 
         # Step 2: Adaptive Operations
         self.min_contribution_threshold: float = (
@@ -147,6 +153,160 @@ def _find_residual_peaks(
     return [tuple(peak.tolist()) for peak in selected_peaks]
 
 
+def _find_density_based_seed_locations(
+    model,
+    V_target: torch.Tensor,
+    k_density_seeds: int,
+    cfg: DynamicOpsConfig,
+) -> List[Tuple[int, ...]]:
+    """
+    Find seed locations based on spatial density (under-covered regions).
+
+    Uses grid-based splat counting to find regions with sparse coverage,
+    weighted by image intensity (optionally log1p-transformed) to ensure
+    both high and low intensity regions get fair representation.
+
+    Args:
+        model: GaussianSplatModel with current splat parameters
+        V_target: Target tensor (used for intensity weighting)
+        k_density_seeds: Number of density-based seeds to generate
+        cfg: Dynamic operations configuration
+
+    Returns:
+        List of seed location coordinates as tuples
+    """
+    if k_density_seeds <= 0:
+        return []
+
+    device = V_target.device
+    shape = V_target.shape
+    d = len(shape)
+    grid_size = cfg.density_grid_size
+
+    # Get current splat centers
+    if model.n_splats() == 0:
+        centers = torch.empty((0, d), device=device)
+    else:
+        centers, _, _, _ = model.current_params()
+
+    # Calculate grid dimensions
+    grid_dims = tuple((s + grid_size - 1) // grid_size for s in shape)
+
+    # Create grid to count splats per cell
+    splat_counts = torch.zeros(grid_dims, dtype=torch.float32, device=device)
+
+    # Count splats in each grid cell
+    if model.n_splats() > 0:
+        grid_indices = (centers / grid_size).long()
+        # Clamp to valid grid range
+        for i in range(d):
+            grid_indices[:, i] = torch.clamp(grid_indices[:, i], 0, grid_dims[i] - 1)
+
+        # Increment count for each cell
+        for i in range(len(centers)):
+            idx = tuple(grid_indices[i].tolist())
+            splat_counts[idx] += 1
+
+    # Calculate mean intensity per grid cell
+    # Reshape target to grid cells and compute mean
+    if d == 2:
+        # Pad to make divisible by grid_size
+        pad_h = (grid_size - shape[0] % grid_size) % grid_size
+        pad_w = (grid_size - shape[1] % grid_size) % grid_size
+        V_padded = torch.nn.functional.pad(V_target, (0, pad_w, 0, pad_h), value=0)
+
+        # Reshape to grid cells: (grid_h, grid_size, grid_w, grid_size)
+        V_reshaped = V_padded.reshape(
+            grid_dims[0], grid_size, grid_dims[1], grid_size
+        )
+        # Mean over grid_size dimensions
+        cell_intensity = V_reshaped.mean(dim=(1, 3))  # (grid_h, grid_w)
+    elif d == 3:
+        # Pad to make divisible
+        pad_d = (grid_size - shape[0] % grid_size) % grid_size
+        pad_h = (grid_size - shape[1] % grid_size) % grid_size
+        pad_w = (grid_size - shape[2] % grid_size) % grid_size
+        V_padded = torch.nn.functional.pad(
+            V_target, (0, pad_w, 0, pad_h, 0, pad_d), value=0
+        )
+
+        V_reshaped = V_padded.reshape(
+            grid_dims[0], grid_size, grid_dims[1], grid_size, grid_dims[2], grid_size
+        )
+        cell_intensity = V_reshaped.mean(dim=(1, 3, 5))  # (grid_d, grid_h, grid_w)
+    else:
+        # For higher dimensions, approximate with downsampling
+        if d == 4:
+            # Simple downsampling for 4D
+            cell_intensity = torch.nn.functional.avg_pool3d(
+                V_target.unsqueeze(0).unsqueeze(0),
+                kernel_size=grid_size,
+                stride=grid_size,
+            )[0, 0]
+            # May need to adjust grid_dims if shape doesn't divide evenly
+            cell_intensity = torch.nn.functional.interpolate(
+                cell_intensity.unsqueeze(0).unsqueeze(0),
+                size=grid_dims,
+                mode='nearest'
+            )[0, 0]
+        else:
+            # Fallback: use uniform intensity
+            cell_intensity = torch.ones(grid_dims, device=device)
+
+    # Apply log1p transformation if enabled (compresses dynamic range)
+    if cfg.density_use_log1p_intensity:
+        intensity_weight = torch.log1p(cell_intensity)
+    else:
+        intensity_weight = cell_intensity
+
+    # Calculate cell scores: coverage_deficit × intensity_weight
+    coverage_deficit = 1.0 / (splat_counts + 1.0)  # Inversely proportional to splat count
+    cell_scores = coverage_deficit * intensity_weight
+
+    # Normalize to probabilities
+    cell_scores_flat = cell_scores.reshape(-1)
+    if cell_scores_flat.sum() == 0:
+        return []  # No valid cells to sample from
+
+    probabilities = cell_scores_flat / cell_scores_flat.sum()
+
+    # Sample k_density_seeds cells (with replacement for simplicity)
+    try:
+        sampled_indices_flat = torch.multinomial(
+            probabilities, num_samples=min(k_density_seeds, len(probabilities)), replacement=True
+        )
+    except RuntimeError:
+        # Handle edge case where probabilities are invalid
+        return []
+
+    # Convert flat indices to grid coordinates, then to actual coordinates
+    seed_locations = []
+    grid_dims_tensor = torch.tensor(grid_dims, device=device)
+
+    for flat_idx in sampled_indices_flat:
+        # Convert flat index to grid coordinates
+        grid_coords = []
+        remaining = flat_idx.item()
+        for i in range(d - 1, -1, -1):
+            stride = 1
+            for j in range(i + 1, d):
+                stride *= grid_dims[j]
+            grid_coords.insert(0, remaining // stride)
+            remaining = remaining % stride
+
+        # Convert grid coordinates to actual voxel coordinates (center of cell)
+        voxel_coords = []
+        for i in range(d):
+            voxel_coord = (grid_coords[i] + 0.5) * grid_size
+            # Clamp to valid range
+            voxel_coord = min(voxel_coord, shape[i] - 1)
+            voxel_coords.append(int(voxel_coord))
+
+        seed_locations.append(tuple(voxel_coords))
+
+    return seed_locations
+
+
 # Note: Complex covariance and amplitude estimation functions removed
 # Replaced with ultra-simple approach: amplitude = residual[center], shape = isotropic
 
@@ -206,17 +366,37 @@ def apply_dynamic_operations(
         topology_changed = False
         operations_performed = []
 
-        # === STEP 1: Residual Peak Analysis ===
-        peak_locations = _find_residual_peaks(
-            residual, cfg.k_max_residuals, cfg.nms_radius_vox
+        # === STEP 1: Hybrid Seed Location Finding ===
+        # Split budget between residual-based and density-based seeding
+        k_residual = int(cfg.k_max_residuals * (1.0 - cfg.density_seeding_fraction))
+        k_density = int(cfg.k_max_residuals * cfg.density_seeding_fraction)
+
+        # Find residual-based peaks (error-driven)
+        residual_peak_locations = _find_residual_peaks(
+            residual, k_residual, cfg.nms_radius_vox
         )
 
-        if verbose and len(peak_locations) > 0:
-            aprint(f"Found {len(peak_locations)} residual peaks for analysis")
+        # Find density-based seeds (coverage-driven)
+        density_seed_locations = []
+        if k_density > 0:
+            density_seed_locations = _find_density_based_seed_locations(
+                model, V_target, k_density, cfg
+            )
 
-        # Convergence guard: If strongest residual peak is below convergence threshold, skip all operations
-        if len(peak_locations) > 0:
-            strongest_peak_coords = peak_locations[
+        # Combine both types of seed locations
+        peak_locations = residual_peak_locations + density_seed_locations
+
+        if verbose and len(peak_locations) > 0:
+            aprint(
+                f"Found {len(residual_peak_locations)} residual peaks + "
+                f"{len(density_seed_locations)} density seeds = {len(peak_locations)} total"
+            )
+
+        # Convergence guard: Apply only to residual peaks (not density seeds)
+        # If strongest residual peak is below threshold, skip residual-based operations
+        # but still allow density-based seeding for spatial coverage
+        if len(residual_peak_locations) > 0:
+            strongest_peak_coords = residual_peak_locations[
                 0
             ]  # _find_residual_peaks returns sorted by strength
             strongest_peak_residual = torch.abs(residual[strongest_peak_coords]).item()
@@ -224,9 +404,16 @@ def apply_dynamic_operations(
             if strongest_peak_residual < max_abs_error_threshold:
                 if verbose:
                     aprint(
-                        f"Convergence guard: strongest residual {strongest_peak_residual:.5f} < threshold {max_abs_error_threshold:.5f}, skipping all dynamic operations"
+                        f"Convergence guard: strongest residual {strongest_peak_residual:.5f} < threshold {max_abs_error_threshold:.5f}"
                     )
-                return optimizer, scheduler, False
+                    if k_density > 0:
+                        aprint(f"  → Skipping residual-based seeding, but allowing {len(density_seed_locations)} density seeds for coverage")
+                    else:
+                        aprint("  → Skipping all dynamic operations (no density seeding enabled)")
+                # Remove residual peaks from consideration, keep only density seeds
+                peak_locations = density_seed_locations
+                if len(peak_locations) == 0:
+                    return optimizer, scheduler, False
 
         # === STEP 2: Adaptive Splat Operations ===
         for peak_coords in peak_locations:
