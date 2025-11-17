@@ -100,7 +100,7 @@ params, amps, stats = fit_gaussian_splats(
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
-    # l1_sharpness auto-set to 0.01 * lr for standard Gaussian regularization
+    # l1_sharpness auto-set to 0.05 * lr for standard Gaussian regularization (5% of base LR = 10% of sharpness LR)
     # enable_dynamic_ops=True by default for optimal results
 )
 
@@ -355,6 +355,7 @@ The system prevents runaway splat multiplication through sophisticated parameter
 Position parameters (μ):     ×0.1  # Slow movement, keeps splats spatially stable
 Variance parameters (L):     ×1.0  # Normal adaptation for shape and orientation
 Amplitude parameters (a):    ×2.0  # Fast intensity matching for better convergence
+Sharpness parameters (s'):   ×0.5  # Conservative shape adaptation (no gradient dilution)
 ```
 
 ### **Benefits**
@@ -528,10 +529,10 @@ Main fitting function with automatic optimizations.
 
 **Key Parameters:**
 - `V`: Input n-dimensional array to reconstruct
-- `seeds`: Initial candidate positions (N, d)
-- `n_iters`: Maximum iterations (default: 300)
-- `lr`: Learning rate (default: 0.2)
-- `loss_type`: "mse" or "poisson" (default: "mse")
+- `seeds`: Initial candidate positions (N, d) or float proportion for auto-generation
+- `n_iters`: Maximum iterations (default: 1000)
+- `lr`: Learning rate (default: 0.01)
+- `loss_type`: "mse", "poisson", or "l1" (default: "l1")
 - `l1_amp`: L1 regularization on amplitudes (default: 0.1 * lr)
 - `l1_diag`: L1 regularization on diagonal elements (default: 0.01 * lr)
 - `sigma_min_diag`: Minimum Gaussian size per axis
