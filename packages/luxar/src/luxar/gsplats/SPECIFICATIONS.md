@@ -436,25 +436,34 @@ def clahe_based_seeding(V_target, residual, k_clahe, cfg, max_abs_error_threshol
     # Step 3: Sort by CLAHE value (highest first) for quality
     filtered_candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Step 4: Spatial NMS - greedy selection with minimum distance
-    final_seeds = []
-    nms_radius = cfg.nms_radius_vox  # Reuse existing NMS parameter
+    # Step 4: Farthest-First Selection - maximize spatial diversity
+    # Start with highest CLAHE value candidate
+    final_seeds = [filtered_candidates[0][0]]
+    remaining = filtered_candidates[1:]
 
-    for coords, clahe_val in filtered_candidates:
-        # Check spatial separation from already-selected seeds
-        too_close = False
-        for existing_coords in final_seeds:
-            distance = euclidean_distance(coords, existing_coords)
-            if distance < nms_radius:
-                too_close = True
-                break
+    # Iteratively pick candidate furthest from all selected
+    for _ in range(k_clahe - 1):
+        if len(remaining) == 0:
+            break
 
-        if not too_close:
-            final_seeds.append(coords)
+        best_candidate = None
+        best_min_distance = -1
 
-            # Stop when budget filled
-            if len(final_seeds) >= k_clahe:
-                break
+        for coords, clahe_val in remaining:
+            # Compute minimum distance to any selected seed
+            min_dist_to_selected = min(
+                euclidean_distance(coords, s) for s in final_seeds
+            )
+
+            # Pick candidate with maximum minimum-distance (farthest from all)
+            if min_dist_to_selected > best_min_distance:
+                best_min_distance = min_dist_to_selected
+                best_candidate = coords
+
+        if best_candidate:
+            final_seeds.append(best_candidate)
+            # Remove from remaining
+            remaining = [(c, v) for c, v in remaining if c != best_candidate]
 
     return final_seeds
 ```
@@ -462,9 +471,10 @@ def clahe_based_seeding(V_target, residual, k_clahe, cfg, max_abs_error_threshol
 **Key Properties:**
 - **Diversity**: 10× oversampling provides spatial and intensity diversity
 - **Coverage-aware**: Residual filter eliminates well-covered regions
-- **Quality**: Top-k ensures highest local perceptual importance
-- **Spatial distribution**: NMS prevents clustering (minimum `nms_radius_vox` separation)
-- **Efficient**: Greedy NMS is O(k²), negligible compared to rendering
+- **Quality**: Initialization with highest CLAHE value ensures best starting point
+- **Spatial distribution**: Farthest-first selection maximizes inter-seed distances
+- **Efficient**: O(k² × n_filtered) for selection, negligible compared to rendering
+- **Robust**: Deterministic spatial spread prevents clustering regardless of CLAHE distribution
 
 #### **CLAHE Implementation for nD Volumes**
 
