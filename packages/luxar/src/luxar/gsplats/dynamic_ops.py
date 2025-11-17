@@ -35,8 +35,10 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
+import numpy as np
 import torch
 
+from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.optim import ModelOptimizerCoordinator
 
 
@@ -154,102 +156,6 @@ def _find_residual_peaks(
     return [tuple(peak.tolist()) for peak in selected_peaks]
 
 
-def _apply_clahe_nd(
-    V: torch.Tensor,
-    tile_size: int,
-    clip_limit: float,
-    nbins: int,
-) -> torch.Tensor:
-    """
-    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to nD volume.
-
-    Algorithm:
-    1. Divide volume into non-overlapping tiles of size tile_size^d
-    2. For each tile:
-       a. Compute local histogram (nbins bins)
-       b. Apply contrast limiting (clip histogram peaks)
-       c. Compute CDF mapping (local histogram equalization)
-       d. Transform tile intensities
-    3. Result: Volume with locally-equalized contrast
-
-    Args:
-        V: Input volume tensor
-        tile_size: Size of tiles in voxels (e.g., 16)
-        clip_limit: Contrast limiting factor (1.0-4.0, higher = more aggressive)
-        nbins: Number of histogram bins (typically 256)
-
-    Returns:
-        V_clahe: CLAHE-equalized volume (same shape as input)
-    """
-    shape = V.shape
-    d = len(shape)
-    device = V.device
-
-    # Calculate number of tiles per dimension
-    n_tiles = tuple((s + tile_size - 1) // tile_size for s in shape)
-
-    # Create output tensor
-    V_clahe = torch.zeros_like(V)
-
-    # Get global min/max for consistent binning
-    V_min, V_max = V.min().item(), V.max().item()
-
-    if V_max - V_min < 1e-12:
-        # Uniform image - return as is
-        return V.clone()
-
-    # For each tile, compute local histogram equalization
-    import itertools
-
-    for tile_idx in itertools.product(*[range(n) for n in n_tiles]):
-        # Extract tile boundaries
-        tile_slice = tuple(
-            slice(t * tile_size, min((t + 1) * tile_size, s))
-            for t, s in zip(tile_idx, shape)
-        )
-
-        # Get tile data
-        tile_data = V[tile_slice]
-        tile_flat = tile_data.reshape(-1)
-
-        # Compute histogram
-        hist = torch.histc(tile_flat, bins=nbins, min=V_min, max=V_max)
-
-        # Apply contrast limiting
-        uniform_height = tile_flat.numel() / nbins
-        clip_height = clip_limit * uniform_height
-        excess = torch.clamp(hist - clip_height, min=0).sum()
-        hist = torch.clamp(hist, max=clip_height)
-        hist += excess / nbins  # Redistribute clipped pixels uniformly
-
-        # Compute CDF
-        cdf = torch.cumsum(hist, dim=0)
-        cdf_min = cdf[cdf > 0].min() if (cdf > 0).any() else 0
-        cdf_range = cdf[-1] - cdf_min
-
-        if cdf_range > 0:
-            cdf_normalized = (cdf - cdf_min) / cdf_range
-        else:
-            cdf_normalized = cdf
-
-        # Map tile intensities through CDF
-        # Digitize values into bins
-        bin_edges = torch.linspace(V_min, V_max, nbins + 1, device=device)
-        bin_indices = torch.searchsorted(bin_edges[1:], tile_flat.contiguous())
-        bin_indices = torch.clamp(bin_indices, 0, nbins - 1)
-
-        # Apply CDF mapping
-        tile_equalized = cdf_normalized[bin_indices]
-
-        # Reshape and store
-        V_clahe[tile_slice] = tile_equalized.reshape(tile_data.shape)
-
-    # Rescale to original range for consistency
-    V_clahe = V_clahe * (V_max - V_min) + V_min
-
-    return V_clahe
-
-
 def _find_clahe_based_seed_locations(
     V_target: torch.Tensor,
     k_clahe_seeds: int,
@@ -277,7 +183,7 @@ def _find_clahe_based_seed_locations(
     shape = V_target.shape
 
     # Step 1: Apply CLAHE to target volume
-    V_clahe = _apply_clahe_nd(
+    V_clahe = apply_clahe(
         V_target,
         tile_size=cfg.clahe_tile_size,
         clip_limit=cfg.clahe_clip_limit,
@@ -314,8 +220,6 @@ def _find_clahe_based_seed_locations(
 
     # Step 5: Convert flat indices to nD coordinates
     # Use numpy's unravel_index for correct coordinate conversion
-    import numpy as np
-
     flat_indices_np = sampled_indices.cpu().numpy()
     coords_np = np.unravel_index(flat_indices_np, shape)
 
