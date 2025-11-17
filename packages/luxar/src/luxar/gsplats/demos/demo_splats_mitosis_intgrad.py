@@ -40,7 +40,7 @@ N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
-GRADIENT_ATTENUATION = 0.95  # Top attenuation factor (0.95 = 95% reduction at top)
+GRADIENT_ATTENUATION = 0.1  # Top attenuation factor (0.1 = 10% reduction at top)
 # ==========================
 
 # Setup Arbol
@@ -120,6 +120,81 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
     aprint(
         f"  CLAHE: tile_size={dynamic_config.clahe_tile_size}, clip_limit={dynamic_config.clahe_clip_limit}, nbins={dynamic_config.clahe_nbins}"
     )
+
+    # === Visualize CLAHE Effect ===
+    with asection("CLAHE Visualization - Before/After Comparison"):
+        import torch
+        from luxar.gsplats.clahe import apply_clahe
+
+        aprint("Computing CLAHE-equalized image for visualization...")
+
+        # Convert to torch tensor (same as will be used in dynamic ops)
+        V_torch = torch.tensor(V, dtype=torch.float32)
+
+        # Apply CLAHE with same parameters as dynamic ops
+        V_clahe_torch = apply_clahe(
+            V_torch,
+            tile_size=dynamic_config.clahe_tile_size,
+            clip_limit=dynamic_config.clahe_clip_limit,
+            nbins=dynamic_config.clahe_nbins,
+        )
+
+        # Convert back to numpy for visualization
+        V_clahe = V_clahe_torch.cpu().numpy()
+
+        aprint(f"Original gradient range: [{V.min():.4f}, {V.max():.4f}]")
+        aprint(f"CLAHE-equalized range: [{V_clahe.min():.4f}, {V_clahe.max():.4f}]")
+
+        # Show CLAHE before/after comparison
+        viewer_clahe = napari.Viewer(title="CLAHE Visualization - Before/After")
+
+        viewer_clahe.add_image(
+            V,
+            name="Before CLAHE (gradient input)",
+            colormap="magma",
+            contrast_limits=[0, float(V.max())],
+        )
+
+        viewer_clahe.add_image(
+            V_clahe,
+            name="After CLAHE (used for sampling)",
+            colormap="viridis",
+            contrast_limits=[V_clahe.min(), V_clahe.max()],
+        )
+
+        # Add difference visualization
+        clahe_diff = V_clahe - V
+        viewer_clahe.add_image(
+            clahe_diff,
+            name="CLAHE - Original (difference)",
+            colormap="bwr",  # Blue-white-red diverging
+            contrast_limits=[-V.max() * 0.5, V.max() * 0.5],
+            visible=False,
+        )
+
+        aprint("")
+        aprint("📊 CLAHE Effect Analysis:")
+        aprint(f"  Top region (dim):")
+        aprint(f"    Before: mean={V[0:32].mean():.4f}, std={V[0:32].std():.4f}")
+        aprint(f"    After:  mean={V_clahe[0:32].mean():.4f}, std={V_clahe[0:32].std():.4f}")
+        aprint(f"  Bottom region (bright):")
+        aprint(
+            f"    Before: mean={V[-32:].mean():.4f}, std={V[-32:].std():.4f}"
+        )
+        aprint(
+            f"    After:  mean={V_clahe[-32:].mean():.4f}, std={V_clahe[-32:].std():.4f}"
+        )
+        aprint("")
+        aprint("🔍 What to look for:")
+        aprint("  • CLAHE should enhance contrast in dim (top) region")
+        aprint("  • Top and bottom regions should have more balanced intensities")
+        aprint(
+            "  • 'After CLAHE' image shows what's used for sampling probabilities"
+        )
+        aprint("")
+        aprint("Press any key to close this window and continue with fitting...")
+
+        napari.run()
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
