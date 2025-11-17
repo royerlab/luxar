@@ -231,28 +231,39 @@ def _find_clahe_based_seed_locations(
     # Step 3: Sort by CLAHE value (highest first) for quality guarantee
     filtered_candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Step 4: Spatial NMS - greedy selection with minimum distance
-    final_seeds = []
-    nms_radius = cfg.nms_radius_vox
+    # Step 4: Farthest-First Selection - maximize spatial diversity
+    # Start with highest CLAHE value candidate
+    final_seeds = [filtered_candidates[0][0]]
+    remaining = filtered_candidates[1:]
 
-    for coords, clahe_val in filtered_candidates:
-        # Check spatial separation from already-selected seeds
-        too_close = False
-        for existing_coords in final_seeds:
-            # Compute Euclidean distance
-            distance_sq = sum((c1 - c2) ** 2 for c1, c2 in zip(coords, existing_coords))
-            distance = distance_sq ** 0.5
+    # Iteratively pick candidate furthest from all selected
+    for _ in range(k_clahe_seeds - 1):
+        if len(remaining) == 0:
+            break
 
-            if distance < nms_radius:
-                too_close = True
-                break
+        best_candidate = None
+        best_min_distance = -1.0
 
-        if not too_close:
-            final_seeds.append(coords)
+        for coords, clahe_val in remaining:
+            # Compute minimum distance to any selected seed
+            min_dist_to_selected = float("inf")
+            for selected_coords in final_seeds:
+                # Euclidean distance
+                distance_sq = sum(
+                    (c1 - c2) ** 2 for c1, c2 in zip(coords, selected_coords)
+                )
+                distance = distance_sq**0.5
+                min_dist_to_selected = min(min_dist_to_selected, distance)
 
-            # Stop when budget filled
-            if len(final_seeds) >= k_clahe_seeds:
-                break
+            # Pick candidate with maximum minimum-distance (farthest from all)
+            if min_dist_to_selected > best_min_distance:
+                best_min_distance = min_dist_to_selected
+                best_candidate = coords
+
+        if best_candidate is not None:
+            final_seeds.append(best_candidate)
+            # Remove selected candidate from remaining
+            remaining = [(c, v) for c, v in remaining if c != best_candidate]
 
     return final_seeds
 
