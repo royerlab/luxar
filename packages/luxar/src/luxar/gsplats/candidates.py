@@ -366,9 +366,10 @@ def find_candidates_overcomplete_nd(
         V_work, percentile_thresh
     )  # Cache base image threshold
 
-    # (A) Multiscale Gaussian-blurred peaks
+    # (A) Multiscale Gaussian-blurred peaks (coarsest to finest)
     # Detect blob-like structures at multiple scales by finding peaks in Gaussian-filtered images
-    for s in scales:
+    # Process coarsest scales first for farthest-first priority (large structures before details)
+    for s in reversed(scales):
         # Apply Gaussian smoothing at current scale
         img = ndi.gaussian_filter(V_work, sigma=s, mode="nearest")
 
@@ -387,10 +388,12 @@ def find_candidates_overcomplete_nd(
         coords = _local_maxima(img, radius=radius, thresh=thr, top_k=peaks_per_scale)
         all_coords.append(coords)
 
-    # (B) Multiscale Difference of Gaussians (DoG) peaks
+    # (B) Multiscale Difference of Gaussians (DoG) peaks (coarsest to finest)
     # Detect blob boundaries and edge-like structures using DoG filtering
     # Pre-compute DoG responses for all scales to enable threshold optimization
-    dog_responses = [_dog_response(V_work, sigma=s, k=1.6) for s in scales]
+    # Process in reverse order for farthest-first priority (coarse before fine)
+    scales_list = list(scales)
+    dog_responses = [_dog_response(V_work, sigma=s, k=1.6) for s in scales_list]
 
     # Compute adaptive thresholds: use global DoG statistics when possible
     if len(dog_responses) > 1:
@@ -398,8 +401,10 @@ def find_candidates_overcomplete_nd(
         combined_dog = np.concatenate([dog.ravel() for dog in dog_responses])
         global_dog_thresh = np.percentile(combined_dog, percentile_thresh)
 
-    for i, s in enumerate(scales):
-        dog = dog_responses[i]
+    # Process in reverse order (coarsest first)
+    for idx in range(len(scales_list) - 1, -1, -1):
+        s = scales_list[idx]
+        dog = dog_responses[idx]
 
         # Use global threshold for consistency, or scale-specific if significantly different
         if len(dog_responses) > 1:
