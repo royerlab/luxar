@@ -313,21 +313,17 @@ def _find_clahe_based_seed_locations(
         return []
 
     # Step 5: Convert flat indices to nD coordinates
-    seed_locations = []
-    for flat_idx in sampled_indices:
-        idx = flat_idx.item()
-        coords = []
+    # Use numpy's unravel_index for correct coordinate conversion
+    import numpy as np
 
-        # Convert flat index to nD coordinates
-        for i in range(len(shape) - 1, -1, -1):
-            stride = 1
-            for j in range(i + 1, len(shape)):
-                stride *= shape[j]
-            coord = idx // stride
-            coords.insert(0, coord)
-            idx = idx % stride
+    flat_indices_np = sampled_indices.cpu().numpy()
+    coords_np = np.unravel_index(flat_indices_np, shape)
 
-        seed_locations.append(tuple(coords))
+    # Convert to list of tuples
+    seed_locations = [
+        tuple(int(coords_np[i][j]) for i in range(len(shape)))
+        for j in range(len(flat_indices_np))
+    ]
 
     return seed_locations
 
