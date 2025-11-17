@@ -262,17 +262,18 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             V = np.clip(V, 0, 100).astype(np.float32)
             aprint(f"Created synthetic DAPI-like volume: {V.shape}")
 
-    # Configure dynamic operations
+    # Configure dynamic operations with CLAHE-based coverage seeding
     dynamic_config = DynamicOpsConfig()
     dynamic_config.k_max_residuals = 40  # Total budget for seeding per cycle
-    dynamic_config.density_seeding_fraction = 0.5  # 50% density-based, 50% residual-based
-    dynamic_config.density_use_log1p_intensity = True  # Compress intensity for fair coverage
-    dynamic_config.density_grid_size = 8  # Grid cell size for density estimation
+    dynamic_config.density_seeding_fraction = 0.5  # 50% CLAHE-based, 50% residual-based
+    dynamic_config.clahe_tile_size = 16  # Tile size for CLAHE (≈2× nucleus diameter)
+    dynamic_config.clahe_clip_limit = 2.0  # Contrast limiting factor
+    dynamic_config.clahe_nbins = 256  # Histogram bins for CLAHE
     aprint(f"Dynamic operations enabled:")
     aprint(f"  step_every={dynamic_config.step_every}")
     aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
     aprint(f"  density_seeding_fraction={dynamic_config.density_seeding_fraction} (50-50 hybrid)")
-    aprint(f"  density_grid_size={dynamic_config.density_grid_size} voxels")
+    aprint(f"  CLAHE parameters: tile_size={dynamic_config.clahe_tile_size}, clip_limit={dynamic_config.clahe_clip_limit}, nbins={dynamic_config.clahe_nbins}")
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
