@@ -125,8 +125,8 @@ def _generate_candidates(
 
     # Determine target number of seeds
     if proportion is None:
-        # Default heuristic: volume-log-proportional (~1% of voxels)
-        peaks_per_scale = max(50, int(log1p(V.size * 0.01)))
+        # Default heuristic: volume-proportional (~0.1% of voxels)
+        peaks_per_scale = max(50, int(V.size * 0.001))
     else:
         # User-specified proportion
         target_seeds = int(V.size * proportion)
@@ -145,9 +145,9 @@ def _generate_candidates(
 
     seed_centers = find_candidates_overcomplete_nd(
         V,
-        scales=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),  # Universal scale series
+        scales=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0),  # Universal scale series
         peaks_per_scale=peaks_per_scale,  # Volume-proportional
-        percentile_thresh=70.0,  # Inclusive threshold
+        percentile_thresh=10.0,  # Inclusive threshold
         min_dist=2.0,  # Standard spacing
         add_intensity_grid=False,  # Clean peak-based detection
     )

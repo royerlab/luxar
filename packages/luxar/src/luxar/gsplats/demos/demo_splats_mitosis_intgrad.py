@@ -35,7 +35,7 @@ if NO_NAPARI and len(sys.argv) > 1:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
-LR = 0.02  # Learning rate for fitting
+LR = 0.04  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -106,9 +106,9 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
     # Configure dynamic operations with CLAHE-based coverage seeding
     dynamic_config = DynamicOpsConfig()
     dynamic_config.k_max_residuals = 40  # Total seed budget per cycle
-    dynamic_config.density_seeding_fraction = 0.5  # 50% CLAHE, 50% residual
-    dynamic_config.clahe_tile_size = 16  # Tile size for CLAHE
-    dynamic_config.clahe_clip_limit = 2.0  # Contrast limiting factor
+    dynamic_config.density_seeding_fraction = 1.0  # 50% CLAHE, 50% residual
+    dynamic_config.clahe_tile_size = 32  # Tile size for CLAHE
+    dynamic_config.clahe_clip_limit = 16.0  # Contrast limiting factor
     dynamic_config.clahe_nbins = 256  # Histogram bins
 
     aprint("Dynamic operations with CLAHE-based coverage seeding:")
