@@ -89,7 +89,6 @@ def apply_clahe(
            Graphics Gems IV, Academic Press.
     """
     shape = V.shape
-    d = len(shape)
     device = V.device
     dtype = V.dtype
 

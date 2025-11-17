@@ -38,7 +38,7 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from luxar.gsplats.clahe import apply_clahe
+from luxar.gsplats.clahe import compute_clahe_sampling_probabilities
 from luxar.gsplats.optim import ModelOptimizerCoordinator
 
 
@@ -179,35 +179,17 @@ def _find_clahe_based_seed_locations(
     if k_clahe_seeds <= 0:
         return []
 
-    device = V_target.device
     shape = V_target.shape
 
-    # Step 1: Apply CLAHE to target volume
-    V_clahe = apply_clahe(
+    # Compute CLAHE-based sampling probabilities
+    probabilities, _ = compute_clahe_sampling_probabilities(
         V_target,
         tile_size=cfg.clahe_tile_size,
         clip_limit=cfg.clahe_clip_limit,
         nbins=cfg.clahe_nbins,
     )
 
-    # Step 2: Normalize to [0, 1] for probability distribution
-    V_min, V_max = V_clahe.min(), V_clahe.max()
-    if V_max - V_min < 1e-12:
-        # Uniform - use uniform sampling
-        V_norm = torch.ones_like(V_clahe)
-    else:
-        V_norm = (V_clahe - V_min) / (V_max - V_min)
-
-    # Step 3: Flatten and normalize to valid probability distribution
-    V_flat = V_norm.reshape(-1)
-    prob_sum = V_flat.sum()
-
-    if prob_sum < 1e-12:
-        return []  # No valid sampling distribution
-
-    probabilities = V_flat / prob_sum
-
-    # Step 4: Sample k_clahe_seeds locations with replacement
+    # Sample k_clahe_seeds locations with replacement
     try:
         sampled_indices = torch.multinomial(
             probabilities,
@@ -218,8 +200,7 @@ def _find_clahe_based_seed_locations(
         # Handle edge case where probabilities are invalid
         return []
 
-    # Step 5: Convert flat indices to nD coordinates
-    # Use numpy's unravel_index for correct coordinate conversion
+    # Convert flat indices to nD coordinates using numpy's unravel_index
     flat_indices_np = sampled_indices.cpu().numpy()
     coords_np = np.unravel_index(flat_indices_np, shape)
 
