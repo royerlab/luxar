@@ -103,40 +103,33 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             f"Bottom row intensity: [{V[-1].min():.4f}, {V[-1].max():.4f}]  (bright region)"
         )
 
-    # Configure dynamic operations with CLAHE-based coverage seeding
+    # Configure dynamic operations (residual-based seeding only)
+    # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
-    dynamic_config.k_max_residuals = 40  # Total seed budget per cycle
-    dynamic_config.density_seeding_fraction = 1.0  # 50% CLAHE, 50% residual
-    dynamic_config.clahe_tile_size = 32  # Tile size for CLAHE
-    dynamic_config.clahe_clip_limit = 16.0  # Contrast limiting factor
-    dynamic_config.clahe_nbins = 256  # Histogram bins
+    dynamic_config.k_max_residuals = 10  # Number of residual peaks per cycle
 
-    aprint("Dynamic operations with CLAHE-based coverage seeding:")
+    aprint("Dynamic operations enabled (residual-based seeding):")
     aprint(f"  step_every={dynamic_config.step_every}")
     aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
-    aprint(
-        f"  density_seeding_fraction={dynamic_config.density_seeding_fraction} (50-50 hybrid)"
-    )
-    aprint(
-        f"  CLAHE: tile_size={dynamic_config.clahe_tile_size}, clip_limit={dynamic_config.clahe_clip_limit}, nbins={dynamic_config.clahe_nbins}"
-    )
+    aprint(f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
 
     # === Visualize CLAHE Effect ===
-    with asection("CLAHE Visualization - Before/After Comparison"):
+    with asection("CLAHE Visualization - Initial Seed Detection"):
         import torch
         from luxar.gsplats.clahe import apply_clahe
 
         aprint("Computing CLAHE-equalized image for visualization...")
+        aprint("(CLAHE is used for initial candidate detection, not dynamic seeding)")
 
-        # Convert to torch tensor (same as will be used in dynamic ops)
+        # Convert to torch tensor
         V_torch = torch.tensor(V, dtype=torch.float32)
 
-        # Apply CLAHE with same parameters as dynamic ops
+        # Apply CLAHE with same parameters as used in candidates.py
         V_clahe_torch = apply_clahe(
             V_torch,
-            tile_size=dynamic_config.clahe_tile_size,
-            clip_limit=dynamic_config.clahe_clip_limit,
-            nbins=dynamic_config.clahe_nbins,
+            tile_size=32,  # Same as candidates.py default
+            clip_limit=16.0,  # Same as candidates.py default
+            nbins=256,
         )
 
         # Convert back to numpy for visualization
@@ -188,9 +181,8 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
         aprint("🔍 What to look for:")
         aprint("  • CLAHE should enhance contrast in dim (top) region")
         aprint("  • Top and bottom regions should have more balanced intensities")
-        aprint(
-            "  • 'After CLAHE' image shows what's used for sampling probabilities"
-        )
+        aprint("  • 'After CLAHE' image is used for initial peak detection")
+        aprint("  • This allows dim structures to be detected from the start")
         aprint("")
         aprint("Press any key to close this window and continue with fitting...")
 

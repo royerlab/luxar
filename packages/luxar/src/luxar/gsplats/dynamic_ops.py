@@ -18,11 +18,11 @@ The approach focuses on two core operations driven by convergence requirements:
 ### Step 1: Residual Peak Analysis
 - Compute residual image: residual = V_target - V_pred
 - Find k strongest peaks with spatial exclusion (non-maximum suppression)
-- Apply convergence guard: skip all operations if strongest residual < convergence threshold
+- Apply convergence guard: skip if strongest residual < convergence threshold
 
 ### Step 2: Convergence-Based Splat Operations
 - For each peak, determine if coverage is sufficient using convergence criteria
-- **Seeding**: Coverage insufficient (residual > convergence threshold or no threshold set)
+- **Seeding**: Coverage insufficient (residual > convergence threshold)
 - **Adaptive learning rate boosting**: "Unfreeze" existing splats covering problematic regions
 - **Adaptive thresholds**: Amplitude validation scales with local residual magnitude
 
@@ -35,10 +35,8 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-import numpy as np
 import torch
 
-from luxar.gsplats.clahe import compute_clahe_sampling_probabilities
 from luxar.gsplats.optim import ModelOptimizerCoordinator
 
 
@@ -48,14 +46,14 @@ class DynamicOpsConfig:
 
     This class contains all parameters for the three-step dynamic operations algorithm:
     1. Residual Peak Analysis: Find strongest error locations
-    2. Convergence-Based Operations: Seed/split based on convergence criteria
+    2. Convergence-Based Operations: Seed based on convergence criteria
     3. Global Pruning: Remove ineffective splats
 
     Key features:
     - Convergence-based detection aligns operations with optimization goals
     - Adaptive thresholds prevent plateau issues
     - Asymmetric loss awareness for additive Gaussian models
-    - Hybrid seeding: combines error-driven (residual) and structure-driven (CLAHE) approaches
+    - Residual-driven seeding targets reconstruction deficiencies
     """
 
     def __init__(self):
@@ -63,15 +61,8 @@ class DynamicOpsConfig:
         self.step_every: int = 50  # Run operations every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 10  # Total seed budget per cycle
+        self.k_max_residuals: int = 10  # Number of residual peaks to analyze per cycle
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
-
-        # Hybrid Seeding Strategy: CLAHE-Based Coverage Seeding
-        self.density_seeding_fraction: float = 0.0  # Fraction of seeds from CLAHE-based coverage (0.0 = disabled, 0.5 = 50-50)
-        self.clahe_tile_size: int = 32  # Tile size for CLAHE in voxels (default: ~2× feature diameter)
-        self.clahe_clip_limit: float = 8.0  # Contrast limiting factor for CLAHE (1.0-4.0, higher = more aggressive)
-        self.clahe_nbins: int = 256  # Number of histogram bins for CLAHE equalization
-        self.clahe_oversample_factor: int = 10  # Oversample factor for robust seeding (sample k×factor, filter, select top-k)
 
         # Step 2: Adaptive Operations
         self.min_contribution_threshold: float = (
@@ -157,121 +148,6 @@ def _find_residual_peaks(
     return [tuple(peak.tolist()) for peak in selected_peaks]
 
 
-def _find_clahe_based_seed_locations(
-    V_target: torch.Tensor,
-    residual: torch.Tensor,
-    k_clahe_seeds: int,
-    cfg: DynamicOpsConfig,
-    max_abs_error_threshold: float,
-) -> List[Tuple[int, ...]]:
-    """
-    Find seed locations using robust CLAHE-based approach with oversampling, filtering, and NMS.
-
-    Implements 4-step algorithm:
-    1. Oversample from CLAHE distribution (diversity)
-    2. Filter by residual > threshold (eliminate covered regions)
-    3. Sort by CLAHE value, select top candidates (quality guarantee)
-    4. Apply spatial NMS with min_dist separation (prevent clustering)
-
-    Args:
-        V_target: Target tensor to sample from
-        residual: Residual tensor (V_target - V_pred) for coverage checking
-        k_clahe_seeds: Number of CLAHE-based seeds to generate
-        cfg: Dynamic operations configuration
-        max_abs_error_threshold: Convergence threshold for residual filtering
-
-    Returns:
-        List of up to k_clahe_seeds spatially-separated coordinates with highest
-        local perceptual importance in uncovered regions
-    """
-    if k_clahe_seeds <= 0:
-        return []
-
-    shape = V_target.shape
-
-    # Step 1: Compute CLAHE probabilities and oversample
-    probabilities, V_clahe = compute_clahe_sampling_probabilities(
-        V_target,
-        tile_size=cfg.clahe_tile_size,
-        clip_limit=cfg.clahe_clip_limit,
-        nbins=cfg.clahe_nbins,
-    )
-
-    # Oversample for robustness
-    k_oversample = min(k_clahe_seeds * cfg.clahe_oversample_factor, V_target.numel())
-
-    try:
-        candidate_indices = torch.multinomial(
-            probabilities,
-            num_samples=k_oversample,
-            replacement=True,  # Allow duplicates in initial sample
-        )
-    except RuntimeError:
-        return []
-
-    # Convert to coordinates and get CLAHE values
-    flat_indices_np = candidate_indices.cpu().numpy()
-    coords_np = np.unravel_index(flat_indices_np, shape)
-    V_clahe_flat = V_clahe.reshape(-1)
-
-    # Step 2: Filter by residual (remove already-covered locations)
-    filtered_candidates = []
-    for j in range(len(flat_indices_np)):
-        coords = tuple(int(coords_np[i][j]) for i in range(len(shape)))
-        local_residual = torch.abs(residual[coords]).item()
-
-        if local_residual > max_abs_error_threshold:
-            # Location needs coverage - keep candidate
-            clahe_value = V_clahe_flat[candidate_indices[j]].item()
-            filtered_candidates.append((coords, clahe_value))
-
-    if len(filtered_candidates) == 0:
-        return []  # All oversampled locations already covered
-
-    # Step 3: Sort by CLAHE value (highest first) for quality guarantee
-    filtered_candidates.sort(key=lambda x: x[1], reverse=True)
-
-    # Step 4: Farthest-First Selection - maximize spatial diversity
-    # Start with highest CLAHE value candidate
-    final_seeds = [filtered_candidates[0][0]]
-    remaining = filtered_candidates[1:]
-
-    # Iteratively pick candidate furthest from all selected
-    for _ in range(k_clahe_seeds - 1):
-        if len(remaining) == 0:
-            break
-
-        best_candidate = None
-        best_min_distance = -1.0
-
-        for coords, clahe_val in remaining:
-            # Compute minimum distance to any selected seed
-            min_dist_to_selected = float("inf")
-            for selected_coords in final_seeds:
-                # Euclidean distance
-                distance_sq = sum(
-                    (c1 - c2) ** 2 for c1, c2 in zip(coords, selected_coords)
-                )
-                distance = distance_sq**0.5
-                min_dist_to_selected = min(min_dist_to_selected, distance)
-
-            # Pick candidate with maximum minimum-distance (farthest from all)
-            if min_dist_to_selected > best_min_distance:
-                best_min_distance = min_dist_to_selected
-                best_candidate = coords
-
-        if best_candidate is not None:
-            final_seeds.append(best_candidate)
-            # Remove selected candidate from remaining
-            remaining = [(c, v) for c, v in remaining if c != best_candidate]
-
-    return final_seeds
-
-
-# Note: Complex covariance and amplitude estimation functions removed
-# Replaced with ultra-simple approach: amplitude = residual[center], shape = isotropic
-
-
 def apply_dynamic_operations(
     model,
     optimizer,
@@ -327,39 +203,18 @@ def apply_dynamic_operations(
         topology_changed = False
         operations_performed = []
 
-        # === STEP 1: Hybrid Seed Location Finding ===
-        # Split budget between residual-based and CLAHE-based seeding
-        k_residual = int(cfg.k_max_residuals * (1.0 - cfg.density_seeding_fraction))
-        k_clahe = int(cfg.k_max_residuals * cfg.density_seeding_fraction)
-
-        # Find residual-based peaks (error-driven)
-        residual_peak_locations = _find_residual_peaks(
-            residual, k_residual, cfg.nms_radius_vox
+        # === STEP 1: Residual Peak Analysis ===
+        # Find k strongest residual peaks with spatial exclusion
+        peak_locations = _find_residual_peaks(
+            residual, cfg.k_max_residuals, cfg.nms_radius_vox
         )
 
-        # Find CLAHE-based seeds (structure-driven with coverage awareness)
-        clahe_seed_locations = []
-        if k_clahe > 0:
-            clahe_seed_locations = _find_clahe_based_seed_locations(
-                V_target, residual, k_clahe, cfg, max_abs_error_threshold
-            )
-
-        # Combine both types of seed locations
-        peak_locations = residual_peak_locations + clahe_seed_locations
-
         if verbose and len(peak_locations) > 0:
-            aprint(
-                f"Found {len(residual_peak_locations)} residual peaks + "
-                f"{len(clahe_seed_locations)} CLAHE seeds = {len(peak_locations)} total"
-            )
+            aprint(f"Found {len(peak_locations)} residual peaks")
 
-        # Convergence guard: Apply only to residual peaks (not CLAHE seeds)
-        # If strongest residual peak is below threshold, skip residual-based operations
-        # but still allow CLAHE-based seeding for spatial coverage
-        if len(residual_peak_locations) > 0:
-            strongest_peak_coords = residual_peak_locations[
-                0
-            ]  # _find_residual_peaks returns sorted by strength
+        # Convergence guard: skip if strongest residual below threshold
+        if len(peak_locations) > 0:
+            strongest_peak_coords = peak_locations[0]  # Sorted by strength
             strongest_peak_residual = torch.abs(residual[strongest_peak_coords]).item()
 
             if strongest_peak_residual < max_abs_error_threshold:
@@ -367,14 +222,8 @@ def apply_dynamic_operations(
                     aprint(
                         f"Convergence guard: strongest residual {strongest_peak_residual:.5f} < threshold {max_abs_error_threshold:.5f}"
                     )
-                    if k_clahe > 0:
-                        aprint(f"  → Skipping residual-based seeding, but allowing {len(clahe_seed_locations)} CLAHE seeds for coverage")
-                    else:
-                        aprint("  → Skipping all dynamic operations (no CLAHE seeding enabled)")
-                # Remove residual peaks from consideration, keep only CLAHE seeds
-                peak_locations = clahe_seed_locations
-                if len(peak_locations) == 0:
-                    return optimizer, scheduler, False
+                    aprint("  → Skipping all dynamic operations")
+                return optimizer, scheduler, False
 
         # === STEP 2: Adaptive Splat Operations ===
         for peak_coords in peak_locations:
