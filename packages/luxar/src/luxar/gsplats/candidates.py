@@ -96,61 +96,90 @@ def _dog_response(vol: np.ndarray, sigma: float, k: float = 1.6) -> np.ndarray:
     return g1 - g2
 
 
-def _dedupe(coords: np.ndarray, min_dist: float) -> np.ndarray:
+def _dedupe_farthest_first(
+    coords: np.ndarray, min_dist: float, intensities: Optional[np.ndarray] = None
+) -> np.ndarray:
     """
-    Remove duplicate candidates using efficient spatial deduplication.
+    Remove duplicate candidates using farthest-first selection for maximum spatial diversity.
 
-    Uses KDTree for O(N log N) spatial queries instead of O(N²) brute force.
-    For each candidate in order, eliminates all nearby candidates within min_dist.
+    Algorithm:
+    1. Sort candidates by intensity (if provided) or keep original order
+    2. Start with strongest/first candidate
+    3. Iteratively select candidate furthest from all previously selected
+    4. Continue until all candidates processed
+
+    This ensures maximum spatial spread with quality priority.
 
     Parameters
     ----------
     coords : np.ndarray
         Array of shape (N, ndim) containing candidate coordinates.
     min_dist : float
-        Minimum Euclidean distance required between kept candidates.
+        Minimum Euclidean distance required between kept candidates (not strictly enforced,
+        but farthest-first naturally creates good spatial separation).
+    intensities : np.ndarray, optional
+        Array of shape (N,) containing intensity/quality values for each candidate.
+        If provided, candidates are sorted by intensity (highest first) before selection.
 
     Returns
     -------
     np.ndarray
-        Array of deduplicated coordinates, subset of input coords.
+        Array of deduplicated coordinates with maximum spatial diversity.
         Returns float coordinates for consistency with downstream processing.
     """
     # Handle empty input case
     if len(coords) == 0:
         return coords.astype(float)
 
-    # For small datasets, use original greedy approach to avoid KDTree overhead
-    if len(coords) < 100:
-        return _dedupe_greedy(coords, min_dist)
+    # Sort by intensity if provided (highest first), otherwise keep original order
+    if intensities is not None:
+        sort_indices = np.argsort(intensities)[::-1]  # Descending order
+        coords_sorted = coords[sort_indices]
+    else:
+        coords_sorted = coords
 
-    # Use KDTree for efficient spatial queries on larger datasets
-    try:
-        from scipy.spatial import cKDTree
-    except ImportError:
-        # Fallback to greedy if scipy not available
-        return _dedupe_greedy(coords, min_dist)
+    # Start with first (strongest) candidate
+    selected = [coords_sorted[0]]
+    remaining_indices = list(range(1, len(coords_sorted)))
 
-    # Build spatial index
-    tree = cKDTree(coords)
-    used = np.zeros(len(coords), dtype=bool)
-    out = []
+    # Iteratively select candidate furthest from all previously selected
+    while remaining_indices:
+        best_idx = None
+        best_min_distance = -1.0
 
-    for i in range(len(coords)):
-        if used[i]:
-            continue
+        for idx in remaining_indices:
+            candidate = coords_sorted[idx]
 
-        # Keep this candidate
-        out.append(coords[i])
+            # Compute minimum distance to any selected point
+            min_dist_to_selected = float("inf")
+            for selected_coord in selected:
+                diff = candidate - selected_coord
+                distance = np.sqrt(np.sum(diff**2))
+                min_dist_to_selected = min(min_dist_to_selected, distance)
 
-        # Find all candidates within min_dist and mark as used
-        # query_ball_point returns list of indices of points within distance
-        neighbors = tree.query_ball_point(coords[i], r=min_dist)
-        if neighbors:  # Handle empty neighbor list
-            for neighbor_idx in neighbors:
-                used[neighbor_idx] = True
+            # Only consider candidates that satisfy min_dist constraint
+            if min_dist_to_selected >= min_dist:
+                # Pick candidate with maximum minimum-distance (farthest from all)
+                if min_dist_to_selected > best_min_distance:
+                    best_min_distance = min_dist_to_selected
+                    best_idx = idx
 
-    return np.array(out, dtype=float)
+        if best_idx is not None:
+            selected.append(coords_sorted[best_idx])
+            remaining_indices.remove(best_idx)
+        else:
+            break  # No more candidates satisfy min_dist constraint
+
+    return np.array(selected, dtype=float)
+
+
+def _dedupe(coords: np.ndarray, min_dist: float) -> np.ndarray:
+    """
+    Deprecated: Use _dedupe_farthest_first for better spatial distribution.
+
+    Kept for backwards compatibility in case external code calls this directly.
+    """
+    return _dedupe_farthest_first(coords, min_dist)
 
 
 def _dedupe_greedy(coords: np.ndarray, min_dist: float) -> np.ndarray:
@@ -208,6 +237,10 @@ def find_candidates_overcomplete_nd(
     add_intensity_grid: bool = True,
     grid_step: Optional[Sequence[int]] = None,
     grid_percentile: float = 60.0,
+    apply_clahe: bool = True,
+    clahe_tile_size: int = 32,
+    clahe_clip_limit: float = 16.0,
+    clahe_nbins: int = 256,
 ) -> np.ndarray:
     """
     Generate overcomplete set of candidate centers for Gaussian splat fitting.
@@ -215,6 +248,7 @@ def find_candidates_overcomplete_nd(
     This function combines multiple detection strategies to create a rich set of
     candidate locations where Gaussian splats might be placed:
 
+    0. CLAHE preprocessing (optional): Enhances local contrast for balanced detection
     1. Multiscale Gaussian-blurred peaks: Detects blob-like structures at various sizes
     2. Multiscale DoG (Difference of Gaussians) peaks: Detects blob boundaries and edges
     3. Intensity-weighted grid sampling: Ensures spatial coverage in high-intensity regions
@@ -250,6 +284,17 @@ def find_candidates_overcomplete_nd(
     grid_percentile : float, default=60.0
         Intensity percentile threshold for keeping grid samples. Lower than
         percentile_thresh to be more inclusive.
+    apply_clahe : bool, default=True
+        Whether to apply CLAHE preprocessing before detection. When enabled,
+        all detection methods operate on CLAHE-enhanced image, allowing
+        discovery of dim structures in heterogeneous data.
+    clahe_tile_size : int, default=32
+        Tile size for CLAHE preprocessing in voxels.
+    clahe_clip_limit : float, default=16.0
+        Contrast limiting factor for CLAHE. Higher values provide more
+        aggressive enhancement (range: 1.0-40.0, typical: 2.0-16.0).
+    clahe_nbins : int, default=256
+        Number of histogram bins for CLAHE equalization.
 
     Returns
     -------
@@ -296,19 +341,36 @@ def find_candidates_overcomplete_nd(
     if len(spacing) != d:
         raise ValueError(f"spacing must have length {d} to match input dimensions")
 
+    # CLAHE preprocessing (if enabled)
+    if apply_clahe:
+        import torch
+        from luxar.gsplats.clahe import apply_clahe as apply_clahe_torch
+
+        # Convert to torch, apply CLAHE, convert back
+        V_torch = torch.tensor(V, dtype=torch.float32)
+        V_clahe_torch = apply_clahe_torch(
+            V_torch,
+            tile_size=clahe_tile_size,
+            clip_limit=clahe_clip_limit,
+            nbins=clahe_nbins,
+        )
+        V_work = V_clahe_torch.cpu().numpy()
+    else:
+        V_work = V
+
     # Collect coordinates from all detection methods
     all_coords: List[np.ndarray] = []
 
     # Pre-compute common statistics to avoid redundant calculations
     V_percentile_thresh = np.percentile(
-        V, percentile_thresh
+        V_work, percentile_thresh
     )  # Cache base image threshold
 
     # (A) Multiscale Gaussian-blurred peaks
     # Detect blob-like structures at multiple scales by finding peaks in Gaussian-filtered images
     for s in scales:
         # Apply Gaussian smoothing at current scale
-        img = ndi.gaussian_filter(V, sigma=s, mode="nearest")
+        img = ndi.gaussian_filter(V_work, sigma=s, mode="nearest")
 
         # Use adaptive threshold: prefer cached base threshold, fall back to scale-specific
         # For heavily smoothed images, use their own percentile; for mild smoothing, reuse base
@@ -328,7 +390,7 @@ def find_candidates_overcomplete_nd(
     # (B) Multiscale Difference of Gaussians (DoG) peaks
     # Detect blob boundaries and edge-like structures using DoG filtering
     # Pre-compute DoG responses for all scales to enable threshold optimization
-    dog_responses = [_dog_response(V, sigma=s, k=1.6) for s in scales]
+    dog_responses = [_dog_response(V_work, sigma=s, k=1.6) for s in scales]
 
     # Compute adaptive thresholds: use global DoG statistics when possible
     if len(dog_responses) > 1:
@@ -385,7 +447,7 @@ def find_candidates_overcomplete_nd(
         # Box size scales with grid step to capture local intensity context
         avg_grid_step = int(np.mean(grid_step))
         box = tuple([max(1, avg_grid_step // 3)] * d)
-        local = ndi.uniform_filter(V, size=box, mode="nearest")
+        local = ndi.uniform_filter(V_work, size=box, mode="nearest")
 
         # Sample filtered intensities at grid points
         vals = local[tuple(pts.T)]

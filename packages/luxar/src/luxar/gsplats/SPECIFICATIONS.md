@@ -63,10 +63,19 @@ Generate overcomplete candidate locations using three complementary methods:
 - Apply `uniform_filter` with size `max(1, step//3)` for local averaging
 - Keep points above `percentile(local_intensities, grid_percentile)`
 
-**Spatial deduplication:**
-- Use `scipy.spatial.cKDTree` for datasets >100 points, else greedy O(N�)
-- Remove points within `min_dist` Euclidean distance
-- Process in detection order, keeping first occurrence
+**Method 4: CLAHE-based perceptual sampling** (if `add_clahe_sampling=True`)
+- Apply CLAHE to enhance local contrast (tile_size=16, clip_limit=2.0)
+- Sample from CLAHE-equalized intensities as probability distribution
+- Generates perceptually-balanced candidates (dim structures get fair representation)
+- Number of samples: `clahe_samples_per_scale` (default: `peaks_per_scale`)
+
+**Spatial deduplication (Farthest-First Selection):**
+- Sort all candidates by detection strength (intensity or CLAHE value)
+- Initialize with strongest candidate
+- Iteratively select candidate furthest from all previously selected
+- Continue until budget exhausted or all candidates processed
+- **Result**: Maximum spatial diversity with quality priority
+- **Complexity**: O(k² × n) where k is output size, n is input candidates
 
 **Sub-pixel refinement:**
 - For each candidate, extract 3�3�...�3 neighborhood (clamped to image bounds)
