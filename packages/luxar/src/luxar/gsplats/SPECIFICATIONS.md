@@ -1,8 +1,37 @@
 # Gaussian Splatting Implementation Specification
 
+## Documentation Structure
+
+This specification serves as the **hub** for the entire gsplats package. For detailed information on specific components, see:
+
+- **Multi-Scale Decomposition**: [multiscale/SPECIFICATIONS.md](./multiscale/SPECIFICATIONS.md) - Image decomposition for efficient multi-scale fitting
+- **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) - Modular 6-stage fitting pipeline architecture
+- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Per-splat Adam optimizer and schedulers
+- **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch model and rendering engine
+- **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Matrix operations and gradient dilution utilities
+- **Terminology Glossary**: [GLOSSARY.md](./GLOSSARY.md) - Standard terminology and naming conventions
+
+**Reading Order**:
+1. **New to Gaussian Splatting?** Start with [Overview](#overview) below, then [Section 2: Gaussian Splat Model](#2-gaussian-splat-model-modelsgspatsgsplat_modelpy)
+2. **Implementing features?** Jump to the relevant package specification above
+3. **Debugging?** See [Testing Requirements](#8-integration-requirements) and individual package test sections
+
+**Quick Start**:
+```python
+from luxar.gsplats import fit_gaussian_splats
+
+# Fit Gaussian splats to your data
+params, amps, stats = fit_gaussian_splats(
+    V,                    # Your nD image/volume
+    n_iters=1000,        # Max iterations
+    max_abs_error=0.01,  # Convergence threshold
+    verbose=True         # Show progress
+)
+```
+
 ## Overview
 
-Implement an n-dimensional Gaussian splatting system for image/volume reconstruction using collections of oriented Gaussian functions. Each "splat" represents: `f_k(x) = a_k * exp(-0.5 * (x - �_k)^T * �_k^(-1) * (x - �_k))` where �_k is the center, �_k is the covariance matrix, and a_k is the amplitude.
+Implement an n-dimensional Gaussian splatting system for image/volume reconstruction using collections of oriented Gaussian functions. Each "splat" represents: `f_k(x) = a_k * exp(-0.5 * (x - μ_k)^T * Σ_k^(-1) * (x - μ_k))` where μ_k is the center, Σ_k is the covariance matrix, and a_k is the amplitude.
 
 Key requirements:
 - Support arbitrary dimensions with optimized 2D/3D fast paths
@@ -436,7 +465,7 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=1.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, ...)`
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
@@ -998,5 +1027,189 @@ Export primary user-facing functions and classes:
 - `GaussianSplatFitter`
 - `DynamicOpsConfig`
 
+## Terminology Glossary
+
+**Note**: For the complete, detailed glossary with usage guidelines, see [GLOSSARY.md](./GLOSSARY.md)
+
+This section provides a quick reference for the most important terms. For comprehensive definitions, naming conventions, and cross-references, consult the dedicated glossary.
+
+### Core Concepts
+
+**Splat**
+- A single oriented Gaussian function: `f(x) = a * exp(-0.5 * (x-μ)^T * Σ^(-1) * (x-μ))`
+- Also called: Gaussian splat, oriented Gaussian
+- NOT: blob, particle, or kernel (avoid these terms for consistency)
+
+**Centers (μ)**
+- Position of splat center in voxel coordinates
+- Parameter name: `raw_mu` (logit-space), transformed via sigmoid to stay in image bounds
+- NOT: positions, means, or locations
+
+**Amplitudes (a)**
+- Non-negative scalar controlling splat brightness/intensity
+- Parameter name: `raw_a` (transformed via softplus)
+- NOT: weights, intensities, or coefficients
+
+**Cholesky Factors (L)**
+- Lower-triangular matrix where `Σ = L @ L^T` (covariance parameterization)
+- Parameter names: `raw_L_diag` (diagonal), `L_off` (off-diagonal)
+- NOT: covariance matrix directly (we use Cholesky for stability)
+
+**Sharpness (s)**
+- Controls edge falloff in generalized Gaussian: `exp(-0.5 * ||y||^s)`
+- Parameter name: `sharpness_offsets_raw` (where `s = 2 * exp(s')`)
+- `s = 2`: standard Gaussian, `s > 2`: sharper edges, `s < 2`: softer edges
+- NOT: shape parameter, falloff rate
+
+### Operations
+
+**Seeding**
+- **Initial seeding**: Generating candidate splat locations from image features (startup)
+- **Dynamic seeding**: Adding new splats in high-residual regions during optimization
+- Use "seeding" for initial generation, "adding" for dynamic operations
+
+**Pruning**
+- **Quality-based removal**: Removing low-importance splats based on reconstruction quality
+- Distinct from generic "removing" which includes any deletion operation
+- Use "pruning" when referring to quality-based removal
+
+**Dynamic Operations**
+- Umbrella term for adaptive topology changes during optimization
+- Includes: seeding new splats, pruning low-quality splats, learning rate boosting
+- Also called: adaptive operations, topology management
+- NOT: splat management (too vague)
+
+**Adding (Dynamic)**
+- Adding new splats during optimization (after initial seeding)
+- Method names: `append_()`, `add_splats()`
+- Context: Dynamic operations
+
+**Removing (Generic)**
+- Any deletion of splats from the model
+- Method names: `prune_()`, `remove_splats()`
+- Context: Generic or implementation-specific
+
+### Optimization Terms
+
+**Gradient Dilution**
+- Phenomenon where higher dimensions have more parameters per splat, diluting gradients
+- **Gradient dilution compensation**: Scaling learning rate to counteract dilution
+- Factor calculation: See [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md)
+- NOT: gradient scaling, LR adjustment (less specific)
+
+**Per-Splat State**
+- Individual optimizer state (momentum, learning rate) maintained for each splat
+- Enables momentum preservation during topology changes
+- NOT: splat-wise state, individual state
+
+**Best State Tracking**
+- Saving the parameter configuration that achieved the lowest max absolute error
+- Provides quality guarantee even with non-monotonic optimization
+- Also called: quality guarantee
+- NOT: optimal state, peak performance (less precise)
+
+**Parameter-Type-Specific Learning Rates**
+- Different learning rate multipliers for different parameter types:
+  - Position: ×0.1 (slow, prevents migration)
+  - Variance: ×1.0 (normal)
+  - Amplitude: ×2.0 (fast convergence)
+  - Sharpness: ×0.5 (conservative)
+
+### Dimensionality
+
+**d**
+- Number of dimensions (mathematical notation)
+- Examples: d=2 (2D image), d=3 (3D volume), d=4 (4D hypercube)
+
+**nD**
+- n-dimensional (prose and code)
+- Follows NumPy convention
+- NOT: N-dimensional, n-D
+
+**Dimensionality**
+- Full word form when writing prose
+- Example: "The algorithm supports arbitrary dimensionality"
+
+### Technical Abbreviations
+
+**AABB**
+- Axis-Aligned Bounding Box
+- Used for efficient rendering (only compute Gaussian contribution within AABB)
+
+**LR**
+- Learning Rate
+- NOT: lr (use lowercase in code, uppercase in prose)
+
+**DoG**
+- Difference of Gaussians
+- Used in candidate generation: `DoG = gaussian_filter(V, σ) - gaussian_filter(V, 1.6*σ)`
+
+**L1 Regularization**
+- L1 norm penalty: `loss += λ * |parameter|`
+- Encourages sparsity (drives values toward zero)
+
+**MSE**
+- Mean Squared Error: `mean((pred - target)²)`
+
+**MAE / L1 Loss**
+- Mean Absolute Error: `mean(|pred - target|)`
+
+### Parameter Names (Use These Consistently)
+
+**Raw Parameters** (learnable, unconstrained or constrained):
+- `raw_mu`: Center parameters in logit space
+- `raw_L_diag`: Diagonal Cholesky parameters (via softplus)
+- `L_off`: Off-diagonal Cholesky parameters (unconstrained)
+- `raw_a`: Amplitude parameters (via softplus)
+- `sharpness_offsets_raw`: Sharpness offset parameters (s')
+
+**Transformed Parameters** (after activation functions):
+- `centers` or `μ`: Actual center positions in voxel coordinates
+- `L` or `Ls`: Cholesky factors (lower-triangular matrices)
+- `amps` or `a`: Actual amplitudes (non-negative)
+- `sharpness` or `s`: Actual sharpness values (s = 2 * exp(s'))
+
+**Configuration Parameters**:
+- `sigma_min_diag`: Minimum diagonal values (per-dimension sequence)
+- `sigma_max_diag`: Maximum diagonal values (per-dimension sequence)
+- `truncate`: Gaussian truncation radius in standard deviations
+- `init_sigma_vox`: Initial sigma for isotropic covariances
+
+### Mathematical Notation
+
+**Σ (Sigma)**
+- Covariance matrix (positive definite)
+- Relationship: `Σ = L @ L^T`
+
+**μ (mu)**
+- Center position vector, shape (d,)
+
+**L (L-matrix)**
+- Lower-triangular Cholesky factor
+- Ensures Σ is always positive definite
+
+**s (sharpness)**
+- Generalized Gaussian exponent
+- Computational form: `exp(-0.5 * ||y||^s)` where s=sharpness
+
+**s' (sharpness offset)**
+- Learnable parameter: `s = 2 * exp(s')`
+- Zero-centered: s'=0 gives s=2 (standard Gaussian)
+
+### Cross-Package References
+
+When referencing other specifications, use this format:
+
+**Format**: `[Package Name](./package/SPECIFICATIONS.md)` → **Section Name**
+
+**Examples**:
+- Gradient dilution details: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → Section 2
+- Fitting pipeline: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) → Pipeline Architecture
+- Per-splat optimizer: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → PerSplatAdam
+
+## Conclusion
+
 This specification provides complete implementation details for a mathematically rigorous, computationally efficient, and feature-rich Gaussian splatting system with dynamic optimization capabilities validated from 2D to 4D and beyond.
+
+**For detailed information on specific components**, see the [Documentation Structure](#documentation-structure) section at the top of this document.
 

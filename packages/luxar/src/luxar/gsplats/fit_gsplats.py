@@ -221,15 +221,15 @@ def fit_gaussian_splats(
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
         - >0: Percentile clipping (e.g., 1.0 uses 1%-99% range, robust to outliers)
         Higher values provide more outlier robustness but may clip important data.
-    init_sigma_vox : float, default=1.5
+    init_sigma_vox : float, default=0.5
         Initial isotropic standard deviation for Gaussian splats (in voxels).
     n_iters : int, default=1000
         Maximum number of optimization iterations. Default is generous to allow
         max_abs_error convergence criterion to work effectively.
-    lr : float, default=0.2
+    lr : float, default=0.01
         Learning rate for Adam optimizer.
-    loss_type : str, default="mse"
-        Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features).
+    loss_type : str, default="l1"
+        Loss function: "mse", "poisson" (better for count/photon data), or "l1" (robust to outliers, preserves sharp features, default).
     asymmetric_penalty : float, default=10.0
         Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
@@ -243,10 +243,11 @@ def fit_gaussian_splats(
         L1 regularization coefficient on diagonal elements of Cholesky factors.
         Encourages smaller, more isotropic splats. If None, automatically set
         to 1% of learning rate for mild shape regularization.
-    l1_sharpness : float, default=None (auto: 0.01 * lr)
+    l1_sharpness : float, default=None (auto: 0.05 * lr)
         L1 regularization coefficient on sharpness offset parameters (s').
         Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
-        beneficial to deviate. If None, automatically set to 1% of learning rate.
+        beneficial to deviate. If None, automatically set to 5% of base learning rate
+        (which equals 10% of the sharpness learning rate due to the 0.5× multiplier).
         Higher values promote standard Gaussians, lower values allow more sharpness learning.
         Note: Sharpness learning rate is hard-coded to 0.5× the base effective learning rate.
     sigma_min_diag : Sequence[float], optional
@@ -271,8 +272,8 @@ def fit_gaussian_splats(
         Type of learning rate scheduler ("plateau" or "exponential").
     patience : int, default=10
         Scheduler patience for plateau scheduler.
-    factor : float, default=0.5
-        Learning rate reduction factor for scheduler.
+    factor : float, default=0.9
+        Learning rate reduction factor for scheduler (new_lr = lr * factor).
     enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional
@@ -280,8 +281,9 @@ def fit_gaussian_splats(
     dynamic_ops_verbose : bool, default=False
         Enable detailed console logging for dynamic operations. Shows residual analysis,
         seeding attempts and pruning operations.
-    napari_movie : bool, default=True
+    napari_movie : bool, default=False
         Record optimization movie for napari visualization.
+        Enable this to create a time-series visualization of optimization progress.
     movie_every : int, default=1
         Record movie frame every N iterations.
     movie_max_frames : int, default=None (infinite)

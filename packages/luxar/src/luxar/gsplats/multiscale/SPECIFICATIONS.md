@@ -8,6 +8,11 @@ This module implements n-dimensional multi-scale image decomposition for efficie
 2. **Better Optimization**: Separating frequency bands reduces interference between large and small splats during fitting
 3. **Hierarchical Representation**: Natural separation of coarse and fine features
 
+**Related Specifications**:
+- **Multi-Scale Fitting API**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Section 6: Multi-Scale Gaussian Splat Fitting
+- **Single-Scale Fitting**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Section 5: Main Fitting Interface
+- **Terminology**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Terminology Glossary
+
 ## Dependencies
 
 **Core Dependencies**:
@@ -626,7 +631,7 @@ V_eighth = scales_list[3]    # Eighth resolution: (32, 32, 16)
 
 **Note**: Multi-scale Gaussian splat fitting is now specified in the main gsplats package. Please refer to:
 
-**`/packages/luxar/src/luxar/gsplats/SPECIFICATIONS.md`** → Section 6: Multi-Scale Gaussian Splat Fitting
+**[Main SPECIFICATIONS.md](../SPECIFICATIONS.md)** → Section 6: Multi-Scale Gaussian Splat Fitting
 
 This section provides comprehensive specification for:
 - Mathematical formulation and parameter scaling rules
@@ -994,13 +999,18 @@ The `show_optimization_movie()` function displays:
 
 ## Glossary
 
-- **Scale factor (r)**: Downsampling ratio (r=2 means half resolution)
+**Note**: For general Gaussian splatting terminology, see [Main GLOSSARY.md](../GLOSSARY.md)
+
+**Multi-scale specific terms**:
+
+- **Scale factor (r)**: Downsampling ratio (r=2 means half resolution, r=4 means quarter resolution)
 - **Energy**: Sum of all pixel/voxel intensities in an image: ∫ V dx
-- **Coarse scale**: Low-resolution component (high scale factor)
-- **Fine scale**: High-resolution component (low scale factor, typically r=1)
-- **Upsampling**: Interpolation from low to high resolution
-- **Downsampling**: Reduction from high to low resolution (e.g., averaging, pooling)
+- **Coarse scale**: Low-resolution component with high scale factor (e.g., r=8)
+- **Fine scale**: High-resolution component with low scale factor (typically r=1, full resolution)
+- **Upsampling**: Interpolation from low resolution to high resolution
+- **Downsampling**: Reduction from high resolution to low resolution (e.g., averaging, pooling)
 - **Total Variation (TV)**: Sum of absolute gradients, measures high-frequency content
+- **Interpolation modes**: `'nearest'` (fastest), `'linear'` (smooth), `'cubic'` (highest quality, default)
 
 ## Version History
 
