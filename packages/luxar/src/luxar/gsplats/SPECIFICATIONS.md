@@ -329,6 +329,7 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 - `clahe_tile_size=16`: Tile size for CLAHE (Contrast Limited Adaptive Histogram Equalization) in voxels
 - `clahe_clip_limit=2.0`: Contrast limiting factor for CLAHE (1.0-4.0, higher = more aggressive)
 - `clahe_nbins=256`: Number of histogram bins for CLAHE equalization
+- `clahe_oversample_factor=10`: Oversample factor for robust CLAHE seeding (sample k×factor candidates, filter, then select top-k)
 
 ### Hybrid Seeding Strategy
 
@@ -377,42 +378,93 @@ Traditional density-based seeding using grid-based splat counting suffers from i
 - **Contrast limiting**: Prevents over-amplification of uniform/noisy regions
 - **Histogram flattening**: Transforms local intensity distribution toward uniform distribution
 
-#### **Sampling Algorithm**
+#### **Sampling Algorithm: Oversample + Filter + Top-K + NMS**
+
+**Rationale**: Robust seeding requires four key steps:
+1. **Oversample**: Generate diverse candidate pool (10× budget)
+2. **Residual filter**: Eliminate already-covered locations
+3. **Top-k selection**: Choose highest-CLAHE candidates (quality guarantee)
+4. **Spatial NMS**: Prevent clustering (spatial diversity)
 
 ```python
-def clahe_based_seeding(V_target, k_clahe, tile_size, clip_limit, nbins):
+def clahe_based_seeding(V_target, residual, k_clahe, cfg, max_abs_error_threshold):
     """
-    Sample k_clahe seed locations using CLAHE-equalized intensities as probabilities.
+    Sample k_clahe seed locations using robust CLAHE-based approach.
+
+    Algorithm:
+    1. Oversample 10× from CLAHE distribution (diversity)
+    2. Filter by residual > threshold (eliminate covered regions)
+    3. Sort by CLAHE value, take top candidates (quality)
+    4. Apply spatial NMS with min_dist separation (prevent clustering)
 
     Returns:
-        seed_locations: List of k_clahe coordinate tuples sampled proportionally
-                       to local perceptual importance
+        seed_locations: List of up to k_clahe spatially-separated coordinates
+                       with highest local perceptual importance in uncovered regions
     """
-    # Step 1: Apply CLAHE to target volume
-    V_clahe = apply_clahe_nd(
+    # Step 1: Compute CLAHE probabilities and oversample
+    V_clahe_probs, V_clahe = compute_clahe_sampling_probabilities(
         V_target,
-        tile_size=tile_size,
-        clip_limit=clip_limit,
-        nbins=nbins
+        tile_size=cfg.clahe_tile_size,
+        clip_limit=cfg.clahe_clip_limit,
+        nbins=cfg.clahe_nbins
     )
 
-    # Step 2: Normalize to [0, 1] for probability distribution
-    V_min, V_max = V_clahe.min(), V_clahe.max()
-    V_norm = (V_clahe - V_min) / (V_max - V_min + 1e-12)
+    # Oversample for robustness (10× budget)
+    oversample_factor = 10
+    k_oversample = min(k_clahe * oversample_factor, V_target.numel())
 
-    # Step 3: Flatten and normalize to valid probability distribution
-    V_flat = V_norm.reshape(-1)
-    probabilities = V_flat / V_flat.sum()
+    candidate_indices = torch.multinomial(
+        V_clahe_probs,
+        k_oversample,
+        replacement=True  # Allow duplicates in initial sample
+    )
 
-    # Step 4: Sample k_clahe locations with replacement
-    sampled_indices = torch.multinomial(probabilities, k_clahe, replacement=True)
+    # Step 2: Filter by residual (remove already-covered locations)
+    filtered_candidates = []
+    for idx in candidate_indices:
+        coords = flat_to_coords(idx, V_target.shape)
+        local_residual = abs(residual[coords])
 
-    # Step 5: Convert flat indices to nD coordinates
-    seed_locations = [flat_index_to_coords(idx, V_target.shape)
-                      for idx in sampled_indices]
+        if local_residual > max_abs_error_threshold:
+            # Location needs coverage - keep candidate
+            clahe_value = V_clahe.flat[idx]
+            filtered_candidates.append((coords, clahe_value.item()))
 
-    return seed_locations
+    if len(filtered_candidates) == 0:
+        return []  # All oversampled locations already covered
+
+    # Step 3: Sort by CLAHE value (highest first) for quality
+    filtered_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    # Step 4: Spatial NMS - greedy selection with minimum distance
+    final_seeds = []
+    nms_radius = cfg.nms_radius_vox  # Reuse existing NMS parameter
+
+    for coords, clahe_val in filtered_candidates:
+        # Check spatial separation from already-selected seeds
+        too_close = False
+        for existing_coords in final_seeds:
+            distance = euclidean_distance(coords, existing_coords)
+            if distance < nms_radius:
+                too_close = True
+                break
+
+        if not too_close:
+            final_seeds.append(coords)
+
+            # Stop when budget filled
+            if len(final_seeds) >= k_clahe:
+                break
+
+    return final_seeds
 ```
+
+**Key Properties:**
+- **Diversity**: 10× oversampling provides spatial and intensity diversity
+- **Coverage-aware**: Residual filter eliminates well-covered regions
+- **Quality**: Top-k ensures highest local perceptual importance
+- **Spatial distribution**: NMS prevents clustering (minimum `nms_radius_vox` separation)
+- **Efficient**: Greedy NMS is O(k²), negligible compared to rendering
 
 #### **CLAHE Implementation for nD Volumes**
 
