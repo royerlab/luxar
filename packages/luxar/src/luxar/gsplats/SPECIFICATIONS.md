@@ -324,16 +324,254 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 - `pruning_percentile=5.0`: Percentage of least important splats to consider for removal
 - `min_splats_to_keep=10`: Minimum number of splats to retain regardless of importance
 
+**Hybrid Seeding Parameters**:
+- `density_seeding_fraction=0.0`: Fraction of seed budget allocated to CLAHE-based coverage seeding (0.0 = disabled, 0.5 = 50-50 split)
+- `clahe_tile_size=16`: Tile size for CLAHE (Contrast Limited Adaptive Histogram Equalization) in voxels
+- `clahe_clip_limit=2.0`: Contrast limiting factor for CLAHE (1.0-4.0, higher = more aggressive)
+- `clahe_nbins=256`: Number of histogram bins for CLAHE equalization
+
+### Hybrid Seeding Strategy
+
+Dynamic operations employ a **hybrid seeding strategy** that combines two complementary approaches to ensure both error correction and spatial coverage:
+
+#### **Approach 1: Residual-Based Seeding (Error-Driven)**
+- **Budget**: `k_residual = k_max_residuals × (1 - density_seeding_fraction)`
+- **Method**: Find peaks in residual image using non-maximum suppression
+- **Target**: Locations with highest reconstruction error
+- **Strength**: Directly addresses reconstruction deficiencies
+- **Limitation**: Biases toward high-intensity regions; may miss dim structures
+
+#### **Approach 2: CLAHE-Based Coverage Seeding (Structure-Driven)**
+- **Budget**: `k_clahe = k_max_residuals × density_seeding_fraction`
+- **Method**: Sample from CLAHE-equalized target image using equalized intensities as probability distribution
+- **Target**: Perceptually salient structures based on local contrast
+- **Strength**: Discovers dim structures; provides balanced spatial coverage
+- **Limitation**: May seed in already-converged regions (filtered by convergence guard)
+
+### CLAHE-Based Coverage Seeding Specification
+
+#### **Motivation**
+Traditional density-based seeding using grid-based splat counting suffers from intensity bias:
+- **Problem**: Even with log1p intensity compression, bright structures dominate sampling probability
+- **Consequence**: Dim nuclei (e.g., DAPI-stained cells in dark regions) receive insufficient splat coverage
+- **Example**: Nucleus at intensity 15 in dark background vs nucleus at intensity 90 in bright background
+  - Grid-based density × intensity → bright nucleus gets 6× more sampling probability
+  - Result: Dim nuclei remain under-represented despite being structurally important
+
+**CLAHE-based seeding solves this** by making sampling probability reflect **local contrast** (perceptual salience) rather than absolute intensity.
+
+#### **Mathematical Foundation: CLAHE**
+
+**Contrast Limited Adaptive Histogram Equalization (CLAHE)**:
+1. **Tile decomposition**: Divide volume into non-overlapping tiles of size `tile_size^d`
+2. **Local histogram computation**: For each tile, compute intensity histogram with `nbins` bins
+3. **Contrast limiting**: Clip histogram peaks at `clip_limit × uniform_height` to prevent noise amplification
+   - `uniform_height = n_pixels_per_tile / nbins`
+   - Redistributes clipped pixels uniformly across bins
+4. **Local equalization**: Apply cumulative distribution function (CDF) mapping within each tile
+   - `equalized_value = CDF(original_value) × (nbins - 1)`
+5. **Bilinear interpolation**: Interpolate between neighboring tile CDFs for smooth transitions
+
+**Key Properties**:
+- **Local adaptation**: Each tile's intensities equalized independently
+- **Contrast limiting**: Prevents over-amplification of uniform/noisy regions
+- **Histogram flattening**: Transforms local intensity distribution toward uniform distribution
+
+#### **Sampling Algorithm**
+
+```python
+def clahe_based_seeding(V_target, k_clahe, tile_size, clip_limit, nbins):
+    """
+    Sample k_clahe seed locations using CLAHE-equalized intensities as probabilities.
+
+    Returns:
+        seed_locations: List of k_clahe coordinate tuples sampled proportionally
+                       to local perceptual importance
+    """
+    # Step 1: Apply CLAHE to target volume
+    V_clahe = apply_clahe_nd(
+        V_target,
+        tile_size=tile_size,
+        clip_limit=clip_limit,
+        nbins=nbins
+    )
+
+    # Step 2: Normalize to [0, 1] for probability distribution
+    V_min, V_max = V_clahe.min(), V_clahe.max()
+    V_norm = (V_clahe - V_min) / (V_max - V_min + 1e-12)
+
+    # Step 3: Flatten and normalize to valid probability distribution
+    V_flat = V_norm.reshape(-1)
+    probabilities = V_flat / V_flat.sum()
+
+    # Step 4: Sample k_clahe locations with replacement
+    sampled_indices = torch.multinomial(probabilities, k_clahe, replacement=True)
+
+    # Step 5: Convert flat indices to nD coordinates
+    seed_locations = [flat_index_to_coords(idx, V_target.shape)
+                      for idx in sampled_indices]
+
+    return seed_locations
+```
+
+#### **CLAHE Implementation for nD Volumes**
+
+```python
+def apply_clahe_nd(V, tile_size, clip_limit, nbins):
+    """
+    Apply CLAHE to n-dimensional volume with tile-wise processing.
+
+    Algorithm:
+    1. Divide volume into tiles of size tile_size^d
+    2. For each tile:
+       a. Compute local histogram (nbins bins)
+       b. Apply contrast limiting
+       c. Compute CDF mapping
+       d. Transform tile intensities
+    3. Interpolate between tile boundaries for smooth transitions
+
+    Returns:
+        V_clahe: CLAHE-equalized volume (same shape as input)
+    """
+    shape = V.shape
+    d = len(shape)
+
+    # Calculate number of tiles per dimension
+    n_tiles = tuple((s + tile_size - 1) // tile_size for s in shape)
+
+    # Create output tensor
+    V_clahe = torch.zeros_like(V)
+
+    # For each tile, compute local histogram equalization
+    tile_cdfs = {}  # Cache CDFs for interpolation
+
+    for tile_idx in itertools.product(*[range(n) for n in n_tiles]):
+        # Extract tile boundaries
+        tile_slice = tuple(
+            slice(t * tile_size, min((t + 1) * tile_size, s))
+            for t, s in zip(tile_idx, shape)
+        )
+
+        # Get tile data
+        tile_data = V[tile_slice]
+
+        # Compute histogram
+        hist, bin_edges = torch.histogram(
+            tile_data.reshape(-1),
+            bins=nbins,
+            range=(V.min().item(), V.max().item())
+        )
+
+        # Apply contrast limiting
+        clip_height = clip_limit * (tile_data.numel() / nbins)
+        excess = torch.clamp(hist - clip_height, min=0).sum()
+        hist = torch.clamp(hist, max=clip_height)
+        hist += excess / nbins  # Redistribute clipped pixels
+
+        # Compute CDF
+        cdf = torch.cumsum(hist, dim=0)
+        cdf = (cdf - cdf.min()) / (cdf.max() - cdf.min() + 1e-12)
+
+        # Store CDF for this tile
+        tile_cdfs[tile_idx] = (cdf, bin_edges)
+
+        # Map tile intensities through CDF
+        tile_equalized = apply_cdf_mapping(tile_data, cdf, bin_edges)
+        V_clahe[tile_slice] = tile_equalized
+
+    # Optional: Bilinear/trilinear interpolation between tiles
+    # (Can be skipped for sampling - discontinuities don't affect sampling quality)
+
+    return V_clahe
+```
+
+#### **Parameter Selection Guidelines**
+
+**`tile_size` (voxels)**:
+- **Too small** (< 8): Overfits to noise, over-samples uniform regions
+- **Too large** (> 32): Loses local adaptation, approaches global equalization
+- **Recommended**: 16 voxels (≈ 2× typical feature diameter)
+- **For DAPI**: 16 voxels ≈ 2× typical nucleus diameter
+
+**`clip_limit` (contrast limiting factor)**:
+- **Range**: 1.0 - 4.0
+- **Low (1.0-2.0)**: Conservative, closer to original distribution, less noise
+- **High (3.0-4.0)**: Aggressive equalization, more noise amplification
+- **Recommended**: 2.0 (balanced enhancement)
+- **For noisy data**: Use lower values (1.0-1.5)
+
+**`nbins` (histogram bins)**:
+- **Too few** (< 64): Coarse equalization, loses detail
+- **Too many** (> 512): Computational cost, no benefit
+- **Recommended**: 256 (standard for 8-16 bit images)
+
+**`density_seeding_fraction`**:
+- **0.0**: Residual-only (error-driven, may miss dim structures)
+- **0.5**: Balanced hybrid (recommended for heterogeneous data)
+- **1.0**: CLAHE-only (coverage-driven, may seed converged regions)
+- **Recommended**: 0.5 for DAPI/microscopy, 0.0-0.2 for synthetic data
+
+#### **Benefits for Microscopy Data**
+
+**DAPI Example** (nuclei with varying background):
+- **Bottom of volume**: Dark background (intensity 0-10), dim nuclei (8-15)
+  - CLAHE tile equalization: Nucleus at 15 → high local percentile → high sampling probability ✓
+- **Top of volume**: Bright background (intensity 40-60), bright nuclei (80-100)
+  - CLAHE tile equalization: Nucleus at 90 → high local percentile → similar sampling probability ✓
+- **Result**: Both dim and bright nuclei sampled proportionally to structural importance
+
+**Advantages**:
+1. **Handles intensity heterogeneity**: Adapts to varying background levels
+2. **Discovers dim structures**: Dim nuclei no longer overlooked
+3. **Noise robust**: Contrast limiting prevents noise over-sampling
+4. **Perceptually balanced**: Sampling reflects local saliency, not raw intensity
+5. **Microscopy-standard**: CLAHE is widely used for microscopy enhancement
+
+#### **Integration with Convergence Guard**
+
+CLAHE-based seeds are **not subject to the convergence guard** (unlike residual peaks):
+- **Rationale**: Coverage-driven seeding complements error-driven seeding
+- **Behavior**: Even when max residual < threshold, CLAHE seeds may be added for spatial coverage
+- **Safety**: Seeds still validated by adaptive amplitude threshold before addition
+- **Result**: Ensures even coverage across entire volume, including dim regions
+
+#### **Computational Complexity**
+
+**CLAHE Computation**: `O(V.size × nbins)` - single pass at start of seeding
+- Amortized across iterations: Minimal overhead (< 1% of iteration time)
+- Can be cached if target doesn't change
+
+**Sampling**: `O(k_clahe × log(V.size))` - multinomial sampling
+- Fast compared to rendering/optimization
+
+**Total Overhead**: Negligible (< 2% increase in iteration time)
+
 ### Core Function: `apply_dynamic_operations(model, optimizer, scheduler, V_target, V_pred, cfg, current_lr, max_abs_error_threshold, device, verbose=False)`
 
 The dynamic operations algorithm runs every `step_every` iterations and performs two core operations:
 
-### **Step 1: Residual Peak Analysis**
+### **Step 1: Hybrid Seed Location Finding**
+Combines residual-based (error-driven) and CLAHE-based (structure-driven) seeding:
+
+**1a. Residual-Based Seed Locations (Error-Driven)**:
 1. **Compute residual image**: `residual = V_target - V_pred`
-2. **Find k strongest peaks**: Identify the `k_max_residuals` locations with highest absolute residual values
-3. **Apply spatial exclusion**: Use non-maximum suppression with radius `nms_radius_vox` to ensure peaks are spatially separated
-4. **Rank by magnitude**: Process peaks in descending order of residual magnitude
-5. **Convergence guard**: If a finite convergence threshold is set (`max_abs_error_threshold != inf`) and the strongest residual peak is below this threshold, skip all dynamic operations to avoid adding splats just before convergence
+2. **Calculate budget**: `k_residual = k_max_residuals × (1 - density_seeding_fraction)`
+3. **Find k_residual strongest peaks**: Identify locations with highest absolute residual values
+4. **Apply spatial exclusion**: Use non-maximum suppression with radius `nms_radius_vox` to ensure peaks are spatially separated
+5. **Rank by magnitude**: Process peaks in descending order of residual magnitude
+6. **Convergence guard**: If a finite convergence threshold is set and the strongest residual peak is below this threshold, skip residual-based seeding (but still allow CLAHE-based seeding)
+
+**1b. CLAHE-Based Seed Locations (Structure-Driven)**:
+1. **Calculate budget**: `k_clahe = k_max_residuals × density_seeding_fraction`
+2. **Apply CLAHE**: Compute CLAHE-equalized target volume with parameters `tile_size`, `clip_limit`, `nbins`
+3. **Normalize**: Transform equalized intensities to [0, 1] probability distribution
+4. **Sample**: Draw k_clahe locations using multinomial sampling with CLAHE values as probabilities
+5. **No convergence guard**: CLAHE seeds are added regardless of residual magnitude (for spatial coverage)
+
+**1c. Combine Seed Locations**:
+- Merge residual-based and CLAHE-based seed lists
+- Total candidates: up to `k_max_residuals` locations
+- Process all candidates in subsequent steps
 
 ### **Step 2: Adaptive Splat Operations**
 For each detected residual peak location, determine if coverage is sufficient using convergence criteria, and adaptively boost learning rates for problematic regions:
