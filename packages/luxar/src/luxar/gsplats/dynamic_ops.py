@@ -68,9 +68,10 @@ class DynamicOpsConfig:
 
         # Hybrid Seeding Strategy: CLAHE-Based Coverage Seeding
         self.density_seeding_fraction: float = 0.0  # Fraction of seeds from CLAHE-based coverage (0.0 = disabled, 0.5 = 50-50)
-        self.clahe_tile_size: int = 16  # Tile size for CLAHE in voxels (default: ~2× feature diameter)
-        self.clahe_clip_limit: float = 2.0  # Contrast limiting factor for CLAHE (1.0-4.0, higher = more aggressive)
+        self.clahe_tile_size: int = 32  # Tile size for CLAHE in voxels (default: ~2× feature diameter)
+        self.clahe_clip_limit: float = 8.0  # Contrast limiting factor for CLAHE (1.0-4.0, higher = more aggressive)
         self.clahe_nbins: int = 256  # Number of histogram bins for CLAHE equalization
+        self.clahe_oversample_factor: int = 10  # Oversample factor for robust seeding (sample k×factor, filter, select top-k)
 
         # Step 2: Adaptive Operations
         self.min_contribution_threshold: float = (
@@ -158,59 +159,102 @@ def _find_residual_peaks(
 
 def _find_clahe_based_seed_locations(
     V_target: torch.Tensor,
+    residual: torch.Tensor,
     k_clahe_seeds: int,
     cfg: DynamicOpsConfig,
+    max_abs_error_threshold: float,
 ) -> List[Tuple[int, ...]]:
     """
-    Find seed locations using CLAHE-equalized intensities as sampling probabilities.
+    Find seed locations using robust CLAHE-based approach with oversampling, filtering, and NMS.
 
-    This approach samples from the target volume weighted by local perceptual importance
-    (CLAHE-equalized intensity) rather than raw intensity, ensuring dim structures
-    in dark regions receive fair sampling probability.
+    Implements 4-step algorithm:
+    1. Oversample from CLAHE distribution (diversity)
+    2. Filter by residual > threshold (eliminate covered regions)
+    3. Sort by CLAHE value, select top candidates (quality guarantee)
+    4. Apply spatial NMS with min_dist separation (prevent clustering)
 
     Args:
         V_target: Target tensor to sample from
+        residual: Residual tensor (V_target - V_pred) for coverage checking
         k_clahe_seeds: Number of CLAHE-based seeds to generate
         cfg: Dynamic operations configuration
+        max_abs_error_threshold: Convergence threshold for residual filtering
 
     Returns:
-        List of seed location coordinates as tuples
+        List of up to k_clahe_seeds spatially-separated coordinates with highest
+        local perceptual importance in uncovered regions
     """
     if k_clahe_seeds <= 0:
         return []
 
     shape = V_target.shape
 
-    # Compute CLAHE-based sampling probabilities
-    probabilities, _ = compute_clahe_sampling_probabilities(
+    # Step 1: Compute CLAHE probabilities and oversample
+    probabilities, V_clahe = compute_clahe_sampling_probabilities(
         V_target,
         tile_size=cfg.clahe_tile_size,
         clip_limit=cfg.clahe_clip_limit,
         nbins=cfg.clahe_nbins,
     )
 
-    # Sample k_clahe_seeds locations with replacement
+    # Oversample for robustness
+    k_oversample = min(k_clahe_seeds * cfg.clahe_oversample_factor, V_target.numel())
+
     try:
-        sampled_indices = torch.multinomial(
+        candidate_indices = torch.multinomial(
             probabilities,
-            num_samples=min(k_clahe_seeds, len(probabilities)),
-            replacement=True,
+            num_samples=k_oversample,
+            replacement=True,  # Allow duplicates in initial sample
         )
     except RuntimeError:
-        # Handle edge case where probabilities are invalid
         return []
 
-    # Convert flat indices to nD coordinates using numpy's unravel_index
-    flat_indices_np = sampled_indices.cpu().numpy()
+    # Convert to coordinates and get CLAHE values
+    flat_indices_np = candidate_indices.cpu().numpy()
     coords_np = np.unravel_index(flat_indices_np, shape)
+    V_clahe_flat = V_clahe.reshape(-1)
 
-    # Convert to list of tuples
-    seed_locations = [
-        tuple(int(coords_np[i][j]) for i in range(len(shape)))
-        for j in range(len(flat_indices_np))
-    ]
+    # Step 2: Filter by residual (remove already-covered locations)
+    filtered_candidates = []
+    for j in range(len(flat_indices_np)):
+        coords = tuple(int(coords_np[i][j]) for i in range(len(shape)))
+        local_residual = torch.abs(residual[coords]).item()
 
-    return seed_locations
+        if local_residual > max_abs_error_threshold:
+            # Location needs coverage - keep candidate
+            clahe_value = V_clahe_flat[candidate_indices[j]].item()
+            filtered_candidates.append((coords, clahe_value))
+
+    if len(filtered_candidates) == 0:
+        return []  # All oversampled locations already covered
+
+    # Step 3: Sort by CLAHE value (highest first) for quality guarantee
+    filtered_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    # Step 4: Spatial NMS - greedy selection with minimum distance
+    final_seeds = []
+    nms_radius = cfg.nms_radius_vox
+
+    for coords, clahe_val in filtered_candidates:
+        # Check spatial separation from already-selected seeds
+        too_close = False
+        for existing_coords in final_seeds:
+            # Compute Euclidean distance
+            distance_sq = sum((c1 - c2) ** 2 for c1, c2 in zip(coords, existing_coords))
+            distance = distance_sq ** 0.5
+
+            if distance < nms_radius:
+                too_close = True
+                break
+
+        if not too_close:
+            final_seeds.append(coords)
+
+            # Stop when budget filled
+            if len(final_seeds) >= k_clahe_seeds:
+                break
+
+    return final_seeds
 
 
 # Note: Complex covariance and amplitude estimation functions removed
@@ -282,11 +326,11 @@ def apply_dynamic_operations(
             residual, k_residual, cfg.nms_radius_vox
         )
 
-        # Find CLAHE-based seeds (structure-driven)
+        # Find CLAHE-based seeds (structure-driven with coverage awareness)
         clahe_seed_locations = []
         if k_clahe > 0:
             clahe_seed_locations = _find_clahe_based_seed_locations(
-                V_target, k_clahe, cfg
+                V_target, residual, k_clahe, cfg, max_abs_error_threshold
             )
 
         # Combine both types of seed locations
