@@ -31,7 +31,7 @@ if NO_NAPARI and len(sys.argv) > 1:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
-LR = 0.02  # Learning rate for fitting
+LR = 0.04  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
