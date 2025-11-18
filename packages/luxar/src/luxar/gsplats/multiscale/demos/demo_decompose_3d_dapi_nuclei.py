@@ -26,7 +26,7 @@ from luxar.gsplats.multiscale import (
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
     aprint("🧬 3D DAPI Multi-Scale Decomposition Demo (napari disabled)")
-    aprint("Running all computations without napari visualization...") 
+    aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 SCALES = [1, 2, 4, 8]  # Scale factors to use
@@ -75,24 +75,24 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
             if len(full_shape) == 5:
                 n_time, n_channels, z_size, y_size, x_size = full_shape
                 aprint(
-    f"Detected OME-ZARR 5D: T={n_time}, C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
+                    f"Detected OME-ZARR 5D: T={n_time}, C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
                 )
 
                 # Extract DAPI channel
                 if DAPI_CHANNEL >= n_channels:
                     aprint(
-    f"⚠ Warning: Requested channel {DAPI_CHANNEL} but only {n_channels} available"
+                        f"⚠ Warning: Requested channel {DAPI_CHANNEL} but only {n_channels} available"
                     )
                     aprint("Using channel 0 instead")
                     DAPI_CHANNEL = 0
 
                 aprint(
-    f"Extracting time={TIME_POINT}, channel={DAPI_CHANNEL} (DAPI)..."
+                    f"Extracting time={TIME_POINT}, channel={DAPI_CHANNEL} (DAPI)..."
                 )
 
                 # Load FULL RESOLUTION volume (no downscaling!)
                 aprint(
-    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
+                    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
                 )
                 V = data[TIME_POINT, DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
@@ -102,7 +102,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
                 # (C, Z, Y, X) format
                 n_channels, z_size, y_size, x_size = full_shape
                 aprint(
-    f"Detected 4D: C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
+                    f"Detected 4D: C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
                 )
 
                 if DAPI_CHANNEL >= n_channels:
@@ -113,7 +113,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
 
                 # Load FULL RESOLUTION volume (no downscaling!)
                 aprint(
-    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
+                    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
                 )
                 V = data[DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
@@ -126,7 +126,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
 
                 # Load FULL RESOLUTION volume (no downscaling!)
                 aprint(
-    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
+                    f"Loading FULL RESOLUTION volume: Z={z_size}, Y={y_size}, X={x_size}"
                 )
                 V = data[:, :, :]
                 V = np.array(V, dtype=np.float32)
@@ -195,7 +195,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
         aprint(f"Converged: {stats['converged']}")
         if stats["converged"]:
             aprint(
-    f"  → Early convergence at iteration {stats['actual_iters']}/{N_ITERS}"
+                f"  → Early convergence at iteration {stats['actual_iters']}/{N_ITERS}"
             )
 
     with asection("Preparing visualization data"):
@@ -204,12 +204,12 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
         scales_upsampled = []
         interpolation_mode = stats.get("interpolation", "cubic")
         aprint(
-    f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
+            f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
         )
         for i, (scale, vol_scale) in enumerate(zip(SCALES, scales_list)):
             if vol_scale.shape != V.shape:
                 aprint(
-    f"  Upsampling scale {scale}x from {vol_scale.shape} to {V.shape}"
+                    f"  Upsampling scale {scale}x from {vol_scale.shape} to {V.shape}"
                 )
                 vol_upsampled = upsample_for_visualization(
                     vol_scale, V.shape, interpolation_mode
@@ -242,156 +242,160 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
     aprint(f"Total: {sum(energy_dist) * 100:.1f}%")
     aprint("=" * 60)
 
-    # Napari visualization
-    aprint("\nLaunching 3D napari viewer...")
-    viewer = napari.Viewer(
-        title="3D DAPI Multi-Scale Decomposition (Full Resolution)", ndisplay=3
-    )
+    if not NO_NAPARI:
+        # Napari visualization
+        aprint("\nLaunching 3D napari viewer...")
+        viewer = napari.Viewer(
+            title="3D DAPI Multi-Scale Decomposition (Full Resolution)", ndisplay=3
+        )
 
-    # Determine contrast limits from original volume
-    contrast_limits = [0, float(V.max())]
+        # Determine contrast limits from original volume
+        contrast_limits = [0, float(V.max())]
 
-    # Add original volume
-    viewer.add_image(
-        V,
-        name="DAPI (input, full res)",
-        colormap="gray",
-        contrast_limits=contrast_limits,
-        rendering="mip",  # Maximum intensity projection
-    )
-
-    # Add reconstruction
-    viewer.add_image(
-        reconstruction,
-        name="reconstruction",
-        colormap="cyan",
-        contrast_limits=contrast_limits,
-        rendering="mip",
-        opacity=0.8,
-        visible=True,
-    )
-
-    # Add each scale component (upsampled)
-    for i, (scale, vol_upsampled) in enumerate(zip(SCALES, scales_upsampled)):
-        energy_pct = energy_dist[i] * 100
+        # Add original volume
         viewer.add_image(
-            vol_upsampled,
-            name=f"scale_{scale}x ({energy_pct:.1f}%)",
-            colormap="turbo",
+            V,
+            name="DAPI (input, full res)",
+            colormap="gray",
             contrast_limits=contrast_limits,
-            blending="additive",
-            opacity=0.7,
+            rendering="mip",  # Maximum intensity projection
+        )
+
+        # Add reconstruction
+        viewer.add_image(
+            reconstruction,
+            name="reconstruction",
+            colormap="cyan",
+            contrast_limits=contrast_limits,
+            rendering="mip",
+            opacity=0.8,
+            visible=True,
+        )
+
+        # Add each scale component (upsampled)
+        for i, (scale, vol_upsampled) in enumerate(zip(SCALES, scales_upsampled)):
+            energy_pct = energy_dist[i] * 100
+            viewer.add_image(
+                vol_upsampled,
+                name=f"scale_{scale}x ({energy_pct:.1f}%)",
+                colormap="turbo",
+                contrast_limits=contrast_limits,
+                blending="additive",
+                opacity=0.7,
+                rendering="mip",
+                visible=True,
+            )
+
+        # Add residual
+        viewer.add_image(
+            abs_residual,
+            name="absolute_residual",
+            colormap="inferno",
+            contrast_limits=[0, max(1e-12, float(abs_residual.max()))],
             rendering="mip",
             visible=True,
         )
 
-    # Add residual
-    viewer.add_image(
-        abs_residual,
-        name="absolute_residual",
-        colormap="inferno",
-        contrast_limits=[0, max(1e-12, float(abs_residual.max()))],
-        rendering="mip",
-        visible=True,
-    )
-
-    # Add signed residual
-    viewer.add_image(
-        residual,
-        name="signed_residual",
-        colormap="bwr",
-        contrast_limits=[-abs_residual.max(), abs_residual.max()],
-        rendering="mip",
-        visible=False,  # Hidden by default
-    )
-
-    # Try to label axes
-    try:
-        viewer.dims.axis_labels = ["z", "y", "x"]
-    except Exception:
-        pass
-
-    # Set better 3D camera view
-    viewer.camera.angles = (45, 45, 45)
-    viewer.camera.zoom = 1.5
-
-    # Enable tile/grid mode for comparison
-    viewer.grid.enabled = True
-    viewer.grid.shape = (-1, 3)  # Auto rows, 3 columns
-
-    # Set up text overlay
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"3D DAPI Multi-Scale Decomposition (FULL RESOLUTION) | "
-        f"Volume: {V.shape[0]}×{V.shape[1]}×{V.shape[2]} | "
-        f"Scales: {SCALES} | "
-        f"Energy: {' → '.join([f'{e:.1%}' for e in energy_dist])} | "
-        f"MSE: {stats['final_error']:.6e}"
-    )
-
-    # Console tips
-    aprint("\n🎮 3D Navigation Tips:")
-    aprint("  • Using FULL RESOLUTION data (no downscaling)")
-    aprint("  • Opened in tile/grid mode for side-by-side comparison")
-    aprint("  • All scales use same contrast limits for consistent comparison")
-    aprint("  • Use mouse + Shift to rotate the 3D view")
-    aprint("  • Toggle layers on/off to compare scales")
-    aprint("  • 'DAPI (input, full res)' = original DAPI channel at full resolution")
-    aprint("  • 'reconstruction' = sum of all scales")
-    aprint(f"  • 'scale_Nx' = individual scale components (N={SCALES})")
-    aprint("  • MIP rendering = Maximum Intensity Projection")
-
-    aprint("\n🎯 Energy Distribution Insights:")
-    coarse_energy = energy_dist[-1]
-    fine_energy = energy_dist[0]
-    if coarse_energy > 0.5:
-        aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
-        aprint(
-    "    → Low-frequency 3D nuclear structures captured at coarse resolution"
+        # Add signed residual
+        viewer.add_image(
+            residual,
+            name="signed_residual",
+            colormap="bwr",
+            contrast_limits=[-abs_residual.max(), abs_residual.max()],
+            rendering="mip",
+            visible=False,  # Hidden by default
         )
-    elif fine_energy > 0.5:
-        aprint(
-    f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
+
+        # Try to label axes
+        try:
+            viewer.dims.axis_labels = ["z", "y", "x"]
+        except Exception:
+            pass
+
+        # Set better 3D camera view
+        viewer.camera.angles = (45, 45, 45)
+        viewer.camera.zoom = 1.5
+
+        # Enable tile/grid mode for comparison
+        viewer.grid.enabled = True
+        viewer.grid.shape = (-1, 3)  # Auto rows, 3 columns
+
+        # Set up text overlay
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"3D DAPI Multi-Scale Decomposition (FULL RESOLUTION) | "
+            f"Volume: {V.shape[0]}×{V.shape[1]}×{V.shape[2]} | "
+            f"Scales: {SCALES} | "
+            f"Energy: {' → '.join([f'{e:.1%}' for e in energy_dist])} | "
+            f"MSE: {stats['final_error']:.6e}"
         )
-        aprint("    → Try increasing alpha or energy_weight")
+
+        # Console tips
+        aprint("\n🎮 3D Navigation Tips:")
+        aprint("  • Using FULL RESOLUTION data (no downscaling)")
+        aprint("  • Opened in tile/grid mode for side-by-side comparison")
+        aprint("  • All scales use same contrast limits for consistent comparison")
+        aprint("  • Use mouse + Shift to rotate the 3D view")
+        aprint("  • Toggle layers on/off to compare scales")
+        aprint("  • 'DAPI (input, full res)' = original DAPI channel at full resolution")
+        aprint("  • 'reconstruction' = sum of all scales")
+        aprint(f"  • 'scale_Nx' = individual scale components (N={SCALES})")
+        aprint("  • MIP rendering = Maximum Intensity Projection")
+
+        aprint("\n🎯 Energy Distribution Insights:")
+        coarse_energy = energy_dist[-1]
+        fine_energy = energy_dist[0]
+        if coarse_energy > 0.5:
+            aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
+            aprint(
+                "    → Low-frequency 3D nuclear structures captured at coarse resolution"
+            )
+        elif fine_energy > 0.5:
+            aprint(
+                f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
+            )
+            aprint("    → Try increasing alpha or energy_weight")
+        else:
+            aprint("  → Energy well distributed across scales")
+
+        aprint("\n📊 Compression Potential:")
+        # Calculate storage requirements for each scale
+        FLOAT_BITS = 32
+        VOLUME_BITS = V.size * FLOAT_BITS
+        total_compressed_bits = 0
+        for i, scale in enumerate(SCALES):
+            scale_voxels = scales_list[i].size
+            scale_bits = scale_voxels * FLOAT_BITS
+            total_compressed_bits += scale_bits
+            compression_pct = 100.0 * (1.0 - (scale_bits / VOLUME_BITS))
+            energy_pct = energy_dist[i] * 100
+            aprint(
+                f"  Scale {scale:2d}x: {scale_voxels:>9,d} voxels | "
+                f"Size vs full: {compression_pct:5.1f}% smaller | "
+                f"Energy: {energy_pct:5.1f}%"
+            )
+
+        overall_compression = 100.0 * (1.0 - (total_compressed_bits / VOLUME_BITS))
+        aprint("\n  Total multi-scale representation:")
+        aprint(f"    Original: {VOLUME_BITS:,} bits ({V.nbytes / 1024 / 1024:.2f} MB)")
+        aprint(
+            f"    Multi-scale: {total_compressed_bits:,} bits ({total_compressed_bits / 8 / 1024 / 1024:.2f} MB)"
+        )
+        aprint(f"    Compression: {overall_compression:.1f}% smaller")
+
+        napari.run()
+
+        # Show optimization convergence movie
+        if stats["movie_frames"] is not None:
+            aprint("\n🎬 Showing optimization convergence movie...")
+            # Pass interpolation mode from stats to ensure movie matches optimization
+            interpolation_mode = stats.get("interpolation", "cubic")
+            show_optimization_movie(
+                stats["movie_frames"], V.shape, interpolation=interpolation_mode
+            )
+
     else:
-        aprint("  → Energy well distributed across scales")
-
-    aprint("\n📊 Compression Potential:")
-    # Calculate storage requirements for each scale
-    FLOAT_BITS = 32
-    VOLUME_BITS = V.size * FLOAT_BITS
-    total_compressed_bits = 0
-    for i, scale in enumerate(SCALES):
-        scale_voxels = scales_list[i].size
-        scale_bits = scale_voxels * FLOAT_BITS
-        total_compressed_bits += scale_bits
-        compression_pct = 100.0 * (1.0 - (scale_bits / VOLUME_BITS))
-        energy_pct = energy_dist[i] * 100
-        aprint(
-    f"  Scale {scale:2d}x: {scale_voxels:>9,d} voxels | "
-            f"Size vs full: {compression_pct:5.1f}% smaller | "
-            f"Energy: {energy_pct:5.1f}%"
-        )
-
-    overall_compression = 100.0 * (1.0 - (total_compressed_bits / VOLUME_BITS))
-    aprint("\n  Total multi-scale representation:")
-    aprint(f"    Original: {VOLUME_BITS:,} bits ({V.nbytes / 1024 / 1024:.2f} MB)")
-    aprint(
-    f"    Multi-scale: {total_compressed_bits:,} bits ({total_compressed_bits / 8 / 1024 / 1024:.2f} MB)"
-    )
-    aprint(f"    Compression: {overall_compression:.1f}% smaller")
-
-    napari.run()
-
-    # Show optimization convergence movie
-    if stats["movie_frames"] is not None:
-        aprint("\n🎬 Showing optimization convergence movie...")
-        # Pass interpolation mode from stats to ensure movie matches optimization
-        interpolation_mode = stats.get("interpolation", "cubic")
-        show_optimization_movie(
-            stats["movie_frames"], V.shape, interpolation=interpolation_mode
-        )
+        aprint("\n✅ Demo completed successfully (napari visualization disabled)")
 
 # Console summary
 aprint("\n" + "=" * 60)

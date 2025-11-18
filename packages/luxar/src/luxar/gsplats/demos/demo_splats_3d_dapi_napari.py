@@ -33,7 +33,6 @@ LR = 0.02
 N_ITERS = 2000
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 30  # number of compression steps (<= #splats)
-TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 ZARR_URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr"
 DAPI_CHANNEL = 1  # DAPI is typically channel 1 (0-indexed)
 TARGET_SIZE = 128  # Downscale to this size for manageable computation
@@ -261,7 +260,6 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     # Configure dynamic operations (residual-based seeding only)
     # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
-    dynamic_config.k_max_residuals = 10  # Number of residual peaks per cycle
 
     aprint("Dynamic operations enabled (residual-based seeding):")
     aprint(f"  step_every={dynamic_config.step_every}")
@@ -273,12 +271,10 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         params_full, amps, stats = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
-            init_sigma_vox=0.5,
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_diag=0,
-            truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
             # Dynamic operations
