@@ -283,85 +283,88 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         else:
             aprint("≈ Similar performance")
 
-    # Napari visualization
-    aprint("\n🔬 Launching napari viewer for side-by-side comparison...")
-    viewer = napari.Viewer(title="Multi-Scale Gaussian Splatting Demo")
+    if not NO_NAPARI:
+        # Napari visualization
+        aprint("\n🔬 Launching napari viewer for side-by-side comparison...")
+        viewer = napari.Viewer(title="Multi-Scale Gaussian Splatting Demo")
 
-    # Shared contrast limits
-    contrast_limits = [0, float(V.max())]
+        # Shared contrast limits
+        contrast_limits = [0, float(V.max())]
 
-    # Add original image
-    viewer.add_image(
+        # Add original image
+        viewer.add_image(
         V,
         name="original",
         colormap="gray",
         contrast_limits=contrast_limits,
-    )
+        )
 
-    # Add multi-scale reconstruction
-    viewer.add_image(
+        # Add multi-scale reconstruction
+        viewer.add_image(
         V_recon_multi,
         name=f"multi-scale (scales={SCALES})",
         colormap="gray",
         contrast_limits=contrast_limits,
-    )
+        )
 
-    # Add multi-scale residual
-    viewer.add_image(
+        # Add multi-scale residual
+        viewer.add_image(
         np.abs(residual_multi),
         name="multi-scale residual",
         colormap="inferno",
         contrast_limits=[0, max(1e-12, float(np.abs(residual_multi).max()))],
-    )
+        )
 
-    # Add single-scale reconstruction
-    viewer.add_image(
+        # Add single-scale reconstruction
+        viewer.add_image(
         V_recon_single,
         name="single-scale (baseline)",
         colormap="gray",
         contrast_limits=contrast_limits,
-    )
+        )
 
-    # Add single-scale residual
-    viewer.add_image(
+        # Add single-scale residual
+        viewer.add_image(
         np.abs(residual_single),
         name="single-scale residual",
         colormap="inferno",
         contrast_limits=[0, max(1e-12, float(np.abs(residual_single).max()))],
-    )
+        )
 
-    # Enable tile/grid mode for side-by-side comparison
-    viewer.grid.enabled = True
-    viewer.grid.shape = (1, -1)  # 1 row, auto columns
+        # Enable tile/grid mode for side-by-side comparison
+        viewer.grid.enabled = True
+        viewer.grid.shape = (1, -1)  # 1 row, auto columns
 
-    # Set up text overlay
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
+        # Set up text overlay
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
         f"Multi-Scale Gaussian Splatting Demo | "
         f"Scales: {SCALES} | "
         f"Multi: {n_splats_multi} splats, {time_multi:.1f}s, MSE={error_multi:.2e} | "
         f"Single: {n_splats_single} splats, {time_single:.1f}s, MSE={error_single:.2e} | "
         f"Speedup: {time_speedup:.1f}×"
-    )
+        )
 
-    # Console tips
-    aprint("\n📊 Visualization Tips:")
-    aprint("  • Grid mode enabled for side-by-side comparison")
-    aprint("  • Compare 'multi-scale' vs 'single-scale' reconstructions")
-    aprint("  • Check residuals to see reconstruction quality")
-    aprint("  • Multi-scale uses hierarchical splat distribution:")
-    for scale_idx, scale in enumerate(SCALES):
-        n = stats_multi["n_splats_per_scale"][scale_idx]
-        aprint(f"    - Scale {scale}×: {n} splats")
+        # Console tips
+        aprint("\n📊 Visualization Tips:")
+        aprint("  • Grid mode enabled for side-by-side comparison")
+        aprint("  • Compare 'multi-scale' vs 'single-scale' reconstructions")
+        aprint("  • Check residuals to see reconstruction quality")
+        aprint("  • Multi-scale uses hierarchical splat distribution:")
+        for scale_idx, scale in enumerate(SCALES):
+            n = stats_multi["n_splats_per_scale"][scale_idx]
+            aprint(f"    - Scale {scale}×: {n} splats")
 
-    aprint("\n🎯 Key Insights:")
-    aprint(f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup")
-    aprint(
+        aprint("\n🎯 Key Insights:")
+        aprint(f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup")
+        aprint(
         f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×"
-    )
-    aprint("  • Coarse scales capture large structures efficiently")
-    aprint("  • Fine scales capture details at full resolution")
-    aprint("  • Both methods achieve similar reconstruction quality")
+        )
+        aprint("  • Coarse scales capture large structures efficiently")
+        aprint("  • Fine scales capture details at full resolution")
+        aprint("  • Both methods achieve similar reconstruction quality")
 
-    # Start the napari event loop (opens all created viewers)
-    napari.run()
+        # Start the napari event loop (opens all created viewers)
+        napari.run()
+    else:
+        aprint("\n✅ Demo completed successfully (napari visualization disabled)")
