@@ -267,7 +267,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     dynamic_config = DynamicOpsConfig()
     dynamic_config.k_max_residuals = 10  # Number of residual peaks per cycle
 
-    aprint(f"Dynamic operations enabled (residual-based seeding):")
+    aprint("Dynamic operations enabled (residual-based seeding):")
     aprint(f"  step_every={dynamic_config.step_every}")
     aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
     aprint(f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
@@ -330,7 +330,9 @@ rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
 # Bit accounting (float32 for centers + packed L + sharpness + amplitude)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(3) + packed L(6) + sharpness(1) + amp(1) = 11
+FLOATS_PER_SPLAT = (
+    d + tril_size(d) + 1 + 1
+)  # centers(3) + packed L(6) + sharpness(1) + amp(1) = 11
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 IMAGE_BITS = V.size * FLOAT_BITS
 NUM_VOXELS = V.size
@@ -445,7 +447,7 @@ def _update_3d_layers(t_index: int):
         name="splat centers (kept)",
         size=2.0,
         face_color="lime",
-    border_color="lime",
+        border_color="lime",
         opacity=0.8,
     )
 

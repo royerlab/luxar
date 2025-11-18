@@ -197,7 +197,7 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
         aprint(f"Best reconstruction error: {stats['best_error']:.6e}")
         aprint(f"Time elapsed: {stats['time_seconds']:.2f} seconds")
         aprint(f"Converged: {stats['converged']}")
-        if stats['converged']:
+        if stats["converged"]:
             aprint(
                 f"  → Early convergence at iteration {stats['actual_iters']}/{N_ITERS}"
             )
@@ -206,14 +206,18 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
         # Upsample all scales to original resolution for visualization
         # Use same interpolation as optimization
         scales_upsampled = []
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
+        interpolation_mode = stats.get("interpolation", "cubic")
+        aprint(
+            f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
+        )
         for i, (scale, vol_scale) in enumerate(zip(SCALES, scales_list)):
             if vol_scale.shape != V.shape:
                 aprint(
                     f"  Upsampling scale {scale}x from {vol_scale.shape} to {V.shape}"
                 )
-                vol_upsampled = upsample_for_visualization(vol_scale, V.shape, interpolation_mode)
+                vol_upsampled = upsample_for_visualization(
+                    vol_scale, V.shape, interpolation_mode
+                )
             else:
                 vol_upsampled = vol_scale
             scales_upsampled.append(vol_upsampled)
@@ -346,7 +350,9 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
     fine_energy = energy_dist[0]
     if coarse_energy > 0.5:
         aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
-        aprint("    → Low-frequency 3D nuclear structures captured at coarse resolution")
+        aprint(
+            "    → Low-frequency 3D nuclear structures captured at coarse resolution"
+        )
     elif fine_energy > 0.5:
         aprint(
             f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
@@ -383,11 +389,13 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
     napari.run()
 
     # Show optimization convergence movie
-    if stats['movie_frames'] is not None:
+    if stats["movie_frames"] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
         # Pass interpolation mode from stats to ensure movie matches optimization
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        show_optimization_movie(stats['movie_frames'], V.shape, interpolation=interpolation_mode)
+        interpolation_mode = stats.get("interpolation", "cubic")
+        show_optimization_movie(
+            stats["movie_frames"], V.shape, interpolation=interpolation_mode
+        )
 
 # Console summary
 aprint("\n" + "=" * 60)

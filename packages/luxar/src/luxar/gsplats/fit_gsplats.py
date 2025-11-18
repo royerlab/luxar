@@ -136,7 +136,10 @@ class GaussianSplatFitter:
         if preprocessed_data.N == 0:
             return (
                 np.zeros(
-                    (0, preprocessed_data.d + tril_size(preprocessed_data.d) + 1),  # Include sharpness
+                    (
+                        0,
+                        preprocessed_data.d + tril_size(preprocessed_data.d) + 1,
+                    ),  # Include sharpness
                     np.float32,
                 ),
                 np.zeros((0,), np.float32),

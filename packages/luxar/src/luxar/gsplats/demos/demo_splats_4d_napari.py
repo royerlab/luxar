@@ -136,7 +136,9 @@ rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
 # 4D bit accounting (float32 for all params + amps)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(4) + packed L(10) + sharpness(1) + amplitude(1) = 16
+FLOATS_PER_SPLAT = (
+    d + tril_size(d) + 1 + 1
+)  # centers(4) + packed L(10) + sharpness(1) + amplitude(1) = 16
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 HYPERCUBE_BITS = V.size * FLOAT_BITS
 NUM_HYPERVOXELS = V.size

@@ -55,9 +55,7 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
 
     with asection(f"Decomposing into {len(SCALES)} scales"):
         aprint(f"Scales: {SCALES}")
-        aprint(
-            f"Parameters: n_iters={N_ITERS}"
-        )
+        aprint(f"Parameters: n_iters={N_ITERS}")
 
         # Decompose with movie recording enabled
         scales_list, stats = decompose_image(
@@ -79,14 +77,16 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
         # Upsample all scales to original resolution for visualization
         # Use same interpolation as optimization
         scales_upsampled = []
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
+        interpolation_mode = stats.get("interpolation", "cubic")
+        aprint(
+            f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
+        )
         for i, (scale, img_scale) in enumerate(zip(SCALES, scales_list)):
-            aprint(
-                f"  Upsampling scale {scale}x from {img_scale.shape} to {V.shape}"
-            )
+            aprint(f"  Upsampling scale {scale}x from {img_scale.shape} to {V.shape}")
             if img_scale.shape != V.shape:
-                img_upsampled = upsample_for_visualization(img_scale, V.shape, interpolation_mode)
+                img_upsampled = upsample_for_visualization(
+                    img_scale, V.shape, interpolation_mode
+                )
             else:
                 img_upsampled = img_scale
             scales_upsampled.append(img_upsampled)
@@ -197,9 +197,7 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
     fine_energy = energy_dist[0]
     if coarse_energy > 0.5:
         aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
-        aprint(
-            "    → Low-frequency cellular structures captured at coarse resolution"
-        )
+        aprint("    → Low-frequency cellular structures captured at coarse resolution")
     elif fine_energy > 0.5:
         aprint(
             f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
@@ -231,8 +229,10 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
     napari.run()
 
     # Show optimization convergence movie
-    if stats['movie_frames'] is not None:
+    if stats["movie_frames"] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
         # Pass interpolation mode from stats to ensure movie matches optimization
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        show_optimization_movie(stats['movie_frames'], V.shape, interpolation=interpolation_mode)
+        interpolation_mode = stats.get("interpolation", "cubic")
+        show_optimization_movie(
+            stats["movie_frames"], V.shape, interpolation=interpolation_mode
+        )

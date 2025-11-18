@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
 from luxar.gsplats.dynamic_ops import (
     DynamicOpsConfig,
     _find_residual_peaks,
@@ -226,7 +226,7 @@ class TestDynamicOperationsIntegration:
         V = blob.astype(np.float32)
 
         # Find candidates
-        centers = find_candidates_overcomplete_nd(
+        centers = find_candidates_multiscale_gaussian(
             V, scales=(1.0, 2.0), peaks_per_scale=10, percentile_thresh=50.0
         )
 
@@ -263,7 +263,7 @@ class TestDynamicOperationsIntegration:
         V = blob.astype(np.float32)
 
         # Find candidates
-        centers = find_candidates_overcomplete_nd(
+        centers = find_candidates_multiscale_gaussian(
             V, scales=(1.0,), peaks_per_scale=5, percentile_thresh=50.0
         )
 
@@ -296,7 +296,7 @@ class TestDynamicOperationsIntegration:
 
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
-        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=50)
+        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=50)
 
         # Create model with many splats to trigger pruning
         L0 = np.eye(2)[None, :, :] * 1.0
@@ -331,7 +331,7 @@ class TestDynamicOperationsIntegration:
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=20)
+        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=20)
 
         for loss_type in ["mse", "poisson", "l1"]:
             params, amps, stats = fit_gaussian_splats(
@@ -402,7 +402,7 @@ class TestDynamicOperationsIntegration:
     def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_candidates_overcomplete_nd(V, peaks_per_scale=30)
+        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=30)
 
         # Test that auto-threshold works with dynamic operations
         params, amps, stats = fit_gaussian_splats(

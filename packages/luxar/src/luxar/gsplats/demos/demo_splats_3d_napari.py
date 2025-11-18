@@ -193,7 +193,9 @@ rel_err_frames = np.zeros(len(keep_counts), dtype=np.float32)
 
 # Bit accounting (float32 for all params + amps)
 FLOAT_BITS = 32
-FLOATS_PER_SPLAT = d + tril_size(d) + 1 + 1  # centers(3) + packed L(6) + sharpness(1) + amplitude(1) = 11
+FLOATS_PER_SPLAT = (
+    d + tril_size(d) + 1 + 1
+)  # centers(3) + packed L(6) + sharpness(1) + amplitude(1) = 11
 BITS_PER_SPLAT = FLOATS_PER_SPLAT * FLOAT_BITS
 VOLUME_BITS = V.size * FLOAT_BITS
 NUM_VOXELS = V.size

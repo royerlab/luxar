@@ -114,12 +114,20 @@ with asection("2D Multi-Scale Decomposition Demo"):
         # Upsample all scales to original resolution for visualization
         # Use cubic interpolation to match optimization
         scales_upsampled = []
-        interpolation_mode = stats.get('interpolation', 'cubic')  # Get from stats or default to cubic
-        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
+        interpolation_mode = stats.get(
+            "interpolation", "cubic"
+        )  # Get from stats or default to cubic
+        aprint(
+            f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
+        )
         for i, (scale, img_scale) in enumerate(zip(SCALES, scales_list)):
-            aprint(f"  Upsampling scale {scale}x from {img_scale.shape} to {image.shape}")
+            aprint(
+                f"  Upsampling scale {scale}x from {img_scale.shape} to {image.shape}"
+            )
             if img_scale.shape != image.shape:
-                img_upsampled = upsample_for_visualization(img_scale, image.shape, interpolation_mode)
+                img_upsampled = upsample_for_visualization(
+                    img_scale, image.shape, interpolation_mode
+                )
             else:
                 img_upsampled = img_scale
             scales_upsampled.append(img_upsampled)
@@ -135,14 +143,14 @@ with asection("2D Multi-Scale Decomposition Demo"):
         aprint(f"Max absolute residual: {abs_residual.max():.6e}")
 
     # Energy distribution analysis
-    energy_dist = stats['energy_distribution']
+    energy_dist = stats["energy_distribution"]
     aprint("\n" + "=" * 60)
     aprint("Energy Distribution (coarse → fine):")
     aprint("=" * 60)
     for i, (scale, energy_frac) in enumerate(zip(SCALES, energy_dist)):
         energy_pct = energy_frac * 100
         bar_length = int(energy_pct / 2)  # Scale for visualization
-        bar = '█' * bar_length
+        bar = "█" * bar_length
         aprint(f"Scale {scale:2d}x: {energy_pct:5.1f}% {bar}")
     aprint(f"Total: {sum(energy_dist) * 100:.1f}%")
     aprint("=" * 60)
@@ -231,15 +239,19 @@ with asection("2D Multi-Scale Decomposition Demo"):
     if coarse_energy > 0.5:
         aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
     elif fine_energy > 0.5:
-        aprint(f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)")
+        aprint(
+            f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
+        )
     else:
         aprint("  → Energy well distributed across scales")
 
     napari.run()
 
     # Show optimization convergence movie
-    if stats['movie_frames'] is not None:
+    if stats["movie_frames"] is not None:
         aprint("\n🎬 Showing optimization convergence movie...")
         # Pass interpolation mode from stats to ensure movie matches optimization
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        show_optimization_movie(stats['movie_frames'], image.shape, interpolation=interpolation_mode)
+        interpolation_mode = stats.get("interpolation", "cubic")
+        show_optimization_movie(
+            stats["movie_frames"], image.shape, interpolation=interpolation_mode
+        )

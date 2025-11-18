@@ -82,9 +82,7 @@ def create_test_volume_3d(size: int = 64) -> np.ndarray:
 
 
 with asection("3D Multi-Scale Decomposition Demo"):
-    aprint(
-        "🧊 Interactive 3D volumetric decomposition with scale separation"
-    )
+    aprint("🧊 Interactive 3D volumetric decomposition with scale separation")
 
     with asection("Creating 3D test volume"):
         # Create test volume
@@ -95,14 +93,12 @@ with asection("3D Multi-Scale Decomposition Demo"):
 
     with asection(f"Decomposing into {len(SCALES)} scales"):
         aprint(f"Scales: {SCALES}")
-        aprint(
-            f"Parameters: n_iters={N_ITERS}"
-        )
+        aprint(f"Parameters: n_iters={N_ITERS}")
 
         # Decompose with movie recording enabled
         scales_list, stats = decompose_image(
             volume,
-            interpolation='nearest',  # Fastest option (cubic is also practical for 3D now with Keys cubic)
+            interpolation="nearest",  # Fastest option (cubic is also practical for 3D now with Keys cubic)
             scales=SCALES,
             n_iters=N_ITERS,
             napari_movie=True,
@@ -120,14 +116,18 @@ with asection("3D Multi-Scale Decomposition Demo"):
         # Upsample all scales to original resolution for visualization
         # Use same interpolation as optimization
         scales_upsampled = []
-        interpolation_mode = stats.get('interpolation', 'cubic')
-        aprint(f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)")
+        interpolation_mode = stats.get("interpolation", "cubic")
+        aprint(
+            f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
+        )
         for i, (scale, vol_scale) in enumerate(zip(SCALES, scales_list)):
             aprint(
                 f"  Upsampling scale {scale}x from {vol_scale.shape} to {volume.shape}"
             )
             if vol_scale.shape != volume.shape:
-                vol_upsampled = upsample_for_visualization(vol_scale, volume.shape, interpolation_mode)
+                vol_upsampled = upsample_for_visualization(
+                    vol_scale, volume.shape, interpolation_mode
+                )
             else:
                 vol_upsampled = vol_scale
             scales_upsampled.append(vol_upsampled)
@@ -284,11 +284,13 @@ with asection("3D Multi-Scale Decomposition Demo"):
         napari.run()
 
         # Show optimization convergence movie
-        if stats['movie_frames'] is not None:
+        if stats["movie_frames"] is not None:
             aprint("\n🎬 Showing optimization convergence movie...")
             # Pass interpolation mode from stats to ensure movie matches optimization
-            interpolation_mode = stats.get('interpolation', 'cubic')
-            show_optimization_movie(stats['movie_frames'], volume.shape, interpolation=interpolation_mode)
+            interpolation_mode = stats.get("interpolation", "cubic")
+            show_optimization_movie(
+                stats["movie_frames"], volume.shape, interpolation=interpolation_mode
+            )
 
     # Console summary (always shown)
     aprint("\n" + "=" * 60)

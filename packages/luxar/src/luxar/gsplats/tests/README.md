@@ -221,7 +221,7 @@ When adding new functionality to gsplats:
 ## Key Improvements Made
 
 ### Code Quality Fixes Applied:
-1. **Input validation**: Added comprehensive validation to `find_candidates_overcomplete_nd`
+1. **Input validation**: Added comprehensive validation to `find_candidates_multiscale_gaussian`
 2. **Division by zero protection**: Fixed uniform image handling in `fit_gsplats`
 3. **Performance optimizations**: Reduced redundant computations in candidate detection
 4. **Code consistency**: Removed unused parameters and standardized error handling

@@ -118,7 +118,7 @@ def prepare_fit_config(
     # Validate sigma constraints
     d = V.ndim
     if sigma_min_diag is None:
-        sigma_min_diag = [0.1] * d
+        sigma_min_diag = [0.01] * d
     else:
         if len(sigma_min_diag) != d:
             raise ValueError(f"sigma_min_diag must have length {d}")

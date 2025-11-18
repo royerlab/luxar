@@ -31,7 +31,7 @@ def plot_ascii_convergence(
     histories: Dict[str, List[Dict]],
     title: str = "Convergence Comparison",
     height: int = 20,
-    width: int = 80
+    width: int = 80,
 ) -> None:
     """
     Create ASCII plot of convergence curves.
@@ -50,11 +50,11 @@ def plot_ascii_convergence(
     # Extract reconstruction loss over iterations
     data = {}
     max_iters = 0
-    min_loss = float('inf')
-    max_loss = float('-inf')
+    min_loss = float("inf")
+    max_loss = float("-inf")
 
     for method, history in histories.items():
-        losses = [h['recon_loss'] for h in history]
+        losses = [h["recon_loss"] for h in history]
         data[method] = losses
         max_iters = max(max_iters, len(losses))
         min_loss = min(min_loss, min(losses))
@@ -76,40 +76,39 @@ def plot_ascii_convergence(
     max_loss += loss_range * 0.05
 
     # Symbols for different methods
-    symbols = {
-        'pyramid': '●',
-        'uniform': '■',
-        'coarse': '▲',
-        'finest': '◆'
-    }
+    symbols = {"pyramid": "●", "uniform": "■", "coarse": "▲", "finest": "◆"}
 
     # Colors (ANSI escape codes)
     colors = {
-        'pyramid': '\033[92m',  # Green
-        'uniform': '\033[94m',  # Blue
-        'coarse': '\033[93m',   # Yellow
-        'finest': '\033[91m',   # Red
+        "pyramid": "\033[92m",  # Green
+        "uniform": "\033[94m",  # Blue
+        "coarse": "\033[93m",  # Yellow
+        "finest": "\033[91m",  # Red
     }
-    reset = '\033[0m'
+    reset = "\033[0m"
 
     aprint("\n" + "=" * width)
     aprint(title.center(width))
     aprint("=" * width)
 
     # Create plot grid
-    grid = [[' ' for _ in range(width)] for _ in range(height)]
+    grid = [[" " for _ in range(width)] for _ in range(height)]
 
     # Plot each method
     for method, losses in data.items():
-        symbol = symbols.get(method, '○')
+        symbol = symbols.get(method, "○")
 
         for i, loss in enumerate(losses):
             # Map to grid coordinates
             x = int((i / max_iters) * (width - 1))
-            y = height - 1 - int(((loss - min_loss) / (max_loss - min_loss)) * (height - 1))
+            y = (
+                height
+                - 1
+                - int(((loss - min_loss) / (max_loss - min_loss)) * (height - 1))
+            )
             y = max(0, min(height - 1, y))  # Clamp
 
-            if grid[y][x] == ' ':
+            if grid[y][x] == " ":
                 grid[y][x] = symbol
 
     # Print grid with y-axis labels
@@ -119,7 +118,7 @@ def plot_ascii_convergence(
         y_value = min_loss + y_frac * (max_loss - min_loss)
 
         if use_log:
-            y_value = 10 ** y_value
+            y_value = 10**y_value
 
         if i % 5 == 0:  # Label every 5th row
             label = f"{y_value:.2e}"
@@ -135,18 +134,15 @@ def plot_ascii_convergence(
     # Legend
     aprint("\nLegend:")
     for method in sorted(data.keys()):
-        symbol = symbols.get(method, '○')
-        color = colors.get(method, '')
-        final_loss = histories[method][-1]['recon_loss']
+        symbol = symbols.get(method, "○")
+        color = colors.get(method, "")
+        final_loss = histories[method][-1]["recon_loss"]
         aprint(f"  {color}{symbol}{reset} {method:8s} (final loss: {final_loss:.6e})")
 
     aprint("")
 
 
-def create_summary_table(
-    results: Dict[str, Dict],
-    width: int = 80
-) -> None:
+def create_summary_table(results: Dict[str, Dict], width: int = 80) -> None:
     """
     Create a summary table comparing methods.
 
@@ -167,14 +163,14 @@ def create_summary_table(
     aprint("─" * width)
 
     # Sort by final loss (best first)
-    sorted_methods = sorted(results.keys(), key=lambda m: results[m]['final_loss'])
+    sorted_methods = sorted(results.keys(), key=lambda m: results[m]["final_loss"])
 
     for method in sorted_methods:
         r = results[method]
-        init_loss = r['history'][0]['recon_loss']
-        final_loss = r['final_loss']
-        time_s = r['time_seconds']
-        energy_dist = r['energy_distribution']
+        init_loss = r["history"][0]["recon_loss"]
+        final_loss = r["final_loss"]
+        time_s = r["time_seconds"]
+        energy_dist = r["energy_distribution"]
         coarse_pct = energy_dist[-1] * 100  # Last scale is coarsest
 
         row = f"{method:12s} │ {init_loss:12.6e} │ {final_loss:12.6e} │ {time_s:8.2f} │ {coarse_pct:7.1f}%"
@@ -187,27 +183,26 @@ def create_summary_table(
     aprint(f"\n🏆 Best convergence: {best_method} (lowest final loss)")
 
     # Analyze initialization quality
-    init_losses = {m: results[m]['history'][0]['recon_loss'] for m in results}
+    init_losses = {m: results[m]["history"][0]["recon_loss"] for m in results}
     best_init = min(init_losses, key=init_losses.get)
     aprint(f"🎯 Best initialization: {best_init} (lowest initial loss)")
 
     # Fastest convergence (steepest improvement in first 50 iterations)
     improvements = {}
     for method, r in results.items():
-        if len(r['history']) >= 50:
-            init = r['history'][0]['recon_loss']
-            iter50 = r['history'][49]['recon_loss']
+        if len(r["history"]) >= 50:
+            init = r["history"][0]["recon_loss"]
+            iter50 = r["history"][49]["recon_loss"]
             improvements[method] = (init - iter50) / init  # Fractional improvement
 
     if improvements:
         fastest = max(improvements, key=improvements.get)
-        aprint(f"⚡ Fastest early convergence: {fastest} ({improvements[fastest]:.1%} improvement in 50 iters)")
+        aprint(
+            f"⚡ Fastest early convergence: {fastest} ({improvements[fastest]:.1%} improvement in 50 iters)"
+        )
 
 
-def plot_ascii_energy_bars(
-    results: Dict[str, Dict],
-    width: int = 80
-) -> None:
+def plot_ascii_energy_bars(results: Dict[str, Dict], width: int = 80) -> None:
     """
     Create ASCII bar chart of energy distribution for each method.
 
@@ -223,10 +218,10 @@ def plot_ascii_energy_bars(
     aprint("=" * width)
 
     # Get scales from first result
-    scales = list(results.values())[0]['scales']
+    scales = list(results.values())[0]["scales"]
 
     for method in sorted(results.keys()):
-        energy_dist = results[method]['energy_distribution']
+        energy_dist = results[method]["energy_distribution"]
 
         aprint(f"\n{method.capitalize():12s}")
         for scale, energy_frac in zip(scales, energy_dist):
@@ -256,7 +251,7 @@ with asection("Multi-Scale Initialization Method Comparison"):
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
     # Run decomposition with each initialization method
-    methods = ['pyramid', 'uniform', 'coarse', 'finest']
+    methods = ["pyramid", "uniform", "coarse", "finest"]
     results = {}
     histories = {}
 
@@ -270,26 +265,30 @@ with asection("Multi-Scale Initialization Method Comparison"):
                 energy_weight=0.001,
                 alpha=1.5,
                 device=DEVICE,
-                verbose=True
+                verbose=True,
             )
 
             results[method] = {
-                'scales_list': scales_list,
-                'final_loss': stats['final_error'],
-                'time_seconds': stats['time_seconds'],
-                'energy_distribution': stats['energy_distribution'],
-                'scales': stats['scales'],
-                'history': stats['history']
+                "scales_list": scales_list,
+                "final_loss": stats["final_error"],
+                "time_seconds": stats["time_seconds"],
+                "energy_distribution": stats["energy_distribution"],
+                "scales": stats["scales"],
+                "history": stats["history"],
             }
-            histories[method] = stats['history']
+            histories[method] = stats["history"]
 
-            aprint(f"✓ {method}: final loss = {stats['final_error']:.6e}, time = {stats['time_seconds']:.2f}s")
+            aprint(
+                f"✓ {method}: final loss = {stats['final_error']:.6e}, time = {stats['time_seconds']:.2f}s"
+            )
 
     # Visualization
     if not NO_VIZ:
         with asection("Convergence Analysis"):
             # Plot convergence curves
-            plot_ascii_convergence(histories, title="Reconstruction Loss Over Iterations")
+            plot_ascii_convergence(
+                histories, title="Reconstruction Loss Over Iterations"
+            )
 
             # Summary table
             create_summary_table(results)
@@ -300,7 +299,9 @@ with asection("Multi-Scale Initialization Method Comparison"):
     aprint("\n✨ Comparison complete!")
     aprint("\nKey Observations:")
     aprint("  • 'pyramid' initialization typically starts with lowest loss")
-    aprint("  • 'uniform' provides balanced starting point, works well with energy loss")
+    aprint(
+        "  • 'uniform' provides balanced starting point, works well with energy loss"
+    )
     aprint("  • 'coarse' strongly biases toward coarse scales from the start")
     aprint("  • 'finest' starts worst but shows optimization dynamics clearly")
     aprint("  • All methods converge to similar final quality with enough iterations")

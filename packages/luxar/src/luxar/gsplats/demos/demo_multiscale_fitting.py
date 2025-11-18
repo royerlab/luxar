@@ -70,7 +70,9 @@ def create_test_image_2d(size: int = 256) -> np.ndarray:
 with asection("Multi-Scale Gaussian Splatting Demo"):
     aprint("🎯 Comparing single-scale vs multi-scale Gaussian splat fitting")
     aprint(f"Scales: {SCALES}  |  Decomp iters: {N_ITERS_DECOMP}")
-    aprint(f"Per-scale iters: {N_ITERS_PER_SCALE}  |  Single-scale iters: {N_ITERS_SINGLE}")
+    aprint(
+        f"Per-scale iters: {N_ITERS_PER_SCALE}  |  Single-scale iters: {N_ITERS_SINGLE}"
+    )
 
     with asection("Loading test image"):
         # Load mitosis image (full size)
@@ -91,12 +93,17 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             n_background_blobs = 5
             for i in range(n_background_blobs):
                 # Random position
-                cy, cx = np.random.randint(20, V.shape[0] - 20), np.random.randint(20, V.shape[1] - 20)
+                cy, cx = (
+                    np.random.randint(20, V.shape[0] - 20),
+                    np.random.randint(20, V.shape[1] - 20),
+                )
                 # Random size (large blobs for background)
                 sigma = np.random.uniform(30, 60)
                 # Create Gaussian blob
-                y_coords, x_coords = np.ogrid[:V.shape[0], :V.shape[1]]
-                blob = np.exp(-((y_coords - cy)**2 + (x_coords - cx)**2) / (2 * sigma**2))
+                y_coords, x_coords = np.ogrid[: V.shape[0], : V.shape[1]]
+                blob = np.exp(
+                    -((y_coords - cy) ** 2 + (x_coords - cx) ** 2) / (2 * sigma**2)
+                )
                 # Random amplitude (subtle background)
                 amplitude = np.random.uniform(5, 15)
                 background += blob * amplitude
@@ -171,7 +178,9 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
     per_scale_vis = stats_multi.get("per_scale_visualizations", [])
     if len(per_scale_vis) > 0:
         with asection("Per-Scale Visualizations"):
-            aprint(f"🔍 Displaying {len(per_scale_vis)} scale visualizations in napari...")
+            aprint(
+                f"🔍 Displaying {len(per_scale_vis)} scale visualizations in napari..."
+            )
             viewer_per_scale = napari.Viewer(title="Per-Scale Gaussian Splat Fitting")
 
             # Shared contrast limits
@@ -219,8 +228,12 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             viewer_per_scale.grid.shape = (1, -1)  # 1 row, auto columns
 
             aprint("✅ Per-scale visualizations ready")
-            aprint("   Tip: Toggle layers to compare reconstructions and see splat locations")
-            aprint("   Note: Per-scale viewer will open alongside comparison viewer at the end")
+            aprint(
+                "   Tip: Toggle layers to compare reconstructions and see splat locations"
+            )
+            aprint(
+                "   Note: Per-scale viewer will open alongside comparison viewer at the end"
+            )
 
     # Method 2: Single-scale fitting (baseline comparison)
     with asection("Method 2: Single-Scale Fitting (baseline comparison)"):
@@ -262,7 +275,9 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         aprint(f"{'Speedup':<25} {time_speedup:>15.1f}× {'':<15}")
         aprint(f"{'Number of splats':<25} {n_splats_multi:>15,} {n_splats_single:>15,}")
         aprint(f"{'MSE':<25} {error_multi:>15.6e} {error_single:>15.6e}")
-        aprint(f"{'Max abs error':<25} {max_abs_error_multi:>15.6f} {max_abs_error_single:>15.6f}")
+        aprint(
+            f"{'Max abs error':<25} {max_abs_error_multi:>15.6f} {max_abs_error_single:>15.6f}"
+        )
         aprint("=" * 60)
 
         if time_speedup > 1:
@@ -340,12 +355,14 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
     aprint("  • Check residuals to see reconstruction quality")
     aprint("  • Multi-scale uses hierarchical splat distribution:")
     for scale_idx, scale in enumerate(SCALES):
-        n = stats_multi['n_splats_per_scale'][scale_idx]
+        n = stats_multi["n_splats_per_scale"][scale_idx]
         aprint(f"    - Scale {scale}×: {n} splats")
 
     aprint("\n🎯 Key Insights:")
     aprint(f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup")
-    aprint(f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×")
+    aprint(
+        f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×"
+    )
     aprint("  • Coarse scales capture large structures efficiently")
     aprint("  • Fine scales capture details at full resolution")
     aprint("  • Both methods achieve similar reconstruction quality")

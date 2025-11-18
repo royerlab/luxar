@@ -163,12 +163,14 @@ class TestMultiScaleFitting:
             fit_multiscale_gaussian_splats(
                 np.random.rand(16, 16).astype(np.float32),
                 scales=[1, 2, 4],  # Scale 4 gives 4x4, below minimum
-                verbose=False
+                verbose=False,
             )
 
         # Invalid base_init_sigma (use valid scales to reach this validation)
         with pytest.raises(ValueError, match="base_init_sigma must be positive"):
-            fit_multiscale_gaussian_splats(V, scales=[1, 2], base_init_sigma=-1, verbose=False)
+            fit_multiscale_gaussian_splats(
+                V, scales=[1, 2], base_init_sigma=-1, verbose=False
+            )
 
         # Invalid V
         with pytest.raises(ValueError, match="non-empty"):
@@ -225,7 +227,9 @@ class TestMultiScaleFitting:
 
         # Should have some output from arbol
         assert len(captured.out) > 0
-        assert "Multi-Scale Decomposition" in captured.out or "Decomposing" in captured.out
+        assert (
+            "Multi-Scale Decomposition" in captured.out or "Decomposing" in captured.out
+        )
 
     def test_movie_recording(self):
         """Test that movie recording works when enabled."""

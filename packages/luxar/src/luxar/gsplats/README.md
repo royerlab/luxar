@@ -187,10 +187,10 @@ for vis in stats['per_scale_visualizations']:
 For specialized use cases requiring custom candidate generation:
 
 ```python
-from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
 
 # Custom candidate generation with specific parameters
-custom_candidates = find_candidates_overcomplete_nd(
+custom_candidates = find_candidates_multiscale_gaussian(
     image,
     scales=(1.0, 2.0, 4.0),      # Custom scales
     peaks_per_scale=1000,        # Custom density
@@ -544,14 +544,14 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
-#### `find_candidates_overcomplete_nd(V, **kwargs)`
+#### `find_candidates_multiscale_gaussian(V, **kwargs)`
 Generate initial splat positions using multiscale detection.
 
 **Key Parameters:**
 - `scales`: Gaussian filter scales (default: (0.7, 1.0, 1.4, 2.0, 2.8, 4.0))
 - `peaks_per_scale`: Maximum peaks per scale (default: 1000)
 - `percentile_thresh`: Intensity threshold percentile (default: 70.0)
-- `min_dist`: Minimum distance between candidates (default: 2.0)
+- `min_distance`: Minimum distance between candidates (default: 2.0)
 
 ## Device Support and Performance
 

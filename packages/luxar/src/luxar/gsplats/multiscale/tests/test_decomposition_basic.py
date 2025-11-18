@@ -33,7 +33,7 @@ def simple_3d_volume():
     x = np.linspace(-1, 1, 32)
     y = np.linspace(-1, 1, 32)
     z = np.linspace(-1, 1, 32)
-    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     volume = np.exp(-(X**2 + Y**2 + Z**2) / 0.5)
     return volume.astype(np.float32)
 
@@ -81,7 +81,7 @@ class TestMultiScaleDecomposer:
     def test_non_negativity(self):
         """Test that all outputs are non-negative."""
         # Use 'linear' interpolation for this test - bicubic can undershoot
-        model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4], interpolation='linear')
+        model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4], interpolation="linear")
 
         # Initialize with random negative values
         for param in model.raw_images:
@@ -98,9 +98,7 @@ class TestMultiScaleDecomposer:
             assert torch.all(img >= 0), "Upsampled component has negative values"
 
         # Reconstruction should be non-negative
-        assert torch.all(
-            reconstruction >= 0
-        ), "Reconstruction has negative values"
+        assert torch.all(reconstruction >= 0), "Reconstruction has negative values"
 
     def test_pyramid_initialization(self, simple_2d_image):
         """Test Gaussian pyramid initialization."""
@@ -118,10 +116,12 @@ class TestMultiScaleDecomposer:
         _, _, recon_after = model()
         error_after = torch.mean(torch.abs(recon_after - target)).item()
 
-        assert error_after < error_before, \
+        assert error_after < error_before, (
             "Pyramid initialization should improve reconstruction"
-        assert error_after < 0.1, \
+        )
+        assert error_after < 0.1, (
             f"Pyramid initialization error too high: {error_after}"
+        )
 
     def test_finest_scale_initialization(self, simple_2d_image):
         """Test finest scale initialization puts all energy in finest scale."""
@@ -143,24 +143,27 @@ class TestMultiScaleDecomposer:
             finest_fraction = finest_energy / total_energy
 
             # Finest scale should have >98% of energy initially
-            assert finest_fraction > 0.98, \
+            assert finest_fraction > 0.98, (
                 f"Finest scale should have >98% energy, got {finest_fraction:.2%}"
+            )
 
             # Other scales should have negligible energy
             for i, scale_img in enumerate(scales_list):
                 if i != finest_idx:
                     scale_energy = torch.sum(scale_img).item()
                     scale_fraction = scale_energy / total_energy
-                    assert scale_fraction < 0.02, \
+                    assert scale_fraction < 0.02, (
                         f"Scale {i} should have <2% energy, got {scale_fraction:.2%}"
+                    )
 
         # Check that reconstruction has roughly the right energy
         # (not necessarily perfect due to softplus nonlinearity)
         target_energy = torch.sum(target).item()
         recon_energy = torch.sum(reconstruction).item()
         energy_ratio = recon_energy / (target_energy + 1e-12)
-        assert 0.1 < energy_ratio < 10.0, \
+        assert 0.1 < energy_ratio < 10.0, (
             f"Reconstruction energy ratio unreasonable: {energy_ratio:.2f}"
+        )
 
     def test_uniform_initialization(self, simple_2d_image):
         """Test uniform initialization splits energy equally across scales when upsampled."""
@@ -184,15 +187,17 @@ class TestMultiScaleDecomposer:
 
             # Check within reasonable tolerance (25% to 42% for 3 scales = 33% ± 8%)
             # Allow wider tolerance due to softplus nonlinearity
-            assert 0.25 < energy_fraction < 0.42, \
+            assert 0.25 < energy_fraction < 0.42, (
                 f"Scale {i} (upsampled) should have ~{expected_fraction:.1%} energy, got {energy_fraction:.1%}"
+            )
 
         # Check that reconstruction has roughly the right total energy
         target_energy = torch.sum(target).item()
         recon_energy = torch.sum(reconstruction).item()
         energy_ratio = recon_energy / (target_energy + 1e-12)
-        assert 0.8 < energy_ratio < 1.2, \
+        assert 0.8 < energy_ratio < 1.2, (
             f"Reconstruction energy ratio should be ~1.0, got {energy_ratio:.2f}"
+        )
 
     def test_coarse_initialization(self, simple_2d_image):
         """Test coarse initialization weights energy toward coarse scales."""
@@ -212,7 +217,9 @@ class TestMultiScaleDecomposer:
         # That's approximately [14%, 29%, 57%]
         expected_fractions = [s / sum(scales) for s in scales]
 
-        for i, (upsampled_scale, expected_frac) in enumerate(zip(upsampled_list, expected_fractions)):
+        for i, (upsampled_scale, expected_frac) in enumerate(
+            zip(upsampled_list, expected_fractions)
+        ):
             scale_energy = torch.sum(upsampled_scale).item()
             energy_fraction = scale_energy / total_upsampled_energy
 
@@ -221,22 +228,26 @@ class TestMultiScaleDecomposer:
             lower_bound = expected_frac * 0.85
             upper_bound = expected_frac * 1.15
 
-            assert lower_bound < energy_fraction < upper_bound, \
+            assert lower_bound < energy_fraction < upper_bound, (
                 f"Scale {i} should have ~{expected_frac:.1%} energy, got {energy_fraction:.1%}"
+            )
 
         # Verify that coarsest scale has most energy
         energies = [torch.sum(s).item() for s in upsampled_list]
-        assert energies[-1] > energies[0], \
+        assert energies[-1] > energies[0], (
             "Coarsest scale should have more energy than finest scale"
-        assert energies[-1] > energies[1], \
+        )
+        assert energies[-1] > energies[1], (
             "Coarsest scale should have more energy than middle scale"
+        )
 
         # Check that reconstruction has roughly the right total energy
         target_energy = torch.sum(target).item()
         recon_energy = torch.sum(reconstruction).item()
         energy_ratio = recon_energy / (target_energy + 1e-12)
-        assert 0.8 < energy_ratio < 1.2, \
+        assert 0.8 < energy_ratio < 1.2, (
             f"Reconstruction energy ratio should be ~1.0, got {energy_ratio:.2f}"
+        )
 
 
 class TestDecompositionLoss:
@@ -255,11 +266,11 @@ class TestDecompositionLoss:
         assert loss.ndim == 0
 
         # Check stats dictionary
-        assert 'recon_loss' in stats
-        assert 'energy_loss' in stats
-        assert 'total_loss' in stats
-        assert 'energy_scale_0' in stats
-        assert 'energy_scale_1' in stats
+        assert "recon_loss" in stats
+        assert "energy_loss" in stats
+        assert "total_loss" in stats
+        assert "energy_scale_0" in stats
+        assert "energy_scale_1" in stats
 
         # Check all stats are finite numbers
         for key, value in stats.items():
@@ -293,7 +304,7 @@ class TestDecomposeImage:
             simple_2d_image,
             scales=[1, 2],
             n_iters=50,  # Few iterations for fast test
-            verbose=False
+            verbose=False,
         )
 
         # Check output structure
@@ -302,9 +313,9 @@ class TestDecomposeImage:
         assert scales_list[1].shape == tuple(s // 2 for s in simple_2d_image.shape)
 
         # Check stats
-        assert 'final_error' in stats
-        assert 'energy_distribution' in stats
-        assert len(stats['energy_distribution']) == 2
+        assert "final_error" in stats
+        assert "energy_distribution" in stats
+        assert len(stats["energy_distribution"]) == 2
 
         # Check non-negativity
         for img in scales_list:
@@ -313,10 +324,7 @@ class TestDecomposeImage:
     def test_basic_decomposition_3d(self, simple_3d_volume):
         """Test basic 3D decomposition."""
         scales_list, stats = decompose_image(
-            simple_3d_volume,
-            scales=[1, 2],
-            n_iters=50,
-            verbose=False
+            simple_3d_volume, scales=[1, 2], n_iters=50, verbose=False
         )
 
         assert len(scales_list) == 2
@@ -326,14 +334,12 @@ class TestDecomposeImage:
     def test_reconstruction_quality(self, simple_2d_image):
         """Test that reconstruction is close to original."""
         scales_list, stats = decompose_image(
-            simple_2d_image,
-            scales=[1, 2, 4],
-            n_iters=200,
-            verbose=False
+            simple_2d_image, scales=[1, 2, 4], n_iters=200, verbose=False
         )
 
         # Compute reconstruction
         from scipy.ndimage import zoom
+
         reconstruction = np.zeros_like(simple_2d_image)
         for i, img in enumerate(scales_list):
             if img.shape != simple_2d_image.shape:
@@ -348,19 +354,17 @@ class TestDecomposeImage:
         assert mse < 0.01, f"Reconstruction MSE too high: {mse}"
 
         # Check relative error
-        relative_error = np.linalg.norm(reconstruction - simple_2d_image) / \
-                        (np.linalg.norm(simple_2d_image) + 1e-12)
-        assert relative_error < 0.1, \
+        relative_error = np.linalg.norm(reconstruction - simple_2d_image) / (
+            np.linalg.norm(simple_2d_image) + 1e-12
+        )
+        assert relative_error < 0.1, (
             f"Relative reconstruction error too high: {relative_error}"
+        )
 
     def test_device_cpu(self, simple_2d_image):
         """Test decomposition on CPU."""
         scales_list, stats = decompose_image(
-            simple_2d_image,
-            scales=[1, 2],
-            n_iters=10,
-            device='cpu',
-            verbose=False
+            simple_2d_image, scales=[1, 2], n_iters=10, device="cpu", verbose=False
         )
         assert len(scales_list) == 2
 
@@ -368,11 +372,7 @@ class TestDecomposeImage:
     def test_device_cuda(self, simple_2d_image):
         """Test decomposition on CUDA."""
         scales_list, stats = decompose_image(
-            simple_2d_image,
-            scales=[1, 2],
-            n_iters=10,
-            device='cuda',
-            verbose=False
+            simple_2d_image, scales=[1, 2], n_iters=10, device="cuda", verbose=False
         )
         assert len(scales_list) == 2
 
@@ -384,21 +384,22 @@ class TestDecomposeImage:
             scales=[1, 2],
             n_iters=100,
             max_abs_error_threshold=1e-10,  # Very low threshold to prevent early convergence
-            verbose=False
+            verbose=False,
         )
 
-        history = stats['history']
-        actual_iters = stats['actual_iters']
+        history = stats["history"]
+        actual_iters = stats["actual_iters"]
 
         # With very low threshold, should run all iterations
         assert actual_iters == 100
         assert len(history) == 100
 
         # Check that reconstruction loss generally decreases
-        initial_loss = history[0]['recon_loss']
-        final_loss = history[-1]['recon_loss']
-        assert final_loss < initial_loss, \
+        initial_loss = history[0]["recon_loss"]
+        final_loss = history[-1]["recon_loss"]
+        assert final_loss < initial_loss, (
             "Reconstruction loss should decrease during optimization"
+        )
 
         # Test convergence with reasonable threshold
         scales_list2, stats2 = decompose_image(
@@ -406,39 +407,42 @@ class TestDecomposeImage:
             scales=[1, 2],
             n_iters=100,
             # Use default auto-convergence
-            verbose=False
+            verbose=False,
         )
 
         # With auto-convergence, should converge early
-        assert stats2['converged'], "Should converge with auto-convergence threshold"
-        assert stats2['actual_iters'] < 100, "Should converge before max iterations"
-        assert stats2['best_max_abs_error'] < 1e-2, "Should achieve good convergence"
+        assert stats2["converged"], "Should converge with auto-convergence threshold"
+        assert stats2["actual_iters"] < 100, "Should converge before max iterations"
+        assert stats2["best_max_abs_error"] < 1e-2, "Should achieve good convergence"
 
     def test_initialization_methods(self, simple_2d_image):
         """Test all initialization methods produce valid results."""
-        for init_method in ['pyramid', 'finest', 'uniform', 'coarse', 'zero']:
+        for init_method in ["pyramid", "finest", "uniform", "coarse", "zero"]:
             # Zero initialization needs more iterations to converge
-            n_iters = 100 if init_method == 'zero' else 50
+            n_iters = 100 if init_method == "zero" else 50
 
             scales_list, stats = decompose_image(
                 simple_2d_image,
                 scales=[1, 2, 4],
                 n_iters=n_iters,
                 init_method=init_method,
-                verbose=False
+                verbose=False,
             )
 
             # Check basic output structure
             assert len(scales_list) == 3
-            assert 'final_error' in stats
-            assert 'energy_distribution' in stats
+            assert "final_error" in stats
+            assert "energy_distribution" in stats
 
             # Check reconstruction quality
             from scipy.ndimage import zoom
+
             reconstruction = np.zeros_like(simple_2d_image)
             for img in scales_list:
                 if img.shape != simple_2d_image.shape:
-                    zoom_factors = [o / s for o, s in zip(simple_2d_image.shape, img.shape)]
+                    zoom_factors = [
+                        o / s for o, s in zip(simple_2d_image.shape, img.shape)
+                    ]
                     img_upsampled = zoom(img, zoom_factors, order=1)
                 else:
                     img_upsampled = img
@@ -446,40 +450,48 @@ class TestDecomposeImage:
 
             mse = np.mean((reconstruction - simple_2d_image) ** 2)
             # Zero initialization starts from scratch, so be more lenient
-            mse_threshold = 0.2 if init_method == 'zero' else 0.1
-            assert mse < mse_threshold, f"Reconstruction MSE too high for {init_method}: {mse}"
+            mse_threshold = 0.2 if init_method == "zero" else 0.1
+            assert mse < mse_threshold, (
+                f"Reconstruction MSE too high for {init_method}: {mse}"
+            )
 
             # Check non-negativity
             for img in scales_list:
-                assert np.all(img >= 0), f"Output contains negative values for {init_method}"
+                assert np.all(img >= 0), (
+                    f"Output contains negative values for {init_method}"
+                )
 
     def test_interpolation_modes_2d(self, simple_2d_image):
         """Test all three interpolation modes for 2D images."""
-        for interpolation in ['nearest', 'linear', 'cubic']:
+        for interpolation in ["nearest", "linear", "cubic"]:
             scales_list, stats = decompose_image(
                 simple_2d_image,
                 scales=[1, 2, 4],
                 n_iters=50,
                 interpolation=interpolation,
-                verbose=False
+                verbose=False,
             )
 
             # Check basic output structure
             assert len(scales_list) == 3
-            assert 'final_error' in stats
-            assert 'energy_distribution' in stats
+            assert "final_error" in stats
+            assert "energy_distribution" in stats
 
             # Check non-negativity (all modes should clamp negatives)
             for img in scales_list:
-                assert np.all(img >= 0), \
+                assert np.all(img >= 0), (
                     f"Output contains negative values for interpolation='{interpolation}'"
+                )
 
             # Check reconstruction quality (looser threshold for nearest)
             from scipy.ndimage import zoom
+
             reconstruction = np.zeros_like(simple_2d_image)
             for img in scales_list:
                 if img.shape != simple_2d_image.shape:
-                    zoom_factors = [o / s for o, s in zip(simple_2d_image.shape, img.shape)]
+                    zoom_factors = [
+                        o / s for o, s in zip(simple_2d_image.shape, img.shape)
+                    ]
                     img_upsampled = zoom(img, zoom_factors, order=1)
                 else:
                     img_upsampled = img
@@ -487,36 +499,41 @@ class TestDecomposeImage:
 
             mse = np.mean((reconstruction - simple_2d_image) ** 2)
             # Nearest neighbor has worse quality, so use looser threshold
-            mse_threshold = 0.2 if interpolation == 'nearest' else 0.1
-            assert mse < mse_threshold, \
+            mse_threshold = 0.2 if interpolation == "nearest" else 0.1
+            assert mse < mse_threshold, (
                 f"Reconstruction MSE too high for {interpolation}: {mse}"
+            )
 
     def test_interpolation_modes_3d(self, simple_3d_volume):
         """Test all three interpolation modes for 3D volumes."""
-        for interpolation in ['nearest', 'linear', 'cubic']:
+        for interpolation in ["nearest", "linear", "cubic"]:
             scales_list, stats = decompose_image(
                 simple_3d_volume,
                 scales=[1, 2],
                 n_iters=50,
                 interpolation=interpolation,
-                verbose=False
+                verbose=False,
             )
 
             # Check basic output structure
             assert len(scales_list) == 2
-            assert 'final_error' in stats
+            assert "final_error" in stats
 
             # Check non-negativity
             for img in scales_list:
-                assert np.all(img >= 0), \
+                assert np.all(img >= 0), (
                     f"3D output contains negative values for interpolation='{interpolation}'"
+                )
 
             # Check reconstruction quality
             from scipy.ndimage import zoom
+
             reconstruction = np.zeros_like(simple_3d_volume)
             for img in scales_list:
                 if img.shape != simple_3d_volume.shape:
-                    zoom_factors = [o / s for o, s in zip(simple_3d_volume.shape, img.shape)]
+                    zoom_factors = [
+                        o / s for o, s in zip(simple_3d_volume.shape, img.shape)
+                    ]
                     img_upsampled = zoom(img, zoom_factors, order=1)
                 else:
                     img_upsampled = img
@@ -524,9 +541,10 @@ class TestDecomposeImage:
 
             mse = np.mean((reconstruction - simple_3d_volume) ** 2)
             # All modes should achieve reasonable quality for this simple test
-            mse_threshold = 0.2 if interpolation == 'nearest' else 0.15
-            assert mse < mse_threshold, \
+            mse_threshold = 0.2 if interpolation == "nearest" else 0.15
+            assert mse < mse_threshold, (
                 f"3D reconstruction MSE too high for {interpolation}: {mse}"
+            )
 
 
 class TestEdgeCases:
@@ -535,22 +553,16 @@ class TestEdgeCases:
     def test_single_scale(self, simple_2d_image):
         """Test decomposition with single scale."""
         scales_list, stats = decompose_image(
-            simple_2d_image,
-            scales=[1],
-            n_iters=50,
-            verbose=False
+            simple_2d_image, scales=[1], n_iters=50, verbose=False
         )
         assert len(scales_list) == 1
         # Should reconstruct perfectly with single scale
-        assert stats['final_error'] < 0.01
+        assert stats["final_error"] < 0.01
 
     def test_many_scales(self, simple_2d_image):
         """Test decomposition with many scales."""
         scales_list, stats = decompose_image(
-            simple_2d_image,
-            scales=[1, 2, 4, 8, 16],
-            n_iters=50,
-            verbose=False
+            simple_2d_image, scales=[1, 2, 4, 8, 16], n_iters=50, verbose=False
         )
         assert len(scales_list) == 5
 
@@ -558,10 +570,7 @@ class TestEdgeCases:
         """Test with very small image."""
         small_image = np.random.rand(16, 16).astype(np.float32)
         scales_list, stats = decompose_image(
-            small_image,
-            scales=[1, 2],
-            n_iters=10,
-            verbose=False
+            small_image, scales=[1, 2], n_iters=10, verbose=False
         )
         assert len(scales_list) == 2
 
@@ -569,11 +578,7 @@ class TestEdgeCases:
         """Test with different alpha values."""
         for alpha in [1.0, 1.5, 2.0, 3.0]:
             scales_list, stats = decompose_image(
-                simple_2d_image,
-                scales=[1, 2],
-                n_iters=20,
-                alpha=alpha,
-                verbose=False
+                simple_2d_image, scales=[1, 2], n_iters=20, alpha=alpha, verbose=False
             )
             assert len(scales_list) == 2
 
