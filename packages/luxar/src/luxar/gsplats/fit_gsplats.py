@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from arbol import asection
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting import (
     create_loss_function,
     finalize_results,
@@ -17,6 +16,7 @@ from luxar.gsplats.fitting import (
     preprocess_data,
     run_optimization_loop,
 )
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.utils.trils import tril_size
 
 

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.losses import (
     _compute_l1_loss,
     _compute_mse_loss,

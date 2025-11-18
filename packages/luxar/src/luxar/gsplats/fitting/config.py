@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 import torch
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 
 @dataclass

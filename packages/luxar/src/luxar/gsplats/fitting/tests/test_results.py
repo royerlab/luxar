@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,
     PreprocessedData,
 )
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.results import finalize_results
 
 

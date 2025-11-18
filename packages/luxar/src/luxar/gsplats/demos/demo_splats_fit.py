@@ -13,8 +13,8 @@ import numpy as np
 from arbol import aprint, asection
 from skimage import data, filters
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 
 def main():
