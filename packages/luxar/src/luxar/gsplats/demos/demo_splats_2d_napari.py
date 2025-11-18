@@ -159,84 +159,6 @@ for i, K in enumerate(keep_counts):
     polygons_frames.append(polys)
     centers_frames.append(Ck)
 
-# 4) Napari viewer with "compression" slider
-viewer = napari.Viewer()
-viewer.add_image(
-    V,
-    name="input",
-    colormap="magma",
-    contrast_limits=[0, float(V.max())],
-)
-
-lyr_recon = viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, oriented)",
-    colormap="magma",
-    contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
-)
-lyr_resid = viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="inferno",  # Better visibility than turbo
-    opacity=1.0,  # Full opacity for clear visualization
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
-)
-
-# Shapes & points that update with slider
-shapes = viewer.add_shapes(
-    name="oriented 2σ ellipses (kept)",
-    shape_type="polygon",
-    edge_color="cyan",
-    edge_width=1,
-    face_color=[0, 0, 0, 0],
-)
-pts = viewer.add_points(
-    np.zeros((0, 2)),
-    name="centers (kept)",
-    size=3,
-    border_color="cyan",
-    face_color="transparent",
-)
-
-# Try to label axes (requires napari >= 0.4.18)
-try:
-    viewer.dims.axis_labels = ["compression", "y", "x"]
-except Exception:
-    pass
-
-
-def _set_overlay_text(t_index: int):
-    K = int(keep_counts[t_index])
-    bits_model = int(model_bits_frames[t_index])
-    bpp = float(bpp_frames[t_index])
-    pct_bits = float(bit_compression_pct[t_index])
-    rel = float(rel_err_frames[t_index])
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  Model bpp: {bpp:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
-        f"|  rel L2 err: {rel:.4f}"
-    )
-
-
-def _update_layers_for_t(t_index: int):
-    shapes.data = polygons_frames[t_index]  # list of (M_i, 2) polygons
-    pts.data = centers_frames[t_index]
-    _set_overlay_text(t_index)
-
-
-# Initialize
-_update_layers_for_t(0)
-
-
-# Hook slider to updates
-def _on_step_change(event=None):
-    t = viewer.dims.current_step[0]
-    _update_layers_for_t(int(t))
-
-
-viewer.dims.events.current_step.connect(_on_step_change)
-
 # Console summary
 aprint(f"Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
 for i, K in enumerate(keep_counts):
@@ -246,7 +168,83 @@ for i, K in enumerate(keep_counts):
         f"| relL2={rel_err_frames[i]:.4f}"
     )
 
-aprint(
-    "Ready. Use the top slider (axis 0) to move from keeping all splats toward keeping just one."
-)
-napari.run()
+if not NO_NAPARI:
+    # Napari viewer with "compression" slider
+    viewer = napari.Viewer()
+    viewer.add_image(
+        V,
+        name="input",
+        colormap="magma",
+        contrast_limits=[0, float(V.max())],
+    )
+
+    lyr_recon = viewer.add_image(
+        stack_recon,
+        name="reconstruction (compression, oriented)",
+        colormap="magma",
+        contrast_limits=[0, float(V.max())],  # Same as input for fair comparison
+    )
+    lyr_resid = viewer.add_image(
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="inferno",  # Better visibility than turbo
+        opacity=1.0,  # Full opacity for clear visualization
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+    )
+
+    # Shapes & points that update with slider
+    shapes = viewer.add_shapes(
+        name="oriented 2σ ellipses (kept)",
+        shape_type="polygon",
+        edge_color="cyan",
+        edge_width=1,
+        face_color=[0, 0, 0, 0],
+    )
+    pts = viewer.add_points(
+        np.zeros((0, 2)),
+        name="centers (kept)",
+        size=3,
+        border_color="cyan",
+        face_color="transparent",
+    )
+
+    # Try to label axes (requires napari >= 0.4.18)
+    try:
+        viewer.dims.axis_labels = ["compression", "y", "x"]
+    except Exception:
+        pass
+
+    def _set_overlay_text(t_index: int):
+        K = int(keep_counts[t_index])
+        bits_model = int(model_bits_frames[t_index])
+        bpp = float(bpp_frames[t_index])
+        pct_bits = float(bit_compression_pct[t_index])
+        rel = float(rel_err_frames[t_index])
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+            f"|  Model bpp: {bpp:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
+            f"|  rel L2 err: {rel:.4f}"
+        )
+
+    def _update_layers_for_t(t_index: int):
+        shapes.data = polygons_frames[t_index]  # list of (M_i, 2) polygons
+        pts.data = centers_frames[t_index]
+        _set_overlay_text(t_index)
+
+    # Initialize
+    _update_layers_for_t(0)
+
+    # Hook slider to updates
+    def _on_step_change(event=None):
+        t = viewer.dims.current_step[0]
+        _update_layers_for_t(int(t))
+
+    viewer.dims.events.current_step.connect(_on_step_change)
+
+    aprint(
+        "Ready. Use the top slider (axis 0) to move from keeping all splats toward keeping just one."
+    )
+    napari.run()
+else:
+    aprint("\n✅ Demo completed successfully (napari visualization disabled)")

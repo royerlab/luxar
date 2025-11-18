@@ -26,7 +26,8 @@ from luxar.gsplats.multiscale import (
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
     aprint("🧬 3D DAPI Multi-Scale Decomposition Demo (napari disabled)")
-    aprint("Running all computations without napari visualization...") 
+    aprint("Running all computations without napari visualization...")
+    )
 
 # ======= Demo knobs =======
 SCALES = [1, 2, 4, 8]  # Scale factors to use

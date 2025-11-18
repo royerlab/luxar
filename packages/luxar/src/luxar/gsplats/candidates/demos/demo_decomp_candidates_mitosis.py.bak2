@@ -25,7 +25,8 @@ from luxar.gsplats.candidates import (
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
     aprint("🔬 Decomposition Candidates Demo (napari disabled)")
-    aprint("Running all computations without napari visualization...") 
+    aprint("Running all computations without napari visualization...")
+    )
 
 
 # Setup Arbol

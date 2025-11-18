@@ -378,6 +378,8 @@ if not NO_NAPARI:
     aprint("  • 3D splats can achieve good compression on volumetric data!")
 
     napari.run()
+else:
+    aprint("\n✅ Demo completed successfully (napari visualization disabled)")
 
 # Console summary for 3D (always shown)
 aprint("\n3D Gaussian Splat Compression Analysis")
