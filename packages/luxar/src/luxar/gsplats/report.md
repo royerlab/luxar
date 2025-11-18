@@ -776,7 +776,7 @@ param -= lr * exp_avg / sqrt(exp_avg_sq + eps)
 ```python
 # Auto-generation for 256×256 image
 # Generates ~131 peaks/scale × 6 scales ≈ 786 candidates (1.2% of pixels)
-candidates = find_candidates_overcomplete_nd(
+candidates = find_candidates_multiscale_gaussian(
     V, scales=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
 )
 ```

@@ -44,7 +44,9 @@ def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
         Image upsampled 2× along specified axis
     """
     # Keys cubic kernel at x=0.5: [-1/16, 9/16, 9/16, -1/16]
-    kernel = torch.tensor([-1/16, 9/16, 9/16, -1/16], dtype=img.dtype, device=img.device)
+    kernel = torch.tensor(
+        [-1 / 16, 9 / 16, 9 / 16, -1 / 16], dtype=img.dtype, device=img.device
+    )
 
     # Move axis to last position for easier processing
     img = img.movedim(axis, -1)
@@ -64,7 +66,7 @@ def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
     # Odd positions: cubic interpolation (vectorized)
     # Pad input for boundary handling: replicate edges
     # Padding (1, 2) means 1 element on left, 2 on right
-    img_padded = F.pad(img_flat, (1, 2), mode='replicate')
+    img_padded = F.pad(img_flat, (1, 2), mode="replicate")
 
     # Extract sliding windows of size 4 with stride 1
     # unfold(dimension, size, step) creates windows efficiently
@@ -110,7 +112,9 @@ def _cubic_upsample_2x_nd(img: torch.Tensor) -> torch.Tensor:
     return result
 
 
-def _cubic_upsample_recursive(img: torch.Tensor, target_shape: Tuple[int, ...]) -> torch.Tensor:
+def _cubic_upsample_recursive(
+    img: torch.Tensor, target_shape: Tuple[int, ...]
+) -> torch.Tensor:
     """
     Recursively upsample to target shape using 2× cubic upsampling.
 
@@ -148,22 +152,24 @@ def _cubic_upsample_recursive(img: torch.Tensor, target_shape: Tuple[int, ...]) 
 
         ndim = img.ndim
         if ndim == 2:
-            mode = 'bilinear'
+            mode = "bilinear"
         elif ndim == 3:
-            mode = 'trilinear'
+            mode = "trilinear"
         else:
-            mode = 'nearest'
+            mode = "nearest"
 
         upsampled = F.interpolate(
-            img_expanded, size=target_shape, mode=mode,
-            align_corners=False if mode != 'nearest' else None
+            img_expanded,
+            size=target_shape,
+            mode=mode,
+            align_corners=False if mode != "nearest" else None,
         )
         return upsampled[0, 0]
     else:
         raise ValueError(f"Cannot upsample {current_shape} to {target_shape}")
 
 
-def _get_interpolation_mode(ndim: int, interpolation: str = 'cubic') -> str:
+def _get_interpolation_mode(ndim: int, interpolation: str = "cubic") -> str:
     """
     Get appropriate interpolation mode based on dimensionality and preference.
 
@@ -202,16 +208,16 @@ def _get_interpolation_mode(ndim: int, interpolation: str = 'cubic') -> str:
     Note: Cubic interpolation can produce small negative values (undershoot)
     which are clamped to zero in _upsample_to_shape().
     """
-    if interpolation == 'nearest':
+    if interpolation == "nearest":
         return "nearest"
-    elif interpolation == 'linear':
+    elif interpolation == "linear":
         if ndim == 2:
             return "bilinear"
         elif ndim == 3:
             return "trilinear"
         else:
             return "nearest"  # Fallback for nD where n > 3
-    elif interpolation == 'cubic':
+    elif interpolation == "cubic":
         if ndim == 2:
             return "bicubic"
         else:
@@ -250,7 +256,7 @@ def _upsample_to_shape(
         return img
 
     # Keys cubic convolution for 3D+ cubic interpolation
-    if mode == 'cubic_keys':
+    if mode == "cubic_keys":
         upsampled = _cubic_upsample_recursive(img, target_shape)
         # Clamp negative values from cubic undershoot
         upsampled = torch.clamp(upsampled, min=0.0)
@@ -261,7 +267,7 @@ def _upsample_to_shape(
     img_expanded = img[None, None, ...]
 
     # Upsample (align_corners only for interpolating modes, not 'nearest' or 'area')
-    if mode in ('nearest', 'area', 'nearest-exact'):
+    if mode in ("nearest", "area", "nearest-exact"):
         upsampled = F.interpolate(img_expanded, size=target_shape, mode=mode)
     else:
         upsampled = F.interpolate(
@@ -272,7 +278,7 @@ def _upsample_to_shape(
     upsampled = upsampled[0, 0]
 
     # Clamp negative values from cubic interpolation (bicubic can produce undershoot)
-    if mode == 'bicubic':
+    if mode == "bicubic":
         upsampled = torch.clamp(upsampled, min=0.0)
 
     return upsampled
@@ -321,26 +327,26 @@ def _downsample_to_scale(
                 img_expanded,
                 size=target_shape,
                 mode="trilinear" if mode == "area" else "nearest",
-                align_corners=False if mode == "area" else None
+                align_corners=False if mode == "area" else None,
             )
         else:
             # Use native pooling for CPU/CUDA
             if mode == "area":
-                downsampled = F.avg_pool3d(img_expanded, kernel_size=scale, stride=scale)
+                downsampled = F.avg_pool3d(
+                    img_expanded, kernel_size=scale, stride=scale
+                )
             else:
-                downsampled = F.max_pool3d(img_expanded, kernel_size=scale, stride=scale)
+                downsampled = F.max_pool3d(
+                    img_expanded, kernel_size=scale, stride=scale
+                )
     else:
         # For nD where n > 3, use interpolate
         target_shape = tuple(s // scale for s in img.shape)
         if mode == "area":
-            downsampled = F.interpolate(
-                img_expanded, size=target_shape, mode="nearest"
-            )
+            downsampled = F.interpolate(img_expanded, size=target_shape, mode="nearest")
         else:
             # Fallback for higher dimensions
-            downsampled = F.interpolate(
-                img_expanded, size=target_shape, mode="nearest"
-            )
+            downsampled = F.interpolate(img_expanded, size=target_shape, mode="nearest")
 
     # Remove batch and channel dimensions
     return downsampled[0, 0]
@@ -384,8 +390,10 @@ class MultiScaleDecomposer(nn.Module):
     """
 
     def __init__(
-        self, shape: Tuple[int, ...], scales: List[int] = [1, 2, 4, 8],
-        interpolation: str = 'cubic'
+        self,
+        shape: Tuple[int, ...],
+        scales: List[int] = [1, 2, 4, 8],
+        interpolation: str = "cubic",
     ) -> None:
         super().__init__()
         self.shape = tuple(shape)
@@ -566,8 +574,10 @@ class MultiScaleDecomposer(nn.Module):
 
             # Account for upsampling factor: when we upsample, the energy gets
             # multiplied by scale^ndim. So we need to divide by this factor.
-            upsampling_factor = scale ** self.ndim
-            energy_per_scale_downsampled = energy_per_scale_upsampled / upsampling_factor
+            upsampling_factor = scale**self.ndim
+            energy_per_scale_downsampled = (
+                energy_per_scale_upsampled / upsampling_factor
+            )
 
             # Normalize to have the correct energy at this resolution
             current_energy = torch.sum(img_scale)
@@ -625,8 +635,10 @@ class MultiScaleDecomposer(nn.Module):
 
             # Account for upsampling factor: when we upsample, the energy gets
             # multiplied by scale^ndim. So we need to divide by this factor.
-            upsampling_factor = scale ** self.ndim
-            energy_per_scale_downsampled = energy_per_scale_upsampled / upsampling_factor
+            upsampling_factor = scale**self.ndim
+            energy_per_scale_downsampled = (
+                energy_per_scale_upsampled / upsampling_factor
+            )
 
             # Normalize to have the correct energy at this resolution
             current_energy = torch.sum(img_scale)
@@ -876,7 +888,7 @@ def decomposition_loss(
         # Weight grows exponentially with fineness
         # k=0 is finest (scale 1), k=K-1 is coarsest (scale 8)
         # We want to penalize fine scales more, so invert the indexing
-        weight = alpha**(len(scales_list) - 1 - k)
+        weight = alpha ** (len(scales_list) - 1 - k)
         scale_energy = torch.sum(img_scale)
         energy_loss = energy_loss + weight * scale_energy
 
@@ -913,7 +925,7 @@ def decompose_image(
     asymmetric_penalty: Optional[float] = 10.0,
     init_method: str = "coarse",
     max_abs_error_threshold: Optional[float] = None,
-    interpolation: str = 'cubic',
+    interpolation: str = "cubic",
     napari_movie: bool = False,
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
@@ -1069,7 +1081,9 @@ def decompose_image(
             aprint(f"Input shape: {V.shape} ({V.ndim}D)")
             aprint(f"Scales: {scales}")
             aprint(f"Device: {device}")
-            asymmetric_str = f"{asymmetric_penalty}" if asymmetric_penalty is not None else "None"
+            asymmetric_str = (
+                f"{asymmetric_penalty}" if asymmetric_penalty is not None else "None"
+            )
             aprint(
                 f"Parameters: n_iters={n_iters}, lr={lr}, "
                 f"energy_weight={energy_weight}, alpha={alpha}, "
@@ -1081,9 +1095,13 @@ def decompose_image(
             if init_method == "finest":
                 aprint("Initializing model with all energy in finest scale...")
             elif init_method == "uniform":
-                aprint("Initializing model with energy split uniformly across scales...")
+                aprint(
+                    "Initializing model with energy split uniformly across scales..."
+                )
             elif init_method == "coarse":
-                aprint("Initializing model with energy weighted toward coarse scales...")
+                aprint(
+                    "Initializing model with energy weighted toward coarse scales..."
+                )
             elif init_method == "zero":
                 aprint("Initializing model with all scales at zero...")
             else:
@@ -1147,8 +1165,12 @@ def decompose_image(
 
             # Compute loss
             loss, stats = decomposition_loss(
-                model, V_tensor, energy_weight=energy_weight, alpha=alpha,
-                loss_type=loss_type, asymmetric_penalty=asymmetric_penalty
+                model,
+                V_tensor,
+                energy_weight=energy_weight,
+                alpha=alpha,
+                loss_type=loss_type,
+                asymmetric_penalty=asymmetric_penalty,
             )
 
             # Backward pass
@@ -1178,7 +1200,9 @@ def decompose_image(
                     # Save current best state (deep copy to avoid mutations)
                     best_state = {
                         "raw_images": [p.detach().clone() for p in model.raw_images],
-                        "scales_list": [s.detach().clone() for s in scales_list_current],
+                        "scales_list": [
+                            s.detach().clone() for s in scales_list_current
+                        ],
                         "reconstruction": reconstruction.detach().clone(),
                         "iteration": it,
                         "max_abs_error": current_max_abs_error,
@@ -1211,7 +1235,13 @@ def decompose_image(
                     # Memory-bounded recording: remove oldest frames if limit exceeded
                     if len(movie_frames["target"]) >= movie_max_frames:
                         # Remove oldest frame (FIFO)
-                        for key in ["target", "reconstruction", "residual", "scales", "iterations"]:
+                        for key in [
+                            "target",
+                            "reconstruction",
+                            "residual",
+                            "scales",
+                            "iterations",
+                        ]:
                             movie_frames[key].pop(0)
 
                     # Get current reconstruction and scale components
@@ -1223,7 +1253,9 @@ def decompose_image(
                     residual_frame = torch.abs(V_tensor - reconstruction).cpu().numpy()
 
                     # Store individual scale components (as list of numpy arrays)
-                    scales_frame = [s.detach().cpu().numpy() for s in scales_list_current]
+                    scales_frame = [
+                        s.detach().cpu().numpy() for s in scales_list_current
+                    ]
 
                     movie_frames["target"].append(target_frame)
                     movie_frames["reconstruction"].append(recon_frame)
@@ -1247,7 +1279,9 @@ def decompose_image(
 
         end_time = time.time()
         elapsed = end_time - start_time
-        actual_iters = it  # Actual number of iterations (may be less if converged early)
+        actual_iters = (
+            it  # Actual number of iterations (may be less if converged early)
+        )
 
         # Log convergence status
         if verbose:
@@ -1307,9 +1341,7 @@ def decompose_image(
                 aprint(f"Best max absolute error: {best_max_abs_error:.6e}")
                 aprint(f"Converged: {converged_early}")
                 aprint("Energy distribution (coarse → fine):")
-                for k, (scale, energy_pct) in enumerate(
-                    zip(scales, final_energy_dist)
-                ):
+                for k, (scale, energy_pct) in enumerate(zip(scales, final_energy_dist)):
                     shape_str = "x".join(str(s) for s in scales_np[k].shape)
                     aprint(f"  Scale {scale:2d}x: {energy_pct:6.1%}  [{shape_str}]")
 
@@ -1331,9 +1363,7 @@ def decompose_image(
 
 
 def upsample_for_visualization(
-    img: np.ndarray,
-    target_shape: Tuple[int, ...],
-    interpolation: str = 'cubic'
+    img: np.ndarray, target_shape: Tuple[int, ...], interpolation: str = "cubic"
 ) -> np.ndarray:
     """
     Upsample numpy array to target shape for visualization purposes.
@@ -1377,9 +1407,7 @@ def upsample_for_visualization(
 
 
 def show_optimization_movie(
-    movie_frames: Dict[str, Any],
-    shape: Tuple[int, ...],
-    interpolation: str = 'cubic'
+    movie_frames: Dict[str, Any], shape: Tuple[int, ...], interpolation: str = "cubic"
 ) -> None:
     """
     Display napari viewer with optimization movie showing target, reconstruction, residual, and all scales over time.
@@ -1427,7 +1455,9 @@ def show_optimization_movie(
                 scale_component = movie_frames["scales"][frame_idx][scale_idx]
                 # Upsample to target shape if needed using same interpolation as optimization
                 if scale_component.shape != shape:
-                    scale_upsampled = upsample_for_visualization(scale_component, shape, interpolation)
+                    scale_upsampled = upsample_for_visualization(
+                        scale_component, shape, interpolation
+                    )
                 else:
                     scale_upsampled = scale_component
                 scale_frames.append(scale_upsampled)
@@ -1435,7 +1465,7 @@ def show_optimization_movie(
             # Stack into (time, spatial_dims...)
             scale_stack = np.array(scale_frames)
             scales_stacks.append(scale_stack)
-            aprint(f"    Scale {scale_idx+1}/{n_scales} shape: {scale_stack.shape}")
+            aprint(f"    Scale {scale_idx + 1}/{n_scales} shape: {scale_stack.shape}")
 
         # Create napari viewer with time series
         viewer = napari.Viewer(
@@ -1464,7 +1494,7 @@ def show_optimization_movie(
         for scale_idx, scale_stack in enumerate(scales_stacks):
             viewer.add_image(
                 scale_stack,
-                name=f"Scale {scale_idx+1}",
+                name=f"Scale {scale_idx + 1}",
                 colormap="viridis",
                 contrast_limits=contrast_limits,
                 blending="additive",
@@ -1480,7 +1510,9 @@ def show_optimization_movie(
         )
 
         # Set up the time slider
-        viewer.dims.axis_labels = ["iteration"] + [f"dim_{i}" for i in range(len(shape))]
+        viewer.dims.axis_labels = ["iteration"] + [
+            f"dim_{i}" for i in range(len(shape))
+        ]
 
         # Add text overlay with movie information
         info_text = "Multi-Scale Decomposition Movie\n"
@@ -1499,7 +1531,9 @@ def show_optimization_movie(
         )
         aprint(f"   {n_scales} scale components included (all visible)")
         aprint("Use the time slider to scrub through optimization progress!")
-        aprint("Toggle layer visibility to compare target/reconstruction/scales/residual")
+        aprint(
+            "Toggle layer visibility to compare target/reconstruction/scales/residual"
+        )
         aprint("All scale components are visible - toggle them off to reduce clutter")
         aprint("Close napari window to continue...")
 

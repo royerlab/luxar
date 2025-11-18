@@ -163,9 +163,7 @@ def fit_multiscale_gaussian_splats(
     if base_init_sigma <= 0:
         raise ValueError(f"base_init_sigma must be positive, got {base_init_sigma}")
     if n_iters_decomp < 0:
-        raise ValueError(
-            f"n_iters_decomp must be non-negative, got {n_iters_decomp}"
-        )
+        raise ValueError(f"n_iters_decomp must be non-negative, got {n_iters_decomp}")
     if n_iters_per_scale < 0:
         raise ValueError(
             f"n_iters_per_scale must be non-negative, got {n_iters_per_scale}"
@@ -199,9 +197,7 @@ def fit_multiscale_gaussian_splats(
             f"Decomposition complete in {decomp_time:.2f}s, final error: {decomp_stats.get('final_error', 0):.6e}"
         )
         energy_dist = decomp_stats.get("energy_distribution", [])
-        aprint(
-            f"Energy distribution: {' → '.join([f'{e:.1%}' for e in energy_dist])}"
-        )
+        aprint(f"Energy distribution: {' → '.join([f'{e:.1%}' for e in energy_dist])}")
 
     # Step 2: Independent Fitting Per Scale
     all_params = []

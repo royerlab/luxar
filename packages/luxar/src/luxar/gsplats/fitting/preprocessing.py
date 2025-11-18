@@ -6,8 +6,6 @@ Handles normalization, candidate generation, and gradient dilution compensation.
 
 from __future__ import annotations
 
-from math import log1p
-
 import numpy as np
 import torch
 from arbol import aprint
@@ -121,41 +119,32 @@ def _generate_candidates(
     np.ndarray
         Generated seed centers (N, ndim)
     """
-    from luxar.gsplats.candidates import find_candidates_overcomplete_nd
+    from luxar.gsplats.candidates import (
+        combine_candidates,
+        find_candidates_from_decomposition,
+        find_candidates_multiscale_gaussian,
+    )
 
-    # Determine target number of seeds
-    if proportion is None:
-        # Default heuristic: volume-proportional (~0.1% of voxels)
-        peaks_per_scale = max(50, int(V.size * 0.001))
-    else:
-        # User-specified proportion
-        target_seeds = int(V.size * proportion)
-        # Distribute across scales (assuming 6 scales)
-        peaks_per_scale = max(10, target_seeds // 6)
+    # Generate candidates using both methods for comprehensive coverage
+    cand_decomp = find_candidates_from_decomposition(V)
+    cand_multiscale = find_candidates_multiscale_gaussian(V)
 
-    if verbose:
-        if proportion is None:
-            aprint(
-                f"Auto-generating seeds: {peaks_per_scale} peaks/scale for {V.size:,} pixels"
-            )
-        else:
-            aprint(
-                f"Generating seeds: {proportion * 100:.2f}% of {V.size:,} pixels = ~{target_seeds} seeds"
-            )
-
-    seed_centers = find_candidates_overcomplete_nd(
-        V,
-        scales=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0),  # Universal scale series
-        peaks_per_scale=peaks_per_scale,  # Volume-proportional
-        percentile_thresh=10.0,  # Inclusive threshold
-        min_dist=2.0,  # Standard spacing
-        add_intensity_grid=False,  # Clean peak-based detection
+    # Combine with decomposition candidates prioritized (coarse structure first)
+    seed_centers = combine_candidates(
+        cand_decomp,  # Decomposition first (global structure priority)
+        cand_multiscale,  # Then multiscale (local features)
     )
 
     if verbose:
         actual_proportion = len(seed_centers) / V.size * 100
         aprint(
-            f"Generated {len(seed_centers)} seed centers ({actual_proportion:.3f}% of voxels)"
+            f"Generated {len(seed_centers)} seed centers from combined methods "
+            f"({actual_proportion:.3f}% of voxels)"
+        )
+        aprint(
+            f"  Decomposition: {len(cand_decomp)}, "
+            f"Multiscale Gaussian: {len(cand_multiscale)}, "
+            f"Combined: {len(seed_centers)}"
         )
 
     return seed_centers

@@ -280,9 +280,7 @@ def test_movie_frames_excluded(
     assert stats["movie_frames"] is None
 
 
-def test_data_types(
-    basic_optimization_results, basic_config, basic_preprocessed_data
-):
+def test_data_types(basic_optimization_results, basic_config, basic_preprocessed_data):
     """Test that output arrays are float32."""
     params, amps, stats = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data

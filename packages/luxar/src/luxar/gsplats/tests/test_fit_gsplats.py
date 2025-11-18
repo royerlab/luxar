@@ -100,7 +100,9 @@ class TestFitGaussianSplatsBasic:
         # Check output shapes
         d = 2
         N = len(simple_candidates_2d)
-        expected_param_size = d + tril_size(d) + 1  # centers + packed Cholesky + sharpness
+        expected_param_size = (
+            d + tril_size(d) + 1
+        )  # centers + packed Cholesky + sharpness
 
         assert params_full.shape == (N, expected_param_size)
         assert amps.shape == (N,)

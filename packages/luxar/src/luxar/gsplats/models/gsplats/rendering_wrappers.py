@@ -100,9 +100,7 @@ def render_gaussians_numpy(
             (centers_torch.shape[0],), 2.0, dtype=torch.float32, device="cpu"
         )
     else:
-        sharpness_torch = torch.tensor(
-            sharpness, dtype=torch.float32, device="cpu"
-        )
+        sharpness_torch = torch.tensor(sharpness, dtype=torch.float32, device="cpu")
 
     # Render using the PyTorch function
     with torch.no_grad():
@@ -199,9 +197,7 @@ def render_gaussians_pytorch(
             (centers_torch.shape[0],), 2.0, dtype=torch.float32, device=device
         )
     else:
-        sharpness_torch = torch.tensor(
-            sharpness, dtype=torch.float32, device=device
-        )
+        sharpness_torch = torch.tensor(sharpness, dtype=torch.float32, device=device)
 
     # Render using the PyTorch function
     result = render_gaussians(

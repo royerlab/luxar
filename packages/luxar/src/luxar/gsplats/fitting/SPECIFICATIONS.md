@@ -288,9 +288,9 @@ else:
 
 **Seed Generation**:
 - **If seeds provided**: Validate shape and convert to numpy
-- **If seeds is None**: Auto-generate using `find_candidates_overcomplete_nd()`:
+- **If seeds is None**: Auto-generate using `find_candidates_multiscale_gaussian()`:
   ```python
-  seeds = find_candidates_overcomplete_nd(
+  seeds = find_candidates_multiscale_gaussian(
       V,
       spacing=None,
       scales=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),  # Universal scale series

@@ -42,7 +42,7 @@ Key requirements:
 
 ## 1. Candidate Generation (`candidates.py`)
 
-### Core Function: `find_candidates_overcomplete_nd(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_dist=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
+### Core Function: `find_candidates_multiscale_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
 
 Generate overcomplete candidate locations using three complementary methods:
 
@@ -83,8 +83,8 @@ Generate overcomplete candidate locations using three complementary methods:
 
 ### Helper Functions:
 - `_local_maxima(img, radius, thresh, top_k)`: L neighborhood maxima detection
-- `_dog_response(vol, sigma, k=1.6)`: Difference of Gaussians computation
-- `_dedupe(coords, min_dist)`: Spatial deduplication with KDTree/greedy fallback
+- `dog_response (removed)(vol, sigma, k=1.6)`: Difference of Gaussians computation
+- `_dedupe(coords, min_distance)`: Spatial deduplication with KDTree/greedy fallback
 
 ## 2. Gaussian Splat Model (`models/gsplats/gsplat_model.py`)
 
@@ -490,7 +490,7 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **Universal scale series**: `(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)` works optimally for all dimensions from fine details to large structures
 - **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales candidate count with image size (~0.2% of pixels)
 - **Inclusive detection**: `percentile_thresh=70` for comprehensive feature coverage
-- **Standard parameters**: `min_dist=2.0, add_intensity_grid=False` for robust detection
+- **Standard parameters**: `min_distance=2.0, add_intensity_grid=False` for robust detection
 - **Logging**: Auto-generation usage is logged for transparency
 
 **Auto-Convergence Threshold:**

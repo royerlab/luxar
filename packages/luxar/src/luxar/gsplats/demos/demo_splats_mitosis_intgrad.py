@@ -39,7 +39,6 @@ LR = 0.04  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
-TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 GRADIENT_ATTENUATION = 0.1  # Top attenuation factor (0.1 = 10% reduction at top)
 # ==========================
 
@@ -96,9 +95,7 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
 
         aprint(f"Gradient: top={GRADIENT_ATTENUATION:.2f}×, bottom=1.00×")
         aprint(f"Result intensity range: [{V.min():.4f}, {V.max():.4f}]")
-        aprint(
-            f"Top row intensity: [{V[0].min():.4f}, {V[0].max():.4f}]  (dim region)"
-        )
+        aprint(f"Top row intensity: [{V[0].min():.4f}, {V[0].max():.4f}]  (dim region)")
         aprint(
             f"Bottom row intensity: [{V[-1].min():.4f}, {V[-1].max():.4f}]  (bright region)"
         )
@@ -116,6 +113,7 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
     # === Visualize CLAHE Effect ===
     with asection("CLAHE Visualization - Initial Seed Detection"):
         import torch
+
         from luxar.gsplats.clahe import apply_clahe
 
         aprint("Computing CLAHE-equalized image for visualization...")
@@ -167,13 +165,13 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
 
         aprint("")
         aprint("📊 CLAHE Effect Analysis:")
-        aprint(f"  Top region (dim):")
+        aprint("  Top region (dim):")
         aprint(f"    Before: mean={V[0:32].mean():.4f}, std={V[0:32].std():.4f}")
-        aprint(f"    After:  mean={V_clahe[0:32].mean():.4f}, std={V_clahe[0:32].std():.4f}")
-        aprint(f"  Bottom region (bright):")
         aprint(
-            f"    Before: mean={V[-32:].mean():.4f}, std={V[-32:].std():.4f}"
+            f"    After:  mean={V_clahe[0:32].mean():.4f}, std={V_clahe[0:32].std():.4f}"
         )
+        aprint("  Bottom region (bright):")
+        aprint(f"    Before: mean={V[-32:].mean():.4f}, std={V[-32:].std():.4f}")
         aprint(
             f"    After:  mean={V_clahe[-32:].mean():.4f}, std={V_clahe[-32:].std():.4f}"
         )
@@ -198,7 +196,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_diag=0,
-            truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
             # Dynamic operations
@@ -254,9 +251,7 @@ for i, K in enumerate(keep_counts):
     idx = order[:K]
 
     # Render with auto-extraction of all parameters from params_full
-    Vk = render_gaussians_numpy(
-        V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
-    )
+    Vk = render_gaussians_numpy(V.shape, params_full[idx], amps[idx])
     stack_recon[i] = Vk
     stack_resid[i] = V - Vk
     rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -363,7 +358,9 @@ viewer.dims.events.current_step.connect(_on_step_change)
 # Console summary
 aprint("")
 aprint("🎯 Evaluation Guidance:")
-aprint("1. Check splat distribution - are there splats in BOTH top (dim) and bottom (bright) regions?")
+aprint(
+    "1. Check splat distribution - are there splats in BOTH top (dim) and bottom (bright) regions?"
+)
 aprint("2. Compare residual between top and bottom - is error balanced?")
 aprint("3. Toggle 'original (no gradient)' layer to compare structures")
 aprint("4. If splats are missing from top → CLAHE seeding may need tuning")
