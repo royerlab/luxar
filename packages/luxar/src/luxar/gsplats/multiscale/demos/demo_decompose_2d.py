@@ -19,7 +19,7 @@ try:
     DEPS_AVAILABLE = True
 except ImportError:
     DEPS_AVAILABLE = False
-    aprint("Warning: scikit-image not available")
+    aprint("Running all computations without napari visualization...")"Warning: scikit-image not available")
 
 from luxar.gsplats.multiscale import (
     decompose_image,
@@ -30,12 +30,9 @@ from luxar.gsplats.multiscale import (
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
-    aprint("🎨 2D Multi-Scale Decomposition Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
+    aprint("Running all computations without napari visualization...")"🎨 2D Multi-Scale Decomposition Demo (napari disabled)")
+    aprint("Running all computations without napari visualization...")
     )
-    sys.exit(0)
 
 # ======= Demo knobs =======
 SCALES = [1, 2, 4, 8, 16, 32]  # Scale factors to use
@@ -69,46 +66,46 @@ def create_test_image_2d(size: int = 256) -> np.ndarray:
 
 
 with asection("2D Multi-Scale Decomposition Demo"):
-    aprint("🎨 Interactive 2D image decomposition with scale separation")
+    aprint("Running all computations without napari visualization...")"🎨 Interactive 2D image decomposition with scale separation")
 
     with asection("Loading image data"):
         # Load or create test image
         if DEPS_AVAILABLE:
             try:
-                aprint("Loading astronaut image from scikit-image...")
+                aprint("Running all computations without napari visualization...")"Loading astronaut image from scikit-image...")
                 image = data.astronaut()
                 # Convert to grayscale
                 image = color.rgb2gray(image).astype(np.float32)
-                aprint(f"Loaded astronaut image: {image.shape}")
+                aprint("Running all computations without napari visualization...")f"Loaded astronaut image: {image.shape}")
             except Exception as e:
-                aprint(f"Could not load astronaut image: {e}")
-                aprint("Creating synthetic test image...")
+                aprint("Running all computations without napari visualization...")f"Could not load astronaut image: {e}")
+                aprint("Running all computations without napari visualization...")"Creating synthetic test image...")
                 image = create_test_image_2d(256)
         else:
-            aprint("Creating synthetic test image...")
+            aprint("Running all computations without napari visualization...")"Creating synthetic test image...")
             image = create_test_image_2d(256)
 
-        aprint(f"Image shape: {image.shape}")
-        aprint(f"Value range: [{image.min():.3f}, {image.max():.3f}]")
+        aprint("Running all computations without napari visualization...")f"Image shape: {image.shape}")
+        aprint("Running all computations without napari visualization...")f"Value range: [{image.min():.3f}, {image.max():.3f}]")
 
     with asection(f"Decomposing into {len(SCALES)} scales"):
-        aprint(f"Scales: {SCALES}")
-        aprint(f"Parameters: n_iters={N_ITERS}")
+        aprint("Running all computations without napari visualization...")f"Scales: {SCALES}")
+        aprint("Running all computations without napari visualization...")f"Parameters: n_iters={N_ITERS}")
 
         # Decompose with movie recording enabled
         scales_list, stats = decompose_image(
             image,
             scales=SCALES,
             n_iters=N_ITERS,
-            napari_movie=True,
+            napari_movie=(not NO_NAPARI),
             movie_every=1,  # Record every 10 iterations for reasonable frame count
             movie_max_frames=None,  # No limit on frames
             device=DEVICE,
             verbose=True,
         )
 
-        aprint("Decomposition complete!")
-        aprint(f"Final reconstruction error: {stats['final_error']:.6e}")
+        aprint("Running all computations without napari visualization...")"Decomposition complete!")
+        aprint("Running all computations without napari visualization...")f"Final reconstruction error: {stats['final_error']:.6e}")
 
     with asection("Preparing visualization data"):
         # Upsample all scales to original resolution for visualization
@@ -117,11 +114,11 @@ with asection("2D Multi-Scale Decomposition Demo"):
         interpolation_mode = stats.get(
             "interpolation", "cubic"
         )  # Get from stats or default to cubic
-        aprint(
+        aprint("Running all computations without napari visualization...")
             f"  Using '{interpolation_mode}' interpolation for upsampling (matches optimization)"
         )
         for i, (scale, img_scale) in enumerate(zip(SCALES, scales_list)):
-            aprint(
+            aprint("Running all computations without napari visualization...")
                 f"  Upsampling scale {scale}x from {img_scale.shape} to {image.shape}"
             )
             if img_scale.shape != image.shape:
@@ -139,24 +136,24 @@ with asection("2D Multi-Scale Decomposition Demo"):
         residual = image - reconstruction
         abs_residual = np.abs(residual)
 
-        aprint(f"Reconstruction MSE: {np.mean((reconstruction - image) ** 2):.6e}")
-        aprint(f"Max absolute residual: {abs_residual.max():.6e}")
+        aprint("Running all computations without napari visualization...")f"Reconstruction MSE: {np.mean((reconstruction - image) ** 2):.6e}")
+        aprint("Running all computations without napari visualization...")f"Max absolute residual: {abs_residual.max():.6e}")
 
     # Energy distribution analysis
     energy_dist = stats["energy_distribution"]
-    aprint("\n" + "=" * 60)
-    aprint("Energy Distribution (coarse → fine):")
-    aprint("=" * 60)
+    aprint("Running all computations without napari visualization...")"\n" + "=" * 60)
+    aprint("Running all computations without napari visualization...")"Energy Distribution (coarse → fine):")
+    aprint("Running all computations without napari visualization...")"=" * 60)
     for i, (scale, energy_frac) in enumerate(zip(SCALES, energy_dist)):
         energy_pct = energy_frac * 100
         bar_length = int(energy_pct / 2)  # Scale for visualization
         bar = "█" * bar_length
-        aprint(f"Scale {scale:2d}x: {energy_pct:5.1f}% {bar}")
-    aprint(f"Total: {sum(energy_dist) * 100:.1f}%")
-    aprint("=" * 60)
+        aprint("Running all computations without napari visualization...")f"Scale {scale:2d}x: {energy_pct:5.1f}% {bar}")
+    aprint("Running all computations without napari visualization...")f"Total: {sum(energy_dist) * 100:.1f}%")
+    aprint("Running all computations without napari visualization...")"=" * 60)
 
     # Napari visualization
-    aprint("\nLaunching napari viewer...")
+    aprint("Running all computations without napari visualization...")"\nLaunching napari viewer...")
     viewer = napari.Viewer()
 
     # Determine contrast limits from original image (shared across all scales)
@@ -223,33 +220,33 @@ with asection("2D Multi-Scale Decomposition Demo"):
     )
 
     # Console tips
-    aprint("\n📊 Visualization Tips:")
-    aprint("  • Opened in tile/grid mode for side-by-side comparison")
-    aprint("  • All scales use same contrast limits for consistent comparison")
-    aprint("  • Toggle layers on/off to compare scales")
-    aprint("  • 'original' = input image")
-    aprint("  • 'reconstruction' = sum of all scales")
-    aprint(f"  • 'scale_Nx' = individual scale components (N={SCALES})")
-    aprint("  • 'absolute_residual' = |original - reconstruction|")
-    aprint("  • Use additive blending to see scale contributions")
+    aprint("Running all computations without napari visualization...")"\n📊 Visualization Tips:")
+    aprint("Running all computations without napari visualization...")"  • Opened in tile/grid mode for side-by-side comparison")
+    aprint("Running all computations without napari visualization...")"  • All scales use same contrast limits for consistent comparison")
+    aprint("Running all computations without napari visualization...")"  • Toggle layers on/off to compare scales")
+    aprint("Running all computations without napari visualization...")"  • 'original' = input image")
+    aprint("Running all computations without napari visualization...")"  • 'reconstruction' = sum of all scales")
+    aprint("Running all computations without napari visualization...")f"  • 'scale_Nx' = individual scale components (N={SCALES})")
+    aprint("Running all computations without napari visualization...")"  • 'absolute_residual' = |original - reconstruction|")
+    aprint("Running all computations without napari visualization...")"  • Use additive blending to see scale contributions")
 
-    aprint("\n🎯 Energy Distribution Insights:")
+    aprint("Running all computations without napari visualization...")"\n🎯 Energy Distribution Insights:")
     coarse_energy = energy_dist[-1]
     fine_energy = energy_dist[0]
     if coarse_energy > 0.5:
-        aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
+        aprint("Running all computations without napari visualization...")f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
     elif fine_energy > 0.5:
-        aprint(
+        aprint("Running all computations without napari visualization...")
             f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"
         )
     else:
-        aprint("  → Energy well distributed across scales")
+        aprint("Running all computations without napari visualization...")"  → Energy well distributed across scales")
 
     napari.run()
 
     # Show optimization convergence movie
     if stats["movie_frames"] is not None:
-        aprint("\n🎬 Showing optimization convergence movie...")
+        aprint("Running all computations without napari visualization...")"\n🎬 Showing optimization convergence movie...")
         # Pass interpolation mode from stats to ensure movie matches optimization
         interpolation_mode = stats.get("interpolation", "cubic")
         show_optimization_movie(

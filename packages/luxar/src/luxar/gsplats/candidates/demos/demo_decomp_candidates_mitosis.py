@@ -24,12 +24,9 @@ from luxar.gsplats.candidates import (
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
-    aprint("🔬 Decomposition Candidates Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
+    aprint("Running all computations without napari visualization...")"🔬 Decomposition Candidates Demo (napari disabled)")
+    aprint("Running all computations without napari visualization...")
     )
-    sys.exit(0)
 
 
 # Setup Arbol
@@ -37,7 +34,7 @@ Arbol.max_depth = 4
 
 
 with asection("Candidate Generation Methods Comparison"):
-    aprint("🔬 Comparing candidate generation methods on human mitosis histology data")
+    aprint("Running all computations without napari visualization...")"🔬 Comparing candidate generation methods on human mitosis histology data")
 
     with asection("Loading and preprocessing data"):
         # Load human_mitosis and prepare grayscale image
@@ -49,8 +46,8 @@ with asection("Candidate Generation Methods Comparison"):
         # Crop to smaller region for faster demo
         V = V[100:356, 100:356]  # 256x256
 
-        aprint(f"Preprocessed image: {V.shape}")
-        aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
+        aprint("Running all computations without napari visualization...")f"Preprocessed image: {V.shape}")
+        aprint("Running all computations without napari visualization...")f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
     # ======================================================================
     # CANDIDATE GENERATION
@@ -60,12 +57,12 @@ with asection("Candidate Generation Methods Comparison"):
         # Method 1: Multiscale Gaussian
         with asection("Multiscale Gaussian method"):
             candidates_multiscale = find_candidates_multiscale_gaussian(V)
-            aprint(f"Generated {len(candidates_multiscale)} candidates")
+            aprint("Running all computations without napari visualization...")f"Generated {len(candidates_multiscale)} candidates")
 
         # Method 2: Decomposition-based
         with asection("Decomposition method"):
             candidates_decomp = find_candidates_from_decomposition(V, verbose=True)
-            aprint(f"Generated {len(candidates_decomp)} candidates")
+            aprint("Running all computations without napari visualization...")f"Generated {len(candidates_decomp)} candidates")
 
         # Method 3: Combined (as used in fit_gaussian_splats)
         with asection("Combined method"):
@@ -73,8 +70,8 @@ with asection("Candidate Generation Methods Comparison"):
                 candidates_decomp,  # Decomposition first (global structure)
                 candidates_multiscale,  # Then multiscale (local features)
             )
-            aprint(f"Generated {len(candidates_combined)} candidates")
-            aprint(
+            aprint("Running all computations without napari visualization...")f"Generated {len(candidates_combined)} candidates")
+            aprint("Running all computations without napari visualization...")
                 f"  ({len(candidates_decomp)} decomp + "
                 f"{len(candidates_multiscale)} multiscale → "
                 f"{len(candidates_combined)} after dedup)"
@@ -125,19 +122,19 @@ with asection("Candidate Generation Methods Comparison"):
         )
 
         # Summary
-        aprint("\n" + "=" * 70)
-        aprint("CANDIDATE GENERATION SUMMARY")
-        aprint("=" * 70)
-        aprint(
+        aprint("Running all computations without napari visualization...")"\n" + "=" * 70)
+        aprint("Running all computations without napari visualization...")"CANDIDATE GENERATION SUMMARY")
+        aprint("Running all computations without napari visualization...")"=" * 70)
+        aprint("Running all computations without napari visualization...")
             f"Multiscale Gaussian: {len(candidates_multiscale):4d} candidates (magenta)"
         )
-        aprint(f"Decomposition:       {len(candidates_decomp):4d} candidates (cyan)")
-        aprint(
+        aprint("Running all computations without napari visualization...")f"Decomposition:       {len(candidates_decomp):4d} candidates (cyan)")
+        aprint("Running all computations without napari visualization...")
             f"Combined:            {len(candidates_combined):4d} candidates (lime) ← Used in fitting"
         )
-        aprint("=" * 70)
-        aprint("\n✅ Napari viewer launched!")
-        aprint("   • Lime points show combined method (used in fit_gaussian_splats)")
-        aprint("   • Toggle layers to compare individual methods")
+        aprint("Running all computations without napari visualization...")"=" * 70)
+        aprint("Running all computations without napari visualization...")"\n✅ Napari viewer launched!")
+        aprint("Running all computations without napari visualization...")"   • Lime points show combined method (used in fit_gaussian_splats)")
+        aprint("Running all computations without napari visualization...")"   • Toggle layers to compare individual methods")
 
         napari.run()

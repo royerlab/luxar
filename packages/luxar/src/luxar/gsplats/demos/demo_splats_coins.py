@@ -22,13 +22,9 @@ from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
-if NO_NAPARI and len(sys.argv) > 1:
-    aprint("🪙 Coins Gaussian Splatting Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
-    )
-    sys.exit(0)
+if NO_NAPARI:
+    aprint("🔬 Demo (napari disabled)")
+    aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
@@ -100,7 +96,7 @@ with asection("Coins Gaussian Splatting Demo"):
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,
             max_abs_error=0.1,  # Same as mitosis/astronaut
-            napari_movie=True,
+            napari_movie=(not NO_NAPARI),
             movie_every=1,  # Same as mitosis/astronaut
             movie_max_frames=None,  # Same as mitosis/astronaut
         )

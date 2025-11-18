@@ -17,13 +17,9 @@ from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
-if NO_NAPARI and len(sys.argv) > 1:
-    aprint("🎯 2D Gaussian Splatting Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
-    )
-    sys.exit(0)
+if NO_NAPARI:
+    aprint("🔬 Demo (napari disabled)")
+    aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"  # L1 loss for robust features
@@ -87,7 +83,7 @@ params_full, amps, stats = fit_gaussian_splats(
     # Dynamic operations
     enable_dynamic_ops=USE_DYNAMIC_OPS,
     dynamic_config=dynamic_config,
-    napari_movie=True,
+    napari_movie=(not NO_NAPARI),
     movie_every=1,
 )
 

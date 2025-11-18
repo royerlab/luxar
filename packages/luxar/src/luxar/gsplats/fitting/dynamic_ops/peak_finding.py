@@ -197,6 +197,15 @@ def _find_residual_peaks_tiled(
             global_coords = tuple(local_coords[i] + tile_origin[i] for i in range(d))
             all_peaks.append(global_coords)
 
+    # Sort peaks by residual magnitude (descending) to match global mode
+    # This ensures convergence guard checks the actual strongest peak
+    if len(all_peaks) > 0:
+        peak_residuals = [residual_abs[peak].item() for peak in all_peaks]
+        sorted_indices = sorted(
+            range(len(all_peaks)), key=lambda i: peak_residuals[i], reverse=True
+        )
+        all_peaks = [all_peaks[i] for i in sorted_indices]
+
     return all_peaks
 
 

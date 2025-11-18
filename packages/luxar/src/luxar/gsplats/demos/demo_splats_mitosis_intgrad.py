@@ -25,13 +25,9 @@ from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
-if NO_NAPARI and len(sys.argv) > 1:
+if NO_NAPARI:
     aprint("🔬 Mitosis Intensity Gradient Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
-    )
-    sys.exit(0)
+    aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"
@@ -136,33 +132,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
         aprint(f"Original gradient range: [{V.min():.4f}, {V.max():.4f}]")
         aprint(f"CLAHE-equalized range: [{V_clahe.min():.4f}, {V_clahe.max():.4f}]")
 
-        # Show CLAHE before/after comparison
-        viewer_clahe = napari.Viewer(title="CLAHE Visualization - Before/After")
-
-        viewer_clahe.add_image(
-            V,
-            name="Before CLAHE (gradient input)",
-            colormap="magma",
-            contrast_limits=[0, float(V.max())],
-        )
-
-        viewer_clahe.add_image(
-            V_clahe,
-            name="After CLAHE (used for sampling)",
-            colormap="viridis",
-            contrast_limits=[V_clahe.min(), V_clahe.max()],
-        )
-
-        # Add difference visualization
-        clahe_diff = V_clahe - V
-        viewer_clahe.add_image(
-            clahe_diff,
-            name="CLAHE - Original (difference)",
-            colormap="bwr",  # Blue-white-red diverging
-            contrast_limits=[-V.max() * 0.5, V.max() * 0.5],
-            visible=False,
-        )
-
         aprint("")
         aprint("📊 CLAHE Effect Analysis:")
         aprint("  Top region (dim):")
@@ -176,15 +145,41 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             f"    After:  mean={V_clahe[-32:].mean():.4f}, std={V_clahe[-32:].std():.4f}"
         )
         aprint("")
-        aprint("🔍 What to look for:")
-        aprint("  • CLAHE should enhance contrast in dim (top) region")
-        aprint("  • Top and bottom regions should have more balanced intensities")
-        aprint("  • 'After CLAHE' image is used for initial peak detection")
-        aprint("  • This allows dim structures to be detected from the start")
-        aprint("")
-        aprint("Press any key to close this window and continue with fitting...")
+        aprint("🔍 CLAHE Effect:")
+        aprint("  • CLAHE enhances contrast in dim (top) region")
+        aprint("  • Top and bottom regions have more balanced intensities")
+        aprint("  • Used for initial peak detection to find dim structures")
 
-        napari.run()
+        if not NO_NAPARI:
+            # Show CLAHE before/after comparison
+            viewer_clahe = napari.Viewer(title="CLAHE Visualization - Before/After")
+
+            viewer_clahe.add_image(
+                V,
+                name="Before CLAHE (gradient input)",
+                colormap="magma",
+                contrast_limits=[0, float(V.max())],
+            )
+
+            viewer_clahe.add_image(
+                V_clahe,
+                name="After CLAHE (used for sampling)",
+                colormap="viridis",
+                contrast_limits=[V_clahe.min(), V_clahe.max()],
+            )
+
+            # Add difference visualization
+            clahe_diff = V_clahe - V
+            viewer_clahe.add_image(
+                clahe_diff,
+                name="CLAHE - Original (difference)",
+                colormap="bwr",  # Blue-white-red diverging
+                contrast_limits=[-V.max() * 0.5, V.max() * 0.5],
+                visible=False,
+            )
+
+            aprint("Press any key to close this window and continue with fitting...")
+            napari.run()
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
@@ -200,9 +195,10 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             verbose=True,
             # Dynamic operations
             enable_dynamic_ops=True,
+            dynamic_ops_verbose=True,
             dynamic_config=dynamic_config,
             max_abs_error=0.1,
-            napari_movie=True,
+            napari_movie=(not NO_NAPARI),
             movie_every=1,
             movie_max_frames=None,
         )
@@ -268,102 +264,13 @@ for i, K in enumerate(keep_counts):
     polygons_frames.append(polys)
     centers_frames.append(Ck)
 
-# Napari viewer with "compression" slider
-viewer = napari.Viewer(title="Mitosis Intensity Gradient - CLAHE Seeding Test")
-
-# Add original image (no gradient)
-viewer.add_image(
-    V_base,
-    name="original (no gradient)",
-    colormap="magma",
-    contrast_limits=[0, float(V_base.max())],
-    visible=False,  # Start hidden
-)
-
-# Add gradient image (input to fitting)
-viewer.add_image(
-    V,
-    name="gradient input (top dim, bottom bright)",
-    colormap="magma",
-    contrast_limits=[0, float(V_base.max())],  # Use original range for fair comparison
-)
-
-viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, oriented)",
-    colormap="magma",
-    contrast_limits=[0, float(V_base.max())],
-)
-viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="inferno",
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
-)
-
-# Shapes & points that update with slider
-shapes = viewer.add_shapes(
-    name="oriented 2σ ellipses (kept)",
-    shape_type="polygon",
-    edge_color="cyan",
-    edge_width=1,
-    face_color=[0, 0, 0, 0],
-)
-pts = viewer.add_points(
-    np.zeros((0, 2)),
-    name="centers (kept)",
-    size=3,
-    border_color="cyan",
-    face_color="transparent",
-)
-
-# Axis labels (if supported)
-try:
-    viewer.dims.axis_labels = ["compression", "y", "x"]
-except Exception:
-    pass
-
-
-def _set_overlay_text(t_index: int):
-    K = int(keep_counts[t_index])
-    bits_model = int(model_bits_frames[t_index])
-    bpp = float(bpp_frames[t_index])
-    pct_bits = float(bit_compression_pct[t_index])
-    rel = float(rel_err_frames[t_index])
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"🔬 Intensity Gradient Demo (CLAHE Seeding) | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  Model bpp: {bpp:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
-        f"|  rel L2 err: {rel:.4f}"
-    )
-
-
-def _update_layers_for_t(t_index: int):
-    shapes.data = polygons_frames[t_index]
-    pts.data = centers_frames[t_index]
-    _set_overlay_text(t_index)
-
-
-# Initialize and wire slider
-_update_layers_for_t(0)
-
-
-def _on_step_change(event=None):
-    t = viewer.dims.current_step[0]
-    _update_layers_for_t(int(t))
-
-
-viewer.dims.events.current_step.connect(_on_step_change)
-
 # Console summary
 aprint("")
-aprint("🎯 Evaluation Guidance:")
+aprint("🎯 Evaluation Results:")
 aprint(
-    "1. Check splat distribution - are there splats in BOTH top (dim) and bottom (bright) regions?"
+    "1. Splat distribution - check if there are splats in BOTH top (dim) and bottom (bright) regions"
 )
-aprint("2. Compare residual between top and bottom - is error balanced?")
-aprint("3. Toggle 'original (no gradient)' layer to compare structures")
-aprint("4. If splats are missing from top → CLAHE seeding may need tuning")
+aprint("2. Residual balance - error should be balanced between top and bottom")
 aprint("")
 aprint(f"Raw image bits (float32): {IMAGE_BITS:,}  |  raw bpp = 32.000")
 for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
@@ -375,10 +282,95 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
             f"| relL2={rel_err_frames[idx]:.4f}"
         )
 
-aprint("")
-aprint("🎛️  Controls:")
-aprint("   • Use the top slider (axis 0) to explore compression levels")
-aprint("   • Toggle layers to compare original, gradient input, and reconstruction")
-aprint("   • Cyan points/ellipses show active splats at current compression level")
+if not NO_NAPARI:
+    # Napari viewer with "compression" slider
+    viewer = napari.Viewer(title="Mitosis Intensity Gradient - CLAHE Seeding Test")
 
-napari.run()
+    # Add original image (no gradient)
+    viewer.add_image(
+        V_base,
+        name="original (no gradient)",
+        colormap="magma",
+        contrast_limits=[0, float(V_base.max())],
+        visible=False,  # Start hidden
+    )
+
+    # Add gradient image (input to fitting)
+    viewer.add_image(
+        V,
+        name="gradient input (top dim, bottom bright)",
+        colormap="magma",
+        contrast_limits=[0, float(V_base.max())],  # Use original range for fair comparison
+    )
+
+    viewer.add_image(
+        stack_recon,
+        name="reconstruction (compression, oriented)",
+        colormap="magma",
+        contrast_limits=[0, float(V_base.max())],
+    )
+    viewer.add_image(
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="inferno",
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+    )
+
+    # Shapes & points that update with slider
+    shapes = viewer.add_shapes(
+        name="oriented 2σ ellipses (kept)",
+        shape_type="polygon",
+        edge_color="cyan",
+        edge_width=1,
+        face_color=[0, 0, 0, 0],
+    )
+    pts = viewer.add_points(
+        np.zeros((0, 2)),
+        name="centers (kept)",
+        size=3,
+        border_color="cyan",
+        face_color="transparent",
+    )
+
+    # Axis labels (if supported)
+    try:
+        viewer.dims.axis_labels = ["compression", "y", "x"]
+    except Exception:
+        pass
+
+    def _set_overlay_text(t_index: int):
+        K = int(keep_counts[t_index])
+        bits_model = int(model_bits_frames[t_index])
+        bpp = float(bpp_frames[t_index])
+        pct_bits = float(bit_compression_pct[t_index])
+        rel = float(rel_err_frames[t_index])
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"🔬 Intensity Gradient Demo (CLAHE Seeding) | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+            f"|  Model bpp: {bpp:.3f} (raw=32.000)  |  Bit compression: {pct_bits:.1f}%  "
+            f"|  rel L2 err: {rel:.4f}"
+        )
+
+    def _update_layers_for_t(t_index: int):
+        shapes.data = polygons_frames[t_index]
+        pts.data = centers_frames[t_index]
+        _set_overlay_text(t_index)
+
+    # Initialize and wire slider
+    _update_layers_for_t(0)
+
+    def _on_step_change(event=None):
+        t = viewer.dims.current_step[0]
+        _update_layers_for_t(int(t))
+
+    viewer.dims.events.current_step.connect(_on_step_change)
+
+    aprint("")
+    aprint("🎛️  Controls:")
+    aprint("   • Use the top slider (axis 0) to explore compression levels")
+    aprint("   • Toggle layers to compare original, gradient input, and reconstruction")
+    aprint("   • Cyan points/ellipses show active splats at current compression level")
+
+    napari.run()
+else:
+    aprint("\n✅ Demo completed successfully (napari visualization disabled)")

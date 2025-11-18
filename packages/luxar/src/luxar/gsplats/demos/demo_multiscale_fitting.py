@@ -21,13 +21,9 @@ from luxar.gsplats.multiscale import show_optimization_movie
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
-if NO_NAPARI and len(sys.argv) > 1:
-    aprint("🎯 Multi-Scale Gaussian Splatting Demo (napari disabled)")
-    aprint("Note: This demo is designed for interactive napari visualization.")
-    aprint(
-        "✅ Demo structure verified - would run with full napari functionality when enabled"
-    )
-    sys.exit(0)
+if NO_NAPARI:
+    aprint("🔬 Demo (napari disabled)")
+    aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 SCALES = [1, 2, 4, 8]  # Scale factors to use
@@ -138,7 +134,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             max_abs_error=0.1,
             device=DEVICE,
             verbose=True,
-            napari_movie=True,
+            napari_movie=(not NO_NAPARI),
             movie_every=50,  # Record every 50 iterations to reduce memory
             visualize_per_scale=True,  # Enable per-scale visualization
         )
