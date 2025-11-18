@@ -23,17 +23,17 @@ class DynamicOpsConfig:
         self.step_every: int = 50  # Run operations every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 10  # Number of peaks (GLOBAL MODE ONLY - ignored when tiled seeding enabled)
+        self.k_max_residuals: int = 10  # Expected number of seeds (controls both modes)
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
-        # Tile-based seeding for spatial fairness
-        self.enable_tiled_seeding: bool = (
-            True  # Enabled by default. When True, k_max_residuals is IGNORED
-        )
+        # Tile-based seeding for spatial fairness (enabled by default)
+        # In tiled mode, k_per_tile is auto-calculated as k_max_residuals / num_tiles
+        # If k_per_tile >= 1: deterministic (keep floor(k_per_tile) per tile)
+        # If k_per_tile < 1: probabilistic (keep each peak with probability k_per_tile)
+        self.enable_tiled_seeding: bool = True  # Use tiled seeding for spatial fairness
         self.num_tiles_per_dim: int | None = (
             None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
         )
-        self.k_per_tile: int = 1  # Peaks per tile. Total peaks ≈ num_tiles × k_per_tile
 
         # Step 2: Adaptive Operations
         self.min_contribution_threshold: float = (
@@ -58,4 +58,6 @@ class DynamicOpsConfig:
         )
 
         # Seeding parameters
-        self.init_sigma_vox: float = 0.5  # Initial sigma for new splats (single-voxel scale)
+        self.init_sigma_vox: float = (
+            0.5  # Initial sigma for new splats (single-voxel scale)
+        )

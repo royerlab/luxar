@@ -74,7 +74,6 @@ def apply_dynamic_operations(
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
             num_tiles_per_dim=cfg.num_tiles_per_dim,
-            k_per_tile=cfg.k_per_tile,
         )
 
         if verbose and len(peak_locations) > 0:

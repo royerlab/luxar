@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import random
 from typing import List, Tuple
 
 import torch
@@ -15,30 +16,34 @@ def _find_residual_peaks(
     nms_radius_vox: float,
     enable_tiled: bool = False,
     num_tiles_per_dim: int = 8,
-    k_per_tile: int = 1,
 ) -> List[Tuple[int, ...]]:
     """
     Find k strongest residual peaks with spatial exclusion (non-maximum suppression).
 
     Supports two modes:
-    - Global mode (enable_tiled=False): Find top k peaks globally
-    - Tiled mode (enable_tiled=True): Divide into num_tiles_per_dim tiles per dimension,
-      find k_per_tile peaks in each tile for fair spatial coverage
+    - Global mode (enable_tiled=False): Find top k_max_residuals peaks globally
+    - Tiled mode (enable_tiled=True): Divide into tiles, use probabilistic/deterministic
+      selection to maintain expected count of k_max_residuals peaks
 
     Args:
         residual: Residual image (target - prediction)
-        k_max_residuals: Number of peaks to find (global mode only)
+        k_max_residuals: Expected number of peaks to return (controls both modes)
         nms_radius_vox: Minimum distance between peaks
         enable_tiled: If True, use tile-based seeding for spatial fairness
         num_tiles_per_dim: Number of tiles per dimension (e.g., 8 → 8×8=64 tiles for 2D, 8³=512 for 3D)
-        k_per_tile: Number of peaks to find per tile (tiled mode only)
 
     Returns:
         List of peak coordinates as tuples
+
+    Notes:
+        In tiled mode, k_per_tile = k_max_residuals / num_tiles is auto-calculated:
+        - If k_per_tile >= 1: Deterministically keep floor(k_per_tile) per tile
+        - If k_per_tile < 1: Probabilistically keep each with probability k_per_tile
+        This ensures expected count ≈ k_max_residuals regardless of mode.
     """
     if enable_tiled:
         return _find_residual_peaks_tiled(
-            residual, num_tiles_per_dim, k_per_tile, nms_radius_vox
+            residual, num_tiles_per_dim, k_max_residuals, nms_radius_vox
         )
     else:
         return _find_residual_peaks_global(residual, k_max_residuals, nms_radius_vox)
@@ -108,15 +113,14 @@ def _find_residual_peaks_global(
 def _find_residual_peaks_tiled(
     residual: torch.Tensor,
     num_tiles_per_dim: int | None,
-    k_per_tile: int,
+    k_max_residuals: int,
     nms_radius_vox: float,
 ) -> List[Tuple[int, ...]]:
     """
     Find residual peaks using tile-based approach for spatial fairness.
 
-    Divides each dimension into num_tiles_per_dim equal tiles and finds k_per_tile
-    peaks within each tile independently. This ensures all regions get attention
-    regardless of brightness or residual magnitude.
+    Divides image into tiles and uses probabilistic/deterministic selection to
+    maintain expected count of k_max_residuals peaks while ensuring spatial fairness.
 
     Args:
         residual: Residual image (target - prediction)
@@ -125,18 +129,19 @@ def _find_residual_peaks_tiled(
             3D: 6 (6×6×6 = 216 tiles)
             4D: 4 (4⁴ = 256 tiles)
             5D+: 2 (2^d tiles)
-        k_per_tile: Number of peaks to find per tile
+        k_max_residuals: Expected total number of peaks to return
         nms_radius_vox: Minimum distance between peaks (applied within each tile)
 
     Returns:
         List of peak coordinates as tuples (in global image coordinates)
 
     Notes:
-        - Each tile is processed independently (no inter-tile competition)
-        - Bright regions cannot dominate dim regions
-        - Tiles with residuals below convergence threshold contribute 0 peaks
-        - Total peaks ≈ k_per_tile × num_active_tiles
-        - Coordinates are returned in global image space
+        - k_per_tile = k_max_residuals / total_tiles is auto-calculated
+        - If k_per_tile >= 1: Keep floor(k_per_tile) peaks per tile (deterministic)
+        - If k_per_tile < 1: Keep each peak with probability k_per_tile (random)
+        - Expected total ≈ k_max_residuals regardless of tiling
+        - Randomness ensures fairness (no bias toward bright regions)
+        - Each tile processed independently (spatial fairness guaranteed)
     """
     residual_abs = torch.abs(residual)
     shape = residual.shape
@@ -152,6 +157,21 @@ def _find_residual_peaks_tiled(
             num_tiles_per_dim = 4  # 4⁴ = 256 tiles
         else:
             num_tiles_per_dim = 2  # 2^d tiles
+
+    # Calculate k_per_tile from k_max_residuals and total tiles
+    total_tiles = num_tiles_per_dim**d
+    k_per_tile_float = k_max_residuals / total_tiles
+
+    # Determine selection mode
+    use_probabilistic = k_per_tile_float < 1.0
+    if use_probabilistic:
+        # Probabilistic: each peak kept with probability k_per_tile
+        keep_probability = k_per_tile_float
+        k_deterministic = None
+    else:
+        # Deterministic: keep floor(k_per_tile) peaks per tile
+        k_deterministic = int(k_per_tile_float)
+        keep_probability = None
 
     all_peaks = []
 
@@ -190,7 +210,19 @@ def _find_residual_peaks_tiled(
             continue
 
         # Find peaks within this tile using NMS
-        tile_peaks = _find_peaks_in_tile(tile, k_per_tile, nms_radius_vox)
+        if use_probabilistic:
+            # Find best peak in tile, keep it with probability keep_probability
+            tile_peaks = _find_peaks_in_tile(
+                tile, k_max=1, nms_radius_vox=nms_radius_vox
+            )
+            # Probabilistic selection: keep peak with probability keep_probability
+            if tile_peaks and random.random() >= keep_probability:
+                tile_peaks = []  # Reject this tile's peak (failed probability check)
+        else:
+            # Deterministic: keep top k_deterministic peaks per tile
+            tile_peaks = _find_peaks_in_tile(
+                tile, k_max=k_deterministic, nms_radius_vox=nms_radius_vox
+            )
 
         # Convert local tile coordinates to global image coordinates
         for local_coords in tile_peaks:
@@ -210,14 +242,14 @@ def _find_residual_peaks_tiled(
 
 
 def _find_peaks_in_tile(
-    tile: torch.Tensor, k_max: int, nms_radius_vox: float
+    tile: torch.Tensor, k_max: int | None, nms_radius_vox: float
 ) -> List[Tuple[int, ...]]:
     """
     Find up to k_max peaks within a single tile using NMS.
 
     Args:
         tile: Tile region (absolute residual values)
-        k_max: Maximum number of peaks to find
+        k_max: Maximum number of peaks to find. If None, return all peaks.
         nms_radius_vox: NMS radius for spatial exclusion
 
     Returns:
@@ -270,8 +302,11 @@ def _find_peaks_in_tile(
     peak_values = tile[tuple(peak_indices.T)]
     sorted_indices = torch.argsort(peak_values, descending=True)
 
-    # Take top k
-    top_k = min(k_max, len(sorted_indices))
-    selected_peaks = peak_indices[sorted_indices[:top_k]]
+    # Take top k (or all if k_max is None)
+    if k_max is None:
+        selected_peaks = peak_indices[sorted_indices]
+    else:
+        top_k = min(k_max, len(sorted_indices))
+        selected_peaks = peak_indices[sorted_indices[:top_k]]
 
     return [tuple(peak.tolist()) for peak in selected_peaks]

@@ -151,9 +151,10 @@ with asection("2D Multi-Scale Decomposition Demo"):
     aprint(f"Total: {sum(energy_dist) * 100:.1f}%")
     aprint("=" * 60)
 
-    # Napari visualization
-    aprint("\nLaunching napari viewer...")
-    viewer = napari.Viewer()
+    if not NO_NAPARI:
+        # Napari visualization
+        aprint("\nLaunching napari viewer...")
+        viewer = napari.Viewer()
 
     # Determine contrast limits from original image (shared across all scales)
     contrast_limits = [0, float(image.max())]
