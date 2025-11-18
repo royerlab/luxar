@@ -31,7 +31,7 @@ class TestDynamicOpsConfig:
         assert cfg.boost_influence_threshold == 0.05
         assert cfg.pruning_percentile == 5.0
         assert cfg.min_splats_to_keep == 10
-        assert cfg.init_sigma_vox == 1.5
+        assert cfg.init_sigma_vox == 0.5
 
     def test_config_modification(self) -> None:
         """Test that config values can be modified."""
@@ -120,7 +120,7 @@ class TestSimplifiedSeeding:
         L = torch.eye(d, device=center.device) * cfg.init_sigma_vox
 
         assert L.shape == (2, 2)
-        assert torch.allclose(L, torch.eye(2) * 1.5)  # Should be identity scaled
+        assert torch.allclose(L, torch.eye(2) * 0.5)  # Should be identity scaled
 
 
 class TestGaussianSplatModel:

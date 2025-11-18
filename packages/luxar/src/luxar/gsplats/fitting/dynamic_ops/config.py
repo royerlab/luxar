@@ -58,4 +58,4 @@ class DynamicOpsConfig:
         )
 
         # Seeding parameters
-        self.init_sigma_vox: float = 1.5  # Initial covariance for new splats
+        self.init_sigma_vox: float = 0.5  # Initial sigma for new splats (single-voxel scale)

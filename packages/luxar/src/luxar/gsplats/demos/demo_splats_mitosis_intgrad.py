@@ -99,7 +99,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
     # Configure dynamic operations (residual-based seeding only)
     # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
-    dynamic_config.k_max_residuals = 10  # Number of residual peaks per cycle
 
     aprint("Dynamic operations enabled (residual-based seeding):")
     aprint(f"  step_every={dynamic_config.step_every}")
@@ -186,7 +185,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
         params_full, amps, stats = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
-            init_sigma_vox=0.5,
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
@@ -195,9 +193,8 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             verbose=True,
             # Dynamic operations
             enable_dynamic_ops=True,
-            dynamic_ops_verbose=True,
+            dynamic_ops_verbose=False,
             dynamic_config=dynamic_config,
-            max_abs_error=0.1,
             napari_movie=(not NO_NAPARI),
             movie_every=1,
             movie_max_frames=None,

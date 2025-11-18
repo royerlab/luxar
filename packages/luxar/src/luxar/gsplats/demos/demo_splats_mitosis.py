@@ -84,7 +84,6 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         params_full, amps, stats = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
-            init_sigma_vox=0.5,
             n_iters=N_ITERS,
             loss_type=LOSS_TYPE,
             lr=LR,
@@ -95,7 +94,6 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             # Dynamic operations
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,
-            max_abs_error=0.1,
             napari_movie=(not NO_NAPARI),
             movie_every=1,
             movie_max_frames=None,
