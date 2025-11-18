@@ -23,17 +23,17 @@ class DynamicOpsConfig:
         self.step_every: int = 50  # Run operations every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 10  # Number of residual peaks to analyze per cycle
+        self.k_max_residuals: int = 10  # Number of peaks (GLOBAL MODE ONLY - ignored when tiled seeding enabled)
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
         # Tile-based seeding for spatial fairness
         self.enable_tiled_seeding: bool = (
-            True  # Use tile-based seeding for fair coverage
+            True  # Enabled by default. When True, k_max_residuals is IGNORED
         )
         self.num_tiles_per_dim: int | None = (
             None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
         )
-        self.k_per_tile: int = 1  # Number of peaks to find per tile
+        self.k_per_tile: int = 1  # Peaks per tile. Total peaks ≈ num_tiles × k_per_tile
 
         # Step 2: Adaptive Operations
         self.min_contribution_threshold: float = (

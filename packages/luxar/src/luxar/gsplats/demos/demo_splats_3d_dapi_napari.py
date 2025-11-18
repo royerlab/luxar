@@ -99,12 +99,12 @@ def ellipsoid_wireframe_from_L(
 
 
 with asection("3D DAPI Gaussian Splatting Demo"):
-    aprint("Running all computations without napari visualization...")"🧬 Real microscopy data: DAPI-stained nuclei from IDR")
-    aprint("Running all computations without napari visualization...")f"📦 Data source: {ZARR_URL}")
+    aprint("🧬 Real microscopy data: DAPI-stained nuclei from IDR")
+    aprint(f"📦 Data source: {ZARR_URL}")
 
     with asection("Loading DAPI data from zarr"):
-        aprint("Running all computations without napari visualization...")"Loading data from remote zarr store...")
-        aprint("Running all computations without napari visualization...")"Note: Remote data loading may take a moment...")
+        aprint("Loading data from remote zarr store...")
+        aprint("Note: Remote data loading may take a moment...")
         try:
             # Open remote zarr store via fsspec
             import fsspec
@@ -114,17 +114,17 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             # Try opening as a group first
             try:
                 store = zarr.open_group(mapper, mode="r")
-                aprint("Running all computations without napari visualization...")"Zarr group opened successfully")
+                aprint("Zarr group opened successfully")
             except (zarr.errors.PathNotFoundError, zarr.errors.GroupNotFoundError):
                 # Try as direct array
                 store = zarr.open_array(mapper, mode="r")
-                aprint("Running all computations without napari visualization...")"Zarr array opened successfully")
+                aprint("Zarr array opened successfully")
 
             # OME-ZARR format: access the '0' array (highest resolution)
             data = store["0"]
             full_shape = data.shape
-            aprint("Running all computations without napari visualization...")f"OME-ZARR data shape: {full_shape}")
-            aprint("Running all computations without napari visualization...")f"Data type: {data.dtype}")
+            aprint(f"OME-ZARR data shape: {full_shape}")
+            aprint(f"Data type: {data.dtype}")
 
             # OME-ZARR typically uses (T, C, Z, Y, X) format
             if len(full_shape) == 5:
@@ -138,7 +138,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     aprint("Running all computations without napari visualization...")
                         f"⚠ Warning: Requested channel {DAPI_CHANNEL} but only {n_channels} available"
                     )
-                    aprint("Running all computations without napari visualization...")"Using channel 0 instead")
+                    aprint("Using channel 0 instead")
                     DAPI_CHANNEL = 0
 
                 aprint("Running all computations without napari visualization...")
@@ -146,7 +146,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 )
 
                 # Load full volume for this channel and time point
-                aprint("Running all computations without napari visualization...")f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
+                aprint(f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
                 V = data[TIME_POINT, DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
 
@@ -162,7 +162,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)  # order=1 for linear interpolation
-                aprint("Running all computations without napari visualization...")f"Downscaled to: {V.shape}")
+                aprint(f"Downscaled to: {V.shape}")
 
             elif len(full_shape) == 4:
                 # (C, Z, Y, X) format
@@ -172,13 +172,13 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 )
 
                 if DAPI_CHANNEL >= n_channels:
-                    aprint("Running all computations without napari visualization...")f"⚠ Warning: Using channel 0 instead of {DAPI_CHANNEL}")
+                    aprint(f"⚠ Warning: Using channel 0 instead of {DAPI_CHANNEL}")
                     DAPI_CHANNEL = 0
 
-                aprint("Running all computations without napari visualization...")f"Extracting channel={DAPI_CHANNEL} (DAPI)...")
+                aprint(f"Extracting channel={DAPI_CHANNEL} (DAPI)...")
 
                 # Load full volume for this channel
-                aprint("Running all computations without napari visualization...")f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
+                aprint(f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
                 V = data[DAPI_CHANNEL, :, :, :]
                 V = np.array(V, dtype=np.float32)
 
@@ -194,15 +194,15 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)
-                aprint("Running all computations without napari visualization...")f"Downscaled to: {V.shape}")
+                aprint(f"Downscaled to: {V.shape}")
 
             elif len(full_shape) == 3:
                 # Single channel, just ZYX
                 z_size, y_size, x_size = full_shape
-                aprint("Running all computations without napari visualization...")f"Detected 3D: Z={z_size}, Y={y_size}, X={x_size}")
+                aprint(f"Detected 3D: Z={z_size}, Y={y_size}, X={x_size}")
 
                 # Load full volume
-                aprint("Running all computations without napari visualization...")f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
+                aprint(f"Loading full volume: Z={z_size}, Y={y_size}, X={x_size}")
                 V = data[:, :, :]
                 V = np.array(V, dtype=np.float32)
 
@@ -218,7 +218,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)
-                aprint("Running all computations without napari visualization...")f"Downscaled to: {V.shape}")
+                aprint(f"Downscaled to: {V.shape}")
             else:
                 raise ValueError(
                     f"Unexpected data shape: {full_shape}. Expected 3D, 4D, or 5D (OME-ZARR)."
@@ -229,15 +229,15 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             if V_max > V_min:
                 V = ((V - V_min) / (V_max - V_min)) * 100.0
             else:
-                aprint("Running all computations without napari visualization...")"⚠ Warning: Uniform data, using constant value")
+                aprint("⚠ Warning: Uniform data, using constant value")
                 V = np.ones_like(V) * 50.0
 
-            aprint("Running all computations without napari visualization...")f"Loaded DAPI volume: {V.shape} = {V.size:,} voxels")
-            aprint("Running all computations without napari visualization...")f"Intensity range: [{V.min():.2f}, {V.max():.2f}]")
+            aprint(f"Loaded DAPI volume: {V.shape} = {V.size:,} voxels")
+            aprint(f"Intensity range: [{V.min():.2f}, {V.max():.2f}]")
 
         except Exception as e:
-            aprint("Running all computations without napari visualization...")f"❌ Error loading zarr data: {e}")
-            aprint("Running all computations without napari visualization...")"Falling back to synthetic phantom data for demo purposes")
+            aprint(f"❌ Error loading zarr data: {e}")
+            aprint("Falling back to synthetic phantom data for demo purposes")
 
             # Create synthetic data as fallback
             shape_3d = (TARGET_SIZE, TARGET_SIZE, TARGET_SIZE)
@@ -256,17 +256,17 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                 V += blob
 
             V = np.clip(V, 0, 100).astype(np.float32)
-            aprint("Running all computations without napari visualization...")f"Created synthetic DAPI-like volume: {V.shape}")
+            aprint(f"Created synthetic DAPI-like volume: {V.shape}")
 
     # Configure dynamic operations (residual-based seeding only)
     # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
     dynamic_config.k_max_residuals = 10  # Number of residual peaks per cycle
 
-    aprint("Running all computations without napari visualization...")"Dynamic operations enabled (residual-based seeding):")
-    aprint("Running all computations without napari visualization...")f"  step_every={dynamic_config.step_every}")
-    aprint("Running all computations without napari visualization...")f"  k_max_residuals={dynamic_config.k_max_residuals}")
-    aprint("Running all computations without napari visualization...")f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
+    aprint("Dynamic operations enabled (residual-based seeding):")
+    aprint(f"  step_every={dynamic_config.step_every}")
+    aprint(f"  k_max_residuals={dynamic_config.k_max_residuals}")
+    aprint(f"  nms_radius_vox={dynamic_config.nms_radius_vox}")
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
@@ -290,7 +290,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             movie_every=1,
         )
 
-        aprint("Running all computations without napari visualization...")f"🎉 Fitted {len(amps)} splats successfully")
+        aprint(f"🎉 Fitted {len(amps)} splats successfully")
 
         if len(amps) == 0:
             raise RuntimeError(
@@ -312,7 +312,7 @@ diag_prod = np.prod(
 energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
-aprint("Running all computations without napari visualization...")f"📊 Ranking {len(amps)} splats by L2 energy contribution")
+aprint(f"📊 Ranking {len(amps)} splats by L2 energy contribution")
 
 # ----- Precompute reconstructions/residuals + wireframes per frame -----
 N = len(amps)
@@ -340,7 +340,7 @@ bit_compression_pct = np.zeros(len(keep_counts), dtype=np.float64)
 wireframes_frames = []
 centers_frames = []
 
-aprint("Running all computations without napari visualization...")"🎬 Precomputing compression frames...")
+aprint("🎬 Precomputing compression frames...")
 with asection("Computing 3D reconstruction quality at different compression levels"):
     for i, K in enumerate(keep_counts):
         idx = order[:K]
@@ -375,7 +375,7 @@ with asection("Computing 3D reconstruction quality at different compression leve
             )
 
 # ----- Napari viewer with "compression" slider -----
-aprint("Running all computations without napari visualization...")"🔬 Launching interactive 3D napari viewer...")
+aprint("🔬 Launching interactive 3D napari viewer...")
 viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)
 
 # Add original DAPI volume
@@ -479,8 +479,8 @@ viewer.camera.angles = (45, 45, 45)
 viewer.camera.zoom = 2.0
 
 # Console summary
-aprint("Running all computations without napari visualization...")"📈 3D Compression Analysis Results:")
-aprint("Running all computations without napari visualization...")f"Raw volume bits (float32): {IMAGE_BITS:,}  |  raw bpv = 32.000")
+aprint("📈 3D Compression Analysis Results:")
+aprint(f"Raw volume bits (float32): {IMAGE_BITS:,}  |  raw bpv = 32.000")
 for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
     idx = i * 5
     if idx < len(keep_counts):
@@ -490,26 +490,26 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
             f"| relL2={rel_err_frames[idx]:.4f}"
         )
 
-aprint("Running all computations without napari visualization...")"")
-aprint("Running all computations without napari visualization...")"🎛️  3D Controls:")
-aprint("Running all computations without napari visualization...")"   • Use the top slider (axis 0) to explore compression levels")
-aprint("Running all computations without napari visualization...")"   • Rotate view with mouse drag")
-aprint("Running all computations without napari visualization...")"   • Zoom with mouse wheel")
-aprint("Running all computations without napari visualization...")"   • Toggle layers on/off to compare input vs reconstruction")
-aprint("Running all computations without napari visualization...")"   • Yellow points = 3D ellipsoid wireframes")
-aprint("Running all computations without napari visualization...")"   • Lime points = splat centers")
-aprint("Running all computations without napari visualization...")"")
-aprint("Running all computations without napari visualization...")"🔍 What to notice:")
-aprint("Running all computations without napari visualization...")"   • How 3D nuclear structures are represented by oriented ellipsoids")
-aprint("Running all computations without napari visualization...")"   • Efficiency of 3D Gaussians for volumetric microscopy data")
-aprint("Running all computations without napari visualization...")"   • Trade-off between storage size and reconstruction fidelity")
-aprint("Running all computations without napari visualization...")"   • Alignment of ellipsoids with nuclear morphology")
+aprint("")
+aprint("🎛️  3D Controls:")
+aprint("   • Use the top slider (axis 0) to explore compression levels")
+aprint("   • Rotate view with mouse drag")
+aprint("   • Zoom with mouse wheel")
+aprint("   • Toggle layers on/off to compare input vs reconstruction")
+aprint("   • Yellow points = 3D ellipsoid wireframes")
+aprint("   • Lime points = splat centers")
+aprint("")
+aprint("🔍 What to notice:")
+aprint("   • How 3D nuclear structures are represented by oriented ellipsoids")
+aprint("   • Efficiency of 3D Gaussians for volumetric microscopy data")
+aprint("   • Trade-off between storage size and reconstruction fidelity")
+aprint("   • Alignment of ellipsoids with nuclear morphology")
 
 # Best compression and final error
 best_compression = bit_compression_pct.max()
 final_error = rel_err_frames[-1]
-aprint("Running all computations without napari visualization...")f"  • Best compression: {best_compression:.1f}% bit reduction")
-aprint("Running all computations without napari visualization...")f"  • Final relative error: {final_error:.4f}")
-aprint("Running all computations without napari visualization...")"  • 3D splats efficiently capture volumetric DAPI structures!")
+aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
+aprint(f"  • Final relative error: {final_error:.4f}")
+aprint("  • 3D splats efficiently capture volumetric DAPI structures!")
 
 napari.run()
