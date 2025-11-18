@@ -16,7 +16,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
-    from luxar.gsplats.dynamic_ops import DynamicOpsConfig
+    from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.fitting.validation import prepare_fit_config
 
 

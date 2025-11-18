@@ -7,12 +7,12 @@ import pytest
 import torch
 
 from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
-from luxar.gsplats.dynamic_ops import (
+from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fitting.dynamic_ops import (
     DynamicOpsConfig,
     _find_residual_peaks,
     apply_dynamic_operations,
 )
-from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
 
@@ -110,7 +110,7 @@ class TestSimplifiedSeeding:
 
     def test_isotropic_shape_generation(self) -> None:
         """Test isotropic covariance matrix generation."""
-        from luxar.gsplats.dynamic_ops import DynamicOpsConfig
+        from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
         cfg = DynamicOpsConfig()
         center = torch.tensor([10.0, 10.0])
@@ -289,7 +289,7 @@ class TestDynamicOperationsIntegration:
 
     def test_principled_pruning_functionality(self) -> None:
         """Test the new principled pruning algorithm."""
-        from luxar.gsplats.dynamic_ops import (
+        from luxar.gsplats.fitting.dynamic_ops import (
             _calculate_splat_importance,
             _select_pruning_candidates,
         )
@@ -368,7 +368,10 @@ class TestDynamicOperationsIntegration:
             sigma_min_diag=[0.1, 0.1],
         )
 
-        from luxar.gsplats.dynamic_ops import DynamicOpsConfig, apply_dynamic_operations
+        from luxar.gsplats.fitting.dynamic_ops import (
+            DynamicOpsConfig,
+            apply_dynamic_operations,
+        )
         from luxar.gsplats.optim import PerSplatAdam, PerSplatReduceLROnPlateau
 
         optimizer = PerSplatAdam(model, lr=0.1)
@@ -442,7 +445,7 @@ class TestDynamicOperationsIntegration:
 
     def test_adaptive_learning_rate_boosting(self) -> None:
         """Test adaptive learning rate boosting for problematic regions."""
-        from luxar.gsplats.dynamic_ops import (
+        from luxar.gsplats.fitting.dynamic_ops import (
             DynamicOpsConfig,
             _boost_splat_learning_rate,
         )

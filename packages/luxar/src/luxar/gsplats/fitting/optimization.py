@@ -13,13 +13,13 @@ from arbol import aprint
 if TYPE_CHECKING:
     from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
-from luxar.gsplats.dynamic_ops import apply_dynamic_operations
 from luxar.gsplats.fitting.config import (
     FitConfig,
     ModelComponents,
     OptimizationResults,
     PreprocessedData,
 )
+from luxar.gsplats.fitting.dynamic_ops import apply_dynamic_operations
 
 
 def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:

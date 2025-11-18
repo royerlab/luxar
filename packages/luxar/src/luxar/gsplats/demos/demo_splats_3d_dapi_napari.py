@@ -16,8 +16,8 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
-from luxar.gsplats.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
