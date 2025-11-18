@@ -189,6 +189,7 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             loss_type=LOSS_TYPE,
             lr=LR,
             l1_diag=0,
+            max_abs_error=0.05,
             device=DEVICE,
             verbose=True,
             # Dynamic operations

@@ -129,19 +129,19 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             # OME-ZARR typically uses (T, C, Z, Y, X) format
             if len(full_shape) == 5:
                 n_time, n_channels, z_size, y_size, x_size = full_shape
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Detected OME-ZARR 5D: T={n_time}, C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
                 )
 
                 # Extract DAPI channel
                 if DAPI_CHANNEL >= n_channels:
-                    aprint("Running all computations without napari visualization...")
+                    aprint(
                         f"⚠ Warning: Requested channel {DAPI_CHANNEL} but only {n_channels} available"
                     )
                     aprint("Using channel 0 instead")
                     DAPI_CHANNEL = 0
 
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Extracting time={TIME_POINT}, channel={DAPI_CHANNEL} (DAPI)..."
                 )
 
@@ -158,7 +158,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)  # order=1 for linear interpolation
@@ -167,7 +167,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             elif len(full_shape) == 4:
                 # (C, Z, Y, X) format
                 n_channels, z_size, y_size, x_size = full_shape
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Detected 4D: C={n_channels}, Z={z_size}, Y={y_size}, X={x_size}"
                 )
 
@@ -190,7 +190,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)
@@ -214,7 +214,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
                     TARGET_SIZE / y_size,
                     TARGET_SIZE / x_size,
                 ]
-                aprint("Running all computations without napari visualization...")
+                aprint(
                     f"Downscaling with zoom factors: Z={zoom_factors[0]:.3f}, Y={zoom_factors[1]:.3f}, X={zoom_factors[2]:.3f}"
                 )
                 V = zoom(V, zoom_factors, order=1)
@@ -370,113 +370,9 @@ with asection("Computing 3D reconstruction quality at different compression leve
         centers_frames.append(Ck)
 
         if (i + 1) % 5 == 0:
-            aprint("Running all computations without napari visualization...")
+            aprint(
                 f"Frame {i + 1:02d}/{len(keep_counts)}: {K} splats, {bit_compression_pct[i]:.1f}% compression"
             )
-
-# ----- Napari viewer with "compression" slider -----
-aprint("🔬 Launching interactive 3D napari viewer...")
-viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)
-
-# Add original DAPI volume
-viewer.add_image(
-    V,
-    name="DAPI (input)",
-    colormap="gray",
-    contrast_limits=[0, float(V.max())],
-    rendering="mip",  # Maximum intensity projection
-)
-
-# Add reconstruction stack
-viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, oriented 3D)",
-    colormap="cyan",
-    contrast_limits=[0, float(V.max())],
-    rendering="mip",
-    opacity=0.8,
-)
-
-# Add residual stack
-viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="red",
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
-    rendering="mip",
-    opacity=0.5,
-)
-
-
-# Dynamic wireframe and points layers
-def _update_3d_layers(t_index: int):
-    """Update wireframes and centers for current compression level."""
-    # Clear existing wireframe and point layers
-    for layer in list(viewer.layers):
-        if "wireframe" in layer.name.lower() or "centers" in layer.name.lower():
-            viewer.layers.remove(layer)
-
-    # Get current frame data
-    wireframes = wireframes_frames[t_index]
-    centers = centers_frames[t_index]
-
-    # Add wireframe ellipsoids (one shape layer per splat for better control)
-    all_wireframe_pts = []
-    for wf in wireframes:
-        all_wireframe_pts.append(wf)
-
-    if all_wireframe_pts:
-        # Combine all wireframes into one layer
-        combined_wireframes = np.vstack(all_wireframe_pts)
-        viewer.add_points(
-            combined_wireframes,
-            name="3D ellipsoid wireframes",
-            size=0.5,
-            face_color="yellow",
-            border_color="yellow",
-            opacity=0.3,
-        )
-
-    # Add splat centers
-    viewer.add_points(
-        centers,
-        name="splat centers (kept)",
-        size=2.0,
-        face_color="lime",
-        border_color="lime",
-        opacity=0.8,
-    )
-
-    # Update text overlay
-    K = int(keep_counts[t_index])
-    bits_model = int(model_bits_frames[t_index])
-    bpp = float(bpp_frames[t_index])
-    pct_bits = float(bit_compression_pct[t_index])
-    rel = float(rel_err_frames[t_index])
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"🧬 3D DAPI Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  bpv: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
-        f"|  rel L2 error: {rel:.4f}"
-    )
-
-
-# Initialize and wire slider
-_update_3d_layers(0)
-
-
-def _on_step_change(event=None):
-    # Get the first dimension step (compression axis)
-    if hasattr(viewer.dims, "current_step"):
-        t = viewer.dims.current_step[0]
-        _update_3d_layers(int(t))
-
-
-viewer.dims.events.current_step.connect(_on_step_change)
-
-# Set 3D rendering defaults
-viewer.camera.angles = (45, 45, 45)
-viewer.camera.zoom = 2.0
 
 # Console summary
 aprint("📈 3D Compression Analysis Results:")
@@ -484,32 +380,139 @@ aprint(f"Raw volume bits (float32): {IMAGE_BITS:,}  |  raw bpv = 32.000")
 for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame
     idx = i * 5
     if idx < len(keep_counts):
-        aprint("Running all computations without napari visualization...")
+        aprint(
             f"Frame {idx:02d} | keep {K:4d} | model_bits={int(model_bits_frames[idx]):>10,d} "
             f"| compression={bit_compression_pct[idx]:6.1f}% | bpv={bpp_frames[idx]:6.3f} "
             f"| relL2={rel_err_frames[idx]:.4f}"
         )
 
-aprint("")
-aprint("🎛️  3D Controls:")
-aprint("   • Use the top slider (axis 0) to explore compression levels")
-aprint("   • Rotate view with mouse drag")
-aprint("   • Zoom with mouse wheel")
-aprint("   • Toggle layers on/off to compare input vs reconstruction")
-aprint("   • Yellow points = 3D ellipsoid wireframes")
-aprint("   • Lime points = splat centers")
-aprint("")
-aprint("🔍 What to notice:")
-aprint("   • How 3D nuclear structures are represented by oriented ellipsoids")
-aprint("   • Efficiency of 3D Gaussians for volumetric microscopy data")
-aprint("   • Trade-off between storage size and reconstruction fidelity")
-aprint("   • Alignment of ellipsoids with nuclear morphology")
+if not NO_NAPARI:
+    # ----- Napari viewer with "compression" slider -----
+    aprint("🔬 Launching interactive 3D napari viewer...")
+    viewer = napari.Viewer(title="3D DAPI Gaussian Splatting Demo", ndisplay=3)
 
-# Best compression and final error
-best_compression = bit_compression_pct.max()
-final_error = rel_err_frames[-1]
-aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
-aprint(f"  • Final relative error: {final_error:.4f}")
-aprint("  • 3D splats efficiently capture volumetric DAPI structures!")
+    # Add original DAPI volume
+    viewer.add_image(
+        V,
+        name="DAPI (input)",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
+        rendering="mip",  # Maximum intensity projection
+    )
 
-napari.run()
+    # Add reconstruction stack
+    viewer.add_image(
+        stack_recon,
+        name="reconstruction (compression, oriented 3D)",
+        colormap="cyan",
+        contrast_limits=[0, float(V.max())],
+        rendering="mip",
+        opacity=0.8,
+    )
+
+    # Add residual stack
+    viewer.add_image(
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="red",
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+        rendering="mip",
+        opacity=0.5,
+    )
+
+
+    # Dynamic wireframe and points layers
+    def _update_3d_layers(t_index: int):
+        """Update wireframes and centers for current compression level."""
+        # Clear existing wireframe and point layers
+        for layer in list(viewer.layers):
+            if "wireframe" in layer.name.lower() or "centers" in layer.name.lower():
+                viewer.layers.remove(layer)
+
+        # Get current frame data
+        wireframes = wireframes_frames[t_index]
+        centers = centers_frames[t_index]
+
+        # Add wireframe ellipsoids (one shape layer per splat for better control)
+        all_wireframe_pts = []
+        for wf in wireframes:
+            all_wireframe_pts.append(wf)
+
+        if all_wireframe_pts:
+            # Combine all wireframes into one layer
+            combined_wireframes = np.vstack(all_wireframe_pts)
+            viewer.add_points(
+                combined_wireframes,
+                name="3D ellipsoid wireframes",
+                size=0.5,
+                face_color="yellow",
+                border_color="yellow",
+                opacity=0.3,
+            )
+
+        # Add splat centers
+        viewer.add_points(
+            centers,
+            name="splat centers (kept)",
+            size=2.0,
+            face_color="lime",
+            border_color="lime",
+            opacity=0.8,
+        )
+
+        # Update text overlay
+        K = int(keep_counts[t_index])
+        bits_model = int(model_bits_frames[t_index])
+        bpp = float(bpp_frames[t_index])
+        pct_bits = float(bit_compression_pct[t_index])
+        rel = float(rel_err_frames[t_index])
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"🧬 3D DAPI Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+            f"|  bpv: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
+            f"|  rel L2 error: {rel:.4f}"
+        )
+
+
+    # Initialize and wire slider
+    _update_3d_layers(0)
+
+
+    def _on_step_change(event=None):
+        # Get the first dimension step (compression axis)
+        if hasattr(viewer.dims, "current_step"):
+            t = viewer.dims.current_step[0]
+            _update_3d_layers(int(t))
+
+
+    viewer.dims.events.current_step.connect(_on_step_change)
+
+    # Set 3D rendering defaults
+    viewer.camera.angles = (45, 45, 45)
+    viewer.camera.zoom = 2.0
+
+    aprint("")
+    aprint("🎛️  3D Controls:")
+    aprint("   • Use the top slider (axis 0) to explore compression levels")
+    aprint("   • Rotate view with mouse drag")
+    aprint("   • Zoom with mouse wheel")
+    aprint("   • Toggle layers on/off to compare input vs reconstruction")
+    aprint("   • Yellow points = 3D ellipsoid wireframes")
+    aprint("   • Lime points = splat centers")
+    aprint("")
+    aprint("🔍 What to notice:")
+    aprint("   • How 3D nuclear structures are represented by oriented ellipsoids")
+    aprint("   • Efficiency of 3D Gaussians for volumetric microscopy data")
+    aprint("   • Trade-off between storage size and reconstruction fidelity")
+    aprint("   • Alignment of ellipsoids with nuclear morphology")
+
+    # Best compression and final error
+    best_compression = bit_compression_pct.max()
+    final_error = rel_err_frames[-1]
+    aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
+    aprint(f"  • Final relative error: {final_error:.4f}")
+    aprint("  • 3D splats efficiently capture volumetric DAPI structures!")
+
+    napari.run()
+else:
+    aprint("\n✅ Demo completed successfully (napari visualization disabled)")

@@ -176,87 +176,6 @@ with asection("Computing reconstruction quality at different compression levels"
                 f"Frame {i + 1:02d}/{len(keep_counts)}: {K} splats, {bit_compression_pct[i]:.1f}% compression"
             )
 
-# 4) Napari viewer with "compression" slider
-aprint("🔬 Launching interactive napari viewer...")
-viewer = napari.Viewer(title="Coins Gaussian Splatting Demo")
-
-# Add original image
-viewer.add_image(
-    V,
-    name="coins (input)",
-    colormap="gray",
-    contrast_limits=[0, float(V.max())],
-)
-
-# Add reconstruction stack
-viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, oriented)",
-    colormap="gray",
-    contrast_limits=[0, float(V.max())],
-)
-
-# Add residual stack with copper colormap for metallic theme
-viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="copper",
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
-)
-
-# Shapes & points that update with slider - use gold colors for coin theme
-shapes = viewer.add_shapes(
-    name="oriented 2σ ellipses (kept)",
-    shape_type="polygon",
-    edge_color="gold",
-    edge_width=1.3,
-    face_color=[0, 0, 0, 0],
-)
-pts = viewer.add_points(
-    np.zeros((0, 2)),
-    name="centers (kept)",
-    size=2.8,
-    border_color="gold",
-    face_color="transparent",
-)
-
-# Axis labels (if supported)
-try:
-    viewer.dims.axis_labels = ["compression", "y", "x"]
-except Exception:
-    pass
-
-
-def _set_overlay_text(t_index: int):
-    K = int(keep_counts[t_index])
-    bits_model = int(model_bits_frames[t_index])
-    bpp = float(bpp_frames[t_index])
-    pct_bits = float(bit_compression_pct[t_index])
-    rel = float(rel_err_frames[t_index])
-    viewer.text_overlay.visible = True
-    viewer.text_overlay.text = (
-        f"🪙 Coins Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
-        f"|  bpp: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
-        f"|  rel L2 error: {rel:.4f}"
-    )
-
-
-def _update_layers_for_t(t_index: int):
-    shapes.data = polygons_frames[t_index]
-    pts.data = centers_frames[t_index]
-    _set_overlay_text(t_index)
-
-
-# Initialize and wire slider
-_update_layers_for_t(0)
-
-
-def _on_step_change(event=None):
-    t = viewer.dims.current_step[0]
-    _update_layers_for_t(int(t))
-
-
-viewer.dims.events.current_step.connect(_on_step_change)
 
 # Console summary
 aprint("📈 Compression Analysis Results:")
@@ -270,18 +189,105 @@ for i, K in enumerate(keep_counts[::5]):  # Show every 5th frame to avoid spam
             f"| relL2={rel_err_frames[idx]:.4f}"
         )
 
-aprint("")
-aprint("🎛️  Controls:")
-aprint("   • Use the top slider (axis 0) to explore compression levels")
-aprint("   • Move from keeping all splats toward keeping just the most important ones")
-aprint("   • Watch how coin details and metallic textures degrade with fewer splats")
-aprint("   • Observe the gold ellipse overlays showing splat orientations and sizes")
-aprint("")
-aprint("🔍 What to notice:")
-aprint("   • How circular coin shapes are preserved at different compression levels")
-aprint("   • Metallic surface gradients and how they're reconstructed")
-aprint("   • The efficiency of oriented ellipses in capturing coin boundaries")
-aprint("   • Impact of l1_diag regularization on splat shapes for metallic textures")
-aprint("   • Trade-off between model complexity and reconstruction fidelity")
 
-napari.run()
+if not NO_NAPARI:
+    # 4) Napari viewer with "compression" slider
+    aprint("🔬 Launching interactive napari viewer...")
+    viewer = napari.Viewer(title="Coins Gaussian Splatting Demo")
+
+    # Add original image
+    viewer.add_image(
+        V,
+        name="coins (input)",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
+    )
+
+    # Add reconstruction stack
+    viewer.add_image(
+        stack_recon,
+        name="reconstruction (compression, oriented)",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
+    )
+
+    # Add residual stack with copper colormap for metallic theme
+    viewer.add_image(
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="copper",
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+    )
+
+    # Shapes & points that update with slider - use gold colors for coin theme
+    shapes = viewer.add_shapes(
+        name="oriented 2σ ellipses (kept)",
+        shape_type="polygon",
+        edge_color="gold",
+        edge_width=1.3,
+        face_color=[0, 0, 0, 0],
+    )
+    pts = viewer.add_points(
+        np.zeros((0, 2)),
+        name="centers (kept)",
+        size=2.8,
+        border_color="gold",
+        face_color="transparent",
+    )
+
+    # Axis labels (if supported)
+    try:
+        viewer.dims.axis_labels = ["compression", "y", "x"]
+    except Exception:
+        pass
+
+
+    def _set_overlay_text(t_index: int):
+        K = int(keep_counts[t_index])
+        bits_model = int(model_bits_frames[t_index])
+        bpp = float(bpp_frames[t_index])
+        pct_bits = float(bit_compression_pct[t_index])
+        rel = float(rel_err_frames[t_index])
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = (
+            f"🪙 Coins Demo | Kept splats: {K}/{N}  |  Model bits: {bits_model:,}  "
+            f"|  bpp: {bpp:.3f} (raw=32.0)  |  Compression: {pct_bits:.1f}%  "
+            f"|  rel L2 error: {rel:.4f}"
+        )
+
+
+    def _update_layers_for_t(t_index: int):
+        shapes.data = polygons_frames[t_index]
+        pts.data = centers_frames[t_index]
+        _set_overlay_text(t_index)
+
+
+    # Initialize and wire slider
+    _update_layers_for_t(0)
+
+
+    def _on_step_change(event=None):
+        t = viewer.dims.current_step[0]
+        _update_layers_for_t(int(t))
+
+
+    viewer.dims.events.current_step.connect(_on_step_change)
+
+    aprint("")
+    aprint("🎛️  Controls:")
+    aprint("   • Use the top slider (axis 0) to explore compression levels")
+    aprint("   • Move from keeping all splats toward keeping just the most important ones")
+    aprint("   • Watch how coin details and metallic textures degrade with fewer splats")
+    aprint("   • Observe the gold ellipse overlays showing splat orientations and sizes")
+    aprint("")
+    aprint("🔍 What to notice:")
+    aprint("   • How circular coin shapes are preserved at different compression levels")
+    aprint("   • Metallic surface gradients and how they're reconstructed")
+    aprint("   • The efficiency of oriented ellipses in capturing coin boundaries")
+    aprint("   • Impact of l1_diag regularization on splat shapes for metallic textures")
+    aprint("   • Trade-off between model complexity and reconstruction fidelity")
+
+    napari.run()
+else:
+    aprint("\n✅ Demo completed successfully (napari visualization disabled)")
+
