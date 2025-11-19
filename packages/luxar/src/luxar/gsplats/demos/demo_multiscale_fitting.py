@@ -293,42 +293,42 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
 
         # Add original image
         viewer.add_image(
-        V,
-        name="original",
-        colormap="gray",
-        contrast_limits=contrast_limits,
+            V,
+            name="original",
+            colormap="gray",
+            contrast_limits=contrast_limits,
         )
 
         # Add multi-scale reconstruction
         viewer.add_image(
-        V_recon_multi,
-        name=f"multi-scale (scales={SCALES})",
-        colormap="gray",
-        contrast_limits=contrast_limits,
+            V_recon_multi,
+            name=f"multi-scale (scales={SCALES})",
+            colormap="gray",
+            contrast_limits=contrast_limits,
         )
 
         # Add multi-scale residual
         viewer.add_image(
-        np.abs(residual_multi),
-        name="multi-scale residual",
-        colormap="inferno",
-        contrast_limits=[0, max(1e-12, float(np.abs(residual_multi).max()))],
+            np.abs(residual_multi),
+            name="multi-scale residual",
+            colormap="inferno",
+            contrast_limits=[0, max(1e-12, float(np.abs(residual_multi).max()))],
         )
 
         # Add single-scale reconstruction
         viewer.add_image(
-        V_recon_single,
-        name="single-scale (baseline)",
-        colormap="gray",
-        contrast_limits=contrast_limits,
+            V_recon_single,
+            name="single-scale (baseline)",
+            colormap="gray",
+            contrast_limits=contrast_limits,
         )
 
         # Add single-scale residual
         viewer.add_image(
-        np.abs(residual_single),
-        name="single-scale residual",
-        colormap="inferno",
-        contrast_limits=[0, max(1e-12, float(np.abs(residual_single).max()))],
+            np.abs(residual_single),
+            name="single-scale residual",
+            colormap="inferno",
+            contrast_limits=[0, max(1e-12, float(np.abs(residual_single).max()))],
         )
 
         # Enable tile/grid mode for side-by-side comparison
@@ -338,11 +338,11 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         # Set up text overlay
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
-        f"Multi-Scale Gaussian Splatting Demo | "
-        f"Scales: {SCALES} | "
-        f"Multi: {n_splats_multi} splats, {time_multi:.1f}s, MSE={error_multi:.2e} | "
-        f"Single: {n_splats_single} splats, {time_single:.1f}s, MSE={error_single:.2e} | "
-        f"Speedup: {time_speedup:.1f}×"
+            f"Multi-Scale Gaussian Splatting Demo | "
+            f"Scales: {SCALES} | "
+            f"Multi: {n_splats_multi} splats, {time_multi:.1f}s, MSE={error_multi:.2e} | "
+            f"Single: {n_splats_single} splats, {time_single:.1f}s, MSE={error_single:.2e} | "
+            f"Speedup: {time_speedup:.1f}×"
         )
 
         # Console tips
@@ -356,9 +356,11 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             aprint(f"    - Scale {scale}×: {n} splats")
 
         aprint("\n🎯 Key Insights:")
-        aprint(f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup")
         aprint(
-        f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×"
+            f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup"
+        )
+        aprint(
+            f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×"
         )
         aprint("  • Coarse scales capture large structures efficiently")
         aprint("  • Fine scales capture details at full resolution")

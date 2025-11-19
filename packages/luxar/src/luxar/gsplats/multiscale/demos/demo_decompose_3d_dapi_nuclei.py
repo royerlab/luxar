@@ -337,7 +337,9 @@ with asection("3D DAPI Multi-Scale Decomposition Demo"):
         aprint("  • All scales use same contrast limits for consistent comparison")
         aprint("  • Use mouse + Shift to rotate the 3D view")
         aprint("  • Toggle layers on/off to compare scales")
-        aprint("  • 'DAPI (input, full res)' = original DAPI channel at full resolution")
+        aprint(
+            "  • 'DAPI (input, full res)' = original DAPI channel at full resolution"
+        )
         aprint("  • 'reconstruction' = sum of all scales")
         aprint(f"  • 'scale_Nx' = individual scale components (N={SCALES})")
         aprint("  • MIP rendering = Maximum Intensity Projection")
