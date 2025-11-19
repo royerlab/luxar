@@ -241,7 +241,6 @@ if not NO_NAPARI:
     except Exception:
         pass
 
-
     def _set_overlay_text(t_index: int):
         K = int(keep_counts[t_index])
         bits_model = int(model_bits_frames[t_index])
@@ -255,39 +254,44 @@ if not NO_NAPARI:
             f"|  rel L2 error: {rel:.4f}"
         )
 
-
     def _update_layers_for_t(t_index: int):
         shapes.data = polygons_frames[t_index]
         pts.data = centers_frames[t_index]
         _set_overlay_text(t_index)
 
-
     # Initialize and wire slider
     _update_layers_for_t(0)
-
 
     def _on_step_change(event=None):
         t = viewer.dims.current_step[0]
         _update_layers_for_t(int(t))
-
 
     viewer.dims.events.current_step.connect(_on_step_change)
 
     aprint("")
     aprint("🎛️  Controls:")
     aprint("   • Use the top slider (axis 0) to explore compression levels")
-    aprint("   • Move from keeping all splats toward keeping just the most important ones")
-    aprint("   • Watch how coin details and metallic textures degrade with fewer splats")
-    aprint("   • Observe the gold ellipse overlays showing splat orientations and sizes")
+    aprint(
+        "   • Move from keeping all splats toward keeping just the most important ones"
+    )
+    aprint(
+        "   • Watch how coin details and metallic textures degrade with fewer splats"
+    )
+    aprint(
+        "   • Observe the gold ellipse overlays showing splat orientations and sizes"
+    )
     aprint("")
     aprint("🔍 What to notice:")
-    aprint("   • How circular coin shapes are preserved at different compression levels")
+    aprint(
+        "   • How circular coin shapes are preserved at different compression levels"
+    )
     aprint("   • Metallic surface gradients and how they're reconstructed")
     aprint("   • The efficiency of oriented ellipses in capturing coin boundaries")
-    aprint("   • Impact of l1_diag regularization on splat shapes for metallic textures")
+    aprint(
+        "   • Impact of l1_diag regularization on splat shapes for metallic textures"
+    )
     aprint("   • Trade-off between model complexity and reconstruction fidelity")
 
     napari.run()
 else:
     aprint("\n✅ Demo completed successfully (napari visualization disabled)")
-

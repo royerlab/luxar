@@ -199,42 +199,42 @@ if not NO_NAPARI:
 
     # Add original image
     viewer.add_image(
-    V,
-    name="astronaut (input)",
-    colormap="gray",
-    contrast_limits=[0, float(V.max())],
+        V,
+        name="astronaut (input)",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
     )
 
     # Add reconstruction stack
     viewer.add_image(
-    stack_recon,
-    name="reconstruction (compression, oriented)",
-    colormap="gray",
-    contrast_limits=[0, float(V.max())],
+        stack_recon,
+        name="reconstruction (compression, oriented)",
+        colormap="gray",
+        contrast_limits=[0, float(V.max())],
     )
 
     # Add residual stack
     viewer.add_image(
-    np.abs(stack_resid),
-    name="absolute residual",
-    colormap="hot",
-    contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
+        np.abs(stack_resid),
+        name="absolute residual",
+        colormap="hot",
+        contrast_limits=[0, max(1e-12, float(np.abs(stack_resid).max()))],
     )
 
     # Shapes & points that update with slider
     shapes = viewer.add_shapes(
-    name="oriented 2σ ellipses (kept)",
-    shape_type="polygon",
-    edge_color="lime",
-    edge_width=1.2,
-    face_color=[0, 0, 0, 0],
+        name="oriented 2σ ellipses (kept)",
+        shape_type="polygon",
+        edge_color="lime",
+        edge_width=1.2,
+        face_color=[0, 0, 0, 0],
     )
     pts = viewer.add_points(
-    np.zeros((0, 2)),
-    name="centers (kept)",
-    size=2.5,
-    border_color="lime",
-    face_color="transparent",
+        np.zeros((0, 2)),
+        name="centers (kept)",
+        size=2.5,
+        border_color="lime",
+        face_color="transparent",
     )
 
     # Axis labels (if supported)
@@ -242,7 +242,6 @@ if not NO_NAPARI:
         viewer.dims.axis_labels = ["compression", "y", "x"]
     except Exception:
         pass
-
 
     def _set_overlay_text(t_index: int):
         K = int(keep_counts[t_index])
@@ -269,12 +268,13 @@ if not NO_NAPARI:
         t = viewer.dims.current_step[0]
         _update_layers_for_t(int(t))
 
-
     viewer.dims.events.current_step.connect(_on_step_change)
 
     aprint("🎛️  Controls:")
     aprint("   • Use the top slider (axis 0) to explore compression levels")
-    aprint("   • Move from keeping all splats toward keeping just the most important ones")
+    aprint(
+        "   • Move from keeping all splats toward keeping just the most important ones"
+    )
     aprint("   • Watch how the reconstruction degrades with fewer splats")
     aprint("   • Observe the ellipse overlays showing splat orientations and sizes")
     aprint("")

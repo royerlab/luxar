@@ -25,7 +25,7 @@ from luxar.gsplats.candidates import (
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
     aprint("🔬 Decomposition Candidates Demo (napari disabled)")
-    aprint("Running all computations without napari visualization...") 
+    aprint("Running all computations without napari visualization...")
 
 
 # Setup Arbol
@@ -71,7 +71,7 @@ with asection("Candidate Generation Methods Comparison"):
             )
             aprint(f"Generated {len(candidates_combined)} candidates")
             aprint(
-    f"  ({len(candidates_decomp)} decomp + "
+                f"  ({len(candidates_decomp)} decomp + "
                 f"{len(candidates_multiscale)} multiscale → "
                 f"{len(candidates_combined)} after dedup)"
             )
@@ -81,14 +81,14 @@ with asection("Candidate Generation Methods Comparison"):
     # ======================================================================
 
     if not NO_NAPARI:
-            with asection("Launching napari visualization"):
-                viewer = napari.Viewer(title="Candidate Generation Methods Comparison")
+        with asection("Launching napari visualization"):
+            viewer = napari.Viewer(title="Candidate Generation Methods Comparison")
 
-                # Original image
-                viewer.add_image(V, name="Original Mitosis Image", colormap="gray")
+            # Original image
+            viewer.add_image(V, name="Original Mitosis Image", colormap="gray")
 
-                # Method 1: Multiscale Gaussian candidates
-                viewer.add_points(
+            # Method 1: Multiscale Gaussian candidates
+            viewer.add_points(
                 candidates_multiscale,
                 name=f"Multiscale Gaussian ({len(candidates_multiscale)})",
                 size=3,
@@ -96,10 +96,10 @@ with asection("Candidate Generation Methods Comparison"):
                 border_color="white",
                 border_width=0.3,
                 symbol="disc",
-                )
+            )
 
-                # Method 2: Decomposition candidates
-                viewer.add_points(
+            # Method 2: Decomposition candidates
+            viewer.add_points(
                 candidates_decomp,
                 name=f"Decomposition ({len(candidates_decomp)})",
                 size=3,
@@ -108,10 +108,10 @@ with asection("Candidate Generation Methods Comparison"):
                 border_width=0.3,
                 symbol="disc",
                 visible=False,  # Start hidden
-                )
+            )
 
-                # Method 3: Combined candidates (as used in fitting)
-                viewer.add_points(
+            # Method 3: Combined candidates (as used in fitting)
+            viewer.add_points(
                 candidates_combined,
                 name=f"Combined ({len(candidates_combined)})",
                 size=3,
@@ -119,24 +119,28 @@ with asection("Candidate Generation Methods Comparison"):
                 border_color="black",
                 border_width=0.3,
                 symbol="disc",
-                )
+            )
 
-                # Summary
-                aprint("\n" + "=" * 70)
-                aprint("CANDIDATE GENERATION SUMMARY")
-                aprint("=" * 70)
-                aprint(
-        f"Multiscale Gaussian: {len(candidates_multiscale):4d} candidates (magenta)"
-                )
-                aprint(f"Decomposition:       {len(candidates_decomp):4d} candidates (cyan)")
-                aprint(
-        f"Combined:            {len(candidates_combined):4d} candidates (lime) ← Used in fitting"
-                )
-                aprint("=" * 70)
-                aprint("\n✅ Napari viewer launched!")
-                aprint("   • Lime points show combined method (used in fit_gaussian_splats)")
-                aprint("   • Toggle layers to compare individual methods")
+            # Summary
+            aprint("\n" + "=" * 70)
+            aprint("CANDIDATE GENERATION SUMMARY")
+            aprint("=" * 70)
+            aprint(
+                f"Multiscale Gaussian: {len(candidates_multiscale):4d} candidates (magenta)"
+            )
+            aprint(
+                f"Decomposition:       {len(candidates_decomp):4d} candidates (cyan)"
+            )
+            aprint(
+                f"Combined:            {len(candidates_combined):4d} candidates (lime) ← Used in fitting"
+            )
+            aprint("=" * 70)
+            aprint("\n✅ Napari viewer launched!")
+            aprint(
+                "   • Lime points show combined method (used in fit_gaussian_splats)"
+            )
+            aprint("   • Toggle layers to compare individual methods")
 
-                napari.run()
+            napari.run()
     else:
         aprint("\n✅ Demo completed successfully (napari visualization disabled)")

@@ -298,7 +298,10 @@ if not NO_NAPARI:
         V,
         name="gradient input (top dim, bottom bright)",
         colormap="magma",
-        contrast_limits=[0, float(V_base.max())],  # Use original range for fair comparison
+        contrast_limits=[
+            0,
+            float(V_base.max()),
+        ],  # Use original range for fair comparison
     )
 
     viewer.add_image(

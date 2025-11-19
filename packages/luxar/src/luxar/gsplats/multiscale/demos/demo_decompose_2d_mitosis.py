@@ -194,7 +194,9 @@ with asection("Human Mitosis Multi-Scale Decomposition Demo"):
         fine_energy = energy_dist[0]
         if coarse_energy > 0.5:
             aprint(f"  ✓ Good: {coarse_energy:.1%} energy in coarsest scale")
-            aprint("    → Low-frequency cellular structures captured at coarse resolution")
+            aprint(
+                "    → Low-frequency cellular structures captured at coarse resolution"
+            )
         elif fine_energy > 0.5:
             aprint(
                 f"  ⚠ Warning: {fine_energy:.1%} energy in finest scale (trivial solution)"

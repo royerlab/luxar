@@ -343,7 +343,7 @@ with asection("Computing 3D reconstruction quality at different compression leve
 
         # Render with auto-extraction of all parameters from params_full
         Vk = render_gaussians_numpy(
-            V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
+            V.shape, params_full[idx], amps[idx], truncate=3.0
         )
         stack_recon[i] = Vk
         stack_resid[i] = V - Vk
@@ -416,7 +416,6 @@ if not NO_NAPARI:
         opacity=0.5,
     )
 
-
     # Dynamic wireframe and points layers
     def _update_3d_layers(t_index: int):
         """Update wireframes and centers for current compression level."""
@@ -469,17 +468,14 @@ if not NO_NAPARI:
             f"|  rel L2 error: {rel:.4f}"
         )
 
-
     # Initialize and wire slider
     _update_3d_layers(0)
-
 
     def _on_step_change(event=None):
         # Get the first dimension step (compression axis)
         if hasattr(viewer.dims, "current_step"):
             t = viewer.dims.current_step[0]
             _update_3d_layers(int(t))
-
 
     viewer.dims.events.current_step.connect(_on_step_change)
 
