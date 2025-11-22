@@ -124,7 +124,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
     # Method 1: Multi-scale fitting
     with asection(f"Method 1: Multi-Scale Fitting (scales={SCALES})"):
         start_multi = time.time()
-        params_multi, amps_multi, stats_multi = fit_multiscale_gaussian_splats(
+        result_multi = fit_multiscale_gaussian_splats(
             V,
             scales=SCALES,
             base_init_sigma=BASE_INIT_SIGMA,
@@ -140,17 +140,14 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         )
         time_multi = time.time() - start_multi
 
-        n_splats_multi = len(amps_multi)
+        n_splats_multi = len(result_multi.amplitudes)
         aprint(f"\n✅ Multi-scale complete in {time_multi:.2f}s")
         aprint(f"Total splats: {n_splats_multi:,}")
-        aprint(f"Splats per scale: {stats_multi['n_splats_per_scale']}")
-        aprint(f"Computational speedup: {stats_multi['computational_speedup']:.1f}×")
+        aprint(f"Splats per scale: {result_multi.stats['n_splats_per_scale']}")
+        aprint(f"Computational speedup: {result_multi.stats['computational_speedup']:.1f}×")
 
     # Render multi-scale reconstruction
-    # params_multi includes sharpness - auto-extracted by render function
-    V_recon_multi = render_gaussians_numpy(
-        V.shape, params_multi, amps_multi, truncate=TRUNCATE_SIG
-    )
+    V_recon_multi = render_gaussians_numpy(V.shape, result_multi, truncate=TRUNCATE_SIG)
     residual_multi = V - V_recon_multi
     error_multi = np.mean((V - V_recon_multi) ** 2)
     max_abs_error_multi = np.abs(residual_multi).max()
@@ -159,7 +156,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
     aprint(f"Multi-scale max abs error: {max_abs_error_multi:.6f}")
 
     # Display decomposition convergence animation
-    decomp_stats = stats_multi.get("decomposition_stats", {})
+    decomp_stats = result_multi.stats.get("decomposition_stats", {})
     if decomp_stats.get("movie_frames") is not None:
         with asection("Decomposition Convergence Animation"):
             aprint("🎬 Showing optimization movie...")
@@ -171,7 +168,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             )
 
     # Display per-scale visualizations
-    per_scale_vis = stats_multi.get("per_scale_visualizations", [])
+    per_scale_vis = result_multi.stats.get("per_scale_visualizations", [])
     if len(per_scale_vis) > 0:
         with asection("Per-Scale Visualizations"):
             aprint(
@@ -234,7 +231,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
     # Method 2: Single-scale fitting (baseline comparison)
     with asection("Method 2: Single-Scale Fitting (baseline comparison)"):
         start_single = time.time()
-        params_single, amps_single, stats_single = fit_gaussian_splats(
+        result_single = fit_gaussian_splats(
             V,
             init_sigma_vox=BASE_INIT_SIGMA,
             n_iters=N_ITERS_SINGLE,
@@ -245,15 +242,12 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         )
         time_single = time.time() - start_single
 
-        n_splats_single = len(amps_single)
+        n_splats_single = len(result_single.amplitudes)
         aprint(f"\n✅ Single-scale complete in {time_single:.2f}s")
         aprint(f"Total splats: {n_splats_single:,}")
 
     # Render single-scale reconstruction
-    # params_single includes sharpness - auto-extracted by render function
-    V_recon_single = render_gaussians_numpy(
-        V.shape, params_single, amps_single, truncate=TRUNCATE_SIG
-    )
+    V_recon_single = render_gaussians_numpy(V.shape, result_single, truncate=TRUNCATE_SIG)
     residual_single = V - V_recon_single
     error_single = np.mean((V - V_recon_single) ** 2)
     max_abs_error_single = np.abs(residual_single).max()

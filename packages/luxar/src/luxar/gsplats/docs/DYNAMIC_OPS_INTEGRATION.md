@@ -45,7 +45,7 @@ dynamic_config.residual_quantile = 0.95 # More selective
 
 #### Step 3: Update Function Call
 ```python
-params_full, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     V,
     seeds=centers,
     # ... your existing parameters ...

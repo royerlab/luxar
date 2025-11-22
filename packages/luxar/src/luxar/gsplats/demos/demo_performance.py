@@ -59,7 +59,7 @@ def main():
             start_time = time.time()
 
             # Use simplified one-step API with auto-candidate generation
-            params, amps, stats = fit_gaussian_splats(
+            result = fit_gaussian_splats(
                 V,
                 # seeds auto-generated with intelligent defaults
                 init_sigma_vox=1.6,
@@ -77,6 +77,7 @@ def main():
                 movie_every=5,
             )
 
+            stats = result.stats
             fit_time = time.time() - start_time
 
             aprint("\nOptimization Summary:")
@@ -84,7 +85,7 @@ def main():
             aprint(f"  Iterations: {stats['iterations']}/{args.n_iters}")
             aprint(f"  Converged: {stats['converged']}")
             aprint(f"  Final loss: {stats['final_loss']:.5g}")
-            aprint(f"  Active splats: {np.sum(amps > 0.01)}/{len(amps)}")
+            aprint(f"  Active splats: {np.sum(result.amplitudes > 0.01)}/{len(result.amplitudes)}")
             aprint("  ✓ Per-splat optimizer with individual learning rates")
 
             if stats["converged"]:
@@ -97,8 +98,8 @@ def main():
 
         # Prepare visualization
         with asection("Visualization Preparation"):
-            # Render reconstruction with auto-extraction of all parameters
-            reconstruction = render_gaussians_numpy(V.shape, params, amps, truncate=3.0)
+            # Render reconstruction
+            reconstruction = render_gaussians_numpy(V.shape, result, truncate=3.0)
 
             # Compute error metrics
             residual = V - reconstruction
@@ -116,9 +117,9 @@ def main():
             centers = params[:, :d]
 
             # Create shapes for active splats
-            active_mask = amps > 0.01
+            active_mask = result.amplitudes > 0.01
             active_centers = centers[active_mask]
-            active_amps = amps[active_mask]
+            active_amps = result.amplitudes[active_mask]
 
             aprint(f"Visualizing {len(active_centers)} active splats")
 
@@ -162,7 +163,7 @@ def main():
         viewer.text_overlay.visible = True
         viewer.text_overlay.text = (
             f"Per-Splat Optimizer: {stats['iterations']} iterations in {fit_time:.1f}s | "
-            f"Active splats: {len(active_centers)}/{len(amps)} total | "
+            f"Active splats: {len(active_centers)}/{len(result.amplitudes)} total | "
             f"MSE: {mse:.5f} | Rel L2: {rel_l2:.4f} | PSNR: {psnr:.1f} dB"
         )
 
@@ -177,7 +178,7 @@ def main():
         aprint(
             f"Per-splat optimizer: {stats['iterations']} iterations in {fit_time:.1f}s"
         )
-        aprint(f"Active splats: {len(active_centers)}/{len(amps)} total")
+        aprint(f"Active splats: {len(active_centers)}/{len(result.amplitudes)} total")
         aprint(f"Quality: MSE={mse:.5f}, Rel L2={rel_l2:.4f}, PSNR={psnr:.1f} dB")
 
 

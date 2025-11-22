@@ -1,64 +1,12 @@
 """
-Test dimension metadata functionality.
+Test dimension functionality (current Dimension class).
 """
 
 import numpy as np
 import pytest
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.types import (
-    DimensionMetadata,
-    validate_dimension_metadata,
-    validate_positions,
-)
-
-
-class TestDimensionMetadata:
-    """Test DimensionMetadata class."""
-
-    def test_dimension_metadata_creation(self):
-        """Test creating dimension metadata."""
-        dim = DimensionMetadata(name="x", unit="um", scale=0.5, range=(-10.0, 10.0))
-        assert dim.name == "x"
-        assert dim.unit == "um"
-        assert dim.scale == 0.5
-        assert dim.range == (-10.0, 10.0)
-
-    def test_dimension_metadata_defaults(self):
-        """Test dimension metadata defaults."""
-        dim = DimensionMetadata()
-        assert dim.name == ""
-        assert dim.unit == ""
-        assert dim.scale == 1.0
-        assert dim.range is None
-
-    def test_to_dict(self):
-        """Test converting to dictionary."""
-        dim = DimensionMetadata(name="time", unit="ms", scale=2.0, range=(0.0, 100.0))
-        d = dim.to_dict()
-        assert d == {"name": "time", "unit": "ms", "scale": 2.0, "range": [0.0, 100.0]}
-
-        # Test without range
-        dim2 = DimensionMetadata(name="x", unit="px")
-        d2 = dim2.to_dict()
-        assert d2 == {"name": "x", "unit": "px", "scale": 1.0}
-
-    def test_from_dict(self):
-        """Test creating from dictionary."""
-        data = {"name": "z", "unit": "nm", "scale": 0.1, "range": [-50.0, 50.0]}
-        dim = DimensionMetadata.from_dict(data)
-        assert dim.name == "z"
-        assert dim.unit == "nm"
-        assert dim.scale == 0.1
-        assert dim.range == (-50.0, 50.0)
-
-        # Test with missing fields
-        data2 = {"name": "y"}
-        dim2 = DimensionMetadata.from_dict(data2)
-        assert dim2.name == "y"
-        assert dim2.unit == ""
-        assert dim2.scale == 1.0
-        assert dim2.range is None
+from luxar.validation.types import validate_positions
 
 
 class TestDimensionValidation:
@@ -100,37 +48,6 @@ class TestDimensionValidation:
         with pytest.raises(ValueError, match="at least 1 dimension"):
             validate_positions(np.zeros((10, 0)))
 
-    def test_validate_dimension_metadata(self):
-        """Test validating dimension metadata list."""
-        # Valid metadata
-        metadata = [
-            DimensionMetadata(name="x", unit="um"),
-            DimensionMetadata(name="y", unit="um"),
-            DimensionMetadata(name="z", unit="um"),
-        ]
-        validated = validate_dimension_metadata(metadata, 3)
-        assert len(validated) == 3
-        assert all(isinstance(m, DimensionMetadata) for m in validated)
-
-        # From dictionaries
-        dict_metadata = [
-            {"name": "x", "unit": "px"},
-            {"name": "y", "unit": "px"},
-        ]
-        validated = validate_dimension_metadata(dict_metadata, 2)
-        assert len(validated) == 2
-        assert validated[0].name == "x"
-        assert validated[1].unit == "px"
-
-        # Wrong count
-        with pytest.raises(
-            ValueError, match="Expected 3 dimension metadata entries, got 2"
-        ):
-            validate_dimension_metadata(metadata[:2], 3)
-
-        # Invalid type
-        with pytest.raises(ValueError, match="must be dict or DimensionMetadata"):
-            validate_dimension_metadata(["x", "y", "z"], 3)
 
 
 class TestSceneDimensionMetadata:

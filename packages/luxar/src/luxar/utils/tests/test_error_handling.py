@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, Scene
-from luxar.types import DimensionMetadata, validate_dimension_metadata
 
 
 class TestDimensionErrorHandling:
@@ -178,10 +177,11 @@ class TestSceneErrorHandling:
 
     def test_scene_initialization_errors(self):
         """Test scene initialization error cases."""
-        # Invalid units
-        with pytest.raises(ValueError):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                LuxarZarrCompiler(Path(tmpdir) / "test.zarr", units="invalid_unit")
+        # Invalid units in Dimensions
+        from luxar.typing_utils.enums import PhysicalUnit
+
+        with pytest.raises(ValueError, match="Invalid"):
+            PhysicalUnit.validate("invalid_unit")
 
         # Invalid path (simulate permission error)
         # This is platform-specific, so we'll skip for now
@@ -195,56 +195,6 @@ class TestSceneErrorHandling:
             scene.finalize()
             # Second finalize should work (idempotent)
             scene.finalize()
-
-
-class TestLegacyDimensionMetadata:
-    """Test error handling for legacy dimension metadata."""
-
-    def test_invalid_metadata_count(self):
-        """Test validation of dimension metadata count."""
-        # Too few metadata entries
-        with pytest.raises(ValueError, match="Expected 3 dimension metadata"):
-            validate_dimension_metadata(
-                [DimensionMetadata(name="x"), DimensionMetadata(name="y")], ndim=3
-            )
-
-        # Too many metadata entries
-        with pytest.raises(ValueError, match="Expected 2 dimension metadata"):
-            validate_dimension_metadata(
-                [
-                    DimensionMetadata(name="x"),
-                    DimensionMetadata(name="y"),
-                    DimensionMetadata(name="z"),
-                ],
-                ndim=2,
-            )
-
-    def test_invalid_metadata_types(self):
-        """Test validation of metadata types."""
-        # Not a list
-        with pytest.raises(ValueError, match="must be a list"):
-            validate_dimension_metadata("not a list", ndim=2)
-
-        # List of wrong types (not dict or DimensionMetadata)
-        with pytest.raises(ValueError, match="must be dict or DimensionMetadata"):
-            validate_dimension_metadata(["string1", "string2"], ndim=2)
-
-    def test_metadata_dict_conversion(self):
-        """Test conversion from dict to DimensionMetadata."""
-        # Valid dict
-        data = [
-            {"name": "x", "unit": "um", "scale": 1.0},
-            {"name": "y", "unit": "um", "scale": 1.0},
-        ]
-        metadata = validate_dimension_metadata(data, ndim=2)
-        assert len(metadata) == 2
-        assert all(isinstance(m, DimensionMetadata) for m in metadata)
-
-        # Invalid dict (missing required field will be handled by from_dict)
-        # from_dict creates a DimensionMetadata with default name
-        # So this won't raise an error anymore
-        metadata = validate_dimension_metadata([{"unit": "um"}], ndim=1)
-        assert len(metadata) == 1  # Should succeed with default values
 
 
 class TestEdgeCases:

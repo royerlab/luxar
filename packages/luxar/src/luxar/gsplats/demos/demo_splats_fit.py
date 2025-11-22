@@ -59,7 +59,7 @@ def main():
 
     with asection(f"Fitting with per-splat optimizer ({args.n_iters} iterations)"):
         # Use the high-level fit function with per-splat optimizer
-        params_full, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=V,
             # seeds auto-generated with intelligent defaults
             init_sigma_vox=1.6,
@@ -76,8 +76,10 @@ def main():
             movie_every=1,
         )
 
-        aprint(f"Final parameters shape: {params_full.shape}")
-        aprint(f"Final amplitudes shape: {amps.shape}")
+        stats = result.stats
+
+        aprint(f"Final centers shape: {result.centers.shape}")
+        aprint(f"Final amplitudes shape: {result.amplitudes.shape}")
         aprint(f"Final MSE: {stats.get('final_loss', 'N/A'):.6f}")
 
     # Show results in napari if enabled
@@ -88,8 +90,8 @@ def main():
                 render_gaussians_numpy,
             )
 
-            # Render with auto-extraction of all parameters
-            V_recon = render_gaussians_numpy(V.shape, params_full, amps)
+            # Render
+            V_recon = render_gaussians_numpy(V.shape, result)
 
             # Create napari viewer
             viewer = napari.Viewer(title="High-Level Fit Demo Results")
@@ -116,7 +118,7 @@ def main():
             optimization_info = (
                 f"Per-Splat Optimizer fit_gaussian_splats() Demo\n"
                 f"Target: {V.shape} image\n"
-                f"Splats: {len(amps)}\n"
+                f"Splats: {len(result.amplitudes)}\n"
                 f"Iterations: {stats['iterations']}/{args.n_iters}\n"
                 f"Time: {stats['time_seconds']:.2f}s\n"
                 f"Final loss: {stats.get('final_loss', 'N/A'):.6f}\n"

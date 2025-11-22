@@ -40,6 +40,8 @@ def prepare_fit_config(
     patience: int = 10,
     factor: float = 0.5,
     dynamic_ops_verbose: bool = False,
+    seed_method: str = "both",
+    **seed_kwargs,
 ) -> FitConfig:
     """
     Validate input parameters and prepare configuration for fitting.
@@ -50,6 +52,16 @@ def prepare_fit_config(
         The fitter instance (for device and dynamic ops config)
     V : np.ndarray
         Input image/volume to reconstruct
+    seed_method : str, default="both"
+        Method for generating seeds when seeds=None:
+        - "gaussian": Gaussian multi-scale blob detection
+        - "decomposition": Dictionary/PCA-based decomposition
+        - "both": Hybrid approach combining both methods
+        This parameter is only used when seeds=None. If seeds are provided,
+        this parameter is ignored.
+    **seed_kwargs
+        Additional keyword arguments for seed generation (e.g., num_scales,
+        percentile_thresh, etc.). Only used when seeds=None.
     **kwargs
         All other fitting parameters
 
@@ -104,6 +116,18 @@ def prepare_fit_config(
         raise ValueError("l1_diag must be non-negative if specified")
     if l1_sharpness is not None and l1_sharpness < 0:
         raise ValueError("l1_sharpness must be non-negative if specified")
+    if asymmetric_penalty is not None and asymmetric_penalty < 1.0:
+        raise ValueError(
+            "asymmetric_penalty must be >= 1.0 (values < 1.0 would invert the penalty)"
+        )
+    if gradient_clip is not None and gradient_clip <= 0:
+        raise ValueError("gradient_clip must be positive if specified")
+    if patience < 1:
+        raise ValueError("patience must be >= 1")
+    if factor <= 0.0 or factor >= 1.0:
+        raise ValueError("factor must be in range (0, 1)")
+    if scheduler_type not in ["plateau", "exponential"]:
+        raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
     if truncate <= 0:
         raise ValueError("truncate must be positive")
     if max_abs_error is not None and max_abs_error <= 0:
@@ -136,6 +160,8 @@ def prepare_fit_config(
     return FitConfig(
         V=V,
         seeds=seeds,
+        seed_method=seed_method,
+        seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,
         init_sigma_vox=init_sigma_vox,
         sigma_min_diag=sigma_min_diag,

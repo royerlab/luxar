@@ -250,7 +250,7 @@ class GaussianSplatModel(nn.Module):
         centers: torch.Tensor,  # (N,d)
         Ls: torch.Tensor,  # (N,d,d)
         amps: torch.Tensor,  # (N,)
-        sharpness: Optional[torch.Tensor] = None,  # (N,) optional
+        sharpness: torch.Tensor,  # (N,) required
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Convert external (μ, L, a, s) to raw learnable params (raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw)."""
         device = self.raw_mu.device
@@ -295,14 +295,8 @@ class GaussianSplatModel(nn.Module):
 
         # sharpness -> sharpness_raw (inverse of s = 2 * exp(s'))
         # s' = log(s / 2)
-        if sharpness is None:
-            # Default to standard Gaussian (s = 2, s' = 0)
-            sharpness_raw = torch.zeros(
-                centers.shape[0], device=device, dtype=torch.float32
-            )
-        else:
-            sharpness = torch.clamp(sharpness, min=1e-6)  # Avoid log(0)
-            sharpness_raw = torch.log(sharpness / 2.0)
+        sharpness = torch.clamp(sharpness, min=1e-6)  # Avoid log(0)
+        sharpness_raw = torch.log(sharpness / 2.0)
 
         return raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw
 
@@ -312,7 +306,7 @@ class GaussianSplatModel(nn.Module):
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
-        sharpness: Optional[torch.Tensor] = None,
+        sharpness: torch.Tensor,
     ) -> None:
         """Hard replace the whole parameter set."""
         raw_mu, L_diag_raw, L_off, amp_raw, sharpness_raw = self._to_internal_params(
@@ -341,7 +335,7 @@ class GaussianSplatModel(nn.Module):
         centers_new: torch.Tensor,
         Ls_new: torch.Tensor,
         amps_new: torch.Tensor,
-        sharpness_new: Optional[torch.Tensor] = None,
+        sharpness_new: torch.Tensor,
     ) -> None:
         """Append new splats to the tail."""
         if centers_new.numel() == 0:

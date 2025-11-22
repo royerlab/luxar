@@ -6,12 +6,13 @@ Uses existing fit_gaussian_splats() as a building block.
 """
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.multiscale import decompose_image
 
@@ -32,7 +33,7 @@ def fit_multiscale_gaussian_splats(
     movie_max_frames: Optional[int] = None,
     visualize_per_scale: bool = False,
     **fit_kwargs,
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+) -> GaussianSplatResult:
     """
     Fit Gaussian splats using multi-scale decomposition for computational efficiency.
 
@@ -77,27 +78,25 @@ def fit_multiscale_gaussian_splats(
 
     Returns
     -------
-    params : np.ndarray
-        Combined parameters from all scales, shape (N_total, d + d*(d+1)//2 + 1).
-        Columns: [centers (d cols), Cholesky factors (d*(d+1)//2 cols), sharpness (1 col)].
-        All geometric parameters (centers, Cholesky) scaled to full resolution.
-        Sharpness values are per-splat (not scaled, as they are dimensionless).
-    amplitudes : np.ndarray
-        Combined amplitudes from all scales, shape (N_total,).
-    stats : Dict[str, Any]
-        Statistics including:
-        - 'decomposition_stats': Stats from decompose_image()
-        - 'per_scale_stats': List of stats from each scale's fitting
-        - 'n_splats_per_scale': Number of splats fitted per scale
-        - 'total_splats': Total number of splats across all scales
-        - 'computational_speedup': Theoretical voxel-based speedup (not wall-clock time)
-        - 'total_time_seconds': Total wall-clock time for decomposition and fitting
-        - 'decomposition_time_seconds': Time spent on multi-scale decomposition
-        - 'fitting_time_seconds': Time spent on per-scale fitting
-        - 'per_scale_visualizations': List of visualization data per scale (only if visualize_per_scale=True)
-          Each entry contains: scale_factor, scale_shape, n_splats, original_scale,
-          centers (at full resolution), reconstruction (at full resolution),
-          residual (at full resolution), error_mse, error_max_abs
+    GaussianSplatResult
+        Dataclass containing combined results from all scales:
+        - centers: np.ndarray, shape (N_total, d) - Center positions at full resolution
+        - amplitudes: np.ndarray, shape (N_total,) - Combined amplitudes from all scales
+        - cholesky_factors: np.ndarray, shape (N_total, d*(d+1)//2) - Cholesky factors at full resolution
+        - sharpnesses: np.ndarray, shape (N_total,) - Per-splat sharpness values (not scaled)
+        - stats: Dict[str, Any] - Combined statistics including:
+          * decomposition_stats: Stats from decompose_image()
+          * per_scale_stats: List of stats from each scale's fitting
+          * n_splats_per_scale: Number of splats fitted per scale
+          * total_splats: Total number of splats across all scales
+          * computational_speedup: Theoretical voxel-based speedup
+          * total_time_seconds: Total wall-clock time
+          * decomposition_time_seconds: Time for decomposition
+          * fitting_time_seconds: Time for per-scale fitting
+          * per_scale_visualizations: Visualization data (only if visualize_per_scale=True)
+
+        All geometric parameters (centers, Cholesky factors) are scaled to full resolution.
+        Sharpness values are dimensionless and not scaled.
 
     Notes
     -----
@@ -229,7 +228,7 @@ def fit_multiscale_gaussian_splats(
         # Fit Gaussians on this scale with error handling (Issue #13)
         scale_start = time.time()
         try:
-            params, amps, stats_scale = fit_gaussian_splats(
+            result = fit_gaussian_splats(
                 V_scale,
                 init_sigma_vox=init_sigma_scaled,
                 n_iters=n_iters_per_scale,
@@ -244,16 +243,21 @@ def fit_multiscale_gaussian_splats(
 
         scale_time = time.time() - scale_start
 
+        # Extract components from result
+        centers_scale = result.centers
+        amps = result.amplitudes
+        chol_scale = result.cholesky_factors
+        sharpness_scale = result.sharpnesses
+        stats_scale = result.stats
+
         if verbose:
-            n_splats = len(params)
+            n_splats = len(amps)
             final_error = stats_scale.get("final_error", 0)
             aprint(f"Fitted {n_splats} splats in {scale_time:.2f}s")
             aprint(f"Final error: {final_error:.6e}")
 
-        # Extract sharpness from params (NOW INCLUDED in last column!)
-        # params shape: (N, d + d*(d+1)//2 + 1) where last column is sharpness
-        sharpness_scale = params[:, -1].copy()
-        params_geom = params[:, :-1].copy()  # Everything except sharpness
+        # Combine geometric parameters (centers and cholesky factors)
+        params_geom = np.column_stack([centers_scale, chol_scale])
 
         # Scale geometric parameters back to full resolution
         if scale_factor > 1:
@@ -273,7 +277,7 @@ def fit_multiscale_gaussian_splats(
                 "scale_factor": int(scale_factor),
                 "scale_shape": tuple(V_scale.shape),
                 "n_voxels": int(V_scale.size),
-                "n_splats": int(len(params)),
+                "n_splats": int(len(amps)),
                 "final_error": float(stats_scale.get("final_error", 0)),
                 "time_seconds": float(scale_time),
             }
@@ -285,23 +289,28 @@ def fit_multiscale_gaussian_splats(
             # Get truncate parameter from fit_kwargs if present
             truncate = fit_kwargs.get("truncate", 3.0)
 
-            # Reconstruct full params with scaled geometry + unscaled sharpness
-            params_scaled_full = np.column_stack([params_geom, sharpness_scale])
-
-            # Render with auto-extraction of all parameters
-            recon_full_res = render_gaussians_numpy(
-                V.shape, params_scaled_full, amps, truncate=truncate
-            )
-            residual_full_res = V - recon_full_res
-
-            # Extract centers for visualization (first d columns)
+            # Extract centers and cholesky factors from scaled params_geom
             centers_full_res = params_geom[:, :d]
+            chol_full_res = params_geom[:, d:]
+
+            # Create result object for rendering
+            result_vis = GaussianSplatResult(
+                centers=centers_full_res,
+                amplitudes=amps,
+                cholesky_factors=chol_full_res,
+                sharpnesses=sharpness_scale,
+                stats={}  # Empty stats for visualization
+            )
+
+            # Render
+            recon_full_res = render_gaussians_numpy(V.shape, result_vis, truncate=truncate)
+            residual_full_res = V - recon_full_res
 
             per_scale_visualizations.append(
                 {
                     "scale_factor": int(scale_factor),
                     "scale_shape": tuple(V_scale.shape),
-                    "n_splats": int(len(params)),
+                    "n_splats": int(len(amps)),
                     "original_scale": V_scale.copy(),  # Original downsampled image
                     "centers": centers_full_res.copy(),  # Splat centers at full resolution
                     "reconstruction": recon_full_res.copy(),  # Reconstruction at full resolution
@@ -387,4 +396,15 @@ def fit_multiscale_gaussian_splats(
         aprint(f"Theoretical voxel speedup: {computational_speedup:.1f}×")
         aprint(f"Splats per scale: {stats['n_splats_per_scale']}")
 
-    return params_final, amps_combined, stats
+    # Unpack params_final into separate components
+    centers_final = params_final[:, :d]
+    cholesky_final = params_final[:, d:-1]  # Everything between centers and sharpness
+    sharpnesses_final = params_final[:, -1]
+
+    return GaussianSplatResult(
+        centers=centers_final,
+        amplitudes=amps_combined,
+        cholesky_factors=cholesky_final,
+        sharpnesses=sharpnesses_final,
+        stats=stats,
+    )

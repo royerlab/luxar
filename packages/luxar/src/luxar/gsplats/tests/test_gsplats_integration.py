@@ -9,12 +9,12 @@ import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
 from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
 from luxar.gsplats.models.gsplats import (
     render_gaussians,
     render_gaussians_numpy,
 )
+from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -43,21 +43,21 @@ class TestGaussianSplatsIntegration:
         # Create test data
         image = self.create_test_image((64, 64), n_blobs=3)
 
-        # Find candidates
-        candidates = find_candidates_multiscale_gaussian(
+        # Find seeds
+        seeds = find_seeds_multiscale_gaussian(
             image,
             scales=(1.0, 2.0, 3.0),
             peaks_per_scale=50,
             percentile_thresh=80,
             min_distance=2.0,
         )
-        assert len(candidates) > 0
-        assert candidates.shape[1] == 2
+        assert len(seeds) > 0
+        assert seeds.shape[1] == 2
 
         # Fit splats
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=50,
             lr=0.2,
             verbose=False,
@@ -65,13 +65,17 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,  # Disable napari windows in tests
         )
 
-        assert params.shape[0] == len(candidates)
-        assert params.shape[1] == 2 + tril_size(2) + 1  # centers + packed L + sharpness
-        assert amps.shape == (len(candidates),)
-        assert np.all(amps >= 0)  # Amplitudes should be non-negative
+        # Verify result structure
+        assert result.centers.shape[0] == len(seeds)
+        assert result.centers.shape[1] == 2  # 2D centers
+        assert result.cholesky_factors.shape[0] == len(seeds)
+        assert result.cholesky_factors.shape[1] == tril_size(2)  # Packed L
+        assert result.sharpnesses.shape == (len(seeds),)
+        assert result.amplitudes.shape == (len(seeds),)
+        assert np.all(result.amplitudes >= 0)  # Amplitudes should be non-negative
 
-        # Render reconstruction (auto-extraction of all parameters)
-        reconstruction = render_gaussians_numpy(image.shape, params, amps, truncate=3.0)
+        # Render reconstruction
+        reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
         assert reconstruction.shape == image.shape
         assert np.all(np.isfinite(reconstruction))
@@ -85,21 +89,21 @@ class TestGaussianSplatsIntegration:
         # Create test data
         volume = self.create_test_image((32, 32, 32), n_blobs=3)
 
-        # Find candidates
-        candidates = find_candidates_multiscale_gaussian(
+        # Find seeds
+        seeds = find_seeds_multiscale_gaussian(
             volume,
             scales=(1.0, 2.0),
             peaks_per_scale=30,
             percentile_thresh=85,
             min_distance=3.0,
         )
-        assert len(candidates) > 0
-        assert candidates.shape[1] == 3
+        assert len(seeds) > 0
+        assert seeds.shape[1] == 3
 
         # Fit splats
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             volume,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=30,  # Fewer for speed
             lr=0.2,
             verbose=False,
@@ -107,14 +111,16 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
 
-        assert params.shape[0] == len(candidates)
-        assert params.shape[1] == 3 + tril_size(3) + 1  # centers + packed L + sharpness
-        assert amps.shape == (len(candidates),)
+        # Verify result structure
+        assert result.centers.shape[0] == len(seeds)
+        assert result.centers.shape[1] == 3  # 3D centers
+        assert result.cholesky_factors.shape[0] == len(seeds)
+        assert result.cholesky_factors.shape[1] == tril_size(3)  # Packed L
+        assert result.sharpnesses.shape == (len(seeds),)
+        assert result.amplitudes.shape == (len(seeds),)
 
-        # Render reconstruction (auto-extraction of all parameters)
-        reconstruction = render_gaussians_numpy(
-            volume.shape, params, amps, truncate=3.0
-        )
+        # Render reconstruction
+        reconstruction = render_gaussians_numpy(volume.shape, result, truncate=3.0)
 
         assert reconstruction.shape == volume.shape
         assert np.all(np.isfinite(reconstruction))
@@ -145,21 +151,21 @@ class TestGaussianSplatsIntegration:
 
         data = np.clip(data, 0, 1)
 
-        # Find candidates using fewer scales for 4D
-        candidates = find_candidates_multiscale_gaussian(
+        # Find seeds using fewer scales for 4D
+        seeds = find_seeds_multiscale_gaussian(
             data,
             scales=(1.0, 2.0),  # Fewer scales for 4D
-            peaks_per_scale=20,  # Fewer candidates
+            peaks_per_scale=20,  # Fewer seeds
             percentile_thresh=75,
             min_distance=2.0,
         )
-        assert len(candidates) > 0
-        assert candidates.shape[1] == 4  # 4D coordinates
+        assert len(seeds) > 0
+        assert seeds.shape[1] == 4  # 4D coordinates
 
         # Fit splats with reduced iterations for 4D
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             data,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=50,  # Fewer iterations for test speed
             lr=0.3,
             verbose=False,  # Reduce test output
@@ -167,14 +173,15 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
 
-        assert (
-            params.shape[1] == 4 + tril_size(4) + 1
-        )  # 4 centers + 4x4 Cholesky + sharpness
-        assert len(amps) == len(candidates)
-        assert all(amps >= 0)  # Non-negative amplitudes
+        # Verify result structure
+        assert result.centers.shape[1] == 4  # 4D centers
+        assert result.cholesky_factors.shape[1] == tril_size(4)  # 4x4 Cholesky
+        assert result.sharpnesses.shape == (len(seeds),)
+        assert len(result.amplitudes) == len(seeds)
+        assert all(result.amplitudes >= 0)  # Non-negative amplitudes
 
         # Render reconstruction (this tests our nD chunking path!)
-        reconstruction = render_gaussians_numpy(shape_4d, params, amps, truncate=2.5)
+        reconstruction = render_gaussians_numpy(shape_4d, result, truncate=2.5)
         assert reconstruction.shape == shape_4d
 
         # Verify reconstruction quality (looser tolerance for 4D)
@@ -194,28 +201,30 @@ class TestGaussianSplatsIntegration:
         y, x = np.meshgrid(np.arange(32), np.arange(32), indexing="ij")
         image = 0.8 * np.exp(-((y - 16) ** 2 + (x - 16) ** 2) / (2 * 4**2))
 
-        # Find candidates
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=10)
+        # Find seeds
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
 
         # Fit with early stopping (more iterations to allow convergence)
         fitter = GaussianSplatFitter(enable_dynamic_ops=False)
-        params_early, amps_early, stats_early = fitter.fit(
+        result_early = fitter.fit(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=200,  # More iterations
             max_abs_error=0.001,  # Use convergence threshold instead of early_stopping
             verbose=False,
             napari_movie=False,
         )
+        stats_early = result_early.stats
 
         # Fit without early stopping
-        params_full, amps_full, stats_full = fitter.fit(
+        result_full = fitter.fit(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=200,  # Same number
             verbose=False,
             napari_movie=False,
         )
+        stats_full = result_full.stats
 
         # Early stopping should use fewer iterations (or at least not more)
         assert stats_early["iterations"] <= stats_full["iterations"]
@@ -223,9 +232,9 @@ class TestGaussianSplatsIntegration:
         if stats_early["converged"]:
             assert stats_early["iterations"] < 200
 
-        # But achieve similar quality (auto-extraction of all parameters)
-        recon_early = render_gaussians_numpy(image.shape, params_early, amps_early)
-        recon_full = render_gaussians_numpy(image.shape, params_full, amps_full)
+        # But achieve similar quality
+        recon_early = render_gaussians_numpy(image.shape, result_early)
+        recon_full = render_gaussians_numpy(image.shape, result_full)
 
         mse_early = np.mean((image - recon_early) ** 2)
         mse_full = np.mean((image - recon_full) ** 2)
@@ -239,33 +248,30 @@ class TestGaussianSplatsIntegration:
             pytest.skip("Requires GPU for batched renderer test")
 
         image = self.create_test_image((64, 64), n_blobs=3)
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=30)
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=30)
 
         # Fit splats
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=30,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-
-        # Render with numpy (auto-extraction of all parameters)
-        recon_numpy = render_gaussians_numpy(image.shape, params, amps)
+        # Render with numpy
+        recon_numpy = render_gaussians_numpy(image.shape, result)
 
         # Render with batched PyTorch
         device = torch.device("cuda" if torch.cuda.is_available() else "mps")
         d = 2
         # Extract parameters manually for PyTorch rendering
-        sharpness_np = params[:, -1]
-        centers = torch.tensor(params[:, :d], device=device)
-        L_packed = params[:, d:-1]  # Exclude sharpness
-        L_full = unpack_tril(L_packed, d)
+        centers = torch.tensor(result.centers, device=device)
+        L_full = unpack_tril(result.cholesky_factors, d)
         Ls = torch.tensor(L_full, device=device)
-        amps_t = torch.tensor(amps, device=device)
+        amps_t = torch.tensor(result.amplitudes, device=device)
         # Use fitted sharpness values
-        sharpness = torch.tensor(sharpness_np, device=device)
+        sharpness = torch.tensor(result.sharpnesses, device=device)
 
         recon_torch = render_gaussians(
             image.shape, centers, Ls, amps_t, sharpness, truncate=3.0
@@ -279,23 +285,22 @@ class TestGaussianSplatsIntegration:
     def test_loss_functions(self) -> None:
         """Test both MSE and Poisson loss functions."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=20)
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=20)
 
         # Test MSE loss
-        params_mse, amps_mse, _ = fit_gaussian_splats(
+        result_mse = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=30,
             loss_type="mse",
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-
         # Test Poisson loss
-        params_poisson, amps_poisson, _ = fit_gaussian_splats(
+        result_poisson = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=30,
             loss_type="poisson",
             verbose=False,
@@ -304,16 +309,16 @@ class TestGaussianSplatsIntegration:
         )
 
         # Both should produce valid results
-        assert np.all(np.isfinite(params_mse))
-        assert np.all(np.isfinite(params_poisson))
-        assert np.all(amps_mse >= 0)
-        assert np.all(amps_poisson >= 0)
+        assert np.all(np.isfinite(result_mse.centers))
+        assert np.all(np.isfinite(result_mse.cholesky_factors))
+        assert np.all(np.isfinite(result_poisson.centers))
+        assert np.all(np.isfinite(result_poisson.cholesky_factors))
+        assert np.all(result_mse.amplitudes >= 0)
+        assert np.all(result_poisson.amplitudes >= 0)
 
-        # Both should reconstruct reasonably well (auto-extraction of all parameters)
-        recon_mse = render_gaussians_numpy(image.shape, params_mse, amps_mse)
-        recon_poisson = render_gaussians_numpy(
-            image.shape, params_poisson, amps_poisson
-        )
+        # Both should reconstruct reasonably well
+        recon_mse = render_gaussians_numpy(image.shape, result_mse)
+        recon_poisson = render_gaussians_numpy(image.shape, result_poisson)
 
         mse_mse = np.mean((image - recon_mse) ** 2)
         mse_poisson = np.mean((image - recon_poisson) ** 2)
@@ -324,23 +329,22 @@ class TestGaussianSplatsIntegration:
     def test_regularization(self) -> None:
         """Test L1 regularization on amplitudes."""
         image = self.create_test_image((32, 32), n_blobs=5)
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=50)
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=50)
 
         # Without regularization
-        params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
+        result_no_reg = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=50,
             l1_amp=0.0,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-
         # With strong regularization
-        params_reg, amps_reg, _ = fit_gaussian_splats(
+        result_reg = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=50,
             l1_amp=0.1,
             verbose=False,
@@ -349,23 +353,23 @@ class TestGaussianSplatsIntegration:
         )
 
         # Regularization should produce sparser solution
-        n_active_no_reg = np.sum(amps_no_reg > 0.01)
-        n_active_reg = np.sum(amps_reg > 0.01)
+        n_active_no_reg = np.sum(result_no_reg.amplitudes > 0.01)
+        n_active_reg = np.sum(result_reg.amplitudes > 0.01)
 
         assert n_active_reg <= n_active_no_reg
 
     def test_sigma_constraints(self) -> None:
         """Test that sigma constraints are respected."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=10)
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
 
         # Fit with constraints
         sigma_min = [0.5, 0.5]
         sigma_max = [5.0, 5.0]
 
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=50,
             sigma_min_diag=sigma_min,
             sigma_max_diag=sigma_max,
@@ -373,6 +377,8 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
+        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
+        amps = result.amplitudes
 
         # Extract and check Cholesky factors
         d = 2
@@ -388,73 +394,80 @@ class TestGaussianSplatsIntegration:
     def test_device_compatibility(self) -> None:
         """Test that fitting works on different devices."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        candidates = find_candidates_multiscale_gaussian(image, peaks_per_scale=10)
+        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
 
         # Test CPU
-        params_cpu, amps_cpu, _ = fit_gaussian_splats(
+        result_cpu = fit_gaussian_splats(
             image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=20,
             device="cpu",
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
+        params_cpu = np.column_stack([result_cpu.centers, result_cpu.cholesky_factors, result_cpu.sharpnesses])
         assert np.all(np.isfinite(params_cpu))
 
         # Test GPU if available
         if torch.cuda.is_available():
-            params_cuda, amps_cuda, _ = fit_gaussian_splats(
+            result_cuda = fit_gaussian_splats(
                 image,
-                seeds=candidates,
+                seeds=seeds,
                 n_iters=20,
                 device="cuda",
                 verbose=False,
             )
+            params_cuda = np.column_stack([result_cuda.centers, result_cuda.cholesky_factors, result_cuda.sharpnesses])
             assert np.all(np.isfinite(params_cuda))
 
         # Test MPS if available
         if torch.backends.mps.is_available():
-            params_mps, amps_mps, _ = fit_gaussian_splats(
+            result_mps = fit_gaussian_splats(
                 image,
-                seeds=candidates,
+                seeds=seeds,
                 n_iters=20,
                 device="mps",
                 verbose=False,
             )
+            params_mps = np.column_stack([result_mps.centers, result_mps.cholesky_factors, result_mps.sharpnesses])
             assert np.all(np.isfinite(params_mps))
 
     def test_empty_input_handling(self) -> None:
         """Test handling of edge cases and empty inputs."""
-        # Empty candidates
+        # Empty seeds
         image = self.create_test_image((32, 32), n_blobs=1)
-        empty_candidates = np.zeros((0, 2), dtype=np.float32)
+        empty_seeds = np.zeros((0, 2), dtype=np.float32)
 
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             image,
-            seeds=empty_candidates,
+            seeds=empty_seeds,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
+        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses]) if len(result.centers) > 0 else np.zeros((0, 2 + tril_size(2) + 1))
+        amps = result.amplitudes
 
         assert params.shape == (0, 2 + tril_size(2) + 1)  # Include sharpness
         assert amps.shape == (0,)
 
         # Uniform image
         uniform_image = np.ones((32, 32), dtype=np.float32) * 0.5
-        candidates = find_candidates_multiscale_gaussian(
+        seeds = find_seeds_multiscale_gaussian(
             uniform_image, peaks_per_scale=10
         )
 
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             uniform_image,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=20,
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
+        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
+        amps = result.amplitudes
 
         assert np.all(np.isfinite(params))
         assert np.all(np.isfinite(amps))
@@ -472,22 +485,21 @@ class TestGaussianSplatsIntegration:
         dist_sq = (grids[0] - center[0]) ** 2 + (grids[1] - center[1]) ** 2
         data = 0.8 * np.exp(-dist_sq / (2 * sigma**2))
 
-        # Use just one candidate at the center
-        candidates = np.array([[32.0, 32.0]])
+        # Use just one seed at the center
+        seeds = np.array([[32.0, 32.0]])
 
         # Fit with very loose truncation to force large AABB
-        params, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             data,
-            seeds=candidates,
+            seeds=seeds,
             n_iters=20,
             truncate=8.0,  # Very loose truncation = large AABB
             verbose=False,
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-
         # Render with loose truncation (this exercises chunking!)
-        reconstruction = render_gaussians_numpy(shape, params, amps, truncate=8.0)
+        reconstruction = render_gaussians_numpy(shape, result, truncate=8.0)
 
         assert reconstruction.shape == shape
         assert np.all(np.isfinite(reconstruction))

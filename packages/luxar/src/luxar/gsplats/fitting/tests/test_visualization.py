@@ -7,6 +7,7 @@ import sys
 import numpy as np
 import pytest
 
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.visualization import (
     display_compression_analysis,
     show_optimization_movie,
@@ -38,15 +39,21 @@ def test_display_compression_analysis_2d(capsys):
     """Test compression analysis display for 2D data."""
     V = np.random.rand(64, 64).astype(np.float32)
 
-    # Create params: 10 splats with centers (2 floats) + packed L (3 floats for 2D)
+    # Create GaussianSplatResult: 10 splats with 2D centers and packed L
     N = 10
     d = 2
     tril_size = d * (d + 1) // 2  # 3 for 2D
-    params = np.random.rand(N, d + tril_size).astype(np.float32)
-    amps = np.random.rand(N).astype(np.float32)
+
+    result = GaussianSplatResult(
+        centers=np.random.rand(N, d).astype(np.float32),
+        amplitudes=np.random.rand(N).astype(np.float32),
+        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+        sharpnesses=np.full(N, 2.0, dtype=np.float32),
+        stats={}
+    )
 
     # Should run without errors
-    display_compression_analysis(V, params, amps)
+    display_compression_analysis(V, result)
 
     # Check that output was produced
     captured = capsys.readouterr()
@@ -60,15 +67,21 @@ def test_display_compression_analysis_3d(capsys):
     """Test compression analysis display for 3D data."""
     V = np.random.rand(32, 32, 32).astype(np.float32)
 
-    # Create params: 8 splats for 3D (centers: 3 floats, packed L: 6 floats)
+    # Create GaussianSplatResult: 8 splats for 3D
     N = 8
     d = 3
     tril_size = d * (d + 1) // 2  # 6 for 3D
-    params = np.random.rand(N, d + tril_size).astype(np.float32)
-    amps = np.random.rand(N).astype(np.float32)
+
+    result = GaussianSplatResult(
+        centers=np.random.rand(N, d).astype(np.float32),
+        amplitudes=np.random.rand(N).astype(np.float32),
+        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+        sharpnesses=np.full(N, 2.0, dtype=np.float32),
+        stats={}
+    )
 
     # Should run without errors
-    display_compression_analysis(V, params, amps)
+    display_compression_analysis(V, result)
 
     captured = capsys.readouterr()
     assert "Compression Analysis" in captured.out
@@ -80,21 +93,27 @@ def test_compression_ratio_calculation(capsys):
     # Small example where we can verify the calculation
     V = np.random.rand(16, 16).astype(np.float32)  # 256 pixels * 4 bytes = 1024 bytes
 
-    # 2 splats: each has 2 (centers) + 3 (packed L) + 1 (amp) = 6 floats
-    # Total: 2 * 6 * 4 = 48 bytes
-    # Compression ratio: 1024 / 48 = 21.33:1
+    # 2 splats: each has 2 (centers) + 3 (packed L) + 1 (sharpness) + 1 (amp) = 7 floats
+    # Total: 2 * 7 * 4 = 56 bytes
+    # Compression ratio: 1024 / 56 = 18.29:1
     N = 2
     d = 2
     tril_size = 3
-    params = np.random.rand(N, d + tril_size).astype(np.float32)
-    amps = np.random.rand(N).astype(np.float32)
 
-    display_compression_analysis(V, params, amps)
+    result = GaussianSplatResult(
+        centers=np.random.rand(N, d).astype(np.float32),
+        amplitudes=np.random.rand(N).astype(np.float32),
+        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+        sharpnesses=np.full(N, 2.0, dtype=np.float32),
+        stats={}
+    )
+
+    display_compression_analysis(V, result)
 
     captured = capsys.readouterr()
     assert "Compression ratio:" in captured.out
-    # Should see a high compression ratio
-    assert "21." in captured.out or "21:" in captured.out
+    # Should see a high compression ratio (around 18:1)
+    assert "18." in captured.out or "18:" in captured.out
 
 
 def test_bits_per_pixel_calculation(capsys):
@@ -105,10 +124,16 @@ def test_bits_per_pixel_calculation(capsys):
     N = 5
     d = 2
     tril_size = 3
-    params = np.random.rand(N, d + tril_size).astype(np.float32)
-    amps = np.random.rand(N).astype(np.float32)
 
-    display_compression_analysis(V, params, amps)
+    result = GaussianSplatResult(
+        centers=np.random.rand(N, d).astype(np.float32),
+        amplitudes=np.random.rand(N).astype(np.float32),
+        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+        sharpnesses=np.full(N, 2.0, dtype=np.float32),
+        stats={}
+    )
+
+    display_compression_analysis(V, result)
 
     captured = capsys.readouterr()
     assert "Bits per pixel:" in captured.out
@@ -188,11 +213,19 @@ def test_compression_analysis_zero_splats(capsys):
     V = np.random.rand(16, 16).astype(np.float32)
 
     # Zero splats
-    params = np.array([]).reshape(0, 5).astype(np.float32)
-    amps = np.array([]).astype(np.float32)
+    d = 2
+    tril_size = 3
+
+    result = GaussianSplatResult(
+        centers=np.array([]).reshape(0, d).astype(np.float32),
+        amplitudes=np.array([]).astype(np.float32),
+        cholesky_factors=np.array([]).reshape(0, tril_size).astype(np.float32),
+        sharpnesses=np.array([]).astype(np.float32),
+        stats={}
+    )
 
     # Should handle gracefully (infinite compression ratio)
-    display_compression_analysis(V, params, amps)
+    display_compression_analysis(V, result)
 
     captured = capsys.readouterr()
     assert "Compression Analysis" in captured.out
@@ -209,10 +242,16 @@ def test_compression_analysis_many_splats(capsys):
     N = 100
     d = 2
     tril_size = 3
-    params = np.random.rand(N, d + tril_size).astype(np.float32)
-    amps = np.random.rand(N).astype(np.float32)
 
-    display_compression_analysis(V, params, amps)
+    result = GaussianSplatResult(
+        centers=np.random.rand(N, d).astype(np.float32),
+        amplitudes=np.random.rand(N).astype(np.float32),
+        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+        sharpnesses=np.full(N, 2.0, dtype=np.float32),
+        stats={}
+    )
+
+    display_compression_analysis(V, result)
 
     captured = capsys.readouterr()
     assert "Compression Analysis" in captured.out
@@ -228,11 +267,17 @@ def test_display_compression_various_dimensions(capsys):
 
         N = 5
         tril_size = d * (d + 1) // 2
-        params = np.random.rand(N, d + tril_size).astype(np.float32)
-        amps = np.random.rand(N).astype(np.float32)
+
+        result = GaussianSplatResult(
+            centers=np.random.rand(N, d).astype(np.float32),
+            amplitudes=np.random.rand(N).astype(np.float32),
+            cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
+            sharpnesses=np.full(N, 2.0, dtype=np.float32),
+            stats={}
+        )
 
         # Should work for all dimensionalities
-        display_compression_analysis(V, params, amps)
+        display_compression_analysis(V, result)
 
         captured = capsys.readouterr()
         assert "Compression Analysis" in captured.out

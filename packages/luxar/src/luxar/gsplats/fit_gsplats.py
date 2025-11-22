@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
 from arbol import asection
 
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting import (
     create_loss_function,
     finalize_results,
@@ -62,7 +63,7 @@ class GaussianSplatFitter:
         V: np.ndarray,
         seeds: Optional[np.ndarray | float] = None,
         norm_percentile: float = 0.0,
-        init_sigma_vox: float = 1.5,
+        init_sigma_vox: float = 0.5,
         n_iters: int = 1000,
         lr: float = 0.01,
         loss_type: str = "l1",
@@ -73,6 +74,7 @@ class GaussianSplatFitter:
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
+        seed_method: str = "gaussian",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
@@ -83,22 +85,30 @@ class GaussianSplatFitter:
         patience: int = 10,
         factor: float = 0.5,
         dynamic_ops_verbose: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+        **seed_kwargs,
+    ) -> GaussianSplatResult:
         """
         Fit Gaussian splats using per-splat Adam optimizer.
 
         This is the refactored version that uses the modular fitting pipeline.
         See fit_gaussian_splats() for full parameter documentation.
 
+        Parameters
+        ----------
+        seed_method : str, default="gaussian"
+            Method for generating seeds when seeds=None:
+            - "gaussian": Gaussian multi-scale blob detection
+            - "decomposition": Dictionary/PCA-based decomposition
+            - "both": Hybrid approach combining both methods
+            This parameter is only used when seeds=None.
+        **seed_kwargs
+            Additional keyword arguments for seed generation (e.g., num_scales,
+            percentile_thresh, etc.). Only used when seeds=None.
+
         Returns
         -------
-        params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1)
-            Splat parameters [centers, packed_L, sharpness].
-            Last column contains per-splat sharpness values.
-        amps : np.ndarray
-            Splat amplitudes.
-        stats : dict
-            Optimization statistics (time, iterations, convergence).
+        GaussianSplatResult
+            Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats.
         """
         # Step 1: Validate and prepare configuration
         config = prepare_fit_config(
@@ -127,6 +137,8 @@ class GaussianSplatFitter:
             patience,
             factor,
             dynamic_ops_verbose,
+            seed_method=seed_method,
+            **seed_kwargs,
         )
 
         # Step 2: Preprocess data and generate candidates
@@ -134,16 +146,13 @@ class GaussianSplatFitter:
 
         # Handle edge case of no candidates
         if preprocessed_data.N == 0:
-            return (
-                np.zeros(
-                    (
-                        0,
-                        preprocessed_data.d + tril_size(preprocessed_data.d) + 1,
-                    ),  # Include sharpness
-                    np.float32,
-                ),
-                np.zeros((0,), np.float32),
-                {},
+            d = preprocessed_data.d
+            return GaussianSplatResult(
+                centers=np.zeros((0, d), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, tril_size(d)), dtype=np.float32),
+                sharpnesses=np.zeros((0,), dtype=np.float32),
+                stats={},
             )
 
         # Step 3: Initialize model and optimizer
@@ -177,6 +186,7 @@ def fit_gaussian_splats(
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
     device: Optional[str] = None,
+    seed_method: str = "gaussian",
     verbose: bool = True,
     # Optimization parameters
     max_abs_error: Optional[float] = None,
@@ -192,7 +202,8 @@ def fit_gaussian_splats(
     napari_movie: bool = False,
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    **seed_kwargs,
+) -> GaussianSplatResult:
     """
     Fit n-dimensional oriented Gaussian splats to reconstruct input image/volume.
 
@@ -262,6 +273,17 @@ def fit_gaussian_splats(
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
+    seed_method : str, default="gaussian"
+        Method for generating seeds when seeds=None:
+        - "gaussian": Gaussian multi-scale blob detection (recommended for general use)
+        - "decomposition": Dictionary/PCA-based decomposition
+        - "both": Hybrid approach combining both methods
+        This parameter is only used when seeds=None. If seeds are provided,
+        this parameter is ignored.
+    **seed_kwargs
+        Additional keyword arguments for seed generation (e.g., num_scales,
+        percentile_thresh, scale_voxels, etc.). Only used when seeds=None.
+        See seed generation functions for available options.
     verbose : bool, default=True
         Whether to print optimization progress.
     max_abs_error : float or None, default=None (auto: 0.01)
@@ -295,22 +317,16 @@ def fit_gaussian_splats(
 
     Returns
     -------
-    params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1), dtype=float32
-        Concatenated parameters for each splat: [center_coords, packed_cholesky_L, sharpness].
-        Column structure:
-        - First d columns: center coordinates (voxel units)
-        - Next d*(d+1)//2 columns: packed lower-triangular Cholesky factors
-        - Last column: per-splat sharpness values (s = 2.0 is standard Gaussian)
-        Represents the BEST state encountered during optimization (lowest max_abs_error).
-    amps : np.ndarray, shape (N,), dtype=float32
-        Non-negative amplitude values for each splat, rescaled to original image
-        intensity range. Can be used directly to reconstruct original image intensities.
-        Represents the BEST state encountered during optimization.
+    GaussianSplatResult
+        Dataclass containing all fitting results:
+        - centers: np.ndarray, shape (N, d) - Center positions in voxel coordinates
+        - amplitudes: np.ndarray, shape (N,) - Non-negative amplitudes rescaled to original intensity
+        - cholesky_factors: np.ndarray, shape (N, d*(d+1)//2) - Packed lower-triangular Cholesky factors
+        - sharpnesses: np.ndarray, shape (N,) - Per-splat sharpness values (s=2.0 is standard Gaussian)
+        - stats: Dict[str, Any] - Optimization statistics (time, iterations, convergence, etc.)
+
+        All arrays represent the BEST state encountered during optimization (lowest max_abs_error).
         Note: Gaussian splatting cannot represent uniform DC components - only variations.
-    stats : dict
-        Optimization statistics including time, iterations, convergence status.
-        Reflects the best state iteration, not the final iteration.
-        Includes per-splat sharpness statistics (min, max, mean, std, median).
 
     Notes
     -----
@@ -334,7 +350,7 @@ def fit_gaussian_splats(
         )
 
         # Fit and extract results
-        params, amps, stats = fitter.fit(
+        result = fitter.fit(
             V=V,
             seeds=seeds,
             norm_percentile=norm_percentile,
@@ -350,6 +366,7 @@ def fit_gaussian_splats(
             sigma_min_diag=sigma_min_diag,
             sigma_max_diag=sigma_max_diag,
             truncate=truncate,
+            seed_method=seed_method,
             verbose=verbose,
             max_abs_error=max_abs_error,
             gradient_clip=gradient_clip,
@@ -359,6 +376,7 @@ def fit_gaussian_splats(
             scheduler_type=scheduler_type,
             patience=patience,
             factor=factor,
+            **seed_kwargs,
         )
 
     # After fitting section closes, show summary and movie
@@ -366,39 +384,39 @@ def fit_gaussian_splats(
         from arbol import aprint
 
         with asection("Optimization Complete"):
-            aprint(f"Time: {stats['time_seconds']:.2f} seconds")
-            aprint(f"Iterations: {stats['iterations']}/{n_iters}")
-            if stats["converged"]:
+            aprint(f"Time: {result.stats['time_seconds']:.2f} seconds")
+            aprint(f"Iterations: {result.stats['iterations']}/{n_iters}")
+            if result.stats["converged"]:
                 aprint(
-                    f"✓ Converged (saved {n_iters - stats['iterations']} iterations)"
+                    f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
                 )
 
         # Calculate and display compression ratio
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
-        display_compression_analysis(V, params, amps)
+        display_compression_analysis(V, result)
 
         # Display sharpness statistics
         with asection("Sharpness Statistics"):
             aprint(
-                f"Range: [{stats['sharpness_min']:.2f}, {stats['sharpness_max']:.2f}]  "
-                f"Mean: {stats['sharpness_mean']:.2f} ± {stats['sharpness_std']:.2f}  "
-                f"Median: {stats['sharpness_median']:.2f}"
+                f"Range: [{result.stats['sharpness_min']:.2f}, {result.stats['sharpness_max']:.2f}]  "
+                f"Mean: {result.stats['sharpness_mean']:.2f} ± {result.stats['sharpness_std']:.2f}  "
+                f"Median: {result.stats['sharpness_median']:.2f}"
             )
             # Provide interpretation
-            if stats["sharpness_mean"] < 1.5:
+            if result.stats["sharpness_mean"] < 1.5:
                 aprint("→ Soft falloff (s < 2): Heavy-tailed Gaussians")
-            elif stats["sharpness_mean"] < 2.5:
+            elif result.stats["sharpness_mean"] < 2.5:
                 aprint("→ Standard Gaussians (s ≈ 2): Classic Gaussian profiles")
-            elif stats["sharpness_mean"] < 4.0:
+            elif result.stats["sharpness_mean"] < 4.0:
                 aprint("→ Sharp edges (2 < s < 4): Compact splats with faster decay")
             else:
                 aprint("→ Very sharp (s ≥ 4): Near box-like splats with abrupt cutoff")
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
-    if stats.get("movie_frames") is not None:
+    if result.stats.get("movie_frames") is not None:
         from luxar.gsplats.fitting.visualization import show_optimization_movie
 
-        show_optimization_movie(stats["movie_frames"], stats["movie_shape"])
+        show_optimization_movie(result.stats["movie_frames"], result.stats["movie_shape"])
 
-    return params, amps, stats
+    return result

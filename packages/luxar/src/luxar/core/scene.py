@@ -68,8 +68,8 @@ class Scene(Node):
             # Store writer interface
             self._writer = writer
 
-            # Create lightweight root node (no Zarr group)
-            super().__init__("Scene", group=None, writer=writer)
+            # Create lightweight root node
+            super().__init__("Scene", writer=writer)
 
             # Store dimensions
             self._dimensions: Optional[Dimensions] = dimensions

@@ -179,30 +179,56 @@ Points in nD space are treated as hyperspheres. When viewing a 3D slice:
 
 ## 📖 API Reference
 
+### LuxarZarrCompiler
+
+The compiler is the entry point for creating Luxar scenes with progressive writing.
+
+```python
+class LuxarZarrCompiler:
+    """Progressive Zarr compiler with context manager support."""
+
+    def __init__(
+        self,
+        store_path: Optional[PathLike] = None,
+        compressor: Optional[Compressor] = DEFAULT_COMP,
+        version: str = "0.1",
+        enable_spatial_index: bool = True,
+        dtype_config: Optional[DataTypeConfig] = None
+    ) -> None:
+        """
+        Create a new Zarr compiler for progressive writing.
+
+        Args:
+            store_path: Path to Zarr store (None for temporary directory)
+            compressor: Zarr compressor for datasets
+            version: Luxar format version
+            enable_spatial_index: Whether to build spatial indices (default: True)
+            dtype_config: Data type configuration (default: auto-detect)
+
+        Note:
+            Physical units are specified per-dimension using the Dimensions
+            system. This provides flexibility for multi-dimensional data where
+            different axes may have different units.
+        """
+
+    def create_scene(
+        self,
+        dimensions: Optional[Dimensions] = None
+    ) -> Scene:
+        """Create a scene with this compiler as writer.
+
+        Args:
+            dimensions: Scene-level dimension definitions
+
+        Returns:
+            Scene object for building the scene graph
+        """
+
 ### Scene Class
 
 ```python
 class Scene:
-    """Root scene node managing a Zarr store."""
-    
-    def __init__(
-        self, 
-        store_path: Optional[PathLike] = None,
-        units: str = "metre",
-        version: str = "0.2",
-        compressor: Optional[Compressor] = DEFAULT_COMP,
-        dimensions: Optional[Dimensions] = None
-    ) -> None:
-        """
-        Create a new scene.
-        
-        Args:
-            store_path: Path to Zarr store (None for temporary)
-            units: Physical units for coordinates
-            version: Luxar format version
-            compressor: Zarr compressor for datasets
-            dimensions: Scene-level dimension definitions for nD data
-        """
+    """Root scene node. Created via LuxarZarrCompiler.create_scene()."""
     
     def add_group(self, name: str, **attrs) -> Node:
         """Add a group node for organization.

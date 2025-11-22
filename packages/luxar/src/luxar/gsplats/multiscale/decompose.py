@@ -1076,6 +1076,30 @@ def decompose_image(
                     f"(1% of image range [{V.min():.3f}, {V.max():.3f}])"
                 )
 
+    # Filter out scales that are too large for the image dimensions
+    # A scale is valid if all dimensions satisfy: dim // scale >= 1
+    min_dim = min(V.shape)
+    original_scales = scales
+    scales = [s for s in scales if s <= min_dim]
+
+    if len(scales) == 0:
+        # If no scales are valid, use scale=1 only
+        scales = [1]
+        if verbose:
+            import warnings
+            warnings.warn(
+                f"All scales {original_scales} are too large for image shape {V.shape}. "
+                f"Using scale=[1] instead."
+            )
+    elif len(scales) < len(original_scales):
+        removed_scales = [s for s in original_scales if s not in scales]
+        if verbose:
+            import warnings
+            warnings.warn(
+                f"Scales {removed_scales} are too large for image shape {V.shape} "
+                f"(min dimension={min_dim}). Using scales={scales} instead."
+            )
+
     with asection("Multi-Scale Image Decomposition"):
         if verbose:
             aprint(f"Input shape: {V.shape} ({V.ndim}D)")

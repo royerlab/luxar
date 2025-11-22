@@ -1,181 +1,340 @@
-# Core Package
+# luxar.core
 
-The `core` package contains the fundamental data structures and scene graph implementation for Luxar.
+The `core` module contains the fundamental data structures and classes that form the foundation of Luxar's scene graph system. This includes scene nodes, point containers, dimensional specifications, and transformation utilities.
 
 ## Overview
 
-This package provides the core building blocks for creating and manipulating 3D/nD points scenes with hierarchical structure and transformations.
+The core module implements Luxar's hierarchical scene graph architecture, enabling organization of large-scale point cloud data with transforms, metadata, and nD dimensional support.
 
-## Modules
+## Key Components
 
-### `node.py`
-Base class for all scene graph nodes.
+### 1. Scene (`scene.py`)
 
-**Key Classes:**
-- `Node`: Base node class with transform support and hierarchical structure
+The root node of the scene hierarchy. Provides builder methods for constructing complex scenes.
+
+**Key Features:**
+- Progressive writing through `LuxarZarrCompiler`
+- Scene-level dimension definitions
+- Broadcasting support for nD data
+- Hierarchical organization with groups
+
+**Usage Example:**
+```python
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
+import numpy as np
+
+# Define 4D scene dimensions
+dims = Dimensions([
+    Dimension('x', unit='um', display=True),
+    Dimension('y', unit='um', display=True),
+    Dimension('z', unit='um', display=True),
+    Dimension('time', unit='s', display=False, discrete=True, range=(0, 99))
+])
+
+# Create scene with progressive writer
+with LuxarZarrCompiler('output.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=dims)
+
+    # Add points with all dimensions
+    positions = np.random.randn(10000, 4).astype(np.float32)
+    scene.add_points('my_points', positions)
+```
+
+**Key Methods:**
+- `add_group(name, **attrs)` - Create child group node
+- `add_points(name, positions, ...)` - Add points with attributes
+- `dimensions` (property) - Get/set scene-level dimensions
+
+### 2. Node (`node.py`)
+
+Base class for all scene graph nodes. Represents groups in the hierarchy.
 
 **Key Features:**
 - Hierarchical parent-child relationships
-- 4x4 transform matrices with automatic validation
-- Attribute storage for metadata
+- Transform support (4x4 matrices)
 - Rendering properties (opacity, gamma, blending mode)
-- Tree traversal utilities
+- Progressive writing without keeping Zarr groups in memory
 
-### `scene.py`
-Root node of the scene graph.
-
-**Key Classes:**
-- `Scene`: Top-level container for all scene content
-
-**Key Features:**
-- Dimension system integration for nD data
-- Point cloud creation with automatic validation
-- Group node creation for organization
-- Progressive writing support via writer injection
-- Convenient helper methods for common points patterns
-
-### `points.py`
-Point cloud node implementation.
-
-**Key Classes:**
-- `Points`: Lightweight metadata container for points data
-
-**Key Features:**
-- Metadata-only storage (actual data written to Zarr)
-- Automatic shape tracking
-- Integration with progressive writing system
-
-### `dimensions.py`
-Dimension system for nD points with spatial awareness.
-
-**Key Classes:**
-- `Dimension`: Single dimension specification with spatial and discrete properties
-  - `spatial`: Whether points extend through this dimension (hyperspheres)
-  - `discrete`: Whether dimension represents categorical/discrete values
-  - Auto-enforces: non-displayed, non-spatial dimensions must be discrete
-- `Dimensions`: Collection of dimensions defining a coordinate system
-  - Provides `spatial_extend_dims` property for spatial index optimization
-
-**Key Features:**
-- Support for arbitrary number of dimensions
-- Physical units for each dimension
-- Display control (which dimensions are visible)
-- Step sizes for keyboard navigation
-- Serialization to/from dictionaries
-
-### `transforms.py`
-Transform utilities for 3D transformations.
-
-**Key Functions:**
-- `identity()`: Create identity matrix
-- `translate(x, y, z)`: Create translation matrix
-- `scale(x, y, z)`: Create scale matrix
-- `rotate_x/y/z(degrees)`: Create rotation matrices
-- `compose(*transforms)`: Compose multiple transforms
-- `inverse(transform)`: Compute inverse transform
-- `look_at(eye, target, up)`: Create look-at matrix
-
-**Key Features:**
-- All transforms are 4x4 matrices (float32)
-- Automatic validation
-- Column-major storage for THREE.js compatibility
-- Convenient aliases for common operations
-
-## Usage Examples
-
-### Creating a Scene with Points
-
+**Usage Example:**
 ```python
-from luxar.core import Scene, Dimensions, Dimension
-from luxar import LuxarZarrCompiler
-import numpy as np
+# Nodes are typically created via Scene.add_group()
+group = scene.add_group('my_group',
+                        opacity=0.8,
+                        gamma=1.2,
+                        blending_mode='additive')
 
-# Create compiler for progressive writing
-with LuxarZarrCompiler('output.zarr') as compiler:
-    # Define dimensions for 6D data with different types
-    dims = Dimensions([
-        # Displayed dimensions - spatial and continuous
-        Dimension("x", "um", (-100, 100), display=True),  # spatial=True (auto)
-        Dimension("y", "um", (-100, 100), display=True),  # spatial=True (auto)
-        Dimension("z", "um", (-50, 50), display=True),    # spatial=True (auto)
-        
-        # Non-displayed spatial dimension - points extend through it
-        Dimension("depth", "um", (0, 200), display=False, spatial=True),  # continuous
-        
-        # Non-displayed, non-spatial dimensions - must be discrete
-        Dimension("time", "ms", (0, 10), display=False, discrete=True, step=1.0),
-        Dimension("channel", "", (0, 3), display=False, discrete=True),
-    ])
-    
-    # Create scene with dimensions
-    scene = compiler.create_scene(dimensions=dims)
-    
-    # Add points
-    positions = np.random.randn(10000, 6).astype(np.float32)
-    colors = np.random.rand(10000, 3).astype(np.float32)
-    scene.add_points("my_points", positions, colors)
+# Transforms can be set directly
+group.transform = luxar.translate(5, 0, 0)
+
+# Or chained
+group.set_opacity(0.5).set_gamma(1.0)
 ```
 
-### Working with Transforms
+**Key Properties:**
+- `transform` - 4x4 transformation matrix
+- `opacity` - Rendering opacity (0.0-1.0)
+- `gamma` - Gamma correction (0.2-2.0)
+- `blending_mode` - Blending mode ('normal', 'additive')
+- `children` - List of child nodes
+- `parent` - Parent node reference
 
+**Important Notes:**
+- Transforms are automatically transposed for THREE.js compatibility when stored
+- Nodes use writer interface for progressive writing without keeping data in memory
+- All rendering attributes are validated on assignment
+
+### 3. Points (`points.py`)
+
+Specialized node for point cloud data. Lightweight metadata container in progressive mode.
+
+**Key Features:**
+- Metadata-only in progressive writing (data written immediately to Zarr)
+- Tracks data characteristics (n_points, has_colors, has_radii, etc.)
+- Inherits all Node capabilities
+
+**Usage Example:**
 ```python
-from luxar.core import transforms
-import numpy as np
+# Points created via Scene.add_points()
+points = scene.add_points('cloud',
+                         positions=positions,
+                         colors=colors,
+                         radii=radii,
+                         sharpness=sharpness)
 
-# Create a transform chain
-t1 = transforms.translate(10, 0, 0)
-t2 = transforms.rotate_z(45)
-t3 = transforms.scale(2, 2, 2)
+# Query metadata
+print(f"Points: {points.n_points:,}")
+print(f"Has colors: {points.has_colors}")
+```
 
-# Compose transforms (applied right to left)
-combined = transforms.compose(t3, t2, t1)
+**Key Properties:**
+- `n_points` - Number of points
+- `has_colors` - Whether colors are present
+- `has_radii` - Whether radii are present
+- `has_sharpness` - Whether sharpness is present
+- `metadata` - Full metadata dictionary
 
-# Apply to a node
+### 4. Dimensions (`dimensions.py`)
+
+Scene-level coordinate system definitions.
+
+**Key Classes:**
+- `Dimension` - Single dimension specification
+- `Dimensions` - Complete scene dimension system
+
+**Key Features:**
+- Support for arbitrary dimensionality (not limited to 3D)
+- Displayed vs non-displayed dimensions
+- Discrete vs continuous dimensions
+- Spatial extension flags for point coverage
+- Navigation properties (step sizes, ranges)
+
+**Usage Example:**
+```python
+from luxar.core.dimensions import Dimension, Dimensions
+
+# Define 5D space (XYZ + Time + Channel)
+dims = Dimensions([
+    Dimension('x', unit='um', display=True),
+    Dimension('y', unit='um', display=True),
+    Dimension('z', unit='um', display=True),
+    Dimension('time', unit='s', display=False, discrete=True,
+              range=(0, 99), step=1.0),
+    Dimension('channel', unit='ch', display=False, discrete=True,
+              range=(0, 2), step=1.0)
+])
+
+# Query properties
+print(f"Total dimensions: {dims.ndim}")
+print(f"Displayed: {dims.displayed}")
+print(f"Non-displayed: {dims.non_displayed}")
+```
+
+**Dimension Properties:**
+- `name` - Dimension identifier
+- `unit` - Physical unit
+- `display` - Whether dimension is displayed (max 3)
+- `discrete` - Whether values are discrete
+- `spatial` - Whether points extend through this dimension
+- `range` - Optional (min, max) bounds
+- `step` - Navigation step size
+- `cyclic` - Whether dimension wraps around
+
+**Automatic Behaviors:**
+- `spatial` flag auto-determined from `display` if not specified
+- Non-spatial, non-displayed dimensions automatically marked discrete
+- Step sizes auto-calculated if not provided
+
+### 5. Transforms (`transforms.py`)
+
+Utilities for creating and manipulating 4x4 transformation matrices.
+
+**Key Functions:**
+- `identity()` - Create identity matrix
+- `translate(x, y, z)` - Translation matrix
+- `rotate_x/y/z(degrees)` - Axis-aligned rotations
+- `rotate(degrees, axis)` - Arbitrary axis rotation
+- `scale(x, y, z, uniform)` - Scaling matrix
+- `compose(*transforms)` - Combine multiple transforms
+- `inverse(transform)` - Compute inverse
+- `look_at(eye, target, up)` - Camera-style transform
+- `to_list(transform)` - Convert to storage format
+- `from_list(values)` - Convert from storage format
+
+**Usage Example:**
+```python
+import luxar
+
+# Create transformation
+t1 = luxar.translate(10, 0, 0)
+t2 = luxar.rotate_z(45)
+t3 = luxar.scale(2, 2, 2)
+
+# Compose (applied in order: translate, then rotate, then scale)
+combined = luxar.compose(t1, t2, t3)
+
+# Apply to node
 node.transform = combined
 ```
 
-### Building Hierarchical Scenes
+**Important Notes:**
+- All matrices are 4x4 homogeneous transforms (float32)
+- Matrices are automatically transposed for THREE.js when stored
+- Use `to_list()` and `from_list()` for serialization (handles transpose)
+- Composition order: `compose(A, B, C)` applies A first, then B, then C
 
-```python
-# Create groups for organization
-group1 = scene.add_group("molecules")
-group2 = scene.add_group("cells", parent=group1)
+## Architecture
 
-# Add points to specific groups
-scene.add_points("proteins", positions1, parent=group1)
-scene.add_points("organelles", positions2, parent=group2)
+### Progressive Writing Design
 
-# Set rendering properties
-group1.opacity = 0.8
-group1.blending_mode = "additive"
+The core module is designed to work with Luxar's progressive writing system:
+
+1. **Scene Creation**: Scene created with a writer (LuxarZarrCompiler)
+2. **Node Creation**: Nodes are lightweight metadata containers
+3. **Data Writing**: Point data written immediately to Zarr via writer
+4. **Memory Efficiency**: Data never kept in memory after writing
+
+### Scene Graph Structure
+
+```
+Scene (root)
+├── Group "cells"
+│   ├── Points "cell_1"
+│   └── Points "cell_2"
+└── Group "markers"
+    └── Points "marker_points"
 ```
 
-## Architecture Notes
+### Transform Hierarchy
 
-### Memory Efficiency
-- Point data is immediately written to Zarr, not kept in memory
-- Nodes only store metadata and array shapes
-- Progressive writing enables TB-scale datasets
-
-### Transform System
-- Transforms compose hierarchically (parent → child)
-- Stored as column-major for THREE.js compatibility
-- Automatic validation ensures matrices are valid
-
-### Dimension System
-- Supports unlimited dimensions (not just 3D)
-- Non-displayed dimensions are "sliced" in viewer
-- Step sizes enable keyboard navigation in viewer
+Transforms compose hierarchically:
+- Each node can have a local transform
+- Final transform = parent_transform @ local_transform
+- Transforms are automatically applied by the viewer
 
 ## Dependencies
 
-Internal:
-- `typing_utils`: Type definitions and protocols
-- `io.writer`: Progressive writing interface
-- `utils.array`: Array manipulation helpers
-- `validation`: Input validation
+**Internal:**
+- `luxar.typing_utils` - Type definitions and validation
+- `luxar.io.writer` - Writer protocol for progressive writing
+- `luxar.utils.array` - Array broadcasting helpers
 
-External:
-- `numpy`: Array operations
-- `zarr`: Storage backend (via writer)
-- `arbol`: Logging and progress display
+**External:**
+- `numpy` - Array operations
+- `zarr` - Data storage (indirect, through writer)
+- `arbol` - Structured logging
+
+## Testing
+
+Tests are located in `core/tests/`:
+- `test_dimensions.py` - Dimension system tests
+- `test_node_rendering.py` - Node rendering properties
+- `test_scene_methods.py` - Scene builder methods
+- `test_scene_structure.py` - Scene graph structure
+- `test_transforms.py` - Transform utilities
+- `test_spatial_dimensions.py` - Spatial dimension handling
+
+Run tests:
+```bash
+hatch run pytest packages/luxar/src/luxar/core/tests/
+```
+
+## Implementation Notes
+
+### Transform Storage
+
+Transforms are stored in THREE.js-compatible format (column-major):
+```python
+# NumPy (row-major) → Storage (column-major)
+numpy_matrix = np.array([[...], [...], [...], [...]])  # 4x4
+storage_list = numpy_matrix.T.ravel().tolist()  # Transpose for THREE.js
+
+# Storage → NumPy
+storage_list = [...]  # 16 elements
+numpy_matrix = np.array(storage_list).reshape(4, 4).T  # Transpose back
+```
+
+This ensures correct interpretation by the THREE.js viewer.
+
+### Dimension Validation
+
+Scene dimensions are validated to ensure:
+- Maximum 3 displayed dimensions
+- At least 1 displayed dimension if any exist
+- Unique dimension names
+- Valid ranges (min < max)
+- Consistent spatial extension flags
+
+### Node Attribute Storage
+
+Nodes cache attributes and write them immediately:
+- Attributes cached in `_attrs_cache` for fast access
+- Written immediately to Zarr via writer interface
+- Rendering attributes validated on assignment
+- No Zarr groups kept in memory (memory-efficient)
+
+## Best Practices
+
+### 1. Always Use Context Manager
+```python
+with LuxarZarrCompiler('output.zarr') as compiler:
+    scene = compiler.create_scene()
+    # ... build scene
+# Automatically finalized
+```
+
+### 2. Define Dimensions Early
+```python
+# Define dimensions before creating scene
+dims = Dimensions([...])
+scene = compiler.create_scene(dimensions=dims)
+```
+
+### 3. Use Explicit Broadcasting
+```python
+# Explicit is better than implicit
+scene.add_points('pts', positions,
+                broadcast_dims=['time', 'channel'])
+```
+
+### 4. Validate Data Before Writing
+```python
+# Positions must match scene dimensions
+if scene.dimensions:
+    scene.dimensions.validate_positions(positions)
+```
+
+### 5. Use Transform Utilities
+```python
+# Use provided functions instead of manual matrix creation
+transform = luxar.compose(
+    luxar.translate(5, 0, 0),
+    luxar.rotate_z(45)
+)
+```
+
+## See Also
+
+- [io/README.md](../io/README.md) - I/O operations and writers
+- [typing_utils/README.md](../typing_utils/README.md) - Type system
+- [validation/README.md](../validation/README.md) - Validation utilities
+- [Main README](../../../../README.md) - Project overview

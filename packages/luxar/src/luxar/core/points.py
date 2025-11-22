@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from arbol import aprint
 
 from ..core.node import Node
 from ..typing_utils.enums import NodeType
+
+if TYPE_CHECKING:
+    from ..io.writer import ZarrWriterProtocol
 
 
 class Points(Node):
@@ -31,7 +34,7 @@ class Points(Node):
         positions: Optional[Any] = None,  # Ignored, for compatibility
         metadata: Optional[Dict[str, Any]] = None,
         parent: Optional[Node] = None,
-        writer: Optional[Any] = None,  # ZarrWriterProtocol
+        writer: Optional[ZarrWriterProtocol] = None,
         **attrs: Any,
     ) -> None:
         """Initialize a Points node.
@@ -44,14 +47,13 @@ class Points(Node):
             writer: Writer interface for progressive writing
             **attrs: Additional attributes for the node
         """
-        # Store metadata
-        self._metadata = metadata or {}
-
-        # Initialize parent Node
+        # Initialize parent Node FIRST
         node_type = NodeType.POINTS.value
-        super().__init__(
-            name, group=None, parent=parent, writer=writer, type=node_type, **attrs
-        )
+        super().__init__(name, parent=parent, writer=writer, type=node_type, **attrs)
+
+        # Store metadata AFTER super().__init__() to avoid being overwritten
+        # (Node.__init__() sets self._metadata = {}, which would overwrite ours)
+        self._metadata = metadata or {}
 
         # Log creation
         if metadata:

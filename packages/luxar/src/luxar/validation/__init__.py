@@ -1,4 +1,10 @@
-"""Validation functions for Luxar data structures."""
+"""Validation functions for Luxar data structures.
+
+This package contains:
+- types.py: Basic type validation and type guards
+- base.py: Detailed validation with helpful error messages (for writing)
+- nd.py: nD dimensional coverage validation
+"""
 
 from .base import (
     ValidationError,
@@ -6,23 +12,54 @@ from .base import (
     validate_positions_for_writing,
     validate_radii_for_writing,
     validate_sharpness_for_writing,
+    validate_zarr_attributes,
 )
 from .nd import (
     DimensionalCoverageError,
     broadcast_to_all_slices,
     validate_dimensional_coverage,
 )
+from .types import (
+    is_color_array,
+    is_position_array,
+    is_transform_matrix,
+    validate_blending_mode,
+    validate_colors,
+    validate_gamma,
+    validate_node_type,
+    validate_opacity,
+    validate_physical_unit,
+    validate_positions,
+    validate_radii,
+    validate_sharpness,
+    validate_transform,
+)
 
 __all__ = [
-    # Exception
+    # Exceptions
     "ValidationError",
-    # From base
+    "DimensionalCoverageError",
+    # From base (detailed validation for writing)
     "validate_colors_for_writing",
     "validate_positions_for_writing",
     "validate_radii_for_writing",
     "validate_sharpness_for_writing",
-    # From nd
-    "DimensionalCoverageError",
+    "validate_zarr_attributes",
+    # From types (basic validation and type guards)
+    "validate_positions",
+    "validate_colors",
+    "validate_radii",
+    "validate_sharpness",
+    "validate_transform",
+    "validate_node_type",
+    "validate_physical_unit",
+    "validate_opacity",
+    "validate_gamma",
+    "validate_blending_mode",
+    "is_position_array",
+    "is_color_array",
+    "is_transform_matrix",
+    # From nd (dimensional validation)
     "broadcast_to_all_slices",
     "validate_dimensional_coverage",
 ]

@@ -16,6 +16,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
+    from luxar.gsplats.fit_result import GaussianSplatResult
     from luxar.gsplats.models.gsplats import (
         render_gaussians,
         render_gaussians_batched,
@@ -35,10 +36,20 @@ def simple_2d_params():
     L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
     L_packed = pack_tril(L)  # Pack lower triangular part
 
-    # Combine centers and packed L
+    # Combine centers and packed L (for backward compat tests)
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([1.0], dtype=np.float32)
+    sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
+
+    # Create result object
+    result = GaussianSplatResult(
+        centers=centers,
+        amplitudes=amps,
+        cholesky_factors=L_packed,
+        sharpnesses=sharpnesses,
+        stats={}
+    )
 
     return {
         "shape": (11, 11),
@@ -46,6 +57,7 @@ def simple_2d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
+        "result": result,  # New API
     }
 
 
@@ -75,6 +87,16 @@ def multi_2d_params():
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([0.8, 0.6, 1.0], dtype=np.float32)
+    sharpnesses = np.array([2.0, 2.0, 2.0], dtype=np.float32)  # Standard Gaussian
+
+    # Create result object
+    result = GaussianSplatResult(
+        centers=centers,
+        amplitudes=amps,
+        cholesky_factors=L_packed,
+        sharpnesses=sharpnesses,
+        stats={}
+    )
 
     return {
         "shape": (11, 11),
@@ -82,6 +104,7 @@ def multi_2d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
+        "result": result,  # New API
     }
 
 
@@ -99,6 +122,16 @@ def simple_3d_params():
     params_full = np.concatenate([centers, L_packed], axis=1)
 
     amps = np.array([1.0], dtype=np.float32)
+    sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
+
+    # Create result object
+    result = GaussianSplatResult(
+        centers=centers,
+        amplitudes=amps,
+        cholesky_factors=L_packed,
+        sharpnesses=sharpnesses,
+        stats={}
+    )
 
     return {
         "shape": (9, 9, 9),
@@ -106,6 +139,7 @@ def simple_3d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
+        "result": result,  # New API
     }
 
 
@@ -118,8 +152,7 @@ class TestRenderGaussiansFullTorch:
 
         result = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=3.0,
         )
 
@@ -150,8 +183,7 @@ class TestRenderGaussiansFullTorch:
 
         result = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=3.0,
         )
 
@@ -173,8 +205,7 @@ class TestRenderGaussiansFullTorch:
 
         result = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=2.5,
         )
 
@@ -192,10 +223,17 @@ class TestRenderGaussiansFullTorch:
     def test_empty_params(self) -> None:
         """Test rendering with no Gaussians."""
         shape = (5, 5)
-        params_full = np.zeros((0, 5), dtype=np.float32)  # 2D + 3 tril elements
-        amps = np.zeros((0,), dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps)
+        # Create empty result object
+        empty_result = GaussianSplatResult(
+            centers=np.zeros((0, 2), dtype=np.float32),
+            amplitudes=np.zeros((0,), dtype=np.float32),
+            cholesky_factors=np.zeros((0, 3), dtype=np.float32),  # 2D has 3 tril elements
+            sharpnesses=np.zeros((0,), dtype=np.float32),
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, empty_result)
 
         # Should be all zeros
         assert result.shape == shape
@@ -208,8 +246,7 @@ class TestRenderGaussiansFullTorch:
         # Test CPU
         result_cpu = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             device="cpu",
         )
         assert result_cpu.device.type == "cpu"
@@ -218,8 +255,7 @@ class TestRenderGaussiansFullTorch:
         if torch.cuda.is_available():
             result_cuda = render_gaussians_pytorch(
                 shape=params["shape"],
-                params_full=params["params_full"],
-                amps=params["amps"],
+                result=params["result"],
                 device="cuda",
             )
             assert result_cuda.device.type == "cuda"
@@ -236,16 +272,14 @@ class TestRenderGaussiansFullTorch:
         # Small truncation (tight support)
         result_small = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=1.0,
         )
 
         # Large truncation (wide support)
         result_large = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=4.0,
         )
 
@@ -272,8 +306,7 @@ class TestRenderGaussiansFullNumpy:
 
         result = render_gaussians_numpy(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=3.0,
         )
 
@@ -292,16 +325,14 @@ class TestRenderGaussiansFullNumpy:
 
         result_numpy = render_gaussians_numpy(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=3.0,
         )
 
         result_torch = (
             render_gaussians_pytorch(
                 shape=params["shape"],
-                params_full=params["params_full"],
-                amps=params["amps"],
+                result=params["result"],
                 truncate=3.0,
                 device="cpu",
             )
@@ -351,11 +382,10 @@ class TestBatchedRendering:
             truncate=3.0,
         )
 
-        # Render with non-batched implementation (uses default sharpness=2.0)
+        # Render with wrapper (uses GaussianSplatResult)
         result_sequential = render_gaussians_pytorch(
             shape=params["shape"],
-            params_full=params["params_full"],
-            amps=params["amps"],
+            result=params["result"],
             truncate=3.0,
         )
 
@@ -405,9 +435,10 @@ class TestBatchedRendering:
         centers = torch.zeros((0, 2), dtype=torch.float32)
         Ls = torch.zeros((0, 2, 2), dtype=torch.float32)
         amps = torch.zeros((0,), dtype=torch.float32)
+        sharpness = torch.zeros((0,), dtype=torch.float32)
 
         result = render_gaussians_batched(
-            shape=shape, centers=centers, Ls=Ls, amps=amps, truncate=3.0
+            shape=shape, centers=centers, Ls=Ls, amps=amps, sharpness=sharpness, truncate=3.0
         )
 
         assert result.shape == shape
@@ -449,11 +480,19 @@ class TestRenderingEdgeCases:
         # Very small covariance
         L = np.array([[[0.01, 0.0], [0.0, 0.01]]], dtype=np.float32)
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         amps = np.array([1.0], dtype=np.float32)
+        sharpnesses = np.array([2.0], dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -467,11 +506,19 @@ class TestRenderingEdgeCases:
         # Very large covariance
         L = np.array([[[10.0, 0.0], [0.0, 10.0]]], dtype=np.float32)
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         amps = np.array([0.01], dtype=np.float32)  # Small amplitude to compensate
+        sharpnesses = np.array([2.0], dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps, truncate=2.0)
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result, truncate=2.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -493,11 +540,19 @@ class TestRenderingEdgeCases:
         # Standard covariances
         L = np.tile(np.eye(2)[None, :, :], (3, 1, 1)).astype(np.float32)
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         amps = np.ones(3, dtype=np.float32)
+        sharpnesses = np.full(3, 2.0, dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -512,11 +567,19 @@ class TestRenderingEdgeCases:
         # Note: With this L matrix, the Gaussian should be narrow horizontally, wide vertically
         L = np.array([[[0.2, 0.0], [0.0, 3.0]]], dtype=np.float32)
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         amps = np.array([1.0], dtype=np.float32)
+        sharpnesses = np.array([2.0], dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps, truncate=3.0)
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -540,11 +603,19 @@ class TestRenderingEdgeCases:
         centers = np.array([[2.0, 2.0]], dtype=np.float32)
         L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         amps = np.array([0.0], dtype=np.float32)  # Zero amplitude
+        sharpnesses = np.array([2.0], dtype=np.float32)
 
-        result = render_gaussians_pytorch(shape, params_full, amps)
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result)
 
         # Should be effectively zero (allowing for floating point precision)
         assert torch.all(result < 1e-6)
@@ -569,13 +640,21 @@ class TestPerformanceAndNumericalStability:
             L[i] = np.eye(2) * sigmas[i]
 
         L_packed = pack_tril(L)
-        params_full = np.concatenate([centers, L_packed], axis=1)
 
         # Random amplitudes
         amps = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
+        sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
+
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
 
         # Should not crash or produce invalid results
-        result = render_gaussians_pytorch(shape, params_full, amps, truncate=2.0)
+        result = render_gaussians_pytorch(shape, test_result, truncate=2.0)
 
         result_np = result.cpu().numpy()
         assert np.all(np.isfinite(result_np))
@@ -590,21 +669,126 @@ class TestPerformanceAndNumericalStability:
         # Test very small values
         L_small = np.array([[[1e-6, 0.0], [0.0, 1e-6]]], dtype=np.float32)
         L_packed_small = pack_tril(L_small)
-        params_small = np.concatenate([centers, L_packed_small], axis=1)
         amps_small = np.array([1e-6], dtype=np.float32)
+        sharpnesses = np.array([2.0], dtype=np.float32)
 
-        result_small = render_gaussians_pytorch(shape, params_small, amps_small)
+        test_result_small = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps_small,
+            cholesky_factors=L_packed_small,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result_small = render_gaussians_pytorch(shape, test_result_small)
         assert torch.all(torch.isfinite(result_small))
 
         # Test reasonable large values
         L_large = np.array([[[5.0, 0.0], [0.0, 5.0]]], dtype=np.float32)
         L_packed_large = pack_tril(L_large)
-        params_large = np.concatenate([centers, L_packed_large], axis=1)
         amps_large = np.array([0.1], dtype=np.float32)
 
-        result_large = render_gaussians_pytorch(shape, params_large, amps_large)
+        test_result_large = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps_large,
+            cholesky_factors=L_packed_large,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result_large = render_gaussians_pytorch(shape, test_result_large)
         assert torch.all(torch.isfinite(result_large))
+
+
+class TestRenderingWrappersEdgeCases:
+    """Test edge cases in rendering wrapper functions."""
+
+    def test_numpy_wrapper_empty_params(self):
+        """Test numpy wrapper with empty params."""
+        shape = (10, 10)
+
+        # Create empty result object
+        empty_result = GaussianSplatResult(
+            centers=np.zeros((0, 2), dtype=np.float32),
+            amplitudes=np.zeros((0,), dtype=np.float32),
+            cholesky_factors=np.zeros((0, 3), dtype=np.float32),  # 2D has 3 tril elements
+            sharpnesses=np.zeros((0,), dtype=np.float32),
+            stats={}
+        )
+
+        result = render_gaussians_numpy(shape, empty_result)
+
+        assert result.shape == shape
+        assert np.all(result == 0)
+
+    def test_numpy_wrapper_with_standard_result(self):
+        """Test numpy wrapper with standard GaussianSplatResult."""
+        shape = (10, 10)
+        centers = np.array([[5.0, 5.0]], dtype=np.float32)
+        L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
+        L_packed = pack_tril(L)
+
+        amps = np.ones(1, dtype=np.float32)
+        sharpnesses = np.array([2.0], dtype=np.float32)
+
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_numpy(shape, test_result)
+
+        # Should render correctly
+        assert result.shape == shape
+        assert np.all(np.isfinite(result))
+        assert np.sum(result) > 0
+
+    def test_pytorch_wrapper_with_standard_result(self):
+        """Test pytorch wrapper with standard GaussianSplatResult."""
+        shape = (10, 10)
+        centers = np.array([[5.0, 5.0]], dtype=np.float32)
+        L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
+        L_packed = pack_tril(L)
+
+        amps = np.ones(1, dtype=np.float32)
+        sharpnesses = np.array([2.0], dtype=np.float32)
+
+        test_result = GaussianSplatResult(
+            centers=centers,
+            amplitudes=amps,
+            cholesky_factors=L_packed,
+            sharpnesses=sharpnesses,
+            stats={}
+        )
+
+        result = render_gaussians_pytorch(shape, test_result)
+
+        # Should render correctly
+        assert result.shape == shape
+        assert torch.all(torch.isfinite(result))
+        assert torch.sum(result) > 0
+
+    def test_batched_wrapper_with_sharpness(self):
+        """Test batched wrapper with explicit sharpness."""
+        shape = (10, 10)
+        centers = torch.tensor([[5.0, 5.0]], dtype=torch.float32)
+        Ls = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        amps = torch.tensor([1.0], dtype=torch.float32)
+        sharpness = torch.tensor([2.0], dtype=torch.float32)
+
+        # Call with explicit sharpness parameter
+        result = render_gaussians_batched(
+            shape, centers, Ls, amps, sharpness=sharpness, truncate=3.0
+        )
+
+        assert result.shape == shape
+        assert torch.all(torch.isfinite(result))
+        assert torch.sum(result) > 0
 
 
 if __name__ == "__main__":
     pytest.main([__file__])
+

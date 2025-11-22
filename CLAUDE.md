@@ -89,15 +89,25 @@ Note: When possible, use `make` commands for convenience (see below).
   - Internal architecture notes
   - Dependencies and requirements
   - Testing information
+- **Python package SPECIFICATIONS.md**: **MANDATORY** - Each major subpackage in `/packages/luxar/src/luxar/` MUST have a SPECIFICATIONS.md file that:
+  - Defines the essential logic, algorithms, and data structures
+  - Specifies behavior independent of implementation details
+  - Documents mathematical formulas and key algorithms
+  - Provides enough detail to re-implement if code was lost
+  - Focuses on WHAT and WHY, not HOW
+  - Serves as the authoritative specification for the package
+  - Should be implementation-agnostic (could re-implement in another language)
 
-**CRITICAL**: 
+**CRITICAL**:
 1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
 2. When making changes to Python code:
    - **MANDATORY**: Update the subpackage README.md if functionality changes
-   - **MANDATORY**: Ensure all major Python subpackages (core, io, utils, cli, gsplats, typing_utils, validation) have comprehensive README.md files
+   - **MANDATORY**: Update the subpackage SPECIFICATIONS.md if algorithms or core logic changes
+   - **MANDATORY**: Ensure all major Python subpackages (core, io, utils, cli, gsplats, typing_utils, validation) have comprehensive README.md AND SPECIFICATIONS.md files
    - Check if `/docs/` folder documentation needs updating
 3. Keep all documentation synchronized with the implementation!
-4. Python package structure follows best practices:
+4. SPECIFICATIONS.md should capture the essence that would let someone re-implement from scratch
+5. Python package structure follows best practices:
    - Flat is better than nested (except for logical groupings)
    - Each package has clear separation of concerns
    - Backward compatibility maintained via main `__init__.py`
@@ -340,6 +350,58 @@ After making changes in luxar-viewer, run:
 This issue was discovered when hierarchical transforms weren't working - all objects were at origin because THREE.js was reading translation values from the wrong array indices.
 
 ### Recent Updates and Learnings
+
+#### Critical Bug Fixes from Code Review (January 2025)
+- **Transform Composition Bug**: Fixed critical math error in `compose()` function
+  - **Issue**: Matrix multiplication order was reversed (left-multiply instead of right-multiply)
+  - **Impact**: `compose(T1, T2, T3)` was applying T3 first instead of T1 first
+  - **Fix**: Changed `result = transform @ result` to `result = result @ transform`
+  - **Location**: `core/transforms.py:271`
+  - **Test Added**: `test_compose_application_order()` with 4 rigorous test cases
+  - **Lesson**: Order matters for non-commutative transforms (rotate+translate). Always test with order-sensitive operations.
+
+- **Points Metadata Loss Bug**: Fixed critical constructor initialization order bug
+  - **Issue**: `Points.__init__()` set `self._metadata` before calling `super().__init__()`, then `Node.__init__()` overwrote it with empty dict
+  - **Impact**: ALL Points objects lost their metadata (has_colors, has_radii, max_radius, etc. all lost)
+  - **Fix**: Call `super().__init__()` BEFORE setting `self._metadata` in Points class
+  - **Location**: `core/points.py:50-58`
+  - **Test Added**: `test_points_metadata_preservation()` with comprehensive checks
+  - **Lesson**: When subclass and parent both initialize the same attribute, parent must initialize first
+
+#### Legacy Code Removal (January 2025)
+- **Legacy Mode Removed**: Eliminated unused "legacy mode" from Node class (~40 lines dead code)
+  - Removed `group` parameter and all `if self._group is not None:` branches
+  - Node now only supports progressive writing mode (simpler, clearer)
+  - No production code ever used legacy mode
+
+- **Deprecated Parameters Removed**: Cleaned up deprecated API surface
+  - Removed `units` parameter from `LuxarZarrCompiler` (use Dimensions instead)
+  - Removed `DimensionMetadata` class (use full-featured `Dimension` instead)
+  - Removed unused version constants (LEGACY, PREVIOUS, FUTURE)
+  - Total: ~160 lines of dead/deprecated code removed
+
+- **Result**: Clean API with one clear way to do everything, zero backward-compatibility baggage
+
+#### Code Quality Improvements (January 2025)
+- **Compiler Refactoring**: Reduced `write_points()` from 432 to 117 lines (73% reduction)
+  - Extracted 8 focused helper methods with single responsibilities
+  - Much easier to test, understand, and maintain
+
+- **Validation Consolidation**: Created `validation/types.py` centralizing all validation
+  - Eliminated ~350 lines of duplication between `protocols.py` and `validation/base.py`
+  - Clear organization: types.py (basic), base.py (detailed for writing), nd.py (dimensional)
+
+- **Transform Handling Centralized**: Added `read_transform_from_zarr()` companion function
+  - Single source of truth for NumPy ↔ THREE.js transform conversion
+  - Eliminated ~50 lines of duplicate transpose logic
+
+- **Magic Numbers Extracted**: Created 18 named constants for spatial index tuning
+  - All grid sizing heuristics now configurable via constants
+  - Self-documenting code with clear intent
+
+- **Performance**: Vectorized HSV→RGB conversion in demos (30-100x faster)
+
+- **Documentation**: Added 80+ inline comments explaining complex algorithms (cell ID calculation, grid shape heuristics, transform composition math)
 
 #### Fullscreen Resize Bug Fix (January 2025)
 - **Issue**: Point sizes changed incorrectly on first fullscreen toggle or window resize

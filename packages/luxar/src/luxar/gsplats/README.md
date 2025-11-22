@@ -23,12 +23,12 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 
 ## How It Works
 
-### 1. Candidate Generation
-The system starts by finding initial splat positions using multiscale analysis:
+### 1. Seed Generation
+The system starts by finding initial seed positions using multiscale seed generation:
 - **Gaussian filtering** at multiple scales to detect blob-like structures
 - **Difference of Gaussians (DoG)** for edge and boundary detection  
 - **Intensity-weighted grid sampling** for spatial coverage
-- **Spatial deduplication** to remove redundant candidates
+- **Spatial deduplication of seeds** to remove redundant seeds
 
 ### 2. Model Architecture
 Each Gaussian splat is parameterized using covariance matrix representation:
@@ -85,11 +85,11 @@ The implementation includes several key optimizations that provide significant s
 The easiest way to use Gaussian splatting with intelligent defaults:
 
 ```python
-from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.gsplat_model import render_gaussians_numpy
+from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 
 # 1. One-step fitting with intelligent defaults
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     # seeds auto-generated with volume-proportional scaling
     # norm_percentile=0.0 by default (full range normalization)
@@ -104,20 +104,20 @@ params, amps, stats = fit_gaussian_splats(
     # enable_dynamic_ops=True by default for optimal results
 )
 
-# 2. Render reconstruction
-# params includes all parameters (centers, Cholesky, sharpness) - auto-extracted
-reconstruction = render_gaussians_numpy(
-    image.shape, params, amps, truncate=3.0
-)
+# 2. Access results and render directly - clean and simple!
+# Result contains: centers, amplitudes, cholesky_factors, sharpnesses, stats
+reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 ```
 
-**Note**: `fit_gaussian_splats()` returns params with shape `(N, d + d*(d+1)//2 + 1)` where:
-- First `d` columns: centers
-- Next `d*(d+1)//2` columns: packed Cholesky factors
-- Last column: per-splat sharpness values
+**Note**: `fit_gaussian_splats()` returns a `GaussianSplatResult` dataclass with:
+- `centers`: np.ndarray, shape (N, d) - Splat center positions
+- `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
+- `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
+- `sharpnesses`: np.ndarray, shape (N,) - Per-splat sharpness values
+- `stats`: Dict[str, Any] - Optimization statistics
 
-`render_gaussians_numpy()` automatically extracts all parameters from params, treating sharpness the same as centers and Cholesky.
+The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering.
 
 ### Multi-Scale Fitting for Large Datasets
 
@@ -127,7 +127,7 @@ For large images and volumes, multi-scale fitting provides 10-100× speedup by l
 from luxar.gsplats import fit_multiscale_gaussian_splats
 
 # Multi-scale fitting with intelligent defaults
-params, amps, stats = fit_multiscale_gaussian_splats(
+result = fit_multiscale_gaussian_splats(
     large_volume,                      # 3D volume or 2D image
     scales=[1, 2, 4, 8],              # Scale factors (default)
     base_init_sigma=1.5,              # Base sigma (scaled per level)
@@ -138,10 +138,10 @@ params, amps, stats = fit_multiscale_gaussian_splats(
     verbose=True,                      # Show progress
 )
 
-# Access speedup statistics
-print(f"Computational speedup: {stats['computational_speedup']:.1f}×")
-print(f"Splats per scale: {stats['n_splats_per_scale']}")
-print(f"Total time: {stats['total_time_seconds']:.2f}s")
+# Access speedup statistics from result.stats
+print(f"Computational speedup: {result.stats['computational_speedup']:.1f}×")
+print(f"Splats per scale: {result.stats['n_splats_per_scale']}")
+print(f"Total time: {result.stats['total_time_seconds']:.2f}s")
 ```
 
 **How it works:**
@@ -165,7 +165,7 @@ print(f"Total time: {stats['total_time_seconds']:.2f}s")
 **Visualization options:**
 ```python
 # Enable per-scale visualization and decomposition movie
-params, amps, stats = fit_multiscale_gaussian_splats(
+result = fit_multiscale_gaussian_splats(
     image,
     scales=[1, 2, 4, 8],
     visualize_per_scale=True,  # Show splat locations and reconstructions per scale
@@ -173,8 +173,8 @@ params, amps, stats = fit_multiscale_gaussian_splats(
     movie_every=50,             # Record every 50 iterations
 )
 
-# Access per-scale visualization data
-for vis in stats['per_scale_visualizations']:
+# Access per-scale visualization data from result.stats
+for vis in result.stats['per_scale_visualizations']:
     scale = vis['scale_factor']
     centers = vis['centers']           # Splat locations at full resolution
     recon = vis['reconstruction']      # Full resolution reconstruction
@@ -187,22 +187,22 @@ for vis in stats['per_scale_visualizations']:
 For specialized use cases requiring custom candidate generation:
 
 ```python
-from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
+from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
 
-# Custom candidate generation with specific parameters
-custom_candidates = find_candidates_multiscale_gaussian(
+# Custom seed generation with specific parameters
+custom_seeds = find_seeds_multiscale_gaussian(
     image,
     scales=(1.0, 2.0, 4.0),      # Custom scales
     peaks_per_scale=1000,        # Custom density
     percentile_thresh=95,        # Custom selectivity
 )
 
-params_custom, amps_custom, _ = fit_gaussian_splats(
-    image, seeds=custom_candidates
+result = fit_gaussian_splats(
+    image, seeds=custom_seeds
 )
 ```
 
-### Auto-Candidate Generation Features
+### Auto-Seed Generation Features
 
 - **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) detect features from fine details to large structures
 - **Volume-proportional density**: Automatically scales candidate count with image size (~0.2% of pixels)
@@ -215,13 +215,13 @@ Control how outliers and noise are handled during normalization:
 
 ```python
 # Full range (default) - maximum dynamic range
-params, amps, _ = fit_gaussian_splats(image, norm_percentile=0.0)
+result = fit_gaussian_splats(image, norm_percentile=0.0)
 
 # Robust to mild outliers - ignore bottom/top 1%
-params, amps, _ = fit_gaussian_splats(image, norm_percentile=1.0)
+result = fit_gaussian_splats(image, norm_percentile=1.0)
 
 # Very robust to noise - ignore bottom/top 5%
-params, amps, _ = fit_gaussian_splats(image, norm_percentile=5.0)
+result = fit_gaussian_splats(image, norm_percentile=5.0)
 ```
 
 **When to use:**
@@ -243,7 +243,7 @@ The system provides detailed optimization progress logging with best state track
 Convergence criterion: max absolute error < 0.010000
 Maximum iterations: 1000
 Auto-generating candidates: 131 peaks/scale for 65,536 pixels
-Generated 212 candidate centers
+Generated [0-9]* seed centers
 
 [   1/1000] loss=0.078185  relL2=0.7969  maxAbsErr=1.1798  N=212
     ★ New best state: iteration 1, max_abs_error=0.978093
@@ -325,7 +325,7 @@ The system includes two types of L1 regularization to control model complexity a
 
 ### **Combined Usage**
 ```python
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     l1_amp=0.02,      # Strong amplitude sparsity (2% of lr)
     l1_diag=0.005,    # Mild shape regularization (0.5% of lr)
@@ -430,7 +430,7 @@ config.do_merge = True
 config.do_split = True
 
 # Fit with dynamic operations
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     seeds=candidates,
     enable_dynamic_ops=True,
@@ -473,7 +473,7 @@ The per-splat optimizer is automatically used when dynamic operations are enable
 
 ```python
 # Per-splat optimizer is used automatically with dynamic operations
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     seeds=candidates,
     enable_dynamic_ops=True,  # Automatically uses per-splat optimizer
@@ -503,7 +503,7 @@ fitter = GaussianSplatFitter(
 )
 
 # Fit with detailed statistics
-params, amps, stats = fitter.fit(
+result = fitter.fit(
     image,
     seeds=candidates,
     n_iters=500,
@@ -513,11 +513,11 @@ params, amps, stats = fitter.fit(
     sigma_max_diag=[10.0, 10.0], # Maximum splat size
 )
 
-# Access optimization statistics
-print(f"Time: {stats['time_seconds']:.2f}s")
-print(f"Iterations: {stats['iterations']}/{500}")
-print(f"Converged: {stats['converged']}")
-print(f"Final loss: {stats['final_loss']:.5g}")
+# Access optimization statistics from result.stats
+print(f"Time: {result.stats['time_seconds']:.2f}s")
+print(f"Iterations: {result.stats['iterations']}/{500}")
+print(f"Converged: {result.stats['converged']}")
+print(f"Final loss: {result.stats['final_loss']:.5g}")
 ```
 
 ## API Reference
@@ -544,7 +544,7 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
-#### `find_candidates_multiscale_gaussian(V, **kwargs)`
+#### `find_seeds_multiscale_gaussian(V, **kwargs)`
 Generate initial splat positions using multiscale detection.
 
 **Key Parameters:**
@@ -588,7 +588,7 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 gsplats/
 ├── fit_gsplats.py              # Main fitting interface (refactored to use modular pipeline)
 ├── fit_multiscale_gsplats.py   # Multi-scale fitting for large datasets (NEW)
-├── candidates.py               # Multiscale candidate detection
+├── seeds.py               # Multiscale candidate detection
 ├── dynamic_ops.py              # Adaptive topology operations (prune, seed, merge, split)
 ├── fitting/                    # Modular fitting pipeline (NEW - refactored components)
 │   ├── __init__.py            # Exports for main interface

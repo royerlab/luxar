@@ -1,0 +1,445 @@
+"""Tests for Node properties and method chaining."""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from luxar.io.compiler import LuxarZarrCompiler
+
+
+class TestNodeProperties:
+    """Test Node hierarchy properties."""
+
+    def test_num_children_property(self, tmp_path: Path):
+        """Test num_children property."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Root has no children initially
+            assert scene.num_children == 0
+
+            # Add one child
+            group1 = scene.add_group("group1")
+            assert scene.num_children == 1
+            assert group1.num_children == 0
+
+            # Add more children to root
+            scene.add_group("group2")
+            assert scene.num_children == 2
+
+            # Add children to group1
+            group1.add_group("subgroup1")
+            assert group1.num_children == 1
+
+            group1.add_group("subgroup2")
+            assert group1.num_children == 2
+
+            # Add points as children
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            scene.add_points("points1", positions)
+            assert scene.num_children == 3  # group1, group2, points1
+
+    def test_is_leaf_property(self, tmp_path: Path):
+        """Test is_leaf property."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Root with no children is a leaf
+            assert scene.is_leaf is True
+
+            # Add a group - root is no longer a leaf
+            group1 = scene.add_group("group1")
+            assert scene.is_leaf is False
+            assert group1.is_leaf is True  # Empty group is a leaf
+
+            # Add children to group1
+            group1.add_group("subgroup")
+            assert group1.is_leaf is False
+
+            # Points are always leaves
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("points1", positions)
+            assert points.is_leaf is True  # Points node is always a leaf
+
+    def test_is_root_property(self, tmp_path: Path):
+        """Test is_root property."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Scene is root
+            assert scene.is_root is True
+
+            # Child groups are not root
+            group1 = scene.add_group("group1")
+            assert group1.is_root is False
+
+            # Nested groups are not root
+            subgroup = group1.add_group("subgroup")
+            assert subgroup.is_root is False
+
+            # Points are not root
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points = scene.add_points("points1", positions)
+            assert points.is_root is False
+
+    def test_properties_with_complex_hierarchy(self, tmp_path: Path):
+        """Test properties with a complex hierarchy."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Build hierarchy: scene -> group1 -> subgroup1
+            #                        -> group2
+            #                        -> points1
+            #                        -> points2
+            group1 = scene.add_group("group1")
+            group2 = scene.add_group("group2")
+
+            subgroup1 = group1.add_group("subgroup1")
+
+            positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+            points1 = scene.add_points("points1", positions)  # add_points only on Scene
+            points2 = scene.add_points("points2", positions)
+
+            # Verify scene (root)
+            assert scene.is_root is True
+            assert scene.is_leaf is False
+            assert scene.num_children == 4  # group1, group2, points1, points2
+
+            # Verify group1
+            assert group1.is_root is False
+            assert group1.is_leaf is False  # Has subgroup1
+            assert group1.num_children == 1  # subgroup1
+
+            # Verify group2
+            assert group2.is_root is False
+            assert (
+                group2.is_leaf is True
+            )  # No children (points added to scene, not group2)
+            assert group2.num_children == 0
+
+            # Verify subgroup1
+            assert subgroup1.is_root is False
+            assert (
+                subgroup1.is_leaf is True
+            )  # No children (points added to scene, not subgroup1)
+            assert subgroup1.num_children == 0
+
+            # Verify points (leaves)
+            assert points1.is_root is False
+            assert points1.is_leaf is True
+            assert points1.num_children == 0
+
+            assert points2.is_root is False
+            assert points2.is_leaf is True
+            assert points2.num_children == 0
+
+
+class TestNodeMethodChaining:
+    """Test Node method chaining for rendering attributes."""
+
+    def test_set_opacity_returns_self(self, tmp_path: Path):
+        """Test that set_opacity() returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # set_opacity should return the node itself
+            result = group.set_opacity(0.5)
+            assert result is group
+
+            # Verify opacity was set
+            assert group.attrs["opacity"] == 0.5
+
+    def test_set_gamma_returns_self(self, tmp_path: Path):
+        """Test that set_gamma() returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # set_gamma should return the node itself
+            result = group.set_gamma(1.5)
+            assert result is group
+
+            # Verify gamma was set
+            assert group.attrs["gamma"] == 1.5
+
+    def test_set_blending_mode_returns_self(self, tmp_path: Path):
+        """Test that set_blending_mode() returns self for chaining."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # set_blending_mode should return the node itself
+            result = group.set_blending_mode("additive")
+            assert result is group
+
+            # Verify blending mode was set
+            assert group.attrs["blending_mode"] == "additive"
+
+    def test_chain_two_methods(self, tmp_path: Path):
+        """Test chaining two setter methods."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # Chain opacity and gamma
+            result = group.set_opacity(0.7).set_gamma(1.2)
+
+            # Result should still be the group
+            assert result is group
+
+            # Verify both attributes were set
+            assert group.attrs["opacity"] == 0.7
+            assert group.attrs["gamma"] == 1.2
+
+    def test_chain_three_methods(self, tmp_path: Path):
+        """Test chaining all three setter methods."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # Chain all three setters
+            result = group.set_opacity(0.8).set_gamma(1.5).set_blending_mode("additive")
+
+            # Result should still be the group
+            assert result is group
+
+            # Verify all attributes were set
+            assert group.attrs["opacity"] == 0.8
+            assert group.attrs["gamma"] == 1.5
+            assert group.attrs["blending_mode"] == "additive"
+
+    def test_chain_methods_on_multiple_nodes(self, tmp_path: Path):
+        """Test chaining methods on multiple nodes independently."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group1 = scene.add_group("group1")
+            group2 = scene.add_group("group2")
+
+            # Chain on group1
+            group1.set_opacity(0.5).set_gamma(1.0)
+
+            # Chain on group2 with different values
+            group2.set_opacity(0.9).set_blending_mode("normal")
+
+            # Verify group1 attributes
+            assert group1.attrs["opacity"] == 0.5
+            assert group1.attrs["gamma"] == 1.0
+            assert "blending_mode" not in group1.attrs
+
+            # Verify group2 attributes
+            assert group2.attrs["opacity"] == 0.9
+            assert group2.attrs["blending_mode"] == "normal"
+            assert "gamma" not in group2.attrs
+
+    def test_chain_after_add_group(self, tmp_path: Path):
+        """Test chaining setters immediately after add_group."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Chain setters right after creating group
+            group = scene.add_group("group1").set_opacity(0.6).set_gamma(1.8)
+
+            # Verify attributes were set
+            assert group.attrs["opacity"] == 0.6
+            assert group.attrs["gamma"] == 1.8
+
+    def test_chain_methods_on_points(self, tmp_path: Path):
+        """Test that setter methods also work on Points nodes."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+
+            # Chain setters on points node
+            points = (
+                scene.add_points("points1", positions)
+                .set_opacity(0.5)
+                .set_blending_mode("additive")
+            )
+
+            # Verify attributes were set
+            assert points.attrs["opacity"] == 0.5
+            assert points.attrs["blending_mode"] == "additive"
+
+    def test_chain_with_invalid_values_raises_error(self, tmp_path: Path):
+        """Test that chaining with invalid values raises errors."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # Invalid opacity should raise ValueError
+            with pytest.raises(ValueError, match="Opacity must be between"):
+                group.set_opacity(1.5)  # > 1.0
+
+            # Invalid gamma should raise ValueError
+            with pytest.raises(ValueError, match="Gamma must be between"):
+                group.set_gamma(0.1)  # < 0.2
+
+            # Invalid blending mode should raise ValueError
+            with pytest.raises(ValueError, match="Invalid blending mode"):
+                group.set_blending_mode("invalid")
+
+    def test_multiple_chains_on_same_node(self, tmp_path: Path):
+        """Test multiple separate chains on the same node (updating values)."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group = scene.add_group("group1")
+
+            # First chain
+            group.set_opacity(0.5).set_gamma(1.0)
+            assert group.attrs["opacity"] == 0.5
+            assert group.attrs["gamma"] == 1.0
+
+            # Second chain (updates values)
+            group.set_opacity(0.8).set_blending_mode("additive")
+            assert group.attrs["opacity"] == 0.8  # Updated
+            assert group.attrs["gamma"] == 1.0  # Unchanged
+            assert group.attrs["blending_mode"] == "additive"  # New
+
+
+class TestNodeWalkDirect:
+    """Test Node.walk() method directly."""
+
+    def test_walk_single_node(self, tmp_path: Path):
+        """Test walk on a single node (no children)."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            # Walk scene with no children
+            hierarchy = list(
+                scene.walk()
+            )  # walk() returns generator of (depth, node) tuples
+
+            # Should return list with just the root
+            assert isinstance(hierarchy, list)
+            assert len(hierarchy) == 1
+            depth, node = hierarchy[0]
+            assert depth == 0
+            assert node.name == "Scene"  # Root is Scene node
+
+    def test_walk_with_children(self, tmp_path: Path):
+        """Test walk with children."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            scene.add_group("group1")
+            scene.add_group("group2")
+
+            hierarchy = list(
+                scene.walk()
+            )  # walk() returns generator of (depth, node) tuples
+
+            # Should have 3 nodes (scene + 2 groups)
+            assert len(hierarchy) == 3
+
+            # Check structure
+            depth0, node0 = hierarchy[0]
+            assert node0.name == "Scene"  # Root is Scene node
+            assert depth0 == 0
+            depth1, node1 = hierarchy[1]
+            assert node1.name == "group1"
+            assert depth1 == 1
+            depth2, node2 = hierarchy[2]
+            assert node2.name == "group2"
+            assert depth2 == 1
+
+    def test_walk_nested_hierarchy(self, tmp_path: Path):
+        """Test walk with nested hierarchy."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group1 = scene.add_group("group1")
+            _subgroup = group1.add_group("subgroup")  # Create hierarchy depth
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            scene.add_points("points", positions)  # add_points only on Scene
+
+            hierarchy = list(
+                scene.walk()
+            )  # walk() returns generator of (depth, node) tuples
+
+            # Should have 4 nodes (scene -> group1 -> subgroup, and points as separate child)
+            assert len(hierarchy) == 4
+
+            # Check depths - points is added to scene (depth 1), not nested
+            assert hierarchy[0][0] == 0  # scene depth
+            assert hierarchy[1][0] == 1  # group1 depth
+            assert hierarchy[2][0] == 2  # subgroup depth
+            assert hierarchy[3][0] == 1  # points depth (direct child of scene)
+
+    def test_walk_from_non_root_node(self, tmp_path: Path):
+        """Test walk starting from a non-root node."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group1 = scene.add_group("group1")
+            group1.add_group("subgroup1")
+            group1.add_group("subgroup2")
+
+            # Walk from group1 instead of root
+            hierarchy = list(
+                group1.walk()
+            )  # walk() returns generator of (depth, node) tuples
+
+            # Should have 3 nodes (group1 + 2 subgroups)
+            assert len(hierarchy) == 3
+            depth0, node0 = hierarchy[0]
+            assert node0.name == "group1"
+            assert depth0 == 0  # Depth starts at 0 from walk start
+            depth1, node1 = hierarchy[1]
+            assert node1.name == "subgroup1"
+            assert depth1 == 1
+            depth2, node2 = hierarchy[2]
+            assert node2.name == "subgroup2"
+            assert depth2 == 1
+
+    def test_walk_returns_nodes(self, tmp_path: Path):
+        """Test that walk returns actual node objects."""
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene()
+            group1 = scene.add_group("group1")
+            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            points1 = scene.add_points("points1", positions)
+
+            hierarchy = list(
+                scene.walk()
+            )  # walk() returns generator of (depth, node) tuples
+
+            # Check that actual node objects are returned
+            _, scene_node = hierarchy[0]
+            assert scene_node is scene
+
+            _, group_node = hierarchy[1]
+            assert group_node is group1
+
+            _, points_node = hierarchy[2]
+            assert points_node is points1

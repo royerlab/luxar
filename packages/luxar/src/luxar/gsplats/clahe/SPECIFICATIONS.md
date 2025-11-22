@@ -68,9 +68,10 @@ For each tile with clipped histogram `H_final`:
 #### Step 5: Intensity Mapping
 
 For each pixel `p` in tile `T`:
-1. Find bin: `bin_idx = floor((I_p - V_min) / bin_width)`
-2. Apply mapping: `I_out = CDF_norm(bin_idx)`
-3. Rescale: `I_out = I_out × (V_max - V_min) + V_min`
+1. Find bin: `bin_idx = searchsorted(bin_edges[1:], intensity_value)`
+2. Clamp to valid range: `bin_idx = clamp(bin_idx, 0, nbins-1)`
+3. Apply mapping: `I_out = CDF_norm(bin_idx)`
+4. Rescale: `I_out = I_out × (V_max - V_min) + V_min`
 
 **Result**: Each tile has locally-equalized contrast, adapted to local intensity distribution.
 
@@ -89,70 +90,135 @@ Standard CLAHE interpolates between neighboring tile CDFs for smooth transitions
 - `nbins`: Number of histogram bins (int, typically 256)
 
 **Output**:
-- `V_clahe`: CLAHE-equalized tensor, same shape as `V`
+- `V_clahe`: CLAHE-equalized tensor, same shape and device as `V`, dtype preserved
 
-**Algorithm**:
+**Detailed Algorithm**:
 ```python
 def apply_clahe(V, tile_size, clip_limit, nbins):
-    # Get global min/max for consistent binning
-    V_min, V_max = V.min(), V.max()
-
-    # Calculate tile grid
-    n_tiles = tuple((s + tile_size - 1) // tile_size for s in V.shape)
-
+    shape = V.shape
+    device = V.device
+    dtype = V.dtype
+    
+    # Calculate tile grid dimensions
+    n_tiles = tuple((s + tile_size - 1) // tile_size for s in shape)
+    
     # Initialize output
     V_clahe = torch.zeros_like(V)
-
-    # Process each tile
-    for tile_idx in all_tile_combinations(n_tiles):
-        # Extract tile
-        tile = V[tile_slice(tile_idx, tile_size)]
-
-        # Compute histogram
-        hist = torch.histc(tile.reshape(-1), bins=nbins, min=V_min, max=V_max)
-
+    
+    # Get global min/max for consistent binning across all tiles
+    V_min, V_max = V.min().item(), V.max().item()
+    
+    # Early exit: uniform image (tolerance: 1e-12)
+    if V_max - V_min < 1e-12:
+        return V.clone()
+    
+    # Iterate over all tiles using itertools.product
+    for tile_idx in itertools.product(*[range(n) for n in n_tiles]):
+        # Compute tile boundaries (handle edge tiles that may be smaller)
+        tile_slice = tuple(
+            slice(t * tile_size, min((t + 1) * tile_size, s))
+            for t, s in zip(tile_idx, shape)
+        )
+        
+        # Extract tile and flatten
+        tile_data = V[tile_slice]
+        tile_flat = tile_data.reshape(-1)
+        
+        # Compute histogram over [V_min, V_max]
+        hist = torch.histc(tile_flat, bins=nbins, min=V_min, max=V_max)
+        
         # Apply contrast limiting
-        uniform_height = tile.numel() / nbins
+        uniform_height = tile_flat.numel() / nbins
         clip_height = clip_limit * uniform_height
-        excess = sum(max(0, hist - clip_height))
-        hist_clipped = min(hist, clip_height) + excess / nbins
-
+        excess = torch.clamp(hist - clip_height, min=0).sum()
+        hist = torch.clamp(hist, max=clip_height)
+        hist += excess / nbins  # Redistribute excess uniformly
+        
         # Compute CDF
-        cdf = cumsum(hist_clipped)
-        cdf_norm = (cdf - cdf.min()) / (cdf.max() - cdf.min())
-
-        # Map intensities
-        bin_indices = digitize(tile, nbins, V_min, V_max)
-        tile_equalized = cdf_norm[bin_indices]
-
-        # Store result
-        V_clahe[tile_slice(tile_idx, tile_size)] = tile_equalized.reshape(tile.shape)
-
-    # Rescale to original range
+        cdf = torch.cumsum(hist, dim=0)
+        
+        # Normalize CDF (robust to edge cases)
+        cdf_min = cdf[cdf > 0].min() if (cdf > 0).any() else 0
+        cdf_range = cdf[-1] - cdf_min
+        
+        if cdf_range > 0:
+            cdf_normalized = (cdf - cdf_min) / cdf_range
+        else:
+            cdf_normalized = cdf  # Degenerate case: no normalization
+        
+        # Map intensities through CDF
+        # Create bin edges for searchsorted
+        bin_edges = torch.linspace(V_min, V_max, nbins + 1, device=device)
+        
+        # Digitize tile values (find which bin each value falls into)
+        # Uses searchsorted on bin_edges[1:] (right edges of bins)
+        bin_indices = torch.searchsorted(bin_edges[1:], tile_flat.contiguous())
+        bin_indices = torch.clamp(bin_indices, 0, nbins - 1)
+        
+        # Apply CDF mapping
+        tile_equalized = cdf_normalized[bin_indices]
+        
+        # Reshape and store in output
+        V_clahe[tile_slice] = tile_equalized.reshape(tile_data.shape)
+    
+    # Rescale to original intensity range
     V_clahe = V_clahe * (V_max - V_min) + V_min
-
-    return V_clahe
+    
+    # Preserve dtype
+    return V_clahe.to(dtype=dtype)
 ```
 
-### Function: `compute_clahe_sampling_probabilities(V, ...)`
+**Key Implementation Details**:
+
+1. **Tile Iteration**: Uses `itertools.product()` to generate all tile index combinations
+2. **Edge Tiles**: Boundary tiles are clipped using `min((t+1)*tile_size, s)` to handle non-divisible dimensions
+3. **Uniform Image Handling**: Returns clone unchanged if `V_max - V_min < 1e-12`
+4. **Binning Method**: Uses `torch.searchsorted()` with `bin_edges[1:]` (right edges) for accurate digitization
+5. **Contiguous Requirement**: `tile_flat.contiguous()` required for `searchsorted()`
+6. **CDF Normalization**: Robust handling of degenerate cases (zero range, all-zero CDF)
+7. **Device Preservation**: All operations inherit device from input tensor
+8. **Dtype Preservation**: Final `.to(dtype=dtype)` ensures output dtype matches input
+
+### Function: `compute_clahe_sampling_probabilities(V, tile_size=16, clip_limit=2.0, nbins=256)`
 
 **Purpose**: Convenience function for using CLAHE output as sampling probabilities.
 
-**Algorithm**:
+**Output**:
+- `probabilities`: 1D tensor of shape `(V.numel(),)` summing to 1.0
+- `V_clahe`: CLAHE-equalized volume (for visualization/debugging)
+
+**Detailed Algorithm**:
 ```python
 def compute_clahe_sampling_probabilities(V, tile_size, clip_limit, nbins):
     # Apply CLAHE
-    V_clahe = apply_clahe(V, tile_size, clip_limit, nbins)
-
-    # Normalize to [0, 1]
-    V_norm = (V_clahe - V_clahe.min()) / (V_clahe.max() - V_clahe.min())
-
-    # Flatten and normalize to probabilities
-    probabilities = V_norm.reshape(-1)
-    probabilities = probabilities / probabilities.sum()
-
+    V_clahe = apply_clahe(V, tile_size=tile_size, clip_limit=clip_limit, nbins=nbins)
+    
+    # Normalize to [0, 1] for probability distribution
+    V_min, V_max = V_clahe.min(), V_clahe.max()
+    
+    if V_max - V_min < 1e-12:
+        # Uniform case: use uniform probabilities
+        V_norm = torch.ones_like(V_clahe)
+    else:
+        V_norm = (V_clahe - V_min) / (V_max - V_min)
+    
+    # Flatten and normalize to valid probability distribution
+    V_flat = V_norm.reshape(-1)
+    prob_sum = V_flat.sum()
+    
+    if prob_sum < 1e-12:
+        # Degenerate case: uniform probabilities
+        probabilities = torch.ones_like(V_flat) / V_flat.numel()
+    else:
+        probabilities = V_flat / prob_sum
+    
     return probabilities, V_clahe
 ```
+
+**Key Implementation Details**:
+1. **Dual Output**: Returns both probabilities and CLAHE result for visualization
+2. **Degenerate Handling**: Falls back to uniform distribution if input is uniform or sum is zero
+3. **Numerical Stability**: Uses tolerance `1e-12` for zero checks
 
 ## Parameter Selection Guidelines
 
@@ -200,48 +266,120 @@ def compute_clahe_sampling_probabilities(V, tile_size, clip_limit, nbins):
 
 **Rule of Thumb**: 256 is standard and works well for most cases.
 
+## Edge Cases and Robustness
+
+### Handled Edge Cases
+
+1. **Uniform Images**: Return unchanged clone (threshold: `V_max - V_min < 1e-12`)
+2. **Near-Uniform Images**: Graceful handling via CDF normalization fallback
+3. **Small Images**: Works correctly when `image_size < tile_size` (single tile)
+4. **Non-Divisible Dimensions**: Boundary tiles automatically clipped to image bounds
+5. **Zero-Range CDF**: No normalization applied if `cdf_range == 0`
+6. **Negative Values**: Fully supported (histogram uses actual min/max)
+7. **Extreme Values**: No assumptions about intensity range
+8. **Mixed Sign Values**: Works correctly with positive and negative values
+9. **Very Small Ranges**: Numerical stability via epsilon comparisons (`1e-12`)
+10. **Non-Square Shapes**: Works with arbitrary rectangular/cuboid/hypercuboid shapes
+
+### Numerical Stability Features
+
+- **Tolerance Checks**: Uses `1e-12` for zero comparisons to avoid division by zero
+- **Conditional Normalization**: Skips normalization when range is zero
+- **Robust CDF Minimum**: Handles all-zero CDF via `cdf[cdf > 0].min() if (cdf > 0).any() else 0`
+- **Clamping**: Bin indices clamped to `[0, nbins-1]` to prevent out-of-bounds access
+
 ## Performance Characteristics
 
 ### Computational Complexity
 
-**Per tile**: `O(n_pixels_per_tile × nbins)`
-- Histogram computation: `O(n_pixels_per_tile)`
+**Per tile**: `O(n_pixels_per_tile × log(nbins))`
+- Histogram computation: `O(n_pixels_per_tile)` via `torch.histc`
 - Contrast limiting: `O(nbins)`
-- CDF computation: `O(nbins)`
-- Intensity mapping: `O(n_pixels_per_tile × log(nbins))` (binary search)
+- CDF computation: `O(nbins)` via `torch.cumsum`
+- Intensity mapping: `O(n_pixels_per_tile × log(nbins))` via `torch.searchsorted`
 
-**Total**: `O(V.numel() × nbins / tile_size^d + V.numel() × log(nbins))`
-- Dominated by intensity mapping when `tile_size` is small
+**Total**: `O(V.numel() × log(nbins) + n_tiles × nbins)`
+- Dominated by intensity mapping (searchsorted)
 - Approximately linear in image size
 
 ### Memory Usage
 
 **Peak memory**: `O(V.numel() + nbins × n_tiles)`
 - Input volume: `V.numel()` elements
-- Output volume: `V.numel()` elements
-- Histograms: `nbins × n_tiles` elements (one histogram per tile)
+- Output volume: `V.numel()` elements (allocated upfront)
+- Histograms: `nbins` elements per tile (ephemeral, not all stored simultaneously)
+- Intermediate tensors: `tile_flat`, `bin_edges`, `cdf_normalized` (reused per tile)
 
 **Typical**: For 256×256 image, tile_size=16, nbins=256:
 - n_tiles = 16×16 = 256
-- Peak memory ≈ 65K + 65K + 65K = 195K elements ≈ 0.8 MB (float32)
+- Memory ≈ 65K (input) + 65K (output) + 256 (histogram) ≈ 130K elements ≈ 0.52 MB (float32)
 
 ### GPU Acceleration
 
-- Histogram computation: GPU-accelerated via `torch.histc`
-- Tensor operations: GPU-accelerated
-- Tile iteration: Sequential (no parallelization across tiles)
-- Expected speedup: 5-10× on GPU vs CPU for large volumes
+- **Histogram computation**: GPU-accelerated via `torch.histc`
+- **Tensor operations**: All operations (`cumsum`, `searchsorted`, `clamp`, etc.) GPU-accelerated
+- **Tile iteration**: Sequential (no parallelization across tiles - potential optimization opportunity)
+- **Expected speedup**: 5-10× on GPU vs CPU for large volumes
+- **Memory transfer**: Minimal - only `V_min`, `V_max` transferred to CPU via `.item()`
 
 ## Testing Requirements
 
 ### Unit Tests
 
+**Test Categories** (all implemented in `test_clahe.py`):
+
+1. **Basic Functionality** (`TestCLAHEBasic`):
+   - Uniform image unchanged
+   - Range preservation (min/max)
+   - Shape preservation (1D, 2D, 3D, 4D)
+   - Dtype preservation (float32, float64)
+   - Device preservation (CPU, CUDA)
+
+2. **Contrast Enhancement** (`TestCLAHEContrastEnhancement`):
+   - Low-contrast region enhancement
+   - Heterogeneous image balancing
+   - Clip limit effect
+
+3. **Dimensionality** (`TestCLAHEDimensionality`):
+   - 1D support
+   - 2D support
+   - 3D support
+   - 4D support
+   - Non-square shapes
+
+4. **Edge Cases** (`TestCLAHEEdgeCases`):
+   - Small images (< tile_size)
+   - Single tile
+   - Exact tile division
+   - Inexact tile division
+   - Near-uniform images
+   - Zero images
+
+5. **Sampling Probabilities** (`TestCLAHESamplingProbabilities`):
+   - Probability properties (sum=1, non-negative)
+   - Sampling works (no errors)
+   - CLAHE output returned
+   - Uniform image probabilities
+
+6. **Parameter Validation** (`TestCLAHEParameterValidation`):
+   - Various tile sizes (4, 8, 16, 32, 64)
+   - Various clip limits (1.0, 1.5, 2.0, 3.0, 4.0)
+   - Various nbins (64, 128, 256, 512)
+
+7. **Numerical Stability** (`TestCLAHENumericalStability`):
+   - Extreme values (large magnitudes)
+   - Negative values
+   - Mixed sign values
+   - Very small intensity ranges
+
+### Test Examples
+
 **Test: Uniform Image**
 ```python
-def test_uniform_image():
+def test_uniform_image_unchanged():
     V = torch.ones(256, 256) * 0.5
     V_clahe = apply_clahe(V, tile_size=16, clip_limit=2.0)
-    assert torch.allclose(V_clahe, V)  # Unchanged
+    assert torch.allclose(V_clahe, V, atol=1e-6)
 ```
 
 **Test: Range Preservation**
@@ -250,91 +388,49 @@ def test_range_preservation():
     V = torch.randn(256, 256)
     V_min, V_max = V.min(), V.max()
     V_clahe = apply_clahe(V, tile_size=16, clip_limit=2.0)
-    assert torch.allclose(V_clahe.min(), V_min, atol=1e-6)
-    assert torch.allclose(V_clahe.max(), V_max, atol=1e-6)
+    assert torch.allclose(V_clahe.min(), V_min, atol=1e-5)
+    assert torch.allclose(V_clahe.max(), V_max, atol=1e-5)
 ```
 
-**Test: Contrast Enhancement**
+**Test: Heterogeneous Enhancement**
 ```python
-def test_contrast_enhancement():
-    # Create image with low-contrast region
+def test_heterogeneous_image_balancing():
     V = torch.zeros(256, 256)
-    V[64:192, 64:192] = torch.linspace(0.4, 0.6, 128).unsqueeze(1)
-
+    V[0:128, :] = torch.randn(128, 256) * 0.05 + 0.1  # Dark region
+    V[128:256, :] = torch.randn(128, 256) * 0.05 + 0.9  # Bright region
+    
     V_clahe = apply_clahe(V, tile_size=16, clip_limit=2.0)
-
-    # Check that local contrast increased
-    region = V_clahe[64:192, 64:192]
-    assert region.std() > V[64:192, 64:192].std()
-```
-
-**Test: Dimensionality**
-```python
-def test_nd_support():
-    # 1D
-    V_1d = torch.randn(256)
-    assert apply_clahe(V_1d, tile_size=16).shape == (256,)
-
-    # 2D
-    V_2d = torch.randn(256, 256)
-    assert apply_clahe(V_2d, tile_size=16).shape == (256, 256)
-
-    # 3D
-    V_3d = torch.randn(64, 64, 64)
-    assert apply_clahe(V_3d, tile_size=16).shape == (64, 64, 64)
-
-    # 4D
-    V_4d = torch.randn(32, 32, 32, 32)
-    assert apply_clahe(V_4d, tile_size=8).shape == (32, 32, 32, 32)
+    
+    # Both regions should have similar local contrast
+    dark_std = V_clahe[0:128, :].std()
+    bright_std = V_clahe[128:256, :].std()
+    assert abs(dark_std.item() - bright_std.item()) < 0.3
 ```
 
 **Test: Device Preservation**
 ```python
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_device_preservation():
-    if torch.cuda.is_available():
-        V_cpu = torch.randn(256, 256)
-        V_gpu = V_cpu.cuda()
-
-        result_cpu = apply_clahe(V_cpu, tile_size=16)
-        result_gpu = apply_clahe(V_gpu, tile_size=16)
-
-        assert result_cpu.device.type == 'cpu'
-        assert result_gpu.device.type == 'cuda'
+    V_cpu = torch.randn(256, 256)
+    V_gpu = V_cpu.cuda()
+    
+    result_cpu = apply_clahe(V_cpu, tile_size=16)
+    result_gpu = apply_clahe(V_gpu, tile_size=16)
+    
+    assert result_cpu.device.type == "cpu"
+    assert result_gpu.device.type == "cuda"
 ```
 
 **Test: Sampling Probabilities**
 ```python
-def test_sampling_probabilities():
+def test_probability_properties():
     V = torch.randn(256, 256)
     probs, V_clahe = compute_clahe_sampling_probabilities(V, tile_size=16)
-
-    # Check probability properties
+    
     assert probs.shape == (256 * 256,)
-    assert torch.allclose(probs.sum(), torch.tensor(1.0))
+    assert torch.allclose(probs.sum(), torch.tensor(1.0), atol=1e-6)
     assert torch.all(probs >= 0)
     assert torch.all(probs <= 1)
-```
-
-### Integration Tests
-
-**Test: Heterogeneous Image Enhancement**
-```python
-def test_heterogeneous_enhancement():
-    # Create image with varying background
-    V = torch.zeros(256, 256)
-
-    # Dark region with dim features
-    V[0:128, :] = torch.randn(128, 256) * 0.05 + 0.1
-
-    # Bright region with bright features
-    V[128:256, :] = torch.randn(128, 256) * 0.05 + 0.9
-
-    V_clahe = apply_clahe(V, tile_size=16, clip_limit=2.0)
-
-    # Check that both regions have similar dynamic range
-    dark_std = V_clahe[0:128, :].std()
-    bright_std = V_clahe[128:256, :].std()
-    assert abs(dark_std - bright_std) < 0.2  # Similar local contrast
 ```
 
 ## Usage Examples
@@ -412,6 +508,22 @@ enhanced_moderate = apply_clahe(image, tile_size=16, clip_limit=2.0)
 enhanced_aggressive = apply_clahe(image, tile_size=16, clip_limit=3.0)
 ```
 
+### Example 5: GPU Acceleration
+
+```python
+import torch
+from luxar.gsplats.clahe import apply_clahe
+
+# Move data to GPU
+image_gpu = torch.randn(512, 512, device='cuda')
+
+# CLAHE automatically runs on GPU
+enhanced_gpu = apply_clahe(image_gpu, tile_size=16, clip_limit=2.0)
+
+# Result stays on GPU
+assert enhanced_gpu.device.type == 'cuda'
+```
+
 ## References
 
 1. Zuiderveld, K. (1994). "Contrast Limited Adaptive Histogram Equalization." *Graphics Gems IV*, Academic Press, 474-485.
@@ -427,3 +539,5 @@ enhanced_aggressive = apply_clahe(image, tile_size=16, clip_limit=3.0)
   - PyTorch-native implementation with GPU acceleration
   - Contrast limiting for noise robustness
   - Convenience function for sampling probabilities
+  - Comprehensive edge case handling
+  - Extensive test coverage (7 test classes, 35+ tests)

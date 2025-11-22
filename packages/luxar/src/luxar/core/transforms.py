@@ -14,7 +14,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import TransformMatrix
-from ..typing_utils.protocols import validate_transform
+from ..validation.types import validate_transform
 
 
 def identity() -> TransformMatrix:
@@ -240,6 +240,15 @@ def compose(*transforms: TransformMatrix) -> TransformMatrix:
     compose(T1, T2, T3) creates a matrix that first applies T1,
     then T2, then T3.
 
+    Mathematical Note:
+        To apply transforms in user order (T1, then T2, then T3), we compute:
+        result = T3 @ T2 @ T1
+
+        This is because matrix multiplication is right-associative when applied
+        to vectors: (T3 @ T2 @ T1) @ v = T3 @ (T2 @ (T1 @ v))
+
+        So the rightmost matrix (T1) is applied first to the vector.
+
     Args:
         *transforms: Variable number of 4x4 transformation matrices
 
@@ -247,19 +256,19 @@ def compose(*transforms: TransformMatrix) -> TransformMatrix:
         4x4 composed transformation matrix as float32 array
 
     Example:
-        >>> t1 = translate(5, 0, 0)
-        >>> t2 = rotate_z(45)
-        >>> t3 = scale(2, 2, 2)
+        >>> t1 = translate(5, 0, 0)   # Move right 5 units
+        >>> t2 = rotate_z(45)          # Rotate 45 degrees
+        >>> t3 = scale(2, 2, 2)        # Scale by 2x
         >>> combined = compose(t1, t2, t3)  # Translate, then rotate, then scale
     """
     if not transforms:
         return identity()
 
-    # To apply transforms in order t1, t2, t3, we need t3 @ t2 @ t1
-    # So we accumulate from right to left
+    # To apply transforms in order t1, t2, t3, we compute: t3 @ t2 @ t1
+    # Accumulate from right to left by iterating in reverse and right-multiplying
     result = identity()
     for transform in reversed(transforms):
-        result = transform @ result
+        result = result @ transform  # Right-multiply: result = result @ next_transform
 
     return result.astype(np.float32)
 
@@ -395,6 +404,9 @@ def prepare_transform_for_zarr(transform: Any) -> list[float]:
 
     Raises:
         ValueError: If transform is invalid or wrong shape
+
+    See Also:
+        read_transform_from_zarr: Reverse operation to read from storage
     """
     if isinstance(transform, list) and len(transform) == 16:
         # Already a list, validate by converting to matrix and back
@@ -423,6 +435,46 @@ def prepare_transform_for_zarr(transform: Any) -> list[float]:
     # Transpose for THREE.js (column-major order) and convert to list
     zarr_result: list[float] = validated.T.ravel().tolist()
     return zarr_result
+
+
+def read_transform_from_zarr(transform_list: list[float]) -> TransformMatrix:
+    """Read a transform from Zarr storage and convert to NumPy format.
+
+    This is the inverse of prepare_transform_for_zarr(). It converts a
+    16-element list in THREE.js column-major format back to a NumPy
+    row-major 4x4 matrix.
+
+    Args:
+        transform_list: 16-element list in column-major order (THREE.js format)
+
+    Returns:
+        4x4 transformation matrix in row-major order (NumPy format)
+
+    Raises:
+        ValueError: If transform_list is invalid
+
+    Example:
+        >>> # Read transform from zarr attributes
+        >>> transform_list = node_attrs['transform']
+        >>> matrix = read_transform_from_zarr(transform_list)
+        >>> print(matrix.shape)  # (4, 4)
+
+    See Also:
+        prepare_transform_for_zarr: Inverse operation to write to storage
+    """
+    if not isinstance(transform_list, list):
+        raise ValueError(f"Expected list, got {type(transform_list).__name__}")
+
+    if len(transform_list) != 16:
+        raise ValueError(f"Expected 16 elements, got {len(transform_list)}")
+
+    # Convert from THREE.js column-major to NumPy row-major
+    # 1. Reshape to 4x4 (column-major layout)
+    # 2. Transpose to get row-major
+    matrix = np.array(transform_list, dtype=np.float32).reshape(4, 4).T
+
+    # Validate before returning
+    return validate_transform(matrix)
 
 
 # Convenience function aliases

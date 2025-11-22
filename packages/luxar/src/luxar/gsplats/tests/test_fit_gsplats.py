@@ -86,7 +86,7 @@ class TestFitGaussianSplatsBasic:
 
     def test_basic_fitting_2d(self, simple_2d_blob, simple_candidates_2d):
         """Test basic splat fitting in 2D."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             init_sigma_vox=1.0,
@@ -100,28 +100,26 @@ class TestFitGaussianSplatsBasic:
         # Check output shapes
         d = 2
         N = len(simple_candidates_2d)
-        expected_param_size = (
-            d + tril_size(d) + 1
-        )  # centers + packed Cholesky + sharpness
 
-        assert params_full.shape == (N, expected_param_size)
-        assert amps.shape == (N,)
+        assert result.centers.shape == (N, d)
+        assert result.cholesky_factors.shape == (N, tril_size(d))
+        assert result.sharpnesses.shape == (N,)
+        assert result.amplitudes.shape == (N,)
 
         # Check data types
-        assert params_full.dtype == np.float32
-        assert amps.dtype == np.float32
+        assert result.centers.dtype == np.float32
+        assert result.amplitudes.dtype == np.float32
 
         # Check that centers are within reasonable bounds
-        centers = params_full[:, :d]
-        assert np.all(centers >= -1)  # Allow small margin outside image
-        assert np.all(centers <= simple_2d_blob.shape[0])
+        assert np.all(result.centers >= -1)  # Allow small margin outside image
+        assert np.all(result.centers <= simple_2d_blob.shape[0])
 
         # Check that amplitudes are non-negative
-        assert np.all(amps >= 0)
+        assert np.all(result.amplitudes >= 0)
 
     def test_basic_fitting_3d(self, simple_3d_blob, simple_candidates_3d):
         """Test basic splat fitting in 3D."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_3d_blob,
             seeds=simple_candidates_3d,
             init_sigma_vox=1.2,
@@ -135,21 +133,21 @@ class TestFitGaussianSplatsBasic:
         # Check output shapes
         d = 3
         N = len(simple_candidates_3d)
-        expected_param_size = d + tril_size(d) + 1  # 3 + 6 + 1 = 10
 
-        assert params_full.shape == (N, expected_param_size)
-        assert amps.shape == (N,)
+        assert result.centers.shape == (N, d)
+        assert result.cholesky_factors.shape == (N, tril_size(d))
+        assert result.sharpnesses.shape == (N,)
+        assert result.amplitudes.shape == (N,)
 
         # Check basic validity
-        assert np.all(amps >= 0)
-        centers = params_full[:, :d]
-        assert np.all(np.isfinite(centers))
+        assert np.all(result.amplitudes >= 0)
+        assert np.all(np.isfinite(result.centers))
 
     def test_empty_candidates(self, simple_2d_blob):
         """Test fitting with no candidate centers."""
         empty_candidates = np.zeros((0, 2), dtype=np.float32)
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=empty_candidates,
             n_iters=10,
@@ -160,16 +158,17 @@ class TestFitGaussianSplatsBasic:
 
         # Should return empty arrays with correct shapes
         d = 2
-        expected_param_size = d + tril_size(d) + 1  # Include sharpness
 
-        assert params_full.shape == (0, expected_param_size)
-        assert amps.shape == (0,)
+        assert result.centers.shape == (0, d)
+        assert result.cholesky_factors.shape == (0, tril_size(d))
+        assert result.sharpnesses.shape == (0,)
+        assert result.amplitudes.shape == (0,)
 
     def test_single_candidate(self, simple_2d_blob):
         """Test fitting with single candidate."""
         single_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=single_candidate,
             n_iters=30,
@@ -178,9 +177,11 @@ class TestFitGaussianSplatsBasic:
             napari_movie=False,  # Disable movie for testing
         )
 
-        assert params_full.shape == (1, 6)  # 2D + 3 tril elements + sharpness
-        assert amps.shape == (1,)
-        assert amps[0] > 0  # Should have positive amplitude
+        assert result.centers.shape == (1, 2)
+        assert result.cholesky_factors.shape == (1, 3)  # 2D tril elements
+        assert result.sharpnesses.shape == (1,)
+        assert result.amplitudes.shape == (1,)
+        assert result.amplitudes[0] > 0  # Should have positive amplitude
 
 
 class TestInputValidation:
@@ -304,7 +305,7 @@ class TestUniformImageHandling:
         uniform_image = np.ones((21, 21), dtype=np.float32) * 5.0
 
         # Should not crash due to division by zero
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=uniform_image,
             seeds=simple_candidates_2d,
             n_iters=10,
@@ -312,17 +313,21 @@ class TestUniformImageHandling:
         )
 
         # Should return valid results
-        assert params_full.shape == (3, 6)  # 2D + 3 tril elements + sharpness
-        assert amps.shape == (3,)
-        assert np.all(np.isfinite(params_full))
-        assert np.all(np.isfinite(amps))
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
+        assert np.all(np.isfinite(result.centers))
+        assert np.all(np.isfinite(result.cholesky_factors))
+        assert np.all(np.isfinite(result.sharpnesses))
+        assert np.all(np.isfinite(result.amplitudes))
 
     def test_nearly_uniform_image(self, simple_candidates_2d):
         """Test fitting on nearly uniform image."""
         nearly_uniform = np.ones((21, 21), dtype=np.float32) * 5.0
         nearly_uniform[10, 10] = 5.0001  # Tiny variation
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=nearly_uniform,
             seeds=simple_candidates_2d,
             n_iters=10,
@@ -331,8 +336,10 @@ class TestUniformImageHandling:
             napari_movie=False,
         )
 
-        assert np.all(np.isfinite(params_full))
-        assert np.all(np.isfinite(amps))
+        assert np.all(np.isfinite(result.centers))
+        assert np.all(np.isfinite(result.cholesky_factors))
+        assert np.all(np.isfinite(result.sharpnesses))
+        assert np.all(np.isfinite(result.amplitudes))
 
 
 class TestLossTypes:
@@ -340,7 +347,7 @@ class TestLossTypes:
 
     def test_mse_loss(self, simple_2d_blob, simple_candidates_2d):
         """Test MSE loss function."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             loss_type="mse",
@@ -350,13 +357,15 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 6)  # Include sharpness
-        assert amps.shape == (3,)
-        assert np.all(amps >= 0)
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
+        assert np.all(result.amplitudes >= 0)
 
     def test_poisson_loss(self, simple_2d_blob, simple_candidates_2d):
         """Test Poisson loss function."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             loss_type="poisson",
@@ -366,13 +375,15 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 6)  # Include sharpness
-        assert amps.shape == (3,)
-        assert np.all(amps >= 0)
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
+        assert np.all(result.amplitudes >= 0)
 
     def test_l1_loss(self, simple_2d_blob, simple_candidates_2d):
         """Test L1 loss function."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             loss_type="l1",
@@ -382,9 +393,11 @@ class TestLossTypes:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 6)  # Include sharpness
-        assert amps.shape == (3,)
-        assert np.all(amps >= 0)
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
+        assert np.all(result.amplitudes >= 0)
 
 
 class TestRegularization:
@@ -394,7 +407,7 @@ class TestRegularization:
         """Test that L1 regularization affects results."""
 
         # Fit without regularization
-        params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
+        result_no_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,
@@ -405,7 +418,7 @@ class TestRegularization:
         )
 
         # Fit with L1 regularization
-        params_reg, amps_reg, _ = fit_gaussian_splats(
+        result_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.01,  # Small regularization
@@ -416,17 +429,17 @@ class TestRegularization:
         )
 
         # Results should be different
-        assert not np.allclose(amps_no_reg, amps_reg, atol=1e-3)
+        assert not np.allclose(result_no_reg.amplitudes, result_reg.amplitudes, atol=1e-3)
 
         # Regularized amplitudes should generally be smaller or more sparse
         # (though this isn't guaranteed for all cases)
-        assert np.all(amps_reg >= 0)
-        assert np.all(amps_no_reg >= 0)
+        assert np.all(result_reg.amplitudes >= 0)
+        assert np.all(result_no_reg.amplitudes >= 0)
 
     def test_l1_diag_regularization(self, multi_blob_2d, simple_candidates_2d):
         """Test that L1 diagonal regularization affects results."""
         # Fit without diagonal regularization
-        params_no_reg, amps_no_reg, _ = fit_gaussian_splats(
+        result_no_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,
@@ -438,7 +451,7 @@ class TestRegularization:
         )
 
         # Fit with L1 diagonal regularization
-        params_reg, amps_reg, _ = fit_gaussian_splats(
+        result_reg = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=simple_candidates_2d,
             l1_amp=0.0,  # Only diagonal regularization
@@ -449,11 +462,15 @@ class TestRegularization:
             napari_movie=False,
         )
 
+        # Reconstruct params_full for comparison
+        params_no_reg = np.column_stack([result_no_reg.centers, result_no_reg.cholesky_factors, result_no_reg.sharpnesses])
+        params_reg = np.column_stack([result_reg.centers, result_reg.cholesky_factors, result_reg.sharpnesses])
+
         # Results should be different due to diagonal regularization
         assert not np.allclose(params_no_reg, params_reg, atol=1e-3)
         # Both should still have valid shapes
         assert params_no_reg.shape == params_reg.shape
-        assert amps_no_reg.shape == amps_reg.shape
+        assert result_no_reg.amplitudes.shape == result_reg.amplitudes.shape
 
 
 class TestConstraints:
@@ -463,7 +480,7 @@ class TestConstraints:
         """Test that minimum sigma constraint is enforced."""
         sigma_min = [0.8, 1.2]  # Different mins for each axis
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             sigma_min_diag=sigma_min,
@@ -477,8 +494,7 @@ class TestConstraints:
         from luxar.gsplats.utils.trils import unpack_tril
 
         d = 2
-        L_packed = params_full[:, d:]
-        L_matrices = unpack_tril(L_packed, d)
+        L_matrices = unpack_tril(result.cholesky_factors, d)
 
         # Check that diagonal elements respect minimum constraints
         for i in range(len(simple_candidates_2d)):
@@ -492,7 +508,7 @@ class TestConstraints:
         sigma_min = [0.3, 0.3]
         sigma_max = [1.5, 2.0]  # Different maxes for each axis
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             sigma_min_diag=sigma_min,
@@ -507,8 +523,7 @@ class TestConstraints:
         from luxar.gsplats.utils.trils import unpack_tril
 
         d = 2
-        L_packed = params_full[:, d:]
-        L_matrices = unpack_tril(L_packed, d)
+        L_matrices = unpack_tril(result.cholesky_factors, d)
 
         for i in range(len(simple_candidates_2d)):
             assert L_matrices[i, 0, 0] <= sigma_max[0] + 1e-6
@@ -520,7 +535,7 @@ class TestDeviceSupport:
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d):
         """Test explicit CPU device."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             device="cpu",
@@ -530,13 +545,15 @@ class TestDeviceSupport:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 6)  # Include sharpness
-        assert amps.shape == (3,)
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_cuda_device(self, simple_2d_blob, simple_candidates_2d):
         """Test CUDA device if available."""
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             device="cuda",
@@ -546,8 +563,10 @@ class TestDeviceSupport:
             napari_movie=False,
         )
 
-        assert params_full.shape == (3, 6)  # Include sharpness
-        assert amps.shape == (3,)
+        assert result.centers.shape == (3, 2)
+        assert result.cholesky_factors.shape == (3, 3)
+        assert result.sharpnesses.shape == (3,)
+        assert result.amplitudes.shape == (3,)
 
 
 class TestConvergence:
@@ -555,7 +574,7 @@ class TestConvergence:
 
     def test_auto_convergence_threshold(self, simple_2d_blob, simple_candidates_2d):
         """Test automatic convergence threshold setting."""
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             n_iters=100,
@@ -566,8 +585,8 @@ class TestConvergence:
         )
 
         # Should converge with auto-threshold
-        assert "converged" in stats
-        assert params.shape[0] > 0
+        assert "converged" in result.stats
+        assert result.centers.shape[0] > 0
 
     def test_auto_candidate_generation_2d(self) -> None:
         """Test automatic candidate generation for 2D images."""
@@ -575,7 +594,7 @@ class TestConvergence:
         V = np.random.random((32, 32)).astype(np.float32)
 
         # Test auto-generation
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             # seeds=None (default)
             n_iters=10,
@@ -586,8 +605,8 @@ class TestConvergence:
 
         # Should generate reasonable number of candidates based on volume
         # Expected at least 50 candidates for any image size
-        assert len(amps) > 0
-        assert params.shape[0] == len(amps)
+        assert len(result.amplitudes) > 0
+        assert result.centers.shape[0] == len(result.amplitudes)
 
     def test_auto_candidate_generation_3d(self) -> None:
         """Test automatic candidate generation for 3D volumes."""
@@ -595,7 +614,7 @@ class TestConvergence:
         V = np.random.random((16, 16, 16)).astype(np.float32)
 
         # Test auto-generation
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             n_iters=10,
             verbose=False,
@@ -604,16 +623,18 @@ class TestConvergence:
         )
 
         # Should work with 3D data
-        assert len(amps) > 0
+        assert len(result.amplitudes) > 0
+        # Reconstruct params_full to check shape
+        params_full = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
         assert (
-            params.shape[1] == 10
+            params_full.shape[1] == 10
         )  # 3D centers (3) + 3x3 packed L (6) + sharpness (1) = 10
 
     def test_volume_proportional_scaling(self) -> None:
         """Test that candidate count scales with image volume."""
         # Small image
         V_small = np.random.random((16, 16)).astype(np.float32)
-        params_small, amps_small, _ = fit_gaussian_splats(
+        result_small = fit_gaussian_splats(
             V_small,
             n_iters=5,
             verbose=False,
@@ -623,7 +644,7 @@ class TestConvergence:
 
         # Large image (4x linear = 16x area)
         V_large = np.random.random((32, 32)).astype(np.float32)
-        params_large, amps_large, _ = fit_gaussian_splats(
+        result_large = fit_gaussian_splats(
             V_large,
             n_iters=5,
             verbose=False,
@@ -633,8 +654,8 @@ class TestConvergence:
 
         # Large image should generate proportionally more candidates
         # But both use minimum of 50, so this tests the scaling logic
-        assert len(amps_small) > 0
-        assert len(amps_large) >= len(amps_small)  # Should be at least as many
+        assert len(result_small.amplitudes) > 0
+        assert len(result_large.amplitudes) >= len(result_small.amplitudes)  # Should be at least as many
 
     def test_intensity_rescaling(self) -> None:
         """Test that amplitudes are correctly rescaled to original intensity range."""
@@ -646,7 +667,7 @@ class TestConvergence:
         original_min, original_max = np.percentile(V, [1, 99])
         expected_scale_factor = original_max - original_min
 
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             n_iters=10,
             verbose=False,
@@ -655,15 +676,15 @@ class TestConvergence:
         )
 
         # Amplitudes should be rescaled to original intensity scale
-        assert len(amps) > 0
-        assert np.all(amps >= 0)  # Should remain non-negative
+        assert len(result.amplitudes) > 0
+        assert np.all(result.amplitudes >= 0)  # Should remain non-negative
 
         # With realistic intensity range (~200), amplitudes should be much larger than [0,1]
         if (
             expected_scale_factor > 10
         ):  # Only test if we have significant intensity range
             assert (
-                np.max(amps) > 5.0
+                np.max(result.amplitudes) > 5.0
             )  # Should be substantially larger than normalized range
 
     def test_configurable_normalization(self) -> None:
@@ -673,27 +694,27 @@ class TestConvergence:
         V[0, 0] = 1000.0  # Extreme outlier
 
         # Test full range normalization
-        params_full, amps_full, _ = fit_gaussian_splats(
+        result_full = fit_gaussian_splats(
             V, norm_percentile=0.0, n_iters=5, verbose=False, napari_movie=False
         )
 
         # Test percentile normalization (should be more robust to outlier)
-        params_robust, amps_robust, _ = fit_gaussian_splats(
+        result_robust = fit_gaussian_splats(
             V, norm_percentile=1.0, n_iters=5, verbose=False, napari_movie=False
         )
 
         # Both should work but potentially with different characteristics
-        assert len(amps_full) > 0
-        assert len(amps_robust) > 0
-        assert np.all(amps_full >= 0)
-        assert np.all(amps_robust >= 0)
+        assert len(result_full.amplitudes) > 0
+        assert len(result_robust.amplitudes) > 0
+        assert np.all(result_full.amplitudes >= 0)
+        assert np.all(result_robust.amplitudes >= 0)
 
     def test_best_state_tracking(self) -> None:
         """Test that best state (lowest max_abs_error) is returned, not final state."""
         # Create simple test case
         V = np.random.random((24, 24)).astype(np.float32)
 
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             n_iters=30,
             verbose=False,
@@ -702,21 +723,21 @@ class TestConvergence:
         )
 
         # Should have best state information in stats
-        assert "best_iteration" in stats
-        assert "final_max_abs_error" in stats
-        assert stats["best_iteration"] > 0
-        assert stats["best_iteration"] <= stats["iterations"]
-        assert stats["final_max_abs_error"] >= 0
+        assert "best_iteration" in result.stats
+        assert "final_max_abs_error" in result.stats
+        assert result.stats["best_iteration"] > 0
+        assert result.stats["best_iteration"] <= result.stats["iterations"]
+        assert result.stats["final_max_abs_error"] >= 0
 
         # Should return valid splat configuration
-        assert len(amps) > 0
-        assert params.shape[0] == len(amps)
+        assert len(result.amplitudes) > 0
+        assert result.centers.shape[0] == len(result.amplitudes)
 
     def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
         """Test that more iterations generally improve convergence."""
 
         # Short optimization
-        params_short, amps_short, _ = fit_gaussian_splats(
+        result_short = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             n_iters=5,
@@ -726,7 +747,7 @@ class TestConvergence:
         )
 
         # Longer optimization
-        params_long, amps_long, _ = fit_gaussian_splats(
+        result_long = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             n_iters=50,
@@ -735,14 +756,18 @@ class TestConvergence:
             napari_movie=False,
         )
 
+        # Reconstruct params_full for comparison
+        params_short = np.column_stack([result_short.centers, result_short.cholesky_factors, result_short.sharpnesses])
+        params_long = np.column_stack([result_long.centers, result_long.cholesky_factors, result_long.sharpnesses])
+
         # Results should be different (optimization should progress)
         assert not np.allclose(params_short, params_long, atol=1e-3)
-        assert not np.allclose(amps_short, amps_long, atol=1e-3)
+        assert not np.allclose(result_short.amplitudes, result_long.amplitudes, atol=1e-3)
 
     def test_different_learning_rates(self, simple_2d_blob, simple_candidates_2d):
         """Test that different learning rates produce different results."""
 
-        params_low_lr, amps_low_lr, _ = fit_gaussian_splats(
+        result_low_lr = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             lr=0.01,  # Low learning rate
@@ -752,7 +777,7 @@ class TestConvergence:
             napari_movie=False,
         )
 
-        params_high_lr, amps_high_lr, _ = fit_gaussian_splats(
+        result_high_lr = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=simple_candidates_2d,
             lr=0.5,  # High learning rate
@@ -761,6 +786,10 @@ class TestConvergence:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
+
+        # Reconstruct params_full for comparison
+        params_low_lr = np.column_stack([result_low_lr.centers, result_low_lr.cholesky_factors, result_low_lr.sharpnesses])
+        params_high_lr = np.column_stack([result_high_lr.centers, result_high_lr.cholesky_factors, result_high_lr.sharpnesses])
 
         # Different learning rates should produce different results
         assert not np.allclose(params_low_lr, params_high_lr, atol=1e-2)
@@ -774,7 +803,7 @@ class TestReconstructionQuality:
         # Use candidate near the center where the blob peak should be
         center_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
 
-        params_full, amps, _ = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V=simple_2d_blob,
             seeds=center_candidate,
             n_iters=100,  # More iterations for better fit
@@ -784,21 +813,21 @@ class TestReconstructionQuality:
         )
 
         # Check that fitted center is reasonably close to blob center
-        fitted_center = params_full[0, :2]
+        fitted_center = result.centers[0]
         assert abs(fitted_center[0] - 10.0) < 2.0  # Within 2 pixels
         assert abs(fitted_center[1] - 10.0) < 2.0
 
         # Check that amplitude is reasonable (should be close to peak value)
         expected_peak = simple_2d_blob.max()
-        assert amps[0] > 0.3 * expected_peak  # At least 30% of peak
-        assert amps[0] < 2.0 * expected_peak  # Not unreasonably large
+        assert result.amplitudes[0] > 0.3 * expected_peak  # At least 30% of peak
+        assert result.amplitudes[0] < 2.0 * expected_peak  # Not unreasonably large
 
     def test_reconstruction_improves_with_more_splats(self, multi_blob_2d):
         """Test that using more splats generally improves reconstruction."""
 
         # Fit with few candidates
         few_candidates = np.array([[15.0, 15.0]], dtype=np.float32)
-        params_few, amps_few, _ = fit_gaussian_splats(
+        result_few = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=few_candidates,
             n_iters=50,
@@ -816,7 +845,7 @@ class TestReconstructionQuality:
             ],
             dtype=np.float32,
         )
-        params_many, amps_many, _ = fit_gaussian_splats(
+        result_many = fit_gaussian_splats(
             V=multi_blob_2d,
             seeds=many_candidates,
             n_iters=50,
@@ -829,7 +858,7 @@ class TestReconstructionQuality:
         # (since they can better represent the multiple blobs)
         # This isn't guaranteed in all cases, but is a reasonable expectation
         # for this test case with well-separated blobs
-        assert len(amps_many) > len(amps_few)  # More splats
+        assert len(result_many.amplitudes) > len(result_few.amplitudes)  # More splats
 
 
 if __name__ == "__main__":

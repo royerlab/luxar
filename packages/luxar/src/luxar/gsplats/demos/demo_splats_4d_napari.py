@@ -14,6 +14,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -81,7 +82,7 @@ with asection("4D Gaussian Splatting Demo"):
 
     with asection(f"Fitting 4D Gaussian splats ({N_ITERS} iterations)"):
         # Test complete nD pipeline with auto-candidate generation
-        params_full, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             # seeds auto-generated with 4D-aware intelligent defaults
             n_iters=N_ITERS,
@@ -98,9 +99,9 @@ with asection("4D Gaussian Splatting Demo"):
             napari_movie=True,
         )
 
-        aprint(f"Fitted {len(amps)} 4D splats successfully")
+        aprint(f"Fitted {len(result.amplitudes)} 4D splats successfully")
 
-        if len(amps) == 0:
+        if len(result.amplitudes) == 0:
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
@@ -110,20 +111,18 @@ with asection("4D Gaussian Splatting Demo"):
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 4
 
-# params_full includes sharpness in last column: [centers, packed_L, sharpness]
-# Extract L for energy ranking (exclude sharpness from the end)
-L_packed = params_full[:, d:-1]  # (N, 10) in 4D - centers excluded, sharpness excluded
-L_full = unpack_tril(L_packed, d)  # (N, 4, 4)
+# Extract L for energy ranking
+L_full = unpack_tril(result.cholesky_factors, d)  # (N, 4, 4)
 diag_prod = np.prod(
     np.stack([L_full[:, i, i] for i in range(d)], axis=1), axis=1
 )  # ∏ diag(L)
-energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
+energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
 aprint("4D energy scores computed for compression ranking")
 
 # ----- Precompute reconstructions/residuals per frame -----
-N = len(amps)
+N = len(result.amplitudes)
 keep_counts = np.unique(
     np.linspace(1, N, num=min(N_FRAMES, N), endpoint=True).astype(int)
 )
@@ -156,10 +155,17 @@ for i, K in enumerate(keep_counts):
 
     idx = order[:K]
 
-    # Reconstruction & residual with auto-extraction of all parameters
-    Vk = render_gaussians_numpy(
-        V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
+    # Create sliced result for rendering
+    result_idx = GaussianSplatResult(
+        centers=result.centers[idx],
+        amplitudes=result.amplitudes[idx],
+        cholesky_factors=result.cholesky_factors[idx],
+        sharpnesses=result.sharpnesses[idx],
+        stats={}  # Empty stats for rendering subset
     )
+
+    # Reconstruction & residual
+    Vk = render_gaussians_numpy(V.shape, result_idx, truncate=TRUNCATE_SIG)
     stack_recon[i] = Vk
     stack_resid[i] = V - Vk
     rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -169,8 +175,8 @@ for i, K in enumerate(keep_counts):
     bpv_frames[i] = model_bits_frames[i] / NUM_HYPERVOXELS  # bits per hypervoxel
     bit_compression_pct[i] = 100.0 * (1.0 - (model_bits_frames[i] / HYPERCUBE_BITS))
 
-    # 4D centers (first 4 dimensions of params)
-    Ck = params_full[idx, :4]  # (K, 4) hypercube centers
+    # 4D centers
+    Ck = result.centers[idx]  # (K, 4) hypercube centers
     centers_frames.append(Ck)
 
 aprint("4D rendering and compression analysis complete!")

@@ -299,7 +299,7 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
     if is_root:
         # Root scene requires additional attributes
         required = {"type", "luxar_version"}
-        recommended = {"units", "scene_dimensions"}
+        recommended = {"scene_dimensions"}
     else:
         # Child nodes only require type
         required = {"type"}

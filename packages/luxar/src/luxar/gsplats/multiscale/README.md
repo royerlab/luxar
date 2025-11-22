@@ -443,10 +443,10 @@ pytest packages/luxar/src/luxar/gsplats/multiscale/tests/ --cov=luxar.gsplats.mu
 ```python
 decompose_image(
     V: np.ndarray,
-    scales: List[int] = [1, 2, 4, 8],
+    scales: List[int] = [1, 2, 4, 8, 16, 32],
     n_iters: int = 500,
     lr: float = 0.01,
-    energy_weight: float = 0.001,
+    energy_weight: float = 0.01,
     alpha: float = 1.5,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,

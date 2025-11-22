@@ -1,6 +1,6 @@
 # multiscale_gaussian.py
 """
-Multiscale Gaussian candidate generation for Gaussian splatting.
+Multiscale Gaussian seed generation for Gaussian splatting.
 
 This module provides multiscale Gaussian-blurred peak detection with optional
 CLAHE preprocessing for comprehensive feature coverage.
@@ -11,10 +11,10 @@ from typing import List, Optional, Sequence
 import numpy as np
 from scipy import ndimage as ndi
 
-from luxar.gsplats.candidates.utils import dedupe_farthest_first, local_maxima
+from luxar.gsplats.seeds.utils import dedupe_farthest_first, local_maxima
 
 
-def find_candidates_multiscale_gaussian(
+def find_seeds_multiscale_gaussian(
     V: np.ndarray,
     spacing: Optional[Sequence[float]] = None,
     scales: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0),
@@ -27,13 +27,13 @@ def find_candidates_multiscale_gaussian(
     clahe_nbins: int = 256,
 ) -> np.ndarray:
     """
-    Generate candidate set of candidate centers for Gaussian splat fitting.
+    Generate seed set of seed centers for Gaussian splat fitting.
 
     Uses multiscale Gaussian-blurred peak detection to detect blob-like structures
     at various sizes with optional CLAHE preprocessing to enhances local contrast for balanced detection/
 
 
-    The resulting candidate set is comprehensive across scales - the subsequent fitting
+    The resulting seed set is comprehensive across scales - the subsequent fitting
     process will select and refine the most useful subset.
 
     Parameters
@@ -51,10 +51,10 @@ def find_candidates_multiscale_gaussian(
         peaks above threshold. Default: None (unlimited).
     percentile_thresh : float, default=70.0
         Intensity percentile threshold (0-100) for peak detection. Higher values
-        are more selective, lower values detect more candidates.
+        are more selective, lower values detect more seeds.
     min_distance : float, default=2.0
-        Minimum Euclidean distance (in voxels) between candidate centers.
-        Used for deduplication to avoid overly dense candidates.
+        Minimum Euclidean distance (in voxels) between seed centers.
+        Used for deduplication to avoid overly dense seeds.
     apply_clahe : bool, default=True
         Whether to apply CLAHE preprocessing before detection. When enabled,
         all detection methods operate on CLAHE-enhanced image, allowing
@@ -70,7 +70,7 @@ def find_candidates_multiscale_gaussian(
     Returns
     -------
     np.ndarray
-        Array of shape (N, ndim) containing candidate center coordinates in
+        Array of shape (N, ndim) containing seed center coordinates in
         voxel units (float). Coordinates may be sub-voxel due to centroid refinement.
 
     Notes
@@ -156,27 +156,27 @@ def find_candidates_multiscale_gaussian(
         coords = local_maxima(img, radius=radius, thresh=thr, top_k=peaks_per_scale)
         all_coords.append(coords)
 
-    # Handle case where no candidates were found
+    # Handle case where no seeds were found
     if len(all_coords) == 0:
         return np.zeros((0, d), float)
 
-    # Combine all candidate coordinate arrays, filtering out empty arrays
+    # Combine all seed coordinate arrays, filtering out empty arrays
     non_empty_coords = [c for c in all_coords if c.size > 0]
     if len(non_empty_coords) == 0:
         return np.zeros((0, d), float)
 
     coords = np.vstack(non_empty_coords)
 
-    # Remove candidates that are too close to each other (spatial deduplication)
+    # Remove seeds that are too close to each other (spatial deduplication)
     # This reduces redundancy between different detection methods
     coords = dedupe_farthest_first(coords, min_distance=min_distance)
 
-    # Refine candidate positions to sub-voxel precision using intensity-weighted centroids
+    # Refine seed positions to sub-voxel precision using intensity-weighted centroids
     # This improves localization accuracy by considering local intensity distribution
     # Use V_work (same image used for detection) for consistency
     centers = []
     for c in coords:
-        # Extract 3x3x...x3 neighborhood around each candidate (clipped at image borders)
+        # Extract 3x3x...x3 neighborhood around each seed (clipped at image borders)
         slices = []
         for ax in range(d):
             # Create slice from c-1 to c+2 (exclusive), clamped to image bounds
@@ -200,6 +200,6 @@ def find_candidates_multiscale_gaussian(
         )
         centers.append(mu)
 
-    # Convert list to array and return refined candidate positions
+    # Convert list to array and return refined seed positions
     centers = np.array(centers, float)
     return centers

@@ -1,26 +1,155 @@
-# Candidate Generation for Gaussian Splatting
+# Seed Generation for Gaussian Splatting
 
-This document describes the candidate generation methods available in `luxar.gsplats.candidates` for seeding Gaussian splat fitting.
+This document describes the seed generation methods available in `luxar.gsplats.seeds` for seeding Gaussian splat fitting.
 
 ## Overview
 
-Candidate generation is the first step in Gaussian splat fitting - identifying potential locations where Gaussian splats should be placed. Good candidate selection is crucial for:
+Seed generation is the first step in Gaussian splat fitting - identifying potential locations where Gaussian splats should be placed. Good seed selection is crucial for:
 - **Convergence speed**: Starting near optimal positions reduces iterations
 - **Reconstruction quality**: Better coverage of important features
 - **Computational efficiency**: Fewer redundant splats
 
 The module provides two complementary approaches:
 
-1. **Multiscale Gaussian Detection** (`find_candidates_multiscale_gaussian`): Multi-method detection with spatial redundancy
-2. **Decomposition-Based** (`find_candidates_from_decomposition`): Scale-hierarchical detection via image decomposition
+1. **Multiscale Gaussian Detection** (`find_seeds_multiscale_gaussian`): Multi-method detection with spatial redundancy
+2. **Decomposition-Based** (`find_seeds_multiscale_decomposition`): Scale-hierarchical detection via image decomposition
 
 ## Methods
 
-### 1. Multiscale Gaussian Candidate Generation
+## Unified Entry Point: `generate_seeds()`
 
-**Function**: `find_candidates_multiscale_gaussian()`
+**Purpose**: Simplified interface for seed generation with automatic method selection.
 
-**Strategy**: Combine multiple detection methods to create a rich, overcomplete set of candidates.
+**Function Signature**:
+```python
+def generate_seeds(
+    V: np.ndarray,
+    method: str = "both",
+    **method_kwargs
+) -> np.ndarray
+```
+
+**Parameters**:
+- `V` (np.ndarray): Input n-dimensional image/volume
+- `method` (str): Seed generation method
+  - `"both"`: Automatic selection (combines multiscale + decomposition) - **DEFAULT**
+  - `"multiscale_gaussian"`: Fast multiscale Gaussian peak detection
+  - `"multiscale_decomposition"`: Hierarchical decomposition-based detection
+  - `"combined"`: Explicit combination of both methods
+- `**method_kwargs`: Method-specific parameters passed to underlying functions
+
+**Returns**:
+- `seeds` (np.ndarray): Seed coordinates of shape (N, ndim) with float values
+
+**Examples**:
+```python
+from luxar.gsplats.seeds import generate_seeds
+
+# Automatic method selection (recommended)
+seeds = generate_seeds(image)
+
+# Explicit multiscale Gaussian method
+seeds = generate_seeds(image, method="multiscale_gaussian", 
+                      scales=(1.0, 2.0, 4.0))
+
+# Decomposition method with custom parameters
+seeds = generate_seeds(image, method="multiscale_decomposition",
+                      scales=[1, 2, 4, 8], ignore_finest_k=1)
+```
+
+**Method Selection Guide**:
+- **"both"** (default): Best for most use cases - combines both methods for comprehensive coverage
+- **"multiscale_gaussian"**: Fast generation when speed is critical
+- **"multiscale_decomposition"**: High-quality seeds for noisy data or when principled scale separation is needed
+- **"combined"**: Explicit control over combining both methods
+
+**Integration with fit_gaussian_splats()**:
+```python
+from luxar.gsplats import fit_gaussian_splats
+
+# Method 1: Automatic (most common)
+result = fit_gaussian_splats(
+    image,
+    # seeds auto-generated with method="both" internally
+)
+
+# Method 2: Explicit seed generation
+seeds = generate_seeds(image, method="multiscale_gaussian")
+result = fit_gaussian_splats(image, seeds=seeds)
+
+# Method 3: Custom seed_method parameter
+result = fit_gaussian_splats(
+    image,
+    seed_method="multiscale_decomposition",  # Override default
+    seed_kwargs={"scales": [1, 2, 4, 8], "ignore_finest_k": 2}
+)
+```
+
+
+**Seed Method Defaults: API vs Internal**
+
+When using the high-level API (`fit_gaussian_splats()`), the default seed generation method differs from the unified entry point:
+
+- **API default**: `seed_method="gaussian"` (faster, ~1-10 seconds)
+  - Prioritizes speed for typical workflows
+  - Uses multiscale Gaussian peak detection
+  - Sufficient for most use cases
+  
+- **Internal default**: `method="both"` in `generate_seeds()` (higher quality, ~10-60 seconds)
+  - Combines both multiscale Gaussian and decomposition methods
+  - Best quality when explicit control is needed
+  - Comprehensive feature coverage
+
+**Rationale**: The API optimizes for common workflows (speed), while the unified entry point optimizes for explicit seed generation (quality).
+
+**Configuration with seed_kwargs**:
+
+All parameters from `generate_seeds()` can be passed through the API via `**seed_kwargs`:
+
+```python
+# Fast default (multiscale Gaussian only)
+result = fit_gaussian_splats(image)
+
+# High-quality seeds (both methods)
+result = fit_gaussian_splats(
+    image,
+    seed_method="both",  # Override default
+    seed_kwargs={}        # Additional parameters passed to generate_seeds()
+)
+
+# Custom multiscale Gaussian parameters
+result = fit_gaussian_splats(
+    image,
+    seed_method="gaussian",
+    seed_kwargs={
+        "scales": (1.0, 2.0, 4.0),
+        "peaks_per_scale": 2000
+    }
+)
+
+# Custom decomposition parameters
+result = fit_gaussian_splats(
+    image,
+    seed_method="decomposition",
+    seed_kwargs={
+        "scales": [1, 2, 4, 8],
+        "ignore_finest_k": 2
+    }
+)
+```
+
+See docstring for `fit_gaussian_splats()` for complete `seed_kwargs` options.
+
+---
+
+---
+
+
+### 1. Multiscale Gaussian Seed Generation
+
+**Function**: `find_seeds_multiscale_gaussian()`
+
+**Strategy**: Combine multiple detection methods to create a rich, overcomplete set of seeds.
 
 **Detection Methods**:
 1. **CLAHE Preprocessing** (optional): Enhances local contrast for balanced detection in heterogeneous data
@@ -30,12 +159,12 @@ The module provides two complementary approaches:
 **When to Use**:
 - Standard use case for most images
 - When you want comprehensive feature detection
-- When computational cost of many candidates is acceptable
+- When computational cost of many seeds is acceptable
 - For complex scenes with mixed feature types
 
 **Key Parameters**:
 ```python
-candidates = find_candidates_multiscale_gaussian(
+seeds = find_seeds_multiscale_gaussian(
     V,                                    # Input image/volume
     scales=(0.7, 1.0, 1.4, 2.0, 2.8, 4.0),  # Detection scales (in voxels)
     peaks_per_scale=1000,                 # Max peaks per scale
@@ -48,15 +177,15 @@ candidates = find_candidates_multiscale_gaussian(
 
 **Example**:
 ```python
-from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
+from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
 from skimage import data
 import numpy as np
 
 # Load image
 image = data.cell().astype(np.float32)
 
-# Generate candidates with CLAHE
-candidates = find_candidates_multiscale_gaussian(
+# Generate seeds with CLAHE
+seeds = find_seeds_multiscale_gaussian(
     image,
     scales=(0.7, 1.0, 1.4, 2.0, 2.8, 4.0),
     apply_clahe=True,
@@ -82,9 +211,9 @@ print(f"Generated {len(candidates)} candidate locations")
 
 ---
 
-### 2. Decomposition-Based Candidate Generation
+### 2. Decomposition-Based Seed Generation
 
-**Function**: `find_candidates_from_decomposition()`
+**Function**: `find_seeds_multiscale_decomposition()`
 
 **Strategy**: Decompose image into scale hierarchy, then find local maxima in each scale (excluding finest k scales for noise suppression).
 
@@ -104,12 +233,12 @@ print(f"Generated {len(candidates)} candidate locations")
 
 **Key Parameters**:
 ```python
-candidates = find_candidates_from_decomposition(
+seeds = find_seeds_multiscale_decomposition(
     V,                                    # Input image/volume
     scales=[1, 2, 4, 8, 16, 32],         # Scale factors for decomposition
     ignore_finest_k=1,                    # Skip finest k scales (noise suppression)
     peaks_per_scale=None,                 # Max peaks per scale (None = unlimited)
-    min_distance=2.0,                     # Min distance between candidates
+    min_distance=2.0,                     # Min distance between seeds
     threshold_rel=0.1,                    # Relative threshold (0.0-1.0)
     decompose_kwargs=None,                # Additional args for decompose_image()
 )
@@ -117,15 +246,15 @@ candidates = find_candidates_from_decomposition(
 
 **Example**:
 ```python
-from luxar.gsplats.candidates import find_candidates_from_decomposition
+from luxar.gsplats.seeds import find_seeds_multiscale_decomposition
 from skimage import data
 import numpy as np
 
 # Load image
 image = data.cell().astype(np.float32)
 
-# Generate candidates using decomposition
-candidates = find_candidates_from_decomposition(
+# Generate seeds using decomposition
+seeds = find_seeds_multiscale_decomposition(
     image,
     scales=[1, 2, 4, 8, 16],
     ignore_finest_k=1,              # Skip full-resolution scale (noise)
@@ -160,8 +289,8 @@ print(f"Generated {len(candidates)} candidate locations")
 - `ignore_finest_k=2`: Aggressive noise suppression for very noisy data
 - `ignore_finest_k=0`: Include all scales (no noise filtering)
 - `threshold_rel=0.1`: Standard setting (10% of scale maximum)
-- `threshold_rel=0.05`: More permissive (find more candidates)
-- `threshold_rel=0.2`: More selective (fewer, stronger candidates)
+- `threshold_rel=0.05`: More permissive (find more seeds)
+- `threshold_rel=0.2`: More selective (fewer, stronger seeds)
 
 ---
 
@@ -183,17 +312,17 @@ Both methods seamlessly integrate with the main fitting API:
 
 ```python
 from luxar.gsplats import fit_gaussian_splats
-from luxar.gsplats.candidates import find_candidates_from_decomposition
+from luxar.gsplats.seeds import find_seeds_multiscale_decomposition
 
 # Step 1: Generate candidates
-candidates = find_candidates_from_decomposition(
+seeds = find_seeds_multiscale_decomposition(
     image,
     scales=[1, 2, 4, 8],
     ignore_finest_k=1,
 )
 
 # Step 2: Fit Gaussian splats using these candidates
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     seeds=candidates,  # Pass explicit candidate positions
     n_iters=1000,
@@ -201,7 +330,7 @@ params, amps, stats = fit_gaussian_splats(
 )
 
 print(f"Started with {len(candidates)} candidates")
-print(f"Final splats: {len(amps)}")
+print(f"Final splats: {len(result.amplitudes)}")
 ```
 
 **Note**: Even with explicit seeds, `enable_dynamic_ops=True` allows the optimizer to add/remove splats during fitting based on residual analysis.
@@ -213,28 +342,28 @@ print(f"Final splats: {len(amps)}")
 You can combine both methods for comprehensive coverage:
 
 ```python
-# Generate candidates from both methods
-candidates_overcomplete = find_candidates_multiscale_gaussian(image, min_distance=3.0)
-candidates_decomp = find_candidates_from_decomposition(
+# Generate seeds from both methods
+candidates_overcomplete = find_seeds_multiscale_gaussian(image, min_distance=3.0)
+candidates_decomp = find_seeds_multiscale_decomposition(
     image,
     scales=[1, 2, 4, 8],
     ignore_finest_k=1,
 )
 
 # Combine and deduplicate
-from luxar.gsplats.candidates import _dedupe_farthest_first
+from luxar.gsplats.seeds import _dedupe_farthest_first
 all_candidates = np.vstack([candidates_overcomplete, candidates_decomp])
 combined = _dedupe_farthest_first(all_candidates, min_distance=3.0)
 
 # Use combined candidates
-params, amps, stats = fit_gaussian_splats(image, seeds=combined)
+result = fit_gaussian_splats(image, seeds=combined)
 ```
 
 ### Tuning for Different Data Types
 
 **For noisy microscopy images**:
 ```python
-candidates = find_candidates_from_decomposition(
+seeds = find_seeds_multiscale_decomposition(
     image,
     scales=[1, 2, 4, 8],
     ignore_finest_k=2,          # Aggressive noise filtering
@@ -245,7 +374,7 @@ candidates = find_candidates_from_decomposition(
 
 **For clean synthetic data**:
 ```python
-candidates = find_candidates_multiscale_gaussian(
+seeds = find_seeds_multiscale_gaussian(
     image,
     scales=(0.5, 0.7, 1.0, 1.4, 2.0),  # Include fine scales
     apply_clahe=False,          # No preprocessing needed
@@ -255,7 +384,7 @@ candidates = find_candidates_multiscale_gaussian(
 
 **For large sparse features**:
 ```python
-candidates = find_candidates_from_decomposition(
+seeds = find_seeds_multiscale_decomposition(
     image,
     scales=[2, 4, 8, 16, 32],   # Skip finest scales entirely
     ignore_finest_k=0,          # Process all provided scales
@@ -337,7 +466,7 @@ Both methods have modest memory requirements:
 
 ## References
 
-- **Specification**: See `SPEC_DECOMPOSITION_CANDIDATES.md` for detailed algorithm design
+- **Specification**: See `SPECIFICATIONS.md` for comprehensive technical details
 - **Main API**: See `fit_gsplats.py` for integration with fitting pipeline
 - **Decomposition**: See `multiscale/decompose.py` for multi-scale decomposition details
 - **Tests**: See `tests/test_candidates.py` for usage examples and validation
@@ -345,6 +474,6 @@ Both methods have modest memory requirements:
 ## Version History
 
 - **v0.1 (2025-01-16)**: Initial implementation of decomposition-based candidate generation
-  - Added `find_candidates_from_decomposition()` function
+  - Added `find_seeds_multiscale_decomposition()` function
   - Comprehensive test suite
   - Integration with existing overcomplete method
