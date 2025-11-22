@@ -54,20 +54,21 @@ from .constants import (
 from .enums import BlendingMode, Defaults, NodeType, PhysicalUnit, RenderingLimits
 from .protocols import (
     CompressorProtocol,
-    DimensionMetadata,
     NodeProtocol,
     NodeT,
     NumericT,
     PointsProtocol,
     SceneProtocol,
     ZarrDataT,
-    ZarrGroupProtocol,
+)
+
+# Import validation functions from validation.types module
+from ..validation.types import (
     is_color_array,
     is_position_array,
     is_transform_matrix,
     validate_blending_mode,
     validate_colors,
-    validate_dimension_metadata,
     validate_gamma,
     validate_node_type,
     validate_opacity,
@@ -108,20 +109,17 @@ __all__ = [
     "ZarrAttrs",
     # From protocols
     "CompressorProtocol",
-    "DimensionMetadata",
     "NodeProtocol",
     "NodeT",
     "NumericT",
     "PointsProtocol",
     "SceneProtocol",
     "ZarrDataT",
-    "ZarrGroupProtocol",
     "is_color_array",
     "is_position_array",
     "is_transform_matrix",
     "validate_blending_mode",
     "validate_colors",
-    "validate_dimension_metadata",
     "validate_gamma",
     "validate_node_type",
     "validate_opacity",

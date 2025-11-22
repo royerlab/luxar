@@ -63,6 +63,7 @@ class ModelOptimizerCoordinator:
         centers_new: torch.Tensor,
         Ls_new: torch.Tensor,
         amps_new: torch.Tensor,
+        sharpness_new: torch.Tensor,
         lr_new: Optional[float] = None,
     ):
         """
@@ -72,13 +73,14 @@ class ModelOptimizerCoordinator:
             centers_new: New splat centers, shape (n_new, d)
             Ls_new: New splat Cholesky factors, shape (n_new, d, d)
             amps_new: New splat amplitudes, shape (n_new,)
+            sharpness_new: New splat sharpness values, shape (n_new,)
             lr_new: Learning rate for new splats (default: optimizer base_lr)
         """
         n_before = self.model.n_splats()
         n_new = centers_new.shape[0]
 
         # Update model
-        self.model.append_(centers_new, Ls_new, amps_new)
+        self.model.append_(centers_new, Ls_new, amps_new, sharpness_new)
 
         # Update optimizer state
         self.optimizer.add_splats(n_new, lr_new=lr_new)
@@ -100,6 +102,7 @@ class ModelOptimizerCoordinator:
         centers: torch.Tensor,
         Ls: torch.Tensor,
         amps: torch.Tensor,
+        sharpness: torch.Tensor,
         lr_reset: Optional[float] = None,
     ):
         """
@@ -111,7 +114,7 @@ class ModelOptimizerCoordinator:
         n_new = centers.shape[0]
 
         # Update model
-        self.model.replace_with(centers, Ls, amps)
+        self.model.replace_with(centers, Ls, amps, sharpness)
 
         # Reset optimizer state completely
         self.optimizer.splat_states = {}

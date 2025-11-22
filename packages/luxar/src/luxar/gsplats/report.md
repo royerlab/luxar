@@ -71,11 +71,13 @@ gsplats/
 
 ```python
 # Simple API
-params, amps, stats = fit_gaussian_splats(V, seeds=None)
+result = fit_gaussian_splats(V, seeds=None)
+# Access via result.centers, result.amplitudes, result.cholesky_factors, result.sharpnesses, result.stats
 
 # Advanced API
 fitter = GaussianSplatFitter(device="cuda", enable_dynamic_ops=True)
-params, amps, stats = fitter.fit(V, seeds=0.05, ...)
+result = fitter.fit(V, seeds=0.05, ...)
+# Same dataclass interface
 ```
 
 **Strengths:**

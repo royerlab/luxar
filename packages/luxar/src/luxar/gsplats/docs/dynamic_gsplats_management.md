@@ -522,7 +522,7 @@ These defaults work well as a starting point; adjust for your dataset’s SNR an
 In your `fit_gaussian_splats(...)`, after constructing `fitter = FitGaussianSplats(...)`, pass dynamic flags:
 
 ```python
-params, amps, stats = fitter.fit(
+result = fitter.fit(
     V=V,
     seeds=seeds,
     n_iters=n_iters,

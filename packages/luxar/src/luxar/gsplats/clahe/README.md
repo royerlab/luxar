@@ -90,8 +90,7 @@ k = 100
 sampled_indices = torch.multinomial(probs, k, replacement=True)
 
 # Convert flat indices to coordinates
-import numpy as np
-coords = np.unravel_index(sampled_indices.numpy(), image.shape)
+coords = torch.unravel_index(sampled_indices, image.shape)
 ```
 
 ## Parameters

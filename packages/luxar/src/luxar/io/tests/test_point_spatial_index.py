@@ -339,3 +339,154 @@ class TestIntegration:
         assert np.allclose(
             np.sort(loaded_positions.flatten()), np.sort(positions.flatten()), rtol=1e-5
         )
+
+
+class TestSpatialIndexDiscreteDimensions:
+    """Test spatial index with discrete dimensions."""
+
+    def test_build_index_with_discrete_dimensions(self):
+        """Test building spatial index with explicitly marked discrete dimensions."""
+        # Create 4D positions with one discrete dimension (e.g., category labels)
+        n_points = 100
+        np.random.seed(42)
+
+        # x, y, z are continuous, category is discrete (0, 1, 2, 3, 4)
+        x = np.random.uniform(0, 100, n_points)
+        y = np.random.uniform(0, 100, n_points)
+        z = np.random.uniform(0, 100, n_points)
+        category = np.random.choice([0, 1, 2, 3, 4], n_points)  # 5 discrete categories
+
+        positions = np.column_stack([x, y, z, category]).astype(np.float32)
+
+        # Build index with dimension 3 (category) marked as discrete
+        result = build_spatial_index(
+            positions=positions,
+            grid_shape=None,  # Auto-grid
+            discrete_dims=[3],  # Mark category as discrete
+        )
+
+        # Verify index was built
+        assert result is not None
+        assert "sort_order" in result
+        assert "occupied_cells" in result
+        assert "cell_ranges" in result
+        assert "grid_shape" in result
+
+        # Verify grid shape reflects discrete dimension
+        # For discrete dimensions, should use one cell per unique value
+        grid_shape = result["grid_shape"]
+        # Only non-displayed dimension (category) is indexed, so grid_shape is 1D
+        assert len(grid_shape) == 1
+        assert grid_shape[0] == 5  # Category dimension has 5 unique values
+
+    def test_build_index_multiple_discrete_dimensions(self):
+        """Test with multiple discrete dimensions."""
+        n_points = 50
+        np.random.seed(123)
+
+        # 5D: x, y (displayed) + time, class_a, class_b (non-displayed, discrete)
+        x = np.random.uniform(0, 10, n_points)
+        y = np.random.uniform(0, 10, n_points)
+        time = np.random.uniform(0, 100, n_points)
+        class_a = np.random.choice([0, 1, 2], n_points)  # 3 classes
+        class_b = np.random.choice([0, 1], n_points)  # 2 classes
+
+        positions = np.column_stack([x, y, time, class_a, class_b]).astype(np.float32)
+
+        # Build with discrete dimensions 3 and 4
+        result = build_spatial_index(
+            positions=positions,
+            grid_shape=None,  # Auto-grid
+            discrete_dims=[3, 4],  # class_a and class_b are discrete
+            displayed_dims=[0, 1],  # Only x, y displayed
+        )
+
+        grid_shape = result["grid_shape"]
+        # 3 indexed dimensions: time (continuous), class_a, class_b (discrete)
+        assert len(grid_shape) == 3
+        # The discrete dimensions should have grid cells based on unique values
+        # (exact positions depend on indexing order, but should be reasonable)
+        assert all(g > 0 for g in grid_shape)
+
+    def test_discrete_dimension_with_many_unique_values(self):
+        """Test discrete dimension with many unique values (capped at max)."""
+        from luxar.io.point_spatial_index import SPATIAL_INDEX_MAX_CELLS_DISCRETE
+
+        n_points = 200
+        np.random.seed(456)
+
+        # Create discrete dimension with 100 unique values (> typical max)
+        # 4D: x, y, z (displayed) + large_discrete (non-displayed)
+        x = np.random.uniform(0, 10, n_points)
+        y = np.random.uniform(0, 10, n_points)
+        z = np.random.uniform(0, 10, n_points)
+        large_discrete = np.random.choice(range(100), n_points)  # 100 categories
+
+        positions = np.column_stack([x, y, z, large_discrete]).astype(np.float32)
+
+        result = build_spatial_index(
+            positions=positions,
+            grid_shape=None,  # Auto-grid
+            discrete_dims=[3],  # large_discrete is discrete
+        )
+
+        grid_shape = result["grid_shape"]
+        # Should be capped at SPATIAL_INDEX_MAX_CELLS_DISCRETE (typically 32)
+        # Only large_discrete dimension is indexed, so grid_shape is 1D
+        assert len(grid_shape) == 1
+        assert grid_shape[0] <= SPATIAL_INDEX_MAX_CELLS_DISCRETE
+
+
+class TestSpatialIndexEdgeCases:
+    """Test spatial index edge cases."""
+
+    def test_empty_array_with_auto_grid(self):
+        """Test building index for empty array with auto-grid."""
+        # Empty 4D positions
+        positions = np.empty((0, 4), dtype=np.float32)
+
+        result = build_spatial_index(
+            positions=positions,
+            grid_shape=None,  # Auto-grid (tests line 140)
+        )
+
+        # Should successfully create index even for empty data
+        assert result is not None
+        assert "sort_order" in result
+        assert "grid_shape" in result
+
+        # Sort order should be empty
+        assert len(result["sort_order"]) == 0
+
+        # Grid shape should be created for non-displayed dimension
+        # By default, only last dimension is non-displayed, so grid_shape is 1D
+        grid_shape = result["grid_shape"]
+        assert len(grid_shape) == 1
+        assert grid_shape[0] >= 2  # At least 2 cells
+
+    def test_single_point_with_auto_grid(self):
+        """Test building index for single point with auto-grid."""
+        positions = np.array([[5.0, 10.0, 15.0]], dtype=np.float32)
+
+        result = build_spatial_index(positions=positions, grid_shape=None)
+
+        assert result is not None
+        assert len(result["sort_order"]) == 1
+        assert result["sort_order"][0] == 0  # Only one point, index 0
+
+    def test_empty_array_with_explicit_grid(self):
+        """Test empty array with explicit grid shape and specified displayed dimensions."""
+        positions = np.empty(
+            (0, 4), dtype=np.float32
+        )  # 4D to have non-displayed dimension
+
+        result = build_spatial_index(
+            positions=positions,
+            grid_shape=[4],  # Grid for non-displayed dimension only
+            displayed_dims=[0, 1, 2],  # First 3 dimensions displayed
+        )
+
+        # Should create index for non-displayed dimension even with empty data
+        assert result is not None
+        assert len(result["sort_order"]) == 0
+        assert result["grid_shape"][0] == 4

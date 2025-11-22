@@ -94,8 +94,9 @@ class TestPerSplatAdam:
         centers_new = torch.tensor([[8.0, 8.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2)], dim=0)
         amps_new = torch.tensor([0.5], dtype=torch.float32)
+        sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        model.append_(centers_new, Ls_new, amps_new)
+        model.append_(centers_new, Ls_new, amps_new, sharpness_new)
         optimizer.add_splats(1, lr_new=0.1)
 
         assert len(optimizer.splat_states) == 3
@@ -150,8 +151,9 @@ class TestPerSplatAdam:
         centers_new = torch.tensor([[12.0, 12.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2)], dim=0)
         amps_new = torch.tensor([0.6], dtype=torch.float32)
+        sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        model.append_(centers_new, Ls_new, amps_new)
+        model.append_(centers_new, Ls_new, amps_new, sharpness_new)
         optimizer.add_splats(1, lr_new=0.08)
 
         # Check momentum is preserved for original splats
@@ -240,8 +242,9 @@ class TestPerSplatScheduler:
         centers_new = torch.tensor([[10.0, 10.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2)], dim=0)
         amps_new = torch.tensor([0.5], dtype=torch.float32)
+        sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        model.append_(centers_new, Ls_new, amps_new)
+        model.append_(centers_new, Ls_new, amps_new, sharpness_new)
         optimizer.add_splats(1)
         scheduler.add_splats(1)
 
@@ -297,8 +300,9 @@ class TestFactoryFunction:
         centers_new = torch.tensor([[6.0, 6.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2) * 0.8], dim=0)
         amps_new = torch.tensor([0.4], dtype=torch.float32)
+        sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, lr_new=0.05)
+        n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05)
         assert n_added == 1
 
         status = coordinator.get_status()
@@ -348,6 +352,66 @@ class TestEdgeCases:
         optimizer.set_learning_rate(0, 1e-8)
         lrs = optimizer.get_effective_learning_rates()
         assert lrs[0] == 1e-8  # Should match what we set
+
+    def test_gradient_dilution_compensation(self):
+        """Test gradient dilution compensation for different dimensions."""
+        # 2D model
+        model_2d = TestPerSplatAdam.create_test_model(3)
+        optimizer_2d = PerSplatAdam(model_2d, lr=0.01)
+
+        # 2D: params = 5, factor = 5/5 = 1.0
+        expected_2d = 0.01 * 1.0
+        assert abs(optimizer_2d.effective_lr - expected_2d) < 1e-6
+
+        # 3D model
+        shape_3d = (16, 16, 16)
+        centers_3d = np.random.uniform(2, 14, (3, 3)).astype(np.float32)
+        L0_3d = np.stack([np.eye(3)] * 3).astype(np.float32)
+        amps_3d = np.ones(3, dtype=np.float32)
+
+        model_3d = GaussianSplatModel(
+            shape=shape_3d,
+            centers0=centers_3d,
+            L0=L0_3d,
+            amps0=amps_3d,
+            sigma_min_diag=[0.5, 0.5, 0.5],
+        )
+        optimizer_3d = PerSplatAdam(model_3d, lr=0.01)
+
+        # 3D: params = 9, factor = 9/5 = 1.8
+        expected_3d = 0.01 * 1.8
+        assert abs(optimizer_3d.effective_lr - expected_3d) < 1e-6
+
+    def test_amsgrad_max_tracking(self):
+        """Test that AMSGrad properly tracks max_exp_avg_sq."""
+        model = TestPerSplatAdam.create_test_model(2)
+        optimizer = PerSplatAdam(model, lr=0.02, amsgrad=True)
+
+        target = torch.randn(model.shape)
+
+        # Run first step
+        optimizer.zero_grad()
+        pred = model()
+        loss = torch.nn.functional.mse_loss(pred, target)
+        loss.backward()
+        optimizer.step()
+
+        # Store first max values
+        first_max = optimizer.splat_states[0]["max_exp_avg_sq_mu"].clone()
+
+        # Run more steps
+        for _ in range(3):
+            optimizer.zero_grad()
+            pred = model()
+            loss = torch.nn.functional.mse_loss(pred, target)
+            loss.backward()
+            optimizer.step()
+
+        # Verify max values are monotonically non-decreasing
+        final_max = optimizer.splat_states[0]["max_exp_avg_sq_mu"]
+        assert torch.all(final_max >= first_max), (
+            "AMSGrad max_exp_avg_sq should be monotonically non-decreasing"
+        )
 
 
 if __name__ == "__main__":

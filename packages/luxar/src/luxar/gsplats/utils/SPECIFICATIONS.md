@@ -88,8 +88,8 @@ def calculate_gradient_dilution_factor(d: int) -> float:
 
     Examples:
         2D: factor = 5/5 = 1.0× (baseline, no compensation needed)
-        3D: factor = 10/5 = 2.0× (double learning rate)
-        4D: factor = 4^0.8 × 15/5 = 3.03 × 3.0 ≈ 7.1×
+        3D: factor = 9/5 = 1.8× (80% increase in learning rate)
+        4D: factor = 4^0.8 × 14/5 = 3.03 × 2.8 ≈ 8.5×
 
     Rationale:
         - Higher dimensions have more parameters diluting gradients
@@ -107,8 +107,8 @@ def calculate_gradient_dilution_factor(d: int) -> float:
 
 Parameter counts per splat:
 - 2D: 2 position + 3 covariance = 5 parameters
-- 3D: 3 position + 6 covariance = 10 parameters
-- 4D: 4 position + 10 covariance = 15 parameters
+- 3D: 3 position + 6 covariance = 9 parameters
+- 4D: 4 position + 10 covariance = 14 parameters
 - nD: `d + d*(d+1)//2` parameters
 
 **Gradient Dilution Phenomenon**:
@@ -130,8 +130,8 @@ Parameter counts per splat:
 ```python
 # Expected compensation factors
 assert calculate_gradient_dilution_factor(2) == 1.0
-assert calculate_gradient_dilution_factor(3) == 2.0
-assert abs(calculate_gradient_dilution_factor(4) - 7.1) < 0.2  # ≈ 7.1
+assert calculate_gradient_dilution_factor(3) == 1.8
+assert abs(calculate_gradient_dilution_factor(4) - 8.5) < 0.2  # ≈ 8.5
 ```
 
 ### 3. Pack Lower-Triangular Matrices
@@ -379,7 +379,7 @@ out = np.zeros((N, tril_size(d)), dtype=L.dtype)  # Preserve input dtype
 
 **calculate_gradient_dilution_factor()**:
 - Correctness for d=1,2,3,4,5,10
-- Expected values: 2D=1.0, 3D=2.0, 4D≈7.1
+- Expected values: 2D=1.0, 3D=1.8, 4D≈8.5
 - Conservative vs enhanced scaling boundary at d=3
 
 **pack_tril()**:

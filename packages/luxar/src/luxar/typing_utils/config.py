@@ -29,9 +29,6 @@ DEFAULT_CHUNK_SIZE: Final[int] = CHUNK_SIZE_DEFAULT
 MIN_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MIN
 MAX_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MAX
 
-# Default units for scenes
-DEFAULT_UNITS: Final[str] = PhysicalUnit.METRE.value
-
 # Default version for Luxar scenes
 DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT
 

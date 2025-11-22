@@ -78,6 +78,14 @@ def __init__(
     - Calculates effective_lr based on model dimensionality
     - Uses gradient dilution factor from utils.trils
     - Sharpness always uses base_lr (no dilution since it's 1 scalar)
+    
+    Internal state tracking:
+    - splat_states: Dict[int, Dict] storing per-splat optimizer state
+    - global_step: int tracking total optimization steps
+    - _last_known_n_splats: int for detecting topology changes
+    
+    Initialization behavior:
+    - Calls _initialize_all_splats() immediately to create state for current splats
     """
 ```
 
@@ -96,8 +104,8 @@ def _calculate_effective_lr(self, d: int, base_lr: float) -> float:
 
     Gradient Dilution Factor Calculation:
     - 2D: params=5 → factor = 5/5 = 1.0× (baseline)
-    - 3D: params=10 → factor = 10/5 = 2.0×
-    - 4D: params=15 → factor = 4^0.8 × 15/5 ≈ 7.1×
+    - 3D: params=9 → factor = 9/5 = 1.8×
+    - 4D: params=14 → factor = 4^0.8 × 14/5 ≈ 8.5×
     - d≤3: factor = params_current / params_2d
     - d>3: factor = d^0.8 × (params_current / params_2d)
     """
@@ -116,11 +124,11 @@ state = {
     "base_lr": float,                     # Base LR without gradient dilution (for sharpness)
     "step": int,                          # Step counter for bias correction
 
-    # Momentum for center position (μ)
+    # Momentum for center position (μ) - stored in raw_mu space
     "exp_avg_mu": torch.Tensor,           # First moment estimate, shape (d,)
     "exp_avg_sq_mu": torch.Tensor,        # Second moment estimate, shape (d,)
 
-    # Momentum for Cholesky diagonal (L_diag)
+    # Momentum for Cholesky diagonal (L_diag) - stored in raw_L_diag space
     "exp_avg_L_diag": torch.Tensor,       # First moment estimate, shape (d,)
     "exp_avg_sq_L_diag": torch.Tensor,    # Second moment estimate, shape (d,)
 
@@ -128,11 +136,11 @@ state = {
     "exp_avg_L_off": torch.Tensor,        # First moment estimate, shape (n_off_diag,)
     "exp_avg_sq_L_off": torch.Tensor,     # Second moment estimate, shape (n_off_diag,)
 
-    # Momentum for amplitude (a)
+    # Momentum for amplitude (a) - stored in raw_a space
     "exp_avg_a": torch.Tensor,            # First moment estimate, scalar
     "exp_avg_sq_a": torch.Tensor,         # Second moment estimate, scalar
 
-    # Momentum for sharpness offset (s')
+    # Momentum for sharpness offset (s') - stored in raw space
     "exp_avg_sharpness": torch.Tensor,    # First moment estimate, scalar
     "exp_avg_sq_sharpness": torch.Tensor, # Second moment estimate, scalar
 }
@@ -145,6 +153,8 @@ state["max_exp_avg_sq_a"] = torch.Tensor      # Maximum second moment for a
 state["max_exp_avg_sq_sharpness"] = torch.Tensor  # Maximum second moment for s'
 ```
 
+**Important Note**: All momentum buffers are stored in the **raw parameter space** (e.g., raw_mu, raw_L_diag, raw_a, sharpness_offsets_raw), not in the transformed space. This is critical for proper gradient application.
+
 #### Optimization Step
 
 ```python
@@ -153,11 +163,13 @@ def step(self) -> bool:
     Perform single optimization step for all splats.
 
     Algorithm:
-    1. Check if any parameter has gradients (skip if none)
-    2. Increment global step counter
-    3. Detect topology changes (n_splats changed since last step)
-    4. Initialize new splat states if topology changed (lazy initialization)
-    5. Update each splat individually with _step_single_splat()
+    1. Check if any parameter has gradients (return False if none)
+    2. Increment global_step counter
+    3. Validate current_n_splats is non-negative
+    4. Detect topology changes (current_n_splats != _last_known_n_splats)
+    5. Initialize new splat states if topology changed (lazy initialization)
+    6. Update _last_known_n_splats to current value
+    7. Update each splat individually with _step_single_splat()
 
     Returns:
         bool: True if optimization performed, False if skipped (no gradients)
@@ -165,6 +177,10 @@ def step(self) -> bool:
     Performance:
         - Only initializes states when topology changes (efficient)
         - Preserves momentum for unchanged splats during dynamic operations
+    
+    Error Handling:
+        - Validates n_splats >= 0
+        - Wraps all exceptions in RuntimeError with context
     """
 ```
 
@@ -175,12 +191,24 @@ def _step_single_splat(self, splat_idx: int):
     Perform Adam optimization step for a single Gaussian splat.
 
     Algorithm:
-    1. Validate splat index and ensure state exists
-    2. Extract gradients for all parameter types
-    3. Update momentum buffers for each parameter type
-    4. Apply bias correction
-    5. Compute parameter updates using Adam formula
-    6. Apply parameter-type-specific learning rate multipliers
+    1. Validate splat index (0 <= splat_idx < n_splats)
+    2. Lazy initialize state if splat_idx not in splat_states
+    3. Increment state["step"] counter
+    4. Validate hyperparameters (lr > 0, base_lr > 0, 0 <= betas < 1)
+    5. Calculate bias corrections: bias_correction1 = 1 - beta1^step
+                                   bias_correction2 = 1 - beta2^step
+    6. Extract gradients for all parameter types:
+       - grad_mu from raw_mu.grad[splat_idx]
+       - grad_L_diag from raw_L_diag.grad[splat_idx]
+       - grad_L_off from L_off.grad[splat_idx]
+       - grad_a from raw_a.grad[splat_idx]
+       - grad_sharpness from sharpness_offsets_raw.grad[splat_idx]
+    7. Update each parameter type with _update_parameter():
+       - Position: lr × 0.1 (POS_LR_MULTIPLIER)
+       - L_diag: lr × 1.0 (VAR_LR_MULTIPLIER)
+       - L_off: lr × 1.0 (VAR_LR_MULTIPLIER)
+       - Amplitude: lr × 2.0 (AMP_LR_MULTIPLIER)
+       - Sharpness: base_lr × 0.5 (SHARPNESS_LR_MULTIPLIER, no gradient dilution)
 
     Parameter Update Formula (Standard Adam):
         m_t = β₁ * m_{t-1} + (1 - β₁) * g_t
@@ -194,6 +222,11 @@ def _step_single_splat(self, splat_idx: int):
         - Variance: α = effective_lr × 1.0
         - Amplitude: α = effective_lr × 2.0
         - Sharpness: α = base_lr × 0.5 (no gradient dilution)
+        
+    Gradient Extraction:
+        - All gradients extracted with bounds checking (splat_idx < grad.shape[0])
+        - Only updates parameters if gradient is not None
+        - Handles None gradients gracefully (skips update)
     """
 ```
 
@@ -216,17 +249,25 @@ def _update_parameter(
     Core Adam parameter update following PyTorch's implementation.
 
     Steps:
-    1. Apply L2 regularization if weight_decay > 0
-    2. Update first moment: exp_avg ← β₁*exp_avg + (1-β₁)*grad
-    3. Update second moment: exp_avg_sq ← β₂*exp_avg_sq + (1-β₂)*grad²
+    1. Apply L2 regularization if weight_decay > 0:
+       grad = grad.add(param, alpha=weight_decay)
+    2. Update first moment: exp_avg.mul_(beta1).add_(grad, alpha=1-beta1)
+    3. Update second moment: exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1-beta2)
     4. Compute denominator:
-       - AMSGrad: use max(max_exp_avg_sq, exp_avg_sq)
-       - Standard: use exp_avg_sq
-    5. Apply update: param ← param - step_size * exp_avg / (√denom + ε)
+       - AMSGrad: torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                  denom = (max_exp_avg_sq.sqrt() / sqrt(bias_correction2)) + eps
+       - Standard: denom = (exp_avg_sq.sqrt() / sqrt(bias_correction2)) + eps
+    5. Compute step_size = lr / bias_correction1
+    6. Apply update: param.addcdiv_(exp_avg, denom, value=-step_size)
 
-    Where:
+    Formula Details:
         step_size = lr / bias_correction1
-        denom = √(exp_avg_sq) / √(bias_correction2) + ε
+        denom = sqrt(exp_avg_sq) / sqrt(bias_correction2) + ε
+        param ← param - step_size * exp_avg / denom
+        
+    In-Place Operations:
+        - All tensor updates use in-place operations (.mul_, .add_, .addcdiv_)
+        - Modifies param, exp_avg, exp_avg_sq, and max_exp_avg_sq directly
     """
 ```
 
@@ -243,7 +284,21 @@ def add_splats(self, n_new_splats: int, lr_new: Optional[float] = None):
 
     Args:
         n_new_splats: Number of new splats added to model
-        lr_new: Learning rate for new splats (default: effective_lr)
+        lr_new: Learning rate for new splats (default: effective_lr if None)
+
+    Validation:
+        - n_new_splats must be >= 0 (returns immediately if 0)
+        - lr_new must be > 0 if provided
+        
+    Implementation:
+        - Calculates current_n = len(self.splat_states)
+        - For i in range(n_new_splats): _initialize_splat(current_n + i, lr=lr_new)
+        - Uses effective_lr if lr_new is None
+        
+    Error Handling:
+        - Raises ValueError if n_new_splats < 0
+        - Raises ValueError if lr_new <= 0
+        - Wraps exceptions in RuntimeError with context
     """
 ```
 
@@ -257,7 +312,25 @@ def remove_splats(self, keep_mask: torch.Tensor):
     Preserves momentum for kept splats.
 
     Args:
-        keep_mask: Boolean tensor indicating which splats to keep
+        keep_mask: Boolean tensor (1D) indicating which splats to keep
+
+    Validation:
+        - Must be torch.Tensor
+        - Must have dtype torch.bool
+        - Must be 1D tensor
+        - Length must match len(self.splat_states)
+        
+    Algorithm:
+        1. Create empty new_states dict
+        2. Extract keep_indices = torch.where(keep_mask)[0].cpu().numpy()
+        3. For each (new_idx, old_idx) in enumerate(keep_indices):
+           - If old_idx in splat_states: new_states[new_idx] = splat_states[old_idx]
+        4. Atomic replacement: self.splat_states = new_states
+        
+    Error Handling:
+        - Raises TypeError if keep_mask is not torch.Tensor or not bool dtype
+        - Raises ValueError if keep_mask is not 1D or wrong length
+        - Wraps exceptions in RuntimeError with context
     """
 ```
 
@@ -268,13 +341,36 @@ def set_learning_rate(self, splat_idx: int, lr: float):
     Set learning rate for a specific splat.
 
     Enables per-splat learning rate adaptation (used by schedulers).
+    
+    Validation:
+        - lr must be > 0
+        - splat_idx must be in range [0, n_splats)
+        
+    Behavior:
+        - If splat_idx in splat_states: updates state["lr"] = lr
+        - If splat_idx not in splat_states: calls _initialize_splat(splat_idx, lr=lr)
     """
 
 def get_learning_rate(self, splat_idx: int) -> float:
-    """Get learning rate for a specific splat."""
+    """
+    Get learning rate for a specific splat.
+    
+    Returns:
+        - splat_states[splat_idx]["lr"] if splat_idx in splat_states
+        - base_lr otherwise
+    """
 
 def get_effective_learning_rates(self) -> torch.Tensor:
-    """Get learning rates for all splats (for monitoring)."""
+    """
+    Get learning rates for all splats (for monitoring).
+    
+    Returns:
+        torch.Tensor of shape (n_splats,) with current learning rates
+        
+    Implementation:
+        - Creates zeros tensor of size n_splats
+        - For each splat_idx: lrs[splat_idx] = get_learning_rate(splat_idx)
+    """
 ```
 
 #### State Serialization
@@ -284,14 +380,25 @@ def state_dict(self) -> Dict:
     """
     Get optimizer state for serialization.
 
-    Returns all splat states, hyperparameters, and global step counter.
+    Returns dict containing:
+        - splat_states: Dict[int, Dict] with all per-splat state
+        - global_step: int
+        - base_lr: float
+        - betas: Tuple[float, float]
+        - eps: float
+        - weight_decay: float
+        - amsgrad: bool
+        
+    Note: effective_lr is NOT saved (recalculated from base_lr on load)
     """
 
 def load_state_dict(self, state_dict: Dict):
     """
     Load optimizer state from serialization.
 
-    Restores all splat states and hyperparameters.
+    Restores all fields from state_dict directly.
+    Does NOT recalculate effective_lr (assumes it's reconstructed properly).
+    Does NOT update _last_known_n_splats (will be updated on next step()).
     """
 ```
 
@@ -322,11 +429,14 @@ def __init__(
     """
     Initialize per-splat plateau scheduler.
 
-    Maintains separate state for each splat:
-    - best: Best metric seen for this splat
-    - num_bad_epochs: Consecutive epochs without improvement
-    - cooldown_counter: Remaining cooldown steps
-    - lr_reductions: Total LR reductions for this splat
+    Internal State:
+        - splat_scheduler_states: Dict[int, Dict] with per-splat state
+        - global_best: Optional[float] (None initially)
+        - global_bad_epochs: int (starts at 0)
+        - global_cooldown_counter: int (starts at 0)
+        - last_epoch: int (starts at 0)
+
+    No automatic initialization of splat states (lazy initialization in step()).
     """
 ```
 
@@ -334,10 +444,10 @@ def __init__(
 
 ```python
 splat_state = {
-    "best": float,             # Best metric value seen (initialized to inf/-inf based on mode)
-    "num_bad_epochs": int,     # Consecutive epochs without improvement
-    "cooldown_counter": int,   # Remaining cooldown steps after LR reduction
-    "lr_reductions": int       # Total number of LR reductions applied
+    "best": float,             # Best metric value seen (inf for min, -inf for max)
+    "num_bad_epochs": int,     # Consecutive epochs without improvement (starts at 0)
+    "cooldown_counter": int,   # Remaining cooldown steps after LR reduction (starts at 0)
+    "lr_reductions": int       # Total number of LR reductions applied (starts at 0)
 }
 ```
 
@@ -350,20 +460,54 @@ def step(self, metrics: Union[float, torch.Tensor, Dict[int, float]]):
 
     Args:
         metrics: Can be:
-            - float: Global loss (affects all splats equally)
-            - torch.Tensor: Per-splat losses, shape (n_splats,)
+            - float/int: Global loss (affects all splats equally)
+            - torch.Tensor: Per-splat losses
+              - Scalar tensor (shape []): treated as global metric
+              - 1D tensor (shape [n_splats]): per-splat metrics
+              - Other shapes: raises ValueError
             - Dict[int, float]: Explicit per-splat metrics {splat_idx: metric}
 
     Algorithm:
-    1. Convert metrics to per-splat format
-    2. Update global state (for fallback mechanism)
-    3. Update each splat individually:
-       a. Skip if in cooldown
-       b. Check for improvement (metric better than best + threshold)
-       c. If improved: update best, reset bad_epochs counter
-       d. If not improved: increment bad_epochs counter
-       e. If bad_epochs >= patience: reduce LR and enter cooldown
-    4. Global fallback: If global_bad_epochs >= global_patience, reduce all LRs
+    1. Validate metrics is not None
+    2. Increment last_epoch counter
+    3. Convert metrics to per-splat dict (splat_metrics):
+       - float/int: create dict with same value for all splats [0, n_splats)
+       - torch.Tensor (scalar): same as float
+       - torch.Tensor (1D): create dict from tensor values
+       - dict: validate keys are non-negative ints, values are finite
+    4. Calculate global_metric:
+       - float/int or scalar tensor: use directly
+       - 1D tensor: use torch.mean(metrics)
+       - dict: use sum(values) / len(values)
+    5. Call _update_global_state(global_metric)
+    6. For each (splat_idx, metric) in splat_metrics:
+       - Call _update_splat_lr(splat_idx, metric)
+
+    Validation:
+        - Raises ValueError if metrics is None
+        - Raises ValueError if metric values are not finite
+        - Raises ValueError if tensor is not scalar or 1D
+        - Raises ValueError if dict keys are not non-negative ints
+        - Wraps exceptions in RuntimeError
+    """
+```
+
+**Global State Update**:
+```python
+def _update_global_state(self, metric: float):
+    """
+    Update global scheduler state.
+    
+    Algorithm:
+    1. If global_best is None: set global_best = metric and return
+    2. If global_cooldown_counter > 0: decrement and return
+    3. Check if metric is better than global_best (using _is_better):
+       - If better: update global_best, reset global_bad_epochs = 0
+       - If not better: increment global_bad_epochs
+    4. If global_bad_epochs >= global_patience:
+       - Call _reduce_all_learning_rates()
+       - Reset global_bad_epochs = 0
+       - Set global_cooldown_counter = cooldown
     """
 ```
 
@@ -389,14 +533,37 @@ def _update_splat_lr(self, splat_idx: int, metric: float):
     Update learning rate for individual splat based on its metric.
 
     Algorithm:
-    1. Initialize state if splat is new
-    2. Skip if in cooldown period
-    3. Check for improvement
-    4. If plateau detected (bad_epochs >= patience):
-       a. Calculate new_lr = max(current_lr * factor, min_lr)
-       b. Apply new learning rate to optimizer
-       c. Reset bad_epochs counter
-       d. Enter cooldown period
+    1. If splat_idx not in splat_scheduler_states: call _init_splat_state(splat_idx)
+    2. Get state = splat_scheduler_states[splat_idx]
+    3. If state["cooldown_counter"] > 0: decrement and return
+    4. Check if metric is better than state["best"] (using _is_better):
+       - If better: update state["best"] = metric, state["num_bad_epochs"] = 0
+       - If not better: increment state["num_bad_epochs"]
+    5. If state["num_bad_epochs"] >= patience:
+       a. Get current_lr from optimizer.get_learning_rate(splat_idx)
+       b. Calculate new_lr = max(current_lr * factor, min_lr)
+       c. If new_lr < current_lr:
+          - optimizer.set_learning_rate(splat_idx, new_lr)
+          - state["lr_reductions"] += 1
+          - state["num_bad_epochs"] = 0
+          - state["cooldown_counter"] = cooldown
+    """
+```
+
+**Splat State Initialization**:
+```python
+def _init_splat_state(self, splat_idx: int):
+    """
+    Initialize scheduler state for a splat.
+    
+    Sets best to:
+        - float("inf") if mode == "min"
+        - float("-inf") if mode == "max"
+        
+    Sets all counters to 0:
+        - num_bad_epochs = 0
+        - cooldown_counter = 0
+        - lr_reductions = 0
     """
 ```
 
@@ -408,6 +575,15 @@ def _reduce_all_learning_rates(self):
 
     Fallback mechanism when overall convergence stalls.
     Applied when global_bad_epochs >= global_patience.
+    
+    Algorithm:
+        For splat_idx in range(optimizer.model.n_splats()):
+            current_lr = optimizer.get_learning_rate(splat_idx)
+            new_lr = max(current_lr * factor, min_lr)
+            if new_lr < current_lr:
+                optimizer.set_learning_rate(splat_idx, new_lr)
+                
+    Note: Does NOT update per-splat lr_reductions counters
     """
 ```
 
@@ -415,10 +591,40 @@ def _reduce_all_learning_rates(self):
 
 ```python
 def add_splats(self, n_new_splats: int):
-    """Add scheduler state for new splats (fresh state, no history)."""
+    """
+    Add scheduler state for new splats (fresh state, no history).
+    
+    Validation:
+        - n_new_splats must be >= 0 (returns immediately if 0)
+        
+    Algorithm:
+        - current_n = len(self.splat_scheduler_states)
+        - For i in range(n_new_splats): _init_splat_state(current_n + i)
+        
+    Error Handling:
+        - Raises ValueError if n_new_splats < 0
+        - Wraps exceptions in RuntimeError
+    """
 
 def remove_splats(self, keep_mask: torch.Tensor):
-    """Remove scheduler state for pruned splats (reindex remaining)."""
+    """
+    Remove scheduler state for pruned splats (reindex remaining).
+    
+    Validation:
+        - Must be torch.Tensor with dtype torch.bool
+        - Must be 1D tensor
+        - Length must match len(self.splat_scheduler_states)
+        
+    Algorithm:
+        - Same reindexing logic as PerSplatAdam.remove_splats()
+        - Creates new_states dict with reindexed entries
+        - Atomic replacement: self.splat_scheduler_states = new_states
+        
+    Error Handling:
+        - Raises TypeError if keep_mask is not torch.Tensor or not bool
+        - Raises ValueError if keep_mask is not 1D or wrong length
+        - Wraps exceptions in RuntimeError
+    """
 ```
 
 #### Monitoring
@@ -430,6 +636,11 @@ def get_lr_reduction_counts(self) -> torch.Tensor:
 
     Returns:
         Tensor of shape (n_splats,) with reduction counts
+        
+    Implementation:
+        - Creates zeros tensor of size n_splats
+        - For each splat_idx: if in states, set counts[splat_idx] = state["lr_reductions"]
+        - Returns 0 for splats without state
     """
 ```
 
@@ -442,11 +653,11 @@ def state_dict(self) -> Dict:
 
     Returns:
         Dictionary containing:
-            - splat_scheduler_states: Per-splat scheduler states
-            - global_best: Best global metric seen
-            - global_bad_epochs: Consecutive epochs without global improvement
-            - global_cooldown_counter: Remaining global cooldown steps
-            - last_epoch: Current epoch number
+            - splat_scheduler_states: Dict[int, Dict]
+            - global_best: Optional[float]
+            - global_bad_epochs: int
+            - global_cooldown_counter: int
+            - last_epoch: int
     """
 
 def load_state_dict(self, state_dict: Dict):
@@ -454,6 +665,7 @@ def load_state_dict(self, state_dict: Dict):
     Load scheduler state from serialization.
 
     Restores all scheduler states and global tracking variables.
+    Direct assignment from state_dict keys.
     """
 ```
 
@@ -478,9 +690,13 @@ def __init__(
     """
     Initialize per-splat exponential scheduler.
 
-    Tracks splat ages (when they were added):
-    - splat_ages: Dict[int, int] mapping splat_idx → birth_epoch
-    - current_epoch: Current optimization epoch
+    Internal State:
+        - splat_ages: Dict[int, int] mapping splat_idx → birth_epoch
+        - current_epoch: int (starts at 0)
+        
+    Initialization:
+        - Initializes ages for all current splats to 0
+        - For i in range(optimizer.model.n_splats()): splat_ages[i] = 0
     """
 ```
 
@@ -493,20 +709,29 @@ def step(self):
 
     Algorithm:
     1. Increment current_epoch
-    2. For each splat:
-       a. Get current learning rate
-       b. Calculate age = current_epoch - birth_epoch
-       c. If age_based_decay enabled:
-          - Calculate age_factor = 1.0 / (1.0 + age * 0.1)
-          - Adjust gamma: gamma_adjusted = gamma + (1 - gamma) * age_factor
-          - Newer splats get slower decay (gamma closer to 1)
-       d. Apply decay: new_lr = current_lr * gamma_adjusted
-       e. Set new learning rate in optimizer
+    2. For splat_idx in range(optimizer.model.n_splats()):
+       a. Get current_lr = optimizer.get_learning_rate(splat_idx)
+       b. If age_based_decay enabled:
+          - age = current_epoch - splat_ages.get(splat_idx, 0)
+          - age_factor = 1.0 / (1.0 + age * 0.1)
+          - gamma_adjusted = gamma + (1 - gamma) * age_factor
+       c. Else: gamma_adjusted = gamma
+       d. Calculate new_lr = current_lr * gamma_adjusted
+       e. Set optimizer.set_learning_rate(splat_idx, new_lr)
 
     Age-Based Decay Rationale:
-    - New splats need aggressive learning (slow decay)
-    - Old splats need fine-tuning (fast decay)
+    - New splats (age=0): age_factor=1.0, gamma_adjusted → 1.0 (slow decay)
+    - Old splats (age→∞): age_factor→0.0, gamma_adjusted → gamma (fast decay)
     - Provides automatic adaptation without manual scheduling
+    
+    Age Factor Formula:
+        age_factor = 1.0 / (1.0 + age * 0.1)
+        gamma_adjusted = gamma + (1 - gamma) * age_factor
+        
+    Examples (gamma=0.95):
+        - age=0: gamma_adjusted = 0.95 + 0.05*1.0 = 1.00 (no decay)
+        - age=10: gamma_adjusted = 0.95 + 0.05*0.5 = 0.975 (slow decay)
+        - age=100: gamma_adjusted = 0.95 + 0.05*0.09 = 0.9545 (near-normal decay)
     """
 ```
 
@@ -518,15 +743,25 @@ def add_splats(self, n_new_splats: int):
     Add age tracking for new splats.
 
     New splats are born at current_epoch (fresh splats get slow decay).
+    
+    Algorithm:
+        - current_n = len(self.splat_ages)
+        - For i in range(n_new_splats):
+            - splat_ages[current_n + i] = current_epoch
     """
 
 def remove_splats(self, keep_mask: torch.Tensor):
     """
     Remove age tracking for pruned splats (reindex remaining).
+    
+    Algorithm:
+        - Same reindexing logic as other components
+        - Creates new_ages dict with reindexed entries
+        - Atomic replacement: self.splat_ages = new_ages
     """
 ```
 
-**Note**: PerSplatExponentialLR does **not** provide `state_dict()` or `load_state_dict()` methods for serialization (unlike PerSplatReduceLROnPlateau). This is because the state is simple (just age tracking) and can be reconstructed easily.
+**Note**: PerSplatExponentialLR does **not** provide `state_dict()` or `load_state_dict()` methods for serialization (unlike PerSplatReduceLROnPlateau). This is a design decision - the state is simple (just age tracking) and can be reconstructed easily if needed.
 
 ### 4. ModelOptimizerCoordinator (`integration.py`)
 
@@ -550,7 +785,11 @@ def __init__(
     """
     Initialize coordinator.
 
-    Maintains references to all components and operation counter.
+    Internal State:
+        - model: reference to GaussianSplatModel
+        - optimizer: reference to PerSplatAdam
+        - scheduler: optional reference to scheduler
+        - operation_count: int (starts at 0)
     """
 ```
 
@@ -563,16 +802,21 @@ def prune_splats(self, keep_mask: torch.Tensor) -> int:
     Prune splats from model and sync all states.
 
     Algorithm:
-    1. Apply keep_mask to model parameters
-    2. Remove optimizer states for pruned splats
-    3. Remove scheduler states for pruned splats (if present)
-    4. Increment operation counter
-
-    Returns:
-        n_removed: Number of splats removed
+    1. Get n_before = model.n_splats()
+    2. Call model.prune_(keep_mask)
+    3. Call optimizer.remove_splats(keep_mask)
+    4. If scheduler is not None and has remove_splats method:
+       - Call scheduler.remove_splats(keep_mask)
+    5. Get n_after = model.n_splats()
+    6. Calculate n_removed = n_before - n_after
+    7. Increment operation_count
+    8. Return n_removed
 
     Atomicity:
         All components updated together - no partial states
+        
+    Scheduler Check:
+        Uses hasattr(scheduler, "remove_splats") to check for method existence
     """
 ```
 
@@ -589,14 +833,19 @@ def add_splats(
     Add new splats to model and sync all states.
 
     Algorithm:
-    1. Append new splats to model parameters
-    2. Add optimizer states for new splats (zero momentum)
-    3. Add scheduler states for new splats (if present)
-    4. Increment operation counter
-    5. Assert: n_splats_after == n_splats_before + n_new
+    1. Get n_before = model.n_splats()
+    2. Calculate n_new = centers_new.shape[0]
+    3. Call model.append_(centers_new, Ls_new, amps_new)
+    4. Call optimizer.add_splats(n_new, lr_new=lr_new)
+    5. If scheduler is not None and has add_splats method:
+       - Call scheduler.add_splats(n_new)
+    6. Get n_after = model.n_splats()
+    7. Assert n_after == n_before + n_new (raises AssertionError if not)
+    8. Increment operation_count
+    9. Return n_new
 
-    Returns:
-        n_new: Number of splats added
+    Scheduler Check:
+        Uses hasattr(scheduler, "add_splats") to check for method existence
     """
 ```
 
@@ -613,18 +862,24 @@ def replace_all_splats(
     Replace all splats (complete model reset).
 
     Algorithm:
-    1. Replace model parameters completely
-    2. Clear optimizer states entirely
-    3. Initialize fresh optimizer states for all splats
-    4. Clear scheduler states entirely (if present)
-    5. Initialize fresh scheduler states for all splats (if present)
-    6. Increment operation counter
-
-    Returns:
-        n_new: Number of splats after replacement
+    1. Calculate n_new = centers.shape[0]
+    2. Call model.replace_with(centers, Ls, amps)
+    3. Clear optimizer state:
+       - optimizer.splat_states = {}
+       - optimizer.add_splats(n_new, lr_new=lr_reset)
+    4. Clear scheduler state if present:
+       - If hasattr(scheduler, "splat_scheduler_states"):
+           scheduler.splat_scheduler_states = {}
+       - If hasattr(scheduler, "splat_ages"):
+           scheduler.splat_ages = {}
+       - If hasattr(scheduler, "add_splats"):
+           scheduler.add_splats(n_new)
+    5. Increment operation_count
+    6. Return n_new
 
     Use Case:
-        Operations where entire splat population changes structure.
+        Operations where entire splat population changes structure
+        (e.g., complete reseeding, dimension changes)
     """
 ```
 
@@ -636,11 +891,19 @@ def get_status(self) -> dict:
     Get coordinator status for monitoring.
 
     Returns:
-        status: Dict containing:
-            - model_splats: Current number of splats in model
-            - optimizer_states: Number of optimizer states
-            - operation_count: Total dynamic operations performed
-            - learning_rates: {mean, min, max} LR statistics
+        dict containing:
+            - model_splats: int (current number of splats)
+            - optimizer_states: int (number of optimizer states)
+            - operation_count: int (total dynamic operations)
+            - learning_rates: dict with:
+                - mean: float
+                - min: float
+                - max: float
+                
+    Implementation:
+        - Gets effective_lrs = optimizer.get_effective_learning_rates()
+        - Calculates mean, min, max from effective_lrs tensor
+        - Converts all values to float for JSON serialization
     """
 ```
 
@@ -672,12 +935,35 @@ def create_per_splat_optimizer_setup(
     age_based_decay: bool = True,
 
     **extra_kwargs
-) -> Tuple[PerSplatAdam, Optional[Scheduler], ModelOptimizerCoordinator]:
+) -> Tuple[PerSplatAdam, Optional[Union[PerSplatReduceLROnPlateau, PerSplatExponentialLR]], ModelOptimizerCoordinator]:
     """
     Factory function to create coordinated per-splat optimizer setup.
 
+    Algorithm:
+    1. Create optimizer_kwargs with only optimizer-specific args:
+       - betas, eps, weight_decay, amsgrad
+    2. Create optimizer = PerSplatAdam(model, lr=lr, **optimizer_kwargs)
+    3. If scheduler_type == "plateau":
+       - Create scheduler_kwargs with plateau-specific args
+       - Create scheduler = PerSplatReduceLROnPlateau(optimizer, **scheduler_kwargs)
+    4. Elif scheduler_type == "exponential":
+       - Create scheduler_kwargs with exponential-specific args
+       - Create scheduler = PerSplatExponentialLR(optimizer, **scheduler_kwargs)
+    5. Elif scheduler_type is None:
+       - scheduler = None
+    6. Else: raise ValueError
+    7. Create coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)
+    8. Return (optimizer, scheduler, coordinator)
+
     Returns:
-        (optimizer, scheduler, coordinator) tuple
+        tuple: (optimizer, scheduler, coordinator)
+
+    Scheduler Options:
+        - "plateau": PerSplatReduceLROnPlateau with patience-based reduction
+        - "exponential": PerSplatExponentialLR with age-based decay
+        - None: No scheduler
+
+    Note: extra_kwargs is accepted but not used (for API flexibility)
 
     Usage:
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
@@ -797,6 +1083,8 @@ def step(self):
         self._last_known_n_splats = current_n_splats
 ```
 
+**Note**: `_initialize_all_splats()` only initializes splats that don't already have state, preserving existing momentum.
+
 ### State Reindexing
 
 **Problem**: When splats are removed, indices need to be reindexed.
@@ -816,6 +1104,12 @@ def remove_splats(self, keep_mask: torch.Tensor):
     self.splat_states = new_states  # Atomic replacement
 ```
 
+**Key Details**:
+- Uses torch.where(keep_mask)[0] to extract kept indices
+- Converts to CPU numpy for iteration
+- Uses enumerate to assign new contiguous indices
+- Atomic dict replacement ensures consistency
+
 ### Device Compatibility
 
 **Supported Devices**:
@@ -825,8 +1119,9 @@ def remove_splats(self, keep_mask: torch.Tensor):
 
 **Device Handling**:
 - All tensors created on same device as model
-- State tensors automatically placed on correct device
-- Serialization preserves device information
+- Device determined by: `device = next(model.parameters()).device`
+- State tensors automatically placed on correct device during initialization
+- Serialization preserves device information in tensor data
 
 ### Thread Safety
 
@@ -849,6 +1144,7 @@ def remove_splats(self, keep_mask: torch.Tensor):
 - Dynamic operations (add/remove splats)
 - State serialization/deserialization
 - AMSGrad variant correctness
+- Edge cases: zero gradients, single splat, device placement
 
 **per_splat_scheduler.py**:
 - Plateau detection and LR reduction
@@ -857,11 +1153,16 @@ def remove_splats(self, keep_mask: torch.Tensor):
 - Dynamic operations support
 - Global fallback mechanism
 - Monitoring functions
+- Metrics conversion (float, tensor, dict)
+- Edge cases: scalar tensors, empty metrics
 
 **integration.py**:
 - Coordinator atomic operations
 - State consistency across components
 - Factory function correctness
+- Prune/add/replace operations
+- Status monitoring
+- Assertion checks
 
 ### Integration Tests
 
@@ -870,6 +1171,7 @@ def remove_splats(self, keep_mask: torch.Tensor):
 - Scheduler integration with coordinator
 - State preservation during topology changes
 - Multi-epoch training with LR scheduling
+- End-to-end workflows
 
 ### Property Tests
 
@@ -878,6 +1180,7 @@ def remove_splats(self, keep_mask: torch.Tensor):
 - Parameter-type LR multipliers applied correctly
 - Adam update formula matches PyTorch implementation
 - State indices remain contiguous after reindexing
+- Learning rates always positive and >= min_lr
 
 ## Performance Characteristics
 
@@ -891,20 +1194,26 @@ def remove_splats(self, keep_mask: torch.Tensor):
 
 **Total**: `O(N_splats × n_params)` per optimization step
 
+**Where**:
+- N_splats = number of splats
+- n_params = total scalar parameters per splat
+  - 2D: 2 (mu) + 2 (L_diag) + 1 (L_off) + 1 (a) + 1 (s') = 7 scalars
+  - 3D: 3 (mu) + 3 (L_diag) + 3 (L_off) + 1 (a) + 1 (s') = 11 scalars
+  - General formula: d + d + d*(d-1)/2 + 2 = 2d + d*(d-1)/2 + 2
+
 ### Memory Usage
 
 **Per Splat**:
 - Standard Adam: `2 × n_params` tensors (exp_avg, exp_avg_sq)
 - AMSGrad: `3 × n_params` tensors (+ max_exp_avg_sq)
-- Additional metadata: learning rate, step counter
+- Additional metadata: learning rate (float), base_lr (float), step counter (int)
 
 **Total**: `O(N_splats × n_params × tensor_size)` memory
 
 **Example** (3D with 10K splats):
-- n_params per splat = 10 (3 pos + 6 cov + 1 amp + 1 sharpness = 11, but position/variance have d elements each)
-- Actually: 3 + 3 + 3 + 1 + 1 = 11 scalar values
+- Parameters per splat: 3 (mu) + 3 (L_diag) + 3 (L_off) + 1 (a) + 1 (s') = 11 scalars
 - With exp_avg and exp_avg_sq: 22 scalars per splat
-- Total: 10K × 22 × 4 bytes ≈ 880 KB (negligible)
+- Total: 10K × 22 × 4 bytes (float32) ≈ 880 KB (negligible)
 
 ### Optimization Tips
 
@@ -912,6 +1221,7 @@ def remove_splats(self, keep_mask: torch.Tensor):
 2. **Enable AMSGrad for stability**: Set `amsgrad=True` if convergence issues
 3. **Tune scheduler patience**: Higher patience for smoother convergence
 4. **Monitor LR reductions**: Use `get_lr_reduction_counts()` for debugging
+5. **Batch dynamic operations**: Group add/remove operations when possible
 
 ## Extension Points
 
@@ -933,11 +1243,20 @@ def remove_splats(self, keep_mask: torch.Tensor):
            ...
    ```
 
-2. Add to factory function in `integration.py`
+2. Add to factory function in `integration.py`:
+   ```python
+   elif scheduler_type == "custom":
+       scheduler = PerSplatCustomScheduler(optimizer, **custom_kwargs)
+   ```
 
 ### Adding New Optimizers
 
-Follow same per-splat state management pattern as `PerSplatAdam`.
+Follow same per-splat state management pattern as `PerSplatAdam`:
+- Dict[int, Dict] for per-splat state storage
+- Lazy initialization on topology changes
+- Reindexing support for dynamic operations
+- Parameter-type-specific handling
+- Serialization support
 
 ## See Also
 

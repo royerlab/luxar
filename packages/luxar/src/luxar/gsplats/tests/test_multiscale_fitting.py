@@ -23,105 +23,108 @@ class TestMultiScaleFitting:
         V = np.exp(-(X**2 + Y**2) / 1.0).astype(np.float32)
 
         # Fit with minimal iterations for speed
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=50, n_iters_per_scale=50, verbose=False
         )
 
         # Verify outputs
-        assert params.ndim == 2
-        assert params.shape[0] == len(amps)
-        assert params.shape[1] == 2 + 3 + 1  # centers + cov + sharpness for 2D
-        assert "decomposition_stats" in stats
-        assert "per_scale_stats" in stats
-        assert "total_splats" in stats
-        assert stats["total_splats"] > 0
+        assert result.centers.ndim == 2
+        assert result.centers.shape[0] == len(result.amplitudes)
+        assert result.cholesky_factors.shape[1] == 3  # 2D cholesky (3 elements)
+        assert result.sharpnesses.shape[0] == len(result.amplitudes)
+        assert "decomposition_stats" in result.stats
+        assert "per_scale_stats" in result.stats
+        assert "total_splats" in result.stats
+        assert result.stats["total_splats"] > 0
 
     def test_parameter_shapes(self):
         """Test that parameter shapes are correct for different dimensions."""
         # 2D case
         V_2d = np.random.rand(32, 32).astype(np.float32)
-        params_2d, amps_2d, _ = fit_multiscale_gaussian_splats(
+        result_2d = fit_multiscale_gaussian_splats(
             V_2d, scales=[1], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
         )
         d = 2
-        expected_cols = d + d * (d + 1) // 2 + 1  # centers + cholesky + sharpness
-        assert params_2d.shape[1] == expected_cols
-        assert params_2d.shape[0] == len(amps_2d)
+        assert result_2d.centers.shape[1] == d
+        assert result_2d.cholesky_factors.shape[1] == d * (d + 1) // 2
+        assert result_2d.sharpnesses.shape[0] == result_2d.centers.shape[0]
+        assert result_2d.centers.shape[0] == len(result_2d.amplitudes)
 
         # 3D case
         V_3d = np.random.rand(16, 16, 16).astype(np.float32)
-        params_3d, amps_3d, _ = fit_multiscale_gaussian_splats(
+        result_3d = fit_multiscale_gaussian_splats(
             V_3d, scales=[1], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
         )
         d = 3
-        expected_cols = d + d * (d + 1) // 2 + 1
-        assert params_3d.shape[1] == expected_cols
-        assert params_3d.shape[0] == len(amps_3d)
+        assert result_3d.centers.shape[1] == d
+        assert result_3d.cholesky_factors.shape[1] == d * (d + 1) // 2
+        assert result_3d.sharpnesses.shape[0] == result_3d.centers.shape[0]
+        assert result_3d.centers.shape[0] == len(result_3d.amplitudes)
 
     def test_multiple_scales(self):
         """Test fitting with multiple scales."""
         V = np.random.rand(32, 32).astype(np.float32)
         scales = [1, 2, 4]
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=scales, n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
         # Verify per-scale stats
-        assert len(stats["per_scale_stats"]) == len(scales)
-        assert len(stats["n_splats_per_scale"]) == len(scales)
+        assert len(result.stats["per_scale_stats"]) == len(scales)
+        assert len(result.stats["n_splats_per_scale"]) == len(scales)
 
         # Each scale should have some splats (with high probability)
-        assert sum(stats["n_splats_per_scale"]) > 0
+        assert sum(result.stats["n_splats_per_scale"]) > 0
 
     def test_default_scales(self):
         """Test that default scales work correctly."""
         # Use 64x64 image to allow default scales [1, 2, 4, 8] with 8-pixel minimum
         V = np.random.rand(64, 64).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
         # Default should be [1, 2, 4, 8]
-        assert len(stats["per_scale_stats"]) == 4
-        assert stats["per_scale_stats"][0]["scale_factor"] == 1
-        assert stats["per_scale_stats"][1]["scale_factor"] == 2
-        assert stats["per_scale_stats"][2]["scale_factor"] == 4
-        assert stats["per_scale_stats"][3]["scale_factor"] == 8
+        assert len(result.stats["per_scale_stats"]) == 4
+        assert result.stats["per_scale_stats"][0]["scale_factor"] == 1
+        assert result.stats["per_scale_stats"][1]["scale_factor"] == 2
+        assert result.stats["per_scale_stats"][2]["scale_factor"] == 4
+        assert result.stats["per_scale_stats"][3]["scale_factor"] == 8
 
     def test_computational_speedup(self):
         """Test that computational speedup is calculated."""
         V = np.random.rand(64, 64).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2, 4], n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
         # Speedup should be > 1 for multiple scales
-        assert stats["computational_speedup"] > 1.0
+        assert result.stats["computational_speedup"] > 1.0
 
         # For scales [1, 2, 4] in 2D, expected speedup ~ (1 + 1 + 1) / (1 + 0.25 + 0.0625) ≈ 2.3
-        assert stats["computational_speedup"] > 2.0
+        assert result.stats["computational_speedup"] > 2.0
 
     def test_statistics_structure(self):
         """Test that returned statistics have correct structure."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
         # Check top-level keys
-        assert "decomposition_stats" in stats
-        assert "per_scale_stats" in stats
-        assert "n_splats_per_scale" in stats
-        assert "total_splats" in stats
-        assert "computational_speedup" in stats
-        assert "total_time_seconds" in stats
+        assert "decomposition_stats" in result.stats
+        assert "per_scale_stats" in result.stats
+        assert "n_splats_per_scale" in result.stats
+        assert "total_splats" in result.stats
+        assert "computational_speedup" in result.stats
+        assert "total_time_seconds" in result.stats
 
         # Check per-scale stats structure
-        for scale_stat in stats["per_scale_stats"]:
+        for scale_stat in result.stats["per_scale_stats"]:
             assert "scale_factor" in scale_stat
             assert "scale_shape" in scale_stat
             assert "n_voxels" in scale_stat
@@ -134,7 +137,7 @@ class TestMultiScaleFitting:
         V = np.random.rand(32, 32).astype(np.float32)
 
         # Test with custom loss_type
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V,
             scales=[1],
             n_iters_decomp=10,
@@ -144,11 +147,15 @@ class TestMultiScaleFitting:
         )
 
         # Should complete without error
-        assert params.shape[0] > 0
+        assert result.centers.shape[0] > 0
 
     def test_input_validation(self):
         """Test input validation."""
         V = np.random.rand(64, 64).astype(np.float32)
+
+        # TypeError for non-numpy V
+        with pytest.raises(TypeError, match="must be a numpy array"):
+            fit_multiscale_gaussian_splats([1, 2, 3], scales=[1], verbose=False)
 
         # Invalid scales
         with pytest.raises(ValueError, match="scale factors must be >= 1"):
@@ -172,6 +179,24 @@ class TestMultiScaleFitting:
                 V, scales=[1, 2], base_init_sigma=-1, verbose=False
             )
 
+        # Negative n_iters_decomp
+        with pytest.raises(ValueError, match="n_iters_decomp must be non-negative"):
+            fit_multiscale_gaussian_splats(
+                V, scales=[1, 2], n_iters_decomp=-1, verbose=False
+            )
+
+        # Negative n_iters_per_scale
+        with pytest.raises(ValueError, match="n_iters_per_scale must be non-negative"):
+            fit_multiscale_gaussian_splats(
+                V, scales=[1, 2], n_iters_per_scale=-1, verbose=False
+            )
+
+        # Invalid learning rate
+        with pytest.raises(ValueError, match="lr must be positive"):
+            fit_multiscale_gaussian_splats(
+                V, scales=[1, 2], lr=-0.01, verbose=False
+            )
+
         # Invalid V
         with pytest.raises(ValueError, match="non-empty"):
             fit_multiscale_gaussian_splats(np.array([]), scales=[1], verbose=False)
@@ -189,25 +214,27 @@ class TestMultiScaleFitting:
         X, Y, Z = np.meshgrid(x, x, x)
         V = np.exp(-(X**2 + Y**2 + Z**2) / 0.5).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
-        # For 3D: d=3, so params should have 3 + 6 + 1 = 10 columns
-        assert params.shape[1] == 10
-        assert params.shape[0] == len(amps)
-        assert stats["total_splats"] > 0
+        # For 3D: d=3
+        assert result.centers.shape[1] == 3
+        assert result.cholesky_factors.shape[1] == 6
+        assert result.sharpnesses.shape[0] == len(result.amplitudes)
+        assert result.centers.shape[0] == len(result.amplitudes)
+        assert result.stats["total_splats"] > 0
 
     def test_sharpness_preservation(self):
         """Test that sharpness is preserved (not scaled)."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2, 4], n_iters_decomp=20, n_iters_per_scale=20, verbose=False
         )
 
         # Extract sharpness column (last column)
-        sharpness = params[:, -1]
+        sharpness = result.sharpnesses
 
         # All sharpness values should be reasonable (close to default 2.0)
         # Since we use default initialization and few iterations
@@ -218,7 +245,7 @@ class TestMultiScaleFitting:
         """Test that verbose mode produces output."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=True
         )
 
@@ -235,7 +262,7 @@ class TestMultiScaleFitting:
         """Test that movie recording works when enabled."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V,
             scales=[1, 2],
             n_iters_decomp=20,
@@ -246,8 +273,8 @@ class TestMultiScaleFitting:
         )
 
         # Check that movie frames were recorded in decomposition stats
-        assert "decomposition_stats" in stats
-        decomp_stats = stats["decomposition_stats"]
+        assert "decomposition_stats" in result.stats
+        decomp_stats = result.stats["decomposition_stats"]
         assert "movie_frames" in decomp_stats
 
         # Movie frames should be a dict with specific keys
@@ -277,12 +304,12 @@ class TestMultiScaleFitting:
         """Test that movie recording is disabled by default."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
         )
 
         # Movie should not be recorded by default
-        decomp_stats = stats.get("decomposition_stats", {})
+        decomp_stats = result.stats.get("decomposition_stats", {})
         movie_frames = decomp_stats.get("movie_frames")
         assert movie_frames is None or len(movie_frames) == 0
 
@@ -290,7 +317,7 @@ class TestMultiScaleFitting:
         """Test that per-scale visualization data is generated when enabled."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V,
             scales=[1, 2, 4],
             n_iters_decomp=20,
@@ -300,8 +327,8 @@ class TestMultiScaleFitting:
         )
 
         # Check that per-scale visualizations were generated
-        assert "per_scale_visualizations" in stats
-        per_scale_vis = stats["per_scale_visualizations"]
+        assert "per_scale_visualizations" in result.stats
+        per_scale_vis = result.stats["per_scale_visualizations"]
         assert len(per_scale_vis) == 3  # Should match number of scales
 
         # Check structure of each visualization
@@ -337,12 +364,12 @@ class TestMultiScaleFitting:
         """Test that per-scale visualization is disabled by default."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        params, amps, stats = fit_multiscale_gaussian_splats(
+        result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=False
         )
 
         # Should not have per-scale visualizations by default
-        assert "per_scale_visualizations" not in stats
+        assert "per_scale_visualizations" not in result.stats
 
 
 if __name__ == "__main__":

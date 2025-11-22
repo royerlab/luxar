@@ -13,7 +13,7 @@ def test_random_demo_roundtrip(tmp_path):
     root = zarr.open_group(store, mode="r")
     # ---- root attrs
     assert root.attrs["luxar_version"] == "0.1"
-    assert root.attrs["units"] == "metre"
+    # Units are now specified per-dimension via scene_dimensions, not globally
 
     # ---- hierarchy
     assert [name for name, _ in root.groups()] == ["LorenzAttractor"]

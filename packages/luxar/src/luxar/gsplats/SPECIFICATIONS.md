@@ -21,12 +21,13 @@ This specification serves as the **hub** for the entire gsplats package. For det
 from luxar.gsplats import fit_gaussian_splats
 
 # Fit Gaussian splats to your data
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     V,                    # Your nD image/volume
     n_iters=1000,        # Max iterations
     max_abs_error=0.01,  # Convergence threshold
     verbose=True         # Show progress
 )
+# Access via result.centers, result.amplitudes, result.cholesky_factors, result.sharpnesses, result.stats
 ```
 
 ## Overview
@@ -40,11 +41,16 @@ Key requirements:
 - Mathematically stable parameterizations avoiding singularities
 - GPU-accelerated rendering with memory management
 
-## 1. Candidate Generation (`candidates.py`)
+## 1. Seed Generation Sub-Package (`seeds/)
 
-### Core Function: `find_candidates_multiscale_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
+### Core Function: `find_seeds_multiscale_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
 
-Generate overcomplete candidate locations using three complementary methods:
+
+**Note**: Seed generation is implemented in the `seeds/` sub-package (not a single file).
+The `clahe/` sub-package provides CLAHE-based perceptual sampling functionality.
+Both packages are exported from the root `__init__.py` for convenience.
+
+Generate overcomplete seed locations using three complementary methods:
 
 **Method 1: Multi-scale Gaussian peaks**
 - For each scale � in `scales`: apply `gaussian_filter(V, sigma=�)`
@@ -69,7 +75,7 @@ Generate overcomplete candidate locations using three complementary methods:
 - Generates perceptually-balanced candidates (dim structures get fair representation)
 - Number of samples: `clahe_samples_per_scale` (default: `peaks_per_scale`)
 
-**Spatial deduplication (Farthest-First Selection):**
+**Spatial deduplication of seeds (Farthest-First Selection):**
 - Sort all candidates by detection strength (intensity or CLAHE value)
 - Initialize with strongest candidate
 - Iteratively select candidate furthest from all previously selected
@@ -116,9 +122,9 @@ Generate overcomplete candidate locations using three complementary methods:
 - `forward()`: Render all splats using main rendering function with sharpness
 - `n_splats()`: Return current number of splats
 - `prune_(keep_mask)`: Remove splats by boolean mask (including sharpness)
-- `append_(centers, Ls, amps, sharpness=None)`: Add new splats (defaults to s=2 if None)
-- `replace_with(centers, Ls, amps, sharpness=None)`: Replace all parameters
-- `_to_internal_params(centers, Ls, amps, sharpness=None)`: Convert external to internal parameterization
+- `append_(centers, Ls, amps, sharpness)`: Add new splats (sharpness required)
+- `replace_with(centers, Ls, amps, sharpness)`: Replace all parameters (sharpness required)
+- `_to_internal_params(centers, Ls, amps, sharpness)`: Convert external to internal parameterization (sharpness required)
 
 ### Rendering Function: `render_gaussians(shape, centers, Ls, amps, sharpness, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
 
@@ -477,7 +483,61 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 
 ## 5. Main Fitting Interface (`fit_gsplats.py`)
 
+### Architecture Overview
+
+The main fitting interface provides both functional and object-oriented APIs:
+- **Functional API**: `fit_gaussian_splats()` - Convenience function for one-shot fitting
+- **Object-Oriented API**: `GaussianSplatFitter` class - Reusable fitter with stateful configuration
+
+**Implementation Architecture**:
+The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md)):
+1. **`prepare_fit_config()`**: Validate inputs and prepare configuration object
+2. **`preprocess_data()`**: Normalize data, generate/validate candidates
+3. **`initialize_optimization()`**: Create model, optimizer, scheduler, and coordinator
+4. **`create_loss_function()`**: Build loss function with regularization
+5. **`run_optimization_loop()`**: Execute iterative optimization with dynamic operations
+6. **`finalize_results()`**: Extract parameters, rescale intensities, compute statistics
+
+This modular design separates concerns, improves testability, and makes the codebase maintainable.
+The root-level functions delegate to the `fitting/` sub-package for actual implementation.
+
 ### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, ...)`
+
+**Functional Signature**:
+```python
+def fit_gaussian_splats(
+    V: np.ndarray,
+    seeds: Optional[np.ndarray | float] = None,
+    norm_percentile: float = 0.0,
+    init_sigma_vox: float = 0.5,  # Default changed to 0.5 for single-voxel splats
+    n_iters: int = 1000,
+    lr: float = 0.01,
+    loss_type: str = "l1",
+    asymmetric_penalty: Optional[float] = 10.0,
+    l1_amp: Optional[float] = None,
+    l1_diag: Optional[float] = None,
+    l1_sharpness: Optional[float] = None,
+    # ... additional parameters
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]
+```
+
+**Implementation Flow**:
+1. Create `GaussianSplatFitter` instance with device and dynamic ops config
+2. Call `fitter.fit()` which executes the 6-stage pipeline
+3. Return (params, amps, stats) tuple from finalization stage
+
+
+**Input Validation and Error Handling**:
+- **V validation**: Non-empty, finite values, valid NumPy array
+- **seeds validation**: If array, shape must match V.ndim; if float, must be in (0, 1]
+- **Parameter validation**: All learning rates, sigmas, and thresholds must be positive
+- **Scale validation** (multi-scale): Ensures downsampled dimensions ≥ _MIN_SCALE_DIM (8 pixels)
+- **Exception types**: `TypeError` for type errors, `ValueError` for invalid values, `RuntimeError` for optimization failures
+
+**Edge Case Handling**:
+- **Empty candidates**: Returns zero-sized arrays with correct shape (0, d + d*(d+1)//2 + 1)
+- **Invalid inputs**: Raises `TypeError` or `ValueError` with descriptive messages
+- **Scale validation**: Multi-scale fitting validates minimum dimension size (_MIN_SCALE_DIM = 8)
 
 **Input validation:**
 - Ensure V is non-empty with valid dimensions
@@ -485,10 +545,10 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - Check all hyperparameters are positive/valid
 - Validate `max_abs_error` is positive if specified
 
-**Auto-Candidate Generation:**
+**Auto-Seed Generation:**
 - **Default behavior**: If `seeds=None`, automatically generate candidates using dimension-aware defaults
 - **Universal scale series**: `(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)` works optimally for all dimensions from fine details to large structures
-- **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales candidate count with image size (~0.2% of pixels)
+- **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales seed count with image size (~0.2% of pixels)
 - **Inclusive detection**: `percentile_thresh=70` for comprehensive feature coverage
 - **Standard parameters**: `min_distance=2.0, add_intensity_grid=False` for robust detection
 - **Logging**: Auto-generation usage is logged for transparency
@@ -526,11 +586,11 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 1. Setup per-splat optimizer and scheduler
    - **Gradient dilution compensation**: Optimizer internally applies gradient dilution compensation to learning rate
      - **Problem**: Higher dimensions have more parameters per splat, diluting gradients
-     - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (10 params: 3 pos + 6 cov), 4D (15 params: 4 pos + 10 cov), nD (d + d(d+1)/2 params)
+     - **Parameter count**: 2D (5 params: 2 pos + 3 cov), 3D (9 params: 3 pos + 6 cov), 4D (14 params: 4 pos + 10 cov), nD (d + d(d+1)/2 params)
      - **Compensation formula** (for d ≤ 3): `effective_lr = base_lr × (params_current / params_2d)`
      - **Enhanced formula** (for d > 3): `effective_lr = base_lr × d^0.8 × (params_current / params_2d)`
-     - **Result**: Learning rate scaling - 2D (×1.0), 3D (×2.0), 4D (×7.1)
-     - **Sharpness exception**: Sharpness always uses base_lr (no gradient dilution) since it's a single scalar regardless of dimension
+     - **Result**: Learning rate scaling - 2D (×1.0), 3D (×1.8), 4D (×8.5)
+     - **Sharpness exception**: Sharpness always uses 0.5 × base_lr (no gradient dilution) since it's a single scalar regardless of dimension
 2. **Log convergence criteria**: Explicitly state convergence threshold (given or auto-calculated)
 3. **Initialize best state tracking**: Track best max absolute error and corresponding splat configuration
 4. For each iteration:
@@ -554,6 +614,16 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **State restoration**: Return best configuration instead of potentially suboptimal final state
 - **Statistics alignment**: Report statistics from best iteration, not final iteration
 
+
+**Return Statistics Structure**:
+The `stats` dictionary returned by `fit_gaussian_splats()` includes:
+- **Core metrics**: `time_seconds`, `iterations`, `converged`, `final_error`, `best_iteration`
+- **Sharpness statistics**: `sharpness_min`, `sharpness_max`, `sharpness_mean`, `sharpness_std`, `sharpness_median`
+- **Optimization trajectory**: `loss_history`, `error_history` (if tracking enabled)
+- **Movie data**: `movie_frames`, `movie_shape` (if `napari_movie=True`)
+- **Best state info**: All statistics reflect the best state encountered during optimization
+
+
 **Convergence detection:**
 - Primary criterion: Maximum absolute error `max_abs_error = max(|prediction - target|)`
 - Stop when `max_abs_error < threshold` with explicit logging of convergence achievement
@@ -564,6 +634,18 @@ This approach ensures that dynamic operations are directly driven by reconstruct
   - Report current max absolute error during training
   - Log new best states when encountered
   - Explicitly state termination reason and which iteration's state was restored
+
+
+**Verbose Output and Visualization**:
+When `verbose=True`, the function displays:
+- **Optimization progress**: Iteration-by-iteration metrics via arbol sections
+- **Compression analysis**: Comparing splat representation size to original data
+- **Sharpness statistics**: Distribution of per-splat sharpness values with interpretation
+- **Termination summary**: Final timing, iteration count, and convergence status
+- **Optimization movie**: Interactive napari visualization (if `napari_movie=True`)
+
+The verbose output uses the `arbol` library for hierarchical console logging.
+
 
 **Loss functions:**
 - MSE: `mean((pred - target)²)`
@@ -594,7 +676,39 @@ This approach ensures that dynamic operations are directly driven by reconstruct
 - **L1 synergy**: L1 + asymmetric penalty provides exceptional robustness and stability for challenging datasets
 
 ### GaussianSplatFitter Class
-Object-oriented interface with identical functionality to functional API.
+
+**Purpose**: Object-oriented interface providing reusable fitter with stateful configuration.
+
+**Constructor**:
+```python
+GaussianSplatFitter(
+    device: Optional[str] = None,
+    enable_dynamic_ops: bool = False,
+    dynamic_config: Optional[DynamicOpsConfig] = None
+)
+```
+
+**Key Method**:
+```python
+def fit(
+    self,
+    V: np.ndarray,
+    seeds: Optional[np.ndarray | float] = None,
+    # ... all parameters from fit_gaussian_splats()
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]
+```
+
+**Relationship to Functional API**:
+- `fit_gaussian_splats()` creates a `GaussianSplatFitter` instance internally
+- Both APIs share the same implementation via the 6-stage pipeline
+- The class allows configuration reuse across multiple fitting operations
+- Identical parameter signatures and return values
+
+**Device Selection Logic**:
+- Auto-detection order: CUDA → CPU
+- MPS (Apple Silicon) supported but may be slower than CPU for typical workloads
+- Explicit device specification overrides auto-detection
+
 
 ## 6. Multi-Scale Gaussian Splat Fitting
 
@@ -825,14 +939,14 @@ def fit_multiscale_gaussian_splats(
     Examples
     --------
     >>> # Simple 2D example
-    >>> params, amps, stats = fit_multiscale_gaussian_splats(
+    >>> result = fit_multiscale_gaussian_splats(
     ...     image_2d,
     ...     scales=[1, 2, 4],
     ...     n_iters_per_scale=300
     ... )
 
     >>> # 3D volume with custom parameters
-    >>> params, amps, stats = fit_multiscale_gaussian_splats(
+    >>> result = fit_multiscale_gaussian_splats(
     ...     volume_3d,
     ...     scales=[1, 2, 4, 8, 16],
     ...     base_init_sigma=2.0,
@@ -892,7 +1006,7 @@ def fit_multiscale_gaussian_splats(V, scales, ...):
     all_results = []
     for scale_factor, V_scale in zip(scales, scales_list):
         # 3. Fit using existing function (black box)
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V_scale,
             init_sigma_vox=base_init_sigma * scale_factor,
             ...

@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 import torch
 
-from luxar.gsplats.candidates import find_candidates_multiscale_gaussian
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import (
     DynamicOpsConfig,
@@ -14,6 +13,7 @@ from luxar.gsplats.fitting.dynamic_ops import (
     apply_dynamic_operations,
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
 
 
 class TestDynamicOpsConfig:
@@ -225,20 +225,20 @@ class TestDynamicOperationsIntegration:
         blob[12, 12] = 0.8
         V = blob.astype(np.float32)
 
-        # Find candidates
-        centers = find_candidates_multiscale_gaussian(
+        # Find seeds
+        centers = find_seeds_multiscale_gaussian(
             V, scales=(1.0, 2.0), peaks_per_scale=10, percentile_thresh=50.0
         )
 
         if len(centers) == 0:
-            pytest.skip("No candidates found for test data")
+            pytest.skip("No seeds found for test data")
 
         # Configure dynamic operations
         cfg = DynamicOpsConfig()
         cfg.step_every = 5  # Run more frequently for testing
 
         # Run fitting with dynamic operations
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             seeds=centers,
             init_sigma_vox=1.5,
@@ -251,9 +251,9 @@ class TestDynamicOperationsIntegration:
         )
 
         # Check that we got valid results
-        assert params.shape[0] > 0  # Should have some splats
-        assert amps.shape[0] == params.shape[0]
-        assert "final_loss" in stats  # Check for stats that actually exist
+        assert result.centers.shape[0] > 0  # Should have some splats
+        assert result.amplitudes.shape[0] == result.centers.shape[0]
+        assert "final_loss" in result.stats  # Check for stats that actually exist
 
     def test_fit_without_dynamic_ops(self) -> None:
         """Test fitting without dynamic operations for comparison."""
@@ -262,16 +262,16 @@ class TestDynamicOperationsIntegration:
         blob[16, 16] = 1.0
         V = blob.astype(np.float32)
 
-        # Find candidates
-        centers = find_candidates_multiscale_gaussian(
+        # Find seeds
+        centers = find_seeds_multiscale_gaussian(
             V, scales=(1.0,), peaks_per_scale=5, percentile_thresh=50.0
         )
 
         if len(centers) == 0:
-            pytest.skip("No candidates found for test data")
+            pytest.skip("No seeds found for test data")
 
         # Run fitting without dynamic operations
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             seeds=centers,
             init_sigma_vox=1.5,
@@ -283,9 +283,9 @@ class TestDynamicOperationsIntegration:
         )
 
         # Check that we got valid results
-        assert params.shape[0] > 0
-        assert amps.shape[0] == params.shape[0]
-        assert "final_loss" in stats  # Check for stats that actually exist
+        assert result.centers.shape[0] > 0
+        assert result.amplitudes.shape[0] == result.centers.shape[0]
+        assert "final_loss" in result.stats  # Check for stats that actually exist
 
     def test_principled_pruning_functionality(self) -> None:
         """Test the new principled pruning algorithm."""
@@ -296,7 +296,7 @@ class TestDynamicOperationsIntegration:
 
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
-        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=50)
+        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=50)
 
         # Create model with many splats to trigger pruning
         L0 = np.eye(2)[None, :, :] * 1.0
@@ -331,10 +331,10 @@ class TestDynamicOperationsIntegration:
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=20)
+        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=20)
 
         for loss_type in ["mse", "poisson", "l1"]:
-            params, amps, stats = fit_gaussian_splats(
+            result = fit_gaussian_splats(
                 V,
                 centers,
                 n_iters=10,
@@ -345,8 +345,8 @@ class TestDynamicOperationsIntegration:
                 napari_movie=False,
             )
 
-            assert len(amps) > 0, f"{loss_type} with asymmetric penalty failed"
-            assert all(amps >= 0), f"{loss_type} produced negative amplitudes"
+            assert len(result.amplitudes) > 0, f"{loss_type} with asymmetric penalty failed"
+            assert all(result.amplitudes >= 0), f"{loss_type} produced negative amplitudes"
 
     def test_local_convergence_based_pruning(self) -> None:
         """Test the local convergence-based pruning algorithm."""
@@ -405,10 +405,10 @@ class TestDynamicOperationsIntegration:
     def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_candidates_multiscale_gaussian(V, peaks_per_scale=30)
+        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=30)
 
         # Test that auto-threshold works with dynamic operations
-        params, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             centers,
             n_iters=50,
@@ -420,23 +420,31 @@ class TestDynamicOperationsIntegration:
             napari_movie=False,
         )
 
-        assert "converged" in stats
-        assert len(amps) > 0
+        assert "converged" in result.stats
+        assert len(result.amplitudes) > 0
 
     def test_compression_analysis_functionality(self) -> None:
         """Test compression ratio analysis functionality."""
+        from luxar.gsplats.fit_result import GaussianSplatResult
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         # Create simple test data
         V = np.random.random((16, 16)).astype(np.float32)
-        params = np.random.random((10, 5)).astype(
-            np.float32
-        )  # 10 splats, 2D + packed L + amp
-        amps = np.random.uniform(0.1, 1.0, 10).astype(np.float32)
+        d = 2
+        N = 10
+
+        # Create GaussianSplatResult for testing
+        result = GaussianSplatResult(
+            centers=np.random.random((N, d)).astype(np.float32),
+            amplitudes=np.random.uniform(0.1, 1.0, N).astype(np.float32),
+            cholesky_factors=np.random.random((N, 3)).astype(np.float32),  # 2D tril = 3
+            sharpnesses=np.random.uniform(1.5, 3.0, N).astype(np.float32),
+            stats={}
+        )
 
         # Test compression analysis (should not raise exceptions)
         try:
-            display_compression_analysis(V, params, amps)
+            display_compression_analysis(V, result)
             compression_test_passed = True
         except Exception:
             compression_test_passed = False

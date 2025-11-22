@@ -61,9 +61,10 @@ def test_per_splat_adam():
     centers_new = torch.tensor([[10.0, 10.0], [20.0, 20.0]], dtype=torch.float32)
     Ls_new = torch.stack([torch.eye(2) * 1.0, torch.eye(2) * 1.2], dim=0)
     amps_new = torch.tensor([0.5, 0.7], dtype=torch.float32)
+    sharpness_new = torch.tensor([2.0, 2.0], dtype=torch.float32)
 
     old_n = model.n_splats()
-    model.append_(centers_new, Ls_new, amps_new)
+    model.append_(centers_new, Ls_new, amps_new, sharpness_new)
     optimizer.add_splats(2, lr_new=0.1)  # Higher LR for new splats
     scheduler.add_splats(2)
 
@@ -127,8 +128,9 @@ def test_factory_function():
     centers_new = torch.tensor([[8.0, 8.0]], dtype=torch.float32)
     Ls_new = torch.stack([torch.eye(2)], dim=0)
     amps_new = torch.tensor([0.8], dtype=torch.float32)
+    sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-    n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, lr_new=0.05)
+    n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05)
     print(f"✓ Coordinator added {n_added} splats")
     print(f"✓ New status: {coordinator.get_status()}")
 

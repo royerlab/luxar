@@ -14,6 +14,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -138,7 +139,7 @@ with asection("3D Gaussian Splatting Demo"):
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-candidate generation
-        params_full, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
@@ -155,9 +156,9 @@ with asection("3D Gaussian Splatting Demo"):
             napari_movie=True,
         )
 
-        aprint(f"Fitted {len(amps)} splats successfully")
+        aprint(f"Fitted {len(result.amplitudes)} splats successfully")
 
-        if len(amps) == 0:
+        if len(result.amplitudes) == 0:
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
@@ -167,20 +168,18 @@ with asection("3D Gaussian Splatting Demo"):
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 3
 
-# params_full includes sharpness in last column: [centers, packed_L, sharpness]
-# Extract L for energy ranking (exclude sharpness from the end)
-L_packed = params_full[:, d:-1]  # (N, 6) in 3D - centers excluded, sharpness excluded
-L_full = unpack_tril(L_packed, d)  # (N, 3, 3)
+# Extract L for energy ranking
+L_full = unpack_tril(result.cholesky_factors, d)  # (N, 3, 3)
 diag_prod = np.prod(
     np.stack([L_full[:, 0, 0], L_full[:, 1, 1], L_full[:, 2, 2]], axis=1), axis=1
 )  # ∏ diag(L)
-energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
+energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
 aprint("Energy scores computed for compression ranking")
 
 # ----- Precompute reconstructions/residuals + wireframe ellipsoids per frame -----
-N = len(amps)
+N = len(result.amplitudes)
 keep_counts = np.unique(
     np.linspace(1, N, num=min(N_FRAMES, N), endpoint=True).astype(int)
 )
@@ -214,10 +213,17 @@ for i, K in enumerate(keep_counts):
 
     idx = order[:K]
 
-    # Reconstruction & residual with auto-extraction of all parameters
-    Vk = render_gaussians_numpy(
-        V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
+    # Create sliced result for rendering
+    result_idx = GaussianSplatResult(
+        centers=result.centers[idx],
+        amplitudes=result.amplitudes[idx],
+        cholesky_factors=result.cholesky_factors[idx],
+        sharpnesses=result.sharpnesses[idx],
+        stats={}  # Empty stats for rendering subset
     )
+
+    # Reconstruction & residual
+    Vk = render_gaussians_numpy(V.shape, result_idx, truncate=TRUNCATE_SIG)
     stack_recon[i] = Vk
     stack_resid[i] = V - Vk
     rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -229,7 +235,7 @@ for i, K in enumerate(keep_counts):
 
     # Wireframe ellipsoids & centers (2σ contour)
     Lk = L_full[idx]  # (K, 3, 3)
-    Ck = params_full[idx, :3]  # (K, 3) voxel centers (z,y,x)
+    Ck = result.centers[idx]  # (K, 3) voxel centers (z,y,x)
 
     # Create wireframes for each ellipsoid (limit to reasonable number for visualization)
     max_wireframes = min(K, 50)  # Limit wireframes for performance

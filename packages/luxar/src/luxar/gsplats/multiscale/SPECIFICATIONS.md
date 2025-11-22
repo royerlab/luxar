@@ -210,16 +210,38 @@ The decomposition supports three interpolation modes (controlled by `interpolati
 **Negative Value Handling**: Cubic interpolation can produce small negative values due to the negative lobes in the cubic kernel (inherent to its superior smoothness). These are automatically clamped to zero after upsampling since all scale components must be non-negative.
 
 **Keys Cubic Convolution**: For 3D and higher dimensions, we use a custom implementation of Keys cubic convolution (a=-0.5) with vectorized PyTorch operations:
-- Uses torch.unfold for efficient sliding window extraction
-- Broadcasting for kernel application (fully vectorized, no Python loops)
-- Separable filters applied along each axis independently (O(n×k) vs O(k^n))
-- Recursive 2× upsampling for power-of-2 scale factors
-- Fully GPU-accelerated without external dependencies
-- 27-45× faster than previous torch-interpol implementation
+- **Kernel weights**: Uses Keys cubic kernel at x=0.5: [-1/16, 9/16, 9/16, -1/16]
+  - Provides C1 continuity (continuous first derivative)
+  - Negative lobes enable superior smoothness compared to linear interpolation
+  - Parameter a=-0.5 chosen for optimal balance between sharpness and smoothness
+- **Efficient implementation**:
+  - Uses `torch.unfold(dimension, size=4, step=1)` for sliding window extraction
+  - Creates 4-element windows for each interpolation point without copying
+  - Broadcasting for kernel application: (batch, size_in, 4) * (4,) → fully vectorized
+  - No Python loops - all operations in PyTorch
+- **Separable filtering**: Applied along each axis independently
+  - Complexity: O(n×k) instead of O(k^n) for n dimensions
+  - Example: 3D cubic would be 4³=64 kernel vs 3×4=12 with separable approach
+- **Padding strategy**: Edge replication (`mode='replicate'`) for boundary handling
+  - Padding (1, 2) for 4-element kernel: 1 element left, 2 elements right
+  - Ensures smooth behavior at image boundaries
+- **Recursive upsampling**: For scale factors > 2, applies 2× upsampling recursively
+  - Example: 8× upsampling = three successive 2× operations
+  - Maintains high quality across all power-of-2 scale factors
+- **Performance**: Fully GPU-accelerated without external dependencies
+  - 27-45× faster than previous torch-interpol implementation
+  - Works seamlessly on CUDA, CPU, and MPS (Apple Silicon)
+
+**Device Compatibility Notes**:
+- **MPS (Apple Silicon)**: For 3D data, MPS doesn't support native avg_pool3d/max_pool3d operations
+  - Implementation falls back to F.interpolate with trilinear mode for downsampling
+  - All upsampling operations (cubic, linear, nearest) work correctly on MPS
+  - No performance degradation for upsampling; slight overhead for downsampling fallback
+- **CUDA/CPU**: All operations use native optimized kernels
 
 ## Initialization Strategy
 
-The initialization method significantly affects convergence speed and final energy distribution. Four initialization methods are available via the `init_method` parameter:
+The initialization method significantly affects convergence speed and final energy distribution. Five initialization methods are available via the `init_method` parameter:
 
 ### 1. Coarse Initialization (`init_method="coarse"`) - **STRONGLY RECOMMENDED**
 
@@ -273,7 +295,9 @@ def initialize_from_pyramid(V, scales):
 
         # Subtract contribution
         remaining = remaining - upsample(V_scale, V.shape)
-        remaining = clamp(remaining, min=0)
+        # DON'T clamp negatives - allow negative propagation for energy conservation
+        # If coarse scales overshoot, negatives naturally reduce finer scales
+        # through the averaging operation in downsampling
 
         components.append(V_scale)
 
@@ -284,6 +308,12 @@ def initialize_from_pyramid(V, scales):
 - Energy distributed across scales from coarse to fine
 - Provides natural frequency decomposition
 - Already approximately decomposes the image
+- **Negative propagation enabled**: Allows coarse scales to overshoot for energy conservation
+  - If coarse scales overshoot (causing negative residuals), those negatives naturally reduce
+    finer scales' values through the averaging operation in downsampling
+  - This ensures energy conservation without information loss
+  - Individual scale values are still clamped to non-negative (via softplus constraint)
+  - No clamping of the residual signal preserves mathematical correctness
 
 **Use case**: Available for experimentation, but generally inferior to "coarse" initialization.
 
@@ -346,6 +376,41 @@ def initialize_finest_scale(V, scales):
 
 **Use case**: Useful for understanding and visualizing how energy redistributes from fine to coarse scales during optimization. Good for debugging and analysis of optimization dynamics. Generally converges slower and achieves worse final quality than "coarse" initialization.
 
+### 5. Zero Initialization (`init_method="zero"`)
+
+Initialize all scales to zero (or near-zero values):
+
+```python
+def initialize_zero(target: Tensor) -> None:
+    """
+    Initialize all scales to zero (or near-zero).
+    
+    This creates a "worst case" starting point where all scales start at
+    effectively zero and must be learned from scratch. Useful for understanding
+    the importance of initialization and as a baseline comparison.
+    """
+    # Initialize all scales to large negative values
+    # softplus(-10) ≈ 4.5e-5, which is effectively zero
+    for raw_param in self.raw_images:
+        raw_param.data.fill_(-10.0)
+```
+
+**Properties**:
+- All scales start at effectively zero (softplus(-10) ≈ 4.5e-5)
+- Worst-case baseline for initialization studies
+- Requires optimizer to learn everything from scratch
+- Typically requires many more iterations to converge
+- Usually achieves poor final quality
+
+**Use case**: Primarily for research and analysis purposes:
+- Understanding the importance of good initialization
+- Baseline comparison to quantify initialization impact
+- Testing optimizer robustness
+- Educational demonstrations of optimization from scratch
+- **NOT RECOMMENDED** for production use
+
+**Note**: This initialization is included in the API for completeness and research purposes, but should not be used for actual decomposition tasks. It demonstrates how critical proper initialization is for convergence speed and quality.
+
 ### Numerical Considerations
 
 All initialization methods must account for the softplus parameterization:
@@ -403,6 +468,9 @@ def initialize_from_pyramid(target: Tensor) -> None:
 def initialize_uniform(target: Tensor) -> None:
     """Initialize with energy split equally across all scales."""
 
+
+def initialize_zero(target: Tensor) -> None:
+    """Initialize all scales to zero (or near-zero) for worst-case baseline."""
 def initialize_finest_scale(target: Tensor) -> None:
     """Initialize with all energy in finest scale, other scales near zero."""
 ```
@@ -414,7 +482,7 @@ def initialize_finest_scale(target: Tensor) -> None:
 def decomposition_loss(
     model: MultiScaleDecomposer,
     target: torch.Tensor,
-    energy_weight: float = 0.001,
+    energy_weight: float = 0.01,
     alpha: float = 1.5,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0
@@ -441,10 +509,10 @@ def decomposition_loss(
 ```python
 def decompose_image(
     V: np.ndarray,
-    scales: List[int] = [1, 2, 4, 8],
+    scales: List[int] = [1, 2, 4, 8, 16, 32],
     n_iters: int = 500,
     lr: float = 0.01,
-    energy_weight: float = 0.001,
+    energy_weight: float = 0.01,
     alpha: float = 1.5,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
@@ -584,7 +652,7 @@ for iteration in range(n_iters):
     scales_list, upsampled_list, reconstruction = model()
 
     # Compute losses
-    L_recon = MSE(reconstruction, V)
+    L_recon = L1(reconstruction, V)  # L1 loss is default (not MSE)
     L_energy = sum(alpha^k * sum(scales_list[k]) for k in range(K)) / sum(V)
     L_total = L_recon + energy_weight * L_energy
 
@@ -660,7 +728,7 @@ scales_list, _ = decompose_image(
 )
 ```
 
-### Pattern 4: Initialization Method Selection
+### Pattern 4: Initialization Method Selection (5 Methods Available)
 
 ```python
 # Coarse initialization (default and STRONGLY RECOMMENDED)
@@ -796,6 +864,9 @@ if best_state is not None:
 1. **Quality guarantee**: Always returns best result, not final iteration
 2. **Prevents regression**: If optimization overshoots, restores earlier state
 3. **Smart logging**: Only logs significant improvements (> 5% reduction)
+   - Uses threshold: `current_error < previous_best * 0.95` (5% improvement)
+   - Prevents log spam during fine-tuning phase
+   - Always logs first 10 iterations for debugging
 4. **Deep copies**: Saves state without interfering with gradient computation
 
 **Statistics Returned**:
@@ -854,7 +925,7 @@ else:
    - Energy weight parameter effect
 
 4. **test_initialization.py** (integrated in test_decomposition_basic.py):
-   - All four initialization methods: pyramid, uniform, coarse, finest
+   - All five initialization methods: coarse (default), pyramid, uniform, finest, zero
    - Energy distribution verification for each method
    - Convergence properties comparison
    - Numerical stability of initialization
@@ -945,13 +1016,17 @@ if stats['movie_frames'] is not None:
 
 ```python
 movie_frames = {
-    "target": [frame_0, frame_1, ...],           # Target image (constant)
+    "target": [frame_0, frame_1, ...],           # Target image (constant, one per frame)
     "reconstruction": [frame_0, frame_1, ...],   # Reconstruction at each iteration
     "residual": [frame_0, frame_1, ...],        # Absolute residual at each iteration
-    "scales": [[scale_0_0, scale_1_0, ...],     # List of scale components per frame
-               [scale_0_1, scale_1_1, ...], ...], # Each inner list = all scales for that frame
-    "iterations": [iter_0, iter_1, ...]         # Iteration numbers
+    "scales": [[scale_0_0, scale_1_0, ...],     # Nested list: outer=frames, inner=scales
+               [scale_0_1, scale_1_1, ...], ...], # Each inner list contains K numpy arrays
+    "iterations": [iter_0, iter_1, ...]         # Iteration numbers (one per frame)
 }
+
+# Note: Each scale component in "scales" is stored as a numpy array at its native resolution
+# (not upsampled). The show_optimization_movie() function upsamples them for visualization.
+# This saves memory while preserving the ability to visualize individual scale evolution.
 ```
 
 ### Memory Management

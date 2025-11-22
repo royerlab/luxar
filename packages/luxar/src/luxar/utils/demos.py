@@ -84,34 +84,52 @@ def create_lorenz_attractor(
     t = np.linspace(0, 1, n_points)
     hue = (t * 2) % 1.0  # Cycle through hues twice
 
-    # Convert HSV to RGB (now using float32 for HDR)
-    colors = np.zeros((n_points, 3), dtype=np.float32)
-    for i in range(n_points):
-        h = hue[i]
-        # Full saturation and value for vibrant colors
-        s, v = 1.0, 1.0
+    # Convert HSV to RGB using vectorized operations
+    # Full saturation and value for vibrant colors
+    s, v = 1.0, 1.0
 
-        # HSV to RGB conversion
-        c = v * s
-        x_val = c * (1 - abs((h * 6) % 2 - 1))
-        m = v - c
+    # HSV to RGB vectorized conversion
+    # Based on standard HSV→RGB algorithm, vectorized for performance
+    c = v * s  # Chroma
+    h_prime = hue * 6.0  # Hue in [0, 6) range
+    x = c * (1 - np.abs(h_prime % 2 - 1))  # Intermediate value
+    m = v - c  # Match value
 
-        h_i = int(h * 6)
-        if h_i == 0:
-            r, g, b = c, x_val, 0.0
-        elif h_i == 1:
-            r, g, b = x_val, c, 0.0
-        elif h_i == 2:
-            r, g, b = 0.0, c, x_val
-        elif h_i == 3:
-            r, g, b = 0.0, x_val, c
-        elif h_i == 4:
-            r, g, b = x_val, 0.0, c
-        else:
-            r, g, b = c, 0.0, x_val
+    # Initialize RGB arrays
+    r = np.zeros(n_points, dtype=np.float32)
+    g = np.zeros(n_points, dtype=np.float32)
+    b = np.zeros(n_points, dtype=np.float32)
 
-        # Store as float32 HDR colors
-        colors[i] = (r + m, g + m, b + m)
+    # Apply RGB values based on hue sector (0-5)
+    # Each sector represents 60° of the color wheel
+    sector = np.floor(h_prime).astype(int)
+
+    # Sector 0: Red to Yellow (R=max, G=rising, B=0)
+    mask = (sector == 0)
+    r[mask], g[mask], b[mask] = c, x[mask], 0.0
+
+    # Sector 1: Yellow to Green (R=falling, G=max, B=0)
+    mask = (sector == 1)
+    r[mask], g[mask], b[mask] = x[mask], c, 0.0
+
+    # Sector 2: Green to Cyan (R=0, G=max, B=rising)
+    mask = (sector == 2)
+    r[mask], g[mask], b[mask] = 0.0, c, x[mask]
+
+    # Sector 3: Cyan to Blue (R=0, G=falling, B=max)
+    mask = (sector == 3)
+    r[mask], g[mask], b[mask] = 0.0, x[mask], c
+
+    # Sector 4: Blue to Magenta (R=rising, G=0, B=max)
+    mask = (sector == 4)
+    r[mask], g[mask], b[mask] = x[mask], 0.0, c
+
+    # Sector 5: Magenta to Red (R=max, G=0, B=falling)
+    mask = (sector == 5)
+    r[mask], g[mask], b[mask] = c, 0.0, x[mask]
+
+    # Add match value to get final RGB (adjust for brightness)
+    colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
 
     # Generate radii based on position in the trajectory (growing over time)
     # This creates a visual effect of the attractor "growing" as it evolves

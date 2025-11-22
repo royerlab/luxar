@@ -133,7 +133,7 @@ from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 # Use default (tiled seeding with probabilistic fairness)
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     enable_dynamic_ops=True,  # Enabled by default
 )
@@ -143,7 +143,7 @@ config = DynamicOpsConfig()
 config.k_max_residuals = 20              # More seeds per iteration
 config.num_tiles_per_dim = 8             # Custom tiling
 
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     enable_dynamic_ops=True,
     dynamic_config=config,
@@ -154,7 +154,7 @@ params, amps, stats = fit_gaussian_splats(
 config = DynamicOpsConfig()
 config.enable_tiled_seeding = False      # Global peak finding
 
-params, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     image,
     enable_dynamic_ops=True,
     dynamic_config=config,

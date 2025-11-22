@@ -6,12 +6,15 @@ enabling memory-efficient handling of arbitrarily large datasets.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol, Tuple, Union
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
+
+if TYPE_CHECKING:
+    import zarr
 
 # Type aliases for arrays that can be written with different dtypes
 # The actual dtype used depends on the DataTypeConfig settings
@@ -80,24 +83,24 @@ class ZarrWriterProtocol(Protocol):
     def create_resizable_dataset(
         self,
         path: NodePath,
-        dtype: Any,
+        dtype: np.dtype,
         shape: Tuple[int, ...],
         maxshape: MaxShape = None,
         chunks: ChunkSpec = True,
-    ) -> Any:
+    ) -> "zarr.Array":
         """Create a resizable dataset for streaming writes.
 
         This enables appending data in batches without loading existing data.
 
         Args:
             path: Path for the dataset within the Zarr store
-            dtype: Data type for the dataset
+            dtype: Data type for the dataset (numpy dtype)
             shape: Initial shape of the dataset
             maxshape: Maximum shape (None for unlimited dimensions)
             chunks: Chunk configuration for the dataset
 
         Returns:
-            Handle to the created dataset that supports resizing and slicing
+            Zarr array handle that supports resizing and slicing
         """
         ...
 

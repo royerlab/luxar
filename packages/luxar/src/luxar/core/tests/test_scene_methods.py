@@ -143,3 +143,72 @@ class TestSceneMethods:
         # Scene should still be finalized
         store = zarr.open_group(tmp_path / "test.zarr", mode="r")
         assert "points" in store
+
+    def test_points_metadata_preservation(self, tmp_path):
+        """Test that Points object preserves metadata from write_points().
+
+        This test catches the bug where Node.__init__() would overwrite
+        Points._metadata by initializing it after Points had set it.
+
+        Critical metadata to verify:
+        - has_colors, has_radii, has_sharpness (boolean flags)
+        - max_radius (float value)
+        - n_points, dims (shape info)
+        """
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
+
+            # Create points with all attributes
+            n_points = 100
+            positions = np.random.randn(n_points, 3).astype(np.float32)
+            colors = np.random.rand(n_points, 3).astype(np.float32)
+            radii = np.ones(n_points, dtype=np.float32) * 0.15
+            sharpness = np.ones(n_points, dtype=np.float32) * 2.0
+
+            points = scene.add_points(
+                "test_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+            )
+
+            # Verify all metadata is preserved
+            assert points.has_colors == True, "has_colors should be True"
+            assert points.has_radii == True, "has_radii should be True"
+            assert points.has_sharpness == True, "has_sharpness should be True"
+
+            # Verify metadata dict has all expected keys
+            assert "n_points" in points.metadata, "n_points missing from metadata"
+            assert "dims" in points.metadata, "dims missing from metadata"
+            assert "has_colors" in points.metadata, "has_colors missing"
+            assert "has_radii" in points.metadata, "has_radii missing"
+            assert "has_sharpness" in points.metadata, "has_sharpness missing"
+            assert "max_radius" in points.metadata, "max_radius missing"
+
+            # Verify values
+            assert points.n_points == n_points
+            assert points.metadata["dims"] == 3
+            assert 0.14 < points.metadata["max_radius"] < 0.16, "max_radius incorrect"
+
+    def test_points_metadata_without_optional_attributes(self, tmp_path):
+        """Test Points metadata when only positions are provided."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene()
+
+            positions = np.random.randn(50, 3).astype(np.float32)
+            points = scene.add_points("minimal", positions)
+
+            # Should have basic metadata
+            assert points.n_points == 50
+            assert points.metadata["dims"] == 3
+
+            # Should NOT have optional attributes
+            assert points.has_colors == False
+            assert points.has_radii == False
+            assert points.has_sharpness == False
+
+            # Metadata dict should still exist and have required keys
+            assert "n_points" in points.metadata
+            assert "has_colors" in points.metadata
+            assert points.metadata["has_colors"] == False

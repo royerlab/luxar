@@ -10,7 +10,7 @@ The fitting package implements a modular, type-safe pipeline for fitting n-dimen
 - **Model & Rendering**: [models/SPECIFICATIONS.md](../models/SPECIFICATIONS.md)
 - **Optimizers**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
 - **Utilities**: [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md)
-- **Dynamic Operations**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Section 4
+- **Dynamic Operations**: [dynamic_ops/README.md](dynamic_ops/README.md) - Adaptive seeding and pruning
 
 ## Design Principles
 
@@ -42,6 +42,8 @@ class FitConfig:
     # Input data
     V: np.ndarray                            # Input image/volume to fit (ndim >= 1)
     seeds: Optional[np.ndarray | float]      # Centers array (N, d) OR float proportion (e.g., 0.01 = 1%)
+    seed_method: str                         # Method for auto seed generation: "auto", "multiscale_gaussian", "multiscale_decomposition"
+    seed_kwargs: Dict[str, Any]              # Additional parameters for seed generation function
 
     # Normalization
     norm_percentile: float                   # Percentile for normalization (0 = full range, >0 = percentile clipping)
@@ -146,11 +148,18 @@ class PreprocessedData:
 ```python
 @dataclass
 class ModelComponents:
-    model: GaussianSplatModel              # PyTorch model with splat parameters
-    optimizer: PerSplatAdam                # Per-splat Adam optimizer
-    scheduler: Union[PerSplatReduceLROnPlateau, PerSplatExponentialLR]  # Learning rate scheduler
-    coordinator: ModelOptimizerCoordinator  # Coordinates dynamic operations
+    """
+    Components needed during optimization.
+    
+    Contains model, optimizer, scheduler, and coordinator.
+    """
+    model: Any  # GaussianSplatModel - PyTorch model with splat parameters
+    optimizer: torch.optim.Optimizer  # PerSplatAdam - Per-splat Adam optimizer
+    scheduler: Any  # Learning rate scheduler (plateau or exponential)
+    coordinator: Any  # ModelOptimizerCoordinator - Coordinates dynamic operations
 ```
+
+**Note**: Type annotations use `Any` to avoid circular imports, but actual types are documented in comments.
 
 ### OptimizationResults
 
@@ -288,20 +297,26 @@ else:
 
 **Seed Generation**:
 - **If seeds provided**: Validate shape and convert to numpy
-- **If seeds is None**: Auto-generate using `find_candidates_multiscale_gaussian()`:
+- **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
-  seeds = find_candidates_multiscale_gaussian(
-      V,
-      spacing=None,
-      scales=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),  # Universal scale series
-      peaks_per_scale=max(50, int(V.size * 0.002)),  # Volume-proportional density (~0.2%)
-      percentile_thresh=70.0,  # Inclusive detection
-      min_dist=2.0,
-      add_intensity_grid=False,  # Grid sampling disabled by default
-      grid_step=None,
-      grid_percentile=60.0
+  # Generate candidates using both methods for comprehensive coverage
+  from luxar.gsplats.seeds import (
+      combine_seeds,
+      find_seeds_multiscale_decomposition,
+      find_seeds_multiscale_gaussian,
+  )
+  
+  cand_decomp = find_seeds_multiscale_decomposition(V)
+  cand_multiscale = find_seeds_multiscale_gaussian(V)
+  
+  # Combine with decomposition candidates prioritized (coarse structure first)
+  seed_centers = combine_seeds(
+      cand_decomp,  # Decomposition first (global structure priority)
+      cand_multiscale,  # Then multiscale (local features)
   )
   ```
+  
+  **Rationale**: Combined approach ensures both global structure (decomposition) and local features (multiscale) are captured.
 
 **L1 Regularization Defaults**:
 ```python
@@ -345,16 +360,33 @@ def initialize_optimization(
 
 **Model Initialization**:
 ```python
-# Create model
+# Initialize parameters
+L0 = np.zeros((N, d, d), dtype=np.float32)
+for i in range(d):
+    L0[:, i, i] = config.init_sigma_vox
+
+# Extract amplitudes from image at seed locations  
+idx = np.clip(
+    np.round(preprocessed_data.seed_centers).astype(int),
+    0,
+    np.array(config.V.shape) - 1,
+)
+amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
+
+# Build model (handles internal parameter transformations)
 model = GaussianSplatModel(
-    centers=preprocessed_data.seed_centers,
     shape=config.V.shape,
+    centers0=preprocessed_data.seed_centers,
+    L0=L0,
+    amps0=amps0,
+    sigma_min_diag=config.sigma_min_diag,
+    sigma_max_diag=config.sigma_max_diag,
+    truncate=config.truncate,
     device=config.device,
-    sigma_min=config.sigma_min_vox,
-    sigma_max=config.sigma_max_vox,
-    init_sigma=config.init_sigma_vox
 )
 ```
+
+**Note**: GaussianSplatModel internally handles parameter transformations (logit for centers, inverse softplus for amplitudes/diagonals, zero initialization for sharpness offsets).
 
 **GaussianSplatModel Initialization Logic**:
 1. **Centers**: Transform to logit space
@@ -393,53 +425,33 @@ model = GaussianSplatModel(
    sharpness_offsets_raw = torch.zeros(N, dtype=torch.float32, device=device)
    ```
 
-**Optimizer Initialization**:
+**Optimizer Setup**:
 ```python
-optimizer = PerSplatAdam(
-    model.parameters(),
-    n_splats=preprocessed_data.n_seeds,
-    lr=config.lr,  # Base learning rate (gradient dilution applied internally)
-    betas=(0.9, 0.999),
-    eps=1e-8,
-    shape=config.V.shape  # For gradient dilution compensation
+# Setup per-splat optimizer using helper function
+# Note: Gradient dilution compensation is handled internally by the optimizer
+optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
+    model,
+    lr=config.lr,  # Base learning rate
+    scheduler_type=config.scheduler_type,
+    patience=config.patience,
+    factor=config.factor,
 )
 ```
 
-**PerSplatAdam Internal Behavior**:
-- Applies gradient dilution compensation automatically based on dimensionality
-- Uses parameter-type-specific learning rate multipliers:
-  - Position (μ): `×0.1` (slow position updates, prevent proliferation)
-  - Variance (L_diag, L_off): `×1.0` with gradient dilution compensation
-  - Amplitude (a): `×2.0` (fast intensity convergence)
-  - Sharpness (s'): `×0.5` (conservative, no gradient dilution since always 1 scalar)
+**What create_per_splat_optimizer_setup() does internally**:
+1. Creates PerSplatAdam optimizer with:
+   - Gradient dilution compensation based on dimensionality
+   - Parameter-type-specific learning rate multipliers:
+     - Position (μ): ×0.1 (slow position updates, prevent proliferation)
+     - Variance (L_diag, L_off): ×1.0 with gradient dilution compensation
+     - Amplitude (a): ×2.0 (fast intensity convergence)
+     - Sharpness (s'): ×0.5 (conservative, no gradient dilution since always 1 scalar)
 
-**Scheduler Initialization**:
-```python
-if config.scheduler_type == "plateau":
-    scheduler = PerSplatReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=config.plateau_factor,
-        patience=config.plateau_patience,
-        min_lr=config.plateau_min_lr,
-        verbose=config.verbose
-    )
-else:  # "exponential"
-    scheduler = PerSplatExponentialLR(
-        optimizer,
-        gamma=config.exp_gamma,
-        verbose=config.verbose
-    )
-```
+2. Creates scheduler based on scheduler_type:
+   - "plateau": PerSplatReduceLROnPlateau with patience and factor
+   - "exponential": PerSplatExponentialLR with gamma
 
-**Coordinator Initialization**:
-```python
-coordinator = ModelOptimizerCoordinator(
-    model=model,
-    optimizer=optimizer,
-    scheduler=scheduler
-)
-```
+3. Creates ModelOptimizerCoordinator to manage dynamic operations
 
 ### Stage 4: Loss Function Creation (`losses.py`)
 
@@ -749,17 +761,17 @@ def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
     preprocessed_data: PreprocessedData,
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+) -> GaussianSplatResult:
     """
     Finalize optimization results for return to user.
 
     Steps:
     1. Extract parameters from OptimizationResults (already contains best tensors)
     2. Convert tensors to numpy
-    3. Pack parameters: [centers | packed_Cholesky | sharpness]
+    3. Pack Cholesky factors (lower triangular only)
     4. Rescale amplitudes to original intensity range
     5. Compile comprehensive statistics
-    6. Return (params, amplitudes, stats) tuple
+    6. Return GaussianSplatResult dataclass
     """
 ```
 
@@ -772,21 +784,14 @@ amps_np = optimization_results.amps.cpu().numpy()            # Shape: (N,)
 sharpness_np = optimization_results.sharpness.cpu().numpy()  # Shape: (N,)
 ```
 
-**Parameter Packing**:
+**Cholesky Factor Packing**:
 ```python
-# Pack Cholesky factors (lower triangular)
+# Pack Cholesky factors (lower triangular) for compact storage
 from luxar.gsplats.utils import pack_tril
 
 N, d = centers_np.shape
-packed_L = pack_tril(Ls_np)  # Shape: (N, d*(d+1)//2)
-
-# Combine: [centers | packed_L | sharpness]
-params = np.column_stack([
-    centers_np,       # (N, d)
-    packed_L,         # (N, d*(d+1)//2)
-    sharpness_np      # (N, 1)
-])
-# Final shape: (N, d + d*(d+1)//2 + 1)
+cholesky_factors_packed = pack_tril(Ls_np)  # Shape: (N, d*(d+1)//2)
+# This extracts only the lower triangular elements in row-major order
 ```
 
 **Amplitude Rescaling**:
@@ -816,7 +821,7 @@ stats = {
 
     # Final state
     "n_splats": len(amps_np),
-    "n_seeds": preprocessed_data.N,  # Number of initial candidates
+    "n_seeds": preprocessed_data.N,  # Number of initial seeds
 
     # Sharpness statistics
     "sharpness_mean": float(np.mean(sharpness_np)),
@@ -846,7 +851,15 @@ stats = {
 
 **Return Value**:
 ```python
-return params, amplitudes_rescaled, stats
+from luxar.gsplats.fitting.results import GaussianSplatResult
+
+return GaussianSplatResult(
+    centers=centers_np,
+    amplitudes=amplitudes_rescaled,
+    cholesky_factors=cholesky_factors_packed,
+    sharpnesses=sharpness_np,
+    stats=stats
+)
 ```
 
 ## Visualization Module (`visualization.py`)
@@ -858,46 +871,59 @@ return params, amplitudes_rescaled, stats
 **Function Signature**:
 ```python
 def display_compression_analysis(
-    V_shape: Tuple[int, ...],
-    n_splats: int,
-    V_dtype: np.dtype = np.float32,
-    verbose: bool = True
-) -> Dict[str, float]:
+    V: np.ndarray,
+    params: np.ndarray,
+    amps: np.ndarray
+) -> None:
     """
-    Calculate and display compression statistics.
-
-    Returns:
-        stats: Dictionary with compression metrics
+    Calculate and display compression ratio analysis.
+    
+    Compares storage requirements of original image vs Gaussian splat representation.
+    
+    Parameters
+    ----------
+    V : np.ndarray
+        Original input image/volume
+    params : np.ndarray
+        Fitted parameters [centers, packed_cholesky, sharpness]
+    amps : np.ndarray
+        Fitted amplitudes
     """
 ```
 
 **Calculation**:
 ```python
-# Original data size
-original_bytes = np.prod(V_shape) * np.dtype(V_dtype).itemsize
+# Original image storage (assuming float32)
+original_bytes = V.size * 4  # 4 bytes per float32
+original_bits = original_bytes * 8
 
-# Splat representation size
-d = len(V_shape)
-params_per_splat = d + d*(d+1)//2 + 1  # centers + Cholesky + sharpness
-splat_bytes = n_splats * (params_per_splat + 1) * 4  # +1 for amplitude, 4 bytes per float32
+# Gaussian splat representation storage
+n_splats = len(amps)
+d = len(V.shape)
 
-# Compression ratio
-compression_ratio = original_bytes / splat_bytes
+from luxar.gsplats.utils.trils import tril_size
+floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
+splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
+splat_bits = splat_bytes * 8
 
-stats = {
-    "original_bytes": original_bytes,
-    "splat_bytes": splat_bytes,
-    "compression_ratio": compression_ratio,
-    "savings_percent": (1 - 1/compression_ratio) * 100
-}
+# Calculate compression metrics
+compression_ratio = (
+    original_bytes / splat_bytes if splat_bytes > 0 else float("inf")
+)
+compression_percent = (
+    (1.0 - splat_bytes / original_bytes) * 100.0 if original_bytes > 0 else 0.0
+)
+bits_per_pixel = splat_bits / V.size
 
-if verbose:
-    aprint(f"Original: {original_bytes / 1e6:.2f} MB")
-    aprint(f"Splats: {splat_bytes / 1e6:.2f} MB")
-    aprint(f"Compression: {compression_ratio:.2f}×")
-    aprint(f"Savings: {stats['savings_percent']:.1f}%")
-
-return stats
+# Display results (always prints, no verbose flag)
+aprint(f"Original image: {original_bytes:,} bytes ({original_bits:,} bits)")
+aprint(f"Splat representation: {splat_bytes:,} bytes ({splat_bits:,} bits)")
+aprint(f"Compression ratio: {compression_ratio:.2f}:1")
+aprint(f"Space savings: {compression_percent:.1f}%")
+aprint(f"Bits per pixel: {bits_per_pixel:.3f} (original: 32.000)")
+aprint(
+    f"Storage efficiency: {n_splats} splats ({floats_per_splat} floats each)"
+)
 ```
 
 ### show_optimization_movie()
@@ -907,22 +933,29 @@ return stats
 **Function Signature**:
 ```python
 def show_optimization_movie(
-    movie_frames: Dict[str, List],
-    original_shape: Tuple[int, ...],
-    title: str = "Optimization Progress"
+    movie_frames: Dict[str, Any],
+    shape: tuple
 ) -> None:
     """
-    Display napari viewer with optimization movie.
-
+    Display napari viewer with optimization movie showing target, reconstruction, and residual over time.
+    
+    Parameters
+    ----------
+    movie_frames : dict
+        Dictionary containing movie frame data
+    shape : tuple
+        Shape of the original data
+    
     Requires:
         - napari installed
         - movie_frames from optimization results
-
+    
     Layers:
         - Target (constant)
         - Reconstruction (changing)
         - Residual (abs difference, changing)
-
+        - Splat Centers (optional, commented out in implementation)
+    
     Time Slider:
         - Scrub through optimization iterations
     """
@@ -1208,7 +1241,7 @@ Key extension points in `optimization.py`:
 - `../models/gsplats/gsplat_model.py` - PyTorch model definition
 - `../optim/per_splat_adam.py` - Per-splat optimizer
 - `../dynamic_ops.py` - Adaptive topology operations
-- `../candidates.py` - Seed generation
+- `../seeds.py` - Seed generation
 
 **Related Specifications**:
 - [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) - Main Gaussian splatting specification

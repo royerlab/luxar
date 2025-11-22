@@ -31,14 +31,19 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     """
     V = config.V.copy()  # Work with a copy
     seeds = config.seeds
+    seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
     # Generate seed centers
     if seeds is None:
-        # Auto-generate with default proportion
-        seed_centers = _generate_candidates(V, None, config.verbose)
+        # Auto-generate using specified method
+        seed_centers = _generate_candidates(
+            V, None, config.seed_method, config.verbose, **seed_kwargs
+        )
     elif isinstance(seeds, (int, float)):
-        # User-specified proportion
-        seed_centers = _generate_candidates(V, float(seeds), config.verbose)
+        # User-specified proportion (seed_method still applies)
+        seed_centers = _generate_candidates(
+            V, float(seeds), config.seed_method, config.verbose, **seed_kwargs
+        )
     else:
         # User-provided array of seed centers
         seed_centers = seeds
@@ -99,10 +104,14 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
 
 def _generate_candidates(
-    V: np.ndarray, proportion: float | None, verbose: bool
+    V: np.ndarray,
+    proportion: float | None,
+    seed_method: str,
+    verbose: bool,
+    **seed_kwargs,
 ) -> np.ndarray:
     """
-    Generate seed centers using multiscale approach.
+    Generate seed centers using specified detection method(s).
 
     Parameters
     ----------
@@ -111,40 +120,30 @@ def _generate_candidates(
     proportion : float | None
         Target proportion of voxels to use as seeds (0 < proportion <= 1.0).
         If None, uses default heuristic (~1% of voxels).
+        Note: Currently not enforced, seed generation methods use their own heuristics.
+    seed_method : str
+        Seed generation method: "gaussian", "decomposition", "both",
+        "decomposition,gaussian", or "gaussian,decomposition"
     verbose : bool
         Whether to print progress
+    **seed_kwargs
+        Additional parameters routed to seed generation methods
 
     Returns
     -------
     np.ndarray
         Generated seed centers (N, ndim)
     """
-    from luxar.gsplats.candidates import (
-        combine_candidates,
-        find_candidates_from_decomposition,
-        find_candidates_multiscale_gaussian,
-    )
+    from luxar.gsplats.seeds import generate_seeds
 
-    # Generate candidates using both methods for comprehensive coverage
-    cand_decomp = find_candidates_from_decomposition(V)
-    cand_multiscale = find_candidates_multiscale_gaussian(V)
-
-    # Combine with decomposition candidates prioritized (coarse structure first)
-    seed_centers = combine_candidates(
-        cand_decomp,  # Decomposition first (global structure priority)
-        cand_multiscale,  # Then multiscale (local features)
-    )
+    # Generate seeds using specified method
+    seed_centers = generate_seeds(V, method=seed_method, **seed_kwargs)
 
     if verbose:
         actual_proportion = len(seed_centers) / V.size * 100
         aprint(
-            f"Generated {len(seed_centers)} seed centers from combined methods "
+            f"Generated {len(seed_centers)} seed centers using '{seed_method}' method "
             f"({actual_proportion:.3f}% of voxels)"
-        )
-        aprint(
-            f"  Decomposition: {len(cand_decomp)}, "
-            f"Multiscale Gaussian: {len(cand_multiscale)}, "
-            f"Combined: {len(seed_centers)}"
         )
 
     return seed_centers

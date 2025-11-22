@@ -9,16 +9,17 @@ This package centralizes all type-related code to ensure consistency and type sa
 ## Modules
 
 ### `protocols.py`
-Protocol definitions, dataclasses, validation functions, and type guards.
+Protocol definitions for type checking and validation function imports.
 
 **Key Components:**
-- **Protocols**: `CompressorProtocol`, `ZarrGroupProtocol`, `NodeProtocol`, `PointsProtocol`, `SceneProtocol`
-- **Dataclasses**: `DimensionMetadata`
-- **Validation Functions**: `validate_positions()`, `validate_colors()`, `validate_transform()`, etc.
+- **Protocols**: `CompressorProtocol`, `NodeProtocol`, `PointsProtocol`, `SceneProtocol`
+- **Validation Functions**: Imported from `validation/types.py` and re-exported for convenience
 - **Type Guards**: `is_position_array()`, `is_color_array()`, `is_transform_matrix()`
 - **Generic Type Variables**: `NodeT`, `NumericT`, `ArrayT`, `ZarrDataT`
 
-**Purpose**: Define contracts and validate runtime data
+**Purpose**: Define contracts for duck typing and centralize validation imports
+
+**Note**: Validation functions are now defined in `validation/types.py` to avoid duplication
 
 ### `aliases.py`
 Simple type aliases for improved readability.

@@ -21,7 +21,7 @@ class FitConfig:
     Contains all parameters and settings needed for the fitting process.
     """
 
-    # Input data
+    # Input data (required)
     V: np.ndarray
     seeds: Optional[np.ndarray | float]  # Can be array of centers or float proportion
 
@@ -65,6 +65,10 @@ class FitConfig:
     # Device and logging
     device: torch.device
     verbose: bool
+
+    # Seed generation (with defaults - must come after required fields)
+    seed_method: str = "both"  # "gaussian", "decomposition", "both", etc.
+    seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
 
 
 @dataclass

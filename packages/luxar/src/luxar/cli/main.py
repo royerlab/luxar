@@ -154,7 +154,16 @@ def serve(
                     "❌ Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
                 )
                 raise typer.Exit(1)
-            _serve_viewer(host, viewer_port, None, open_browser)
+
+            # Find available port
+            actual_viewer_port = find_available_port(viewer_port)
+            if actual_viewer_port is None:
+                aprint(f"❌ Error: No available ports found near {viewer_port}")
+                raise typer.Exit(1)
+            if actual_viewer_port != viewer_port:
+                aprint(f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead")
+
+            _serve_viewer(host, actual_viewer_port, None, open_browser)
             return
 
         # Require path for data serving
@@ -173,6 +182,25 @@ def serve(
             aprint(f"❌ Error: {path} is not a directory")
             raise typer.Exit(1)
 
+        # Find available ports (auto-increment if requested ports are busy)
+        actual_port = find_available_port(port)
+        if actual_port is None:
+            aprint(f"❌ Error: No available ports found near {port}")
+            raise typer.Exit(1)
+
+        if actual_port != port:
+            aprint(f"⚠️  Port {port} busy, using {actual_port} instead")
+
+        if viewer:
+            actual_viewer_port = find_available_port(viewer_port)
+            if actual_viewer_port is None:
+                aprint(f"❌ Error: No available ports found near {viewer_port}")
+                raise typer.Exit(1)
+            if actual_viewer_port != viewer_port:
+                aprint(f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead")
+        else:
+            actual_viewer_port = viewer_port
+
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
 
         # Add CORS middleware to allow requests from the viewer
@@ -187,7 +215,7 @@ def serve(
         # Mount the static files handler with directory listing
         api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
-        aprint(f"🛰️  Serving {serve_path} at http://{host}:{port}/")
+        aprint(f"🛰️  Serving {serve_path} at http://{host}:{actual_port}/")
 
         # Also serve viewer if requested
         if viewer:
@@ -198,21 +226,21 @@ def serve(
                 # Start viewer in a separate thread
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
-                    args=(host, viewer_port, f"http://{host}:{port}/", False),
+                    args=(host, actual_viewer_port, f"http://{host}:{actual_port}/", False),
                     daemon=True,
                 )
                 viewer_thread.start()
                 time.sleep(1)  # Give viewer time to start
         else:
-            aprint(f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{port}/")
+            aprint(f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{actual_port}/")
 
         # Open browser if requested
         if open_browser:
-            url = f"http://{host}:{viewer_port if viewer else 5173}/?src=http://{host}:{port}/"
+            url = f"http://{host}:{actual_viewer_port if viewer else 5173}/?src=http://{host}:{actual_port}/"
             time.sleep(1)  # Give servers time to start
             open_browser_func(url)
 
-        uvicorn.run(api, host=host, port=port, reload=False, log_level="warning")
+        uvicorn.run(api, host=host, port=actual_port, reload=False, log_level="warning")
     except Exception as e:
         aprint(f"❌ Error serving path: {e}")
         raise typer.Exit(1)
@@ -301,8 +329,16 @@ def viewer(
             if data.name.endswith(".zarr"):
                 data_url += data.name
 
+        # Find available port for viewer
+        actual_viewer_port = find_available_port(port)
+        if actual_viewer_port is None:
+            aprint(f"❌ No available ports near {port}")
+            raise typer.Exit(1)
+        if actual_viewer_port != port:
+            aprint(f"⚠️  Viewer port {port} busy, using {actual_viewer_port} instead")
+
         # Serve viewer
-        _serve_viewer(host, port, data_url, open_browser)
+        _serve_viewer(host, actual_viewer_port, data_url, open_browser)
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")

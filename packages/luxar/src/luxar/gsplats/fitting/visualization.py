@@ -9,10 +9,10 @@ from typing import Any, Dict
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats.fit_result import GaussianSplatResult
 
-def display_compression_analysis(
-    V: np.ndarray, params: np.ndarray, amps: np.ndarray
-) -> None:
+
+def display_compression_analysis(V: np.ndarray, result: GaussianSplatResult) -> None:
     """
     Calculate and display compression ratio analysis.
 
@@ -22,10 +22,8 @@ def display_compression_analysis(
     ----------
     V : np.ndarray
         Original input image/volume
-    params : np.ndarray
-        Fitted parameters [centers, packed_cholesky]
-    amps : np.ndarray
-        Fitted amplitudes
+    result : GaussianSplatResult
+        Fitted Gaussian splat result
     """
     with asection("Compression Analysis"):
         # Original image storage (assuming float32)
@@ -33,14 +31,14 @@ def display_compression_analysis(
         original_bits = original_bytes * 8
 
         # Gaussian splat representation storage
-        # params contains: centers (d floats) + packed L matrix (tril_size(d) floats)
-        # amps contains: amplitudes (1 float per splat)
-        n_splats = len(amps)
+        # result contains: centers (d floats) + packed L matrix (tril_size(d) floats)
+        # + sharpness (1 float) + amplitude (1 float per splat)
+        n_splats = len(result.amplitudes)
         d = len(V.shape)
 
         from luxar.gsplats.utils.trils import tril_size
 
-        floats_per_splat = d + tril_size(d) + 1  # centers + covariance + amplitude
+        floats_per_splat = d + tril_size(d) + 1 + 1  # centers + covariance + sharpness + amplitude
         splat_bytes = n_splats * floats_per_splat * 4  # 4 bytes per float32
         splat_bits = splat_bytes * 8
 

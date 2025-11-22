@@ -42,6 +42,8 @@ from .core.transforms import (
     identity,
     inverse,
     look_at,
+    prepare_transform_for_zarr,
+    read_transform_from_zarr,
     rotate,
     rotate_x,
     rotate_y,
@@ -72,7 +74,6 @@ from .typing_utils.enums import (
     PhysicalUnit,
     RenderingLimits,
 )
-from .typing_utils.protocols import DimensionMetadata
 
 __version__ = "2025.08.03"
 
@@ -115,7 +116,6 @@ __all__: list[str] = [
     # Dimension system
     "Dimensions",
     "Dimension",
-    "DimensionMetadata",  # Legacy support
     # Enumerations
     "BlendingMode",
     "NodeType",
@@ -144,6 +144,8 @@ __all__: list[str] = [
     "from_list",
     "inverse",
     "look_at",
+    "prepare_transform_for_zarr",
+    "read_transform_from_zarr",
     # Version
     "__version__",
 ]

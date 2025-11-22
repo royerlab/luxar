@@ -2,55 +2,52 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
-import zarr
 from arbol import aprint
 
 from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
-from ..typing_utils.protocols import ZarrGroupProtocol, validate_transform
+
+if TYPE_CHECKING:
+    from ..io.writer import ZarrWriterProtocol
 
 
 class Node:
     """A node in the Luxar scene graph.
 
     This class represents a single node in the hierarchical scene graph structure.
-    In progressive mode with a writer, nodes are lightweight metadata containers.
-    In legacy mode, they mirror Zarr groups directly.
+    Nodes are lightweight metadata containers that write data immediately through
+    the writer interface without keeping Zarr groups in memory.
 
     Args:
         name: Name of the node
-        group: Backing Zarr group (optional in progressive mode)
         parent: Parent node in the hierarchy
-        writer: Optional writer interface for progressive writing
+        writer: Writer interface for progressive writing
         **attrs: Additional attributes for the node
     """
 
     def __init__(
         self,
         name: str,
-        group: Optional[Union[zarr.Group, ZarrGroupProtocol]] = None,
         parent: Optional[Node] = None,
-        writer: Optional[Any] = None,  # ZarrWriterProtocol
+        writer: Optional[ZarrWriterProtocol] = None,
         **attrs: Any,
     ) -> None:
         """Initialize a scene graph node.
 
         Args:
             name: Name of the node
-            group: Zarr group backing this node (optional in progressive mode)
             parent: Parent node in the scene hierarchy
-            writer: Optional writer for progressive mode
+            writer: Writer interface for progressive data writing
             **attrs: Additional attributes to set on the node
         """
         self.name: str = name
-        self._group: Optional[Union[zarr.Group, ZarrGroupProtocol]] = group
         self._writer = writer
         self.parent: Optional[Node] = parent
         self.children: List[Node] = []
-        self._metadata: Dict[str, Any] = {}  # For progressive mode
-        self._attrs_cache: Dict[str, Any] = {}  # Attributes cache for progressive mode
+        self._metadata: Dict[str, Any] = {}  # Metadata storage
+        self._attrs_cache: Dict[str, Any] = {}  # Attributes cache
 
         # Determine path in hierarchy
         if parent is not None:
@@ -65,59 +62,37 @@ class Node:
             # Validate transform if present
             if "transform" in attrs:
                 try:
-                    transform_value = attrs["transform"]
-                    # Check if it's already a list (already transposed for THREE.js)
-                    if isinstance(transform_value, list) and len(transform_value) == 16:
-                        # Already in the correct format, just validate it
-                        # Convert to matrix, validate, and store back as list
-                        matrix = (
-                            np.array(transform_value, dtype=np.float32).reshape(4, 4).T
-                        )
-                        validated = validate_transform(matrix)
-                        # Store back as list in THREE.js format (transpose back)
-                        attrs["transform"] = validated.T.ravel().tolist()
-                    else:
-                        # It's a numpy array or other format, needs conversion
-                        transform_array = np.array(transform_value, dtype=np.float32)
-                        if transform_array.size == 16:
-                            transform_matrix = transform_array.reshape(4, 4)
-                            validated = validate_transform(transform_matrix)
-                            # Transpose for THREE.js (column-major order) before flattening
-                            attrs["transform"] = validated.T.ravel().tolist()
-                        else:
-                            raise ValueError(
-                                f"Transform must have 16 elements, got {transform_array.size}"
-                            )
+                    from ..core.transforms import prepare_transform_for_zarr
+
+                    # Use centralized function for consistent handling
+                    attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
                 except Exception as e:
                     aprint(f"Invalid transform for node '{name}': {e}")
                     raise ValueError(f"Invalid transform: {e}") from e
 
             # Validate rendering attributes if present
             if "opacity" in attrs:
-                from ..typing_utils.protocols import validate_opacity
+                from ..validation.types import validate_opacity
 
                 attrs["opacity"] = validate_opacity(attrs["opacity"])
 
             if "gamma" in attrs:
-                from ..typing_utils.protocols import validate_gamma
+                from ..validation.types import validate_gamma
 
                 attrs["gamma"] = validate_gamma(attrs["gamma"])
 
             if "blending_mode" in attrs:
-                from ..typing_utils.protocols import validate_blending_mode
+                from ..validation.types import validate_blending_mode
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
             # Store attributes
-            if self._group is not None:
-                # Legacy mode: write to Zarr
-                self._group.attrs.update(attrs)
-            elif self._writer is not None:
-                # Progressive mode: write via writer and cache
+            if self._writer is not None:
+                # Write via writer interface and cache
                 self._writer.write_group(self.path, **attrs)
                 self._attrs_cache.update(attrs)
             else:
-                # Metadata-only mode
+                # Metadata-only mode (no writer available)
                 self._attrs_cache.update(attrs)
 
     # --------------------------------------------------------------------- attrs
@@ -126,14 +101,9 @@ class Node:
         """Get node attributes.
 
         Returns:
-            Dictionary of node attributes (from Zarr or cache)
+            Dictionary of node attributes from cache
         """
-        if self._group is not None:
-            # Legacy mode: return Zarr attrs
-            return self._group.attrs
-        else:
-            # Progressive mode: return cached attrs
-            return self._attrs_cache
+        return self._attrs_cache
 
     # --------------------------------------------------------------- hierarchy
     def add_group(self, name: str, **attrs: Any) -> Node:
@@ -152,35 +122,21 @@ class Node:
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
 
-            # Process transform if present to convert numpy array to list
+            # Process transform if present to convert to storage format
             if "transform" in attrs:
-                transform_value = attrs["transform"]
-                if not isinstance(transform_value, list):
-                    # Convert numpy array to list for JSON serialization
-                    transform_array = np.array(transform_value, dtype=np.float32)
-                    if transform_array.size == 16:
-                        transform_matrix = transform_array.reshape(4, 4)
-                        # Transpose for THREE.js (column-major order) before flattening
-                        attrs["transform"] = transform_matrix.T.ravel().tolist()
-                    else:
-                        raise ValueError(
-                            f"Transform must have 16 elements, got {transform_array.size}"
-                        )
+                from ..core.transforms import prepare_transform_for_zarr
+
+                # Use centralized function for consistent handling
+                attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
             if self._writer is not None:
-                # Progressive mode: create via writer
+                # Create via writer interface
                 child_path = f"{self.path}/{name}" if self.path else name
                 self._writer.write_group(child_path, type="group", **attrs)
-                child_node = Node(
-                    name, group=None, parent=self, writer=self._writer, **attrs
-                )
-            elif self._group is not None:
-                # Legacy mode: create Zarr group
-                grp = self._group.require_group(name)
-                child_node = Node(name, grp, parent=self, **attrs)
+                child_node = Node(name, parent=self, writer=self._writer, **attrs)
             else:
-                # Metadata-only mode
-                child_node = Node(name, group=None, parent=self, **attrs)
+                # Metadata-only mode (no writer available)
+                child_node = Node(name, parent=self, **attrs)
 
             aprint(f"✓ Child group '{name}' added successfully.")
             return child_node
@@ -226,9 +182,10 @@ class Node:
             4x4 transformation matrix if set, None otherwise
         """
         if "transform" in self.attrs:
+            from ..core.transforms import read_transform_from_zarr
+
             transform_list = self.attrs["transform"]
-            # Transpose back from THREE.js format (column-major) to numpy format (row-major)
-            return np.array(transform_list, dtype=np.float32).reshape(4, 4).T
+            return read_transform_from_zarr(transform_list)
         return None
 
     @transform.setter
@@ -248,16 +205,10 @@ class Node:
             if "transform" in self.attrs:
                 del self.attrs["transform"]
         else:
-            # Convert and validate
-            if isinstance(matrix, list):
-                matrix = np.array(matrix, dtype=np.float32)
+            from ..core.transforms import prepare_transform_for_zarr
 
-            if matrix.size == 16:
-                matrix = matrix.reshape(4, 4)
-
-            validated = validate_transform(matrix)
-            # Transpose for THREE.js (column-major order) before flattening
-            self.attrs["transform"] = validated.T.ravel().tolist()
+            # Use centralized function for consistent handling
+            self.attrs["transform"] = prepare_transform_for_zarr(matrix)
 
     @property
     def num_children(self) -> int:
@@ -295,7 +246,7 @@ class Node:
             ValueError: If opacity is not in valid range
             TypeError: If opacity cannot be converted to float
         """
-        from ..typing_utils.protocols import validate_opacity
+        from ..validation.types import validate_opacity
 
         self.attrs["opacity"] = validate_opacity(value)
 
@@ -319,7 +270,7 @@ class Node:
             ValueError: If gamma is not in valid range
             TypeError: If gamma cannot be converted to float
         """
-        from ..typing_utils.protocols import validate_gamma
+        from ..validation.types import validate_gamma
 
         self.attrs["gamma"] = validate_gamma(value)
 
@@ -343,7 +294,7 @@ class Node:
             ValueError: If blending mode is not valid
             TypeError: If blending mode is not a string
         """
-        from ..typing_utils.protocols import validate_blending_mode
+        from ..validation.types import validate_blending_mode
 
         self.attrs["blending_mode"] = validate_blending_mode(value)
 

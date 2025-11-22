@@ -17,6 +17,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -258,7 +259,6 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             aprint(f"Created synthetic DAPI-like volume: {V.shape}")
 
     # Configure dynamic operations (residual-based seeding only)
-    # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
 
     aprint("Dynamic operations enabled (residual-based seeding):")
@@ -268,7 +268,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
-        params_full, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
@@ -286,9 +286,9 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             movie_every=1,
         )
 
-        aprint(f"🎉 Fitted {len(amps)} splats successfully")
+        aprint(f"🎉 Fitted {len(result.amplitudes)} splats successfully")
 
-        if len(amps) == 0:
+        if len(result.amplitudes) == 0:
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
@@ -298,20 +298,18 @@ with asection("3D DAPI Gaussian Splatting Demo"):
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 3
 
-# params_full includes sharpness in last column: [centers, packed_L, sharpness]
-# Extract L for energy ranking (exclude sharpness from the end)
-L_packed = params_full[:, d:-1]  # (N, 6) in 3D - centers excluded, sharpness excluded
-L_full = unpack_tril(L_packed, d)  # (N, 3, 3)
+# Extract L for energy ranking
+L_full = unpack_tril(result.cholesky_factors, d)  # (N, 3, 3)
 diag_prod = np.prod(
     np.stack([L_full[:, 0, 0], L_full[:, 1, 1], L_full[:, 2, 2]], axis=1), axis=1
 )  # ∏ diag(L)
-energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
+energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
-aprint(f"📊 Ranking {len(amps)} splats by L2 energy contribution")
+aprint(f"📊 Ranking {len(result.amplitudes)} splats by L2 energy contribution")
 
 # ----- Precompute reconstructions/residuals + wireframes per frame -----
-N = len(amps)
+N = len(result.amplitudes)
 keep_counts = np.unique(
     np.linspace(1, N, num=min(N_FRAMES, N), endpoint=True).astype(int)
 )
@@ -341,10 +339,17 @@ with asection("Computing 3D reconstruction quality at different compression leve
     for i, K in enumerate(keep_counts):
         idx = order[:K]
 
-        # Render with auto-extraction of all parameters from params_full
-        Vk = render_gaussians_numpy(
-            V.shape, params_full[idx], amps[idx], truncate=3.0
+        # Create sliced result for rendering
+        result_idx = GaussianSplatResult(
+            centers=result.centers[idx],
+            amplitudes=result.amplitudes[idx],
+            cholesky_factors=result.cholesky_factors[idx],
+            sharpnesses=result.sharpnesses[idx],
+            stats={}  # Empty stats for rendering subset
         )
+
+        # Render
+        Vk = render_gaussians_numpy(V.shape, result_idx, truncate=3.0)
         stack_recon[i] = Vk
         stack_resid[i] = V - Vk
         rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -355,7 +360,7 @@ with asection("Computing 3D reconstruction quality at different compression leve
 
         # Build 3D wireframe ellipsoids
         Lk = L_full[idx]  # (K, 3, 3)
-        Ck = params_full[idx, :3]  # (K, 3) - centers in ZYX order
+        Ck = result.centers[idx]  # (K, 3) - centers in ZYX order
 
         wireframes = []
         for j in range(len(idx)):

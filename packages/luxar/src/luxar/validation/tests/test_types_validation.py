@@ -3,12 +3,19 @@
 import numpy as np
 import pytest
 
-from luxar.typing_utils.protocols import (
+from luxar.validation.types import (
+    is_color_array,
+    is_position_array,
+    is_transform_matrix,
     validate_blending_mode,
+    validate_colors,
     validate_gamma,
     validate_node_type,
     validate_opacity,
     validate_physical_unit,
+    validate_positions,
+    validate_radii,
+    validate_sharpness,
     validate_transform,
 )
 
@@ -208,3 +215,415 @@ class TestBlendingModeValidation:
 
         with pytest.raises(ValueError, match="Invalid blending mode 'NORMAL'"):
             validate_blending_mode("NORMAL")  # Case sensitive
+
+    def test_blending_mode_type_error(self):
+        """Test that non-string blending mode raises TypeError."""
+        with pytest.raises(TypeError, match="Blending mode must be a string"):
+            validate_blending_mode(123)
+
+        with pytest.raises(TypeError, match="Blending mode must be a string"):
+            validate_blending_mode(None)
+
+        with pytest.raises(TypeError, match="Blending mode must be a string"):
+            validate_blending_mode(["normal"])
+
+
+class TestPositionsValidation:
+    """Test validate_positions function."""
+
+    def test_valid_positions_2d(self):
+        """Test that valid 2D positions are accepted."""
+        positions = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]], dtype=np.float32)
+        result = validate_positions(positions)
+        assert result.shape == (3, 2)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, positions)
+
+    def test_valid_positions_3d(self):
+        """Test that valid 3D positions are accepted."""
+        positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+        result = validate_positions(positions)
+        assert result.shape == (2, 3)
+        assert result.dtype == np.float32
+
+    def test_valid_positions_high_dimensional(self):
+        """Test that high-dimensional positions are accepted."""
+        # 5D positions
+        positions = np.random.rand(10, 5).astype(np.float32)
+        result = validate_positions(positions)
+        assert result.shape == (10, 5)
+        assert result.dtype == np.float32
+
+    def test_positions_dtype_conversion(self):
+        """Test that positions are converted to float32."""
+        # float64 to float32
+        positions_f64 = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float64)
+        result = validate_positions(positions_f64)
+        assert result.dtype == np.float32
+
+        # int to float32
+        positions_int = np.array([[0, 1], [2, 3]], dtype=np.int32)
+        result = validate_positions(positions_int)
+        assert result.dtype == np.float32
+
+    def test_positions_with_ndim_parameter(self):
+        """Test ndim parameter validation."""
+        positions_2d = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+        positions_3d = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+
+        # Correct ndim
+        result = validate_positions(positions_2d, ndim=2)
+        assert result.shape == (2, 2)
+
+        result = validate_positions(positions_3d, ndim=3)
+        assert result.shape == (2, 3)
+
+        # Incorrect ndim
+        with pytest.raises(ValueError, match="Expected 3 dimensions, got 2"):
+            validate_positions(positions_2d, ndim=3)
+
+        with pytest.raises(ValueError, match="Expected 2 dimensions, got 3"):
+            validate_positions(positions_3d, ndim=2)
+
+    def test_positions_not_numpy_array(self):
+        """Test that non-numpy array raises ValueError."""
+        with pytest.raises(ValueError, match="Positions must be a numpy array"):
+            validate_positions([[0.0, 0.0], [1.0, 1.0]])
+
+        with pytest.raises(ValueError, match="Positions must be a numpy array"):
+            validate_positions([0.0, 1.0, 2.0])
+
+    def test_positions_wrong_ndim(self):
+        """Test that wrong number of dimensions raises ValueError."""
+        # 1D array
+        positions_1d = np.array([0.0, 1.0, 2.0])
+        with pytest.raises(ValueError, match="Positions must have shape \\(N, D\\)"):
+            validate_positions(positions_1d)
+
+        # 3D array
+        positions_3d = np.random.rand(5, 3, 2)
+        with pytest.raises(ValueError, match="Positions must have shape \\(N, D\\)"):
+            validate_positions(positions_3d)
+
+    def test_positions_zero_dimensions(self):
+        """Test that positions with 0 dimensions raises ValueError."""
+        # This is an edge case - positions with shape (N, 0)
+        positions_empty = np.empty((5, 0), dtype=np.float32)
+        with pytest.raises(
+            ValueError, match="Positions must have at least 1 dimension"
+        ):
+            validate_positions(positions_empty)
+
+
+class TestColorsValidation:
+    """Test validate_colors function."""
+
+    def test_valid_colors(self):
+        """Test that valid colors are accepted."""
+        n_points = 10
+        colors = np.random.rand(n_points, 3).astype(np.float32)
+        result = validate_colors(colors, n_points)
+        assert result.shape == (n_points, 3)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, colors)
+
+    def test_colors_dtype_conversion(self):
+        """Test that colors are converted to float32."""
+        n_points = 5
+        # float64 to float32
+        colors_f64 = np.random.rand(n_points, 3)
+        result = validate_colors(colors_f64, n_points)
+        assert result.dtype == np.float32
+
+        # int to float32 (e.g., 0-255 RGB)
+        colors_int = np.array([[255, 128, 0], [0, 255, 128]], dtype=np.uint8)
+        result = validate_colors(colors_int, 2)
+        assert result.dtype == np.float32
+
+    def test_colors_hdr_values(self):
+        """Test that HDR color values (>1.0) are accepted."""
+        n_points = 3
+        # HDR colors with values > 1.0
+        colors_hdr = np.array(
+            [[1.0, 2.0, 3.0], [5.0, 10.0, 0.5], [0.1, 0.2, 20.0]], dtype=np.float32
+        )
+        result = validate_colors(colors_hdr, n_points)
+        assert result.shape == (n_points, 3)
+        np.testing.assert_array_equal(result, colors_hdr)
+
+    def test_colors_not_numpy_array(self):
+        """Test that non-numpy array raises ValueError."""
+        with pytest.raises(ValueError, match="Colors must be a numpy array"):
+            validate_colors([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 2)
+
+        with pytest.raises(ValueError, match="Colors must be a numpy array"):
+            validate_colors([1.0, 0.0, 0.0], 1)
+
+    def test_colors_wrong_shape(self):
+        """Test that wrong shape raises ValueError."""
+        n_points = 5
+        # Wrong number of points
+        colors_wrong_n = np.random.rand(10, 3).astype(np.float32)
+        with pytest.raises(ValueError, match="Colors must have shape \\(5, 3\\)"):
+            validate_colors(colors_wrong_n, n_points)
+
+        # Wrong number of channels (4 channels instead of 3)
+        colors_rgba = np.random.rand(n_points, 4).astype(np.float32)
+        with pytest.raises(ValueError, match="Colors must have shape \\(5, 3\\)"):
+            validate_colors(colors_rgba, n_points)
+
+        # 1D array
+        colors_1d = np.array([1.0, 0.0, 0.0])
+        with pytest.raises(ValueError, match="Colors must have shape \\(1, 3\\)"):
+            validate_colors(colors_1d, 1)
+
+
+class TestRadiiValidation:
+    """Test validate_radii function."""
+
+    def test_valid_radii(self):
+        """Test that valid radii are accepted."""
+        n_points = 10
+        radii = np.ones(n_points, dtype=np.float32) * 0.5
+        result = validate_radii(radii, n_points)
+        assert result.shape == (n_points,)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, radii)
+
+    def test_radii_dtype_conversion(self):
+        """Test that radii are converted to float32."""
+        n_points = 5
+        # float64 to float32
+        radii_f64 = np.ones(n_points, dtype=np.float64)
+        result = validate_radii(radii_f64, n_points)
+        assert result.dtype == np.float32
+
+        # int to float32
+        radii_int = np.array([1, 2, 3, 4, 5], dtype=np.int32)
+        result = validate_radii(radii_int, n_points)
+        assert result.dtype == np.float32
+
+    def test_radii_not_numpy_array(self):
+        """Test that non-numpy array raises ValueError."""
+        with pytest.raises(ValueError, match="Radii must be a numpy array"):
+            validate_radii([1.0, 2.0, 3.0], 3)
+
+        with pytest.raises(ValueError, match="Radii must be a numpy array"):
+            validate_radii(1.0, 1)
+
+    def test_radii_wrong_ndim(self):
+        """Test that wrong number of dimensions raises ValueError."""
+        n_points = 5
+        # 2D array
+        radii_2d = np.ones((n_points, 1), dtype=np.float32)
+        with pytest.raises(ValueError, match="Radii must have shape \\(N,\\)"):
+            validate_radii(radii_2d, n_points)
+
+        # 0D (scalar)
+        radii_scalar = np.array(1.0)
+        with pytest.raises(ValueError, match="Radii must have shape \\(N,\\)"):
+            validate_radii(radii_scalar, 1)
+
+    def test_radii_wrong_length(self):
+        """Test that wrong length raises ValueError."""
+        n_points = 5
+        radii_wrong_length = np.ones(10, dtype=np.float32)
+        with pytest.raises(ValueError, match="Radii shape .* doesn't match positions"):
+            validate_radii(radii_wrong_length, n_points)
+
+    def test_radii_negative_values(self):
+        """Test that negative radii raise ValueError."""
+        n_points = 5
+        radii_negative = np.array([1.0, 2.0, -0.5, 1.0, 1.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="All radii must be positive values"):
+            validate_radii(radii_negative, n_points)
+
+    def test_radii_zero_values(self):
+        """Test that zero radii raise ValueError."""
+        n_points = 3
+        radii_with_zero = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="All radii must be positive values"):
+            validate_radii(radii_with_zero, n_points)
+
+    def test_radii_all_negative(self):
+        """Test that all negative radii raise ValueError."""
+        n_points = 5
+        radii_all_negative = np.array([-1.0, -2.0, -3.0, -4.0, -5.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="All radii must be positive values"):
+            validate_radii(radii_all_negative, n_points)
+
+
+class TestSharpnessValidation:
+    """Test validate_sharpness function."""
+
+    def test_valid_sharpness(self):
+        """Test that valid sharpness values are accepted."""
+        n_points = 10
+        sharpness = np.ones(n_points, dtype=np.float32) * 2.0
+        result = validate_sharpness(sharpness, n_points)
+        assert result.shape == (n_points,)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, sharpness)
+
+    def test_sharpness_dtype_conversion(self):
+        """Test that sharpness values are converted to float32."""
+        n_points = 5
+        # float64 to float32
+        sharpness_f64 = np.ones(n_points, dtype=np.float64) * 1.5
+        result = validate_sharpness(sharpness_f64, n_points)
+        assert result.dtype == np.float32
+
+        # int to float32
+        sharpness_int = np.array([1, 2, 3, 2, 1], dtype=np.int32)
+        result = validate_sharpness(sharpness_int, n_points)
+        assert result.dtype == np.float32
+
+    def test_sharpness_typical_range(self):
+        """Test sharpness in typical range [0.5, 10.0] passes without warning."""
+        n_points = 5
+        sharpness = np.array([0.5, 1.0, 5.0, 8.0, 10.0], dtype=np.float32)
+        # Should not raise warning
+        result = validate_sharpness(sharpness, n_points)
+        assert result.shape == (n_points,)
+
+    def test_sharpness_out_of_range_warning(self):
+        """Test that sharpness outside [0.5, 10.0] triggers warning."""
+        n_points = 3
+        # Very low values
+        sharpness_low = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
+            validate_sharpness(sharpness_low, n_points)
+
+        # Very high values
+        sharpness_high = np.array([15.0, 20.0, 100.0], dtype=np.float32)
+        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
+            validate_sharpness(sharpness_high, n_points)
+
+        # Mixed with some outside range
+        sharpness_mixed = np.array([0.3, 5.0, 15.0], dtype=np.float32)
+        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
+            validate_sharpness(sharpness_mixed, n_points)
+
+    def test_sharpness_not_numpy_array(self):
+        """Test that non-numpy array raises ValueError."""
+        with pytest.raises(ValueError, match="Sharpness must be a numpy array"):
+            validate_sharpness([1.0, 2.0, 3.0], 3)
+
+        with pytest.raises(ValueError, match="Sharpness must be a numpy array"):
+            validate_sharpness(1.0, 1)
+
+    def test_sharpness_wrong_ndim(self):
+        """Test that wrong number of dimensions raises ValueError."""
+        n_points = 5
+        # 2D array
+        sharpness_2d = np.ones((n_points, 1), dtype=np.float32)
+        with pytest.raises(ValueError, match="Sharpness must have shape \\(N,\\)"):
+            validate_sharpness(sharpness_2d, n_points)
+
+        # 0D (scalar)
+        sharpness_scalar = np.array(1.0)
+        with pytest.raises(ValueError, match="Sharpness must have shape \\(N,\\)"):
+            validate_sharpness(sharpness_scalar, 1)
+
+    def test_sharpness_wrong_length(self):
+        """Test that wrong length raises ValueError."""
+        n_points = 5
+        sharpness_wrong_length = np.ones(10, dtype=np.float32)
+        with pytest.raises(
+            ValueError, match="Sharpness shape .* doesn't match positions"
+        ):
+            validate_sharpness(sharpness_wrong_length, n_points)
+
+    def test_sharpness_negative_values(self):
+        """Test that negative sharpness values raise ValueError."""
+        n_points = 5
+        sharpness_negative = np.array([1.0, 2.0, -0.5, 1.0, 1.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="All sharpness values must be positive"):
+            validate_sharpness(sharpness_negative, n_points)
+
+    def test_sharpness_zero_values(self):
+        """Test that zero sharpness values raise ValueError."""
+        n_points = 3
+        sharpness_with_zero = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="All sharpness values must be positive"):
+            validate_sharpness(sharpness_with_zero, n_points)
+
+
+class TestTypeGuards:
+    """Test type guard functions (is_* functions)."""
+
+    def test_is_position_array_valid(self):
+        """Test that valid position arrays return True."""
+        positions_2d = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+        assert is_position_array(positions_2d) is True
+
+        positions_3d = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        assert is_position_array(positions_3d) is True
+
+        positions_5d = np.random.rand(10, 5).astype(np.float32)
+        assert is_position_array(positions_5d) is True
+
+    def test_is_position_array_invalid(self):
+        """Test that invalid position arrays return False."""
+        # Not a numpy array
+        assert is_position_array([[0.0, 0.0], [1.0, 1.0]]) is False
+
+        # Wrong ndim (1D)
+        assert is_position_array(np.array([0.0, 1.0, 2.0])) is False
+
+        # Wrong ndim (3D)
+        assert is_position_array(np.random.rand(5, 3, 2)) is False
+
+        # Empty dimensions
+        assert is_position_array(np.empty((5, 0))) is False
+
+    def test_is_color_array_valid(self):
+        """Test that valid color arrays return True."""
+        n_points = 10
+        colors = np.random.rand(n_points, 3).astype(np.float32)
+        assert is_color_array(colors, n_points) is True
+
+        # HDR colors
+        colors_hdr = np.array([[5.0, 10.0, 2.0]], dtype=np.float32)
+        assert is_color_array(colors_hdr, 1) is True
+
+    def test_is_color_array_invalid(self):
+        """Test that invalid color arrays return False."""
+        n_points = 5
+        # Not a numpy array
+        assert is_color_array([[1.0, 0.0, 0.0]], n_points) is False
+
+        # Wrong shape
+        colors_wrong_shape = np.random.rand(10, 3).astype(np.float32)
+        assert is_color_array(colors_wrong_shape, n_points) is False
+
+        # Wrong number of channels
+        colors_rgba = np.random.rand(n_points, 4).astype(np.float32)
+        assert is_color_array(colors_rgba, n_points) is False
+
+    def test_is_transform_matrix_valid(self):
+        """Test that valid transform matrices return True."""
+        transform = np.eye(4, dtype=np.float32)
+        assert is_transform_matrix(transform) is True
+
+        transform_custom = np.random.rand(4, 4).astype(np.float32)
+        assert is_transform_matrix(transform_custom) is True
+
+    def test_is_transform_matrix_invalid(self):
+        """Test that invalid transform matrices return False."""
+        # Not a numpy array
+        assert (
+            is_transform_matrix(
+                [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+            )
+            is False
+        )
+
+        # Wrong shape (3x3)
+        assert is_transform_matrix(np.eye(3)) is False
+
+        # Wrong shape (4x3)
+        assert is_transform_matrix(np.ones((4, 3))) is False
+
+        # Wrong ndim (1D)
+        assert is_transform_matrix(np.array([1, 2, 3, 4])) is False

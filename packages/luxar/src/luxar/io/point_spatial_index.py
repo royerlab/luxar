@@ -12,21 +12,46 @@ import numpy as np
 from arbol import aprint
 from numpy.typing import NDArray
 
+from ..typing_utils.constants import (
+    SPATIAL_INDEX_FALLBACK_CELLS,
+    SPATIAL_INDEX_MAX_CELLS_DISCRETE,
+    SPATIAL_INDEX_MAX_CELLS_SINGLE_DIM,
+    SPATIAL_INDEX_MIN_CELLS_SINGLE_DIM,
+    SPATIAL_INDEX_MULTI_DIM_MAX_CELLS_PER_DIM,
+    SPATIAL_INDEX_MULTI_DIM_MAX_TARGET,
+    SPATIAL_INDEX_MULTI_DIM_MIN_TARGET,
+    SPATIAL_INDEX_MULTI_DIM_POINTS_DIVISOR,
+    SPATIAL_INDEX_SINGLE_DIM_POINTS_DIVISOR,
+)
+
 
 def decode_cell_id(cell_id: int, grid_shape: NDArray[np.uint32]) -> List[int]:
     """Convert linear cell ID back to nD grid coordinates.
+
+    This is the inverse of the linearization in build_spatial_index().
+    Extracts grid coordinates from a linear cell ID using row-major order.
+
+    Example for grid_shape (2, 3, 4):
+        - ID 0 → (0, 0, 0)
+        - ID 1 → (0, 0, 1)
+        - ID 4 → (0, 1, 0)
+        - ID 12 → (1, 0, 0)
 
     Args:
         cell_id: Linear cell ID
         grid_shape: Shape of the grid in each dimension
 
     Returns:
-        List of grid coordinates
+        List of grid coordinates in original dimension order
     """
     coords = []
+    # Process dimensions in reverse order (innermost first)
     for dim_size in reversed(grid_shape):
+        # Extract coordinate for this dimension using modulo
         coords.append(int(cell_id % dim_size))
+        # Divide to process next dimension
         cell_id //= dim_size
+    # Reverse to get back to original dimension order
     return list(reversed(coords))
 
 
@@ -139,8 +164,8 @@ def build_spatial_index(
             if dim_idx in discrete_dims_set:
                 # For discrete dimensions, use one cell per unique value
                 unique_vals = len(np.unique(indexed_positions[:, idx]))
-                # Cap at 10000 to prevent memory issues
-                cells = min(10000, unique_vals)
+                # Cap to prevent memory issues
+                cells = min(SPATIAL_INDEX_MAX_CELLS_DISCRETE, unique_vals)
                 grid_shape_list.append(cells)
                 aprint(
                     f"  📊 Auto grid: dimension {dim_idx} is discrete with {unique_vals} unique values → {cells} cells"
@@ -150,12 +175,28 @@ def build_spatial_index(
                 # Aim for reasonable number of cells
                 if n_indexed_dims == 1:
                     # Single indexed dimension - can use more cells
-                    cells = min(100, max(10, int(np.sqrt(n_points / 100))))
+                    cells = min(
+                        SPATIAL_INDEX_MAX_CELLS_SINGLE_DIM,
+                        max(
+                            SPATIAL_INDEX_MIN_CELLS_SINGLE_DIM,
+                            int(np.sqrt(n_points / SPATIAL_INDEX_SINGLE_DIM_POINTS_DIVISOR)),
+                        ),
+                    )
                 else:
                     # Multiple indexed dimensions - use fewer cells per dimension
-                    target_cells = max(10, min(1000, n_points // 500))
+                    # to keep total index size manageable
+                    target_cells = max(
+                        SPATIAL_INDEX_MULTI_DIM_MIN_TARGET,
+                        min(
+                            SPATIAL_INDEX_MULTI_DIM_MAX_TARGET,
+                            n_points // SPATIAL_INDEX_MULTI_DIM_POINTS_DIVISOR,
+                        ),
+                    )
                     cells = int(np.power(target_cells, 1.0 / n_indexed_dims))
-                    cells = max(2, min(20, cells))
+                    cells = max(
+                        SPATIAL_INDEX_FALLBACK_CELLS,
+                        min(SPATIAL_INDEX_MULTI_DIM_MAX_CELLS_PER_DIM, cells),
+                    )  # Clamp to [2, 20]
                 grid_shape_list.append(cells)
                 aprint(
                     f"  📊 Auto grid: dimension {dim_idx} is continuous → {cells} cells"
@@ -196,11 +237,19 @@ def build_spatial_index(
     grid_indices = np.clip(grid_indices, 0, grid_shape - 1)
 
     # Convert nD grid indices to linear cell IDs
+    # This implements row-major linearization: cell_id = i0 * stride0 + i1 * stride1 + ...
+    # where stride_d = product of all grid dimensions after d
+    # Example for 3D grid (2, 3, 4):
+    #   - Cell (0,0,0) → ID 0
+    #   - Cell (0,0,1) → ID 1
+    #   - Cell (0,1,0) → ID 4 (skip 4 cells in last dimension)
+    #   - Cell (1,0,0) → ID 12 (skip 3*4 cells in middle dimensions)
     cell_ids = np.zeros(n_points, dtype=np.uint64)
-    stride = 1
+    stride = 1  # Start with innermost dimension (stride = 1)
+    # Process dimensions from last to first (row-major order)
     for d in range(n_indexed_dims - 1, -1, -1):
         cell_ids += grid_indices[:, d] * stride
-        stride *= grid_shape[d]
+        stride *= grid_shape[d]  # Update stride for next dimension
 
     # Sort points by cell ID for spatial locality
     sort_order = np.argsort(cell_ids)

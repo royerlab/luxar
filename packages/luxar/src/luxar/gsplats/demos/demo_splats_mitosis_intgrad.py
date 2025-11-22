@@ -19,6 +19,7 @@ from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -97,7 +98,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
         )
 
     # Configure dynamic operations (residual-based seeding only)
-    # Note: Initial seeds benefit from CLAHE preprocessing in candidates.py
     dynamic_config = DynamicOpsConfig()
 
     aprint("Dynamic operations enabled (residual-based seeding):")
@@ -182,7 +182,7 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) Gaussians with auto-candidate generation
-        params_full, amps, stats = fit_gaussian_splats(
+        result = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
@@ -200,7 +200,8 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             movie_every=1,
             movie_max_frames=None,
         )
-        if len(amps) == 0:
+
+        if len(result.amplitudes) == 0:
             raise RuntimeError(
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
@@ -209,16 +210,14 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))
 d = 2
 
-# params_full includes sharpness in last column: [centers, packed_L, sharpness]
-# Extract L for energy ranking (exclude sharpness from the end)
-L_packed = params_full[:, d:-1]  # (N, 3) in 2D - centers excluded, sharpness excluded
-L_full = unpack_tril(L_packed, d)  # (N, 2, 2)
+# Extract L for energy ranking
+L_full = unpack_tril(result.cholesky_factors, d)  # (N, 2, 2)
 diag_prod = L_full[:, 0, 0] * L_full[:, 1, 1]  # ∏ diag(L) in 2D
-energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
+energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
 # ----- Precompute reconstructions/residuals + oriented polygons per frame -----
-N = len(amps)
+N = len(result.amplitudes)
 keep_counts = np.unique(
     np.linspace(1, N, num=min(N_FRAMES, N), endpoint=True).astype(int)
 )
@@ -244,8 +243,17 @@ centers_frames = []
 for i, K in enumerate(keep_counts):
     idx = order[:K]
 
-    # Render with auto-extraction of all parameters from params_full
-    Vk = render_gaussians_numpy(V.shape, params_full[idx], amps[idx])
+    # Create sliced result for rendering
+    result_idx = GaussianSplatResult(
+        centers=result.centers[idx],
+        amplitudes=result.amplitudes[idx],
+        cholesky_factors=result.cholesky_factors[idx],
+        sharpnesses=result.sharpnesses[idx],
+        stats={}  # Empty stats for rendering subset
+    )
+
+    # Render
+    Vk = render_gaussians_numpy(V.shape, result_idx)
     stack_recon[i] = Vk
     stack_resid[i] = V - Vk
     rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -255,7 +263,7 @@ for i, K in enumerate(keep_counts):
     bit_compression_pct[i] = 100.0 * (1.0 - (model_bits_frames[i] / IMAGE_BITS))
 
     Lk = L_full[idx]  # (K, 2, 2)
-    Ck = params_full[idx, :2]  # (K, 2)
+    Ck = result.centers[idx]  # (K, 2)
     polys = [
         ellipse_polygon_from_L(Ck[j], Lk[j], t=2.0, n_pts=64) for j in range(len(idx))
     ]

@@ -1,5 +1,5 @@
 """
-Tests for candidate detection functions in gsplats.
+Tests for seed detection functions in gsplats.
 """
 
 import importlib.util
@@ -7,8 +7,8 @@ import importlib.util
 import numpy as np
 import pytest
 
-from luxar.gsplats.candidates import (
-    combine_candidates,
+from luxar.gsplats.seeds import (
+    combine_seeds,
     dedupe_farthest_first,
     local_maxima,
 )
@@ -244,15 +244,15 @@ if __name__ == "__main__":
     pytest.main([__file__])
 
 
-class TestCombineCandidates:
-    """Test combine_candidates function."""
+class TestCombineSeeds:
+    """Test combine_seeds function."""
 
     def test_combine_two_arrays(self) -> None:
-        """Test basic combination of two candidate arrays."""
+        """Test basic combination of two seed arrays."""
         cand1 = np.array([[0, 0], [5, 5]], dtype=float)
         cand2 = np.array([[10, 10], [15, 15]], dtype=float)
 
-        combined = combine_candidates(cand1, cand2)
+        combined = combine_seeds(cand1, cand2)
 
         assert len(combined) == 4
         assert combined.shape[1] == 2
@@ -264,7 +264,7 @@ class TestCombineCandidates:
             [[0.5, 0.5], [10, 10]], dtype=float
         )  # First is close to cand1[0]
 
-        combined = combine_candidates(cand1, cand2, min_distance=2.0)
+        combined = combine_seeds(cand1, cand2, min_distance=2.0)
 
         # Should deduplicate the close candidates
         assert len(combined) == 3  # [0,0], [5,5], [10,10]
@@ -274,7 +274,7 @@ class TestCombineCandidates:
         cand1 = np.array([]).reshape(0, 2)
         cand2 = np.array([[5, 5]], dtype=float)
 
-        combined = combine_candidates(cand1, cand2)
+        combined = combine_seeds(cand1, cand2)
 
         assert len(combined) == 1
         np.testing.assert_array_equal(combined, cand2)
@@ -284,7 +284,7 @@ class TestCombineCandidates:
         cand1 = np.array([]).reshape(0, 2)
         cand2 = np.array([]).reshape(0, 2)
 
-        combined = combine_candidates(cand1, cand2)
+        combined = combine_seeds(cand1, cand2)
 
         assert combined.shape == (0, 2)
 
@@ -293,7 +293,7 @@ class TestCombineCandidates:
         cand1 = np.array([[0, 0]], dtype=float)
         cand2 = np.array([[0.5, 0.5]], dtype=float)  # Close to cand1
 
-        combined = combine_candidates(cand1, cand2, min_distance=1.0)
+        combined = combine_seeds(cand1, cand2, min_distance=1.0)
 
         # Should keep cand1's point (has priority)
         assert len(combined) == 1
@@ -305,7 +305,7 @@ class TestCombineCandidates:
         cand2 = np.array([[5, 5]], dtype=float)
         cand3 = np.array([[10, 10]], dtype=float)
 
-        combined = combine_candidates(cand1, cand2, cand3)
+        combined = combine_seeds(cand1, cand2, cand3)
 
         assert len(combined) == 3
 
@@ -314,7 +314,7 @@ class TestCombineCandidates:
         cand1 = np.array([[0.0], [5.0]], dtype=float)
         cand2 = np.array([[10.0], [15.0]], dtype=float)
 
-        combined = combine_candidates(cand1, cand2, min_distance=2.0)
+        combined = combine_seeds(cand1, cand2, min_distance=2.0)
 
         assert combined.shape[1] == 1
         assert len(combined) == 4
@@ -325,4 +325,4 @@ class TestCombineCandidates:
         cand2 = np.array([[5, 5]], dtype=float)
 
         with pytest.raises(ValueError, match="Unknown combination method"):
-            combine_candidates(cand1, cand2, method="invalid")
+            combine_seeds(cand1, cand2, method="invalid")

@@ -11,6 +11,7 @@ from arbol import aprint
 from skimage import data, filters
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -70,7 +71,7 @@ if USE_DYNAMIC_OPS:
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
 # 3) Fit oriented (full-covariance) Gaussians with auto-candidate generation
-params_full, amps, stats = fit_gaussian_splats(
+result = fit_gaussian_splats(
     V,
     # seeds auto-generated with intelligent defaults
     n_iters=N_ITERS,
@@ -87,7 +88,7 @@ params_full, amps, stats = fit_gaussian_splats(
     movie_every=1,
 )
 
-if len(amps) == 0:
+if len(result.amplitudes) == 0:
     raise RuntimeError(
         "No splats were fitted; try lowering thresholds or increasing iterations."
     )
@@ -97,18 +98,16 @@ if len(amps) == 0:
 # Here sqrt(det Σ) = prod(diag(L)) because Σ = L L^T.
 d = 2
 
-# params_full includes sharpness in last column: [centers, packed_L, sharpness]
-# Extract L for energy ranking (exclude sharpness from the end)
-L_packed = params_full[:, d:-1]  # (N, 3) in 2D - centers excluded, sharpness excluded
-L_full = unpack_tril(L_packed, d)  # (N, 2, 2)
+# Extract L for energy ranking
+L_full = unpack_tril(result.cholesky_factors, d)  # (N, 2, 2)
 diag_prod = np.prod(
     np.stack([L_full[:, 0, 0], L_full[:, 1, 1]], axis=1), axis=1
 )  # ∏ diag(L)
-energy_score = (amps**2) * (np.sqrt(np.pi) ** d) * diag_prod
+energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
 # ----- Precompute reconstructions/residuals + oriented polygons per frame -----
-N = len(amps)
+N = len(result.amplitudes)
 keep_counts = np.unique(
     np.linspace(1, N, num=min(N_FRAMES, N), endpoint=True).astype(int)
 )
@@ -137,10 +136,17 @@ centers_frames = []
 for i, K in enumerate(keep_counts):
     idx = order[:K]
 
-    # Reconstruction & residual with auto-extraction of all parameters
-    Vk = render_gaussians_numpy(
-        V.shape, params_full[idx], amps[idx], truncate=TRUNCATE_SIG
+    # Create sliced result for rendering
+    result_idx = GaussianSplatResult(
+        centers=result.centers[idx],
+        amplitudes=result.amplitudes[idx],
+        cholesky_factors=result.cholesky_factors[idx],
+        sharpnesses=result.sharpnesses[idx],
+        stats={}  # Empty stats for rendering subset
     )
+
+    # Reconstruction & residual
+    Vk = render_gaussians_numpy(V.shape, result_idx, truncate=TRUNCATE_SIG)
     stack_recon[i] = Vk
     stack_resid[i] = V - Vk
     rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)
@@ -152,7 +158,7 @@ for i, K in enumerate(keep_counts):
 
     # Polygons & centers (2σ contour)
     Lk = L_full[idx]  # (K, 2, 2)
-    Ck = params_full[idx, :2]  # (K, 2) voxel centers (y,x)
+    Ck = result.centers[idx]  # (K, 2) voxel centers (y,x)
     polys = [
         ellipse_polygon_from_L(Ck[j], Lk[j], t=2.0, n_pts=64) for j in range(len(idx))
     ]

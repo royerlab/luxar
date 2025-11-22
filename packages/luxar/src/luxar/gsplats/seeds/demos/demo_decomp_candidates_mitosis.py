@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Human mitosis candidate generation comparison demo.
+Human mitosis seed generation comparison demo.
 
-This demo compares two candidate generation methods on the scikit-image human mitosis dataset:
-1. Overcomplete method (standard): Multi-method detection with spatial redundancy
+This demo compares two seed generation methods on the scikit-image human mitosis dataset:
+1. Multiscale Gaussian method (standard): Multi-scale detection with spatial redundancy
 2. Decomposition method (new): Scale-hierarchical detection via image decomposition
 
-Displays candidate locations side-by-side in napari for visual comparison.
+Displays seed locations side-by-side in napari for visual comparison.
 """
 
 import sys
@@ -15,16 +15,16 @@ import napari
 from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
-from luxar.gsplats.candidates import (
-    combine_candidates,
-    find_candidates_from_decomposition,
-    find_candidates_multiscale_gaussian,
+from luxar.gsplats.seeds import (
+    combine_seeds,
+    find_seeds_multiscale_decomposition,
+    find_seeds_multiscale_gaussian,
 )
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
-    aprint("🔬 Decomposition Candidates Demo (napari disabled)")
+    aprint("🔬 Decomposition Seeds Demo (napari disabled)")
     aprint("Running all computations without napari visualization...")
 
 
@@ -32,8 +32,8 @@ if NO_NAPARI:
 Arbol.max_depth = 4
 
 
-with asection("Candidate Generation Methods Comparison"):
-    aprint("🔬 Comparing candidate generation methods on human mitosis histology data")
+with asection("Seed Generation Methods Comparison"):
+    aprint("🔬 Comparing seed generation methods on human mitosis histology data")
 
     with asection("Loading and preprocessing data"):
         # Load human_mitosis and prepare grayscale image
@@ -49,31 +49,31 @@ with asection("Candidate Generation Methods Comparison"):
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
     # ======================================================================
-    # CANDIDATE GENERATION
+    # SEED GENERATION
     # ======================================================================
 
-    with asection("Generating candidates"):
+    with asection("Generating seeds"):
         # Method 1: Multiscale Gaussian
         with asection("Multiscale Gaussian method"):
-            candidates_multiscale = find_candidates_multiscale_gaussian(V)
-            aprint(f"Generated {len(candidates_multiscale)} candidates")
+            seeds_multiscale = find_seeds_multiscale_gaussian(V)
+            aprint(f"Generated {len(seeds_multiscale)} seeds")
 
         # Method 2: Decomposition-based
         with asection("Decomposition method"):
-            candidates_decomp = find_candidates_from_decomposition(V, verbose=True)
-            aprint(f"Generated {len(candidates_decomp)} candidates")
+            seeds_decomp = find_seeds_multiscale_decomposition(V, verbose=True)
+            aprint(f"Generated {len(seeds_decomp)} seeds")
 
         # Method 3: Combined (as used in fit_gaussian_splats)
         with asection("Combined method"):
-            candidates_combined = combine_candidates(
-                candidates_decomp,  # Decomposition first (global structure)
-                candidates_multiscale,  # Then multiscale (local features)
+            seeds_combined = combine_seeds(
+                seeds_decomp,  # Decomposition first (global structure)
+                seeds_multiscale,  # Then multiscale (local features)
             )
-            aprint(f"Generated {len(candidates_combined)} candidates")
+            aprint(f"Generated {len(seeds_combined)} seeds")
             aprint(
-                f"  ({len(candidates_decomp)} decomp + "
-                f"{len(candidates_multiscale)} multiscale → "
-                f"{len(candidates_combined)} after dedup)"
+                f"  ({len(seeds_decomp)} decomp + "
+                f"{len(seeds_multiscale)} multiscale → "
+                f"{len(seeds_combined)} after dedup)"
             )
 
     # ======================================================================
@@ -82,15 +82,15 @@ with asection("Candidate Generation Methods Comparison"):
 
     if not NO_NAPARI:
         with asection("Launching napari visualization"):
-            viewer = napari.Viewer(title="Candidate Generation Methods Comparison")
+            viewer = napari.Viewer(title="Seed Generation Methods Comparison")
 
             # Original image
             viewer.add_image(V, name="Original Mitosis Image", colormap="gray")
 
-            # Method 1: Multiscale Gaussian candidates
+            # Method 1: Multiscale Gaussian seeds
             viewer.add_points(
-                candidates_multiscale,
-                name=f"Multiscale Gaussian ({len(candidates_multiscale)})",
+                seeds_multiscale,
+                name=f"Multiscale Gaussian ({len(seeds_multiscale)})",
                 size=3,
                 face_color="magenta",
                 border_color="white",
@@ -98,10 +98,10 @@ with asection("Candidate Generation Methods Comparison"):
                 symbol="disc",
             )
 
-            # Method 2: Decomposition candidates
+            # Method 2: Decomposition seeds
             viewer.add_points(
-                candidates_decomp,
-                name=f"Decomposition ({len(candidates_decomp)})",
+                seeds_decomp,
+                name=f"Decomposition ({len(seeds_decomp)})",
                 size=3,
                 face_color="cyan",
                 border_color="white",
@@ -110,10 +110,10 @@ with asection("Candidate Generation Methods Comparison"):
                 visible=False,  # Start hidden
             )
 
-            # Method 3: Combined candidates (as used in fitting)
+            # Method 3: Combined seeds (as used in fitting)
             viewer.add_points(
-                candidates_combined,
-                name=f"Combined ({len(candidates_combined)})",
+                seeds_combined,
+                name=f"Combined ({len(seeds_combined)})",
                 size=3,
                 face_color="lime",
                 border_color="black",
@@ -123,16 +123,16 @@ with asection("Candidate Generation Methods Comparison"):
 
             # Summary
             aprint("\n" + "=" * 70)
-            aprint("CANDIDATE GENERATION SUMMARY")
+            aprint("SEED GENERATION SUMMARY")
             aprint("=" * 70)
             aprint(
-                f"Multiscale Gaussian: {len(candidates_multiscale):4d} candidates (magenta)"
+                f"Multiscale Gaussian: {len(seeds_multiscale):4d} seeds (magenta)"
             )
             aprint(
-                f"Decomposition:       {len(candidates_decomp):4d} candidates (cyan)"
+                f"Decomposition:       {len(seeds_decomp):4d} seeds (cyan)"
             )
             aprint(
-                f"Combined:            {len(candidates_combined):4d} candidates (lime) ← Used in fitting"
+                f"Combined:            {len(seeds_combined):4d} seeds (lime) ← Used in fitting"
             )
             aprint("=" * 70)
             aprint("\n✅ Napari viewer launched!")

@@ -102,26 +102,27 @@ def test_finalize_results_basic(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
     """Test basic result finalization."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    # Check params shape: [N, d + tril_size(d) + 1] (includes sharpness)
+    # Check individual component shapes
     N = basic_optimization_results.centers.shape[0]
     d = basic_optimization_results.centers.shape[1]
     tril_size = d * (d + 1) // 2
-    expected_param_cols = d + tril_size + 1  # +1 for sharpness
 
-    assert params.shape == (N, expected_param_cols)
-    assert amps.shape == (N,)
-    assert isinstance(stats, dict)
+    assert result.centers.shape == (N, d)
+    assert result.cholesky_factors.shape == (N, tril_size)
+    assert result.sharpnesses.shape == (N,)
+    assert result.amplitudes.shape == (N,)
+    assert isinstance(result.stats, dict)
 
 
 def test_amplitude_rescaling(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
     """Test that amplitudes are rescaled to original intensity range."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
@@ -129,64 +130,60 @@ def test_amplitude_rescaling(
     original_amps = basic_optimization_results.amps.cpu().numpy()
     expected_amps = original_amps * basic_preprocessed_data.intensity_range
 
-    assert np.allclose(amps, expected_amps, rtol=1e-5)
+    assert np.allclose(result.amplitudes, expected_amps, rtol=1e-5)
 
 
 def test_parameter_packing(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
-    """Test that centers and packed Cholesky are correctly concatenated."""
-    params, amps, stats = finalize_results(
+    """Test that centers and packed Cholesky are correctly stored separately."""
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
     N = basic_optimization_results.centers.shape[0]
     d = basic_optimization_results.centers.shape[1]
 
-    # First d columns should be centers
-    centers_from_params = params[:, :d]
+    # Centers should match exactly
     expected_centers = basic_optimization_results.centers.cpu().numpy()
+    assert np.allclose(result.centers, expected_centers, rtol=1e-5)
 
-    assert np.allclose(centers_from_params, expected_centers, rtol=1e-5)
-
-    # Middle columns should be packed Cholesky, last column is sharpness
+    # Cholesky factors should be packed correctly
     tril_size = d * (d + 1) // 2
-    packed_L = params[:, d:-1]  # Exclude sharpness
-    assert packed_L.shape == (N, tril_size)
+    assert result.cholesky_factors.shape == (N, tril_size)
 
-    # Last column should be sharpness
-    sharpness_from_params = params[:, -1]
+    # Sharpness should match exactly
     expected_sharpness = basic_optimization_results.sharpness.cpu().numpy()
-    assert np.allclose(sharpness_from_params, expected_sharpness, rtol=1e-5)
+    assert np.allclose(result.sharpnesses, expected_sharpness, rtol=1e-5)
 
 
 def test_sharpness_statistics(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
     """Test that sharpness statistics are computed correctly."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
     # Check that all sharpness stats are present
-    assert "sharpness_min" in stats
-    assert "sharpness_max" in stats
-    assert "sharpness_mean" in stats
-    assert "sharpness_std" in stats
-    assert "sharpness_median" in stats
+    assert "sharpness_min" in result.stats
+    assert "sharpness_max" in result.stats
+    assert "sharpness_mean" in result.stats
+    assert "sharpness_std" in result.stats
+    assert "sharpness_median" in result.stats
 
     # Verify they are reasonable values
     sharpness_np = basic_optimization_results.sharpness.cpu().numpy()
-    assert abs(stats["sharpness_min"] - float(np.min(sharpness_np))) < 1e-5
-    assert abs(stats["sharpness_max"] - float(np.max(sharpness_np))) < 1e-5
-    assert abs(stats["sharpness_mean"] - float(np.mean(sharpness_np))) < 1e-5
+    assert abs(result.stats["sharpness_min"] - float(np.min(sharpness_np))) < 1e-5
+    assert abs(result.stats["sharpness_max"] - float(np.max(sharpness_np))) < 1e-5
+    assert abs(result.stats["sharpness_mean"] - float(np.mean(sharpness_np))) < 1e-5
 
 
 def test_stats_dictionary_structure(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
     """Test that stats dictionary has all required fields."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
@@ -207,45 +204,45 @@ def test_stats_dictionary_structure(
     ]
 
     for field in required_fields:
-        assert field in stats
+        assert field in result.stats
 
     # Check values make sense
-    assert stats["time_seconds"] > 0
-    assert stats["iterations"] == basic_optimization_results.actual_iters
-    assert stats["best_iteration"] == basic_optimization_results.best_iteration
-    assert stats["final_loss"] == basic_optimization_results.best_loss
-    assert stats["n_splats"] == len(amps)
+    assert result.stats["time_seconds"] > 0
+    assert result.stats["iterations"] == basic_optimization_results.actual_iters
+    assert result.stats["best_iteration"] == basic_optimization_results.best_iteration
+    assert result.stats["final_loss"] == basic_optimization_results.best_loss
+    assert result.stats["n_splats"] == len(result.amplitudes)
 
 
 def test_convergence_flag(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
-    """Test convergence flag in stats."""
+    """Test convergence flag in result.stats."""
     # Test converged case
     basic_optimization_results.actual_iters = 50
     basic_config.n_iters = 100
 
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert stats["converged"] is True
+    assert result.stats["converged"] is True
 
     # Test non-converged case
     basic_optimization_results.actual_iters = 100
     basic_config.n_iters = 100
 
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert stats["converged"] is False
+    assert result.stats["converged"] is False
 
 
 def test_movie_frames_included(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
-    """Test that movie frames are included in stats when enabled."""
+    """Test that movie frames are included in result.stats when enabled."""
     # Add movie frames to optimization results
     movie_frames = {
         "target": [np.random.rand(32, 32) for _ in range(3)],
@@ -257,13 +254,13 @@ def test_movie_frames_included(
     basic_optimization_results.movie_frames = movie_frames
     basic_config.napari_movie = True
 
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert stats["movie_frames"] is not None
-    assert stats["movie_frames"] == movie_frames
-    assert stats["movie_shape"] == basic_config.V.shape
+    assert result.stats["movie_frames"] is not None
+    assert result.stats["movie_frames"] == movie_frames
+    assert result.stats["movie_shape"] == basic_config.V.shape
 
 
 def test_movie_frames_excluded(
@@ -273,21 +270,23 @@ def test_movie_frames_excluded(
     basic_optimization_results.movie_frames = None
     basic_config.napari_movie = False
 
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert stats["movie_frames"] is None
+    assert result.stats["movie_frames"] is None
 
 
 def test_data_types(basic_optimization_results, basic_config, basic_preprocessed_data):
     """Test that output arrays are float32."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert params.dtype == np.float32
-    assert amps.dtype == np.float32
+    assert result.centers.dtype == np.float32
+    assert result.cholesky_factors.dtype == np.float32
+    assert result.sharpnesses.dtype == np.float32
+    assert result.amplitudes.dtype == np.float32
 
 
 def test_3d_data(basic_config, basic_preprocessed_data):
@@ -319,28 +318,29 @@ def test_3d_data(basic_config, basic_preprocessed_data):
     basic_preprocessed_data.d = 3
     basic_preprocessed_data.N = N
 
-    params, amps_out, stats = finalize_results(
+    result = finalize_results(
         optimization_results, basic_config, basic_preprocessed_data
     )
 
-    # Check params shape for 3D (includes sharpness)
+    # Check component shapes for 3D
     tril_size = 3 * (3 + 1) // 2  # 6 for 3D
-    expected_param_cols = 3 + tril_size + 1  # 9 + 1 = 10 total (includes sharpness)
 
-    assert params.shape == (N, expected_param_cols)
-    assert amps_out.shape == (N,)
+    assert result.centers.shape == (N, d)
+    assert result.cholesky_factors.shape == (N, tril_size)
+    assert result.sharpnesses.shape == (N,)
+    assert result.amplitudes.shape == (N,)
 
 
 def test_positive_amplitudes(
     basic_optimization_results, basic_config, basic_preprocessed_data
 ):
     """Test that output amplitudes are positive."""
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
     # All amplitudes should be positive
-    assert np.all(amps >= 0)
+    assert np.all(result.amplitudes >= 0)
 
 
 def test_time_seconds_calculation(
@@ -351,8 +351,8 @@ def test_time_seconds_calculation(
         basic_optimization_results.end_time - basic_optimization_results.start_time
     )
 
-    params, amps, stats = finalize_results(
+    result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
     )
 
-    assert abs(stats["time_seconds"] - expected_time) < 1e-6
+    assert abs(result.stats["time_seconds"] - expected_time) < 1e-6

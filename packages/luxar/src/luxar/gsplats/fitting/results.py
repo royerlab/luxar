@@ -4,11 +4,10 @@ Result finalization for Gaussian splat fitting.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
-
 import numpy as np
 from arbol import aprint
 
+from luxar.gsplats.fit_result import GaussianSplatResult
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,
@@ -21,9 +20,9 @@ def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
     preprocessed_data: PreprocessedData,
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+) -> GaussianSplatResult:
     """
-    Finalize optimization results and return in expected format.
+    Finalize optimization results and return as GaussianSplatResult.
 
     Parameters
     ----------
@@ -36,13 +35,8 @@ def finalize_results(
 
     Returns
     -------
-    params_full : np.ndarray, shape (N, d + d*(d+1)//2 + 1)
-        Concatenated parameters [centers, packed_cholesky, sharpness]
-        Last column contains per-splat sharpness values
-    amps : np.ndarray
-        Amplitudes rescaled to original intensity range
-    stats : dict
-        Optimization statistics
+    GaussianSplatResult
+        Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats
     """
     # Extract parameters from optimization results
     centers_np = optimization_results.centers.cpu().numpy()
@@ -57,11 +51,8 @@ def finalize_results(
             f"Rescaled amplitudes to original intensity range (factor: {preprocessed_data.intensity_range:.4f})"
         )
 
-    # Pack parameters INCLUDING sharpness
-    # Shape: (N, d + d*(d+1)//2 + 1) where last column is sharpness
-    params_full = np.concatenate(
-        [centers_np, pack_tril(Ls_np), sharpness_np[:, None]], axis=1
-    )
+    # Pack Cholesky factors (without sharpness)
+    cholesky_packed = pack_tril(Ls_np)
 
     # Compute sharpness statistics
     sharpness_stats = {
@@ -95,4 +86,10 @@ def finalize_results(
     else:
         stats["movie_frames"] = None
 
-    return params_full.astype(np.float32), amps_np.astype(np.float32), stats
+    return GaussianSplatResult(
+        centers=centers_np.astype(np.float32),
+        amplitudes=amps_np.astype(np.float32),
+        cholesky_factors=cholesky_packed.astype(np.float32),
+        sharpnesses=sharpness_np.astype(np.float32),
+        stats=stats,
+    )
