@@ -102,8 +102,13 @@ export class LuxarApp {
    * Check if we should show the dataset browser
    */
   private async shouldShowBrowser(src: string): Promise<boolean> {
-    // If no source or it's a directory URL (ends with /), show browser
-    if (!src || src.endsWith('/')) {
+    // If no source or empty string, show browser immediately
+    if (!src || src.trim() === '') {
+      return true;
+    }
+
+    // If it's a directory URL (ends with /), show browser
+    if (src.endsWith('/')) {
       return true;
     }
 
