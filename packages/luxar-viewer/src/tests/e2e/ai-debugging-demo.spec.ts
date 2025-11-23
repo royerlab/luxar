@@ -183,7 +183,7 @@ test.describe('AI Debugging Capabilities', () => {
           const debug = (window as any).__luxarDebug;
           return debug?.getState?.()?.initialized === true;
         },
-        { timeout: 15000 }
+        { timeout: 30000 }
       )
       .then(() => true)
       .catch(() => false);

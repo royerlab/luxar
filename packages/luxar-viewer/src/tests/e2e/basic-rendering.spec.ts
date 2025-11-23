@@ -134,7 +134,7 @@ test.describe('Luxar Basic Rendering', () => {
     // Wait for initial render to complete
     await page.waitForFunction(
       () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 0,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Take screenshot (this tests WebGL rendering stability)

@@ -164,6 +164,7 @@ export default defineConfig({
     },
 
     // Timeout for expect() assertions
-    timeout: 10000,
+    // Increased for E2E tests with real dataset loading
+    timeout: 60000,  // 60 seconds for dataset loading + rendering
   },
 });

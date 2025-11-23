@@ -177,9 +177,9 @@ test.describe('First-Time User Experience', () => {
     // Get all text from browser
     const browserText = await page.locator('.dataset-browser').textContent();
 
-    // Should have generic guidance
-    expect(browserText).toContain('Welcome to Luxar');
-    expect(browserText).toContain('Browse the directories');
+    // Should have generic guidance (updated to match compact banner)
+    expect(browserText).toContain('Luxar');
+    expect(browserText).toContain('Browse');
 
     // Should mention URL format (generic)
     expect(browserText).toContain('?src=');

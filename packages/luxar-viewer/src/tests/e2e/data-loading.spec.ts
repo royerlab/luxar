@@ -132,7 +132,7 @@ test.describe('Luxar Data Loading', () => {
     // Wait for render to complete
     await page.waitForFunction(
       () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 0,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Verify renderer has processed frames

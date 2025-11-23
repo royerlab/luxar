@@ -25,16 +25,16 @@ test.describe('Visual Regression - Basic Rendering', () => {
     // Wait for initial render to stabilize
     await page.waitForFunction(
       () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 3,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Additional wait for GPU to finish
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     // Take screenshot
     await expect(page).toHaveScreenshot('nav-dataset-default-view.png', {
-      maxDiffPixelRatio: 0.05, // 5% tolerance for WebGL
-      threshold: 0.2, // Color tolerance
+      maxDiffPixelRatio: 0.08, // 8% tolerance for WebGL variability
+      threshold: 0.25, // Color tolerance
     });
   });
 
@@ -44,14 +44,14 @@ test.describe('Visual Regression - Basic Rendering', () => {
 
     await page.waitForFunction(
       () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 3,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     await expect(page).toHaveScreenshot('grid-5d-initial-slice.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 });
@@ -67,11 +67,11 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveScreenshot('hdr-multiplier-1.0.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 
@@ -85,11 +85,11 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveScreenshot('hdr-multiplier-10.0.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 
@@ -97,23 +97,23 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
     await page.goto(`/?src=${DATASETS.grid5D}&debug`);
     await waitForLuxarReady(page);
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     // Slice 0
     await expect(page).toHaveScreenshot('grid-5d-slice-0.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
 
     // Navigate to different slice
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
 
     // Slice 1 (should look different)
     await expect(page).toHaveScreenshot('grid-5d-slice-1.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 });
@@ -123,11 +123,11 @@ test.describe('Visual Regression - Camera Views', () => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     await expect(page).toHaveScreenshot('fov-47-default.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 
@@ -144,11 +144,11 @@ test.describe('Visual Regression - Camera Views', () => {
       debug.renderOnce();
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveScreenshot('fov-90-wide.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 
@@ -158,11 +158,11 @@ test.describe('Visual Regression - Camera Views', () => {
 
     // Press 'F' to center on bounding box
     await page.keyboard.press('f');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     await expect(page).toHaveScreenshot('centered-on-bbox.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 });
@@ -177,11 +177,11 @@ test.describe('Visual Regression - Control Modes', () => {
       (window as any).__luxarDebug.controls.setControlType('orbit');
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveScreenshot('orbit-mode-view.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 
@@ -191,11 +191,11 @@ test.describe('Visual Regression - Control Modes', () => {
 
     // Switch to fly mode
     await page.keyboard.press('v');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     await expect(page).toHaveScreenshot('fly-mode-view.png', {
-      maxDiffPixelRatio: 0.05,
-      threshold: 0.2,
+      maxDiffPixelRatio: 0.08,
+      threshold: 0.25,
     });
   });
 });

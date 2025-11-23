@@ -14,6 +14,10 @@ Data Source:
     3D UMAP of single-cell chromatin accessibility peaks
     URL: https://public.czbiohub.org/royerlab/zebrahub/...
 
+    References:
+    - Zebrahub: https://zebrahub.org
+    - Paper: https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1
+
 Dataset Structure:
     - 640,830 points in 3D UMAP space
     - 30 distinct cell types
@@ -132,12 +136,56 @@ def celltype_to_color(celltype_ids: np.ndarray, n_celltypes: int = 30) -> np.nda
     return colors
 
 
+def attribute_to_color(
+    attribute_values: np.ndarray,
+    attribute_name: str,
+) -> np.ndarray:
+    """Convert any attribute to distinct colors.
+
+    Args:
+        attribute_values: Attribute array
+        attribute_name: Name for logging
+
+    Returns:
+        RGB colors
+    """
+    n_unique = len(np.unique(attribute_values))
+    colors = np.zeros((len(attribute_values), 3), dtype=np.float32)
+
+    # Generate distinct colors using HSV
+    for i, val in enumerate(np.unique(attribute_values)):
+        mask = attribute_values == val
+        hue = i / n_unique
+
+        # HSV to RGB
+        h = hue * 6.0
+        c = 1.0
+        x = c * (1 - np.abs(h % 2 - 1))
+
+        if h < 1:
+            r, g, b = c, x, 0
+        elif h < 2:
+            r, g, b = x, c, 0
+        elif h < 3:
+            r, g, b = 0, c, x
+        elif h < 4:
+            r, g, b = 0, x, c
+        elif h < 5:
+            r, g, b = x, 0, c
+        else:
+            r, g, b = c, 0, x
+
+        colors[mask] = [r, g, b]
+
+    return colors
+
+
 def create_zebrahub_scene(
     output_path: Path,
     coordinates: np.ndarray,
     attributes: dict,
 ) -> int:
-    """Create Luxar scene from Zebrahub UMAP data.
+    """Create Luxar scene with categorical attribute visualization.
 
     Args:
         output_path: Where to write Luxar zarr
@@ -149,70 +197,70 @@ def create_zebrahub_scene(
     """
     n_points = len(coordinates)
 
-    with asection("Building Luxar Scene"):
-        # Add timepoint as 4th dimension
-        if "timepoint" in attributes:
-            timepoints = attributes["timepoint"]
-            n_timepoints = len(np.unique(timepoints))
+    with asection("Building Multi-Attribute Scene"):
+        # Define attribute types for categorical navigation
+        attr_types = ["celltype", "chromosome", "leiden_coarse", "leiden_fine",
+                      "lineage", "peak_type", "timepoint"]
 
-            # Create 4D positions: [timepoint, x, y, z]
-            positions_4d = np.column_stack([
-                timepoints.astype(np.float32),
-                coordinates[:, 0],
-                coordinates[:, 1],
-                coordinates[:, 2],
-            ])
+        # Create one copy of points per attribute type
+        all_positions = []
+        all_colors = []
 
-            aprint(f"Added timepoint dimension: {n_timepoints} unique timepoints")
-        else:
-            positions_4d = coordinates
-            n_timepoints = 1
+        for attr_idx, attr_name in enumerate(attr_types):
+            if attr_name in attributes:
+                # Generate colors for this attribute
+                colors = attribute_to_color(attributes[attr_name], attr_name)
 
-        # Generate colors from cell type
-        if "celltype" in attributes:
-            celltype = attributes["celltype"]
-            n_celltypes = len(np.unique(celltype))
-            colors = celltype_to_color(celltype, n_celltypes)
-            aprint(f"Generated colors for {n_celltypes} cell types")
-        else:
-            # Default: rainbow based on position
-            colors = np.random.random((n_points, 3)).astype(np.float32)
+                # Create 4D positions: [attribute_view, x, y, z]
+                positions_4d = np.column_stack([
+                    np.full(n_points, attr_idx, dtype=np.float32),
+                    coordinates[:, 0],
+                    coordinates[:, 1],
+                    coordinates[:, 2],
+                ])
 
-        # Define dimensions
-        if "timepoint" in attributes:
-            dims = Dimensions([
-                Dimension(
-                    "timepoint",
-                    unit="stage",
-                    range=(0, n_timepoints - 1),
-                    step=1,
-                    display=False,
-                    discrete=True,
-                    description="Developmental timepoint",
-                ),
-                Dimension("x", unit="UMAP", display=True),
-                Dimension("y", unit="UMAP", display=True),
-                Dimension("z", unit="UMAP", display=True),
-            ])
-        else:
-            dims = Dimensions([
-                Dimension("x", unit="UMAP", display=True),
-                Dimension("y", unit="UMAP", display=True),
-                Dimension("z", unit="UMAP", display=True),
-            ])
+                all_positions.append(positions_4d)
+                all_colors.append(colors)
+
+                n_unique = len(np.unique(attributes[attr_name]))
+                aprint(f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values")
+
+        # Combine all attribute views
+        positions_combined = np.vstack(all_positions)
+        colors_combined = np.vstack(all_colors)
+
+        aprint(f"✓ Created {len(attr_types)} attribute views")
+        aprint(f"  Total points: {len(positions_combined):,} ({n_points:,} per view)")
+
+        # Define dimensions with categorical attribute selector
+        dims = Dimensions([
+            Dimension(
+                "attribute",
+                unit="view",
+                range=(0, len(attr_types) - 1),
+                step=1,
+                display=False,
+                discrete=True,
+                description="Attribute visualization (0=celltype, 1=chromosome, 2=leiden_coarse, 3=leiden_fine, 4=lineage, 5=peak_type, 6=timepoint)",
+            ),
+            Dimension("x", unit="UMAP", display=True),
+            Dimension("y", unit="UMAP", display=True),
+            Dimension("z", unit="UMAP", display=True),
+        ])
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Add points with small radii for dense point cloud
-            radii = np.full(n_points, 0.04, dtype=np.float32)  # Smaller for 640k points
-            sharpnesses = np.full(n_points, 5.0, dtype=np.float32)
+            total_points = len(positions_combined)
+            radii = np.full(total_points, 0.02, dtype=np.float32)
+            sharpnesses = np.full(total_points, 4.0, dtype=np.float32)
 
             scene.add_points(
                 "Cells",
-                positions_4d if "timepoint" in attributes else coordinates,
-                colors=colors,
+                positions_combined,
+                colors=colors_combined,
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.8,
@@ -231,6 +279,10 @@ def main():
     aprint("")
     aprint("Visualizing single-cell chromatin accessibility from zebrafish!")
     aprint("Data: 3D UMAP of 640k peaks across developmental stages")
+    aprint("")
+    aprint("📚 References:")
+    aprint("   • Zebrahub: https://zebrahub.org")
+    aprint("   • Paper: https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1")
     aprint("")
     aprint("What you'll see:")
     aprint("  • 640k points representing chromatin accessibility peaks")
@@ -257,8 +309,17 @@ def main():
         aprint("")
         aprint("  • Rotate to explore UMAP structure")
         aprint("  • Zoom in to see individual cells")
-        aprint("  • Colors show different cell types")
-        aprint("  • Press '4' to navigate through developmental timepoints")
+        aprint("")
+        aprint("  🔑 Press '1' to select ATTRIBUTE VIEW, then use [/]:")
+        aprint("     0: Cell Type (30 types)")
+        aprint("     1: Chromosome (genomic location)")
+        aprint("     2: Leiden Coarse (broad clusters)")
+        aprint("     3: Leiden Fine (detailed clusters)")
+        aprint("     4: Lineage (6 lineages)")
+        aprint("     5: Peak Type (4 types)")
+        aprint("     6: Timepoint (6 developmental stages)")
+        aprint("")
+        aprint("  → Same structure, different colors reveal different biology!")
         aprint("")
         aprint("=" * 70)
         aprint("LAUNCHING VIEWER")
