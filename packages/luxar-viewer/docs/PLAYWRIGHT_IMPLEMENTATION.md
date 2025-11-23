@@ -397,8 +397,8 @@ pnpm agent:debug
 
 ## 📚 Resources
 
-- **[PLAYWRIGHT_GUIDE.md](./PLAYWRIGHT_GUIDE.md)** - Comprehensive usage guide
-- **[docs/CLIENT_ARCHITECTURE_REVIEW.md](../../docs/CLIENT_ARCHITECTURE_REVIEW.md)** - Architecture overview
+- **[PLAYWRIGHT_GUIDE.md](PLAYWRIGHT_GUIDE.md)** - Comprehensive usage guide
+- **[docs/CLIENT_ARCHITECTURE_REVIEW.md](../../../docs/CLIENT_ARCHITECTURE_REVIEW.md)** - Architecture overview
 - **[Playwright Docs](https://playwright.dev)** - Official documentation
 - **[Three.js Testing](https://threejs.org/docs/#manual/en/introduction/Testing)** - Three.js testing tips
 

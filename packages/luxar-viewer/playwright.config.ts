@@ -45,8 +45,9 @@ export default defineConfig({
     // Collect trace on failure for debugging
     trace: 'retain-on-failure',
 
-    // Screenshot on failure
-    screenshot: 'only-on-failure',
+    // Screenshot settings - capture visual state for inspection
+    // Screenshots saved to test-screenshots/ (not committed, regenerated each run)
+    screenshot: 'on',  // Always take screenshots for visual debugging
 
     // Video on failure (useful but large files)
     video: 'retain-on-failure',

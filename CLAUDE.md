@@ -60,6 +60,27 @@ pnpm test:e2e:ui              # Interactive test UI
 pnpm test:e2e:debug           # Debug mode
 ```
 
+**E2E Test Screenshots** (Transient Visual Inspection):
+- **All E2E tests capture screenshots** to `test-screenshots/` folder
+- **Not committed to git** - regenerated on every test run
+- **Purpose**: Visual debugging for both Claude and user
+- **Location**: `packages/luxar-viewer/test-screenshots/*.png`
+- **Usage in tests**:
+  ```typescript
+  import { takeTestScreenshot } from './helpers';
+
+  test('my test', async ({ page }) => {
+    await page.goto('/?src=/data/demo.zarr');
+    await waitForLuxarReady(page);
+
+    // Capture visual state for inspection
+    await takeTestScreenshot(page, 'demo-loaded');
+    // Screenshot saved to: test-screenshots/demo-loaded.png
+  });
+  ```
+- **Benefit**: Claude can inspect screenshots after running E2E tests to verify visual correctness
+- **Viewing**: After running tests, browse `test-screenshots/` to review all captured states
+
 **Important**: Always use `?debug` URL parameter to enable the debug interface:
 - `http://localhost:5173/?debug` - Exposes `window.__luxarDebug`
 - Contains: scene, camera, renderer, controls, getState(), renderOnce(), etc.
@@ -399,7 +420,7 @@ pnpm agent:debug
 [BROWSER-CONSOLE-LOG] Query result: 50 cells → 10 ranges → 12000 points ✅
 ```
 
-See [packages/luxar-viewer/PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/PLAYWRIGHT_GUIDE.md) for complete guide.
+See [packages/luxar-viewer/PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md) for complete guide.
 
 ## Important Reminders
 
