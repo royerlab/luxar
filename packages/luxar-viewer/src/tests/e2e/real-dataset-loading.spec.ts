@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForPointsLoaded, takeTestScreenshot } from './helpers';
 
 // Dataset paths (relative to dev server root)
 const DATASETS = {
@@ -37,6 +37,9 @@ test.describe('Real Dataset Loading', () => {
     expect(state.initialized).toBe(true);
     expect(state.totalPoints).toBeGreaterThan(0);
     expect(state.pointClouds.length).toBeGreaterThan(0);
+
+    // Capture screenshot for visual inspection
+    await takeTestScreenshot(page, 'dataset-loaded-dimension-nav');
   });
 
   test('should load 5D dataset with correct dimensions', async ({ page }) => {

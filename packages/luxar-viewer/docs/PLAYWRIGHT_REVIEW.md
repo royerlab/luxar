@@ -184,11 +184,12 @@ Playwright generates several output directories and files that shouldn't be comm
 - `*.png-snapshots/` - Baseline screenshots (may want to commit these actually)
 
 **Fix**: Added to root `.gitignore`:
+
 ```gitignore
 # Playwright
 playwright-report/
 test-results/
-debug-view.png
+../debug-view.png
 error-state.png
 *.png-snapshots/
 ```

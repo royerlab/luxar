@@ -93,6 +93,7 @@ export function captureConsoleMessages(page: Page): {
 
 /**
  * Take a stable screenshot (waits for render to settle)
+ * Saves to test-screenshots/ folder for visual inspection
  */
 export async function takeStableScreenshot(page: Page, path: string): Promise<void> {
   // Trigger one render
@@ -101,6 +102,21 @@ export async function takeStableScreenshot(page: Page, path: string): Promise<vo
   // Wait a bit for GPU to finish
   await page.waitForTimeout(500);
 
-  // Take screenshot
-  await page.screenshot({ path, fullPage: false });
+  // Take screenshot (save to test-screenshots folder)
+  const screenshotPath = `test-screenshots/${path}`;
+  await page.screenshot({ path: screenshotPath, fullPage: false });
+}
+
+/**
+ * Take a test screenshot for visual inspection
+ * Automatically prefixes with test-screenshots/ folder
+ *
+ * Use this in tests to capture visual state for debugging:
+ * - Claude can inspect screenshots after test runs
+ * - User can review screenshots manually
+ * - Regenerated on every test run (not committed to git)
+ */
+export async function takeTestScreenshot(page: Page, name: string): Promise<void> {
+  const screenshotPath = `test-screenshots/${name}.png`;
+  await page.screenshot({ path: screenshotPath, fullPage: false });
 }
