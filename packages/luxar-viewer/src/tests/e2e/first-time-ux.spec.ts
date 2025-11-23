@@ -10,7 +10,6 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady } from './helpers';
 
 test.describe('First-Time User Experience', () => {
   test('should show dataset browser when no dataset specified', async ({ page }) => {
