@@ -113,8 +113,8 @@ test.describe('Luxar Basic Rendering', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
-    // Check for canvas element
-    const canvas = page.locator('canvas#canvas');
+    // Check for canvas element (ID is 'app' per index.html and config)
+    const canvas = page.locator('canvas#app');
     await expect(canvas).toBeVisible();
 
     // Canvas should have dimensions
