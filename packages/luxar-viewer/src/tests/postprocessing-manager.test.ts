@@ -337,12 +337,5 @@ describe('PostProcessingManager', () => {
       manager.setMSAAEnabled(false);
       expect(manager.isMSAAEnabled()).toBe(false);
     });
-
-    it('should handle SSAA methods (not implemented)', () => {
-      manager.setSSAAEnabled(true);
-      manager.setSSAAMultiplier(2.0);
-      // These are placeholders that log warnings
-      expect(manager).toBeDefined();
-    });
   });
 });

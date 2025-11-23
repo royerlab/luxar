@@ -200,7 +200,7 @@ def generate_4d_fractal(
     aprint(f"  Grid: {grid_size}^4 = {grid_size**4:,} points")
 
     # Create integer grid for geometric fractals
-    aprint(f"  Creating 4D integer grid...")
+    aprint("  Creating 4D integer grid...")
     coords_int = np.arange(grid_size, dtype=np.int32)
 
     # Create meshgrid efficiently
@@ -282,7 +282,7 @@ def generate_4d_fractal(
 
     # Safety check
     if np.sum(keep_mask) == 0:
-        aprint(f"    ⚠️  No points - using fallback")
+        aprint("    ⚠️  No points - using fallback")
         # Keep random 1M points
         n_fallback = min(1_000_000, grid_size**4)
         indices = np.random.choice(grid_size**4, n_fallback, replace=False)

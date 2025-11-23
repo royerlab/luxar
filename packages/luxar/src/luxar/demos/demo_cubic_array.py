@@ -135,7 +135,7 @@ def generate_cubic_array(
         colors[:, 0] = np.clip(colors[:, 0] + color_variation, 0, 1)
         colors[:, 1] = np.clip(colors[:, 1] - color_variation * 0.5, 0, 1)
         colors[:, 2] = np.clip(colors[:, 2] + color_variation * 0.5, 0, 1)
-        aprint(f"✓ Generated colors with depth gradient")
+        aprint("✓ Generated colors with depth gradient")
 
         # Create uniform radii and sharpness arrays
         radii = np.full(positions.shape[0], radius, dtype=np.float32)

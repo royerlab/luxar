@@ -61,6 +61,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
+  private initLock = false;
   private arrays: {
     positions?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -261,11 +262,18 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const queryId = `${this.node.path}-${startTime}`;
 
     try {
-      // Prevent race conditions during initialization
-      if (!this.initPromise) {
-        this.initPromise = this.initialize();
+      // Prevent race conditions during initialization with atomic check-and-set
+      if (!this.initPromise && !this.initLock) {
+        this.initLock = true;
+        this.initPromise = this.initialize().finally(() => {
+          this.initLock = false;
+        });
       }
-      await this.initPromise;
+
+      // Wait for initialization to complete
+      if (this.initPromise) {
+        await this.initPromise;
+      }
 
       if (!this.spatialIndex || !this.arrays.positions) {
         throw new Error('Loader not properly initialized');
@@ -323,29 +331,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status

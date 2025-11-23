@@ -425,7 +425,7 @@ export class InputHandler {
         }
         break;
 
-      // 'C' key removed - use 'F' to recenter on bounding box instead
+        // 'C' key removed - use 'F' to recenter on bounding box instead
 
       case 'l':
       case 'L':
@@ -446,10 +446,14 @@ export class InputHandler {
         // Only handle if not using modifiers and not typing in input
         if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
           event.preventDefault();
-          import('../data').then(({ cycleDataMonitor }) => {
-            cycleDataMonitor();
-            log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
-          });
+          import('../data')
+            .then(({ cycleDataMonitor }) => {
+              cycleDataMonitor();
+              log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
+            })
+            .catch((error) => {
+              log.error(Modules.INPUT, 'Failed to cycle data monitor:', error);
+            });
         }
         break;
 
@@ -842,9 +846,13 @@ export class InputHandler {
     }
 
     // Close data loading monitor
-    import('../data').then(({ hideDataMonitor }) => {
-      hideDataMonitor();
-    });
+    import('../data')
+      .then(({ hideDataMonitor }) => {
+        hideDataMonitor();
+      })
+      .catch((error) => {
+        log.error(Modules.INPUT, 'Failed to hide data monitor:', error);
+      });
 
     // Close dimension sliders
     if (this.dimensionSliders?.getIsVisible()) {

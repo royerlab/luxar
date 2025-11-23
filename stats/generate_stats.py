@@ -6,11 +6,10 @@ Analyzes Python and TypeScript code to produce comprehensive statistics
 including lines of code, file counts, function/class counts, etc.
 """
 
-import os
 import re
-from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 
 def count_lines_in_file(filepath):
@@ -608,11 +607,11 @@ def main():
 
     # Generate HTML report
     output_file = project_root / 'project_stats.html'
-    print(f"  Generating HTML report...")
+    print("  Generating HTML report...")
     generate_html_report(stats, output_file)
 
     print(f"\n✅ Report generated: {output_file}")
-    print(f"\n📊 Summary:")
+    print("\n📊 Summary:")
     print(f"  Total files: {stats['total']['files']:,}")
     print(f"  Lines of code: {stats['total']['code_lines']:,}")
     print(f"  Python files: {stats['python']['files']:,}")

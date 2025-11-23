@@ -332,20 +332,10 @@ export class SceneManager extends THREE.EventDispatcher<{
         const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         materialManager.updateCameraParams(fovRadians, drawingBufferSize);
 
-        // Also update any materials that might have been created directly
-        this.scene.traverse((object) => {
-          if (object instanceof THREE.Points) {
-            const material = object.material as THREE.ShaderMaterial;
-            if (material.uniforms && material.uniforms.fov && material.uniforms.resolution) {
-              material.uniforms.fov.value = fovRadians;
-              // Ensure the resolution value is properly set
-              if (material.uniforms.resolution.value && material.uniforms.resolution.value.copy) {
-                material.uniforms.resolution.value.copy(drawingBufferSize);
-              } else {
-                material.uniforms.resolution.value = drawingBufferSize.clone();
-              }
-            }
-          }
+        // Also update any materials that might have been created directly (type-safe)
+        this.updatePointMaterialUniforms({
+          fov: fovRadians,
+          resolution: drawingBufferSize,
         });
       }
 
@@ -618,20 +608,10 @@ export class SceneManager extends THREE.EventDispatcher<{
       const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       materialManager.updateCameraParams(fovRadians, drawingBufferSize);
 
-      // Also update any materials in the scene directly
-      this.scene.traverse((object) => {
-        if (object instanceof THREE.Points) {
-          const material = object.material as THREE.ShaderMaterial;
-          if (material.uniforms && material.uniforms.fov && material.uniforms.resolution) {
-            material.uniforms.fov.value = fovRadians;
-            // Ensure the resolution value is properly set
-            if (material.uniforms.resolution.value && material.uniforms.resolution.value.copy) {
-              material.uniforms.resolution.value.copy(drawingBufferSize);
-            } else {
-              material.uniforms.resolution.value = drawingBufferSize.clone();
-            }
-          }
-        }
+      // Also update any materials in the scene directly (type-safe)
+      this.updatePointMaterialUniforms({
+        fov: fovRadians,
+        resolution: drawingBufferSize,
       });
     }
   }
@@ -648,20 +628,15 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
     this.camera.updateProjectionMatrix();
 
-    // Update material uniforms for world-space point sizing
+    // Update material uniforms for world-space point sizing (type-safe)
     const fovRadians = (this.camera.fov * Math.PI) / 180;
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     materialManager.updateCameraParams(fovRadians, drawingBufferSize);
 
     // Also update any materials in the scene directly
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Points) {
-        const material = object.material as THREE.ShaderMaterial;
-        if (material.uniforms && material.uniforms.fov && material.uniforms.resolution) {
-          material.uniforms.fov.value = fovRadians;
-          material.uniforms.resolution.value.copy(drawingBufferSize);
-        }
-      }
+    this.updatePointMaterialUniforms({
+      fov: fovRadians,
+      resolution: drawingBufferSize,
     });
   }
 
@@ -735,17 +710,59 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Update all materials in the material manager
     materialManager.updateHDRMultiplier(multiplier);
 
-    // Also update any materials in the scene directly
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Points) {
-        const material = object.material as THREE.ShaderMaterial;
-        if (material.uniforms && material.uniforms.hdrMultiplier) {
-          material.uniforms.hdrMultiplier.value = multiplier;
-        }
-      }
+    // Also update any materials in the scene directly (type-safe)
+    this.updatePointMaterialUniforms({
+      hdrMultiplier: multiplier,
     });
 
     log.success(Modules.RENDERER, `HDR multiplier updated for all point materials: ${multiplier}`);
+  }
+
+  /**
+   * Update shader uniforms for all point materials in the scene
+   * This is a type-safe helper that validates material types and properties
+   */
+  private updatePointMaterialUniforms(updates: {
+    fov?: number;
+    resolution?: THREE.Vector2;
+    hdrMultiplier?: number;
+  }): void {
+    this.scene.traverse((object) => {
+      // Type guard: ensure it's Points with ShaderMaterial
+      if (!(object instanceof THREE.Points)) {
+        return;
+      }
+
+      // Handle material arrays
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+
+      for (const material of materials) {
+        // Type guard: ensure it's ShaderMaterial with uniforms
+        if (!(material instanceof THREE.ShaderMaterial) || !material.uniforms) {
+          continue;
+        }
+
+        // Update FOV if provided
+        if (updates.fov !== undefined && material.uniforms.fov) {
+          material.uniforms.fov.value = updates.fov;
+        }
+
+        // Update resolution if provided
+        if (updates.resolution !== undefined && material.uniforms.resolution) {
+          const resolution = material.uniforms.resolution.value;
+          if (resolution && typeof resolution.copy === 'function') {
+            resolution.copy(updates.resolution);
+          } else {
+            material.uniforms.resolution.value = updates.resolution.clone();
+          }
+        }
+
+        // Update HDR multiplier if provided
+        if (updates.hdrMultiplier !== undefined && material.uniforms.hdrMultiplier) {
+          material.uniforms.hdrMultiplier.value = updates.hdrMultiplier;
+        }
+      }
+    });
   }
 
   /**

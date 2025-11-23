@@ -28,15 +28,35 @@ const src = params.get('src') ?? config.defaultZarrPath;
 const app = new LuxarApp();
 
 // Type-safe debug interface (only in development builds)
+// Note: This interface is extended in app.ts after initialization
+// to include runtime components (scene, camera, etc.)
 declare global {
   interface Window {
     __luxarDebug?: {
+      // Base properties (available from main.ts)
       app: LuxarApp;
       consoleInterceptor: typeof consoleInterceptor;
       version: string;
+
+      // Runtime properties (added by app.ts after initialization)
+      scene?: THREE.Scene;
+      camera?: THREE.PerspectiveCamera;
+      renderer?: THREE.WebGLRenderer;
+      controls?: any; // ControlsManager not imported here
+      postProcessing?: any; // PostProcessingManager not imported here
+      animationController?: any;
+      inputHandler?: any;
+      renderingControls?: any;
+      getState?: () => any;
+      renderOnce?: () => void;
+      getSceneLoader?: () => Promise<any>;
+      runtimeReady?: boolean;
     };
   }
 }
+
+// Import THREE for type definitions
+import * as THREE from 'three';
 
 // Only expose debug interface in development/debug mode
 // Check for debug flag in URL or localStorage

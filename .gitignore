@@ -146,3 +146,10 @@ local_settings.py
 
 # Generated files
 generated/
+
+# Playwright
+playwright-report/
+test-results/
+debug-view.png
+error-state.png
+*.png-snapshots/

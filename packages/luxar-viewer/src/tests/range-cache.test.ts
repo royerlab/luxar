@@ -227,23 +227,3 @@ describe('Point Range Operations', () => {
     expect(merged).toEqual(ranges);
   });
 });
-
-describe('Loader Integration', () => {
-  // These would be integration tests with actual zarr data
-  // For now, we'll create placeholder tests
-
-  it('should detect spatial index availability', () => {
-    // This would test the SceneLoader's ability to detect spatial indices
-    expect(true).toBe(true);
-  });
-
-  it('should load aligned attributes with spatial index', () => {
-    // This would test that all attributes use the same ranges
-    expect(true).toBe(true);
-  });
-
-  it('should throw error when no spatial index', () => {
-    // Data without spatial index should throw an error
-    expect(true).toBe(true);
-  });
-});

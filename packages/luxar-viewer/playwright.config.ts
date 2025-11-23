@@ -1,0 +1,153 @@
+/**
+ * Playwright Configuration for Luxar Viewer
+ *
+ * This configuration is specifically optimized for testing Three.js/WebGL applications.
+ * Key features:
+ * - GPU acceleration for realistic rendering
+ * - Higher pixel diff tolerance for WebGL variability
+ * - Trace capture for debugging
+ * - Automatic dev server startup
+ */
+
+import { defineConfig, devices } from '@playwright/test';
+
+/**
+ * See https://playwright.dev/docs/test-configuration
+ */
+export default defineConfig({
+  // Test directory
+  testDir: './src/tests/e2e',
+
+  // Run tests in files in parallel
+  fullyParallel: false,  // WebGL tests can be GPU-intensive, run serially
+
+  // Fail the build on CI if you accidentally left test.only
+  forbidOnly: !!process.env.CI,
+
+  // Retry on CI only
+  retries: process.env.CI ? 2 : 0,
+
+  // Single worker for GPU stability (can increase if GPU allows)
+  workers: 1,
+
+  // Reporter to use
+  reporter: [
+    ['html', { outputFolder: 'playwright-report' }],
+    ['list'],
+    ...(process.env.CI ? [['github' as const]] : [])
+  ],
+
+  // Shared settings for all projects
+  use: {
+    // Base URL for tests
+    baseURL: 'http://localhost:5173',
+
+    // Collect trace on failure for debugging
+    trace: 'retain-on-failure',
+
+    // Screenshot on failure
+    screenshot: 'only-on-failure',
+
+    // Video on failure (useful but large files)
+    video: 'retain-on-failure',
+
+    // Maximum time for each action (click, fill, etc.)
+    actionTimeout: 10000,
+
+    // Navigation timeout
+    navigationTimeout: 60000,
+
+    // ========================================================================
+    // CRITICAL: GPU ACCELERATION FLAGS FOR WEBGL/THREE.JS
+    // ========================================================================
+    // These flags force Chromium to use hardware acceleration even in headless mode.
+    // Without these, WebGL falls back to software rendering (SwiftShader), which is:
+    // - 10-100x slower
+    // - Produces different pixels (visual regression tests fail)
+    // - May cause timeouts or crashes
+    launchOptions: {
+      args: [
+        '--use-gl=egl',                          // Force GPU acceleration
+        '--ignore-gpu-blocklist',                // Unblock older/CI GPUs
+        '--enable-webgl-developer-extensions',   // Enable WebGL extensions
+        '--enable-webgl-draft-extensions',       // Enable draft extensions
+        '--disable-web-security',                // Allow CORS for local testing
+        '--no-sandbox',                          // Often needed in CI environments
+        '--disable-setuid-sandbox',
+      ]
+    },
+  },
+
+  // Configure projects for different browsers
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        // Use Playwright's bundled Chromium for consistency
+        // If you want to use installed Chrome, uncomment the line below:
+        // channel: 'chrome',
+      },
+    },
+
+    // Uncomment to test on other browsers (note: WebGL support varies)
+    // {
+    //   name: 'firefox',
+    //   use: { ...devices['Desktop Firefox'] },
+    // },
+    // {
+    //   name: 'webkit',
+    //   use: { ...devices['Desktop Safari'] },
+    // },
+  ],
+
+  // Run local dev server before starting tests
+  webServer: {
+    command: 'pnpm dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: !process.env.CI,  // Reuse server in dev, start fresh in CI
+    timeout: 120000,  // 2 minutes to start
+    stdout: 'pipe',   // Show server output
+    stderr: 'pipe',
+  },
+
+  // Output directory for test artifacts
+  outputDir: 'test-results/',
+
+  // Test timeout (individual test)
+  timeout: 60000,  // 60 seconds per test (WebGL init can be slow)
+
+  // Expect timeout (for assertions)
+  expect: {
+    // ========================================================================
+    // CRITICAL: RELAXED PIXEL MATCHING FOR WEBGL
+    // ========================================================================
+    // WebGL rendering is non-deterministic across GPUs. A scene rendered on:
+    // - NVIDIA GPU vs AMD GPU
+    // - Mac M1 vs Intel integrated graphics
+    // - CI server vs local machine
+    // ...will have slightly different anti-aliasing, color precision, etc.
+    //
+    // Standard screenshot tests (0% tolerance) will fail 100% of the time.
+    // We relax the threshold to allow minor pixel differences while still
+    // catching real visual regressions.
+    toHaveScreenshot: {
+      // Allow 5% of pixels to differ (vs 0% for standard DOM apps)
+      maxDiffPixelRatio: 0.05,
+
+      // Allow 0.2 color difference per channel (0-1 scale)
+      // This tolerates minor anti-aliasing differences
+      threshold: 0.2,
+
+      // Disable CSS animation detection (doesn't work with WebGL)
+      animations: 'disabled' as const,
+
+      // Take multiple screenshots to ensure scene is stable
+      // (Three.js render loop might still be animating)
+      timeout: 10000,
+    },
+
+    // Timeout for expect() assertions
+    timeout: 10000,
+  },
+});
