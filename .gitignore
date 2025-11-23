@@ -154,4 +154,3 @@ debug-view.png
 error-state.png
 *.png-snapshots/
 # E2E test screenshots (transient, regenerated on each test run)
-test-screenshots/

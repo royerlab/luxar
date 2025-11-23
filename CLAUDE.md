@@ -58,34 +58,45 @@ This allows Claude Code to:
 pnpm test:e2e                 # Run all E2E tests
 pnpm test:e2e:ui              # Interactive test UI
 pnpm test:e2e:debug           # Debug mode
+pnpm test:e2e:report          # View HTML report (after running tests)
 ```
 
-**E2E Test Screenshots** (Transient Visual Inspection):
-- **All E2E tests capture screenshots** to `test-screenshots/` folder
-- **Not committed to git** - regenerated on every test run
-- **Purpose**: Visual debugging for both Claude and user
-- **Location**: `packages/luxar-viewer/test-screenshots/*.png`
-- **Usage in tests**:
-  ```typescript
-  import { takeTestScreenshot } from './helpers';
+**E2E Test Artifacts** (Transient, Not Committed):
 
-  test('my test', async ({ page }) => {
-    await page.goto('/?src=/data/demo.zarr');
-    await waitForLuxarReady(page);
+**Playwright automatically generates**:
+- `test-results/` - Per-test artifacts (screenshots, videos, traces, error context)
+- `playwright-report/` - Interactive HTML report with all results
 
-    // Capture visual state for inspection
-    await takeTestScreenshot(page, 'demo-loaded');
-    // Screenshot saved to: test-screenshots/demo-loaded.png
-  });
-  ```
-- **Benefit**: Claude can inspect screenshots after running E2E tests to verify visual correctness
-- **Viewing**: After running tests, browse `test-screenshots/` to review all captured states
+**Viewing Test Results**:
+```bash
+# After running tests, view the HTML report:
+pnpm test:e2e:report
+
+# This opens an interactive report showing:
+# - All test results (pass/fail)
+# - Screenshots for every test
+# - Videos of failures
+# - Trace viewer for debugging
+# - Timings and performance
+```
+
+**For Claude (AI Debugging)**:
+After running E2E tests, Claude can:
+- Read screenshots from `test-results/*/test-failed-*.png`
+- Inspect error-context.md files
+- Review visual state of failed tests
+- Verify rendering correctness
+
+**For Users**:
+- View `playwright-report/` HTML (recommended)
+- Or browse `test-results/` folders directly
+- Each test gets its own folder with complete artifacts
 
 **Important**: Always use `?debug` URL parameter to enable the debug interface:
 - `http://localhost:5173/?debug` - Exposes `window.__luxarDebug`
 - Contains: scene, camera, renderer, controls, getState(), renderOnce(), etc.
 
-See [PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/PLAYWRIGHT_GUIDE.md) for complete documentation.
+See [PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md) for complete documentation.
 
 Note: When possible, use `make` commands for convenience (see below).
 
