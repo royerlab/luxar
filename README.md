@@ -200,6 +200,7 @@ make help
 | Type check | `make type-check` |
 | Start viewer | `make viewer` |
 | Create demo | `make demo-and-serve` |
+| Project stats | `make stats` |
 
 ## 📋 Data Format
 
