@@ -115,13 +115,13 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      // Python backend to serve examples directory
+      // Python HTTP server to serve examples directory
       // This makes /examples/*.zarr accessible for E2E tests
       // NOTE: Run 'make run-examples' first to generate datasets
-      command: 'cd ../.. && hatch run luxar serve examples/',
-      url: 'http://localhost:8000/examples',
+      command: 'cd ../.. && python3 -m http.server 8000',
+      url: 'http://localhost:8000',
       reuseExistingServer: !process.env.CI,
-      timeout: 30000,
+      timeout: 10000,  // Simple HTTP server starts quickly
       stdout: 'pipe',
       stderr: 'pipe',
     }
