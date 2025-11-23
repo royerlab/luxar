@@ -16,6 +16,7 @@ export class LuxarApp {
   private renderingControls!: RenderingControls;
   private datasetBrowser?: DatasetBrowser;
   private isInitialized = false;
+  private boundCleanup: (() => void) | null = null;
 
   /**
    * Initialize the complete application
@@ -84,6 +85,9 @@ export class LuxarApp {
 
       // Setup window focus handling to trigger render on focus
       this.setupFocusHandling();
+
+      // Expose debug interface for testing and AI-assisted development
+      this.setupDebugInterface();
 
       this.isInitialized = true;
     } catch (error) {
@@ -174,13 +178,20 @@ export class LuxarApp {
     this.inputHandler.clearDimensionUI();
 
     // Clear cache when loading new scene (new architecture)
-    import('../data/scene-loader-manager').then(({ SceneLoaderManager }) => {
-      const sceneLoader = SceneLoaderManager.getInstance().getDefaultLoader();
-      if (sceneLoader) {
-        sceneLoader.clearCaches();
-        log.custom(LogEmoji.DELETE, Modules.LUXAR, 'Cleared data cache for new scene');
-      }
-    });
+    import('../data/scene-loader-manager')
+      .then(({ SceneLoaderManager }) => {
+        const sceneLoader = SceneLoaderManager.getInstance().getDefaultLoader();
+        if (sceneLoader) {
+          sceneLoader.clearCaches();
+          log.custom(LogEmoji.DELETE, Modules.LUXAR, 'Cleared data cache for new scene');
+        } else {
+          log.warning(Modules.LUXAR, 'No default scene loader available for cache clearing');
+        }
+      })
+      .catch((error) => {
+        log.error(Modules.LUXAR, 'Failed to clear scene caches:', error);
+        // Continue anyway - cache clearing is not critical for functionality
+      });
 
     // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
     // monitor.disconnectAllLoaders() when loading a new scene
@@ -203,7 +214,8 @@ export class LuxarApp {
    * Setup cleanup on page unload
    */
   private setupCleanup(): void {
-    window.addEventListener('beforeunload', this.cleanup.bind(this));
+    this.boundCleanup = this.cleanup.bind(this);
+    window.addEventListener('beforeunload', this.boundCleanup);
   }
 
   /**
@@ -237,6 +249,110 @@ export class LuxarApp {
         log.info(Modules.LUXAR, 'Document became visible - triggering render refresh');
       }
     });
+  }
+
+  /**
+   * Setup debug interface for testing and AI-assisted development
+   *
+   * This extends the existing debug interface (created in main.ts) with
+   * runtime components that are only available after initialization:
+   * - Three.js scene, camera, renderer
+   * - Controls and animation state
+   * - Helper functions for testing
+   *
+   * Preserves existing properties (app, consoleInterceptor, version) from main.ts
+   *
+   * Only enabled when ?debug URL parameter is present
+   */
+  private setupDebugInterface(): void {
+    // Check if debug mode is enabled via URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const debugEnabled = urlParams.has('debug');
+
+    if (!debugEnabled) {
+      return;
+    }
+
+    log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
+
+    // Extend existing debug interface (preserve app, consoleInterceptor, version from main.ts)
+    const existing = (window as any).__luxarDebug || {};
+
+    (window as any).__luxarDebug = {
+      // Preserve existing properties from main.ts
+      ...existing,
+
+      // Add runtime components (only available after initialization)
+      scene: this.sceneManager.scene,
+      camera: this.sceneManager.camera,
+      renderer: this.sceneManager.renderer,
+      controls: this.sceneManager.controls,
+      postProcessing: this.sceneManager.postProcessing,
+      animationController: this.animationController,
+      inputHandler: this.inputHandler,
+      renderingControls: this.renderingControls,
+
+      // Helper function to get current state snapshot
+      getState: () => {
+        const scene = this.sceneManager.scene;
+
+        // Count points across all point clouds
+        let totalPoints = 0;
+        const pointClouds: any[] = [];
+
+        scene.traverse((object) => {
+          if (object.type === 'Points') {
+            const geometry = (object as any).geometry;
+            const pointCount = geometry?.attributes?.position?.count || 0;
+            totalPoints += pointCount;
+
+            pointClouds.push({
+              name: object.name || 'unnamed',
+              pointCount,
+              visible: object.visible,
+              hasColors: !!geometry?.attributes?.color,
+              hasRadii: !!geometry?.attributes?.radius,
+              hasSharpness: !!geometry?.attributes?.sharpness,
+            });
+          }
+        });
+
+        return {
+          totalPoints,
+          pointClouds,
+          cameraPosition: {
+            x: this.sceneManager.camera.position.x,
+            y: this.sceneManager.camera.position.y,
+            z: this.sceneManager.camera.position.z,
+          },
+          cameraFov: this.sceneManager.camera.fov,
+          isAnimating: this.animationController.isActive,
+          initialized: this.isInitialized,
+        };
+      },
+
+      // Helper to trigger a single frame render (for stable screenshots)
+      renderOnce: () => {
+        this.animationController.startAnimation();
+      },
+
+      // Helper to get scene loader manager (for cache inspection)
+      getSceneLoader: async () => {
+        const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+        return SceneLoaderManager.getInstance();
+      },
+
+      // Mark that runtime components are now available
+      runtimeReady: true,
+    };
+
+    // Log available debug commands
+    log.info(Modules.LUXAR, 'Debug interface ready:');
+    log.info(Modules.LUXAR, '  __luxarDebug.getState() - Get current state snapshot');
+    log.info(Modules.LUXAR, '  __luxarDebug.renderOnce() - Trigger single frame render');
+    log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
+    log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
+    log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
   }
 
   /**
@@ -286,8 +402,11 @@ export class LuxarApp {
       // Clean up UI resources
       cleanupUI();
 
-      // Remove beforeunload listener
-      window.removeEventListener('beforeunload', this.cleanup.bind(this));
+      // Remove beforeunload listener with stored reference
+      if (this.boundCleanup) {
+        window.removeEventListener('beforeunload', this.boundCleanup);
+        this.boundCleanup = null;
+      }
 
       this.isInitialized = false;
     } catch (error) {

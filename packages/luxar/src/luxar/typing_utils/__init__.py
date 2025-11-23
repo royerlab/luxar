@@ -9,6 +9,22 @@ This package is organized as follows:
 """
 
 # Re-export everything for backward compatibility
+# Import validation functions from validation.types module
+from ..validation.types import (
+    is_color_array,
+    is_position_array,
+    is_transform_matrix,
+    validate_blending_mode,
+    validate_colors,
+    validate_gamma,
+    validate_node_type,
+    validate_opacity,
+    validate_physical_unit,
+    validate_positions,
+    validate_radii,
+    validate_sharpness,
+    validate_transform,
+)
 from .aliases import (
     ArrayLike,
     ChunkSpec,
@@ -60,23 +76,6 @@ from .protocols import (
     PointsProtocol,
     SceneProtocol,
     ZarrDataT,
-)
-
-# Import validation functions from validation.types module
-from ..validation.types import (
-    is_color_array,
-    is_position_array,
-    is_transform_matrix,
-    validate_blending_mode,
-    validate_colors,
-    validate_gamma,
-    validate_node_type,
-    validate_opacity,
-    validate_physical_unit,
-    validate_positions,
-    validate_radii,
-    validate_sharpness,
-    validate_transform,
 )
 
 __all__ = [

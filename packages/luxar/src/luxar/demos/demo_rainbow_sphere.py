@@ -84,7 +84,7 @@ def generate_rainbow_sphere(
         y = y * sphere_radius
 
         positions = np.column_stack([x, y, z]).astype(np.float32)
-        aprint(f"✓ Created spherical spiral with even distribution")
+        aprint("✓ Created spherical spiral with even distribution")
 
         # === STEP 2: Generate rainbow colors ===
         aprint("Generating smooth rainbow gradient...")

@@ -36,7 +36,7 @@ export class AnimationController {
   private animationId: number = 0;
 
   /** Timeout ID for auto-pause functionality */
-  private idleTimeout: number = 0;
+  private idleTimeout: ReturnType<typeof setTimeout> | null = null;
 
   /** Performance monitoring instance for FPS/timing metrics */
   private performanceMonitor: PerformanceMonitor;
@@ -151,7 +151,9 @@ export class AnimationController {
 
     // Reset the idle timeout - this is called on every user interaction
     // Clear any existing timeout to prevent premature stopping
-    clearTimeout(this.idleTimeout);
+    if (this.idleTimeout !== null) {
+      clearTimeout(this.idleTimeout);
+    }
 
     // Set new timeout to check for idle - will continue if continuous effects are active
     // This is the key power-saving optimization for static scenes
@@ -181,7 +183,10 @@ export class AnimationController {
     }
 
     // Clear the idle timeout to prevent memory leaks
-    clearTimeout(this.idleTimeout);
+    if (this.idleTimeout !== null) {
+      clearTimeout(this.idleTimeout);
+      this.idleTimeout = null;
+    }
   };
 
   /**

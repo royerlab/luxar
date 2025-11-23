@@ -30,11 +30,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Use pnpm for the luxar-viewer package (NOT npm)
 - Development server: `pnpm dev`
 - Build: `pnpm build`
-- Tests: `pnpm test --run` (use --run for non-interactive mode)
+- Unit tests: `pnpm test --run` (use --run for non-interactive mode)
+- E2E tests: `pnpm test:e2e` (Playwright tests)
 - Coverage: `pnpm run test:coverage`
 - Type checking: `pnpm run typecheck`
 - Linting: `pnpm run lint`
 - Formatting: `pnpm run format`
+
+#### Playwright Testing & AI-Assisted Debugging
+The luxar-viewer has comprehensive Playwright integration for E2E testing and AI-assisted debugging:
+
+**AI Debugging (for Claude Code)**:
+```bash
+cd packages/luxar-viewer
+pnpm agent:debug              # Headless mode - shows browser console logs
+pnpm agent:debug:visible      # Visible browser - watch it run
+```
+
+This allows Claude Code to:
+- See all browser console logs in terminal
+- Inspect Three.js scene state via JSON output
+- Take screenshots for visual verification
+- Debug issues autonomously without asking user to check browser
+
+**E2E Testing**:
+```bash
+pnpm test:e2e                 # Run all E2E tests
+pnpm test:e2e:ui              # Interactive test UI
+pnpm test:e2e:debug           # Debug mode
+```
+
+**Important**: Always use `?debug` URL parameter to enable the debug interface:
+- `http://localhost:5173/?debug` - Exposes `window.__luxarDebug`
+- Contains: scene, camera, renderer, controls, getState(), renderOnce(), etc.
+
+See [PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/PLAYWRIGHT_GUIDE.md) for complete documentation.
 
 Note: When possible, use `make` commands for convenience (see below).
 
@@ -293,24 +323,83 @@ make demo-and-serve                          # Create demo and start servers
 ### Code Quality Checklist
 When making significant changes:
 1. Run Python tests: `hatch run test-cov` (coverage must be >80%)
-2. Run TypeScript build: `cd packages/luxar-viewer && pnpm build` (check current folder first!)
-3. Check Python linting: `hatch run python -m ruff check .`
-4. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
-5. Fix TypeScript unused warnings by prefixing with underscore
-6. **Update TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own README.md that MUST be updated when code changes
-7. **Update documentation in `/docs/` folder** - check ALL relevant docs for Python changes
-8. Update root README.md if features or usage changes
-9. Update LUXAR_ZARR_FORMAT.md if data structures change
-10. Add/update examples if introducing new features
-11. Run integration tests on all examples
-12. Update this CLAUDE.md file with important learnings
+2. Run TypeScript unit tests: `cd packages/luxar-viewer && pnpm test`
+3. **Run TypeScript E2E tests**: `cd packages/luxar-viewer && pnpm test:e2e` (Playwright)
+4. Run TypeScript build: `cd packages/luxar-viewer && pnpm build` (check current folder first!)
+5. Check Python linting: `hatch run python -m ruff check .`
+6. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
+7. Fix TypeScript unused warnings by prefixing with underscore
+8. **Update TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own README.md that MUST be updated when code changes
+9. **Update documentation in `/docs/` folder** - check ALL relevant docs for Python changes
+10. Update root README.md if features or usage changes
+11. Update LUXAR_ZARR_FORMAT.md if data structures change
+12. Add/update examples if introducing new features
+13. Run integration tests on all examples
+14. Update this CLAUDE.md file with important learnings
 
 ### TypeScript Quality Checks
 After making changes in luxar-viewer, run:
 - `pnpm run lint` - Check code style
 - `pnpm run typecheck` - Check TypeScript types
 - `pnpm run format` - Auto-fix formatting
+- `pnpm test` - Run unit tests (Vitest)
+- `pnpm test:e2e` - Run E2E tests (Playwright)
 - `pnpm run check` - Run all checks (typecheck, lint, test)
+
+### AI-Assisted Debugging (IMPORTANT for Claude Code)
+When debugging TypeScript/viewer issues, use the Playwright agent driver:
+
+```bash
+cd packages/luxar-viewer
+pnpm agent:debug
+```
+
+This shows:
+- `[BROWSER-CONSOLE-*]` - All browser console logs (errors, warnings, info)
+- JSON state dump - Three.js scene state, point counts, camera position
+- `debug-view.png` - Screenshot of current state
+
+**How to use**:
+1. User reports a bug in the viewer
+2. Run `pnpm agent:debug` to see browser console output
+3. Inspect JSON state to understand what's loaded
+4. Add debug logging (`console.log()`) if needed
+5. Run again to verify fix
+6. Remove debug logging when done
+
+**Available debug properties** (when `?debug` is in URL):
+- `window.__luxarDebug.scene` - THREE.Scene object
+- `window.__luxarDebug.camera` - Camera object
+- `window.__luxarDebug.renderer` - WebGL renderer
+- `window.__luxarDebug.getState()` - Current state snapshot
+- `window.__luxarDebug.renderOnce()` - Trigger single frame
+- `window.__luxarDebug.app` - LuxarApp instance
+- `window.__luxarDebug.consoleInterceptor` - Console message history
+
+**Example debugging workflow**:
+```bash
+# 1. Run agent driver
+pnpm agent:debug
+
+# 2. See output:
+[BROWSER-CONSOLE-LOG] Query result: 0 cells → 0 ranges → 0 points
+# Identifies the issue: no points loaded
+
+# 3. Add debug logging to code
+console.log('[DEBUG] Spatial index query:', queryTolerance);
+
+# 4. Run again
+pnpm agent:debug
+[BROWSER-CONSOLE-LOG] [DEBUG] Spatial index query: [0, 0, 0, 0]
+# Found the bug: tolerance is all zeros!
+
+# 5. Fix and verify
+# ... make fix ...
+pnpm agent:debug
+[BROWSER-CONSOLE-LOG] Query result: 50 cells → 10 ranges → 12000 points ✅
+```
+
+See [packages/luxar-viewer/PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/PLAYWRIGHT_GUIDE.md) for complete guide.
 
 ## Important Reminders
 
@@ -326,7 +415,7 @@ After making changes in luxar-viewer, run:
 9. When running test 'by-hand', or doing experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later
 10. Example/test datasets should always be named: 'something_something_example(.py|.zarr)' (e.g., 'test_4d_rainbow_sphere_example.zarr')
 11. Resulting zarr datasets from examples can be left in the examples folder - no need to copy them elsewhere
-12. Do not try to run the viewer yourself - ask the user to run it and request console output if needed
+12. **You CAN now run and debug the viewer autonomously** using `pnpm agent:debug` (Playwright). Use this to verify fixes, inspect state, and debug issues without asking the user to open a browser. See the "AI-Assisted Debugging" section above.
 
 ## Technical Documentation
 

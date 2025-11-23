@@ -247,7 +247,7 @@ def generate_volumetric_cloud(
         # Check if we have any points left
         if len(positions) == 0:
             aprint(f"⚠️  WARNING: Threshold {density_threshold} filtered out ALL points!")
-            aprint(f"   Lowering threshold to 0.25 and retrying...")
+            aprint("   Lowering threshold to 0.25 and retrying...")
             density_threshold = 0.25
             mask = combined_density > density_threshold
             positions = positions_raw[mask]
@@ -259,7 +259,7 @@ def generate_volumetric_cloud(
             )
 
         aprint(f"✓ Kept {len(positions):,} points ({len(positions)/n_candidate_points*100:.1f}% of candidates)")
-        aprint(f"  This creates the wispy, cloud-like structure")
+        aprint("  This creates the wispy, cloud-like structure")
 
         # === STEP 5: Size points based on density ===
         aprint("Assigning point sizes based on local density...")
@@ -282,7 +282,7 @@ def generate_volumetric_cloud(
         aprint(f"✓ Point sizes: {min_radius} to {max_radius} units (with variation)")
         aprint(f"  Mean radius: {np.mean(radii):.3f}")
         aprint(f"  Std dev: {np.std(radii):.3f}")
-        aprint(f"  Dramatic size variation for volumetric depth")
+        aprint("  Dramatic size variation for volumetric depth")
 
         # === STEP 6: Create soft, cloud-like colors ===
         aprint("Generating cloud colors...")
@@ -313,9 +313,9 @@ def generate_volumetric_cloud(
         sharpness = sharpness * sharpness_noise
         sharpness = np.clip(sharpness, 0.2, 1.0).astype(np.float32)
 
-        aprint(f"✓ Very soft sharpness: 0.2 to 0.8 (cloud-like softness)")
+        aprint("✓ Very soft sharpness: 0.2 to 0.8 (cloud-like softness)")
         aprint(f"  Mean: {np.mean(sharpness):.2f} (softer than default)")
-        aprint(f"  Inverse to density (dense areas softer = more diffuse)")
+        aprint("  Inverse to density (dense areas softer = more diffuse)")
 
     # === STEP 8: Write to Zarr ===
     with asection("Writing to Zarr"):
