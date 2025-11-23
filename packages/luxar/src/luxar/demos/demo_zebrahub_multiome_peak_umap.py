@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Self-Contained Demo: Zebrahub 3D UMAP Visualization
+"""Self-Contained Demo: Zebrahub Multiome Peak 3D UMAP Visualization
 
 This demo demonstrates:
 - Loading biological data from remote public zarr store
-- 3D UMAP embedding of 640k single-cell peaks
+- 3D UMAP embedding of 640k single-cell ATAC-seq peaks
 - Color-coded by cell type (30 cell types)
 - Navigation through timepoints (6 developmental stages)
 - Real scientific dataset from Zebrahub project
 - Complete workflow: download → build scene → serve → cleanup
 
 Data Source:
-    CZ Biohub - Zebrahub Project
+    CZ Biohub - Zebrahub Multiome Project
     3D UMAP of single-cell chromatin accessibility peaks
     URL: https://public.czbiohub.org/royerlab/zebrahub/...
 
@@ -22,7 +22,7 @@ Dataset Structure:
     - 4 peak types
 
 Usage:
-    python demo_zebrahub_umap.py
+    python demo_zebrahub_multiome_peak_umap.py
 
 Controls:
     - Rotate to explore UMAP structure
@@ -205,9 +205,9 @@ def create_zebrahub_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            # Add points
-            radii = np.full(n_points, 0.15, dtype=np.float32)
-            sharpnesses = np.full(n_points, 4.0, dtype=np.float32)
+            # Add points with small radii for dense point cloud
+            radii = np.full(n_points, 0.04, dtype=np.float32)  # Smaller for 640k points
+            sharpnesses = np.full(n_points, 5.0, dtype=np.float32)
 
             scene.add_points(
                 "Cells",
@@ -226,7 +226,7 @@ def create_zebrahub_scene(
 def main():
     """Main demo entry point."""
     aprint("=" * 70)
-    aprint("ZEBRAHUB 3D UMAP DEMO")
+    aprint("ZEBRAHUB MULTIOME PEAK 3D UMAP DEMO")
     aprint("=" * 70)
     aprint("")
     aprint("Visualizing single-cell chromatin accessibility from zebrafish!")
@@ -267,6 +267,7 @@ def main():
         aprint("")
 
         try:
+            # luxar CLI automatically finds available ports
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
