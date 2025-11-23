@@ -189,31 +189,28 @@ export class DatasetBrowser {
     header.appendChild(title);
     header.appendChild(closeBtn);
 
-    // Welcome banner with helpful guidance (shown on first open)
+    // Compact help banner with essential guidance
     const welcomeBanner = document.createElement('div');
     welcomeBanner.id = 'browser-welcome';
     welcomeBanner.style.cssText = `
-      padding: ${browserConfig.padding.panel}px;
-      background: rgba(76, 175, 80, 0.1);
-      border-bottom: 1px solid rgba(76, 175, 80, 0.3);
-      font-size: 13px;
-      line-height: 1.6;
-      color: #cccccc;
+      padding: 10px ${browserConfig.padding.panel}px;
+      background: rgba(76, 175, 80, 0.08);
+      border-bottom: 1px solid rgba(76, 175, 80, 0.2);
+      font-size: 12px;
+      line-height: 1.4;
+      color: #aaaaaa;
     `;
 
     welcomeBanner.innerHTML = `
-      <div style="font-weight: 600; color: #88cc88; margin-bottom: 8px;">
-        📊 Welcome to Luxar - nD Point Cloud Viewer
-      </div>
-      <div style="margin-bottom: 6px;">
-        <strong>To load a dataset:</strong> Browse the directories below and click on a <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px;">.zarr</code> file
-      </div>
-      <div style="font-size: 12px; opacity: 0.8;">
-        <strong>Or</strong> provide a dataset URL: <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; font-size: 11px;">?src=/path/to/dataset.zarr</code>
-      </div>
-      <div style="font-size: 12px; opacity: 0.7; margin-top: 6px;">
-        💡 Press <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px;">H</kbd> for keyboard shortcuts •
-        <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px;">Esc</kbd> to close
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <strong style="color: #88cc88;">Luxar</strong> - Interactive Scientific Data Visualization
+          <span style="opacity: 0.7; margin-left: 8px;">•</span>
+          <span style="opacity: 0.7; margin-left: 8px;">Browse for <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 2px; font-size: 11px;">.zarr</code> or enter path manually</span>
+        </div>
+        <div style="font-size: 11px; opacity: 0.6;">
+          <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 2px; font-family: monospace;">H</kbd> Help
+        </div>
       </div>
     `;
 
