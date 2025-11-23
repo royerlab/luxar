@@ -71,7 +71,12 @@ export class LuxarApp {
       // Check if source might be a directory (for navigation)
       if (await this.shouldShowBrowser(sceneSrc)) {
         // Show dataset browser for directory navigation
-        this.showDatasetBrowser();
+        try {
+          this.showDatasetBrowser();
+        } catch (error) {
+          log.warning(Modules.APP, 'Dataset browser initialization had issues, but browser is shown:', error);
+          // Browser is shown even if navigation fails - user can use manual entry
+        }
       } else {
         // Load scene data directly
         await this.loadDataset(sceneSrc);
@@ -146,15 +151,22 @@ export class LuxarApp {
     this.datasetBrowser = new DatasetBrowser({
       container: document.body,
       onDatasetSelect: async (path: string) => {
-        // Construct full URL
+        // Construct full URL for the selected dataset
         const params = new URLSearchParams(window.location.search);
         const currentSrc = params.get('src') || '';
 
         let baseUrl: string;
-        try {
-          const url = new URL(currentSrc);
-          baseUrl = url.origin;
-        } catch {
+
+        // Only try to parse as URL if currentSrc is not empty and looks like a URL
+        if (currentSrc && (currentSrc.startsWith('http://') || currentSrc.startsWith('https://'))) {
+          try {
+            const url = new URL(currentSrc);
+            baseUrl = url.origin;
+          } catch {
+            baseUrl = window.location.origin;
+          }
+        } else {
+          // No src parameter or relative path - use current origin
           baseUrl = window.location.origin;
         }
 
