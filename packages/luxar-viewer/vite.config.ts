@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
-import fs from "fs";
 
 export default defineConfig({
   build: { outDir: "dist", emptyOutDir: true },
@@ -8,21 +7,16 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true,
-    // Serve examples directory from parent project for E2E tests
-    fs: {
-      allow: [
-        resolve(__dirname, "src"),  // Allow viewer source
-        resolve(__dirname, "../.."),  // Allow parent project (for /examples/)
-      ]
-    },
-    // Proxy configuration
+    // Proxy configuration - forward requests to Python backend
     proxy: {
       "/data": {
         target: "http://localhost:8000",
         changeOrigin: true
       },
       "/examples": {
-        target: "http://localhost:8001",
+        // E2E tests need access to example datasets
+        // Playwright auto-starts: hatch run luxar serve examples/
+        target: "http://localhost:8000",
         changeOrigin: true
       }
     }
