@@ -430,7 +430,6 @@ class TestInitializationEdgeCases:
 
     def test_invalid_target_shape_raises_error(self, simple_2d_image):
         """Test that mismatched target shape raises error."""
-        target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer((64, 64), scales=[1, 2])
 
         wrong_target = torch.randn(32, 32)

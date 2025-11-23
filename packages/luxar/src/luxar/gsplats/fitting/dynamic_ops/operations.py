@@ -361,7 +361,7 @@ def _seed_new_splat(
         return False
     except Exception as e:
         # Log unexpected errors for debugging
-        print(f"Unexpected seeding error: {type(e).__name__}: {e}")
+        aprint(f"⚠️ Unexpected seeding error: {type(e).__name__}: {e}")
         return False
 
 

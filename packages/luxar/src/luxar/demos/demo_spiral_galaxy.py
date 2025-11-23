@@ -48,22 +48,6 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def logarithmic_spiral(
-    theta: np.ndarray, a: float = 1.0, b: float = 0.3
-) -> np.ndarray:
-    """Calculate radius for logarithmic spiral.
-
-    Args:
-        theta: Angle array
-        a: Initial radius scale
-        b: Tightness parameter (0.2-0.4 typical for galaxies)
-
-    Returns:
-        Radius array
-    """
-    return a * np.exp(b * theta)
-
-
 def generate_spiral_arm(
     n_stars: int,
     arm_offset: float,
@@ -312,8 +296,8 @@ def generate_spiral_galaxy(
         aprint("Generating realistic stellar colors...")
         colors = age_to_color(ages)
 
-        # Boost brightness for visibility
-        colors *= 3.0
+        # Boost brightness for visibility (HDR rendering)
+        colors *= 3.0  # Multiplier to make stars visible against dark background
 
         aprint("✓ Colors: Blue (young) → Yellow (middle) → Red (old)")
 
@@ -396,7 +380,7 @@ def main():
         output_path = Path(tmpdir) / "spiral_galaxy.zarr"
 
         # Generate galaxy
-        total_stars = generate_spiral_galaxy(
+        _total_stars = generate_spiral_galaxy(
             output_path,
             n_stars=n_stars,
             n_arms=n_arms,

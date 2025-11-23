@@ -47,7 +47,6 @@ test.describe('nD Navigation - Dimension Selection', () => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
 
-    const initialLogs = consoleLogs.length;
 
     // Select dimension and navigate
     await page.keyboard.press('4'); // Select 4th dim
