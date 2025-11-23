@@ -5,7 +5,7 @@
     "moduleResolution": "Node",
     "lib": ["DOM", "ES2022"],
     "strict": true,
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
@@ -21,6 +21,6 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "tools"],
   "exclude": ["node_modules", "dist"]
 }

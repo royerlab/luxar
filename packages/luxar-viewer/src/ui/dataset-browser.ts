@@ -128,6 +128,7 @@ export class DatasetBrowser {
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
     panel.id = 'dataset-browser';
+    panel.className = 'dataset-browser'; // Add class for E2E tests
     panel.style.cssText = `
       position: fixed;
       top: 50%;
@@ -188,6 +189,34 @@ export class DatasetBrowser {
     header.appendChild(title);
     header.appendChild(closeBtn);
 
+    // Welcome banner with helpful guidance (shown on first open)
+    const welcomeBanner = document.createElement('div');
+    welcomeBanner.id = 'browser-welcome';
+    welcomeBanner.style.cssText = `
+      padding: ${browserConfig.padding.panel}px;
+      background: rgba(76, 175, 80, 0.1);
+      border-bottom: 1px solid rgba(76, 175, 80, 0.3);
+      font-size: 13px;
+      line-height: 1.6;
+      color: #cccccc;
+    `;
+
+    welcomeBanner.innerHTML = `
+      <div style="font-weight: 600; color: #88cc88; margin-bottom: 8px;">
+        📊 Welcome to Luxar - nD Point Cloud Viewer
+      </div>
+      <div style="margin-bottom: 6px;">
+        <strong>To load a dataset:</strong> Browse the directories below and click on a <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px;">.zarr</code> file
+      </div>
+      <div style="font-size: 12px; opacity: 0.8;">
+        <strong>Or</strong> provide a dataset URL: <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; font-size: 11px;">?src=/path/to/dataset.zarr</code>
+      </div>
+      <div style="font-size: 12px; opacity: 0.7; margin-top: 6px;">
+        💡 Press <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px;">H</kbd> for keyboard shortcuts •
+        <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px;">Esc</kbd> to close
+      </div>
+    `;
+
     // Breadcrumb navigation
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'breadcrumb';
@@ -224,6 +253,7 @@ export class DatasetBrowser {
     `;
 
     panel.appendChild(header);
+    panel.appendChild(welcomeBanner);
     panel.appendChild(breadcrumb);
     panel.appendChild(content);
     panel.appendChild(statusBar);

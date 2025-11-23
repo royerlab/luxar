@@ -625,7 +625,6 @@ describe('zarr-loader', () => {
       };
 
       await loadScene('http://localhost:8000/gamma.zarr');
-
     });
 
     it('should use default values for missing attrs', async () => {
@@ -732,7 +731,6 @@ describe('zarr-loader', () => {
       };
 
       await loadScene('http://localhost:8000/broadcast.zarr');
-
     });
 
     it('should handle missing scene_dimensions gracefully', async () => {
@@ -1083,7 +1081,6 @@ describe('zarr-loader', () => {
       mockGetResult = () => mockRoot;
 
       await loadScene('http://localhost:8000/no-consolidated.zarr');
-
     });
   });
 

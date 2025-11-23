@@ -74,39 +74,112 @@ export function showError(message: string) {
 
   const errorDiv = document.createElement('div');
   errorDiv.id = 'error-message';
-  errorDiv.style.outline = 'none'; // Remove focus outline
+  errorDiv.className = 'error-message'; // Add class for E2E tests
+  errorDiv.style.outline = 'none';
   errorDiv.style.position = 'fixed';
   errorDiv.style.top = '50%';
   errorDiv.style.left = '50%';
   errorDiv.style.transform = 'translate(-50%, -50%)';
-  errorDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+  errorDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.95)';
   errorDiv.style.color = '#e0e0e0';
-  errorDiv.style.padding = '15px';
-  errorDiv.style.borderRadius = '8px';
+  errorDiv.style.padding = '24px';
+  errorDiv.style.borderRadius = '12px';
   errorDiv.style.fontFamily =
     '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
   errorDiv.style.fontSize = '14px';
   errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
-  errorDiv.style.maxWidth = '400px';
-  errorDiv.style.textAlign = 'center';
+  errorDiv.style.maxWidth = '520px';
+  errorDiv.style.textAlign = 'left';
   errorDiv.style.cursor = 'pointer';
   errorDiv.style.backdropFilter = 'blur(10px)';
-  errorDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-  errorDiv.style.border = '1px solid rgba(255, 50, 50, 0.5)';
+  errorDiv.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.4)';
+  errorDiv.style.border = '1px solid rgba(255, 100, 100, 0.3)';
 
+  // Error icon + title
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.marginBottom = '16px';
+  header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
+  header.style.paddingBottom = '12px';
+
+  const icon = document.createElement('div');
+  icon.textContent = '⚠️';
+  icon.style.fontSize = '24px';
+  icon.style.marginRight = '12px';
+
+  const title = document.createElement('div');
+  title.textContent = 'Unable to Load Dataset';
+  title.style.fontSize = '16px';
+  title.style.fontWeight = '600';
+  title.style.color = '#ff9999';
+
+  header.appendChild(icon);
+  header.appendChild(title);
+
+  // Main error message
   const messageText = document.createElement('div');
   messageText.textContent = message;
-  messageText.style.marginBottom = '10px';
-  messageText.style.fontWeight = '500';
-  messageText.style.color = '#ff6b6b';
+  messageText.style.marginBottom = '16px';
+  messageText.style.color = '#ffcccc';
+  messageText.style.lineHeight = '1.5';
 
+  // Helpful guidance section
+  const guidance = document.createElement('div');
+  guidance.style.marginTop = '16px';
+  guidance.style.padding = '12px';
+  guidance.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+  guidance.style.borderRadius = '6px';
+  guidance.style.borderLeft = '3px solid rgba(76, 175, 80, 0.5)';
+
+  const guidanceTitle = document.createElement('div');
+  guidanceTitle.textContent = '💡 How to Load a Dataset:';
+  guidanceTitle.style.fontWeight = '600';
+  guidanceTitle.style.marginBottom = '8px';
+  guidanceTitle.style.color = '#88cc88';
+
+  const guidanceList = document.createElement('div');
+  guidanceList.style.fontSize = '13px';
+  guidanceList.style.color = '#cccccc';
+  guidanceList.style.lineHeight = '1.6';
+
+  guidanceList.innerHTML = `
+    <div style="margin-bottom: 8px;">
+      <strong>1. Add dataset to URL</strong><br/>
+      <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 12px;">
+        http://localhost:5173/?src=/path/to/dataset.zarr
+      </code>
+    </div>
+    <div style="margin-bottom: 8px;">
+      <strong>2. Or browse available datasets</strong><br/>
+      <span style="opacity: 0.8;">Press <kbd style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; font-family: monospace;">O</kbd> key to open dataset browser</span>
+    </div>
+    <div style="margin-bottom: 8px;">
+      <strong>3. Dataset format</strong><br/>
+      <span style="opacity: 0.8;">Luxar loads Zarr-format datasets with point cloud data</span>
+    </div>
+    <div>
+      <strong>4. Need help?</strong><br/>
+      <span style="opacity: 0.8;">Press <kbd style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; font-family: monospace;">H</kbd> to see all keyboard shortcuts</span>
+    </div>
+  `;
+
+  guidance.appendChild(guidanceTitle);
+  guidance.appendChild(guidanceList);
+
+  // Dismiss instructions
   const dismissText = document.createElement('div');
-  dismissText.textContent = 'Click to dismiss';
+  dismissText.textContent = 'Click anywhere or press Escape to dismiss';
+  dismissText.style.marginTop = '16px';
   dismissText.style.fontSize = '11px';
-  dismissText.style.opacity = '0.6';
-  dismissText.style.color = 'rgba(255, 255, 255, 0.8)';
+  dismissText.style.opacity = '0.5';
+  dismissText.style.color = 'rgba(255, 255, 255, 0.6)';
+  dismissText.style.textAlign = 'center';
+  dismissText.style.fontStyle = 'italic';
 
+  errorDiv.appendChild(header);
   errorDiv.appendChild(messageText);
+  errorDiv.appendChild(guidance);
   errorDiv.appendChild(dismissText);
 
   // Add click handler to dismiss

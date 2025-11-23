@@ -38,10 +38,10 @@ test.describe('AI Debugging Capabilities', () => {
         // Renderer capabilities
         renderer: debug.renderer
           ? {
-            pixelRatio: debug.renderer.getPixelRatio(),
-            size: debug.renderer.getSize({ width: 0, height: 0 }),
-            maxTextureSize: debug.renderer.capabilities.maxTextureSize,
-          }
+              pixelRatio: debug.renderer.getPixelRatio(),
+              size: debug.renderer.getSize({ width: 0, height: 0 }),
+              maxTextureSize: debug.renderer.capabilities.maxTextureSize,
+            }
           : null,
       };
     });

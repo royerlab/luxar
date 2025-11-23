@@ -71,7 +71,6 @@ test.describe('nD Navigation - Dimension Selection', () => {
     await page.keyboard.press(']');
     await page.waitForTimeout(1500);
 
-
     // Navigate backward
     await page.keyboard.press('[');
     await page.waitForTimeout(1500);
@@ -116,7 +115,6 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
   test('should load different points when slice position changes', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.denseGrid5D}&debug`);
     await waitForLuxarReady(page);
-
 
     // Navigate to different slice
     await page.keyboard.press('4');
@@ -191,7 +189,6 @@ test.describe('nD Navigation - Broadcasting', () => {
 
     await page.goto(`/?src=${DATASETS.broadcast}&debug`);
     await waitForLuxarReady(page);
-
 
     // Navigate through a dimension (may be broadcast)
     await page.keyboard.press('4');
