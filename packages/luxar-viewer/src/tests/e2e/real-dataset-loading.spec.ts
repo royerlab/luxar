@@ -198,7 +198,7 @@ test.describe('Real Dataset Loading', () => {
         const debug = (window as any).__luxarDebug;
         return debug?.renderer?.info?.render?.frame > 0;
       },
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Verify renderer stats

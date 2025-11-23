@@ -945,6 +945,8 @@ def decompose_image(
         Input n-dimensional image to decompose
     scales : List[int], default=[1, 2, 4, 8]
         Scale factors. Scale 1 = full resolution, scale 2 = half resolution, etc.
+        Note: Scales larger than the minimum image dimension are automatically
+        filtered out with a warning. The actual scales used are returned in stats['scales'].
     n_iters : int, default=500
         Number of optimization iterations
     lr : float, default=0.01

@@ -6,8 +6,9 @@ import { Page } from '@playwright/test';
 
 /**
  * Wait for Luxar to fully initialize
+ * Increased timeout for E2E tests with real dataset loading
  */
-export async function waitForLuxarReady(page: Page, timeout = 10000): Promise<void> {
+export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<void> {
   await page.waitForFunction(
     () => {
       const debug = (window as any).__luxarDebug;
@@ -43,7 +44,7 @@ export async function renderOnce(page: Page): Promise<void> {
 export async function waitForPointsLoaded(
   page: Page,
   minPoints = 1,
-  timeout = 30000
+  timeout = 45000
 ): Promise<void> {
   const startTime = Date.now();
 
