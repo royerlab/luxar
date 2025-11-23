@@ -46,6 +46,10 @@ where:
 1. **Non-negativity**: All Vₖ ≥ 0 (enforced via softplus parameterization)
 2. **Reconstruction fidelity**: Σₖ upsample(Vₖ) ≈ V
 3. **Energy distribution**: Coarse scales should capture low-frequency content, fine scales high-frequency
+4. **Scale validity**: Scales must satisfy `scale ≤ min(image dimensions)` to ensure all downsampled dimensions ≥ 1
+   - Invalid scales are automatically filtered with a warning
+   - Actual scales used are returned in `stats['scales']`
+   - If all scales are invalid, falls back to `scales=[1]`
 
 ### Loss Function
 

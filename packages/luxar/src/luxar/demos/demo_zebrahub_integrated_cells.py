@@ -10,7 +10,6 @@ Navigate between Cell Type and Timepoint views!
 """
 
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -27,16 +26,28 @@ def load_cells_data():
     base = "https://public.czbiohub.org/royerlab/zebrahub/sequencing/3d-umaps/integrated_umap_3d_annotated"
 
     with asection("Loading Zebrahub Integrated Cells"):
-        # Coordinates
-        coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[:]
-        coords = coords_flat.reshape(-1, 3)
-        aprint(f"✓ {len(coords):,} cells loaded")
+        try:
+            # Coordinates
+            coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[:]
+            coords = coords_flat.reshape(-1, 3)
+            aprint(f"✓ {len(coords):,} cells loaded")
 
-        # Attributes
-        attrs = {}
-        for name in ["celltype", "timepoint"]:
-            attrs[name] = zarr.open(fsspec.get_mapper(f"{base}/attribute_{name}.zarr"), mode="r")[:]
-            aprint(f"  {name}: {len(np.unique(attrs[name]))} unique")
+            # Attributes
+            attrs = {}
+            for name in ["celltype", "timepoint"]:
+                attrs[name] = zarr.open(fsspec.get_mapper(f"{base}/attribute_{name}.zarr"), mode="r")[:]
+                aprint(f"  {name}: {len(np.unique(attrs[name]))} unique")
+        except Exception as e:
+            aprint(f"❌ Failed to load data from {base}")
+            aprint(f"   Error: {e}")
+            aprint("")
+            aprint("💡 Possible reasons:")
+            aprint("   • Network connection issues")
+            aprint("   • Remote server unavailable")
+            aprint("   • Data URL has changed")
+            aprint("")
+            aprint("Please check your internet connection and try again.")
+            raise
 
     return coords, attrs
 

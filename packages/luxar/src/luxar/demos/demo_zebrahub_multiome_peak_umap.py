@@ -64,8 +64,20 @@ def load_zebrahub_umap_data(
     with asection("Downloading Zebrahub 3D UMAP Data"):
         # Load coordinates
         aprint("Loading 3D UMAP coordinates...")
-        coords_store = fsspec.get_mapper(f"{base_url}/coords.zarr")
-        coords_flat = zarr.open(coords_store, mode="r")[:]
+        try:
+            coords_store = fsspec.get_mapper(f"{base_url}/coords.zarr")
+            coords_flat = zarr.open(coords_store, mode="r")[:]
+        except Exception as e:
+            aprint(f"❌ Failed to load data from {base_url}")
+            aprint(f"   Error: {e}")
+            aprint("")
+            aprint("💡 Possible reasons:")
+            aprint("   • Network connection issues")
+            aprint("   • Remote server unavailable")
+            aprint("   • Data URL has changed")
+            aprint("")
+            aprint("Please check your internet connection and try again.")
+            raise
 
         # Reshape to (N, 3)
         n_points = len(coords_flat) // 3
@@ -80,7 +92,8 @@ def load_zebrahub_umap_data(
         aprint("\nLoading cell annotations...")
         attributes = {}
 
-        for attr_name in ["celltype", "lineage", "timepoint", "peak_type"]:
+        for attr_name in ["celltype", "chromosome", "leiden_coarse", "leiden_fine",
+                          "lineage", "peak_type", "timepoint"]:
             try:
                 attr_store = fsspec.get_mapper(f"{base_url}/attribute_{attr_name}.zarr")
                 attr_data = zarr.open(attr_store, mode="r")[:]
@@ -92,48 +105,6 @@ def load_zebrahub_umap_data(
                 aprint(f"  {attr_name}: Failed to load - {e}")
 
     return coordinates, attributes
-
-
-def celltype_to_color(celltype_ids: np.ndarray, n_celltypes: int = 30) -> np.ndarray:
-    """Convert cell type IDs to distinct colors.
-
-    Args:
-        celltype_ids: Cell type indices
-        n_celltypes: Total number of cell types
-
-    Returns:
-        RGB colors (N, 3)
-    """
-    colors = np.zeros((len(celltype_ids), 3), dtype=np.float32)
-
-    # Generate distinct colors for each cell type using HSV
-    for ct in np.unique(celltype_ids):
-        mask = celltype_ids == ct
-
-        # Hue varies with cell type
-        hue = ct / n_celltypes
-
-        # Convert to RGB (simplified HSV to RGB)
-        h = hue * 6.0
-        c = 1.0  # Full saturation
-        x = c * (1 - np.abs(h % 2 - 1))
-
-        if h < 1:
-            r, g, b = c, x, 0
-        elif h < 2:
-            r, g, b = x, c, 0
-        elif h < 3:
-            r, g, b = 0, c, x
-        elif h < 4:
-            r, g, b = 0, x, c
-        elif h < 5:
-            r, g, b = x, 0, c
-        else:
-            r, g, b = c, 0, x
-
-        colors[mask] = [r, g, b]
-
-    return colors
 
 
 def attribute_to_color(
@@ -299,7 +270,7 @@ def main():
         output_path = Path(tmpdir) / "zebrahub_umap.zarr"
 
         # Create scene
-        n_points = create_zebrahub_scene(output_path, coordinates, attributes)
+        _n_points = create_zebrahub_scene(output_path, coordinates, attributes)
 
         aprint("")
         aprint("=" * 70)

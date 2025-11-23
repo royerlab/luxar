@@ -166,8 +166,8 @@ def generate_mandelbulb_volumetric(
         # Add small jitter to avoid aliasing artifacts from regular grid
         grid_spacing = coords[1] - coords[0]
         jitter_amount = grid_spacing * 0.3  # 30% of grid spacing
-        jitter = np.random.uniform(-jitter_amount, jitter_amount, sample_points.shape)
-        sample_points += jitter.astype(np.float32)
+        jitter = np.random.uniform(-jitter_amount, jitter_amount, sample_points.shape).astype(np.float32)
+        sample_points += jitter
 
         aprint(f"✓ Created sampling grid: {resolution}×{resolution}×{resolution}")
         aprint(f"  Applied jitter: ±{jitter_amount:.4f} units (30% of grid spacing)")
@@ -261,7 +261,7 @@ def generate_mandelbulb_volumetric(
 def main():
     """Main demo entry point."""
     # Parse command line arguments
-    resolution = 256  # Default: 120^3 = 1.7M samples → ~50-100k surface points
+    resolution = 256  # Default: 256^3 = 16.8M samples → ~200-400k surface points
     power = 8  # Classic Mandelbulb
 
     if len(sys.argv) > 1:

@@ -378,7 +378,6 @@ class TestGaussianSplatsIntegration:
             napari_movie=False,
         )
         params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
-        amps = result.amplitudes
 
         # Extract and check Cholesky factors
         d = 2

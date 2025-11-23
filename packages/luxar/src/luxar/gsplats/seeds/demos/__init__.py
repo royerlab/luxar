@@ -1,2 +1,2 @@
 # demos/__init__.py
-"""Demonstration scripts for candidates package."""
+"""Demonstration scripts for seeds package."""

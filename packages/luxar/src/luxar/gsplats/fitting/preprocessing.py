@@ -1,7 +1,7 @@
 """
 Data preprocessing for Gaussian splat fitting.
 
-Handles normalization, candidate generation, and gradient dilution compensation.
+Handles normalization, seed generation, and gradient dilution compensation.
 """
 
 from __future__ import annotations
@@ -36,12 +36,12 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     # Generate seed centers
     if seeds is None:
         # Auto-generate using specified method
-        seed_centers = _generate_candidates(
+        seed_centers = _generate_seeds(
             V, None, config.seed_method, config.verbose, **seed_kwargs
         )
     elif isinstance(seeds, (int, float)):
         # User-specified proportion (seed_method still applies)
-        seed_centers = _generate_candidates(
+        seed_centers = _generate_seeds(
             V, float(seeds), config.seed_method, config.verbose, **seed_kwargs
         )
     else:
@@ -103,7 +103,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     )
 
 
-def _generate_candidates(
+def _generate_seeds(
     V: np.ndarray,
     proportion: float | None,
     seed_method: str,

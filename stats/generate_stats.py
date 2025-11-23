@@ -7,6 +7,7 @@ including lines of code, file counts, function/class counts, etc.
 """
 
 import re
+import subprocess
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +85,75 @@ def count_typescript_definitions(filepath):
     types = len(re.findall(r'^\s*(?:export\s+)?type\s+\w+\s*=', content, re.MULTILINE))
 
     return {'classes': classes, 'functions': functions, 'interfaces': interfaces, 'types': types}
+
+
+def get_test_statistics(project_root):
+    """Get test count and coverage statistics."""
+    test_stats = {
+        'test_files': 0,
+        'test_count': 0,
+        'test_passed': 0,
+        'test_failed': 0,
+        'coverage_percent': 0,
+        'error': None
+    }
+
+    try:
+        # Count test files
+        root_path = Path(project_root)
+        test_files = list(root_path.rglob('test_*.py')) + list(root_path.rglob('*_test.py'))
+        test_files = [f for f in test_files if '__pycache__' not in str(f)]
+        test_stats['test_files'] = len(test_files)
+
+        # Run pytest to get test count (collect-only, quick)
+        try:
+            result = subprocess.run(
+                ['hatch', 'run', 'pytest', '--collect-only', '-q',
+                 'packages/luxar/src/luxar', '--ignore=packages/luxar/src/luxar/gsplats'],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=project_root
+            )
+
+            # Parse output for test count
+            for line in result.stdout.split('\n'):
+                if 'selected' in line or 'collected' in line:
+                    # Extract number from "collected 370 items" or similar
+                    numbers = re.findall(r'\d+', line)
+                    if numbers:
+                        test_stats['test_count'] = int(numbers[0])
+                        break
+        except Exception as e:
+            test_stats['error'] = f"Could not collect tests: {e}"
+
+        # Try to get coverage from recent coverage report
+        coverage_file = root_path / 'coverage' / 'python' / '.coverage'
+        if coverage_file.exists():
+            try:
+                # Try to read coverage percentage from coverage file
+                result = subprocess.run(
+                    ['hatch', 'run', 'coverage', 'report', '--precision=1'],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    cwd=project_root
+                )
+
+                # Parse TOTAL line: "TOTAL    1234    567    45.9%"
+                for line in result.stdout.split('\n'):
+                    if line.startswith('TOTAL'):
+                        parts = line.split()
+                        if len(parts) >= 4 and '%' in parts[-1]:
+                            test_stats['coverage_percent'] = float(parts[-1].rstrip('%'))
+                            break
+            except Exception:
+                pass  # Coverage not available
+
+    except Exception as e:
+        test_stats['error'] = str(e)
+
+    return test_stats
 
 
 def analyze_directory(root_dir, extensions, category):

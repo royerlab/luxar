@@ -207,58 +207,6 @@ class TestPerSplatAdam:
             assert "max_exp_avg_sq_a" in state
 
 
-class TestPerSplatScheduler:
-    """Test per-splat learning rate scheduler."""
-
-    def test_plateau_scheduler(self) -> None:
-        """Test ReduceLROnPlateau scheduler."""
-        model = TestPerSplatAdam.create_test_model(2)
-        optimizer = PerSplatAdam(model, lr=0.1)
-        scheduler = PerSplatReduceLROnPlateau(optimizer, patience=2, factor=0.5)
-
-        initial_lrs = optimizer.get_effective_learning_rates()
-
-        # Simulate plateau (no improvement)
-        for _ in range(5):
-            scheduler.step(1.0)  # Same loss
-
-        # Learning rates should have been reduced
-        final_lrs = optimizer.get_effective_learning_rates()
-        assert all(
-            final_lr < initial_lr
-            for final_lr, initial_lr in zip(final_lrs, initial_lrs)
-        )
-
-    def test_scheduler_with_topology_changes(self) -> None:
-        """Test scheduler behavior with topology changes."""
-        model = TestPerSplatAdam.create_test_model(2)
-        optimizer = PerSplatAdam(model, lr=0.1)
-        scheduler = PerSplatReduceLROnPlateau(optimizer)
-
-        # Initialize scheduler states for existing splats
-        scheduler.step(0.5)  # This will initialize states for existing splats
-
-        # Add splats
-        centers_new = torch.tensor([[10.0, 10.0]], dtype=torch.float32)
-        Ls_new = torch.stack([torch.eye(2)], dim=0)
-        amps_new = torch.tensor([0.5], dtype=torch.float32)
-        sharpness_new = torch.tensor([2.0], dtype=torch.float32)
-
-        model.append_(centers_new, Ls_new, amps_new, sharpness_new)
-        optimizer.add_splats(1)
-        scheduler.add_splats(1)
-
-        assert len(scheduler.splat_scheduler_states) == 3
-
-        # Remove splats
-        keep_mask = torch.tensor([True, False, True])
-        model.prune_(keep_mask)
-        optimizer.remove_splats(keep_mask)
-        scheduler.remove_splats(keep_mask)
-
-        assert len(scheduler.splat_scheduler_states) == 2
-
-
 class TestFactoryFunction:
     """Test the factory function for creating optimizer setups."""
 

@@ -245,7 +245,7 @@ class TestMultiScaleFitting:
         """Test that verbose mode produces output."""
         V = np.random.rand(32, 32).astype(np.float32)
 
-        result = fit_multiscale_gaussian_splats(
+        _result = fit_multiscale_gaussian_splats(
             V, scales=[1, 2], n_iters_decomp=10, n_iters_per_scale=10, verbose=True
         )
 
