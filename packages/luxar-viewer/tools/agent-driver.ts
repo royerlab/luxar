@@ -161,14 +161,28 @@ async function extractLuxarState(page: Page): Promise<object> {
     } : null;
 
     // Extract renderer information
-    const rendererInfo = debug.renderer ? {
-      pixelRatio: debug.renderer.getPixelRatio(),
-      size: debug.renderer.getSize({ width: 0, height: 0 }),
-      capabilities: {
-        maxTextureSize: debug.renderer.capabilities.maxTextureSize,
-        maxTextures: debug.renderer.capabilities.maxTextures,
+    const rendererInfo = debug.renderer ? (() => {
+      try {
+        // Create a proper Vector2-like object for getSize
+        const sizeVec = new (window as any).THREE.Vector2();
+        debug.renderer.getSize(sizeVec);
+
+        return {
+          pixelRatio: debug.renderer.getPixelRatio(),
+          size: { width: sizeVec.x, height: sizeVec.y },
+          capabilities: {
+            maxTextureSize: debug.renderer.capabilities.maxTextureSize,
+            maxTextures: debug.renderer.capabilities.maxTextures,
+          }
+        };
+      } catch (error) {
+        return {
+          pixelRatio: debug.renderer.getPixelRatio(),
+          size: { width: 0, height: 0 },
+          error: String(error)
+        };
       }
-    } : null;
+    })() : null;
 
     // Extract performance stats (if available)
     const performanceInfo = debug.getState ? debug.getState() : {
