@@ -290,7 +290,12 @@ export class DatasetBrowser {
 
       // If it's a Zarr dataset, load it directly
       // But only if the path is actually valid (not empty or just the root)
-      if (result.isZarr && result.currentPath && result.currentPath !== '/' && result.currentPath.includes('.zarr')) {
+      if (
+        result.isZarr &&
+        result.currentPath &&
+        result.currentPath !== '/' &&
+        result.currentPath.includes('.zarr')
+      ) {
         this.onDatasetSelect(result.currentPath);
         this.close();
         return;

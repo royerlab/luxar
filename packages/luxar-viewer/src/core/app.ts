@@ -74,7 +74,11 @@ export class LuxarApp {
         try {
           this.showDatasetBrowser();
         } catch (error) {
-          log.warning(Modules.APP, 'Dataset browser initialization had issues, but browser is shown:', error);
+          log.warning(
+            Modules.APP,
+            'Dataset browser initialization had issues, but browser is shown:',
+            error
+          );
           // Browser is shown even if navigation fails - user can use manual entry
         }
       } else {

@@ -30,7 +30,6 @@ test.describe('First-Time User Experience', () => {
 
   test('should show welcome banner in dataset browser', async ({ page }) => {
     await page.goto('/?debug');
-    await page.waitForTimeout(2000);
 
     // Wait for browser to appear
     await page.waitForSelector('.dataset-browser', { timeout: 5000 });
@@ -39,32 +38,32 @@ test.describe('First-Time User Experience', () => {
     const welcomeBanner = page.locator('#browser-welcome');
     await expect(welcomeBanner).toBeVisible();
 
-    // Should contain helpful text
+    // Should contain helpful text (updated to match compact banner)
     const bannerText = await welcomeBanner.textContent();
-    expect(bannerText).toContain('Welcome to Luxar');
-    expect(bannerText).toContain('To load a dataset');
+    expect(bannerText).toContain('Luxar');
+    expect(bannerText).toContain('Interactive Scientific Data Visualization');
     expect(bannerText).toContain('.zarr');
   });
 
   test('should show helpful guidance in welcome banner', async ({ page }) => {
     await page.goto('/?debug');
-    await page.waitForTimeout(2000);
+
+    await page.waitForSelector('.dataset-browser', { timeout: 5000 });
 
     const welcomeBanner = page.locator('#browser-welcome');
     await expect(welcomeBanner).toBeVisible();
 
     const text = await welcomeBanner.textContent();
 
-    // Should explain how to use (didactic)
-    expect(text).toContain('Browse the directories');
-    expect(text).toContain('click on a .zarr file');
+    // Should explain how to use (didactic) - updated for compact banner
+    expect(text).toContain('Browse for .zarr');
+    expect(text).toContain('enter path manually');
 
     // Should mention keyboard shortcuts (helpful)
-    expect(text).toContain('H');  // Help key
-    expect(text).toContain('Esc');  // Close key
+    expect(text).toContain('H'); // Help key hint
 
-    // Should mention URL format (educational)
-    expect(text).toContain('?src=');
+    // Should mention Luxar description
+    expect(text).toContain('Scientific Data Visualization');
   });
 
   test('should show enhanced error message with guidance when dataset fails', async ({ page }) => {
@@ -86,17 +85,17 @@ test.describe('First-Time User Experience', () => {
     expect(errorText).toContain('How to Load a Dataset');
 
     // Should explain steps (didactic)
-    expect(errorText).toContain('1.');  // Step 1
-    expect(errorText).toContain('2.');  // Step 2
+    expect(errorText).toContain('1.'); // Step 1
+    expect(errorText).toContain('2.'); // Step 2
     expect(errorText).toContain('Add dataset to URL');
 
     // Should mention browser (helpful)
     expect(errorText).toContain('browse available datasets');
-    expect(errorText).toContain('O');  // O key
+    expect(errorText).toContain('O'); // O key
 
     // Should mention help (educational)
     expect(errorText).toContain('Need help');
-    expect(errorText).toContain('H');  // H key
+    expect(errorText).toContain('H'); // H key
 
     // Should explain dataset format (educational)
     expect(errorText).toContain('Zarr');
@@ -116,7 +115,7 @@ test.describe('First-Time User Experience', () => {
     expect(errorText).not.toContain('build_example');
 
     // Generic placeholder is fine
-    expect(errorText).toContain('/path/to/dataset.zarr');  // Generic example
+    expect(errorText).toContain('/path/to/dataset.zarr'); // Generic example
   });
 
   test('should allow dismissing error message', async ({ page }) => {
@@ -144,10 +143,10 @@ test.describe('First-Time User Experience', () => {
     const guidance = await page.locator('.error-message').textContent();
 
     // Instructions should be numbered and clear
-    expect(guidance).toMatch(/1\./);  // First instruction
-    expect(guidance).toMatch(/2\./);  // Second instruction
-    expect(guidance).toMatch(/3\./);  // Third instruction
-    expect(guidance).toMatch(/4\./);  // Fourth instruction
+    expect(guidance).toMatch(/1\./); // First instruction
+    expect(guidance).toMatch(/2\./); // Second instruction
+    expect(guidance).toMatch(/3\./); // Third instruction
+    expect(guidance).toMatch(/4\./); // Fourth instruction
 
     // Should explain each step
     expect(guidance).toContain('Add dataset to URL');
