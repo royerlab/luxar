@@ -4,7 +4,7 @@
         test-cov test-all clean clean-examples pre-commit-install pre-commit-run check dev-setup \
         demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-test \
         viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check demo-and-serve \
-        docs-build docs-serve env-show env-prune shell build publish-test publish
+        docs-build docs-serve stats env-show env-prune shell build publish-test publish
 
 # Default target
 help:  ## Show this help message
@@ -259,6 +259,13 @@ docs-build:  ## Build documentation with Sphinx
 
 docs-serve:  ## Serve documentation locally
 	hatch run docs:serve
+
+# Project statistics
+stats:  ## Generate project statistics report (HTML)
+	@echo "📊 Analyzing project codebase..."
+	python3 stats/generate_stats.py
+	@echo "✅ Report generated: stats/project_stats.html"
+	@echo "💡 Open with: open stats/project_stats.html"
 
 # Hatch environment management
 env-show:  ## Show all Hatch environments

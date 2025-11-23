@@ -102,15 +102,29 @@ export default defineConfig({
     // },
   ],
 
-  // Run local dev server before starting tests
-  webServer: {
-    command: 'pnpm dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,  // Reuse server in dev, start fresh in CI
-    timeout: 120000,  // 2 minutes to start
-    stdout: 'pipe',   // Show server output
-    stderr: 'pipe',
-  },
+  // Run local dev servers before starting tests
+  // Start BOTH the viewer dev server AND a server for examples/
+  webServer: [
+    {
+      // TypeScript viewer dev server
+      command: 'pnpm dev',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      // Python backend to serve examples directory
+      // This makes /examples/*.zarr accessible for E2E tests
+      command: 'cd ../.. && python3 -m http.server 8001',
+      url: 'http://localhost:8001',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }
+  ],
 
   // Output directory for test artifacts
   outputDir: 'test-results/',

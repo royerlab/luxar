@@ -411,6 +411,12 @@ def generate_html_report(stats, output_file):
                     </tr>
 """
 
+    # Calculate TypeScript percentages safely
+    ts_files_pct = stats['typescript']['files']/stats['total']['files']*100 if stats['total']['files'] > 0 else 0
+    ts_code_lines_pct = stats['typescript']['code_lines']/stats['total']['code_lines']*100 if stats['total']['code_lines'] > 0 else 0
+    ts_comment_lines_pct = stats['typescript']['comment_lines']/stats['typescript']['total_lines']*100 if stats['typescript']['total_lines'] > 0 else 0
+    ts_blank_lines_pct = stats['typescript']['blank_lines']/stats['typescript']['total_lines']*100 if stats['typescript']['total_lines'] > 0 else 0
+
     html += f"""                </table>
             </section>
 
@@ -425,12 +431,12 @@ def generate_html_report(stats, output_file):
                     <tr>
                         <td>TypeScript Files</td>
                         <td class="number">{stats['typescript']['files']:,}</td>
-                        <td class="number">{stats['typescript']['files']/stats['total']['files']*100:.1f}%</td>
+                        <td class="number">{ts_files_pct:.1f}%</td>
                     </tr>
                     <tr>
                         <td>Lines of Code</td>
                         <td class="number">{stats['typescript']['code_lines']:,}</td>
-                        <td class="number">{stats['typescript']['code_lines']/stats['total']['code_lines']*100:.1f}%</td>
+                        <td class="number">{ts_code_lines_pct:.1f}%</td>
                     </tr>
                     <tr>
                         <td>Total Lines</td>
@@ -440,12 +446,12 @@ def generate_html_report(stats, output_file):
                     <tr>
                         <td>Comment Lines</td>
                         <td class="number">{stats['typescript']['comment_lines']:,}</td>
-                        <td class="number">{stats['typescript']['comment_lines']/stats['typescript']['total_lines']*100:.1f}%</td>
+                        <td class="number">{ts_comment_lines_pct:.1f}%</td>
                     </tr>
                     <tr>
                         <td>Blank Lines</td>
                         <td class="number">{stats['typescript']['blank_lines']:,}</td>
-                        <td class="number">{stats['typescript']['blank_lines']/stats['typescript']['total_lines']*100:.1f}%</td>
+                        <td class="number">{ts_blank_lines_pct:.1f}%</td>
                     </tr>
                     <tr>
                         <td>Classes</td>
@@ -578,8 +584,12 @@ def main():
     """Main analysis function."""
     print("Analyzing Luxar project...")
 
-    # Get project root
-    project_root = Path(__file__).parent
+    # Get project root (script is in stats/, so parent.parent is project root)
+    script_path = Path(__file__).resolve()
+    if script_path.parent.name == 'stats':
+        project_root = script_path.parent.parent
+    else:
+        project_root = script_path.parent
 
     # Analyze Python code
     print("  Analyzing Python code...")
@@ -605,8 +615,10 @@ def main():
         }
     }
 
-    # Generate HTML report
-    output_file = project_root / 'project_stats.html'
+    # Generate HTML report (save in stats directory)
+    stats_dir = project_root / 'stats'
+    stats_dir.mkdir(exist_ok=True)
+    output_file = stats_dir / 'project_stats.html'
     print("  Generating HTML report...")
     generate_html_report(stats, output_file)
 

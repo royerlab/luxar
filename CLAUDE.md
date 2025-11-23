@@ -346,6 +346,7 @@ make format-all                              # Format all code (Python + TypeScr
 make run-examples                            # Generate all example datasets
 make serve-examples                          # Serve examples directory
 make demo-and-serve                          # Create demo and start servers
+make stats                                   # Generate project statistics report (HTML)
 ```
 
 **Important Note**: Always ensure that you are at the root of the project directory when running `make` commands.

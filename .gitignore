@@ -147,6 +147,9 @@ local_settings.py
 # Generated files
 generated/
 
+# Project statistics (generated report)
+stats/project_stats.html
+
 # Playwright
 playwright-report/
 test-results/
