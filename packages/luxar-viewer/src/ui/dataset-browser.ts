@@ -38,33 +38,44 @@ export class DatasetBrowser {
     const params = new URLSearchParams(window.location.search);
     const src = params.get('src') || '';
 
-    // Check if we're currently inside a zarr dataset
+    // Determine base URL and initial path for browsing
     let baseUrl: string;
     let initialPath: string;
 
-    if (src && (src.includes('.zarr/') || src.endsWith('.zarr'))) {
-      // We're inside a zarr dataset - navigate to parent directory
-      const parsed = new URL(src);
-      const pathname = parsed.pathname;
+    if (!src || src.trim() === '') {
+      // No dataset specified - show browser at root, will display manual entry
+      baseUrl = window.location.origin + '/';
+      initialPath = ''; // Don't navigate - just show the browser UI
+    } else if (src.includes('.zarr/') || src.endsWith('.zarr')) {
+      // We're inside or at a zarr dataset - navigate to parent directory
+      try {
+        const parsed = new URL(src);
+        const pathname = parsed.pathname;
 
-      // Find the .zarr part and go to parent directory
-      const zarrIndex = pathname.lastIndexOf('.zarr');
-      if (zarrIndex > 0) {
-        const parentPath = pathname.substring(0, pathname.lastIndexOf('/', zarrIndex - 1));
-        baseUrl = parsed.origin + parentPath + '/';
+        // Find the .zarr part and go to parent directory
+        const zarrIndex = pathname.lastIndexOf('.zarr');
+        if (zarrIndex > 0) {
+          const parentPath = pathname.substring(0, pathname.lastIndexOf('/', zarrIndex - 1));
+          baseUrl = parsed.origin + parentPath + '/';
 
-        // Extract just the dataset name for highlighting
-        const datasetPath = pathname.substring(parentPath.length + 1);
-        const datasetName = datasetPath.split('/')[0];
-        initialPath = ''; // Start at parent directory
+          // Extract just the dataset name for highlighting
+          const datasetPath = pathname.substring(parentPath.length + 1);
+          const datasetName = datasetPath.split('/')[0];
+          initialPath = '';
 
-        // Store the current dataset for highlighting
-        this.currentDataset = datasetName;
-      } else {
-        baseUrl = this.extractBaseUrl(src);
-        initialPath = this.extractPath(src);
+          // Store the current dataset for highlighting
+          this.currentDataset = datasetName;
+        } else {
+          baseUrl = this.extractBaseUrl(src);
+          initialPath = this.extractPath(src);
+        }
+      } catch {
+        // If URL parsing fails, fall back to sensible defaults
+        baseUrl = window.location.origin + '/';
+        initialPath = '';
       }
     } else {
+      // Has src but not a zarr dataset - use as base for navigation
       baseUrl = this.extractBaseUrl(src);
       initialPath = this.extractPath(src);
     }
@@ -278,7 +289,8 @@ export class DatasetBrowser {
       this.updateBreadcrumb(result.currentPath);
 
       // If it's a Zarr dataset, load it directly
-      if (result.isZarr) {
+      // But only if the path is actually valid (not empty or just the root)
+      if (result.isZarr && result.currentPath && result.currentPath !== '/' && result.currentPath.includes('.zarr')) {
         this.onDatasetSelect(result.currentPath);
         this.close();
         return;
