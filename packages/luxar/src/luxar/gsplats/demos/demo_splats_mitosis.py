@@ -27,8 +27,6 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.04  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -69,10 +67,6 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         # Crop the image to a smaller region for faster demo
         V = V[100:356, 100:356]  # Crop to 256x256
 
-        # # Optional: mild contrast normalization & smoothing (helps candidate detection)
-        # V = exposure.rescale_intensity(V, in_range="image", out_range=(0.0, 1.0)).astype(
-        #     np.float32
-        # )
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
@@ -86,9 +80,6 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            l1_diag=0,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
@@ -148,7 +139,7 @@ for i, K in enumerate(keep_counts):
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
         sharpnesses=result.sharpnesses[idx],
-        stats={}  # Empty stats for rendering subset
+        stats={},  # Empty stats for rendering subset
     )
 
     # Render

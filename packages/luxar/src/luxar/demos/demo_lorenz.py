@@ -83,7 +83,9 @@ def generate_lorenz_attractor(
         positions *= 0.1  # Scale down
         center = np.mean(positions, axis=0)
         positions -= center  # Center at origin
-        aprint(f"✓ Generated trajectory (bounds: {positions.min():.2f} to {positions.max():.2f})")
+        aprint(
+            f"✓ Generated trajectory (bounds: {positions.min():.2f} to {positions.max():.2f})"
+        )
 
         # Create time-based color gradient (cycles through color wheel twice)
         aprint("Generating time-based color gradient...")

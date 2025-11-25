@@ -117,9 +117,9 @@ Dynamic operations are now **enabled by default** in all demos:
 ## Usage Examples
 
 See the demo scripts for complete examples of dynamic operations:
-- `demo_splats_fit.py` - 2D configuration with synthetic blobs
-- `demo_splats_3d_napari.py` - 3D configuration with volumetric data
-- `demo_performance.py` - Performance testing with dynamic operations  
+- `demo_basic_fitting.py` - 2D configuration with synthetic blobs
+- `demo_3d_synthetic_phantom.py` - 3D configuration with volumetric data
+- `demo_performance_metrics.py` - Performance testing with dynamic operations
 - Conditional enable/disable
 - Parameter tuning guidelines
 

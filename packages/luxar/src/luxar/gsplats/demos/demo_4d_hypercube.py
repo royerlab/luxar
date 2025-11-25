@@ -1,10 +1,44 @@
 #!/usr/bin/env python3
 """
-4D Gaussian splatting demo with hypercube data and interactive visualization.
+4D Hypercube - nD Algorithm Validation and Scalability Test
 
-This demo demonstrates 4D Gaussian splatting on synthetic 4-dimensional data,
-validating the complete nD pipeline including auto-candidate generation,
-dynamic operations, and napari 4D visualization capabilities.
+**What this demo demonstrates:**
+- 4D Gaussian splatting on hypercube data (8×64×64×64)
+- Complete nD pipeline validation (works for any dimensionality)
+- 4D auto-candidate generation with dimension-aware heuristics
+- 10-parameter covariance matrices (d=4: 4+10+1+1=16 floats/splat)
+- Napari 4D visualization with hypercube navigation
+- Computational scalability beyond 3D
+
+**Key concepts:**
+- nD generalization: All algorithms work for arbitrary dimensions
+- Hypercube: 4D data where 1st dimension might be time/spectral
+- 4D covariance: 10 unique parameters in symmetric 4×4 matrix
+- Compression scaling: Bits per hypervoxel (bpv) accounting
+- Dynamic operations: Seeding/pruning work correctly in 4D
+
+**Data source:** Synthetic 4D hypercube with 100 Gaussian blobs
+- Shape: (8, 64, 64, 64) = 2,097,152 hypervoxels
+- Interpretation: 8 time/spectral slices of 64³ spatial volumes
+- Blobs: Random 4D Gaussians with varying sizes and intensities
+
+**Visualization:** Napari 4D navigator
+- Input hypercube
+- Reconstruction hypercube
+- Absolute residual
+- 4D splat centers (navigable points)
+
+**Navigation:**
+- Compression slider (axis 0): Adjust compression level
+- Time/spectral slider (axis 1): Navigate through 4th dimension
+- Spatial sliders (axes 2-4): Navigate Z, Y, X
+
+**Performance:** Reduced iterations (400) due to 4D computational cost
+**Technical:** Validates nD rendering, energy ranking, and compression in 4D
+
+**Related demos:**
+- demo_3d_synthetic_phantom.py - 3D version
+- demo_2d_synthetic_blobs.py - 2D version (shows progression 2D→3D→4D)
 """
 
 import sys
@@ -27,8 +61,6 @@ if NO_NAPARI:
 
 # ======= Demo knobs =======
 SIZE = 64
-LOSS_TYPE = "l1"
-LR = 0.01
 N_ITERS = 400  # Number of optimization iterations (reduced for 4D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 20  # number of compression steps (<= #splats)
@@ -86,9 +118,6 @@ with asection("4D Gaussian Splatting Demo"):
             V,
             # seeds auto-generated with 4D-aware intelligent defaults
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            # l1_amp auto-set to 0.1 * lr = 0.001
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
@@ -161,7 +190,7 @@ for i, K in enumerate(keep_counts):
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
         sharpnesses=result.sharpnesses[idx],
-        stats={}  # Empty stats for rendering subset
+        stats={},  # Empty stats for rendering subset
     )
 
     # Reconstruction & residual

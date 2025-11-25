@@ -1,10 +1,41 @@
 #!/usr/bin/env python3
 """
-3D Gaussian splatting demo with volumetric data and interactive compression analysis.
+3D Synthetic Phantom - Volumetric Compression with Ellipsoid Visualization
 
-This demo demonstrates 3D Gaussian splatting on synthetic volumetric blob data,
-showing full-covariance 3D Gaussians with compression analysis. Features 3D napari
-viewer with interactive compression slider and wireframe ellipsoid visualization.
+**What this demo demonstrates:**
+- 3D Gaussian splatting on synthetic volumetric phantom data
+- Full-covariance 3D ellipsoids (oriented, anisotropic splats)
+- Interactive 3D compression analysis with napari slider
+- Wireframe ellipsoid visualization showing 3D splat shapes
+- Systematic phantom approach for 3D validation
+- Bits per voxel (bpv) accounting for volumetric compression
+
+**Key concepts:**
+- 3D Gaussians: Each splat is a 3D oriented ellipsoid with 6 covariance parameters
+- Phantom validation: Controlled 3D blobs with known properties for systematic testing
+- Wireframe rendering: 3 principal plane circles visualize each 3D ellipsoid
+- MIP rendering: Maximum Intensity Projection for better 3D visualization
+- Energy ranking: Compression by L2 energy importance (same as 2D)
+
+**Data source:** Synthetic 3D phantom (64³ voxels) with 15 controlled Gaussian blobs
+**Visualization:** Interactive 3D napari viewer (ndisplay=3)
+- Original input volume
+- Reconstruction at current compression level
+- Absolute residual volume
+- 3D wireframe ellipsoids (cyan points)
+- Splat centers (yellow points)
+
+**Controls:**
+- Top slider (axis 0): Adjust compression level
+- Mouse + Shift: Rotate 3D view
+- Mouse wheel: Zoom in/out
+- Toggle layers to compare volumes
+
+**Performance:** Reduced iterations (1000) for 3D computational cost
+**Related demos:**
+- demo_2d_synthetic_blobs.py - 2D version with same compression approach
+- demo_3d_dapi_microscopy.py - Real microscopy data in 3D
+- demo_4d_hypercube.py - 4D extension showing nD scalability
 """
 
 import sys
@@ -26,8 +57,6 @@ if NO_NAPARI:
     aprint("Running 3D phantom validation in headless mode...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.04
 N_ITERS = 1000  # Number of optimization iterations (reduced for 3D computational cost)
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 30  # number of compression steps (<= #splats)
@@ -143,9 +172,6 @@ with asection("3D Gaussian Splatting Demo"):
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            # l1_amp auto-set to 0.1 * lr = 0.004
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
@@ -219,7 +245,7 @@ for i, K in enumerate(keep_counts):
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
         sharpnesses=result.sharpnesses[idx],
-        stats={}  # Empty stats for rendering subset
+        stats={},  # Empty stats for rendering subset
     )
 
     # Reconstruction & residual

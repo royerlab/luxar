@@ -23,7 +23,7 @@ class TestDynamicOpsConfig:
         """Test default configuration values."""
         cfg = DynamicOpsConfig()
         assert cfg.step_every == 50
-        assert cfg.k_max_residuals == 10
+        assert cfg.k_max_residuals == 20
         assert cfg.nms_radius_vox == 2.0
         assert cfg.min_contribution_threshold == 0.05
         assert cfg.relative_contribution_factor == 0.1
@@ -345,8 +345,12 @@ class TestDynamicOperationsIntegration:
                 napari_movie=False,
             )
 
-            assert len(result.amplitudes) > 0, f"{loss_type} with asymmetric penalty failed"
-            assert all(result.amplitudes >= 0), f"{loss_type} produced negative amplitudes"
+            assert len(result.amplitudes) > 0, (
+                f"{loss_type} with asymmetric penalty failed"
+            )
+            assert all(result.amplitudes >= 0), (
+                f"{loss_type} produced negative amplitudes"
+            )
 
     def test_local_convergence_based_pruning(self) -> None:
         """Test the local convergence-based pruning algorithm."""
@@ -439,7 +443,7 @@ class TestDynamicOperationsIntegration:
             amplitudes=np.random.uniform(0.1, 1.0, N).astype(np.float32),
             cholesky_factors=np.random.random((N, 3)).astype(np.float32),  # 2D tril = 3
             sharpnesses=np.random.uniform(1.5, 3.0, N).astype(np.float32),
-            stats={}
+            stats={},
         )
 
         # Test compression analysis (should not raise exceptions)

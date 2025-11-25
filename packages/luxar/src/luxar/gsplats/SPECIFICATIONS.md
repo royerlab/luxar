@@ -198,7 +198,7 @@ Used when initializing from existing sharpness values.
 2. **L1 regularization**: `loss += l1_sharpness * mean(|s'|)`
    - Encourages splats to remain at standard Gaussian unless beneficial
    - Promotes sparsity in sharpness parameter space
-   - Default: `l1_sharpness = 0.05 * lr` (5% of base LR)
+   - Default: `l1_sharpness = 0.01 * lr` (1% of base LR)
 3. **Differential learning rate**: Sharpness parameters use fixed slower learning rate
    - Fixed: `sharpness_lr = 0.5 * base_lr` (hardcoded, not gradient-dilution-compensated)
    - Rationale: Sharpness is dimensionality-independent (always 1 scalar), so no gradient dilution applied
@@ -245,7 +245,7 @@ vals = torch.exp(-0.5 * torch.pow(expo, sharpness[:, None] / 2.0)) * amplitude[:
 5. **Backward compatible**: Default `s=2` recovers standard Gaussian behavior
 
 **Configuration Parameters:**
-- `l1_sharpness`: L1 regularization strength on `s'` (default 0.05 * lr, 5% of base learning rate)
+- `l1_sharpness`: L1 regularization strength on `s'` (default 0.01 * lr, 1% of base learning rate)
 
 **Example sharpness values:**
 - Smooth blobs: `s ≈ 1.5-2.0` (soft Gaussian-like)
@@ -501,7 +501,7 @@ The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATI
 This modular design separates concerns, improves testability, and makes the codebase maintainable.
 The root-level functions delegate to the `fitting/` sub-package for actual implementation.
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=10.0, l1_amp=None, l1_diag=None, l1_sharpness=None, max_abs_error=None, seed_method="both", ...)`
 
 **Functional Signature**:
 ```python
@@ -515,6 +515,7 @@ def fit_gaussian_splats(
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
+    seed_method: str = "both",  # DEFAULT: hybrid decomposition + Gaussian for best convergence
     l1_diag: Optional[float] = None,
     l1_sharpness: Optional[float] = None,
     # ... additional parameters
@@ -546,12 +547,14 @@ def fit_gaussian_splats(
 - Validate `max_abs_error` is positive if specified
 
 **Auto-Seed Generation:**
-- **Default behavior**: If `seeds=None`, automatically generate candidates using dimension-aware defaults
+- **Default behavior**: If `seeds=None`, automatically generate seeds using `seed_method="both"` (hybrid approach)
+- **Hybrid method (DEFAULT)**: Combines decomposition-based seeds (global/coarse structure) with Gaussian-based seeds (local features) for optimal convergence
 - **Universal scale series**: `(0.5, 1.0, 2.0, 4.0, 8.0, 16.0)` works optimally for all dimensions from fine details to large structures
 - **Volume-proportional density**: `peaks_per_scale = max(50, int(V.size * 0.002))` scales seed count with image size (~0.2% of pixels)
 - **Inclusive detection**: `percentile_thresh=70` for comprehensive feature coverage
 - **Standard parameters**: `min_distance=2.0, add_intensity_grid=False` for robust detection
 - **Logging**: Auto-generation usage is logged for transparency
+- **Alternative methods**: Can specify `seed_method="gaussian"` (Gaussian only), `seed_method="decomposition"` (decomposition only), or custom order like `"decomposition,gaussian"`
 
 **Auto-Convergence Threshold:**
 - **Default behavior**: If `max_abs_error=None`, automatically set threshold to 1% of normalized image dynamic range
@@ -657,7 +660,7 @@ The verbose output uses the `arbol` library for hierarchical console logging.
 - **Proportional L1 Regularization**:
   - **Amplitude regularization**: `+ l1_amp * mean(|softplus(raw_a)|)` where `l1_amp = 0.1 * lr` by default (10% of base LR = 5% of amplitude LR 2.0×)
   - **Diagonal regularization**: `+ l1_diag * mean(|softplus(raw_L_diag)|)` where `l1_diag = 0.01 * lr` by default (1% of base LR)
-  - **Sharpness regularization**: `+ l1_sharpness * mean(|sharpness_offsets_raw|)` where `l1_sharpness = 0.05 * lr` by default (5% of base LR = 10% of sharpness LR 0.5×)
+  - **Sharpness regularization**: `+ l1_sharpness * mean(|sharpness_offsets_raw|)` where `l1_sharpness = 0.01 * lr` by default (1% of base LR = 2% of sharpness LR 0.5×)
   - **Rationale**: L1 regularization should scale with optimization strength for consistent sparsity pressure
   - **Dimensional scaling**: Works correctly with gradient dilution compensation (higher LR → higher L1)
   - **Auto-tuning**: Eliminates need for manual L1 adjustment when changing learning rates
@@ -1126,7 +1129,7 @@ With proper iteration distribution (more iterations on coarse scales):
 - Support for headless operation (disable napari with flags)
 
 
-### 4D Validation Demo (`demos/demo_splats_4d_napari.py`)
+### 4D Validation Demo (`demos/demo_4d_hypercube.py`)
 
 **Purpose**: Comprehensive validation of nD capabilities with 4-dimensional hypercube data
 

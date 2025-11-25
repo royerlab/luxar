@@ -44,7 +44,9 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def xor_fractal_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) -> np.ndarray:
+def xor_fractal_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
+) -> np.ndarray:
     """XOR fractal: (w⊕x⊕y⊕z) creates beautiful self-similar patterns.
 
     Args:
@@ -63,7 +65,9 @@ def xor_fractal_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) -
     return result
 
 
-def menger_sponge_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 3) -> np.ndarray:
+def menger_sponge_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 3
+) -> np.ndarray:
     """4D Menger sponge - recursive hypercube with holes.
 
     Args:
@@ -93,12 +97,14 @@ def menger_sponge_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray,
 
         # Hole if 2 or more coords in middle third
         middle_count = wm.astype(int) + xm.astype(int) + ym.astype(int) + zm.astype(int)
-        solid &= (middle_count < 2)
+        solid &= middle_count < 2
 
     return solid.astype(np.int16)
 
 
-def sierpinski_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) -> np.ndarray:
+def sierpinski_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
+) -> np.ndarray:
     """4D Sierpinski - points where (w&x&y&z)==0 in binary.
 
     Args:
@@ -117,7 +123,9 @@ def sierpinski_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) ->
     return result.astype(np.int16)
 
 
-def cantor_dust_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 4) -> np.ndarray:
+def cantor_dust_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 4
+) -> np.ndarray:
     """4D Cantor dust - product of Cantor sets.
 
     Args:
@@ -137,17 +145,24 @@ def cantor_dust_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, l
     # Check if in Cantor set for each dimension
     def in_cantor(coord, lev):
         in_set = np.ones(coord.shape, dtype=bool)
-        for l in range(lev):
-            div = 3**l
+        for level_idx in range(lev):
+            div = 3**level_idx
             in_set &= ((coord // div) % 3) != 1  # Not in middle third
         return in_set
 
     # Point is in 4D Cantor dust if in Cantor set in all 4 dimensions
-    result = in_cantor(wi, level) & in_cantor(xi, level) & in_cantor(yi, level) & in_cantor(zi, level)
+    result = (
+        in_cantor(wi, level)
+        & in_cantor(xi, level)
+        & in_cantor(yi, level)
+        & in_cantor(zi, level)
+    )
     return result.astype(np.int16)
 
 
-def checkerboard_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, scale: int = 2) -> np.ndarray:
+def checkerboard_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, scale: int = 2
+) -> np.ndarray:
     """4D hypercheckerboard pattern.
 
     Args:
@@ -166,7 +181,9 @@ def checkerboard_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, 
     return result
 
 
-def diamond_fractal_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) -> np.ndarray:
+def diamond_fractal_4d(
+    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
+) -> np.ndarray:
     """4D diamond/taxicab fractal based on L1 distance.
 
     Args:
@@ -179,7 +196,7 @@ def diamond_fractal_4d(W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarra
     dist = np.abs(W) + np.abs(X) + np.abs(Y) + np.abs(Z)
 
     # Create fractal pattern from distance
-    result = ((dist * 5).astype(np.int32) % 7)
+    result = (dist * 5).astype(np.int32) % 7
 
     return result
 
@@ -204,15 +221,23 @@ def generate_4d_fractal(
     coords_int = np.arange(grid_size, dtype=np.int32)
 
     # Create meshgrid efficiently
-    W, X, Y, Z = np.meshgrid(coords_int, coords_int, coords_int, coords_int, indexing='ij')
+    W, X, Y, Z = np.meshgrid(
+        coords_int, coords_int, coords_int, coords_int, indexing="ij"
+    )
 
     # Fractal type computation (INSTANT - just simple conditions!)
     fractal_funcs = {
         0: ("XOR Fractal", xor_fractal_4d),
-        1: ("Menger Sponge 4D", lambda w,x,y,z: menger_sponge_4d(w,x,y,z, level=3)),
+        1: (
+            "Menger Sponge 4D",
+            lambda w, x, y, z: menger_sponge_4d(w, x, y, z, level=3),
+        ),
         2: ("Sierpinski 4D", sierpinski_4d),
-        3: ("Cantor Dust 4D", lambda w,x,y,z: cantor_dust_4d(w,x,y,z, level=4)),
-        4: ("Hypercheckerboard", lambda w,x,y,z: checkerboard_4d(w,x,y,z, scale=4)),
+        3: ("Cantor Dust 4D", lambda w, x, y, z: cantor_dust_4d(w, x, y, z, level=4)),
+        4: (
+            "Hypercheckerboard",
+            lambda w, x, y, z: checkerboard_4d(w, x, y, z, scale=4),
+        ),
         5: ("Diamond Fractal", diamond_fractal_4d),
     }
 
@@ -233,7 +258,9 @@ def generate_4d_fractal(
         threshold_percentile = max(50, (1 - target_density) * 100)
         threshold = np.percentile(values, threshold_percentile)
         keep_mask = values >= threshold
-        aprint(f"    XOR threshold: {threshold:.0f} (top {100-threshold_percentile:.1f}%)")
+        aprint(
+            f"    XOR threshold: {threshold:.0f} (top {100 - threshold_percentile:.1f}%)"
+        )
 
     elif fractal_type == 1:  # Menger - keep solid, already sparse
         keep_mask = values > 0
@@ -275,10 +302,14 @@ def generate_4d_fractal(
         threshold_percentile = max(50, (1 - target_density) * 100)
         threshold = np.percentile(values, threshold_percentile)
         keep_mask = values >= threshold
-        aprint(f"    Diamond distance threshold: {threshold:.0f} (top {100-threshold_percentile:.1f}%)")
+        aprint(
+            f"    Diamond distance threshold: {threshold:.0f} (top {100 - threshold_percentile:.1f}%)"
+        )
 
     n_points_final = np.sum(keep_mask)
-    aprint(f"    ✓ Kept: {n_points_final:,} points ({n_points_final/grid_size**4*100:.2f}% density)")
+    aprint(
+        f"    ✓ Kept: {n_points_final:,} points ({n_points_final / grid_size**4 * 100:.2f}% density)"
+    )
 
     # Safety check
     if np.sum(keep_mask) == 0:
@@ -390,13 +421,15 @@ def generate_4d_fractal_dataset(
         fractal_ids = np.concatenate(all_fractal_ids)
 
         # Reorder: [fractal_id, w, x, y, z]
-        positions_5d = np.column_stack([
-            fractal_ids,
-            positions[:, 0],  # W
-            positions[:, 1],  # X
-            positions[:, 2],  # Y
-            positions[:, 3],  # Z
-        ])
+        positions_5d = np.column_stack(
+            [
+                fractal_ids,
+                positions[:, 0],  # W
+                positions[:, 1],  # X
+                positions[:, 2],  # Y
+                positions[:, 3],  # Z
+            ]
+        )
 
         aprint(f"✓ Total points: {len(positions_5d):,}")
         aprint(f"  Per fractal: {len(positions_5d) // 6:,} avg")
@@ -404,29 +437,31 @@ def generate_4d_fractal_dataset(
 
     # Write to Zarr
     with asection("Writing to Zarr"):
-        dims = Dimensions([
-            Dimension(
-                "fractal",
-                unit="type",
-                range=(0, 5),
-                step=1,
-                display=False,
-                discrete=True,
-                description="Fractal type (0=Mandelbrot, 1-5=Julia variants)",
-            ),
-            Dimension(
-                "w",
-                unit="",
-                range=(-2.5, 2.5),
-                step=5.0 / grid_size,
-                display=False,
-                discrete=False,
-                description="4th spatial dimension (navigate to see slices!)",
-            ),
-            Dimension("x", unit="", range=(-2.5, 2.5), display=True),
-            Dimension("y", unit="", range=(-2.5, 2.5), display=True),
-            Dimension("z", unit="", range=(-2.5, 2.5), display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension(
+                    "fractal",
+                    unit="type",
+                    range=(0, 5),
+                    step=1,
+                    display=False,
+                    discrete=True,
+                    description="Fractal type (0=Mandelbrot, 1-5=Julia variants)",
+                ),
+                Dimension(
+                    "w",
+                    unit="",
+                    range=(-2.5, 2.5),
+                    step=5.0 / grid_size,
+                    display=False,
+                    discrete=False,
+                    description="4th spatial dimension (navigate to see slices!)",
+                ),
+                Dimension("x", unit="", range=(-2.5, 2.5), display=True),
+                Dimension("y", unit="", range=(-2.5, 2.5), display=True),
+                Dimension("z", unit="", range=(-2.5, 2.5), display=True),
+            ]
+        )
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
@@ -485,7 +520,7 @@ def main():
         output_path = Path(tmpdir) / "fractals_4d.zarr"
 
         # Generate all fractals
-        total_points = generate_4d_fractal_dataset(output_path, grid_size=grid_size)
+        generate_4d_fractal_dataset(output_path, grid_size=grid_size)
 
         aprint("")
         aprint("=" * 70)
@@ -528,7 +563,9 @@ def main():
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
-            aprint("💡 Make sure viewer is built: cd packages/luxar-viewer && pnpm build")
+            aprint(
+                "💡 Make sure viewer is built: cd packages/luxar-viewer && pnpm build"
+            )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")

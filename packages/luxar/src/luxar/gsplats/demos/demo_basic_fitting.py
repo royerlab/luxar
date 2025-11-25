@@ -1,9 +1,30 @@
 #!/usr/bin/env python3
 """
-High-level demo using fit_gaussian_splats() with per-splat optimizer.
+Basic Gaussian Splatting Demo - Simple API Introduction
 
-This demo shows how to use the simplified fit_gaussian_splats() function
-which internally uses the per-splat optimizer and dynamic operations.
+**What this demo demonstrates:**
+- Basic usage of the high-level `fit_gaussian_splats()` API
+- Per-splat Adam optimizer with individual learning rates
+- Dynamic operations (seeding, splitting, pruning) - enabled by default
+- Automatic seed generation with intelligent defaults
+- Early stopping based on convergence criteria
+- Simple napari visualization of results
+
+**Key concepts:**
+- High-level API: Single function call handles entire fitting pipeline
+- Per-splat optimization: Each splat maintains its own learning rate and momentum
+- Dynamic operations: Topology changes during optimization improve quality
+- Convergence monitoring: Automatic early stopping when max absolute error threshold is met
+
+**Data source:** Synthetic 2D blob data (generated via scikit-image)
+**Visualization:** Interactive napari viewer showing input, reconstruction, residual, and splat centers
+**Command-line:** Use `--no-napari` to disable visualization, `--n-iters N` to set iterations,
+                 `--disable-dynamic` to turn off dynamic operations
+
+**Related demos:**
+- demo_performance_metrics.py - Performance analysis and detailed metrics
+- demo_splats_mitosis.py - Real biological data with compression analysis
+- demo_2d_synthetic_blobs.py - More detailed 2D compression visualization
 """
 
 import argparse
@@ -61,12 +82,7 @@ def main():
         # Use the high-level fit function with per-splat optimizer
         result = fit_gaussian_splats(
             V=V,
-            # seeds auto-generated with intelligent defaults
-            init_sigma_vox=1.6,
             n_iters=args.n_iters,
-            lr=0.01,
-            # l1_amp auto-set to 0.1 * lr = 0.001
-            loss_type="l1",
             # asymmetric_penalty defaults to 10.0
             verbose=True,
             dynamic_ops_verbose=True,
@@ -104,9 +120,8 @@ def main():
             viewer.add_image(np.abs(V - V_recon), name="Residual", colormap="hot")
 
             # Add splat centers
-            centers_np = params_full[:, :2]  # Extract center coordinates
             viewer.add_points(
-                centers_np,
+                result.centers,
                 name="Splat Centers",
                 face_color="cyan",
                 size=3,

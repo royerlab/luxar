@@ -69,7 +69,9 @@ class TestModelOptimizerCoordinatorReplaceAll:
         new_amps = torch.tensor([0.8, 0.9, 1.0], dtype=torch.float32)
         new_sharpness = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
 
-        n_new = coordinator.replace_all_splats(new_centers, new_Ls, new_amps, new_sharpness)
+        n_new = coordinator.replace_all_splats(
+            new_centers, new_Ls, new_amps, new_sharpness
+        )
 
         assert n_new == 3
         assert simple_model.n_splats() == 3
@@ -378,7 +380,9 @@ class TestFactoryFunctionOptimizerParams:
         amps_new = torch.tensor([1.0], dtype=torch.float32)
         sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.02)
+        n_added = coordinator.add_splats(
+            centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.02
+        )
         assert n_added == 1
 
         status = coordinator.get_status()
@@ -412,9 +416,7 @@ class TestCoordinatorIntegration:
         assert status["model_splats"] == 2
 
         # Add splats (simulating seeding)
-        centers_new = torch.tensor(
-            [[8.0, 8.0], [22.0, 22.0]], dtype=torch.float32
-        )
+        centers_new = torch.tensor([[8.0, 8.0], [22.0, 22.0]], dtype=torch.float32)
         Ls_new = torch.stack([torch.eye(2) * 0.4 for _ in range(2)], dim=0)
         amps_new = torch.tensor([0.5, 0.6], dtype=torch.float32)
         sharpness_new = torch.tensor([2.0, 2.0], dtype=torch.float32)
@@ -464,7 +466,9 @@ class TestCoordinatorIntegration:
         new_Ls = torch.stack([torch.eye(2) * 0.5 for _ in range(3)], dim=0)
         new_amps = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32)
         new_sharpness = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
-        coordinator.replace_all_splats(new_centers, new_Ls, new_amps, new_sharpness, lr_reset=0.05)
+        coordinator.replace_all_splats(
+            new_centers, new_Ls, new_amps, new_sharpness, lr_reset=0.05
+        )
 
         # Continue training - should work
         for _ in range(3):

@@ -100,7 +100,7 @@ result = fit_gaussian_splats(
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
-    # l1_sharpness auto-set to 0.05 * lr for standard Gaussian regularization (5% of base LR = 10% of sharpness LR)
+    # l1_sharpness auto-set to 0.01 * lr for standard Gaussian regularization (1% of base LR = 2% of sharpness LR)
     # enable_dynamic_ops=True by default for optimal results
 )
 
@@ -613,14 +613,18 @@ gsplats/
 │       └── lt_solver.py       # Triangular system solver
 ├── utils/
 │   └── trils.py               # Triangular matrix packing/unpacking
-├── demos/                      # Interactive demonstrations
-│   ├── demo_multiscale_fitting.py # Multi-scale vs single-scale comparison (NEW)
-│   ├── demo_performance.py      # Performance showcase with dynamic ops
-│   ├── demo_splats_fit.py       # Main fitting demo with simplified API
-│   ├── demo_splats_2d_napari.py # Interactive 2D compression analysis
-│   ├── demo_splats_3d_napari.py # Interactive 3D volumetric visualization
-│   ├── demo_splats_4d_napari.py # 4D hypercube validation (nD algorithms)
-│   └── demo_splats_mitosis.py   # Biological data with L1 loss
+├── demos/                         # Interactive demonstrations
+│   ├── demo_basic_fitting.py      # Simple API introduction with per-splat optimizer
+│   ├── demo_performance_metrics.py # Detailed convergence and quality metrics
+│   ├── demo_multiscale_fitting.py # Multi-scale vs single-scale performance comparison
+│   ├── demo_2d_synthetic_blobs.py # 2D compression analysis with oriented ellipses
+│   ├── demo_3d_synthetic_phantom.py # 3D volumetric compression with ellipsoid wireframes
+│   ├── demo_3d_dapi_microscopy.py # Real DAPI microscopy from IDR (remote zarr)
+│   ├── demo_4d_hypercube.py       # 4D hypercube - nD algorithm validation
+│   ├── demo_splats_astronaut.py   # Astronaut photo compression analysis
+│   ├── demo_splats_coins.py       # Coins image with metallic textures
+│   ├── demo_splats_mitosis.py     # Mitosis histology compression analysis
+│   └── demo_splats_mitosis_intgrad.py # CLAHE seeding test with intensity gradient
 └── tests/
     ├── test_multiscale_fitting.py   # Multi-scale fitting tests (NEW)
     └── test_gsplats_integration.py  # Comprehensive tests
@@ -644,14 +648,17 @@ The fitting pipeline has been refactored from a monolithic 480+ line method into
 # Multi-scale fitting comparison (NEW)
 hatch run python packages/luxar/src/luxar/gsplats/demos/demo_multiscale_fitting.py
 
-# Main demos with simplified one-step API
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_performance.py
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_fit.py
+# Getting started - simple API demos
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_performance_metrics.py
 
-# Interactive compression analysis
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_2d_napari.py
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_3d_napari.py
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_4d_napari.py  # 4D validation
+# Dimensional progression - 2D → 3D → 4D compression analysis
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.py
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_3d_synthetic_phantom.py
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_4d_hypercube.py
+
+# Real data demos
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_3d_dapi_microscopy.py  # Remote zarr loading
 
 # Biological data demonstration
 hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_mitosis.py
@@ -659,13 +666,13 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_mitosis.py
 
 **Headless execution (for testing/CI):**
 ```bash
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_performance.py --no-napari
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_splats_4d_napari.py --no-napari  # 4D validation
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_performance_metrics.py --no-napari
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_4d_hypercube.py --no-napari  # 4D validation
 ```
 
 ### 4D Hypercube Validation
 
-The `demo_splats_4d_napari.py` demonstrates complete nD algorithm validation:
+The `demo_4d_hypercube.py` demonstrates complete nD algorithm validation:
 
 **4D Test Results:**
 - **Hypercube data**: (8×64×64×64) = 262K hypervoxels with synthetic 4D Gaussian blobs

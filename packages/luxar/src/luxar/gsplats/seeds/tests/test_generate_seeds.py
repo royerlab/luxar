@@ -74,12 +74,12 @@ def validate_seeds_output(seeds, expected_ndim, image_shape):
     """
     assert isinstance(seeds, np.ndarray), "Seeds should be numpy array"
     assert seeds.ndim == 2, "Seeds should be 2D array (N, ndim)"
-    assert seeds.shape[1] == expected_ndim, f"Seeds should have {expected_ndim}D coordinates"
+    assert seeds.shape[1] == expected_ndim, (
+        f"Seeds should have {expected_ndim}D coordinates"
+    )
     # Check that coordinates are within bounds (allowing sub-voxel coordinates)
     assert np.all(seeds >= 0), "Seeds should have non-negative coordinates"
-    assert np.all(
-        seeds < np.array(image_shape)
-    ), "Seeds should be within image bounds"
+    assert np.all(seeds < np.array(image_shape)), "Seeds should be within image bounds"
 
 
 # ============================================================================
@@ -148,9 +148,15 @@ class TestMethodSelection:
 
     def test_method_whitespace_handling(self, simple_2d_image):
         """Test that method string handles whitespace correctly."""
-        seeds_no_space = generate_seeds(simple_2d_image, method="gaussian,decomposition")
-        seeds_with_space = generate_seeds(simple_2d_image, method="gaussian, decomposition")
-        seeds_extra_space = generate_seeds(simple_2d_image, method="  gaussian  ,  decomposition  ")
+        seeds_no_space = generate_seeds(
+            simple_2d_image, method="gaussian,decomposition"
+        )
+        seeds_with_space = generate_seeds(
+            simple_2d_image, method="gaussian, decomposition"
+        )
+        seeds_extra_space = generate_seeds(
+            simple_2d_image, method="  gaussian  ,  decomposition  "
+        )
 
         # All should produce valid outputs (results may vary slightly due to internal randomness)
         validate_seeds_output(seeds_no_space, 2, simple_2d_image.shape)
@@ -225,9 +231,7 @@ class TestParameterRouting:
             seeds_close = generate_seeds(
                 simple_2d_image, method=method, min_distance=1.0
             )
-            seeds_far = generate_seeds(
-                simple_2d_image, method=method, min_distance=8.0
-            )
+            seeds_far = generate_seeds(simple_2d_image, method=method, min_distance=8.0)
 
             # Both should produce valid outputs
             validate_seeds_output(seeds_close, 2, simple_2d_image.shape)
@@ -256,9 +260,7 @@ class TestParameterRouting:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             # Pass a parameter that doesn't exist for any method
-            generate_seeds(
-                simple_2d_image, method="gaussian", nonexistent_param=123
-            )
+            generate_seeds(simple_2d_image, method="gaussian", nonexistent_param=123)
             # Should have warned about unused parameter
             assert len(w) == 1
             assert "not used by any selected method" in str(w[0].message)
@@ -489,9 +491,7 @@ class TestIntegration:
         shape = (10, 10, 10, 10)
         center = np.array(shape) // 2
         indices = np.indices(shape)
-        dist = np.sqrt(
-            sum((indices[i] - center[i]) ** 2 for i in range(len(shape)))
-        )
+        dist = np.sqrt(sum((indices[i] - center[i]) ** 2 for i in range(len(shape))))
         V = np.exp(-(dist**2) / 10)
 
         # Only test Gaussian method which supports high-dimensional data

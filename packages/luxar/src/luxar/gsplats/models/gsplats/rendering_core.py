@@ -601,10 +601,15 @@ def render_gaussians(
             )  # (K, d, Pc)
 
             # Solve L y = Δ  (batched lower-tri solve with Pc RHS per splat)
+            # PyTorch Version Compatibility: See models/utils/lt_solver.py for full details
+            # - Modern: torch.linalg.solve_triangular (PyTorch >= 1.9)
+            # - Legacy: torch.triangular_solve (PyTorch 1.12-1.13, removed in 2.0+)
+            # - MPS Note: Both functions have identical 10× CPU overhead on Apple Silicon
             try:
                 y = torch.linalg.solve_triangular(L, delta, upper=False)
             except Exception:
-                # older PyTorch fallback
+                # Legacy PyTorch 1.12-1.13 fallback (deprecated API, removed in 2.0+)
+                # Note: triangular_solve returns (solution, cloned_matrix) tuple
                 y, _ = torch.triangular_solve(delta, L, upper=False)
 
             # Exponent and values: exp(-0.5 * ||y||^s) * a where s is sharpness

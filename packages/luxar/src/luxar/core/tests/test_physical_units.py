@@ -40,7 +40,7 @@ class TestPhysicalUnits:
 
         # Should not raise any errors
         with LuxarZarrCompiler(scene_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            compiler.create_scene(dimensions=dims)
 
         # Check the dimensions were stored correctly
         import zarr
@@ -82,7 +82,7 @@ class TestPhysicalUnits:
         )
 
         with LuxarZarrCompiler(scene_path) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            compiler.create_scene(dimensions=dims)
 
         # Verify dimensions stored correctly
         import zarr

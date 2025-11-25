@@ -1,12 +1,45 @@
 #!/usr/bin/env python3
 """
-3D Gaussian splatting demo with real DAPI microscopy data from IDR.
+3D DAPI Microscopy - Real Biological Data from Image Data Resource
 
-This demo demonstrates 3D Gaussian splatting on DAPI-stained nuclei from the
-Image Data Resource (IDR). It loads a zarr volume, extracts the DAPI channel,
-and fits 3D Gaussians with interactive compression analysis.
+**What this demo demonstrates:**
+- 3D Gaussian splatting on real DAPI-stained nuclear microscopy data
+- Remote zarr data loading from Image Data Resource (IDR)
+- Automatic downscaling to manageable size (128³ voxels)
+- OME-ZARR format handling (5D: T×C×Z×Y×X)
+- Channel extraction (DAPI channel from multi-channel data)
+- 3D ellipsoid fitting to real biological structures
 
-Data source: https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.5/idr0062A/6001240_labels.zarr
+**Key concepts:**
+- Real data challenges: Noise, irregular shapes, varying intensities
+- OME-ZARR: Standard format for multi-dimensional microscopy data
+- Remote loading: Uses fsspec to stream zarr data from IDR
+- Nuclear morphology: DAPI reveals chromatin structure and nuclear shapes
+- Biological validation: Tests algorithm on real scientific imaging data
+
+**Data source:** IDR (Image Data Resource)
+- URL: https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.2/6001240.zarr
+- Type: OME-ZARR 5D volume (Time × Channel × Z × Y × X)
+- Channel: DAPI (channel 1, DNA stain showing nuclei)
+- Processing: Downscaled to 128³ voxels via zoom interpolation
+- Fallback: Creates synthetic nucleus-like blobs if remote load fails
+
+**Visualization:** 3D napari viewer with MIP rendering
+- DAPI input volume (gray colormap)
+- Reconstruction (cyan colormap, 80% opacity)
+- Absolute residual (red colormap)
+- 3D wireframe ellipsoids (yellow, 30% opacity)
+- Splat centers (lime green points)
+
+**Controls:**
+- Top slider: Compression level (all splats → minimal)
+- Mouse + Shift: Rotate 3D view
+- Toggle layers to see individual components
+- Observe ellipsoid alignment with nuclear structures
+
+**Related demos:**
+- demo_3d_synthetic_phantom.py - Controlled 3D synthetic data
+- multiscale/demos/demo_decompose_3d_dapi_nuclei.py - Multi-scale version at FULL resolution
 """
 
 import sys
@@ -29,8 +62,6 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.02
 N_ITERS = 2000
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 30  # number of compression steps (<= #splats)
@@ -272,9 +303,6 @@ with asection("3D DAPI Gaussian Splatting Demo"):
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            l1_diag=0,
             device=DEVICE,
             verbose=True,
             # Dynamic operations
@@ -345,7 +373,7 @@ with asection("Computing 3D reconstruction quality at different compression leve
             amplitudes=result.amplitudes[idx],
             cholesky_factors=result.cholesky_factors[idx],
             sharpnesses=result.sharpnesses[idx],
-            stats={}  # Empty stats for rendering subset
+            stats={},  # Empty stats for rendering subset
         )
 
         # Render

@@ -247,7 +247,9 @@ def generate_spiral_galaxy(
         with asection("Generating Spiral Arms"):
             for i in range(n_arms):
                 arm_angle = i * 2 * np.pi / n_arms
-                aprint(f"  Arm {i+1}/{n_arms} (offset: {np.degrees(arm_angle):.1f}°)...")
+                aprint(
+                    f"  Arm {i + 1}/{n_arms} (offset: {np.degrees(arm_angle):.1f}°)..."
+                )
 
                 positions, ages = generate_spiral_arm(
                     stars_per_arm,
@@ -426,7 +428,9 @@ def main():
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
-            aprint("💡 Make sure viewer is built: cd packages/luxar-viewer && pnpm build")
+            aprint(
+                "💡 Make sure viewer is built: cd packages/luxar-viewer && pnpm build"
+            )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")

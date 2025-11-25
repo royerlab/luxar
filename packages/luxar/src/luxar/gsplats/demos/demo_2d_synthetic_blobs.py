@@ -1,6 +1,39 @@
 #!/usr/bin/env python3
 """
-2D Gaussian splatting demo with interactive compression visualization in napari.
+2D Synthetic Blobs - Interactive Compression Analysis
+
+**What this demo demonstrates:**
+- 2D Gaussian splatting on synthetic blob data with smooth features
+- Interactive compression analysis via napari slider
+- Full-covariance (oriented) 2D Gaussian splats with ellipse visualization
+- Energy-based ranking for progressive quality/compression trade-off
+- Bit-level compression accounting (bits per pixel)
+- Oriented ellipse overlays showing splat shapes and orientations
+
+**Key concepts:**
+- Compression by importance: Keeps splats with highest L2 energy contribution
+- Full covariance: Each splat is an oriented ellipse (not just isotropic circle)
+- Interactive exploration: Slider lets you explore quality vs compression trade-offs
+- L1 loss: Robust to outliers and preserves sharp features
+- Dynamic operations: Auto seeding/pruning for optimal splat distribution
+
+**Data source:** Synthetic 2D blobs generated with scikit-image binary_blobs + Gaussian smoothing
+**Visualization:** Multi-layer napari view with compression slider
+- Input image
+- Reconstruction at current compression level
+- Absolute residual (error map)
+- Oriented 2σ ellipses showing splat shapes
+- Splat centers
+
+**Controls:**
+- Top slider (axis 0): Adjust compression level from all splats to just one
+- Toggle layers to compare input vs reconstruction
+- Watch ellipse overlays to see how splats are distributed
+
+**Related demos:**
+- demo_basic_fitting.py - Simpler introduction to the API
+- demo_splats_coins.py - Real image with similar compression features
+- demo_3d_synthetic_phantom.py - 3D version with volumetric data
 """
 
 import sys
@@ -24,7 +57,6 @@ if NO_NAPARI:
 
 # ======= Demo knobs =======
 LOSS_TYPE = "l1"  # L1 loss for robust features
-LR = 0.04  # Learning rate
 N_ITERS = 1000
 DEVICE = None  # "mps:0"    # None -> auto; or "cuda"/"cpu"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -75,9 +107,7 @@ result = fit_gaussian_splats(
     V,
     # seeds auto-generated with intelligent defaults
     n_iters=N_ITERS,
-    lr=LR,
     loss_type=LOSS_TYPE,
-    # l1_amp auto-set to 0.1 * lr = 0.004
     truncate=TRUNCATE_SIG,
     device=DEVICE,
     verbose=True,
@@ -142,7 +172,7 @@ for i, K in enumerate(keep_counts):
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
         sharpnesses=result.sharpnesses[idx],
-        stats={}  # Empty stats for rendering subset
+        stats={},  # Empty stats for rendering subset
     )
 
     # Reconstruction & residual

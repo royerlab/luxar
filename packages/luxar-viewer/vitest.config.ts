@@ -6,6 +6,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/tests/setup.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/*.spec.ts', // Exclude E2E tests (Playwright)
+    ],
     coverage: {
       reporter: ['text', 'html', 'json'],
       reportsDirectory: '../../coverage/typescript',

@@ -175,8 +175,7 @@ def generate_seeds(
         for m in methods:
             if m not in {"gaussian", "decomposition"}:
                 raise ValueError(
-                    f"Invalid method: '{m}'. "
-                    "Valid methods: 'gaussian', 'decomposition'"
+                    f"Invalid method: '{m}'. Valid methods: 'gaussian', 'decomposition'"
                 )
     elif method == "both":
         methods = ["decomposition", "gaussian"]  # Default order
@@ -232,9 +231,10 @@ def generate_seeds(
         # Warn about unused parameters (not consumed by any selected method)
         if not (used_by_gaussian or used_by_decomposition):
             import warnings
+
             warnings.warn(
                 f"Parameter '{key}' is not used by any selected method: {methods}",
-                UserWarning
+                UserWarning,
             )
 
     # Generate seeds using specified method(s)

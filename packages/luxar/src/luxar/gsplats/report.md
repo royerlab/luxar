@@ -655,15 +655,16 @@ def fit_gaussian_splats(...) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
 **Excellent demo suite** with 9 comprehensive examples:
 
 **Demos:**
-- ✅ `demo_splats_astronaut.py` - Photography (astronaut image)
-- ✅ `demo_splats_coins.py` - Metallic textures
-- ✅ `demo_splats_mitosis.py` - Biological imaging
-- ✅ `demo_splats_dapi_3d.py` - Real 3D microscopy data (NEW)
-- ✅ `demo_splats_2d_napari.py` - Interactive 2D compression
-- ✅ `demo_splats_3d_napari.py` - 3D volumetric visualization
-- ✅ `demo_splats_4d_napari.py` - 4D hypercube validation
-- ✅ `demo_splats_fit.py` - Basic fitting demo
-- ✅ `demo_performance.py` - Performance showcase
+- ✅ `demo_basic_fitting.py` - Simple API introduction
+- ✅ `demo_performance_metrics.py` - Detailed convergence metrics
+- ✅ `demo_2d_synthetic_blobs.py` - 2D interactive compression
+- ✅ `demo_3d_synthetic_phantom.py` - 3D volumetric visualization
+- ✅ `demo_3d_dapi_microscopy.py` - Real 3D microscopy data from IDR
+- ✅ `demo_4d_hypercube.py` - 4D hypercube nD validation
+- ✅ `demo_splats_astronaut.py` - Astronaut photo compression
+- ✅ `demo_splats_coins.py` - Coins with metallic textures
+- ✅ `demo_splats_mitosis.py` - Biological histology data
+- ✅ `demo_multiscale_fitting.py` - Multi-scale vs single-scale comparison
 
 **Strengths:**
 - Wide variety of data types and dimensions

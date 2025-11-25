@@ -299,11 +299,13 @@ def fit_multiscale_gaussian_splats(
                 amplitudes=amps,
                 cholesky_factors=chol_full_res,
                 sharpnesses=sharpness_scale,
-                stats={}  # Empty stats for visualization
+                stats={},  # Empty stats for visualization
             )
 
             # Render
-            recon_full_res = render_gaussians_numpy(V.shape, result_vis, truncate=truncate)
+            recon_full_res = render_gaussians_numpy(
+                V.shape, result_vis, truncate=truncate
+            )
             residual_full_res = V - recon_full_res
 
             per_scale_visualizations.append(

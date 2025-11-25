@@ -158,7 +158,7 @@ def generate_mandelbulb_volumetric(
         coords = np.linspace(-coord_range, coord_range, resolution)
 
         # Create meshgrid
-        X, Y, Z = np.meshgrid(coords, coords, coords, indexing='ij')
+        X, Y, Z = np.meshgrid(coords, coords, coords, indexing="ij")
 
         # Flatten to (N, 3) array
         sample_points = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
@@ -166,7 +166,9 @@ def generate_mandelbulb_volumetric(
         # Add small jitter to avoid aliasing artifacts from regular grid
         grid_spacing = coords[1] - coords[0]
         jitter_amount = grid_spacing * 0.3  # 30% of grid spacing
-        jitter = np.random.uniform(-jitter_amount, jitter_amount, sample_points.shape).astype(np.float32)
+        jitter = np.random.uniform(
+            -jitter_amount, jitter_amount, sample_points.shape
+        ).astype(np.float32)
         sample_points += jitter
 
         aprint(f"✓ Created sampling grid: {resolution}×{resolution}×{resolution}")
@@ -293,9 +295,7 @@ def main():
 
         # Generate the fractal
         n_points = generate_mandelbulb_volumetric(
-            output_path,
-            resolution=resolution,
-            power=power
+            output_path, resolution=resolution, power=power
         )
 
         if n_points == 0:

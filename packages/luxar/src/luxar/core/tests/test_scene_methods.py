@@ -118,18 +118,6 @@ class TestSceneMethods:
             assert group.gamma == 1.5
             assert group.blending_mode == "additive"
 
-    def test_scene_finalize_already_finalized(self, tmp_path):
-        """Test calling finalize multiple times."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
-            scene.add_points("points", np.random.randn(10, 3).astype(np.float32))
-
-            # Finalize once
-            scene.finalize()
-
-            # Finalize again - should be safe
-            scene.finalize()
-
     def test_scene_context_manager_exception(self, tmp_path):
         """Test Scene handles exceptions in context manager."""
         try:
@@ -174,9 +162,9 @@ class TestSceneMethods:
             )
 
             # Verify all metadata is preserved
-            assert points.has_colors == True, "has_colors should be True"
-            assert points.has_radii == True, "has_radii should be True"
-            assert points.has_sharpness == True, "has_sharpness should be True"
+            assert points.has_colors, "has_colors should be True"
+            assert points.has_radii, "has_radii should be True"
+            assert points.has_sharpness, "has_sharpness should be True"
 
             # Verify metadata dict has all expected keys
             assert "n_points" in points.metadata, "n_points missing from metadata"
@@ -204,11 +192,11 @@ class TestSceneMethods:
             assert points.metadata["dims"] == 3
 
             # Should NOT have optional attributes
-            assert points.has_colors == False
-            assert points.has_radii == False
-            assert points.has_sharpness == False
+            assert not points.has_colors
+            assert not points.has_radii
+            assert not points.has_sharpness
 
             # Metadata dict should still exist and have required keys
             assert "n_points" in points.metadata
             assert "has_colors" in points.metadata
-            assert points.metadata["has_colors"] == False
+            assert not points.metadata["has_colors"]

@@ -23,7 +23,7 @@ class DynamicOpsConfig:
         self.step_every: int = 50  # Run operations every N iterations
 
         # Step 1: Residual Peak Analysis
-        self.k_max_residuals: int = 10  # Expected number of seeds (controls both modes)
+        self.k_max_residuals: int = 20  # Expected number of seeds (controls both modes)
         self.nms_radius_vox: float = 2.0  # Minimum distance between detected peaks
 
         # Tile-based seeding for spatial fairness (enabled by default)

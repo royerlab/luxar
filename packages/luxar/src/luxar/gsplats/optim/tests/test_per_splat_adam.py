@@ -130,7 +130,9 @@ def test_factory_function():
     amps_new = torch.tensor([0.8], dtype=torch.float32)
     sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-    n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05)
+    n_added = coordinator.add_splats(
+        centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05
+    )
     print(f"✓ Coordinator added {n_added} splats")
     print(f"✓ New status: {coordinator.get_status()}")
 

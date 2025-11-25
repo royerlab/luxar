@@ -1,7 +1,44 @@
 #!/usr/bin/env python
 """
-Performance demonstration of Gaussian splatting with per-splat optimizer.
-Shows convergence speed and quality metrics.
+Performance Metrics - Convergence Speed and Quality Analysis
+
+**What this demo demonstrates:**
+- Detailed performance metrics for per-splat optimizer
+- Convergence monitoring with early stopping
+- Quality metrics: MSE, relative L2 error, PSNR
+- Timing analysis: iterations per second, total time
+- Active vs total splat counting (pruning effectiveness)
+- Memory-efficient movie recording (every 5 iterations)
+
+**Key concepts:**
+- Early stopping: Saves compute when max absolute error threshold is met
+- Per-splat efficiency: Each splat optimizes independently with own LR
+- Quality metrics:
+  * MSE: Mean Squared Error (lower is better)
+  * Relative L2: Normalized error relative to signal magnitude
+  * PSNR: Peak Signal-to-Noise Ratio in dB (higher is better)
+- Dynamic operations impact: Shows effect of automatic seeding/pruning
+
+**Metrics displayed:**
+- Optimization time (seconds)
+- Iterations completed vs requested
+- Early convergence detection and time saved
+- Final loss value
+- Active splat count (amplitude > 0.01 threshold)
+- Reconstruction quality (MSE, rel L2, PSNR)
+
+**Data source:** Synthetic 2D blobs (256×256, same as basic demo)
+**Visualization:** Napari showing original, reconstruction, error, and active splat centers
+**Command-line:** `--no-napari` for headless mode, `--n-iters N` to set iterations
+
+**Use cases:**
+- Benchmarking: Compare performance across hardware/settings
+- Quality assessment: Understand trade-offs between time and accuracy
+- Algorithm validation: Verify early stopping and convergence behavior
+
+**Related demos:**
+- demo_basic_fitting.py - Simpler introduction without detailed metrics
+- demo_multiscale_fitting.py - Compares single-scale vs multi-scale performance
 """
 
 import argparse
@@ -62,12 +99,7 @@ def main():
             result = fit_gaussian_splats(
                 V,
                 # seeds auto-generated with intelligent defaults
-                init_sigma_vox=1.6,
                 n_iters=args.n_iters,
-                lr=0.01,
-                loss_type="l1",
-                l1_amp=0.001,
-                truncate=3.0,
                 verbose=True,
                 max_abs_error=0.01,  # Stop when max absolute error < 0.01
                 # Dynamic operations
@@ -85,7 +117,9 @@ def main():
             aprint(f"  Iterations: {stats['iterations']}/{args.n_iters}")
             aprint(f"  Converged: {stats['converged']}")
             aprint(f"  Final loss: {stats['final_loss']:.5g}")
-            aprint(f"  Active splats: {np.sum(result.amplitudes > 0.01)}/{len(result.amplitudes)}")
+            aprint(
+                f"  Active splats: {np.sum(result.amplitudes > 0.01)}/{len(result.amplitudes)}"
+            )
             aprint("  ✓ Per-splat optimizer with individual learning rates")
 
             if stats["converged"]:
@@ -113,8 +147,7 @@ def main():
             aprint(f"  PSNR: {psnr:.1f} dB")
 
             # Extract ellipse parameters for visualization
-            d = 2
-            centers = params[:, :d]
+            centers = result.centers
 
             # Create shapes for active splats
             active_mask = result.amplitudes > 0.01

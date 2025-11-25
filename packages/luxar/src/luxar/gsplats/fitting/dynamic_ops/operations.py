@@ -346,11 +346,15 @@ def _seed_new_splat(
         if amplitude_value < adaptive_threshold:
             return False
 
+        # Initial sharpness: 2.0 (standard Gaussian profile)
+        sharpness = torch.tensor([2.0], device=center.device)
+
         # Add the new splat
         coordinator.add_splats(
             center.unsqueeze(0),  # (1, d)
             L.unsqueeze(0),  # (1, d, d)
             amplitude.unsqueeze(0),  # (1,)
+            sharpness,  # (1,)
             lr_new=lr,
         )
 

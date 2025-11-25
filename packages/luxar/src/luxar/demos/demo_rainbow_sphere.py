@@ -113,12 +113,12 @@ def generate_rainbow_sphere(
 
         # Point radius should be about half the average distance
         # This gives ~1 radius of space between points
-        point_radius = (avg_distance / 2)
+        point_radius = avg_distance / 2
         aprint(f"Sphere surface area: {sphere_area:.2f} sq units")
         aprint(f"Area per point: {area_per_point:.6f} sq units")
         aprint(f"Average neighbor distance: {avg_distance:.4f} units")
         aprint(f"Point radius: {point_radius:.4f} units")
-        aprint(f"Spacing ratio: ~{avg_distance/point_radius:.1f}x radius")
+        aprint(f"Spacing ratio: ~{avg_distance / point_radius:.1f}x radius")
 
         # Create uniform radii and sharpness
         radii = np.full(n_points, point_radius, dtype=np.float32)

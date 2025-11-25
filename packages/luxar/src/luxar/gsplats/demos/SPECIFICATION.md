@@ -94,60 +94,102 @@ These practices ensure consistency, maintainability, and usability across all de
 
 ### Available Demo Files
 
-1. **demo_performance.py**
-   - **Description**: Comprehensive performance benchmarking demo that demonstrates the per-splat optimizer with detailed timing metrics, convergence analysis, and quality assessments on synthetic 2D blob data. Shows convergence speed, final reconstruction quality (MSE, PSNR, relative L2 error), and active splat counting with early stopping capabilities.
-   - **Usage**: `python demo_performance.py [--no-napari] [--n-iters N]`
-   - **Best for**: Understanding optimizer performance, convergence behavior, and quality metrics
-
-2. **demo_splats_fit.py**
+1. **demo_basic_fitting.py**
    - **Description**: Clean demonstration of the high-level `fit_gaussian_splats()` API with optional dynamic operations (pruning, seeding, merging, splitting). Uses synthetic blob data to showcase the recommended interface for Gaussian splat fitting with comprehensive structured logging and per-splat optimization features.
-   - **Usage**: `python demo_splats_fit.py [--no-napari] [--n-iters N] [--disable-dynamic]`
+   - **Usage**: `python demo_basic_fitting.py [--no-napari] [--n-iters N] [--disable-dynamic]`
    - **Best for**: Learning the recommended API and understanding dynamic topology changes during optimization
 
-3. **demo_splats_2d_napari.py**
+2. **demo_performance_metrics.py**
+   - **Description**: Comprehensive performance benchmarking demo that demonstrates the per-splat optimizer with detailed timing metrics, convergence analysis, and quality assessments on synthetic 2D blob data. Shows convergence speed, final reconstruction quality (MSE, PSNR, relative L2 error), and active splat counting with early stopping capabilities.
+   - **Usage**: `python demo_performance_metrics.py [--no-napari] [--n-iters N]`
+   - **Best for**: Understanding optimizer performance, convergence behavior, and quality metrics
+
+3. **demo_2d_synthetic_blobs.py**
    - **Description**: Interactive 2D compression analysis featuring a napari viewer with animated compression slider that shows reconstruction quality vs model complexity trade-offs. Displays oriented ellipse overlays representing 2σ contours of fitted Gaussians, with real-time bit-per-pixel analysis and energy-based splat ranking for progressive compression visualization.
-   - **Usage**: `python demo_splats_2d_napari.py [--no-napari]`
+   - **Usage**: `python demo_2d_synthetic_blobs.py [--no-napari]`
    - **Best for**: Understanding compression trade-offs, energy ranking, and visualizing oriented 2D Gaussian representations
 
-4. **demo_splats_3d_napari.py**
+4. **demo_3d_synthetic_phantom.py**
    - **Description**: 3D volumetric Gaussian splatting demo with interactive 3D napari viewer featuring wireframe ellipsoid visualization. Fits full-covariance 3D Gaussians to synthetic volumetric blob data and provides compression analysis with wireframe representations of 3D ellipsoids, demonstrating volumetric data reconstruction and progressive compression in three dimensions.
-   - **Usage**: `python demo_splats_3d_napari.py [--no-napari]`
+   - **Usage**: `python demo_3d_synthetic_phantom.py [--no-napari]`
    - **Best for**: Exploring 3D Gaussian splatting, volumetric data compression, and understanding full-covariance 3D ellipsoid fitting
 
-5. **demo_splats_mitosis.py**
+5. **demo_3d_dapi_microscopy.py**
+   - **Description**: Real DAPI-stained nuclear microscopy data from Image Data Resource (IDR). Demonstrates remote zarr loading, OME-ZARR format handling, and 3D Gaussian fitting to biological structures with automatic downscaling.
+   - **Usage**: `python demo_3d_dapi_microscopy.py [--no-napari]`
+   - **Best for**: Working with real microscopy data, remote data loading, and biological structure fitting
+
+6. **demo_4d_hypercube.py**
+   - **Description**: 4D hypercube validation demonstrating complete nD pipeline with 4-dimensional data. Validates auto-candidate generation, dynamic operations, and compression in 4D.
+   - **Usage**: `python demo_4d_hypercube.py [--no-napari]`
+   - **Best for**: Understanding nD scalability and 4D data handling
+
+7. **demo_splats_mitosis.py**
    - **Description**: Real-world application demo using the scikit-image human mitosis histology dataset. Demonstrates Poisson deviance loss (appropriate for biological imaging), contrast normalization, and tissue-optimized parameters with interactive compression analysis. Shows practical application to biological microscopy data with specialized preprocessing for brightfield histology images.
    - **Usage**: `python demo_splats_mitosis.py [--no-napari]`
    - **Best for**: Seeing practical application to biological imaging, understanding Poisson loss, and histology-specific preprocessing
+
+8. **demo_splats_astronaut.py**
+   - **Description**: Astronaut photo compression analysis with full-covariance fitting and interactive visualization
+   - **Usage**: `python demo_splats_astronaut.py [--no-napari]`
+   - **Best for**: Complex photograph with rich textures and facial features
+
+9. **demo_splats_coins.py**
+   - **Description**: Coins image with metallic textures and circular objects for compression analysis
+   - **Usage**: `python demo_splats_coins.py [--no-napari]`
+   - **Best for**: Metallic surfaces and illumination gradients
+
+10. **demo_splats_mitosis_intgrad.py**
+    - **Description**: Tests CLAHE-based seeding with artificial intensity gradient on mitosis data
+    - **Usage**: `python demo_splats_mitosis_intgrad.py [--no-napari]`
+    - **Best for**: Validating CLAHE seeding in challenging intensity conditions
+
+11. **demo_multiscale_fitting.py**
+    - **Description**: Compares single-scale vs multi-scale fitting showing speedup and quality trade-offs
+    - **Usage**: `python demo_multiscale_fitting.py [--no-napari]`
+    - **Best for**: Understanding multi-scale optimization benefits
 
 ### Running Demos
 
 **Standard execution (with napari visualization):**
 ```bash
-python demo_performance.py
-python demo_splats_fit.py
+python demo_basic_fitting.py
+python demo_performance_metrics.py
+python demo_2d_synthetic_blobs.py
 ```
 
 **Headless execution (for testing/CI):**
 ```bash
-python demo_performance.py --no-napari --n-iters 50
-python demo_splats_2d_napari.py --no-napari
+python demo_basic_fitting.py --no-napari --n-iters 50
+python demo_2d_synthetic_blobs.py --no-napari
+python demo_performance_metrics.py --no-napari
 ```
 
 **From project root with hatch:**
 ```bash
-hatch run python packages/luxar/src/luxar/gsplats/demos/demo_performance.py --no-napari
+hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py --no-napari
 ```
 
 ### Demo Categories
 
 **Learning & Tutorial demos:**
-- `demo_splats_fit.py` - Start here for API overview
-- `demo_performance.py` - Understanding optimization behavior
+- `demo_basic_fitting.py` - Start here for API overview
+- `demo_performance_metrics.py` - Understanding optimization behavior and metrics
 
-**Interactive Analysis demos:**
-- `demo_splats_2d_napari.py` - 2D compression exploration
-- `demo_splats_3d_napari.py` - 3D volumetric visualization
-- `demo_splats_mitosis.py` - Real-world data application
+**Dimensional Progression (2D → 3D → 4D):**
+- `demo_2d_synthetic_blobs.py` - 2D compression with oriented ellipses
+- `demo_3d_synthetic_phantom.py` - 3D volumetric compression with ellipsoid wireframes
+- `demo_4d_hypercube.py` - 4D hypercube nD validation
+
+**Real Data Applications:**
+- `demo_3d_dapi_microscopy.py` - Real microscopy from IDR
+- `demo_splats_mitosis.py` - Biological histology
+- `demo_splats_astronaut.py` - Photography
+- `demo_splats_coins.py` - Metallic textures
+
+**Advanced/Specialized:**
+- `demo_multiscale_fitting.py` - Multi-scale vs single-scale comparison
+- `demo_splats_mitosis_intgrad.py` - CLAHE seeding validation
 
 All demos follow the standardized best practices outlined in this specification, ensuring consistent code quality, documentation, and user experience across the entire demo collection.
 
