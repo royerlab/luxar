@@ -49,7 +49,6 @@ class TestDimensionValidation:
             validate_positions(np.zeros((10, 0)))
 
 
-
 class TestSceneDimensionMetadata:
     """Test dimension metadata in Scene."""
 

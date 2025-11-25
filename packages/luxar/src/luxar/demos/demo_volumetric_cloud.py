@@ -36,7 +36,9 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def simple_noise_3d(x: np.ndarray, y: np.ndarray, z: np.ndarray, seed: int = 0) -> np.ndarray:
+def simple_noise_3d(
+    x: np.ndarray, y: np.ndarray, z: np.ndarray, seed: int = 0
+) -> np.ndarray:
     """Simple 3D noise function (Perlin-like) - completely self-contained.
 
     This is a simplified noise implementation that creates smooth, organic-looking
@@ -104,7 +106,11 @@ def simple_noise_3d(x: np.ndarray, y: np.ndarray, z: np.ndarray, seed: int = 0) 
 
 
 def fractal_noise_3d(
-    x: np.ndarray, y: np.ndarray, z: np.ndarray, octaves: int = 4, persistence: float = 0.5
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    octaves: int = 4,
+    persistence: float = 0.5,
 ) -> np.ndarray:
     """Multi-octave fractal noise - completely self-contained.
 
@@ -125,7 +131,10 @@ def fractal_noise_3d(
 
     for octave in range(octaves):
         # Add noise at this frequency
-        noise += simple_noise_3d(x * frequency, y * frequency, z * frequency, seed=octave) * amplitude
+        noise += (
+            simple_noise_3d(x * frequency, y * frequency, z * frequency, seed=octave)
+            * amplitude
+        )
 
         max_amplitude += amplitude
         amplitude *= persistence
@@ -199,8 +208,20 @@ def generate_volumetric_cloud(
 
         # Add turbulence (distortion) for wispy structure
         # This creates the characteristic cloud wisps and tendrils
-        turbulence_x = fractal_noise_3d(x / cloud_size * 2, y / cloud_size * 2, z / cloud_size * 2, octaves=3, persistence=0.5)
-        turbulence_y = fractal_noise_3d(x / cloud_size * 2 + 100, y / cloud_size * 2 + 100, z / cloud_size * 2, octaves=3, persistence=0.5)
+        turbulence_x = fractal_noise_3d(
+            x / cloud_size * 2,
+            y / cloud_size * 2,
+            z / cloud_size * 2,
+            octaves=3,
+            persistence=0.5,
+        )
+        turbulence_y = fractal_noise_3d(
+            x / cloud_size * 2 + 100,
+            y / cloud_size * 2 + 100,
+            z / cloud_size * 2,
+            octaves=3,
+            persistence=0.5,
+        )
 
         # Apply turbulence to create wispy distortions
         noise_density = fractal_noise_3d(
@@ -246,7 +267,9 @@ def generate_volumetric_cloud(
 
         # Check if we have any points left
         if len(positions) == 0:
-            aprint(f"⚠️  WARNING: Threshold {density_threshold} filtered out ALL points!")
+            aprint(
+                f"⚠️  WARNING: Threshold {density_threshold} filtered out ALL points!"
+            )
             aprint("   Lowering threshold to 0.25 and retrying...")
             density_threshold = 0.25
             mask = combined_density > density_threshold
@@ -258,7 +281,9 @@ def generate_volumetric_cloud(
                 f"No points remain after filtering! Try lowering density_threshold (current: {density_threshold})"
             )
 
-        aprint(f"✓ Kept {len(positions):,} points ({len(positions)/n_candidate_points*100:.1f}% of candidates)")
+        aprint(
+            f"✓ Kept {len(positions):,} points ({len(positions) / n_candidate_points * 100:.1f}% of candidates)"
+        )
         aprint("  This creates the wispy, cloud-like structure")
 
         # === STEP 5: Size points based on density ===
@@ -271,7 +296,9 @@ def generate_volumetric_cloud(
 
         # Map density to radius with more dramatic variation
         # Use power function to make size differences more pronounced
-        size_factor = np.power(density_norm, 0.7)  # Emphasize larger points in dense areas
+        size_factor = np.power(
+            density_norm, 0.7
+        )  # Emphasize larger points in dense areas
         radii = min_radius + size_factor * (max_radius - min_radius)
 
         # Add some randomness to sizes for more natural look
@@ -298,7 +325,9 @@ def generate_volumetric_cloud(
         colors = np.zeros((len(positions), 3), dtype=np.float32)
         colors[:, 0] = np.clip(base_brightness + color_variation, 0, 1)  # R
         colors[:, 1] = np.clip(base_brightness + color_variation * 0.5, 0, 1)  # G
-        colors[:, 2] = np.clip(base_brightness + color_variation * 1.5, 0, 1)  # B (slight blue tint)
+        colors[:, 2] = np.clip(
+            base_brightness + color_variation * 1.5, 0, 1
+        )  # B (slight blue tint)
 
         aprint("✓ Generated white/gray colors with subtle variation")
 
@@ -341,7 +370,9 @@ def generate_volumetric_cloud(
             )
 
         aprint(f"✓ Written {len(positions):,} points to {output_path}")
-        aprint(f"✓ Dataset size: ~{len(positions) * 40 / 1024 / 1024:.1f} MB (uncompressed)")
+        aprint(
+            f"✓ Dataset size: ~{len(positions) * 40 / 1024 / 1024:.1f} MB (uncompressed)"
+        )
 
 
 def main():
@@ -371,10 +402,7 @@ def main():
         output_path = Path(tmpdir) / "cloud.zarr"
 
         # Generate the dataset (all code in this file!)
-        generate_volumetric_cloud(
-            output_path,
-            n_candidate_points=n_candidate_points
-        )
+        generate_volumetric_cloud(output_path, n_candidate_points=n_candidate_points)
 
         aprint("")
         aprint("=" * 70)

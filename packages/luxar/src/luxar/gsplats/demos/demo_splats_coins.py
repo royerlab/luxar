@@ -28,12 +28,9 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.02  # Learning rate (same as mitosis/astronaut)
 N_ITERS = 2000  # Same as mitosis/astronaut
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 45  # number of compression steps (<= #splats)
-TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 # ==========================
 
 # Setup Arbol
@@ -85,12 +82,7 @@ with asection("Coins Gaussian Splatting Demo"):
         result = fit_gaussian_splats(
             V,
             seeds=0.05,
-            init_sigma_vox=0.5,  # Same as mitosis/astronaut
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            l1_diag=0,  # Same as mitosis/astronaut (no diagonal regularization)
-            truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
             # Dynamic operations
@@ -156,11 +148,11 @@ with asection("Computing reconstruction quality at different compression levels"
             amplitudes=result.amplitudes[idx],
             cholesky_factors=result.cholesky_factors[idx],
             sharpnesses=result.sharpnesses[idx],
-            stats={}  # Empty stats for rendering subset
+            stats={},  # Empty stats for rendering subset
         )
 
         # Render
-        Vk = render_gaussians_numpy(V.shape, result_idx, truncate=TRUNCATE_SIG)
+        Vk = render_gaussians_numpy(V.shape, result_idx)
         stack_recon[i] = Vk
         stack_resid[i] = V - Vk
         rel_err_frames[i] = np.linalg.norm(V - Vk) / (np.linalg.norm(V) + 1e-12)

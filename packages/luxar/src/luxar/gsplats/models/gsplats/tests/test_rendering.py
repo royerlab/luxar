@@ -48,7 +48,7 @@ def simple_2d_params():
         amplitudes=amps,
         cholesky_factors=L_packed,
         sharpnesses=sharpnesses,
-        stats={}
+        stats={},
     )
 
     return {
@@ -95,7 +95,7 @@ def multi_2d_params():
         amplitudes=amps,
         cholesky_factors=L_packed,
         sharpnesses=sharpnesses,
-        stats={}
+        stats={},
     )
 
     return {
@@ -130,7 +130,7 @@ def simple_3d_params():
         amplitudes=amps,
         cholesky_factors=L_packed,
         sharpnesses=sharpnesses,
-        stats={}
+        stats={},
     )
 
     return {
@@ -228,9 +228,11 @@ class TestRenderGaussiansFullTorch:
         empty_result = GaussianSplatResult(
             centers=np.zeros((0, 2), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
-            cholesky_factors=np.zeros((0, 3), dtype=np.float32),  # 2D has 3 tril elements
+            cholesky_factors=np.zeros(
+                (0, 3), dtype=np.float32
+            ),  # 2D has 3 tril elements
             sharpnesses=np.zeros((0,), dtype=np.float32),
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, empty_result)
@@ -438,7 +440,12 @@ class TestBatchedRendering:
         sharpness = torch.zeros((0,), dtype=torch.float32)
 
         result = render_gaussians_batched(
-            shape=shape, centers=centers, Ls=Ls, amps=amps, sharpness=sharpness, truncate=3.0
+            shape=shape,
+            centers=centers,
+            Ls=Ls,
+            amps=amps,
+            sharpness=sharpness,
+            truncate=3.0,
         )
 
         assert result.shape == shape
@@ -489,7 +496,7 @@ class TestRenderingEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
@@ -515,7 +522,7 @@ class TestRenderingEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result, truncate=2.0)
@@ -549,7 +556,7 @@ class TestRenderingEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
@@ -576,7 +583,7 @@ class TestRenderingEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result, truncate=3.0)
@@ -612,7 +619,7 @@ class TestRenderingEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result)
@@ -650,7 +657,7 @@ class TestPerformanceAndNumericalStability:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         # Should not crash or produce invalid results
@@ -677,7 +684,7 @@ class TestPerformanceAndNumericalStability:
             amplitudes=amps_small,
             cholesky_factors=L_packed_small,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result_small = render_gaussians_pytorch(shape, test_result_small)
@@ -693,7 +700,7 @@ class TestPerformanceAndNumericalStability:
             amplitudes=amps_large,
             cholesky_factors=L_packed_large,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result_large = render_gaussians_pytorch(shape, test_result_large)
@@ -711,9 +718,11 @@ class TestRenderingWrappersEdgeCases:
         empty_result = GaussianSplatResult(
             centers=np.zeros((0, 2), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
-            cholesky_factors=np.zeros((0, 3), dtype=np.float32),  # 2D has 3 tril elements
+            cholesky_factors=np.zeros(
+                (0, 3), dtype=np.float32
+            ),  # 2D has 3 tril elements
             sharpnesses=np.zeros((0,), dtype=np.float32),
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_numpy(shape, empty_result)
@@ -736,7 +745,7 @@ class TestRenderingWrappersEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_numpy(shape, test_result)
@@ -761,7 +770,7 @@ class TestRenderingWrappersEdgeCases:
             amplitudes=amps,
             cholesky_factors=L_packed,
             sharpnesses=sharpnesses,
-            stats={}
+            stats={},
         )
 
         result = render_gaussians_pytorch(shape, test_result)
@@ -791,4 +800,3 @@ class TestRenderingWrappersEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__])
-

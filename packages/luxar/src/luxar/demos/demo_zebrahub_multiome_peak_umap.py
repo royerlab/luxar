@@ -84,16 +84,29 @@ def load_zebrahub_umap_data(
         coordinates = coords_flat.reshape(n_points, 3)
 
         aprint(f"✓ Loaded {n_points:,} points")
-        aprint(f"  X range: [{coordinates[:, 0].min():.1f}, {coordinates[:, 0].max():.1f}]")
-        aprint(f"  Y range: [{coordinates[:, 1].min():.1f}, {coordinates[:, 1].max():.1f}]")
-        aprint(f"  Z range: [{coordinates[:, 2].min():.1f}, {coordinates[:, 2].max():.1f}]")
+        aprint(
+            f"  X range: [{coordinates[:, 0].min():.1f}, {coordinates[:, 0].max():.1f}]"
+        )
+        aprint(
+            f"  Y range: [{coordinates[:, 1].min():.1f}, {coordinates[:, 1].max():.1f}]"
+        )
+        aprint(
+            f"  Z range: [{coordinates[:, 2].min():.1f}, {coordinates[:, 2].max():.1f}]"
+        )
 
         # Load attributes
         aprint("\nLoading cell annotations...")
         attributes = {}
 
-        for attr_name in ["celltype", "chromosome", "leiden_coarse", "leiden_fine",
-                          "lineage", "peak_type", "timepoint"]:
+        for attr_name in [
+            "celltype",
+            "chromosome",
+            "leiden_coarse",
+            "leiden_fine",
+            "lineage",
+            "peak_type",
+            "timepoint",
+        ]:
             try:
                 attr_store = fsspec.get_mapper(f"{base_url}/attribute_{attr_name}.zarr")
                 attr_data = zarr.open(attr_store, mode="r")[:]
@@ -170,8 +183,15 @@ def create_zebrahub_scene(
 
     with asection("Building Multi-Attribute Scene"):
         # Define attribute types for categorical navigation
-        attr_types = ["celltype", "chromosome", "leiden_coarse", "leiden_fine",
-                      "lineage", "peak_type", "timepoint"]
+        attr_types = [
+            "celltype",
+            "chromosome",
+            "leiden_coarse",
+            "leiden_fine",
+            "lineage",
+            "peak_type",
+            "timepoint",
+        ]
 
         # Create one copy of points per attribute type
         all_positions = []
@@ -183,18 +203,22 @@ def create_zebrahub_scene(
                 colors = attribute_to_color(attributes[attr_name], attr_name)
 
                 # Create 4D positions: [attribute_view, x, y, z]
-                positions_4d = np.column_stack([
-                    np.full(n_points, attr_idx, dtype=np.float32),
-                    coordinates[:, 0],
-                    coordinates[:, 1],
-                    coordinates[:, 2],
-                ])
+                positions_4d = np.column_stack(
+                    [
+                        np.full(n_points, attr_idx, dtype=np.float32),
+                        coordinates[:, 0],
+                        coordinates[:, 1],
+                        coordinates[:, 2],
+                    ]
+                )
 
                 all_positions.append(positions_4d)
                 all_colors.append(colors)
 
                 n_unique = len(np.unique(attributes[attr_name]))
-                aprint(f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values")
+                aprint(
+                    f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values"
+                )
 
         # Combine all attribute views
         positions_combined = np.vstack(all_positions)
@@ -204,20 +228,22 @@ def create_zebrahub_scene(
         aprint(f"  Total points: {len(positions_combined):,} ({n_points:,} per view)")
 
         # Define dimensions with categorical attribute selector
-        dims = Dimensions([
-            Dimension(
-                "attribute",
-                unit="view",
-                range=(0, len(attr_types) - 1),
-                step=1,
-                display=False,
-                discrete=True,
-                description="Attribute visualization (0=celltype, 1=chromosome, 2=leiden_coarse, 3=leiden_fine, 4=lineage, 5=peak_type, 6=timepoint)",
-            ),
-            Dimension("x", unit="UMAP", display=True),
-            Dimension("y", unit="UMAP", display=True),
-            Dimension("z", unit="UMAP", display=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension(
+                    "attribute",
+                    unit="view",
+                    range=(0, len(attr_types) - 1),
+                    step=1,
+                    display=False,
+                    discrete=True,
+                    description="Attribute visualization (0=celltype, 1=chromosome, 2=leiden_coarse, 3=leiden_fine, 4=lineage, 5=peak_type, 6=timepoint)",
+                ),
+                Dimension("x", unit="UMAP", display=True),
+                Dimension("y", unit="UMAP", display=True),
+                Dimension("z", unit="UMAP", display=True),
+            ]
+        )
 
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:

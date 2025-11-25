@@ -55,12 +55,8 @@ class TestFindSeedsOvercompleteNd:
         V = np.random.randn(25, 25) + 1
 
         # Test percentile threshold effect
-        seeds_strict = find_seeds_multiscale_gaussian(
-            V, percentile_thresh=90.0
-        )
-        seeds_loose = find_seeds_multiscale_gaussian(
-            V, percentile_thresh=50.0
-        )
+        seeds_strict = find_seeds_multiscale_gaussian(V, percentile_thresh=90.0)
+        seeds_loose = find_seeds_multiscale_gaussian(V, percentile_thresh=50.0)
 
         # Looser threshold should generally find more seeds
         assert len(seeds_loose) >= len(seeds_strict)
@@ -154,9 +150,9 @@ def test_multiscale_gaussian_edge_cases():
     seeds_low_thresh = find_seeds_multiscale_gaussian(
         dense_image, scales=[1], percentile_thresh=50.0
     )
-    assert (
-        seeds_high_thresh.shape[0] <= seeds_low_thresh.shape[0]
-    ), "Higher threshold should produce fewer or equal seeds"
+    assert seeds_high_thresh.shape[0] <= seeds_low_thresh.shape[0], (
+        "Higher threshold should produce fewer or equal seeds"
+    )
 
 
 def test_multiscale_gaussian_parameter_validation():

@@ -1,4 +1,11 @@
-"""luxar.cli – Command-line interface for building, serving, and inspecting Luxar Zarr scenes."""
+"""luxar.cli – Command-line interface for building, serving, and inspecting Luxar Zarr scenes.
+
+IMPORTANT: URL Construction
+    When constructing data URLs for the viewer's ?src= parameter, DO NOT include
+    trailing slashes. The viewer's fetch logic treats them differently:
+    - CORRECT: http://host:port (joins correctly: http://host:port/.zmetadata)
+    - WRONG:   http://host:port/ (creates double-slash: http://host:port//.zmetadata)
+"""
 
 from __future__ import annotations
 
@@ -161,7 +168,9 @@ def serve(
                 aprint(f"❌ Error: No available ports found near {viewer_port}")
                 raise typer.Exit(1)
             if actual_viewer_port != viewer_port:
-                aprint(f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead")
+                aprint(
+                    f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
+                )
 
             _serve_viewer(host, actual_viewer_port, None, open_browser)
             return
@@ -197,7 +206,9 @@ def serve(
                 aprint(f"❌ Error: No available ports found near {viewer_port}")
                 raise typer.Exit(1)
             if actual_viewer_port != viewer_port:
-                aprint(f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead")
+                aprint(
+                    f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
+                )
         else:
             actual_viewer_port = viewer_port
 
@@ -224,21 +235,26 @@ def serve(
                 aprint("💡 To build: cd packages/luxar-viewer && pnpm build")
             else:
                 # Start viewer in a separate thread
+                data_url = f"http://{host}:{actual_port}"  # No trailing slash
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
-                    args=(host, actual_viewer_port, f"http://{host}:{actual_port}/", False),
+                    args=(host, actual_viewer_port, data_url, False),
                     daemon=True,
                 )
                 viewer_thread.start()
                 time.sleep(1)  # Give viewer time to start
         else:
-            aprint(f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{actual_port}/")
+            aprint(
+                f"📊 Viewer URL: http://localhost:5173/?src=http://{host}:{actual_port}"
+            )
 
         # Open browser if requested
         if open_browser:
-            url = f"http://{host}:{actual_viewer_port if viewer else 5173}/?src=http://{host}:{actual_port}/"
+            # Construct URL without trailing slash on data URL (prevents double-slash in path joining)
+            data_url = f"http://{host}:{actual_port}"
+            viewer_url = f"http://{host}:{actual_viewer_port if viewer else 5173}/?src={data_url}"
             time.sleep(1)  # Give servers time to start
-            open_browser_func(url)
+            open_browser_func(viewer_url)
 
         uvicorn.run(api, host=host, port=actual_port, reload=False, log_level="warning")
     except Exception as e:
@@ -264,9 +280,13 @@ def _serve_viewer(
     # Mount viewer static files
     api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
 
-    viewer_url = f"http://{host}:{port}/"
+    # Construct viewer URL - ensure data_url has no trailing slash
     if data_url:
-        viewer_url += f"?src={data_url}"
+        # Strip trailing slash from data_url to prevent double-slash in viewer requests
+        data_url_clean = data_url.rstrip("/")
+        viewer_url = f"http://{host}:{port}/?src={data_url_clean}"
+    else:
+        viewer_url = f"http://{host}:{port}/"
 
     aprint(f"🌐 Viewer available at: {viewer_url}")
 
@@ -325,7 +345,7 @@ def viewer(
             data_thread.start()
             time.sleep(1)  # Give data server time to start
 
-            data_url = f"http://{host}:{actual_data_port}/"
+            data_url = f"http://{host}:{actual_data_port}"  # No trailing slash!
             if data.name.endswith(".zarr"):
                 data_url += data.name
 

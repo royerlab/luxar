@@ -517,7 +517,7 @@ These are user-facing configuration options:
 **Proportional defaults**: All default to proportion of base learning rate
 - `l1_amp = 0.1 * lr` (10% of base LR)
 - `l1_diag = 0.01 * lr` (1% of base LR)
-- `l1_sharpness = 0.05 * lr` (5% of base LR)
+- `l1_sharpness = 0.01 * lr` (1% of base LR)
 
 ---
 

@@ -46,12 +46,8 @@ def test_methods_comparison():
     # (other blobs may or may not be detected depending on parameters)
     center_blob = np.array([32, 32])
 
-    dist_multiscale = np.min(
-        np.linalg.norm(seeds_multiscale - center_blob, axis=1)
-    )
-    dist_decomp = np.min(
-        np.linalg.norm(seeds_decomp - center_blob, axis=1)
-    )
+    dist_multiscale = np.min(np.linalg.norm(seeds_multiscale - center_blob, axis=1))
+    dist_decomp = np.min(np.linalg.norm(seeds_decomp - center_blob, axis=1))
 
     # At least one method should find something reasonably close
     assert dist_multiscale < 20.0 or dist_decomp < 20.0, (
@@ -59,9 +55,7 @@ def test_methods_comparison():
     )
 
     # Test combining seeds from both methods
-    combined = combine_seeds(
-        seeds_multiscale, seeds_decomp, min_distance=5.0
-    )
+    combined = combine_seeds(seeds_multiscale, seeds_decomp, min_distance=5.0)
 
     # Combined should have some seeds (may be fewer than individual sets after dedup)
     assert combined.shape[0] > 0, "Combined seeds should not be empty"
@@ -83,21 +77,15 @@ def test_seeds_integration_with_fitting():
     image[16, 16] = 1.0  # Single bright pixel
 
     # Generate seeds using both methods
-    seeds_mg = find_seeds_multiscale_gaussian(
-        image, scales=[1], min_distance=1.0
-    )
+    seeds_mg = find_seeds_multiscale_gaussian(image, scales=[1], min_distance=1.0)
     seeds_decomp = find_seeds_multiscale_decomposition(
         image, scales=[1, 2], min_distance=1.0
     )
 
     # Verify candidate format is correct for fitting
     # Candidates should be float numpy arrays with shape (N, ndim)
-    assert isinstance(
-        seeds_mg, np.ndarray
-    ), "Candidates should be numpy arrays"
-    assert (
-        seeds_mg.dtype in [np.float32, np.float64]
-    ), "Candidates should be float type"
+    assert isinstance(seeds_mg, np.ndarray), "Candidates should be numpy arrays"
+    assert seeds_mg.dtype in [np.float32, np.float64], "Candidates should be float type"
     assert seeds_mg.ndim == 2, "Candidates should be 2D arrays"
     assert seeds_mg.shape[1] == 2, "Candidates should have 2D coordinates"
 
@@ -107,12 +95,12 @@ def test_seeds_integration_with_fitting():
     assert seeds_decomp.shape[1] == 2
 
     # Candidates should be within image bounds
-    assert np.all(seeds_mg >= 0) and np.all(
-        seeds_mg < 32
-    ), "Candidates should be within image bounds"
-    assert np.all(seeds_decomp >= 0) and np.all(
-        seeds_decomp < 32
-    ), "Candidates should be within image bounds"
+    assert np.all(seeds_mg >= 0) and np.all(seeds_mg < 32), (
+        "Candidates should be within image bounds"
+    )
+    assert np.all(seeds_decomp >= 0) and np.all(seeds_decomp < 32), (
+        "Candidates should be within image bounds"
+    )
 
     # Test combining seeds for fitting (with deduplication via min_distance)
     combined = combine_seeds(seeds_mg, seeds_decomp, min_distance=2.0)
@@ -166,9 +154,7 @@ def test_3d_seeds():
     image_3d[8, 8, 8] = 1.0  # Single bright voxel
 
     # Test multiscale Gaussian in 3D
-    seeds_mg = find_seeds_multiscale_gaussian(
-        image_3d, scales=[1], min_distance=2.0
-    )
+    seeds_mg = find_seeds_multiscale_gaussian(image_3d, scales=[1], min_distance=2.0)
 
     assert seeds_mg.shape[1] == 3, "3D seeds should have 3 coordinates"
     assert seeds_mg.shape[0] > 0, "Should find seeds in 3D"

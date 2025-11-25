@@ -23,7 +23,7 @@ Streaming Large Datasets:
     >>> streaming = luxar.StreamingPoints('huge_cloud', compiler)
     >>> for batch in data_generator():
     ...     streaming.append_batch(batch)
-    >>> streaming.finalize()
+    >>> metadata = streaming.finalize()  # Returns metadata dict
 
 For detailed documentation, see: https://github.com/royerlab/luxar
 """

@@ -243,7 +243,6 @@ class Scene(Node):
             # Return lightweight Points node with only metadata
             return Points(
                 name,
-                positions=None,  # No data in memory
                 metadata=metadata,
                 parent=parent_node,
                 writer=self._writer,
@@ -315,14 +314,6 @@ class Scene(Node):
                     broadcast_dims.append(dim.name)
 
         return broadcast_dims
-
-    def finalize(self) -> None:
-        """Finalize the scene.
-
-        Note: Finalization is now handled automatically by LuxarZarrCompiler's
-        context manager. This method is kept for compatibility but does nothing.
-        """
-        aprint("Note: Finalization is handled by LuxarZarrCompiler context manager")
 
     def get_store_path(self) -> str:
         """Get the path to the backing Zarr store.

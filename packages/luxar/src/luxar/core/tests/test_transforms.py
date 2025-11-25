@@ -159,9 +159,9 @@ class TestTransformUtilities:
         combined = compose(t1, t2)
         result = combined @ point
 
-        assert np.allclose(
-            result[:3], expected[:3]
-        ), f"Expected {expected[:3]}, got {result[:3]}"
+        assert np.allclose(result[:3], expected[:3]), (
+            f"Expected {expected[:3]}, got {result[:3]}"
+        )
 
         # Test Case 2: Rotate then Translate (order really matters!)
         t1 = rotate_z(90)  # Rotate 90° around Z
@@ -176,9 +176,9 @@ class TestTransformUtilities:
         combined = compose(t1, t2)
         result = combined @ point
 
-        assert np.allclose(
-            result[:3], expected[:3], atol=1e-6
-        ), f"Rotate then translate failed: expected {expected[:3]}, got {result[:3]}"
+        assert np.allclose(result[:3], expected[:3], atol=1e-6), (
+            f"Rotate then translate failed: expected {expected[:3]}, got {result[:3]}"
+        )
 
         # Test Case 3: Opposite order gives different result
         # Translate then Rotate should give (0, 11, 0) not (10, 1, 0)
@@ -194,16 +194,16 @@ class TestTransformUtilities:
         combined = compose(t1, t2)
         result = combined @ point
 
-        assert np.allclose(
-            result[:3], expected[:3], atol=1e-6
-        ), f"Translate then rotate failed: expected {expected[:3]}, got {result[:3]}"
+        assert np.allclose(result[:3], expected[:3], atol=1e-6), (
+            f"Translate then rotate failed: expected {expected[:3]}, got {result[:3]}"
+        )
 
         # Verify they're different (order matters!)
         combined_reverse = compose(t2, t1)
         result_reverse = combined_reverse @ point
-        assert not np.allclose(
-            result[:3], result_reverse[:3], atol=0.1
-        ), "Order should matter for non-commutative transforms!"
+        assert not np.allclose(result[:3], result_reverse[:3], atol=0.1), (
+            "Order should matter for non-commutative transforms!"
+        )
 
         # Test Case 4: Three transforms
         t1 = translate(5, 0, 0)
@@ -220,9 +220,9 @@ class TestTransformUtilities:
         combined = compose(t1, t2, t3)
         result = combined @ point
 
-        assert np.allclose(
-            result[:3], expected[:3], atol=1e-6
-        ), f"Three-transform composition failed: expected {expected[:3]}, got {result[:3]}"
+        assert np.allclose(result[:3], expected[:3], atol=1e-6), (
+            f"Three-transform composition failed: expected {expected[:3]}, got {result[:3]}"
+        )
 
     def test_inverse(self):
         """Test transform inversion."""

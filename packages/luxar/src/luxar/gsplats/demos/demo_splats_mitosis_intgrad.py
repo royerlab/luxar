@@ -31,8 +31,6 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.04  # Learning rate for fitting
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
@@ -186,9 +184,6 @@ with asection("Mitosis Intensity Gradient Demo - Testing CLAHE Seeding"):
             V,
             # seeds auto-generated with intelligent defaults
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            l1_diag=0,
             max_abs_error=0.05,
             device=DEVICE,
             verbose=True,
@@ -249,7 +244,7 @@ for i, K in enumerate(keep_counts):
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],
         sharpnesses=result.sharpnesses[idx],
-        stats={}  # Empty stats for rendering subset
+        stats={},  # Empty stats for rendering subset
     )
 
     # Render

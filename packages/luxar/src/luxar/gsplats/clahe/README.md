@@ -279,7 +279,7 @@ Compute sampling probabilities from CLAHE-equalized volume.
 
 See the `demos/` directory for complete examples:
 - `demo_splats_mitosis_intgrad.py`: CLAHE-based seeding validation
-- `demo_splats_3d_dapi_napari.py`: 3D microscopy enhancement
+- `demo_3d_dapi_microscopy.py`: 3D microscopy enhancement
 
 ## References
 

@@ -133,6 +133,10 @@ vite.config.ts.timestamp-*
 *.zarr/
 *.zarr
 
+# Large demo data files (>100MB for GitHub)
+packages/luxar/src/luxar/demos/data/milky_way_gaia_8m.zarr.zip
+packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py
+
 # Benchmarking
 .benchmarks/
 
@@ -150,13 +154,15 @@ generated/
 # Project statistics (generated report)
 stats/project_stats.html
 
-# Playwright
+# Playwright E2E test artifacts (all in test-results/ now)
 playwright-report/
 test-results/
+*.png-snapshots/
+
+# Agent driver debug artifacts (now output to test-results/debug/)
 debug-view.png
 error-state.png
-*.png-snapshots/
-# E2E test screenshots (transient, regenerated on each test run)
 
-# E2E test screenshots (transient, regenerated on each test run)
+# Deprecated folders (no longer used)
 packages/luxar-viewer/test-screenshots/
+packages/luxar-viewer/debug-screenshots/

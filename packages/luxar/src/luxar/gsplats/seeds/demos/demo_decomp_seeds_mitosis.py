@@ -125,12 +125,8 @@ with asection("Seed Generation Methods Comparison"):
             aprint("\n" + "=" * 70)
             aprint("SEED GENERATION SUMMARY")
             aprint("=" * 70)
-            aprint(
-                f"Multiscale Gaussian: {len(seeds_multiscale):4d} seeds (magenta)"
-            )
-            aprint(
-                f"Decomposition:       {len(seeds_decomp):4d} seeds (cyan)"
-            )
+            aprint(f"Multiscale Gaussian: {len(seeds_multiscale):4d} seeds (magenta)")
+            aprint(f"Decomposition:       {len(seeds_decomp):4d} seeds (cyan)")
             aprint(
                 f"Combined:            {len(seeds_combined):4d} seeds (lime) ← Used in fitting"
             )

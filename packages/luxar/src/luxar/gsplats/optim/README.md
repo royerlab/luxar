@@ -229,10 +229,12 @@ n_removed = coordinator.prune_splats(keep_mask)
 centers_new = torch.randn(10, 3)  # 10 new 3D splats
 Ls_new = torch.eye(3).expand(10, 3, 3)
 amps_new = torch.ones(10) * 0.5
-n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, lr_new=0.02)
+sharpness_new = torch.ones(10) * 2.0  # Standard Gaussian sharpness
+n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.02)
 
 # Replace all splats (complete reset)
-n_new = coordinator.replace_all_splats(centers, Ls, amps, lr_reset=0.01)
+sharpness = torch.ones(centers.shape[0]) * 2.0
+n_new = coordinator.replace_all_splats(centers, Ls, amps, sharpness, lr_reset=0.01)
 
 # Monitor operations
 status = coordinator.get_status()

@@ -105,8 +105,6 @@ def validate_dimensional_coverage(
             if ref_values != group_values:
                 missing = ref_values - group_values
 
-
-
                 if missing:
                     raise DimensionalCoverageError(
                         f"Group '{group_name}' has incomplete coverage of "

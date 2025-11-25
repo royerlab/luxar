@@ -28,14 +28,18 @@ def load_cells_data():
     with asection("Loading Zebrahub Integrated Cells"):
         try:
             # Coordinates
-            coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[:]
+            coords_flat = zarr.open(fsspec.get_mapper(f"{base}/coords.zarr"), mode="r")[
+                :
+            ]
             coords = coords_flat.reshape(-1, 3)
             aprint(f"✓ {len(coords):,} cells loaded")
 
             # Attributes
             attrs = {}
             for name in ["celltype", "timepoint"]:
-                attrs[name] = zarr.open(fsspec.get_mapper(f"{base}/attribute_{name}.zarr"), mode="r")[:]
+                attrs[name] = zarr.open(
+                    fsspec.get_mapper(f"{base}/attribute_{name}.zarr"), mode="r"
+                )[:]
                 aprint(f"  {name}: {len(np.unique(attrs[name]))} unique")
         except Exception as e:
             aprint(f"❌ Failed to load data from {base}")
@@ -63,7 +67,9 @@ def attr_to_colors(values):
         h = hue * 6.0
         c, x = 1.0, 1.0 * (1 - abs(h % 2 - 1))
 
-        r, g, b = [(c,x,0), (x,c,0), (0,c,x), (0,x,c), (x,0,c), (c,0,x)][int(h)]
+        r, g, b = [(c, x, 0), (x, c, 0), (0, c, x), (0, x, c), (x, 0, c), (c, 0, x)][
+            int(h)
+        ]
         colors[values == val] = [r, g, b]
 
     return colors
@@ -95,13 +101,22 @@ def main():
             positions = np.vstack(all_pos)
             colors = np.vstack(all_col)
 
-            dims = Dimensions([
-                Dimension("view", unit="", range=(0,1), step=1, display=False, discrete=True,
-                         description="0=CellType, 1=Timepoint"),
-                Dimension("x", unit="UMAP", display=True),
-                Dimension("y", unit="UMAP", display=True),
-                Dimension("z", unit="UMAP", display=True),
-            ])
+            dims = Dimensions(
+                [
+                    Dimension(
+                        "view",
+                        unit="",
+                        range=(0, 1),
+                        step=1,
+                        display=False,
+                        discrete=True,
+                        description="0=CellType, 1=Timepoint",
+                    ),
+                    Dimension("x", unit="UMAP", display=True),
+                    Dimension("y", unit="UMAP", display=True),
+                    Dimension("z", unit="UMAP", display=True),
+                ]
+            )
 
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
@@ -109,8 +124,8 @@ def main():
                     "Cells",
                     positions,
                     colors=colors,
-                    radii=np.full(len(positions), 0.06, dtype=np.float32),
-                    sharpness=np.full(len(positions), 5.0, dtype=np.float32),
+                    radii=np.full(len(positions), 0.02, dtype=np.float32),
+                    sharpness=np.full(len(positions), 4.0, dtype=np.float32),
                     opacity=0.8,
                 )
 
@@ -123,7 +138,9 @@ def main():
         aprint("")
 
         try:
-            subprocess.run(["luxar", "serve", str(output), "--viewer", "--open"], check=True)
+            subprocess.run(
+                ["luxar", "serve", str(output), "--viewer", "--open"], check=True
+            )
         except (KeyboardInterrupt, subprocess.CalledProcessError, FileNotFoundError):
             pass
 

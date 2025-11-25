@@ -144,7 +144,9 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         aprint(f"\n✅ Multi-scale complete in {time_multi:.2f}s")
         aprint(f"Total splats: {n_splats_multi:,}")
         aprint(f"Splats per scale: {result_multi.stats['n_splats_per_scale']}")
-        aprint(f"Computational speedup: {result_multi.stats['computational_speedup']:.1f}×")
+        aprint(
+            f"Computational speedup: {result_multi.stats['computational_speedup']:.1f}×"
+        )
 
     # Render multi-scale reconstruction
     V_recon_multi = render_gaussians_numpy(V.shape, result_multi, truncate=TRUNCATE_SIG)
@@ -247,7 +249,9 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         aprint(f"Total splats: {n_splats_single:,}")
 
     # Render single-scale reconstruction
-    V_recon_single = render_gaussians_numpy(V.shape, result_single, truncate=TRUNCATE_SIG)
+    V_recon_single = render_gaussians_numpy(
+        V.shape, result_single, truncate=TRUNCATE_SIG
+    )
     residual_single = V - V_recon_single
     error_single = np.mean((V - V_recon_single) ** 2)
     max_abs_error_single = np.abs(residual_single).max()
@@ -346,7 +350,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
         aprint("  • Check residuals to see reconstruction quality")
         aprint("  • Multi-scale uses hierarchical splat distribution:")
         for scale_idx, scale in enumerate(SCALES):
-            n = stats_multi["n_splats_per_scale"][scale_idx]
+            n = result_multi.stats["n_splats_per_scale"][scale_idx]
             aprint(f"    - Scale {scale}×: {n} splats")
 
         aprint("\n🎯 Key Insights:")
@@ -354,7 +358,7 @@ with asection("Multi-Scale Gaussian Splatting Demo"):
             f"  • Multi-scale fitting achieved {time_speedup:.1f}× wall-clock speedup"
         )
         aprint(
-            f"  • Computational speedup (voxel reduction): {stats_multi['computational_speedup']:.1f}×"
+            f"  • Computational speedup (voxel reduction): {result_multi.stats['computational_speedup']:.1f}×"
         )
         aprint("  • Coarse scales capture large structures efficiently")
         aprint("  • Fine scales capture details at full resolution")

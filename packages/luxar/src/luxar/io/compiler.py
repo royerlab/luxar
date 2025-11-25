@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..core.scene import Scene
 import zarr
 from arbol import aprint
 from numpy.typing import NDArray
@@ -434,9 +437,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "scene_dimensions" in self.store.attrs:
             scene_dims = self.store.attrs["scene_dimensions"]
             dims_list = (
-                scene_dims.get("dimensions", [])
-                if isinstance(scene_dims, dict)
-                else []
+                scene_dims.get("dimensions", []) if isinstance(scene_dims, dict) else []
             )
 
             # Find which dimensions are displayed
@@ -539,7 +540,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                         SPATIAL_INDEX_MAX_CELLS_CONTINUOUS,
                         max(
                             SPATIAL_INDEX_MIN_CELLS,
-                            int(np.sqrt(n_points / SPATIAL_INDEX_TARGET_POINTS_PER_CELL)),
+                            int(
+                                np.sqrt(n_points / SPATIAL_INDEX_TARGET_POINTS_PER_CELL)
+                            ),
                         ),
                     )
                 else:
@@ -606,9 +609,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "scene_dimensions" in self.store.attrs:
             scene_dims = self.store.attrs["scene_dimensions"]
             dims_list = (
-                scene_dims.get("dimensions", [])
-                if isinstance(scene_dims, dict)
-                else []
+                scene_dims.get("dimensions", []) if isinstance(scene_dims, dict) else []
             )
             for d in range(n_dims):
                 if d < len(dims_list) and dims_list[d].get("discrete", False):

@@ -65,7 +65,7 @@ class FitConfig:
     asymmetric_penalty: Optional[float]      # Over-prediction penalty factor (default 10.0)
     l1_amp: Optional[float]                  # L1 regularization on amplitudes (default: 0.1 * lr)
     l1_diag: Optional[float]                 # L1 regularization on diagonal elements (default: 0.01 * lr)
-    l1_sharpness: Optional[float]            # L1 regularization on sharpness offsets (default: 0.05 * lr)
+    l1_sharpness: Optional[float]            # L1 regularization on sharpness offsets (default: 0.01 * lr)
 
     # Scheduler parameters
     scheduler_type: str                      # "plateau" or "exponential"
@@ -323,7 +323,7 @@ else:
 # Default: proportional to base learning rate for consistent sparsity pressure
 l1_amp_final = l1_amp if l1_amp is not None else (0.1 * lr)  # 10% of base LR
 l1_diag_final = l1_diag if l1_diag is not None else (0.01 * lr)  # 1% of base LR
-l1_sharpness_final = l1_sharpness if l1_sharpness is not None else (0.05 * lr)  # 5% of base LR
+l1_sharpness_final = l1_sharpness if l1_sharpness is not None else (0.01 * lr)  # 1% of base LR
 ```
 
 **Rationale**: L1 regularization proportional to LR ensures consistent sparsity pressure across different learning rate choices and works correctly with gradient dilution compensation.
@@ -1061,7 +1061,7 @@ lr_sharpness = 0.01 × 0.5 = 0.005  # Conservative shape updates
 ```python
 l1_amp = 0.1 * lr      # 10% of base LR (5% of amplitude LR due to 2.0× multiplier)
 l1_diag = 0.01 * lr    # 1% of base LR
-l1_sharpness = 0.05 * lr  # 5% of base LR (10% of sharpness LR due to 0.5× multiplier)
+l1_sharpness = 0.01 * lr  # 1% of base LR (2% of sharpness LR due to 0.5× multiplier)
 ```
 
 **Benefits**:
