@@ -322,7 +322,9 @@ class TestUpsampleForVisualization:
         img = np.random.rand(16, 16).astype(np.float32)
         target_shape = (64, 64)
 
-        upsampled = upsample_for_visualization(img, target_shape, interpolation="nearest")
+        upsampled = upsample_for_visualization(
+            img, target_shape, interpolation="nearest"
+        )
 
         assert upsampled.shape == target_shape
         assert np.all(upsampled >= 0)
@@ -335,7 +337,9 @@ class TestUpsampleForVisualization:
         img = np.random.rand(16, 16).astype(np.float32)
         target_shape = (64, 64)
 
-        upsampled = upsample_for_visualization(img, target_shape, interpolation="linear")
+        upsampled = upsample_for_visualization(
+            img, target_shape, interpolation="linear"
+        )
 
         assert upsampled.shape == target_shape
         assert np.all(upsampled >= 0)
@@ -701,7 +705,9 @@ class TestMovieFrameFIFO:
 class TestDeviceDetection:
     """Test device auto-detection branches."""
 
-    @pytest.mark.skipif(torch.cuda.is_available(), reason="CUDA available, won't test fallback")
+    @pytest.mark.skipif(
+        torch.cuda.is_available(), reason="CUDA available, won't test fallback"
+    )
     def test_device_detection_no_cuda(self, simple_2d_image):
         """Test device detection when CUDA not available."""
         # When CUDA not available, should fall back to MPS or CPU
@@ -794,4 +800,3 @@ class TestLossComputationHelpers:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

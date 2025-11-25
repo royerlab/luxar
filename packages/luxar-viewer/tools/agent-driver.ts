@@ -36,8 +36,8 @@ function parseArgs(): DriverConfig {
     url: process.env.APP_URL || 'http://localhost:5173/?debug',
     headless: true,
     waitTime: 5000,  // Time to wait for scene initialization (ms)
-    screenshotPath: 'debug-view.png',
-    errorScreenshotPath: 'error-state.png'
+    screenshotPath: 'test-results/debug/debug-view.png',
+    errorScreenshotPath: 'test-results/debug/error-state.png'
   };
 
   for (const arg of args) {

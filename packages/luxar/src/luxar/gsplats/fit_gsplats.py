@@ -74,7 +74,7 @@ class GaussianSplatFitter:
         sigma_min_diag: Optional[Sequence[float]] = None,
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
-        seed_method: str = "gaussian",
+        seed_method: str = "both",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
         gradient_clip: Optional[float] = 1.0,
@@ -95,11 +95,13 @@ class GaussianSplatFitter:
 
         Parameters
         ----------
-        seed_method : str, default="gaussian"
+        seed_method : str, default="both"
             Method for generating seeds when seeds=None:
-            - "gaussian": Gaussian multi-scale blob detection
-            - "decomposition": Dictionary/PCA-based decomposition
-            - "both": Hybrid approach combining both methods
+            - "both": Hybrid approach combining decomposition + Gaussian (RECOMMENDED - best convergence)
+            - "gaussian": Gaussian multi-scale blob detection only
+            - "decomposition": Dictionary/PCA-based decomposition only
+            - "decomposition,gaussian": Decomposition first, then Gaussian
+            - "gaussian,decomposition": Gaussian first, then decomposition
             This parameter is only used when seeds=None.
         **seed_kwargs
             Additional keyword arguments for seed generation (e.g., num_scales,
@@ -176,7 +178,7 @@ def fit_gaussian_splats(
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 0.5,
     n_iters: int = 1000,
-    lr: float = 0.01,
+    lr: float = 0.05,
     loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 10.0,
     l1_amp: Optional[float] = None,
@@ -186,7 +188,7 @@ def fit_gaussian_splats(
     sigma_max_diag: Optional[Sequence[float]] = None,
     truncate: float = 3.0,
     device: Optional[str] = None,
-    seed_method: str = "gaussian",
+    seed_method: str = "both",
     verbose: bool = True,
     # Optimization parameters
     max_abs_error: Optional[float] = None,
@@ -257,11 +259,11 @@ def fit_gaussian_splats(
         L1 regularization coefficient on diagonal elements of Cholesky factors.
         Encourages smaller, more isotropic splats. If None, automatically set
         to 1% of learning rate for mild shape regularization.
-    l1_sharpness : float, default=None (auto: 0.05 * lr)
+    l1_sharpness : float, default=None (auto: 0.01 * lr)
         L1 regularization coefficient on sharpness offset parameters (s').
         Encourages splats to remain at standard Gaussian (s' = 0, s = 2) unless
-        beneficial to deviate. If None, automatically set to 5% of base learning rate
-        (which equals 10% of the sharpness learning rate due to the 0.5× multiplier).
+        beneficial to deviate. If None, automatically set to 1% of base learning rate
+        (which equals 2% of the sharpness learning rate due to the 0.5× multiplier).
         Higher values promote standard Gaussians, lower values allow more sharpness learning.
         Note: Sharpness learning rate is hard-coded to 0.5× the base effective learning rate.
     sigma_min_diag : Sequence[float], optional
@@ -273,11 +275,15 @@ def fit_gaussian_splats(
         Truncation radius in standard deviations for rendering efficiency.
     device : str, optional
         PyTorch device ("cpu", "cuda", "mps"). Auto-detects if None.
-    seed_method : str, default="gaussian"
+    seed_method : str, default="both"
         Method for generating seeds when seeds=None:
-        - "gaussian": Gaussian multi-scale blob detection (recommended for general use)
-        - "decomposition": Dictionary/PCA-based decomposition
-        - "both": Hybrid approach combining both methods
+        - "both": Hybrid approach combining decomposition + Gaussian (DEFAULT - best convergence)
+        - "gaussian": Gaussian multi-scale blob detection only
+        - "decomposition": Dictionary/PCA-based decomposition only
+        - "decomposition,gaussian": Decomposition first, then Gaussian
+        - "gaussian,decomposition": Gaussian first, then decomposition
+        The "both" method provides optimal convergence by combining global structure seeds
+        (from decomposition) with local feature seeds (from Gaussian detection).
         This parameter is only used when seeds=None. If seeds are provided,
         this parameter is ignored.
     **seed_kwargs
@@ -417,6 +423,8 @@ def fit_gaussian_splats(
     if result.stats.get("movie_frames") is not None:
         from luxar.gsplats.fitting.visualization import show_optimization_movie
 
-        show_optimization_movie(result.stats["movie_frames"], result.stats["movie_shape"])
+        show_optimization_movie(
+            result.stats["movie_frames"], result.stats["movie_shape"]
+        )
 
     return result

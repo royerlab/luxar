@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler, Scene
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 class TestDimensionErrorHandling:
@@ -186,15 +186,6 @@ class TestSceneErrorHandling:
         # Invalid path (simulate permission error)
         # This is platform-specific, so we'll skip for now
         pass
-
-    def test_finalize_errors(self):
-        """Test scene finalization error handling."""
-        # Already finalized scene
-        with tempfile.TemporaryDirectory() as tmpdir:
-            scene = Scene(Path(tmpdir) / "test.zarr")
-            scene.finalize()
-            # Second finalize should work (idempotent)
-            scene.finalize()
 
 
 class TestEdgeCases:

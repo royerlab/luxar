@@ -377,7 +377,9 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
+        params = np.column_stack(
+            [result.centers, result.cholesky_factors, result.sharpnesses]
+        )
 
         # Extract and check Cholesky factors
         d = 2
@@ -405,7 +407,9 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params_cpu = np.column_stack([result_cpu.centers, result_cpu.cholesky_factors, result_cpu.sharpnesses])
+        params_cpu = np.column_stack(
+            [result_cpu.centers, result_cpu.cholesky_factors, result_cpu.sharpnesses]
+        )
         assert np.all(np.isfinite(params_cpu))
 
         # Test GPU if available
@@ -417,7 +421,13 @@ class TestGaussianSplatsIntegration:
                 device="cuda",
                 verbose=False,
             )
-            params_cuda = np.column_stack([result_cuda.centers, result_cuda.cholesky_factors, result_cuda.sharpnesses])
+            params_cuda = np.column_stack(
+                [
+                    result_cuda.centers,
+                    result_cuda.cholesky_factors,
+                    result_cuda.sharpnesses,
+                ]
+            )
             assert np.all(np.isfinite(params_cuda))
 
         # Test MPS if available
@@ -429,7 +439,13 @@ class TestGaussianSplatsIntegration:
                 device="mps",
                 verbose=False,
             )
-            params_mps = np.column_stack([result_mps.centers, result_mps.cholesky_factors, result_mps.sharpnesses])
+            params_mps = np.column_stack(
+                [
+                    result_mps.centers,
+                    result_mps.cholesky_factors,
+                    result_mps.sharpnesses,
+                ]
+            )
             assert np.all(np.isfinite(params_mps))
 
     def test_empty_input_handling(self) -> None:
@@ -445,7 +461,13 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses]) if len(result.centers) > 0 else np.zeros((0, 2 + tril_size(2) + 1))
+        params = (
+            np.column_stack(
+                [result.centers, result.cholesky_factors, result.sharpnesses]
+            )
+            if len(result.centers) > 0
+            else np.zeros((0, 2 + tril_size(2) + 1))
+        )
         amps = result.amplitudes
 
         assert params.shape == (0, 2 + tril_size(2) + 1)  # Include sharpness
@@ -453,9 +475,7 @@ class TestGaussianSplatsIntegration:
 
         # Uniform image
         uniform_image = np.ones((32, 32), dtype=np.float32) * 0.5
-        seeds = find_seeds_multiscale_gaussian(
-            uniform_image, peaks_per_scale=10
-        )
+        seeds = find_seeds_multiscale_gaussian(uniform_image, peaks_per_scale=10)
 
         result = fit_gaussian_splats(
             uniform_image,
@@ -465,7 +485,9 @@ class TestGaussianSplatsIntegration:
             enable_dynamic_ops=False,
             napari_movie=False,
         )
-        params = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
+        params = np.column_stack(
+            [result.centers, result.cholesky_factors, result.sharpnesses]
+        )
         amps = result.amplitudes
 
         assert np.all(np.isfinite(params))

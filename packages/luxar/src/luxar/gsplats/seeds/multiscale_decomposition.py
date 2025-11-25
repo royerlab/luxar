@@ -161,7 +161,7 @@ def find_seeds_multiscale_decomposition(
     scale_images, stats = decompose_image(V, scales=scales, **decompose_kwargs)
 
     # Use the actual scales that were used (may be filtered by decompose_image)
-    actual_scales = stats.get('scales', scales)
+    actual_scales = stats.get("scales", scales)
 
     if verbose:
         aprint(
@@ -170,7 +170,9 @@ def find_seeds_multiscale_decomposition(
             f"Iterations: {stats.get('actual_iters', 'N/A')}"
         )
         if len(actual_scales) < len(scales):
-            aprint(f"[Decomposition Seeds] Note: {len(scales) - len(actual_scales)} scale(s) were filtered out by decompose_image")
+            aprint(
+                f"[Decomposition Seeds] Note: {len(scales) - len(actual_scales)} scale(s) were filtered out by decompose_image"
+            )
 
     # Step 2: Find local maxima in each scale (excluding finest k)
     all_seeds = []
@@ -250,10 +252,7 @@ def find_seeds_multiscale_decomposition(
     energies = np.concatenate(all_energies)
 
     if verbose:
-        aprint(
-            f"[Decomposition Seeds] Total seeds before deduplication: "
-            f"{len(seeds)}"
-        )
+        aprint(f"[Decomposition Seeds] Total seeds before deduplication: {len(seeds)}")
 
     # Step 4: Deduplicate spatially close seeds
     # Use farthest-first selection with energy priority
@@ -262,10 +261,7 @@ def find_seeds_multiscale_decomposition(
     )
 
     if verbose:
-        aprint(
-            f"[Decomposition Seeds] Seeds after deduplication: "
-            f"{len(seeds_dedup)}"
-        )
+        aprint(f"[Decomposition Seeds] Seeds after deduplication: {len(seeds_dedup)}")
 
     # Step 5: Return seeds (already sorted by energy from dedupe_farthest_first)
     return seeds_dedup

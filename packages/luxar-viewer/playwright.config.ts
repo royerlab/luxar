@@ -10,11 +10,16 @@
  */
 
 import { defineConfig, devices } from '@playwright/test';
+import * as path from 'path';
+import * as fs from 'fs';
 
 /**
  * See https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
+  // Global setup - runs before any tests
+  globalSetup: path.join(__dirname, 'src/tests/e2e/global-setup.ts'),
+
   // Test directory
   testDir: './src/tests/e2e',
 
@@ -46,7 +51,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
 
     // Screenshot settings - capture visual state for inspection
-    // Screenshots saved to test-screenshots/ (not committed, regenerated each run)
+    // All artifacts (screenshots, videos, traces) saved to test-results/
     screenshot: 'on',  // Always take screenshots for visual debugging
 
     // Video on failure (useful but large files)
@@ -118,12 +123,15 @@ export default defineConfig({
       // Python HTTP server to serve examples directory
       // This makes /examples/*.zarr accessible for E2E tests
       // NOTE: Run 'make run-examples' first to generate datasets
-      command: 'cd ../.. && python3 -m http.server 8000',
-      url: 'http://localhost:8000',
+      // Using port 9000 (ports 8000-8001 are used by luxar serve)
+      command: 'python3 -m http.server 9000',
+      url: 'http://localhost:9000',
+      // Use cwd to set working directory to project root (2 levels up from this file)
+      cwd: path.resolve(__dirname, '../..'),
       reuseExistingServer: !process.env.CI,
-      timeout: 10000,  // Simple HTTP server starts quickly
-      stdout: 'pipe',
-      stderr: 'pipe',
+      timeout: 15000,  // Increased timeout for reliability
+      stdout: 'ignore',  // Reduce noise in test output
+      stderr: 'pipe',    // Still capture errors
     }
   ],
 

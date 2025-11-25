@@ -429,7 +429,9 @@ class TestRegularization:
         )
 
         # Results should be different
-        assert not np.allclose(result_no_reg.amplitudes, result_reg.amplitudes, atol=1e-3)
+        assert not np.allclose(
+            result_no_reg.amplitudes, result_reg.amplitudes, atol=1e-3
+        )
 
         # Regularized amplitudes should generally be smaller or more sparse
         # (though this isn't guaranteed for all cases)
@@ -463,8 +465,16 @@ class TestRegularization:
         )
 
         # Reconstruct params_full for comparison
-        params_no_reg = np.column_stack([result_no_reg.centers, result_no_reg.cholesky_factors, result_no_reg.sharpnesses])
-        params_reg = np.column_stack([result_reg.centers, result_reg.cholesky_factors, result_reg.sharpnesses])
+        params_no_reg = np.column_stack(
+            [
+                result_no_reg.centers,
+                result_no_reg.cholesky_factors,
+                result_no_reg.sharpnesses,
+            ]
+        )
+        params_reg = np.column_stack(
+            [result_reg.centers, result_reg.cholesky_factors, result_reg.sharpnesses]
+        )
 
         # Results should be different due to diagonal regularization
         assert not np.allclose(params_no_reg, params_reg, atol=1e-3)
@@ -625,7 +635,9 @@ class TestConvergence:
         # Should work with 3D data
         assert len(result.amplitudes) > 0
         # Reconstruct params_full to check shape
-        params_full = np.column_stack([result.centers, result.cholesky_factors, result.sharpnesses])
+        params_full = np.column_stack(
+            [result.centers, result.cholesky_factors, result.sharpnesses]
+        )
         assert (
             params_full.shape[1] == 10
         )  # 3D centers (3) + 3x3 packed L (6) + sharpness (1) = 10
@@ -655,7 +667,9 @@ class TestConvergence:
         # Large image should generate proportionally more candidates
         # But both use minimum of 50, so this tests the scaling logic
         assert len(result_small.amplitudes) > 0
-        assert len(result_large.amplitudes) >= len(result_small.amplitudes)  # Should be at least as many
+        assert len(result_large.amplitudes) >= len(
+            result_small.amplitudes
+        )  # Should be at least as many
 
     def test_intensity_rescaling(self) -> None:
         """Test that amplitudes are correctly rescaled to original intensity range."""
@@ -757,12 +771,22 @@ class TestConvergence:
         )
 
         # Reconstruct params_full for comparison
-        params_short = np.column_stack([result_short.centers, result_short.cholesky_factors, result_short.sharpnesses])
-        params_long = np.column_stack([result_long.centers, result_long.cholesky_factors, result_long.sharpnesses])
+        params_short = np.column_stack(
+            [
+                result_short.centers,
+                result_short.cholesky_factors,
+                result_short.sharpnesses,
+            ]
+        )
+        params_long = np.column_stack(
+            [result_long.centers, result_long.cholesky_factors, result_long.sharpnesses]
+        )
 
         # Results should be different (optimization should progress)
         assert not np.allclose(params_short, params_long, atol=1e-3)
-        assert not np.allclose(result_short.amplitudes, result_long.amplitudes, atol=1e-3)
+        assert not np.allclose(
+            result_short.amplitudes, result_long.amplitudes, atol=1e-3
+        )
 
     def test_different_learning_rates(self, simple_2d_blob, simple_candidates_2d):
         """Test that different learning rates produce different results."""
@@ -788,8 +812,20 @@ class TestConvergence:
         )
 
         # Reconstruct params_full for comparison
-        params_low_lr = np.column_stack([result_low_lr.centers, result_low_lr.cholesky_factors, result_low_lr.sharpnesses])
-        params_high_lr = np.column_stack([result_high_lr.centers, result_high_lr.cholesky_factors, result_high_lr.sharpnesses])
+        params_low_lr = np.column_stack(
+            [
+                result_low_lr.centers,
+                result_low_lr.cholesky_factors,
+                result_low_lr.sharpnesses,
+            ]
+        )
+        params_high_lr = np.column_stack(
+            [
+                result_high_lr.centers,
+                result_high_lr.cholesky_factors,
+                result_high_lr.sharpnesses,
+            ]
+        )
 
         # Different learning rates should produce different results
         assert not np.allclose(params_low_lr, params_high_lr, atol=1e-2)

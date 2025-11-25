@@ -179,7 +179,11 @@ def build_spatial_index(
                         SPATIAL_INDEX_MAX_CELLS_SINGLE_DIM,
                         max(
                             SPATIAL_INDEX_MIN_CELLS_SINGLE_DIM,
-                            int(np.sqrt(n_points / SPATIAL_INDEX_SINGLE_DIM_POINTS_DIVISOR)),
+                            int(
+                                np.sqrt(
+                                    n_points / SPATIAL_INDEX_SINGLE_DIM_POINTS_DIVISOR
+                                )
+                            ),
                         ),
                     )
                 else:

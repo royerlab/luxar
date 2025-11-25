@@ -28,8 +28,6 @@ if NO_NAPARI:
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
-LOSS_TYPE = "l1"
-LR = 0.02  # Learning rate for fitting (same as mitosis)
 N_ITERS = 2000  # Same as mitosis
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 50  # number of compression steps (<= #splats)
@@ -89,11 +87,7 @@ with asection("Astronaut Gaussian Splatting Demo"):
         result = fit_gaussian_splats(
             V,
             # seeds auto-generated with intelligent defaults
-            init_sigma_vox=0.5,  # Same as mitosis
             n_iters=N_ITERS,
-            loss_type=LOSS_TYPE,
-            lr=LR,
-            l1_diag=0,  # Same as mitosis (no diagonal regularization)
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
@@ -110,7 +104,9 @@ with asection("Astronaut Gaussian Splatting Demo"):
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
 
-        aprint(f"🎉 Fitted {len(result.amplitudes)} splats to reconstruct astronaut photograph")
+        aprint(
+            f"🎉 Fitted {len(result.amplitudes)} splats to reconstruct astronaut photograph"
+        )
 
 # ----- Compression ranking by approximate L2 energy -----
 # ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))
@@ -159,7 +155,7 @@ with asection("Computing reconstruction quality at different compression levels"
             amplitudes=result.amplitudes[idx],
             cholesky_factors=result.cholesky_factors[idx],
             sharpnesses=result.sharpnesses[idx],
-            stats={}  # Empty stats for rendering subset
+            stats={},  # Empty stats for rendering subset
         )
 
         # Render

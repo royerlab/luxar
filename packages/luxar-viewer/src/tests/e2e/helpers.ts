@@ -93,31 +93,100 @@ export function captureConsoleMessages(page: Page): {
 }
 
 /**
- * Take a stable screenshot (waits for render to settle)
- * Saves to test-screenshots/ folder for visual inspection
+ * NOTE: Manual screenshot helpers removed - use Playwright's built-in screenshot system instead.
+ *
+ * Playwright automatically captures screenshots for every test (configured in playwright.config.ts).
+ * Screenshots are saved to test-results/ and included in the HTML report.
+ *
+ * If you need a screenshot in a test, Playwright will capture it automatically.
+ * To force a screenshot at a specific point: await page.screenshot({ path: 'test-results/my-screenshot.png' });
  */
-export async function takeStableScreenshot(page: Page, path: string): Promise<void> {
-  // Trigger one render
-  await renderOnce(page);
 
-  // Wait a bit for GPU to finish
-  await page.waitForTimeout(500);
-
-  // Take screenshot (save to test-screenshots folder)
-  const screenshotPath = `test-screenshots/${path}`;
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+/**
+ * Wait for data loading to complete
+ * More robust than arbitrary timeouts
+ */
+export async function waitForDataLoaded(page: Page, timeout = 10000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      if (!debug || !debug.getState) return false;
+      const state = debug.getState();
+      // Data is loaded if:
+      // 1. Not currently loading AND
+      // 2. Either has points OR explicitly has no points (valid state)
+      return state && !state.isLoading;
+    },
+    { timeout }
+  );
 }
 
 /**
- * Take a test screenshot for visual inspection
- * Automatically prefixes with test-screenshots/ folder
- *
- * Use this in tests to capture visual state for debugging:
- * - Claude can inspect screenshots after test runs
- * - User can review screenshots manually
- * - Regenerated on every test run (not committed to git)
+ * Wait for dimension navigation to complete
+ * Detects when slice position changes and new data is loaded
  */
-export async function takeTestScreenshot(page: Page, name: string): Promise<void> {
-  const screenshotPath = `test-screenshots/${name}.png`;
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+export async function waitForDimensionNavigation(
+  page: Page,
+  previousPointCount: number,
+  timeout = 8000
+): Promise<void> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      const state = await getLuxarState(page);
+
+      // Navigation complete if:
+      // 1. Point count changed (new data loaded), OR
+      // 2. Data loading finished (even if count same due to broadcast/cache)
+      if (state.totalPoints !== previousPointCount || !state.isLoading) {
+        return;
+      }
+    } catch {
+      // State not ready yet, continue waiting
+    }
+
+    await page.waitForTimeout(200);
+  }
+
+  throw new Error(`Dimension navigation did not complete within ${timeout}ms`);
+}
+
+/**
+ * Wait for console interceptor to be fully initialized
+ * Some tests need this before accessing console messages
+ */
+export async function waitForConsoleInterceptor(page: Page, timeout = 5000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      return (
+        debug &&
+        debug.consoleInterceptor &&
+        typeof debug.consoleInterceptor.getMessages === 'function'
+      );
+    },
+    { timeout }
+  );
+}
+
+/**
+ * Wait for debug interface to be fully ready
+ * Ensures all debug properties are initialized
+ */
+export async function waitForDebugInterfaceReady(page: Page, timeout = 10000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      return (
+        debug &&
+        debug.scene &&
+        debug.camera &&
+        debug.renderer &&
+        debug.getState &&
+        typeof debug.getState === 'function'
+      );
+    },
+    { timeout }
+  );
 }

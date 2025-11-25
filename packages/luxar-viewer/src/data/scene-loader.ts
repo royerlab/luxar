@@ -533,6 +533,12 @@ export class SceneLoader {
    * Initialize scene dimensions from metadata
    */
   private initializeSceneDimensions(sceneDims: any): void {
+    // Validate sceneDims structure
+    if (!sceneDims || typeof sceneDims !== 'object' || !Array.isArray(sceneDims.dimensions)) {
+      log.warning(Modules.SCENE_LOADER, 'Invalid scene_dimensions format, skipping');
+      return;
+    }
+
     const metadata = sceneDims.dimensions.map((dim: any) => ({
       name: dim.name,
       unit: dim.unit,

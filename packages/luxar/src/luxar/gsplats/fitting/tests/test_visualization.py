@@ -49,7 +49,7 @@ def test_display_compression_analysis_2d(capsys):
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
         sharpnesses=np.full(N, 2.0, dtype=np.float32),
-        stats={}
+        stats={},
     )
 
     # Should run without errors
@@ -77,7 +77,7 @@ def test_display_compression_analysis_3d(capsys):
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
         sharpnesses=np.full(N, 2.0, dtype=np.float32),
-        stats={}
+        stats={},
     )
 
     # Should run without errors
@@ -105,7 +105,7 @@ def test_compression_ratio_calculation(capsys):
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
         sharpnesses=np.full(N, 2.0, dtype=np.float32),
-        stats={}
+        stats={},
     )
 
     display_compression_analysis(V, result)
@@ -130,7 +130,7 @@ def test_bits_per_pixel_calculation(capsys):
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
         sharpnesses=np.full(N, 2.0, dtype=np.float32),
-        stats={}
+        stats={},
     )
 
     display_compression_analysis(V, result)
@@ -221,7 +221,7 @@ def test_compression_analysis_zero_splats(capsys):
         amplitudes=np.array([]).astype(np.float32),
         cholesky_factors=np.array([]).reshape(0, tril_size).astype(np.float32),
         sharpnesses=np.array([]).astype(np.float32),
-        stats={}
+        stats={},
     )
 
     # Should handle gracefully (infinite compression ratio)
@@ -248,7 +248,7 @@ def test_compression_analysis_many_splats(capsys):
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
         sharpnesses=np.full(N, 2.0, dtype=np.float32),
-        stats={}
+        stats={},
     )
 
     display_compression_analysis(V, result)
@@ -273,7 +273,7 @@ def test_display_compression_various_dimensions(capsys):
             amplitudes=np.random.rand(N).astype(np.float32),
             cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
             sharpnesses=np.full(N, 2.0, dtype=np.float32),
-            stats={}
+            stats={},
         )
 
         # Should work for all dimensionalities

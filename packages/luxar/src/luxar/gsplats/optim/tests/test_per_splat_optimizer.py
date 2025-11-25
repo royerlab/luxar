@@ -250,7 +250,9 @@ class TestFactoryFunction:
         amps_new = torch.tensor([0.4], dtype=torch.float32)
         sharpness_new = torch.tensor([2.0], dtype=torch.float32)
 
-        n_added = coordinator.add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05)
+        n_added = coordinator.add_splats(
+            centers_new, Ls_new, amps_new, sharpness_new, lr_new=0.05
+        )
         assert n_added == 1
 
         status = coordinator.get_status()

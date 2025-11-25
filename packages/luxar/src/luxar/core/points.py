@@ -16,9 +16,11 @@ if TYPE_CHECKING:
 class Points(Node):
     """Points node that holds metadata about points data.
 
-    This class is a lightweight metadata container. Actual data is written
+    This class is a lightweight metadata container. Actual point data is written
     immediately to Zarr via the writer interface and not kept in memory.
-    This class is intended for internal use via Scene.add_points().
+
+    Points are created internally by Scene.add_points() and should not be
+    instantiated directly by users.
 
     Args:
         name: Name of the points node
@@ -31,7 +33,6 @@ class Points(Node):
     def __init__(
         self,
         name: str,
-        positions: Optional[Any] = None,  # Ignored, for compatibility
         metadata: Optional[Dict[str, Any]] = None,
         parent: Optional[Node] = None,
         writer: Optional[ZarrWriterProtocol] = None,
@@ -41,7 +42,6 @@ class Points(Node):
 
         Args:
             name: Name of the points node
-            positions: Ignored, for compatibility only
             metadata: Metadata dictionary about the written points
             parent: Parent node in the scene graph
             writer: Writer interface for progressive writing

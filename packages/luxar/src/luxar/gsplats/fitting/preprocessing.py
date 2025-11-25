@@ -69,10 +69,10 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         # Diagonal/variance learns at 1.0× base lr (with gradient dilution), so L1 should be ~1%
         config.l1_diag = 0.01 * config.lr  # 1% of base LR
     if config.l1_sharpness is None:
-        # Sharpness learns at 0.5× base lr (no gradient dilution), so L1 should be ~10% of that
+        # Sharpness learns at 0.5× base lr (no gradient dilution), so L1 should be ~2% of that
         config.l1_sharpness = (
-            0.05 * config.lr
-        )  # 5% of base LR = 10% of sharpness LR (0.5×)
+            0.01 * config.lr
+        )  # 1% of base LR = 2% of sharpness LR (0.5×)
 
     # Move to device
     V_tensor = torch.tensor(V_normalized, dtype=torch.float32, device=config.device)
@@ -87,7 +87,7 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             f"  Diagonal: {config.l1_diag:.5f} (1% of diag LR: {config.lr:.3f} × 1.0)"
         )
         aprint(
-            f"  Sharpness: {config.l1_sharpness:.5f} (10% of sharpness LR: {config.lr:.3f} × 0.5)"
+            f"  Sharpness: {config.l1_sharpness:.5f} (2% of sharpness LR: {config.lr:.3f} × 0.5)"
         )
 
     return PreprocessedData(

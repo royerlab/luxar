@@ -1089,6 +1089,7 @@ def decompose_image(
         scales = [1]
         if verbose:
             import warnings
+
             warnings.warn(
                 f"All scales {original_scales} are too large for image shape {V.shape}. "
                 f"Using scale=[1] instead."
@@ -1097,6 +1098,7 @@ def decompose_image(
         removed_scales = [s for s in original_scales if s not in scales]
         if verbose:
             import warnings
+
             warnings.warn(
                 f"Scales {removed_scales} are too large for image shape {V.shape} "
                 f"(min dimension={min_dim}). Using scales={scales} instead."

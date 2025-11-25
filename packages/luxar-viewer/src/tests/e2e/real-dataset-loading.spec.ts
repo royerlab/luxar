@@ -9,16 +9,16 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, getLuxarState, waitForPointsLoaded, takeTestScreenshot } from './helpers';
+import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers';
 
-// Dataset paths (relative to dev server root)
+// Dataset paths (served from Python HTTP server on port 8001)
 const DATASETS = {
-  dimensionNav: '/examples/dimension_navigation_example.zarr',
-  dimSliders5D: '/examples/dimension_sliders_5d_example.zarr',
-  denseGrid5D: '/examples/dense_grid_5d_example.zarr',
-  broadcast: '/examples/broadcast_api_example.zarr',
-  buildManual: '/examples/build_example_manual.zarr',
-  buildStructured: '/examples/build_example_structured.zarr',
+  dimensionNav: 'http://localhost:9000/examples/dimension_navigation_example.zarr',
+  dimSliders5D: 'http://localhost:9000/examples/dimension_sliders_5d_example.zarr',
+  denseGrid5D: 'http://localhost:9000/examples/dense_grid_5d_example.zarr',
+  broadcast: 'http://localhost:9000/examples/broadcast_api_example.zarr',
+  buildManual: 'http://localhost:9000/examples/build_example_manual.zarr',
+  buildStructured: 'http://localhost:9000/examples/build_example_structured.zarr',
 };
 
 test.describe('Real Dataset Loading', () => {
@@ -38,8 +38,7 @@ test.describe('Real Dataset Loading', () => {
     expect(state.totalPoints).toBeGreaterThan(0);
     expect(state.pointClouds.length).toBeGreaterThan(0);
 
-    // Capture screenshot for visual inspection
-    await takeTestScreenshot(page, 'dataset-loaded-dimension-nav');
+    // Note: Playwright automatically captures screenshot (screenshot: 'on' in config)
   });
 
   test('should load 5D dataset with correct dimensions', async ({ page }) => {

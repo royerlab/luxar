@@ -105,27 +105,27 @@ def create_lorenz_attractor(
     sector = np.floor(h_prime).astype(int)
 
     # Sector 0: Red to Yellow (R=max, G=rising, B=0)
-    mask = (sector == 0)
+    mask = sector == 0
     r[mask], g[mask], b[mask] = c, x[mask], 0.0
 
     # Sector 1: Yellow to Green (R=falling, G=max, B=0)
-    mask = (sector == 1)
+    mask = sector == 1
     r[mask], g[mask], b[mask] = x[mask], c, 0.0
 
     # Sector 2: Green to Cyan (R=0, G=max, B=rising)
-    mask = (sector == 2)
+    mask = sector == 2
     r[mask], g[mask], b[mask] = 0.0, c, x[mask]
 
     # Sector 3: Cyan to Blue (R=0, G=falling, B=max)
-    mask = (sector == 3)
+    mask = sector == 3
     r[mask], g[mask], b[mask] = 0.0, x[mask], c
 
     # Sector 4: Blue to Magenta (R=rising, G=0, B=max)
-    mask = (sector == 4)
+    mask = sector == 4
     r[mask], g[mask], b[mask] = x[mask], 0.0, c
 
     # Sector 5: Magenta to Red (R=max, G=0, B=falling)
-    mask = (sector == 5)
+    mask = sector == 5
     r[mask], g[mask], b[mask] = c, 0.0, x[mask]
 
     # Add match value to get final RGB (adjust for brightness)

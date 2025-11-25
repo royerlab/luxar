@@ -193,9 +193,7 @@ class TestMultiScaleFitting:
 
         # Invalid learning rate
         with pytest.raises(ValueError, match="lr must be positive"):
-            fit_multiscale_gaussian_splats(
-                V, scales=[1, 2], lr=-0.01, verbose=False
-            )
+            fit_multiscale_gaussian_splats(V, scales=[1, 2], lr=-0.01, verbose=False)
 
         # Invalid V
         with pytest.raises(ValueError, match="non-empty"):
