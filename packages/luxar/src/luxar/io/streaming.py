@@ -132,15 +132,15 @@ class StreamingPoints:
         start = self.position
         end = new_size
 
-        self.positions_dataset[start:end] = positions  # type: ignore[union-attr,index]
+        self.positions_dataset[start:end] = positions
 
         if colors is not None:
             validate_colors_for_writing(colors, n_points, context="batch colors")
             if self.colors_dataset is None:
                 self._create_colors_dataset()
                 # Resize the newly created dataset to match current size
-                self.colors_dataset.resize((new_size, 3))  # type: ignore[union-attr]
-            self.colors_dataset[start:end] = colors  # type: ignore[union-attr,index]
+                self.colors_dataset.resize((new_size, 3))
+            self.colors_dataset[start:end] = colors
             self.has_colors = True
 
         if radii is not None:
@@ -148,8 +148,8 @@ class StreamingPoints:
             if self.radii_dataset is None:
                 self._create_radii_dataset()
                 # Resize the newly created dataset to match current size
-                self.radii_dataset.resize((new_size,))  # type: ignore[union-attr]
-            self.radii_dataset[start:end] = radii  # type: ignore[union-attr,index]
+                self.radii_dataset.resize((new_size,))
+            self.radii_dataset[start:end] = radii
             self.has_radii = True
 
         if sharpness is not None:
@@ -159,8 +159,8 @@ class StreamingPoints:
             if self.sharpness_dataset is None:
                 self._create_sharpness_dataset()
                 # Resize the newly created dataset to match current size
-                self.sharpness_dataset.resize((new_size,))  # type: ignore[union-attr]
-            self.sharpness_dataset[start:end] = sharpness  # type: ignore[union-attr,index]
+                self.sharpness_dataset.resize((new_size,))
+            self.sharpness_dataset[start:end] = sharpness
             self.has_sharpness = True
 
         # Update position
@@ -176,7 +176,7 @@ class StreamingPoints:
         # Positions dataset
         self.positions_dataset = self.writer.create_resizable_dataset(
             f"{self.name}/positions",
-            dtype=np.float32,  # type: ignore[arg-type]
+            dtype=np.float32,
             shape=(0, n_dims),
             maxshape=(None, n_dims),
         )
@@ -185,7 +185,7 @@ class StreamingPoints:
         """Create colors dataset when first needed."""
         self.colors_dataset = self.writer.create_resizable_dataset(
             f"{self.name}/colors",
-            dtype=np.float32,  # type: ignore[arg-type]
+            dtype=np.float32,
             shape=(0, 3),
             maxshape=(None, 3),
         )
@@ -194,7 +194,7 @@ class StreamingPoints:
         """Create radii dataset when first needed."""
         self.radii_dataset = self.writer.create_resizable_dataset(
             f"{self.name}/radii",
-            dtype=np.float32,  # type: ignore[arg-type]
+            dtype=np.float32,
             shape=(0,),
             maxshape=(None,),
         )
@@ -203,7 +203,7 @@ class StreamingPoints:
         """Create sharpness dataset when first needed."""
         self.sharpness_dataset = self.writer.create_resizable_dataset(
             f"{self.name}/sharpness",
-            dtype=np.float32,  # type: ignore[arg-type]
+            dtype=np.float32,
             shape=(0,),
             maxshape=(None,),
         )
