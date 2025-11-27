@@ -16,7 +16,7 @@ from luxar.validation.base import ValidationError, validate_zarr_attributes
 class TestVersionUpdate:
     """Test that the version is correctly set to 0.3."""
 
-    def test_compiler_writes_correct_version(self):
+    def test_compiler_writes_correct_version(self) -> None:
         """Verify compiler writes version 0.3 to zarr attributes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -35,7 +35,7 @@ class TestVersionUpdate:
 class TestChunkAlignment:
     """Test improved chunk alignment with spatial index."""
 
-    def test_chunk_alignment_with_spatial_index(self):
+    def test_chunk_alignment_with_spatial_index(self) -> None:
         """Verify chunks are aligned with spatial index when available."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -56,7 +56,7 @@ class TestChunkAlignment:
             assert chunks[0] <= 32768  # Default max chunk size
             assert chunks[1] == 3  # Dimensions should not be chunked
 
-    def test_chunk_calculation_without_spatial_index(self):
+    def test_chunk_calculation_without_spatial_index(self) -> None:
         """Verify standard chunking when spatial index is disabled."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -79,7 +79,7 @@ class TestChunkAlignment:
 class TestTransformCentralization:
     """Test centralized transform conversion."""
 
-    def test_prepare_transform_from_numpy_array(self):
+    def test_prepare_transform_from_numpy_array(self) -> None:
         """Test converting numpy array to zarr format."""
         matrix = translate(1, 2, 3)
         result = prepare_transform_for_zarr(matrix)
@@ -92,7 +92,7 @@ class TestTransformCentralization:
         assert result[13] == 2.0
         assert result[14] == 3.0
 
-    def test_prepare_transform_from_list(self):
+    def test_prepare_transform_from_list(self) -> None:
         """Test that list format is validated and preserved."""
         # Already in column-major format
         transform_list = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
@@ -104,7 +104,7 @@ class TestTransformCentralization:
         assert result[13] == 6.0
         assert result[14] == 7.0
 
-    def test_prepare_transform_from_flat_array(self):
+    def test_prepare_transform_from_flat_array(self) -> None:
         """Test converting flat numpy array."""
         flat = np.array(
             [1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1], dtype=np.float32
@@ -118,12 +118,12 @@ class TestTransformCentralization:
         assert result[13] == 2.0
         assert result[14] == 3.0
 
-    def test_prepare_transform_invalid_size(self):
+    def test_prepare_transform_invalid_size(self) -> None:
         """Test that invalid transform size raises error."""
         with pytest.raises(ValueError, match="must have 16 elements"):
             prepare_transform_for_zarr([1, 2, 3])
 
-    def test_transform_in_compiler(self):
+    def test_transform_in_compiler(self) -> None:
         """Test that compiler uses centralized transform conversion."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -149,7 +149,7 @@ class TestTransformCentralization:
 class TestSpatialIndexValidation:
     """Test spatial index validation."""
 
-    def test_validate_spatial_index_correct(self):
+    def test_validate_spatial_index_correct(self) -> None:
         """Test validation passes for correct spatial index."""
         positions = np.random.randn(1000, 3).astype(np.float32)
         index_data = build_spatial_index(positions)
@@ -157,7 +157,7 @@ class TestSpatialIndexValidation:
         # Should not raise
         validate_spatial_index(index_data, 1000, 3)
 
-    def test_validate_spatial_index_wrong_dimensions(self):
+    def test_validate_spatial_index_wrong_dimensions(self) -> None:
         """Test validation fails for dimension mismatch."""
         positions = np.random.randn(1000, 3).astype(np.float32)
         index_data = build_spatial_index(positions)
@@ -165,7 +165,7 @@ class TestSpatialIndexValidation:
         with pytest.raises(ValueError, match="doesn't match expected"):
             validate_spatial_index(index_data, 1000, 4)  # Wrong dimensions
 
-    def test_validate_spatial_index_wrong_points(self):
+    def test_validate_spatial_index_wrong_points(self) -> None:
         """Test validation fails for point count mismatch."""
         positions = np.random.randn(1000, 3).astype(np.float32)
         index_data = build_spatial_index(positions)
@@ -173,7 +173,7 @@ class TestSpatialIndexValidation:
         with pytest.raises(ValueError, match="doesn't match expected"):
             validate_spatial_index(index_data, 500, 3)  # Wrong point count
 
-    def test_validate_spatial_index_missing_keys(self):
+    def test_validate_spatial_index_missing_keys(self) -> None:
         """Test validation fails for missing keys."""
         incomplete_data = {
             "occupied_cells": np.array([]),
@@ -184,7 +184,7 @@ class TestSpatialIndexValidation:
         with pytest.raises(ValueError, match="missing required keys"):
             validate_spatial_index(incomplete_data, 0, 3)
 
-    def test_spatial_index_in_compiler(self):
+    def test_spatial_index_in_compiler(self) -> None:
         """Test that compiler validates spatial index."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -206,7 +206,7 @@ class TestSpatialIndexValidation:
 class TestZarrAttributeValidation:
     """Test zarr attribute validation."""
 
-    def test_validate_root_attributes_complete(self):
+    def test_validate_root_attributes_complete(self) -> None:
         """Test validation passes for complete root attributes."""
         attrs = {
             "type": "scene",
@@ -217,34 +217,34 @@ class TestZarrAttributeValidation:
         # Should not raise
         validate_zarr_attributes(attrs, is_root=True)
 
-    def test_validate_root_missing_required(self):
+    def test_validate_root_missing_required(self) -> None:
         """Test validation fails for missing required root attributes."""
         attrs = {"units": "um"}  # Missing type and luxar_version
 
         with pytest.raises(ValidationError, match="Missing required"):
             validate_zarr_attributes(attrs, is_root=True)
 
-    def test_validate_node_attributes(self):
+    def test_validate_node_attributes(self) -> None:
         """Test validation for non-root node attributes."""
         attrs = {"type": "points"}
         # Should not raise
         validate_zarr_attributes(attrs, is_root=False)
 
-    def test_validate_invalid_type(self):
+    def test_validate_invalid_type(self) -> None:
         """Test validation fails for invalid node type."""
         attrs = {"type": "invalid_type"}
 
         with pytest.raises(ValidationError, match="Invalid node type"):
             validate_zarr_attributes(attrs)
 
-    def test_validate_unsupported_version(self):
+    def test_validate_unsupported_version(self) -> None:
         """Test validation fails for unsupported version."""
         attrs = {"type": "scene", "luxar_version": "99.9"}
 
         with pytest.raises(ValidationError, match="Unsupported Luxar version"):
             validate_zarr_attributes(attrs, is_root=True)
 
-    def test_validate_warns_missing_recommended(self):
+    def test_validate_warns_missing_recommended(self) -> None:
         """Test validation warns about missing recommended attributes."""
         attrs = {
             "type": "scene",
@@ -259,7 +259,7 @@ class TestZarrAttributeValidation:
 class TestHDRColorRanges:
     """Test HDR color range handling."""
 
-    def test_sdr_colors_accepted(self):
+    def test_sdr_colors_accepted(self) -> None:
         """Test that SDR colors (0-1) are accepted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -274,7 +274,7 @@ class TestHDRColorRanges:
             store = zarr.open_group(zarr_path, mode="r")
             assert "test/colors" in store
 
-    def test_hdr_colors_warning(self):
+    def test_hdr_colors_warning(self) -> None:
         """Test that extreme HDR colors trigger warning."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -288,7 +288,7 @@ class TestHDRColorRanges:
                     )  # Very bright HDR
                     scene.add_points("test", positions, colors=colors)
 
-    def test_negative_colors_rejected(self):
+    def test_negative_colors_rejected(self) -> None:
         """Test that negative colors are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -307,7 +307,7 @@ class TestHDRColorRanges:
 class TestEmptyDatasets:
     """Test handling of empty datasets."""
 
-    def test_empty_positions_rejected(self):
+    def test_empty_positions_rejected(self) -> None:
         """Test that empty positions are properly rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -319,7 +319,7 @@ class TestEmptyDatasets:
                     positions = np.array([], dtype=np.float32).reshape(0, 3)
                     scene.add_points("test", positions)
 
-    def test_spatial_index_empty_data(self):
+    def test_spatial_index_empty_data(self) -> None:
         """Test spatial index handles empty data gracefully."""
         positions = np.array([], dtype=np.float32).reshape(0, 3)
         index_data = build_spatial_index(positions)

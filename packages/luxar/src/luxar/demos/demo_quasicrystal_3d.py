@@ -375,7 +375,7 @@ def generate_quasicrystal_3d(
     return len(positions_3d)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse arguments
     target_points = 500_000

@@ -33,7 +33,7 @@ class TestPerSplatAdamStateDictSerialization:
             device=torch.device(device),
         )
 
-    def test_state_dict_basic(self):
+    def test_state_dict_basic(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test basic state_dict extraction."""
@@ -61,7 +61,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert state["weight_decay"] == 0.0
         assert state["amsgrad"] is False
 
-    def test_state_dict_empty_model(self):
+    def test_state_dict_empty_model(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test state_dict with model that has no splats (edge case)."""
@@ -75,7 +75,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert len(state["splat_states"]) == 0
         assert state["global_step"] == 0
 
-    def test_state_dict_large_model(self):
+    def test_state_dict_large_model(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test state_dict with large model (many splats)."""
@@ -97,7 +97,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert len(state["splat_states"]) == 100
         assert state["global_step"] == 3
 
-    def test_state_dict_after_optimization(self):
+    def test_state_dict_after_optimization(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that state_dict captures optimizer state after optimization steps."""
@@ -127,7 +127,7 @@ class TestPerSplatAdamStateDictSerialization:
             # Momentum should be non-zero after optimization
             assert splat_state["step"] == 5
 
-    def test_load_state_dict_basic(self):
+    def test_load_state_dict_basic(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test basic state_dict loading."""
@@ -157,7 +157,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert optimizer2.base_lr == 0.01  # Should match loaded state
         assert len(optimizer2.splat_states) == 5
 
-    def test_load_state_dict_preserves_momentum(self):
+    def test_load_state_dict_preserves_momentum(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that loading state_dict preserves momentum buffers."""
@@ -192,7 +192,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert not torch.isnan(loss1)
         assert optimizer2.global_step == 15  # 10 + 5 steps
 
-    def test_state_dict_with_different_hyperparameters(self):
+    def test_state_dict_with_different_hyperparameters(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test state_dict with non-default hyperparameters."""
@@ -215,7 +215,7 @@ class TestPerSplatAdamStateDictSerialization:
         assert state["weight_decay"] == 0.01
         assert state["amsgrad"] is False
 
-    def test_load_state_dict_with_mismatched_splats(self):
+    def test_load_state_dict_with_mismatched_splats(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test loading state_dict into optimizer with different number of splats."""
@@ -276,7 +276,7 @@ class TestPerSplatAdamAMSGrad:
             device=torch.device("cpu"),
         )
 
-    def test_amsgrad_initialization(self):
+    def test_amsgrad_initialization(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that AMSGrad variant initializes correctly."""
@@ -288,7 +288,7 @@ class TestPerSplatAdamAMSGrad:
         state = optimizer.state_dict()
         assert state["amsgrad"] is True
 
-    def test_amsgrad_state_tracking(self):
+    def test_amsgrad_state_tracking(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that AMSGrad maintains max_exp_avg_sq buffers."""
@@ -312,7 +312,7 @@ class TestPerSplatAdamAMSGrad:
             assert "max_exp_avg_sq_L_off" in splat_state
             assert "max_exp_avg_sq_a" in splat_state
 
-    def test_amsgrad_vs_standard_convergence(self):
+    def test_amsgrad_vs_standard_convergence(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that AMSGrad variant converges (basic functionality check)."""
@@ -349,7 +349,7 @@ class TestPerSplatAdamAMSGrad:
         assert loss_standard < 100.0  # Should have made progress
         assert loss_amsgrad < 100.0
 
-    def test_amsgrad_state_dict_serialization(self):
+    def test_amsgrad_state_dict_serialization(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test that AMSGrad state is properly serialized."""
@@ -408,7 +408,7 @@ class TestPerSplatAdamEdgeCases:
             device=torch.device("cpu"),
         )
 
-    def test_optimizer_with_zero_splats(self):
+    def test_optimizer_with_zero_splats(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test optimizer creation and operation with zero splats."""
@@ -422,7 +422,7 @@ class TestPerSplatAdamEdgeCases:
         state = optimizer.state_dict()
         assert len(state["splat_states"]) == 0
 
-    def test_adding_splats_to_empty_model(self):
+    def test_adding_splats_to_empty_model(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test adding splats to a model that started empty."""
@@ -441,7 +441,7 @@ class TestPerSplatAdamEdgeCases:
         assert model.n_splats() == 2
         assert len(optimizer.splat_states) == 2
 
-    def test_extreme_learning_rate(self):
+    def test_extreme_learning_rate(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test optimizer with extreme learning rates."""
@@ -456,7 +456,7 @@ class TestPerSplatAdamEdgeCases:
         optimizer_large = PerSplatAdam(model2, lr=100.0)
         assert optimizer_large.base_lr == 100.0
 
-    def test_extreme_beta_values(self):
+    def test_extreme_beta_values(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test optimizer with extreme beta values."""
@@ -471,7 +471,7 @@ class TestPerSplatAdamEdgeCases:
         optimizer2 = PerSplatAdam(model2, lr=0.01, betas=(0.999, 0.9999))
         assert optimizer2.betas == (0.999, 0.9999)
 
-    def test_weight_decay_nonzero(self):
+    def test_weight_decay_nonzero(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test optimizer with non-zero weight decay."""
@@ -492,7 +492,7 @@ class TestPerSplatAdamEdgeCases:
         # Should complete without errors
         assert optimizer.global_step == 5
 
-    def test_get_effective_learning_rates(self):
+    def test_get_effective_learning_rates(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test get_effective_learning_rates() method."""
@@ -507,7 +507,7 @@ class TestPerSplatAdamEdgeCases:
         # All should be positive
         assert all(lr > 0 for lr in lrs)
 
-    def test_multiple_zero_grad_calls(self):
+    def test_multiple_zero_grad_calls(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test calling zero_grad() multiple times."""
@@ -521,7 +521,7 @@ class TestPerSplatAdamEdgeCases:
 
         # No assertion needed, just checking it doesn't crash
 
-    def test_step_without_backward(self):
+    def test_step_without_backward(self) -> None:
         from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
 
         """Test calling step() without backward() (edge case)."""

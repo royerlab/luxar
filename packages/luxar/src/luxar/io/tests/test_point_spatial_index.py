@@ -14,7 +14,7 @@ from luxar.io.point_spatial_index import (
 class TestDecoding:
     """Test cell ID decoding functions."""
 
-    def test_decode_cell_id_2d(self):
+    def test_decode_cell_id_2d(self) -> None:
         """Test decoding cell IDs for 2D grids."""
         grid_shape = np.array([3, 4], dtype=np.uint32)
 
@@ -24,7 +24,7 @@ class TestDecoding:
         assert decode_cell_id(4, grid_shape) == [1, 0]
         assert decode_cell_id(11, grid_shape) == [2, 3]
 
-    def test_decode_cell_id_3d(self):
+    def test_decode_cell_id_3d(self) -> None:
         """Test decoding cell IDs for 3D grids."""
         grid_shape = np.array([2, 3, 4], dtype=np.uint32)
 
@@ -39,7 +39,7 @@ class TestDecoding:
 class TestSpatialIndexBuilding:
     """Test spatial index construction."""
 
-    def test_build_index_2d(self):
+    def test_build_index_2d(self) -> None:
         """Test building spatial index for 2D points."""
         np.random.seed(42)
         positions = np.random.randn(100, 2).astype(np.float32) * 10
@@ -75,7 +75,7 @@ class TestSpatialIndexBuilding:
             assert end > start
             last_end = end
 
-    def test_build_index_auto_grid(self):
+    def test_build_index_auto_grid(self) -> None:
         """Test automatic grid resolution determination."""
         np.random.seed(42)
         # Make 4D data where first 3 are displayed, last one is indexed
@@ -90,7 +90,7 @@ class TestSpatialIndexBuilding:
         assert len(result["grid_shape"]) == 1  # Only 1 non-displayed dimension
         assert all(2 <= dim <= 20 for dim in result["grid_shape"])
 
-    def test_build_index_single_point(self):
+    def test_build_index_single_point(self) -> None:
         """Test index building with single point."""
         positions = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)  # 4D point
         grid_shape = np.array(
@@ -106,7 +106,7 @@ class TestSpatialIndexBuilding:
         assert result["cell_ranges"][0][0] == 0
         assert result["cell_ranges"][0][1] == 1
 
-    def test_build_index_empty(self):
+    def test_build_index_empty(self) -> None:
         """Test index building with no points."""
         positions = np.array([], dtype=np.float32).reshape(0, 4)  # 4D for testing
         grid_shape = np.array([2], dtype=np.uint32)  # Grid for non-displayed dim
@@ -117,7 +117,7 @@ class TestSpatialIndexBuilding:
         assert len(result["cell_ranges"]) == 0
         assert result["sorted_positions"].shape == (0, 4)
 
-    def test_spatial_locality(self):
+    def test_spatial_locality(self) -> None:
         """Test that nearby points end up in the same cell."""
         # Create clustered points in 3D (2 spatial + 1 indexed dimension)
         cluster1 = np.random.randn(50, 3).astype(np.float32) * 0.1 + [5, 5, 0]
@@ -139,7 +139,7 @@ class TestSpatialIndexBuilding:
 class TestSpatialIndexQuery:
     """Test spatial index querying."""
 
-    def test_query_index_basic(self):
+    def test_query_index_basic(self) -> None:
         """Test basic query functionality."""
         # Build a simple index with 3D points (2 displayed, 1 indexed)
         positions = np.array(
@@ -178,7 +178,7 @@ class TestSpatialIndexQuery:
         total_points = sum(end - start for start, end in ranges)
         assert total_points >= 4  # At least the first 4 points
 
-    def test_query_index_no_results(self):
+    def test_query_index_no_results(self) -> None:
         """Test query with no matching cells."""
         positions = np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=np.float32)
         grid_shape = np.array([10], dtype=np.uint32)  # Grid for indexed dimension
@@ -201,7 +201,7 @@ class TestSpatialIndexQuery:
 
         assert len(ranges) == 0
 
-    def test_query_index_all_cells(self):
+    def test_query_index_all_cells(self) -> None:
         """Test query that covers entire grid."""
         positions = np.random.randn(100, 3).astype(np.float32) * 10  # 3D points
         grid_shape = np.array([3], dtype=np.uint32)  # Grid for indexed dimension
@@ -230,7 +230,7 @@ class TestSpatialIndexQuery:
 class TestSortOrder:
     """Test array reordering functionality."""
 
-    def test_apply_sort_order(self):
+    def test_apply_sort_order(self) -> None:
         """Test applying sort order to arrays."""
         original = np.array([10, 20, 30, 40, 50])
         sort_order = np.array([4, 2, 0, 1, 3])
@@ -240,7 +240,7 @@ class TestSortOrder:
 
         np.testing.assert_array_equal(sorted_array, expected)
 
-    def test_apply_sort_order_2d(self):
+    def test_apply_sort_order_2d(self) -> None:
         """Test applying sort order to 2D arrays."""
         original = np.array([[1, 2], [3, 4], [5, 6]])
         sort_order = np.array([2, 0, 1])
@@ -250,7 +250,7 @@ class TestSortOrder:
 
         np.testing.assert_array_equal(sorted_array, expected)
 
-    def test_apply_sort_order_none(self):
+    def test_apply_sort_order_none(self) -> None:
         """Test that None arrays remain None."""
         result = apply_sort_order(None, np.array([0, 1, 2]))
         assert result is None
@@ -259,7 +259,7 @@ class TestSortOrder:
 class TestIntegration:
     """Integration tests with zarr storage."""
 
-    def test_round_trip_with_zarr(self, tmp_path):
+    def test_round_trip_with_zarr(self, tmp_path) -> None:
         """Test building index, storing in zarr, and loading back."""
         from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
@@ -344,7 +344,7 @@ class TestIntegration:
 class TestSpatialIndexDiscreteDimensions:
     """Test spatial index with discrete dimensions."""
 
-    def test_build_index_with_discrete_dimensions(self):
+    def test_build_index_with_discrete_dimensions(self) -> None:
         """Test building spatial index with explicitly marked discrete dimensions."""
         # Create 4D positions with one discrete dimension (e.g., category labels)
         n_points = 100
@@ -379,7 +379,7 @@ class TestSpatialIndexDiscreteDimensions:
         assert len(grid_shape) == 1
         assert grid_shape[0] == 5  # Category dimension has 5 unique values
 
-    def test_build_index_multiple_discrete_dimensions(self):
+    def test_build_index_multiple_discrete_dimensions(self) -> None:
         """Test with multiple discrete dimensions."""
         n_points = 50
         np.random.seed(123)
@@ -408,7 +408,7 @@ class TestSpatialIndexDiscreteDimensions:
         # (exact positions depend on indexing order, but should be reasonable)
         assert all(g > 0 for g in grid_shape)
 
-    def test_discrete_dimension_with_many_unique_values(self):
+    def test_discrete_dimension_with_many_unique_values(self) -> None:
         """Test discrete dimension with many unique values (capped at max)."""
         from luxar.io.point_spatial_index import SPATIAL_INDEX_MAX_CELLS_DISCRETE
 
@@ -440,7 +440,7 @@ class TestSpatialIndexDiscreteDimensions:
 class TestSpatialIndexEdgeCases:
     """Test spatial index edge cases."""
 
-    def test_empty_array_with_auto_grid(self):
+    def test_empty_array_with_auto_grid(self) -> None:
         """Test building index for empty array with auto-grid."""
         # Empty 4D positions
         positions = np.empty((0, 4), dtype=np.float32)
@@ -464,7 +464,7 @@ class TestSpatialIndexEdgeCases:
         assert len(grid_shape) == 1
         assert grid_shape[0] >= 2  # At least 2 cells
 
-    def test_single_point_with_auto_grid(self):
+    def test_single_point_with_auto_grid(self) -> None:
         """Test building index for single point with auto-grid."""
         positions = np.array([[5.0, 10.0, 15.0]], dtype=np.float32)
 
@@ -474,7 +474,7 @@ class TestSpatialIndexEdgeCases:
         assert len(result["sort_order"]) == 1
         assert result["sort_order"][0] == 0  # Only one point, index 0
 
-    def test_empty_array_with_explicit_grid(self):
+    def test_empty_array_with_explicit_grid(self) -> None:
         """Test empty array with explicit grid shape and specified displayed dimensions."""
         positions = np.empty(
             (0, 4), dtype=np.float32

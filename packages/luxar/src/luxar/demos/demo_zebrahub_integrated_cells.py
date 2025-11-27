@@ -75,7 +75,7 @@ def attr_to_colors(values):
     return colors
 
 
-def main():
+def main() -> None:
     aprint("=" * 70)
     aprint("ZEBRAHUB INTEGRATED CELLS - 3D UMAP")
     aprint("=" * 70)

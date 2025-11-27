@@ -9,7 +9,7 @@ from luxar.dimensions import Dimension, Dimensions
 class TestDimension:
     """Test the Dimension class."""
 
-    def test_dimension_creation(self):
+    def test_dimension_creation(self) -> None:
         """Test creating dimensions with various parameters."""
         # Basic dimension
         dim = Dimension("x", unit="um")
@@ -37,7 +37,7 @@ class TestDimension:
         assert dim.discrete is True
         assert dim.description == "Time dimension"
 
-    def test_dimension_validation(self):
+    def test_dimension_validation(self) -> None:
         """Test dimension parameter validation."""
         # Invalid range
         with pytest.raises(ValueError, match="Range must be a tuple"):
@@ -54,7 +54,7 @@ class TestDimension:
         with pytest.raises(ValueError, match="Scale must be positive"):
             Dimension("x", scale=0)
 
-    def test_get_step(self):
+    def test_get_step(self) -> None:
         """Test automatic step calculation."""
         # Explicit step
         dim = Dimension("x", step=0.25)
@@ -72,7 +72,7 @@ class TestDimension:
         dim = Dimension("z")
         assert dim.get_step() == 0.1
 
-    def test_dimension_serialization(self):
+    def test_dimension_serialization(self) -> None:
         """Test to_dict and from_dict."""
         dim = Dimension(
             "time", unit="ms", range=(0, 1000), step=10, display=False, discrete=True
@@ -98,7 +98,7 @@ class TestDimension:
 class TestDimensions:
     """Test the Dimensions container class."""
 
-    def test_dimensions_creation(self):
+    def test_dimensions_creation(self) -> None:
         """Test creating dimension collections."""
         dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
         assert dims.ndim == 3
@@ -106,7 +106,7 @@ class TestDimensions:
         assert dims.displayed == [0, 1, 2]
         assert dims.non_displayed == []
 
-    def test_dimension_validation(self):
+    def test_dimension_validation(self) -> None:
         """Test dimensions validation rules."""
         # Duplicate names
         with pytest.raises(ValueError, match="must be unique"):
@@ -127,7 +127,7 @@ class TestDimensions:
         with pytest.raises(ValueError, match="At least one dimension"):
             Dimensions([Dimension("x", display=False), Dimension("y", display=False)])
 
-    def test_dimension_access(self):
+    def test_dimension_access(self) -> None:
         """Test accessing dimensions."""
         dims = Dimensions(
             [
@@ -151,7 +151,7 @@ class TestDimensions:
         with pytest.raises(ValueError, match="not found"):
             dims.get_index("z")
 
-    def test_position_validation(self):
+    def test_position_validation(self) -> None:
         """Test validating positions against dimensions."""
         dims = Dimensions(
             [Dimension("x", range=(-10, 10)), Dimension("y", range=(-5, 5))]
@@ -174,7 +174,7 @@ class TestDimensions:
         with pytest.raises(ValueError, match="outside range"):
             dims.validate_positions(positions)
 
-    def test_dimensions_serialization(self):
+    def test_dimensions_serialization(self) -> None:
         """Test serialization of dimension collections."""
         dims = Dimensions(
             [
@@ -195,7 +195,7 @@ class TestDimensions:
         assert dims2.names == ["t", "x", "y"]
         assert dims2.displayed == [1, 2]
 
-    def test_convenience_constructors(self):
+    def test_convenience_constructors(self) -> None:
         """Test convenience constructor methods."""
         # 2D
         dims = Dimensions.default_2d()
@@ -222,7 +222,7 @@ class TestDimensions:
         assert dims.names == ["c", "x", "y", "z"]
         assert dims.dimensions[0].range == (0, 4)
 
-    def test_from_positions(self):
+    def test_from_positions(self) -> None:
         """Test inferring dimensions from positions."""
         # 3D positions
         positions = np.random.randn(100, 3)
@@ -251,7 +251,7 @@ class TestSceneIntegration:
     # Test removed: Scene dimension validation was removed in new flexible API
     # The Scene class now accepts any dimension values without validation
 
-    def test_scene_dimension_persistence(self, tmp_path):
+    def test_scene_dimension_persistence(self, tmp_path) -> None:
         """Test dimensions are saved and loaded correctly."""
         import zarr
 

@@ -257,7 +257,7 @@ if not NO_NAPARI:
     except Exception:
         pass
 
-    def _set_overlay_text_4d(t_index: int):
+    def _set_overlay_text_4d(t_index: int) -> None:
         """Update text overlay with 4D-specific information."""
         K = int(keep_counts[t_index])
         bits_model = int(model_bits_frames[t_index])
@@ -272,7 +272,7 @@ if not NO_NAPARI:
             f"|  rel L2 err: {rel:.4f}  |  Hypercube: {hypercube_size_str} hypervoxels"
         )
 
-    def _update_layers_for_t_4d(t_index: int):
+    def _update_layers_for_t_4d(t_index: int) -> None:
         """Update 4D layers for given time index."""
         # Update 4D centers
         pts.data = centers_frames[t_index]
@@ -284,7 +284,7 @@ if not NO_NAPARI:
     _update_layers_for_t_4d(0)
 
     # Hook slider to updates
-    def _on_step_change_4d(event=None):
+    def _on_step_change_4d(event=None) -> None:
         t = viewer.dims.current_step[0]
         _update_layers_for_t_4d(int(t))
 

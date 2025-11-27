@@ -375,7 +375,7 @@ def generate_volumetric_cloud(
         )
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse simple command line args (optional)
     n_candidate_points = 800000  # Start with many candidates (will be filtered)

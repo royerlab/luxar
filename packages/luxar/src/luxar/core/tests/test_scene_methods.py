@@ -10,7 +10,7 @@ from luxar import LuxarZarrCompiler
 class TestSceneMethods:
     """Test Scene class methods."""
 
-    def test_scene_str_representation(self, tmp_path):
+    def test_scene_str_representation(self, tmp_path) -> None:
         """Test Scene __str__ method."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -24,7 +24,7 @@ class TestSceneMethods:
             str_repr = str(scene)
             assert "2 children" in str_repr
 
-    def test_scene_finalize_methods(self, tmp_path):
+    def test_scene_finalize_methods(self, tmp_path) -> None:
         """Test Scene finalize and related methods."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -46,7 +46,7 @@ class TestSceneMethods:
     # Test removed: _validate_scene_dimensions is no longer part of the public API
     # Dimension validation is now handled internally during point addition
 
-    def test_scene_infer_dimensions_from_points(self, tmp_path):
+    def test_scene_infer_dimensions_from_points(self, tmp_path) -> None:
         """Test Scene._infer_dimensions_from_points method."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -64,7 +64,7 @@ class TestSceneMethods:
     # Test removed: _apply_dimension_metadata is internal implementation
     # Metadata application is now handled automatically during scene creation
 
-    def test_scene_writer_access(self, tmp_path):
+    def test_scene_writer_access(self, tmp_path) -> None:
         """Test Scene has access to writer."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -73,7 +73,7 @@ class TestSceneMethods:
             assert scene._writer is not None
             assert scene._writer is compiler
 
-    def test_scene_add_points_error_handling(self, tmp_path):
+    def test_scene_add_points_error_handling(self, tmp_path) -> None:
         """Test Scene.add_points error handling."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -86,7 +86,7 @@ class TestSceneMethods:
             with pytest.raises(ValueError, match="Positions must have shape"):
                 scene.add_points("bad", np.zeros((10, 10, 3)))
 
-    def test_scene_add_group_with_transform(self, tmp_path):
+    def test_scene_add_group_with_transform(self, tmp_path) -> None:
         """Test Scene.add_group with transform."""
         from luxar import transforms
 
@@ -103,7 +103,7 @@ class TestSceneMethods:
             assert group.transform is not None
             np.testing.assert_array_almost_equal(group.transform, transform)
 
-    def test_scene_add_group_with_rendering_attrs(self, tmp_path):
+    def test_scene_add_group_with_rendering_attrs(self, tmp_path) -> None:
         """Test Scene.add_group with rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -132,7 +132,7 @@ class TestSceneMethods:
         store = zarr.open_group(tmp_path / "test.zarr", mode="r")
         assert "points" in store
 
-    def test_points_metadata_preservation(self, tmp_path):
+    def test_points_metadata_preservation(self, tmp_path) -> None:
         """Test that Points object preserves metadata from write_points().
 
         This test catches the bug where Node.__init__() would overwrite
@@ -179,7 +179,7 @@ class TestSceneMethods:
             assert points.metadata["dims"] == 3
             assert 0.14 < points.metadata["max_radius"] < 0.16, "max_radius incorrect"
 
-    def test_points_metadata_without_optional_attributes(self, tmp_path):
+    def test_points_metadata_without_optional_attributes(self, tmp_path) -> None:
         """Test Points metadata when only positions are provided."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()

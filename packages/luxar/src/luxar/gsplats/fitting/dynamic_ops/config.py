@@ -18,7 +18,7 @@ class DynamicOpsConfig:
     - Residual-driven seeding targets reconstruction deficiencies
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Scheduling
         self.step_every: int = 50  # Run operations every N iterations
 

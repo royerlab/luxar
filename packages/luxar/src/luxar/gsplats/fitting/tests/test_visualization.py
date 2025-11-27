@@ -17,7 +17,7 @@ from luxar.gsplats.fitting.visualization import (
 class _MockNapari:
     """Simple mock for napari module to prevent window opening."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         pass
 
     def __call__(self, *args, **kwargs):
@@ -35,7 +35,7 @@ def mock_napari_viewer(monkeypatch):
     return mock_napari
 
 
-def test_display_compression_analysis_2d(capsys):
+def test_display_compression_analysis_2d(capsys) -> None:
     """Test compression analysis display for 2D data."""
     V = np.random.rand(64, 64).astype(np.float32)
 
@@ -63,7 +63,7 @@ def test_display_compression_analysis_2d(capsys):
     assert "Compression ratio:" in captured.out
 
 
-def test_display_compression_analysis_3d(capsys):
+def test_display_compression_analysis_3d(capsys) -> None:
     """Test compression analysis display for 3D data."""
     V = np.random.rand(32, 32, 32).astype(np.float32)
 
@@ -88,7 +88,7 @@ def test_display_compression_analysis_3d(capsys):
     assert "Original image:" in captured.out
 
 
-def test_compression_ratio_calculation(capsys):
+def test_compression_ratio_calculation(capsys) -> None:
     """Test that compression ratio is calculated correctly."""
     # Small example where we can verify the calculation
     V = np.random.rand(16, 16).astype(np.float32)  # 256 pixels * 4 bytes = 1024 bytes
@@ -116,7 +116,7 @@ def test_compression_ratio_calculation(capsys):
     assert "18." in captured.out or "18:" in captured.out
 
 
-def test_bits_per_pixel_calculation(capsys):
+def test_bits_per_pixel_calculation(capsys) -> None:
     """Test bits per pixel calculation."""
     V = np.random.rand(32, 32).astype(np.float32)
 
@@ -141,7 +141,7 @@ def test_bits_per_pixel_calculation(capsys):
     assert "original: 32.000" in captured.out
 
 
-def test_show_optimization_movie_no_napari(capsys):
+def test_show_optimization_movie_no_napari(capsys) -> None:
     """Test graceful handling when napari is unavailable."""
     # Create minimal movie frames
     movie_frames = {
@@ -164,7 +164,7 @@ def test_show_optimization_movie_no_napari(capsys):
         pytest.fail(f"show_optimization_movie raised unexpected exception: {e}")
 
 
-def test_show_optimization_movie_3d_structure():
+def test_show_optimization_movie_3d_structure() -> None:
     """Test that 3D movie data structure is handled correctly."""
     # Create 3D movie frames
     movie_frames = {
@@ -187,7 +187,7 @@ def test_show_optimization_movie_3d_structure():
         pytest.fail(f"3D movie visualization failed: {e}")
 
 
-def test_empty_movie_frames():
+def test_empty_movie_frames() -> None:
     """Test handling of empty movie frames."""
     movie_frames = {
         "target": [],
@@ -208,7 +208,7 @@ def test_empty_movie_frames():
         pytest.fail(f"Empty frames caused unexpected error: {e}")
 
 
-def test_compression_analysis_zero_splats(capsys):
+def test_compression_analysis_zero_splats(capsys) -> None:
     """Test compression analysis with zero splats (edge case)."""
     V = np.random.rand(16, 16).astype(np.float32)
 
@@ -234,7 +234,7 @@ def test_compression_analysis_zero_splats(capsys):
     assert "compression ratio" in output_lower
 
 
-def test_compression_analysis_many_splats(capsys):
+def test_compression_analysis_many_splats(capsys) -> None:
     """Test compression analysis with many splats (poor compression)."""
     V = np.random.rand(16, 16).astype(np.float32)
 
@@ -259,7 +259,7 @@ def test_compression_analysis_many_splats(capsys):
     assert "Space savings:" in captured.out
 
 
-def test_display_compression_various_dimensions(capsys):
+def test_display_compression_various_dimensions(capsys) -> None:
     """Test compression analysis with various dimensionalities."""
     for d in [2, 3, 4]:
         shape = tuple([16] * d)

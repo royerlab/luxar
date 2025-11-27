@@ -8,7 +8,7 @@ from luxar import LuxarZarrCompiler
 class TestNodeRenderingAttributes:
     """Test Node rendering properties (opacity, gamma, blending_mode)."""
 
-    def test_default_rendering_attributes(self, tmp_path):
+    def test_default_rendering_attributes(self, tmp_path) -> None:
         """Test that nodes have correct default rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -18,7 +18,7 @@ class TestNodeRenderingAttributes:
         assert node.gamma == 1.0
         assert node.blending_mode == "additive"
 
-    def test_opacity_getter_setter(self, tmp_path):
+    def test_opacity_getter_setter(self, tmp_path) -> None:
         """Test opacity property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -43,7 +43,7 @@ class TestNodeRenderingAttributes:
         node.opacity = "0.3"
         assert node.opacity == 0.3
 
-    def test_opacity_validation(self, tmp_path):
+    def test_opacity_validation(self, tmp_path) -> None:
         """Test opacity validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -59,7 +59,7 @@ class TestNodeRenderingAttributes:
         with pytest.raises(TypeError, match="Opacity must be convertible to float"):
             node.opacity = "invalid"
 
-    def test_gamma_getter_setter(self, tmp_path):
+    def test_gamma_getter_setter(self, tmp_path) -> None:
         """Test gamma property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -84,7 +84,7 @@ class TestNodeRenderingAttributes:
         node.gamma = "1.8"
         assert node.gamma == 1.8
 
-    def test_gamma_validation(self, tmp_path):
+    def test_gamma_validation(self, tmp_path) -> None:
         """Test gamma validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -100,7 +100,7 @@ class TestNodeRenderingAttributes:
         with pytest.raises(TypeError, match="Gamma must be convertible to float"):
             node.gamma = "not_a_number"
 
-    def test_blending_mode_getter_setter(self, tmp_path):
+    def test_blending_mode_getter_setter(self, tmp_path) -> None:
         """Test blending_mode property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -112,7 +112,7 @@ class TestNodeRenderingAttributes:
             assert node.blending_mode == mode
             assert node.attrs["blending_mode"] == mode
 
-    def test_blending_mode_validation(self, tmp_path):
+    def test_blending_mode_validation(self, tmp_path) -> None:
         """Test blending mode validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -128,7 +128,7 @@ class TestNodeRenderingAttributes:
         with pytest.raises(TypeError, match="Blending mode must be a string"):
             node.blending_mode = 123
 
-    def test_rendering_attributes_persistence(self, tmp_path):
+    def test_rendering_attributes_persistence(self, tmp_path) -> None:
         """Test that rendering attributes are persisted to zarr attrs."""
         import zarr
 
@@ -148,7 +148,7 @@ class TestNodeRenderingAttributes:
         assert test_node_attrs.get("gamma") == 1.5
         assert test_node_attrs.get("blending_mode") == "additive"
 
-    def test_rendering_attributes_in_add_points(self, tmp_path):
+    def test_rendering_attributes_in_add_points(self, tmp_path) -> None:
         """Test setting rendering attributes when adding points."""
         import numpy as np
         import zarr
@@ -170,7 +170,7 @@ class TestNodeRenderingAttributes:
         assert test_points_attrs.get("gamma") == 1.2
         assert test_points_attrs.get("blending_mode") == "normal"
 
-    def test_rendering_attributes_inheritance(self, tmp_path):
+    def test_rendering_attributes_inheritance(self, tmp_path) -> None:
         """Test that child nodes can access parent rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()

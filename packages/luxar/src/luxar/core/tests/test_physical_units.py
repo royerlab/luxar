@@ -25,7 +25,7 @@ class TestPhysicalUnits:
             "au",  # arbitrary units
         ],
     )
-    def test_unit_acceptance(self, unit, tmp_path):
+    def test_unit_acceptance(self, unit, tmp_path) -> None:
         """Test that each physical unit is accepted in Dimensions."""
         scene_path = tmp_path / f"test_{unit}.zarr"
 
@@ -50,7 +50,7 @@ class TestPhysicalUnits:
         dims_data = store.attrs["scene_dimensions"]
         assert dims_data["dimensions"][0]["unit"] == unit
 
-    def test_invalid_unit_rejection(self):
+    def test_invalid_unit_rejection(self) -> None:
         """Test that invalid units are rejected in Dimensions."""
         # Invalid unit should be caught during Dimension creation
         # PhysicalUnit.validate() is called by dimension validation
@@ -59,7 +59,7 @@ class TestPhysicalUnits:
         with pytest.raises(ValueError, match="Invalid"):
             PhysicalUnit.validate("invalid_unit")
 
-    def test_units_in_config_match_types(self):
+    def test_units_in_config_match_types(self) -> None:
         """Test that SUPPORTED_UNITS in config matches validation in types."""
         from luxar.config import SUPPORTED_UNITS
         from luxar.validation.types import validate_physical_unit
@@ -69,7 +69,7 @@ class TestPhysicalUnits:
             # Should not raise
             validate_physical_unit(unit)
 
-    def test_dimensions_with_mixed_units(self, tmp_path):
+    def test_dimensions_with_mixed_units(self, tmp_path) -> None:
         """Test that different dimensions can have different units."""
         scene_path = tmp_path / "test_mixed.zarr"
 

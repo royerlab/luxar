@@ -18,7 +18,7 @@ from ..typing_utils.constants import (
 class ValidationError(ValueError):
     """Custom validation error with helpful suggestions."""
 
-    def __init__(self, message: str, suggestion: Optional[str] = None):
+    def __init__(self, message: str, suggestion: Optional[str] = None) -> None:
         """Initialize validation error.
 
         Args:

@@ -250,7 +250,7 @@ if not NO_NAPARI:
     except Exception:
         pass
 
-    def _set_overlay_text(t_index: int):
+    def _set_overlay_text(t_index: int) -> None:
         K = int(keep_counts[t_index])
         bits_model = int(model_bits_frames[t_index])
         bpp = float(bpp_frames[t_index])
@@ -263,7 +263,7 @@ if not NO_NAPARI:
             f"|  rel L2 err: {rel:.4f}"
         )
 
-    def _update_layers_for_t(t_index: int):
+    def _update_layers_for_t(t_index: int) -> None:
         shapes.data = polygons_frames[t_index]  # list of (M_i, 2) polygons
         pts.data = centers_frames[t_index]
         _set_overlay_text(t_index)
@@ -272,7 +272,7 @@ if not NO_NAPARI:
     _update_layers_for_t(0)
 
     # Hook slider to updates
-    def _on_step_change(event=None):
+    def _on_step_change(event=None) -> None:
         t = viewer.dims.current_step[0]
         _update_layers_for_t(int(t))
 

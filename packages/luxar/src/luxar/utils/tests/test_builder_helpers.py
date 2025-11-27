@@ -4,7 +4,7 @@ import zarr
 from luxar import LuxarZarrCompiler
 
 
-def test_incremental_build(tmp_path):
+def test_incremental_build(tmp_path) -> None:
     """Building the graph node‑by‑node flushes immediately to disk."""
     store = tmp_path / "inc.zarr"
 

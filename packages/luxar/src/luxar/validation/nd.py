@@ -20,7 +20,7 @@ class DimensionalCoverageError(ValueError):
         message: str,
         group_name: str,
         missing_coverage: Optional[Dict[str, Set[float]]] = None,
-    ):
+    ) -> None:
         """Initialize dimensional coverage error.
 
         Args:

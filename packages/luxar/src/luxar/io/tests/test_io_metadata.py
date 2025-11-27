@@ -4,7 +4,7 @@ from luxar.typing_utils.config import DEFAULT_COMP
 from luxar.utils.demos import create_lorenz_attractor
 
 
-def test_compressor_and_format(tmp_path):
+def test_compressor_and_format(tmp_path) -> None:
     store = tmp_path / "meta.zarr"
     create_lorenz_attractor(store, n_points=100)
 

@@ -11,7 +11,7 @@ from luxar.io.compiler import LuxarZarrCompiler
 class TestNodeProperties:
     """Test Node hierarchy properties."""
 
-    def test_num_children_property(self, tmp_path: Path):
+    def test_num_children_property(self, tmp_path: Path) -> None:
         """Test num_children property."""
         store_path = tmp_path / "test.zarr"
 
@@ -41,7 +41,7 @@ class TestNodeProperties:
             scene.add_points("points1", positions)
             assert scene.num_children == 3  # group1, group2, points1
 
-    def test_is_leaf_property(self, tmp_path: Path):
+    def test_is_leaf_property(self, tmp_path: Path) -> None:
         """Test is_leaf property."""
         store_path = tmp_path / "test.zarr"
 
@@ -64,7 +64,7 @@ class TestNodeProperties:
             points = scene.add_points("points1", positions)
             assert points.is_leaf is True  # Points node is always a leaf
 
-    def test_is_root_property(self, tmp_path: Path):
+    def test_is_root_property(self, tmp_path: Path) -> None:
         """Test is_root property."""
         store_path = tmp_path / "test.zarr"
 
@@ -86,7 +86,7 @@ class TestNodeProperties:
             points = scene.add_points("points1", positions)
             assert points.is_root is False
 
-    def test_properties_with_complex_hierarchy(self, tmp_path: Path):
+    def test_properties_with_complex_hierarchy(self, tmp_path: Path) -> None:
         """Test properties with a complex hierarchy."""
         store_path = tmp_path / "test.zarr"
 
@@ -142,7 +142,7 @@ class TestNodeProperties:
 class TestNodeMethodChaining:
     """Test Node method chaining for rendering attributes."""
 
-    def test_set_opacity_returns_self(self, tmp_path: Path):
+    def test_set_opacity_returns_self(self, tmp_path: Path) -> None:
         """Test that set_opacity() returns self for chaining."""
         store_path = tmp_path / "test.zarr"
 
@@ -157,7 +157,7 @@ class TestNodeMethodChaining:
             # Verify opacity was set
             assert group.attrs["opacity"] == 0.5
 
-    def test_set_gamma_returns_self(self, tmp_path: Path):
+    def test_set_gamma_returns_self(self, tmp_path: Path) -> None:
         """Test that set_gamma() returns self for chaining."""
         store_path = tmp_path / "test.zarr"
 
@@ -172,7 +172,7 @@ class TestNodeMethodChaining:
             # Verify gamma was set
             assert group.attrs["gamma"] == 1.5
 
-    def test_set_blending_mode_returns_self(self, tmp_path: Path):
+    def test_set_blending_mode_returns_self(self, tmp_path: Path) -> None:
         """Test that set_blending_mode() returns self for chaining."""
         store_path = tmp_path / "test.zarr"
 
@@ -187,7 +187,7 @@ class TestNodeMethodChaining:
             # Verify blending mode was set
             assert group.attrs["blending_mode"] == "additive"
 
-    def test_chain_two_methods(self, tmp_path: Path):
+    def test_chain_two_methods(self, tmp_path: Path) -> None:
         """Test chaining two setter methods."""
         store_path = tmp_path / "test.zarr"
 
@@ -205,7 +205,7 @@ class TestNodeMethodChaining:
             assert group.attrs["opacity"] == 0.7
             assert group.attrs["gamma"] == 1.2
 
-    def test_chain_three_methods(self, tmp_path: Path):
+    def test_chain_three_methods(self, tmp_path: Path) -> None:
         """Test chaining all three setter methods."""
         store_path = tmp_path / "test.zarr"
 
@@ -224,7 +224,7 @@ class TestNodeMethodChaining:
             assert group.attrs["gamma"] == 1.5
             assert group.attrs["blending_mode"] == "additive"
 
-    def test_chain_methods_on_multiple_nodes(self, tmp_path: Path):
+    def test_chain_methods_on_multiple_nodes(self, tmp_path: Path) -> None:
         """Test chaining methods on multiple nodes independently."""
         store_path = tmp_path / "test.zarr"
 
@@ -249,7 +249,7 @@ class TestNodeMethodChaining:
             assert group2.attrs["blending_mode"] == "normal"
             assert "gamma" not in group2.attrs
 
-    def test_chain_after_add_group(self, tmp_path: Path):
+    def test_chain_after_add_group(self, tmp_path: Path) -> None:
         """Test chaining setters immediately after add_group."""
         store_path = tmp_path / "test.zarr"
 
@@ -262,7 +262,7 @@ class TestNodeMethodChaining:
             assert group.attrs["opacity"] == 0.6
             assert group.attrs["gamma"] == 1.8
 
-    def test_chain_methods_on_points(self, tmp_path: Path):
+    def test_chain_methods_on_points(self, tmp_path: Path) -> None:
         """Test that setter methods also work on Points nodes."""
         store_path = tmp_path / "test.zarr"
 
@@ -281,7 +281,7 @@ class TestNodeMethodChaining:
             assert points.attrs["opacity"] == 0.5
             assert points.attrs["blending_mode"] == "additive"
 
-    def test_chain_with_invalid_values_raises_error(self, tmp_path: Path):
+    def test_chain_with_invalid_values_raises_error(self, tmp_path: Path) -> None:
         """Test that chaining with invalid values raises errors."""
         store_path = tmp_path / "test.zarr"
 
@@ -301,7 +301,7 @@ class TestNodeMethodChaining:
             with pytest.raises(ValueError, match="Invalid blending mode"):
                 group.set_blending_mode("invalid")
 
-    def test_multiple_chains_on_same_node(self, tmp_path: Path):
+    def test_multiple_chains_on_same_node(self, tmp_path: Path) -> None:
         """Test multiple separate chains on the same node (updating values)."""
         store_path = tmp_path / "test.zarr"
 
@@ -324,7 +324,7 @@ class TestNodeMethodChaining:
 class TestNodeWalkDirect:
     """Test Node.walk() method directly."""
 
-    def test_walk_single_node(self, tmp_path: Path):
+    def test_walk_single_node(self, tmp_path: Path) -> None:
         """Test walk on a single node (no children)."""
         store_path = tmp_path / "test.zarr"
 
@@ -342,7 +342,7 @@ class TestNodeWalkDirect:
             assert depth == 0
             assert node.name == "Scene"  # Root is Scene node
 
-    def test_walk_with_children(self, tmp_path: Path):
+    def test_walk_with_children(self, tmp_path: Path) -> None:
         """Test walk with children."""
         store_path = tmp_path / "test.zarr"
 
@@ -369,7 +369,7 @@ class TestNodeWalkDirect:
             assert node2.name == "group2"
             assert depth2 == 1
 
-    def test_walk_nested_hierarchy(self, tmp_path: Path):
+    def test_walk_nested_hierarchy(self, tmp_path: Path) -> None:
         """Test walk with nested hierarchy."""
         store_path = tmp_path / "test.zarr"
 
@@ -393,7 +393,7 @@ class TestNodeWalkDirect:
             assert hierarchy[2][0] == 2  # subgroup depth
             assert hierarchy[3][0] == 1  # points depth (direct child of scene)
 
-    def test_walk_from_non_root_node(self, tmp_path: Path):
+    def test_walk_from_non_root_node(self, tmp_path: Path) -> None:
         """Test walk starting from a non-root node."""
         store_path = tmp_path / "test.zarr"
 
@@ -420,7 +420,7 @@ class TestNodeWalkDirect:
             assert node2.name == "subgroup2"
             assert depth2 == 1
 
-    def test_walk_returns_nodes(self, tmp_path: Path):
+    def test_walk_returns_nodes(self, tmp_path: Path) -> None:
         """Test that walk returns actual node objects."""
         store_path = tmp_path / "test.zarr"
 

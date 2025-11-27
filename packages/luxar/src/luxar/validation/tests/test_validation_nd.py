@@ -14,7 +14,7 @@ from luxar.validation.nd import (
 class TestDimensionalCoverageError:
     """Test the DimensionalCoverageError exception."""
 
-    def test_error_with_missing_coverage(self):
+    def test_error_with_missing_coverage(self) -> None:
         """Test error message with missing coverage details."""
         missing = {"time": {0.0, 1.0, 2.0}, "channel": {0.0, 1.0}}
         error = DimensionalCoverageError(
@@ -29,7 +29,7 @@ class TestDimensionalCoverageError:
         assert error.group_name == "group1"
         assert error.missing_coverage == missing
 
-    def test_error_without_missing_coverage(self):
+    def test_error_without_missing_coverage(self) -> None:
         """Test error message without missing coverage."""
         error = DimensionalCoverageError("Simple error", "group2")
 
@@ -42,7 +42,7 @@ class TestDimensionalCoverageError:
 class TestValidateDimensionalCoverage:
     """Test dimensional coverage validation."""
 
-    def test_no_non_displayed_dimensions(self):
+    def test_no_non_displayed_dimensions(self) -> None:
         """Test validation passes when all dimensions are displayed."""
         dims = Dimensions(
             [
@@ -60,7 +60,7 @@ class TestValidateDimensionalCoverage:
         # Should not raise
         validate_dimensional_coverage(dims, groups)
 
-    def test_consistent_coverage(self):
+    def test_consistent_coverage(self) -> None:
         """Test validation passes with consistent coverage."""
         dims = Dimensions(
             [
@@ -92,7 +92,7 @@ class TestValidateDimensionalCoverage:
         # Should not raise
         validate_dimensional_coverage(dims, groups)
 
-    def test_inconsistent_coverage_raises(self):
+    def test_inconsistent_coverage_raises(self) -> None:
         """Test validation raises for inconsistent coverage."""
         dims = Dimensions(
             [
@@ -128,7 +128,7 @@ class TestValidateDimensionalCoverage:
         assert "incomplete coverage" in str(error)
         assert "time" in str(error)
 
-    def test_multiple_non_displayed_dimensions(self):
+    def test_multiple_non_displayed_dimensions(self) -> None:
         """Test validation with multiple non-displayed dimensions."""
         dims = Dimensions(
             [
@@ -164,7 +164,7 @@ class TestValidateDimensionalCoverage:
         # Should not raise
         validate_dimensional_coverage(dims, groups)
 
-    def test_empty_groups(self):
+    def test_empty_groups(self) -> None:
         """Test validation with empty point groups."""
         dims = Dimensions(
             [
@@ -178,7 +178,7 @@ class TestValidateDimensionalCoverage:
         # Should not raise for empty groups (nothing to validate)
         validate_dimensional_coverage(dims, groups)
 
-    def test_single_group(self):
+    def test_single_group(self) -> None:
         """Test validation with single group (no comparison needed)."""
         dims = Dimensions(
             [
@@ -199,7 +199,7 @@ class TestValidateDimensionalCoverage:
 class TestBroadcastToAllSlices:
     """Test broadcast_to_all_slices function."""
 
-    def test_no_broadcasting_needed(self):
+    def test_no_broadcasting_needed(self) -> None:
         """Test when all dimensions are displayed."""
         dims = Dimensions(
             [
@@ -221,7 +221,7 @@ class TestBroadcastToAllSlices:
         assert np.array_equal(new_col, colors)
         assert np.array_equal(new_rad, radii)
 
-    def test_broadcast_single_non_displayed_dimension(self):
+    def test_broadcast_single_non_displayed_dimension(self) -> None:
         """Test broadcasting with one non-displayed dimension."""
         dims = Dimensions(
             [
@@ -254,7 +254,7 @@ class TestBroadcastToAllSlices:
         assert np.array_equal(new_pos[0:5, 0], new_pos[5:10, 0])
         assert np.array_equal(new_pos[0:5, 0], new_pos[10:15, 0])
 
-    def test_broadcast_multiple_non_displayed_dimensions(self):
+    def test_broadcast_multiple_non_displayed_dimensions(self) -> None:
         """Test broadcasting with multiple non-displayed dimensions."""
         dims = Dimensions(
             [
@@ -288,7 +288,7 @@ class TestBroadcastToAllSlices:
         expected = {(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)}
         assert combinations == expected
 
-    def test_broadcast_with_existing_values(self):
+    def test_broadcast_with_existing_values(self) -> None:
         """Test broadcasting uses existing unique values when no range specified."""
         dims = Dimensions(
             [
@@ -316,7 +316,7 @@ class TestBroadcastToAllSlices:
         unique_times = np.unique(new_pos[:, 1])
         assert np.allclose(unique_times, [0.5, 1.5, 2.5])
 
-    def test_broadcast_preserves_colors_and_radii(self):
+    def test_broadcast_preserves_colors_and_radii(self) -> None:
         """Test that colors and radii are properly replicated."""
         dims = Dimensions(
             [
@@ -346,7 +346,7 @@ class TestBroadcastToAllSlices:
         assert new_rad[2] == 0.5
         assert new_rad[3] == 1.0
 
-    def test_broadcast_high_dimensional(self):
+    def test_broadcast_high_dimensional(self) -> None:
         """Test broadcasting with positions having more dimensions than scene."""
         dims = Dimensions(
             [

@@ -30,7 +30,7 @@ class PerSplatReduceLROnPlateau:
         cooldown: int = 0,
         min_lr: float = 1e-8,
         global_patience: int = 20,  # Global fallback
-    ):
+    ) -> None:
         """
         Initialize per-splat plateau scheduler.
 
@@ -62,7 +62,7 @@ class PerSplatReduceLROnPlateau:
         self.global_cooldown_counter = 0
         self.last_epoch = 0
 
-    def _init_splat_state(self, splat_idx: int):
+    def _init_splat_state(self, splat_idx: int) -> None:
         """Initialize scheduler state for a splat."""
         if self.mode == "min":
             best_loss = float("inf")
@@ -149,7 +149,7 @@ class PerSplatReduceLROnPlateau:
         for splat_idx, metric in splat_metrics.items():
             self._update_splat_lr(splat_idx, metric)
 
-    def _update_global_state(self, metric: float):
+    def _update_global_state(self, metric: float) -> None:
         """Update global scheduler state."""
         if self.global_best is None:
             self.global_best = metric
@@ -170,7 +170,7 @@ class PerSplatReduceLROnPlateau:
             self.global_bad_epochs = 0
             self.global_cooldown_counter = self.cooldown
 
-    def _update_splat_lr(self, splat_idx: int, metric: float):
+    def _update_splat_lr(self, splat_idx: int, metric: float) -> None:
         """Update learning rate for individual splat."""
         # Initialize state if needed
         if splat_idx not in self.splat_scheduler_states:
@@ -201,7 +201,7 @@ class PerSplatReduceLROnPlateau:
                 state["num_bad_epochs"] = 0
                 state["cooldown_counter"] = self.cooldown
 
-    def _reduce_all_learning_rates(self):
+    def _reduce_all_learning_rates(self) -> None:
         """Global learning rate reduction for all splats."""
         for splat_idx in range(self.optimizer.model.n_splats()):
             current_lr = self.optimizer.get_learning_rate(splat_idx)
@@ -292,7 +292,7 @@ class PerSplatReduceLROnPlateau:
             "last_epoch": self.last_epoch,
         }
 
-    def load_state_dict(self, state_dict: Dict):
+    def load_state_dict(self, state_dict: Dict) -> None:
         """Load scheduler state from serialization."""
         self.splat_scheduler_states = state_dict["splat_scheduler_states"]
         self.global_best = state_dict["global_best"]
@@ -310,7 +310,7 @@ class PerSplatExponentialLR:
 
     def __init__(
         self, optimizer: PerSplatAdam, gamma: float = 0.95, age_based_decay: bool = True
-    ):
+    ) -> None:
         """
         Initialize per-splat exponential scheduler.
 
@@ -331,7 +331,7 @@ class PerSplatExponentialLR:
         for i in range(self.optimizer.model.n_splats()):
             self.splat_ages[i] = 0
 
-    def step(self):
+    def step(self) -> None:
         """Apply exponential decay to all splats."""
         self.current_epoch += 1
 
@@ -349,14 +349,14 @@ class PerSplatExponentialLR:
             new_lr = current_lr * gamma
             self.optimizer.set_learning_rate(splat_idx, new_lr)
 
-    def add_splats(self, n_new_splats: int):
+    def add_splats(self, n_new_splats: int) -> None:
         """Add age tracking for new splats."""
         current_n = len(self.splat_ages)
         for i in range(n_new_splats):
             new_splat_idx = current_n + i
             self.splat_ages[new_splat_idx] = self.current_epoch  # Born now
 
-    def remove_splats(self, keep_mask: torch.Tensor):
+    def remove_splats(self, keep_mask: torch.Tensor) -> None:
         """Remove age tracking for pruned splats."""
         new_ages = {}
         keep_indices = torch.where(keep_mask)[0].cpu().numpy()
