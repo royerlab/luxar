@@ -140,7 +140,7 @@ def create_icosahedral_projection_matrices():
     P_perp = Vt[3:6, :]  # 3×6 matrix (last 3 singular vectors)
 
     # Verify orthogonality
-    dot_product = np.sum(np.abs(P_parallel @ P_perp.T))
+    dot_product: float = float(np.sum(np.abs(P_parallel @ P_perp.T)))
     if dot_product < 1e-10:
         aprint(f"  ✓ Projection spaces are orthogonal (dot={dot_product:.2e})")
     else:
@@ -302,7 +302,7 @@ def generate_quasicrystal_3d(
                 np.max(np.abs(parallel), axis=1) < box_size / 2
             )
 
-            n_kept_chunk = np.sum(keep)
+            n_kept_chunk: int = int(np.sum(keep))
 
             if n_kept_chunk > 0:
                 all_physical_positions.append(parallel[keep])

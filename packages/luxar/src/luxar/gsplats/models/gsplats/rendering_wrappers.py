@@ -55,10 +55,10 @@ def render_gaussians_numpy(
         return np.zeros(shape, dtype=np.float32)
 
     # Extract components from result
-    centers = result.centers.astype(np.float32)
-    packed_L = result.cholesky_factors.astype(np.float32)
-    sharpness = result.sharpnesses.astype(np.float32)
-    amps = result.amplitudes.astype(np.float32)
+    centers: np.ndarray = result.centers.astype(np.float32)
+    packed_L: np.ndarray = result.cholesky_factors.astype(np.float32)
+    sharpness: np.ndarray = result.sharpnesses.astype(np.float32)
+    amps: np.ndarray = result.amplitudes.astype(np.float32)
 
     # Unpack Cholesky factors
     d = len(shape)
@@ -121,10 +121,10 @@ def render_gaussians_pytorch(
         return torch.zeros(shape, dtype=torch.float32, device=device)
 
     # Extract components from result
-    centers = result.centers.astype(np.float32)
-    packed_L = result.cholesky_factors.astype(np.float32)
-    sharpness = result.sharpnesses.astype(np.float32)
-    amps = result.amplitudes.astype(np.float32)
+    centers: np.ndarray = result.centers.astype(np.float32)
+    packed_L: np.ndarray = result.cholesky_factors.astype(np.float32)
+    sharpness: np.ndarray = result.sharpnesses.astype(np.float32)
+    amps: np.ndarray = result.amplitudes.astype(np.float32)
 
     # Unpack Cholesky factors
     d = len(shape)

@@ -203,7 +203,7 @@ def fit_multiscale_gaussian_splats(
     all_amps = []
     all_sharpness = []
     per_scale_stats = []
-    per_scale_visualizations = [] if visualize_per_scale else None
+    per_scale_visualizations: list | None = [] if visualize_per_scale else None
 
     if verbose:
         with asection("Fitting Gaussian Splats Per Scale"):

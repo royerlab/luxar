@@ -46,8 +46,8 @@ def test_methods_comparison() -> None:
     # (other blobs may or may not be detected depending on parameters)
     center_blob = np.array([32, 32])
 
-    dist_multiscale = np.min(np.linalg.norm(seeds_multiscale - center_blob, axis=1))
-    dist_decomp = np.min(np.linalg.norm(seeds_decomp - center_blob, axis=1))
+    dist_multiscale: float = float(np.min(np.linalg.norm(seeds_multiscale - center_blob, axis=1)))
+    dist_decomp: float = float(np.min(np.linalg.norm(seeds_decomp - center_blob, axis=1)))
 
     # At least one method should find something reasonably close
     assert dist_multiscale < 20.0 or dist_decomp < 20.0, (
@@ -139,8 +139,8 @@ def test_methods_on_noisy_image() -> None:
     # Check if either method found something near the central peak (within 12 pixels)
     # (noise makes precise detection difficult)
     center = np.array([24, 24])
-    dist_mg = np.min(np.linalg.norm(seeds_mg - center, axis=1))
-    dist_decomp = np.min(np.linalg.norm(seeds_decomp - center, axis=1))
+    dist_mg: float = float(np.min(np.linalg.norm(seeds_mg - center, axis=1)))
+    dist_decomp: float = float(np.min(np.linalg.norm(seeds_decomp - center, axis=1)))
 
     assert dist_mg < 12.0 or dist_decomp < 12.0, (
         "At least one method should find something near the central peak"
@@ -169,8 +169,8 @@ def test_3d_seeds() -> None:
 
     # Both should find the central voxel
     center_3d = np.array([8, 8, 8])
-    dist_mg = np.min(np.linalg.norm(seeds_mg - center_3d, axis=1))
-    dist_decomp = np.min(np.linalg.norm(seeds_decomp - center_3d, axis=1))
+    dist_mg: float = float(np.min(np.linalg.norm(seeds_mg - center_3d, axis=1)))
+    dist_decomp: float = float(np.min(np.linalg.norm(seeds_decomp - center_3d, axis=1)))
 
     assert dist_mg < 2.0 or dist_decomp < 2.0
 
