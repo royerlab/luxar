@@ -123,7 +123,7 @@ def broadcast_scalar_to_points(
         )
 
     if require_positive and np.any(values_array <= 0):
-        min_val = np.min(values_array)
+        min_val: float = float(np.min(values_array))
         raise ValueError(
             f"All {name} values must be positive, found minimum value: {min_val}"
         )
@@ -170,8 +170,8 @@ def broadcast_sharpness_to_points(
         if out_of_range:
             import warnings
 
-            min_val = np.min(result)
-            max_val = np.max(result)
+            min_val: float = float(np.min(result))
+            max_val: float = float(np.max(result))
             warnings.warn(
                 f"Sharpness values outside recommended range [0.5, 10.0]: "
                 f"min={min_val:.2f}, max={max_val:.2f}. "
