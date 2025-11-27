@@ -265,7 +265,7 @@ class Scene(Node):
         Returns:
             List of dimension names that should be auto-broadcasted
         """
-        broadcast_dims = []
+        broadcast_dims: list[str] = []
 
         if self._dimensions is None:
             return broadcast_dims

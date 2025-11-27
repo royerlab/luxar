@@ -56,10 +56,10 @@ def xor_fractal_4d(
         XOR values (for coloring)
     """
     # Convert to integers and compute bitwise XOR
-    wi = W.astype(np.int32)
-    xi = X.astype(np.int32)
-    yi = Y.astype(np.int32)
-    zi = Z.astype(np.int32)
+    wi: np.ndarray = W.astype(np.int32)
+    xi: np.ndarray = X.astype(np.int32)
+    yi: np.ndarray = Y.astype(np.int32)
+    zi: np.ndarray = Z.astype(np.int32)
 
     result = wi ^ xi ^ yi ^ zi
     return result
@@ -113,10 +113,10 @@ def sierpinski_4d(
     Returns:
         Sierpinski values
     """
-    wi = W.astype(np.int32)
-    xi = X.astype(np.int32)
-    yi = Y.astype(np.int32)
-    zi = Z.astype(np.int32)
+    wi: np.ndarray = W.astype(np.int32)
+    xi: np.ndarray = X.astype(np.int32)
+    yi: np.ndarray = Y.astype(np.int32)
+    zi: np.ndarray = Z.astype(np.int32)
 
     # Sierpinski condition: bitwise AND of all coordinates
     result = (wi & xi & yi & zi) == 0
@@ -172,10 +172,10 @@ def checkerboard_4d(
     Returns:
         Pattern values
     """
-    wi = (W * scale).astype(np.int32)
-    xi = (X * scale).astype(np.int32)
-    yi = (Y * scale).astype(np.int32)
-    zi = (Z * scale).astype(np.int32)
+    wi: np.ndarray = (W * scale).astype(np.int32)
+    xi: np.ndarray = (X * scale).astype(np.int32)
+    yi: np.ndarray = (Y * scale).astype(np.int32)
+    zi: np.ndarray = (Z * scale).astype(np.int32)
 
     result = (wi + xi + yi + zi) % 2
     return result
@@ -267,7 +267,7 @@ def generate_4d_fractal(
 
     elif fractal_type == 2:  # Sierpinski - threshold on point count if needed
         initial_mask = values > 0
-        n_initial = np.sum(initial_mask)
+        n_initial: int = int(np.sum(initial_mask))
         if n_initial > target_max:
             # For Sierpinski, use distance from origin to threshold
             dist = np.sqrt(W**2 + X**2 + Y**2 + Z**2)
@@ -306,7 +306,7 @@ def generate_4d_fractal(
             f"    Diamond distance threshold: {threshold:.0f} (top {100 - threshold_percentile:.1f}%)"
         )
 
-    n_points_final = np.sum(keep_mask)
+    n_points_final: int = int(np.sum(keep_mask))
     aprint(
         f"    ✓ Kept: {n_points_final:,} points ({n_points_final / grid_size**4 * 100:.2f}% density)"
     )

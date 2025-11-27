@@ -403,7 +403,7 @@ if not NO_NAPARI:
     aprint("  • Toggle layers on/off to compare input vs reconstruction")
 
     aprint("\n📊 Compression Insights:")
-    best_compression = np.max(bit_compression_pct)
+    best_compression: float = float(np.max(bit_compression_pct))
     final_error = rel_err_frames[-1]
     aprint(f"  • Best compression: {best_compression:.1f}% bit reduction")
     aprint(f"  • Final relative error: {final_error:.4f}")

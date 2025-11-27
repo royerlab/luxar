@@ -156,8 +156,8 @@ def _normalize_data(
     # Configurable normalization - store parameters for intensity rescaling
     if norm_percentile == 0.0:
         # Full range normalization
-        image_min = np.min(V)
-        image_max = np.max(V)
+        image_min: float = float(np.min(V))
+        image_max: float = float(np.max(V))
         if verbose:
             aprint("Normalization: full min-max range")
     else:
