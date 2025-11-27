@@ -72,7 +72,7 @@ def simple_noise_3d(
 
     # Generate pseudo-random gradients for cube corners
     # Using a simple hash function based on position
-    def hash_coords(xi, yi, zi):
+    def hash_coords(xi, yi, zi):  # type: ignore[no-untyped-def]
         # Simple position-based hash (not secure, but good for graphics)
         h = (xi * 374761393 + yi * 668265263 + zi * 1274126177 + seed) & 0x7FFFFFFF
         return (h % 1000000) / 500000.0 - 1.0

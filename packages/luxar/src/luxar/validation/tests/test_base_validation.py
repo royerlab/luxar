@@ -30,12 +30,12 @@ class TestValidationError:
         assert "Invalid array shape" in str(error)
         assert "💡 Suggestion: Reshape your array to (N, 3)" in str(error)
 
-    def test_validation_error_can_be_caught_as_value_error(self):
+    def test_validation_error_can_be_caught_as_value_error(self) -> None:  # type: ignore[no-untyped-def]
         """Test that ValidationError is a ValueError subclass."""
         with pytest.raises(ValueError):
             raise ValidationError("test error")
 
-    def test_validation_error_preserves_suggestion(self):
+    def test_validation_error_preserves_suggestion(self) -> None:  # type: ignore[no-untyped-def]
         """Test that suggestion is accessible in error message."""
         try:
             raise ValidationError("problem", "try this fix")
