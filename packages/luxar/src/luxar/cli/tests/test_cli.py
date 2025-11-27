@@ -28,7 +28,7 @@ def sample_scene(tmp_path):
     return store_path
 
 
-def test_demo_command_no_serve_success(runner, tmp_path):
+def test_demo_command_no_serve_success(runner, tmp_path) -> None:
     """Test successful demo generation without serving."""
     output_path = tmp_path / "demo_test.zarr"
 
@@ -57,7 +57,7 @@ def test_demo_command_no_serve_success(runner, tmp_path):
     assert root["LorenzAttractor"]["colors"].shape == (50, 3)
 
 
-def test_demo_command_no_serve_with_defaults(runner, tmp_path):
+def test_demo_command_no_serve_with_defaults(runner, tmp_path) -> None:
     """Test demo command without serving with default parameters."""
     output_path = tmp_path / "default_demo.zarr"
 
@@ -68,7 +68,7 @@ def test_demo_command_no_serve_with_defaults(runner, tmp_path):
     assert "Generated 10,000 points" in result.stdout
 
 
-def test_demo_command_no_serve_short_options(runner, tmp_path):
+def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
     """Test demo command without serving using short option flags."""
     output_path = tmp_path / "short_opts.zarr"
 
@@ -81,7 +81,7 @@ def test_demo_command_no_serve_short_options(runner, tmp_path):
     assert "Generated 25 points" in result.stdout
 
 
-def test_demo_command_no_serve_failure(runner, tmp_path):
+def test_demo_command_no_serve_failure(runner, tmp_path) -> None:
     """Test demo command when scene creation fails."""
     # Use invalid path to trigger failure
     invalid_path = "/invalid/path/that/does/not/exist.zarr"
@@ -94,7 +94,7 @@ def test_demo_command_no_serve_failure(runner, tmp_path):
     assert "Error:" in result.stdout
 
 
-def test_info_command_success(runner, sample_scene):
+def test_info_command_success(runner, sample_scene) -> None:
     """Test successful info command on valid scene."""
     result = runner.invoke(app, ["info", str(sample_scene)])
 
@@ -116,7 +116,7 @@ def test_info_command_success(runner, sample_scene):
     assert "units" in result.stdout
 
 
-def test_info_command_nonexistent_path(runner, tmp_path):
+def test_info_command_nonexistent_path(runner, tmp_path) -> None:
     """Test info command with non-existent path."""
     nonexistent_path = tmp_path / "does_not_exist.zarr"
 
@@ -126,7 +126,7 @@ def test_info_command_nonexistent_path(runner, tmp_path):
     assert "Path does not exist" in result.stdout
 
 
-def test_info_command_complex_hierarchy(runner, tmp_path):
+def test_info_command_complex_hierarchy(runner, tmp_path) -> None:
     """Test info command with complex scene hierarchy."""
     store_path = tmp_path / "complex_scene.zarr"
 
@@ -160,7 +160,7 @@ def test_info_command_complex_hierarchy(runner, tmp_path):
     assert "SubGroup" in result.stdout
 
 
-def test_info_command_invalid_zarr_store(runner, tmp_path):
+def test_info_command_invalid_zarr_store(runner, tmp_path) -> None:
     """Test info command with invalid zarr store."""
     # Create a regular file instead of zarr store
     invalid_file = tmp_path / "not_a_zarr.txt"
@@ -172,7 +172,7 @@ def test_info_command_invalid_zarr_store(runner, tmp_path):
     assert "Error reading info" in result.stdout
 
 
-def test_serve_command_nonexistent_store(runner, tmp_path):
+def test_serve_command_nonexistent_store(runner, tmp_path) -> None:
     """Test serve command with non-existent store."""
     nonexistent_path = tmp_path / "does_not_exist.zarr"
 
@@ -182,7 +182,7 @@ def test_serve_command_nonexistent_store(runner, tmp_path):
     assert result.exit_code != 0
 
 
-def test_serve_command_zip_store_error(runner, tmp_path):
+def test_serve_command_zip_store_error(runner, tmp_path) -> None:
     """Test serve command with zip store (not supported)."""
     zip_path = tmp_path / "store.zip"
     zip_path.touch()  # Create empty zip file
@@ -194,7 +194,7 @@ def test_serve_command_zip_store_error(runner, tmp_path):
     assert "is not a directory" in result.stdout
 
 
-def test_dfs_single_group(tmp_path):
+def test_dfs_single_group(tmp_path) -> None:
     """Test _dfs with single group."""
     store_path = tmp_path / "single.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
@@ -208,7 +208,7 @@ def test_dfs_single_group(tmp_path):
     assert groups[0][1] is root
 
 
-def test_dfs_nested_groups(tmp_path):
+def test_dfs_nested_groups(tmp_path) -> None:
     """Test _dfs with nested group structure."""
     store_path = tmp_path / "nested.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
@@ -236,7 +236,7 @@ def test_dfs_nested_groups(tmp_path):
     assert "SubGroup" in names
 
 
-def test_demo_then_info_workflow(runner, tmp_path):
+def test_demo_then_info_workflow(runner, tmp_path) -> None:
     """Test complete workflow: generate demo scene then get info."""
     store_path = tmp_path / "workflow.zarr"
 
@@ -266,7 +266,7 @@ def test_demo_then_info_workflow(runner, tmp_path):
     assert "LorenzAttractor" in result2.stdout
 
 
-def test_cli_help_commands(runner):
+def test_cli_help_commands(runner) -> None:
     """Test help commands for all CLI functions."""
     # Test main help
     result = runner.invoke(app, ["--help"])
@@ -280,7 +280,7 @@ def test_cli_help_commands(runner):
         assert command in result.stdout.lower()
 
 
-def test_invalid_command(runner):
+def test_invalid_command(runner) -> None:
     """Test invalid command handling."""
     result = runner.invoke(app, ["invalid_command"])
     assert result.exit_code != 0

@@ -69,7 +69,7 @@ class GaussianSplatModel(nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         truncate: float = 3.0,
         device: Optional[torch.device] = None,
-    ):
+    ) -> None:
         super().__init__()
         self.shape = tuple(shape)
         self.dim = len(shape)

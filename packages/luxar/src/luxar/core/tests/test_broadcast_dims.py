@@ -10,7 +10,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 class TestBroadcastDims:
     """Test broadcast_dims parameter in Scene.add_points()."""
 
-    def test_no_broadcast_default(self, tmp_path):
+    def test_no_broadcast_default(self, tmp_path) -> None:
         """Test that default behavior has no broadcasting."""
         dims = Dimensions(
             [
@@ -31,7 +31,7 @@ class TestBroadcastDims:
         store = zarr.open_group(tmp_path / "test.zarr", mode="r")
         assert "broadcast_dims" not in store["points"].attrs
 
-    def test_explicit_broadcast_dims(self, tmp_path):
+    def test_explicit_broadcast_dims(self, tmp_path) -> None:
         """Test explicit broadcast_dims list."""
         dims = Dimensions(
             [
@@ -57,7 +57,7 @@ class TestBroadcastDims:
         assert "broadcast_dims" in store["broadcast_points"].attrs
         assert store["broadcast_points"].attrs["broadcast_dims"] == ["Time", "Channel"]
 
-    def test_broadcast_all_non_displayed(self, tmp_path):
+    def test_broadcast_all_non_displayed(self, tmp_path) -> None:
         """Test broadcast_dims='all' broadcasts all non-displayed dimensions."""
         dims = Dimensions(
             [
@@ -83,7 +83,7 @@ class TestBroadcastDims:
         assert "Time" in broadcast_dims
         assert "Channel" in broadcast_dims
 
-    def test_broadcast_auto_detection(self, tmp_path):
+    def test_broadcast_auto_detection(self, tmp_path) -> None:
         """Test broadcast_dims='auto' with clear single-value dimension."""
         dims = Dimensions(
             [
@@ -115,7 +115,7 @@ class TestBroadcastDims:
             broadcast_dims = store["auto_broadcast"].attrs["broadcast_dims"]
             assert "Time" in broadcast_dims
 
-    def test_invalid_broadcast_dims_value(self, tmp_path):
+    def test_invalid_broadcast_dims_value(self, tmp_path) -> None:
         """Test that invalid broadcast_dims value raises error."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -129,7 +129,7 @@ class TestBroadcastDims:
                     broadcast_dims=123,  # Invalid type
                 )
 
-    def test_broadcast_with_colors_and_radii(self, tmp_path):
+    def test_broadcast_with_colors_and_radii(self, tmp_path) -> None:
         """Test broadcasting works with colors and radii."""
         dims = Dimensions(
             [
@@ -165,7 +165,7 @@ class TestBroadcastDims:
         assert store["colored_broadcast/colors"].shape == (1, 3)
         assert store["colored_broadcast/radii"].shape == (1,)
 
-    def test_position_array_must_include_all_dimensions(self, tmp_path):
+    def test_position_array_must_include_all_dimensions(self, tmp_path) -> None:
         """Test that position arrays must include ALL dimensions even when broadcasting."""
         dims = Dimensions(
             [

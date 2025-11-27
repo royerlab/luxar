@@ -85,7 +85,7 @@ def basic_model():
     )
 
 
-def test_mse_loss_basic(target_tensor, pred_tensor):
+def test_mse_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic MSE loss without asymmetric penalty."""
     loss = _compute_mse_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
 
@@ -94,7 +94,7 @@ def test_mse_loss_basic(target_tensor, pred_tensor):
     assert torch.allclose(loss, expected, atol=1e-6)
 
 
-def test_mse_loss_asymmetric(target_tensor, pred_tensor):
+def test_mse_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test MSE loss with asymmetric penalty."""
     asymmetric_penalty = 5.0
     loss = _compute_mse_loss(pred_tensor, target_tensor, asymmetric_penalty)
@@ -104,7 +104,7 @@ def test_mse_loss_asymmetric(target_tensor, pred_tensor):
     assert loss >= basic_loss
 
 
-def test_l1_loss_basic(target_tensor, pred_tensor):
+def test_l1_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic L1 loss."""
     loss = _compute_l1_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
 
@@ -113,7 +113,7 @@ def test_l1_loss_basic(target_tensor, pred_tensor):
     assert torch.allclose(loss, expected, atol=1e-6)
 
 
-def test_l1_loss_asymmetric(target_tensor, pred_tensor):
+def test_l1_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test L1 loss with asymmetric penalty."""
     asymmetric_penalty = 3.0
     loss = _compute_l1_loss(pred_tensor, target_tensor, asymmetric_penalty)
@@ -123,7 +123,7 @@ def test_l1_loss_asymmetric(target_tensor, pred_tensor):
     assert loss >= basic_loss
 
 
-def test_poisson_loss_basic(target_tensor, pred_tensor):
+def test_poisson_loss_basic(target_tensor, pred_tensor) -> None:
     """Test basic Poisson loss."""
     loss = _compute_poisson_loss(pred_tensor, target_tensor, asymmetric_penalty=None)
 
@@ -132,7 +132,7 @@ def test_poisson_loss_basic(target_tensor, pred_tensor):
     assert torch.isfinite(loss)
 
 
-def test_poisson_loss_asymmetric(target_tensor, pred_tensor):
+def test_poisson_loss_asymmetric(target_tensor, pred_tensor) -> None:
     """Test Poisson loss with asymmetric penalty."""
     asymmetric_penalty = 4.0
     loss = _compute_poisson_loss(pred_tensor, target_tensor, asymmetric_penalty)
@@ -142,7 +142,7 @@ def test_poisson_loss_asymmetric(target_tensor, pred_tensor):
     assert loss >= basic_loss
 
 
-def test_l1_regularization_amplitude(basic_model):
+def test_l1_regularization_amplitude(basic_model) -> None:
     """Test L1 regularization on amplitudes."""
     V = np.random.rand(8, 8).astype(np.float32)
     config = create_test_config(V, n_iters=10, l1_amp=0.1)
@@ -173,7 +173,7 @@ def test_l1_regularization_amplitude(basic_model):
     assert loss_with_reg > loss_without_reg
 
 
-def test_l1_regularization_diagonal(basic_model):
+def test_l1_regularization_diagonal(basic_model) -> None:
     """Test L1 regularization on diagonal elements."""
     V = np.random.rand(8, 8).astype(np.float32)
     config = create_test_config(V, n_iters=10, l1_diag=0.05)
@@ -203,7 +203,7 @@ def test_l1_regularization_diagonal(basic_model):
     assert loss_with_reg > loss_without_reg
 
 
-def test_l1_regularization_sharpness(basic_model):
+def test_l1_regularization_sharpness(basic_model) -> None:
     """Test L1 regularization on sharpness."""
     V = np.random.rand(8, 8).astype(np.float32)
     config = create_test_config(V, n_iters=10, l1_sharpness=0.02)
@@ -238,7 +238,7 @@ def test_l1_regularization_sharpness(basic_model):
     assert torch.isfinite(loss_without_reg)
 
 
-def test_combined_regularization(basic_model):
+def test_combined_regularization(basic_model) -> None:
     """Test all regularizations combined."""
     V = np.random.rand(8, 8).astype(np.float32)
     config = create_test_config(
@@ -271,7 +271,7 @@ def test_combined_regularization(basic_model):
     assert loss_combined > loss_no_reg
 
 
-def test_loss_function_factory_returns_callable(basic_model):
+def test_loss_function_factory_returns_callable(basic_model) -> None:
     """Test that create_loss_function returns a callable."""
     V = np.random.rand(8, 8).astype(np.float32)
     config = create_test_config(V, n_iters=10)
@@ -299,7 +299,7 @@ def test_loss_function_factory_returns_callable(basic_model):
     assert torch.isfinite(loss)
 
 
-def test_different_loss_types(basic_model):
+def test_different_loss_types(basic_model) -> None:
     """Test that different loss types produce different results."""
     V = np.random.rand(8, 8).astype(np.float32)
     V_tensor = torch.from_numpy(V).to("cpu")

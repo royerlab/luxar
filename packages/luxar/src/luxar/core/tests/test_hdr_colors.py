@@ -10,7 +10,7 @@ from luxar import LuxarZarrCompiler
 class TestHDRColorSupport:
     """Test HDR color support with edge cases."""
 
-    def test_standard_sdr_colors(self, tmp_path):
+    def test_standard_sdr_colors(self, tmp_path) -> None:
         """Test standard SDR colors (0-1 range)."""
         with LuxarZarrCompiler(tmp_path / "sdr.zarr") as compiler:
             scene = compiler.create_scene()
@@ -30,7 +30,7 @@ class TestHDRColorSupport:
         # Check values are correctly normalized
         np.testing.assert_array_almost_equal(stored_colors / 255.0, colors, decimal=2)
 
-    def test_hdr_colors_moderate(self, tmp_path):
+    def test_hdr_colors_moderate(self, tmp_path) -> None:
         """Test moderate HDR colors (1-5 range)."""
         with LuxarZarrCompiler(tmp_path / "hdr_moderate.zarr") as compiler:
             scene = compiler.create_scene()
@@ -48,7 +48,7 @@ class TestHDRColorSupport:
         assert np.max(stored_colors) <= 5.0
         np.testing.assert_array_almost_equal(stored_colors, colors)
 
-    def test_hdr_colors_extreme(self, tmp_path):
+    def test_hdr_colors_extreme(self, tmp_path) -> None:
         """Test extreme HDR colors with warnings."""
         with LuxarZarrCompiler(tmp_path / "hdr_extreme.zarr") as compiler:
             compiler.create_scene()
@@ -66,7 +66,7 @@ class TestHDRColorSupport:
         assert np.max(stored_colors) > 10.0  # Extreme HDR
         np.testing.assert_array_almost_equal(stored_colors, colors, decimal=2)
 
-    def test_mixed_hdr_sdr_colors(self, tmp_path):
+    def test_mixed_hdr_sdr_colors(self, tmp_path) -> None:
         """Test mixed HDR and SDR values in same array."""
         with LuxarZarrCompiler(tmp_path / "mixed.zarr") as compiler:
             scene = compiler.create_scene()
@@ -92,7 +92,7 @@ class TestHDRColorSupport:
 
         np.testing.assert_array_almost_equal(stored_colors, colors)
 
-    def test_zero_colors(self, tmp_path):
+    def test_zero_colors(self, tmp_path) -> None:
         """Test all-zero colors (black points)."""
         with LuxarZarrCompiler(tmp_path / "black.zarr") as compiler:
             scene = compiler.create_scene()
@@ -107,7 +107,7 @@ class TestHDRColorSupport:
         stored_colors = store["black_points/colors"][:]
         assert np.all(stored_colors == 0)
 
-    def test_single_hdr_color_broadcast(self, tmp_path):
+    def test_single_hdr_color_broadcast(self, tmp_path) -> None:
         """Test broadcasting a single HDR color to all points."""
         with LuxarZarrCompiler(tmp_path / "broadcast_hdr.zarr") as compiler:
             scene = compiler.create_scene()
@@ -124,7 +124,7 @@ class TestHDRColorSupport:
         assert np.all(stored_colors[0] == [2.0, 3.0, 1.5])
         assert np.all(stored_colors == stored_colors[0])  # All same
 
-    def test_color_precision(self, tmp_path):
+    def test_color_precision(self, tmp_path) -> None:
         """Test that float32 precision is maintained."""
         with LuxarZarrCompiler(tmp_path / "precision.zarr") as compiler:
             scene = compiler.create_scene()
@@ -152,7 +152,7 @@ class TestHDRColorSupport:
         # Float32 has ~7 decimal digits of precision
         np.testing.assert_array_almost_equal(stored_colors, colors, decimal=5)
 
-    def test_negative_color_rejection(self, tmp_path):
+    def test_negative_color_rejection(self, tmp_path) -> None:
         """Test that negative colors are properly rejected."""
         with LuxarZarrCompiler(tmp_path / "negative.zarr") as compiler:
             compiler.create_scene()
@@ -166,7 +166,7 @@ class TestHDRColorSupport:
             with pytest.raises(ValidationError, match="Colors cannot be negative"):
                 compiler.write_points("negative_colors", positions, colors=colors)
 
-    def test_color_channel_count(self, tmp_path):
+    def test_color_channel_count(self, tmp_path) -> None:
         """Test that only RGB (3 channels) is accepted."""
         with LuxarZarrCompiler(tmp_path / "channels.zarr") as compiler:
             compiler.create_scene()
@@ -185,7 +185,7 @@ class TestHDRColorSupport:
             with pytest.raises(ValidationError, match="must have 3 channels"):
                 compiler.write_points("gray", positions, colors=gray_colors)
 
-    def test_no_colors_allowed(self, tmp_path):
+    def test_no_colors_allowed(self, tmp_path) -> None:
         """Test that points without colors are allowed."""
         with LuxarZarrCompiler(tmp_path / "no_colors.zarr") as compiler:
             scene = compiler.create_scene()

@@ -362,7 +362,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
     return luxar_zarr_path
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     aprint("=" * 70)
     aprint("GAIA DR3 MILKY WAY - 3 MILLION REAL STARS")

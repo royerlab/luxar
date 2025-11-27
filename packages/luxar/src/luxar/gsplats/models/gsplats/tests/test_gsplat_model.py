@@ -92,7 +92,7 @@ def simple_3d_setup():
 class TestGaussianSplatModelInitialization:
     """Test model initialization and parameter setup."""
 
-    def test_model_creation_2d(self, simple_2d_setup):
+    def test_model_creation_2d(self, simple_2d_setup) -> None:
         """Test basic model creation in 2D."""
         setup = simple_2d_setup
 
@@ -108,7 +108,7 @@ class TestGaussianSplatModelInitialization:
         assert model.raw_L_diag.shape == (3, 2)  # 3 splats, 2D diagonal
         assert model.raw_a.shape == (3,)  # 3 amplitudes
 
-    def test_model_creation_3d(self, simple_3d_setup):
+    def test_model_creation_3d(self, simple_3d_setup) -> None:
         """Test basic model creation in 3D."""
         setup = simple_3d_setup
 
@@ -168,7 +168,7 @@ class TestGaussianSplatModelInitialization:
         assert model.raw_L_diag.shape == (1, 1)
         assert model.L_off.shape == (1, 0)  # No off-diagonals in 1D
 
-    def test_device_placement(self, simple_2d_setup):
+    def test_device_placement(self, simple_2d_setup) -> None:
         """Test model creation on different devices."""
         setup = simple_2d_setup
 
@@ -213,7 +213,7 @@ class TestGaussianSplatModelInitialization:
 class TestParameterRetrieval:
     """Test current parameter retrieval and transformations."""
 
-    def test_current_params_2d(self, simple_2d_setup):
+    def test_current_params_2d(self, simple_2d_setup) -> None:
         """Test parameter retrieval in 2D."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
@@ -247,7 +247,7 @@ class TestParameterRetrieval:
         amps_np = amps.detach().cpu().numpy()
         assert np.all(amps_np >= 0)
 
-    def test_current_params_bounds_enforcement(self, simple_2d_setup):
+    def test_current_params_bounds_enforcement(self, simple_2d_setup) -> None:
         """Test that parameters respect bounds."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
@@ -262,7 +262,7 @@ class TestParameterRetrieval:
                 if setup["sigma_max_diag"] is not None:
                     assert L_np[i, j, j] <= setup["sigma_max_diag"][j]
 
-    def test_sigma_diag_calculation(self, simple_2d_setup):
+    def test_sigma_diag_calculation(self, simple_2d_setup) -> None:
         """Test diagonal covariance calculation."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
@@ -283,7 +283,7 @@ class TestParameterRetrieval:
         sigma_actual = sigma_diag_batch.detach().cpu().numpy()
         np.testing.assert_allclose(sigma_actual, sigma_expected, rtol=1e-5)
 
-    def test_cholesky_reconstruction(self, simple_2d_setup):
+    def test_cholesky_reconstruction(self, simple_2d_setup) -> None:
         """Test Cholesky factor reconstruction from parameters."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
@@ -303,7 +303,7 @@ class TestParameterRetrieval:
 class TestRendering:
     """Test rendering functionality."""
 
-    def test_forward_pass_2d(self, simple_2d_setup):
+    def test_forward_pass_2d(self, simple_2d_setup) -> None:
         """Test forward pass (rendering) in 2D."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup, truncate=2.0)
@@ -324,7 +324,7 @@ class TestRendering:
         # Check that max value is reasonable
         assert torch.max(output) <= sum(setup["amps0"]) * 1.1  # Allow some margin
 
-    def test_forward_pass_3d(self, simple_3d_setup):
+    def test_forward_pass_3d(self, simple_3d_setup) -> None:
         """Test forward pass in 3D."""
         setup = simple_3d_setup
         model = GaussianSplatModel(**setup, truncate=2.0)
@@ -337,7 +337,7 @@ class TestRendering:
         assert torch.all(output >= 0)
         assert torch.sum(output) > 0
 
-    def test_model_consistency_after_state_copy(self, simple_2d_setup):
+    def test_model_consistency_after_state_copy(self, simple_2d_setup) -> None:
         """Test that models give identical results after state copying."""
         setup = simple_2d_setup
 
@@ -412,7 +412,7 @@ class TestRendering:
 class TestGradientFlow:
     """Test gradient computation and backpropagation."""
 
-    def test_gradient_computation(self, simple_2d_setup):
+    def test_gradient_computation(self, simple_2d_setup) -> None:
         """Test that gradients flow through the model correctly."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)
@@ -442,7 +442,7 @@ class TestGradientFlow:
         )
         assert not torch.allclose(model.raw_a.grad, torch.zeros_like(model.raw_a.grad))
 
-    def test_optimization_step(self, simple_2d_setup):
+    def test_optimization_step(self, simple_2d_setup) -> None:
         """Test that model parameters can be optimized."""
         setup = simple_2d_setup
         model = GaussianSplatModel(**setup)

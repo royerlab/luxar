@@ -12,7 +12,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 class TestDimensionErrorHandling:
     """Test error handling in dimensions module."""
 
-    def test_invalid_range(self):
+    def test_invalid_range(self) -> None:
         """Test invalid dimension ranges."""
         # Min >= max
         with pytest.raises(ValueError, match="min must be less than max"):
@@ -22,7 +22,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="Range must be a tuple"):
             Dimension("x", range=(1, 2, 3))
 
-    def test_invalid_step(self):
+    def test_invalid_step(self) -> None:
         """Test invalid step sizes."""
         with pytest.raises(ValueError, match="Step size must be positive"):
             Dimension("x", step=-1)
@@ -30,7 +30,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="Step size must be positive"):
             Dimension("x", step=0)
 
-    def test_invalid_scale(self):
+    def test_invalid_scale(self) -> None:
         """Test invalid scale values."""
         with pytest.raises(ValueError, match="Scale must be positive"):
             Dimension("x", scale=0)
@@ -38,12 +38,12 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="Scale must be positive"):
             Dimension("x", scale=-2)
 
-    def test_duplicate_dimension_names(self):
+    def test_duplicate_dimension_names(self) -> None:
         """Test that duplicate dimension names are rejected."""
         with pytest.raises(ValueError, match="must be unique"):
             Dimensions([Dimension("x"), Dimension("y"), Dimension("x")])  # Duplicate
 
-    def test_too_many_displayed_dimensions(self):
+    def test_too_many_displayed_dimensions(self) -> None:
         """Test that only 3 dimensions can be displayed."""
         with pytest.raises(ValueError, match="Maximum 3 dimensions"):
             Dimensions(
@@ -55,12 +55,12 @@ class TestDimensionErrorHandling:
                 ]
             )
 
-    def test_no_displayed_dimensions(self):
+    def test_no_displayed_dimensions(self) -> None:
         """Test that at least one dimension must be displayed."""
         with pytest.raises(ValueError, match="At least one dimension"):
             Dimensions([Dimension("x", display=False), Dimension("y", display=False)])
 
-    def test_get_nonexistent_dimension(self):
+    def test_get_nonexistent_dimension(self) -> None:
         """Test accessing non-existent dimensions."""
         dims = Dimensions([Dimension("x"), Dimension("y")])
 
@@ -71,7 +71,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="not found"):
             dims.get_index("z")
 
-    def test_invalid_positions_shape(self):
+    def test_invalid_positions_shape(self) -> None:
         """Test position validation with wrong shapes."""
         dims = Dimensions([Dimension("x"), Dimension("y")])
 
@@ -83,7 +83,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="must be a 2D array"):
             dims.validate_positions(np.zeros((10, 2, 3)))
 
-    def test_position_dimension_mismatch(self):
+    def test_position_dimension_mismatch(self) -> None:
         """Test positions with wrong number of dimensions."""
         dims = Dimensions([Dimension("x"), Dimension("y")])
 
@@ -92,7 +92,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="has 3 dimensions.*has 2 dimensions"):
             dims.validate_positions(positions)
 
-    def test_positions_outside_range(self):
+    def test_positions_outside_range(self) -> None:
         """Test positions outside defined ranges."""
         dims = Dimensions(
             [Dimension("x", range=(-10, 10)), Dimension("y", range=(-5, 5))]
@@ -108,7 +108,7 @@ class TestDimensionErrorHandling:
         with pytest.raises(ValueError, match="outside range"):
             dims.validate_positions(positions)
 
-    def test_from_positions_invalid_input(self):
+    def test_from_positions_invalid_input(self) -> None:
         """Test from_positions with invalid inputs."""
         # Not a 2D array
         with pytest.raises(ValueError, match="must be 2D array"):
@@ -123,7 +123,7 @@ class TestDimensionErrorHandling:
 class TestSceneErrorHandling:
     """Test error handling in Scene class."""
 
-    def test_add_points_invalid_positions(self):
+    def test_add_points_invalid_positions(self) -> None:
         """Test adding points with invalid position arrays."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
@@ -141,7 +141,7 @@ class TestSceneErrorHandling:
                 with pytest.raises(ValueError, match="Positions must have shape"):
                     scene.add_points("bad", np.zeros((10, 10, 3)))
 
-    def test_add_points_dimension_validation(self):
+    def test_add_points_dimension_validation(self) -> None:
         """Test that we can write points of any dimension without validation.
 
         The new API intentionally does not validate dimensions at write time,
@@ -175,7 +175,7 @@ class TestSceneErrorHandling:
             assert "3d_points" in store
             assert "out_of_range" in store
 
-    def test_scene_initialization_errors(self):
+    def test_scene_initialization_errors(self) -> None:
         """Test scene initialization error cases."""
         # Invalid units in Dimensions
         from luxar.typing_utils.enums import PhysicalUnit
@@ -191,7 +191,7 @@ class TestSceneErrorHandling:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    def test_empty_dimensions(self):
+    def test_empty_dimensions(self) -> None:
         """Test empty dimension list."""
         # Empty dimensions are actually allowed
         dims = Dimensions([])
@@ -199,14 +199,14 @@ class TestEdgeCases:
         assert dims.names == []
         assert dims.displayed == []
 
-    def test_single_dimension(self):
+    def test_single_dimension(self) -> None:
         """Test single dimension edge case."""
         dims = Dimensions([Dimension("x")])
         assert dims.ndim == 1
         assert dims.displayed == [0]
         assert dims.non_displayed == []
 
-    def test_large_dimension_count(self):
+    def test_large_dimension_count(self) -> None:
         """Test handling of many dimensions."""
         # Create 20 dimensions
         dims_list = []
@@ -219,7 +219,7 @@ class TestEdgeCases:
         assert len(dims.displayed) == 3
         assert len(dims.non_displayed) == 17
 
-    def test_extreme_values(self):
+    def test_extreme_values(self) -> None:
         """Test extreme parameter values."""
         # Very large range
         dim = Dimension("x", range=(-1e10, 1e10))
@@ -233,7 +233,7 @@ class TestEdgeCases:
         dim = Dimension("x", scale=1e6)
         assert dim.scale == 1e6
 
-    def test_unicode_dimension_names(self):
+    def test_unicode_dimension_names(self) -> None:
         """Test Unicode characters in dimension names."""
         dims = Dimensions(
             [
@@ -245,7 +245,7 @@ class TestEdgeCases:
         assert dims.get_dimension("θ") is not None
         assert dims.get_index("λ") == 1
 
-    def test_concurrent_scene_access(self):
+    def test_concurrent_scene_access(self) -> None:
         """Test that new compiler overwrites existing data (mode='w' behavior)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -277,7 +277,7 @@ class TestEdgeCases:
 class TestRecoveryStrategies:
     """Test graceful error recovery."""
 
-    def test_partial_scene_recovery(self):
+    def test_partial_scene_recovery(self) -> None:
         """Test that validation errors don't corrupt the scene."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -308,7 +308,7 @@ class TestRecoveryStrategies:
             assert "also_valid" in store
             assert "invalid" not in store
 
-    def test_dimension_inference_fallback(self):
+    def test_dimension_inference_fallback(self) -> None:
         """Test that scene dimensions are optional and points of any dimension work."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"

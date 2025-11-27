@@ -14,7 +14,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler, StreamingPoints, tra
 class TestCompilerIntegration:
     """Test the LuxarZarrCompiler progressive writing API integration."""
 
-    def test_simple_scene_creation(self, tmp_path):
+    def test_simple_scene_creation(self, tmp_path) -> None:
         """Test basic scene creation with new API."""
         output_path = tmp_path / "test.zarr"
 
@@ -34,7 +34,7 @@ class TestCompilerIntegration:
         assert store["points1/positions"].shape == (1000, 3)
         assert store["points1/colors"].shape == (1000, 3)
 
-    def test_hierarchical_scene_with_transforms(self, tmp_path):
+    def test_hierarchical_scene_with_transforms(self, tmp_path) -> None:
         """Test building hierarchical scenes with transforms."""
         output_path = tmp_path / "test.zarr"
 
@@ -62,7 +62,7 @@ class TestCompilerIntegration:
         assert "transform" in store["Group1"].attrs
         assert "transform" in store["Group1/Group2"].attrs
 
-    def test_scene_with_dimensions(self, tmp_path):
+    def test_scene_with_dimensions(self, tmp_path) -> None:
         """Test scene with dimension specifications."""
         output_path = tmp_path / "test.zarr"
 
@@ -91,7 +91,7 @@ class TestCompilerIntegration:
         assert len(stored_dims["dimensions"]) == 5
         assert stored_dims["dimensions"][3]["name"] == "time"
 
-    def test_streaming_points_integration(self, tmp_path):
+    def test_streaming_points_integration(self, tmp_path) -> None:
         """Test StreamingPoints for huge datasets."""
         output_path = tmp_path / "test.zarr"
 
@@ -122,7 +122,7 @@ class TestCompilerIntegration:
         assert store["huge_cloud/colors"].shape == (5000, 3)
         assert store["huge_cloud"].attrs["streaming"] is True
 
-    def test_hdr_colors_and_attributes(self, tmp_path):
+    def test_hdr_colors_and_attributes(self, tmp_path) -> None:
         """Test HDR colors and rendering attributes."""
         output_path = tmp_path / "test.zarr"
 
@@ -155,7 +155,7 @@ class TestCompilerIntegration:
 
     # Legacy API compatibility test removed - we no longer support the old API
 
-    def test_memory_efficiency(self, tmp_path):
+    def test_memory_efficiency(self, tmp_path) -> None:
         """Test that large data doesn't accumulate in memory."""
         output_path = tmp_path / "test.zarr"
 
@@ -183,7 +183,7 @@ class TestCompilerIntegration:
             assert f"cloud_{i}" in store
             assert store[f"cloud_{i}/positions"].shape == (1_000_000, 3)
 
-    def test_error_handling_in_context(self, tmp_path):
+    def test_error_handling_in_context(self, tmp_path) -> None:
         """Test error handling with context manager."""
         output_path = tmp_path / "test.zarr"
 
@@ -199,7 +199,7 @@ class TestCompilerIntegration:
         # Store should still be finalized (though incomplete)
         assert output_path.exists()
 
-    def test_streaming_from_generator(self, tmp_path):
+    def test_streaming_from_generator(self, tmp_path) -> None:
         """Test streaming from a data generator."""
         output_path = tmp_path / "test.zarr"
 

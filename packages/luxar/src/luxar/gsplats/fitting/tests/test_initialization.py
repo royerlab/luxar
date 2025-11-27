@@ -68,7 +68,7 @@ def basic_preprocessed_data(basic_config):
     )
 
 
-def test_initialize_optimization_normal(basic_config, basic_preprocessed_data):
+def test_initialize_optimization_normal(basic_config, basic_preprocessed_data) -> None:
     """Test normal initialization with valid config."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
@@ -81,7 +81,7 @@ def test_initialize_optimization_normal(basic_config, basic_preprocessed_data):
     assert components.model.n_splats() == basic_preprocessed_data.N
 
 
-def test_initialize_optimization_zero_candidates(basic_config):
+def test_initialize_optimization_zero_candidates(basic_config) -> None:
     """Test edge case: N=0 returns None components."""
     # Create preprocessed data with zero candidates
     V_normalized = basic_config.V / (basic_config.V.max() + 1e-12)
@@ -105,7 +105,7 @@ def test_initialize_optimization_zero_candidates(basic_config):
     assert components.coordinator is None
 
 
-def test_model_initialization_parameters(basic_config, basic_preprocessed_data):
+def test_model_initialization_parameters(basic_config, basic_preprocessed_data) -> None:
     """Test that model gets correct initialization parameters."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
@@ -117,7 +117,7 @@ def test_model_initialization_parameters(basic_config, basic_preprocessed_data):
     assert model.truncate == basic_config.truncate
 
 
-def test_optimizer_setup(basic_config, basic_preprocessed_data):
+def test_optimizer_setup(basic_config, basic_preprocessed_data) -> None:
     """Test that per-splat optimizer is created correctly."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
@@ -131,7 +131,7 @@ def test_optimizer_setup(basic_config, basic_preprocessed_data):
     assert hasattr(components.optimizer, "get_effective_learning_rates")
 
 
-def test_amplitude_extraction(basic_config, basic_preprocessed_data):
+def test_amplitude_extraction(basic_config, basic_preprocessed_data) -> None:
     """Test that amplitudes are extracted from seed locations."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
@@ -145,7 +145,7 @@ def test_amplitude_extraction(basic_config, basic_preprocessed_data):
     assert len(amps) == basic_preprocessed_data.N
 
 
-def test_sigma_initialization(basic_config, basic_preprocessed_data):
+def test_sigma_initialization(basic_config, basic_preprocessed_data) -> None:
     """Test that L0 diagonal is initialized with init_sigma_vox."""
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
@@ -161,7 +161,7 @@ def test_sigma_initialization(basic_config, basic_preprocessed_data):
         assert np.all(diag > 0)
 
 
-def test_initialization_3d(basic_config):
+def test_initialization_3d(basic_config) -> None:
     """Test initialization works for 3D data."""
     # Create 3D config and data
     V_3d = np.random.rand(16, 16, 16).astype(np.float32) * 0.5 + 0.5
@@ -218,7 +218,7 @@ def test_initialization_3d(basic_config):
     assert components.model.n_splats() == N
 
 
-def test_initialization_different_devices():
+def test_initialization_different_devices() -> None:
     """Test initialization on different devices if available."""
     devices = ["cpu"]
     if torch.cuda.is_available():

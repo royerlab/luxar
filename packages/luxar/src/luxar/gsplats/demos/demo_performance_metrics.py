@@ -57,7 +57,7 @@ from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_num
 Arbol.max_depth = 3
 
 
-def main():
+def main() -> None:
     """Run performance demo with visual output."""
 
     parser = argparse.ArgumentParser(

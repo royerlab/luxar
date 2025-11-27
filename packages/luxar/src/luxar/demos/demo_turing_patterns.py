@@ -269,7 +269,7 @@ def generate_turing_patterns(
     return len(positions)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse arguments
     grid_size = 256  # 256x256 grid

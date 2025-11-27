@@ -13,7 +13,7 @@ from luxar import Dimension, Dimensions
 class TestSpatialDimensions:
     """Test spatial flag functionality in Dimension and Dimensions classes."""
 
-    def test_spatial_flag_auto_determination(self):
+    def test_spatial_flag_auto_determination(self) -> None:
         """Test automatic spatial flag determination based on dimension properties."""
         # Displayed dimension should be spatial
         dim1 = Dimension("x", display=True)
@@ -31,7 +31,7 @@ class TestSpatialDimensions:
         dim4 = Dimension("depth", display=False, spatial=True)
         assert dim4.spatial is True
 
-    def test_displayed_dimensions_always_spatial(self):
+    def test_displayed_dimensions_always_spatial(self) -> None:
         """Test that displayed dimensions are always spatial by default."""
         # Displayed dimensions auto-determine to spatial
         dim_y = Dimension("y", display=True)
@@ -44,7 +44,7 @@ class TestSpatialDimensions:
         dim_x = Dimension("x", display=True, spatial=False)
         assert dim_x.spatial is False  # Explicit override is respected
 
-    def test_discrete_spatial_validation(self):
+    def test_discrete_spatial_validation(self) -> None:
         """Test that discrete dimensions cannot be forced spatial unless displayed."""
         # This should raise ValueError - discrete non-displayed can't be spatial
         with pytest.raises(ValueError, match="cannot be both discrete and spatial"):
@@ -55,7 +55,7 @@ class TestSpatialDimensions:
         assert dim.spatial is True
         assert dim.discrete is True
 
-    def test_non_spatial_auto_correction_to_discrete(self):
+    def test_non_spatial_auto_correction_to_discrete(self) -> None:
         """Test that non-spatial, non-displayed dimensions are auto-corrected to discrete."""
         import warnings
 
@@ -80,7 +80,7 @@ class TestSpatialDimensions:
             assert dim2.discrete is True
             assert len(w) == 0  # No warning
 
-    def test_dimensions_spatial_extend_dims_property(self):
+    def test_dimensions_spatial_extend_dims_property(self) -> None:
         """Test the spatial_extend_dims property returns correct flags."""
         dims = Dimensions(
             [
@@ -100,7 +100,7 @@ class TestSpatialDimensions:
         expected = [True, True, True, True, False, False]
         assert dims.spatial_extend_dims == expected
 
-    def test_dimension_serialization_with_spatial_flag(self):
+    def test_dimension_serialization_with_spatial_flag(self) -> None:
         """Test that spatial flag is preserved through serialization."""
         # Create dimension with explicit spatial flag
         dim = Dimension("depth", display=False, spatial=True, unit="μm")
@@ -115,7 +115,7 @@ class TestSpatialDimensions:
         assert dim_restored.display is False
         assert dim_restored.unit == "μm"
 
-    def test_dimensions_serialization_with_spatial_flags(self):
+    def test_dimensions_serialization_with_spatial_flags(self) -> None:
         """Test that Dimensions preserves spatial flags through serialization."""
         dims = Dimensions(
             [
@@ -135,7 +135,7 @@ class TestSpatialDimensions:
         # Check spatial flags are preserved
         assert dims_restored.spatial_extend_dims == [True, True, True, False]
 
-    def test_mixed_spatial_non_spatial_dimensions(self):
+    def test_mixed_spatial_non_spatial_dimensions(self) -> None:
         """Test complex scenarios with mixed spatial and non-spatial dimensions."""
         # Microscopy example: xyz spatial, time discrete, depth spatial, channel discrete
         dims = Dimensions(
@@ -155,7 +155,7 @@ class TestSpatialDimensions:
         assert dims.displayed == [0, 1, 2]
         assert dims.non_displayed == [3, 4, 5]
 
-    def test_edge_cases(self):
+    def test_edge_cases(self) -> None:
         """Test edge cases for spatial dimension handling."""
         # All dimensions displayed (common 3D case)
         dims_3d = Dimensions(
@@ -181,7 +181,7 @@ class TestSpatialDimensions:
         )
         assert dims_categorical.spatial_extend_dims == [True, False, False]
 
-    def test_spatial_flag_none_handling(self):
+    def test_spatial_flag_none_handling(self) -> None:
         """Test that None spatial flag is properly auto-determined."""
         # Explicitly set spatial=None
         dim1 = Dimension("x", display=True, spatial=None)
@@ -197,7 +197,7 @@ class TestSpatialDimensions:
 class TestSpatialIndexIntegration:
     """Test integration of spatial dimensions with spatial index building."""
 
-    def test_spatial_index_with_spatial_extend_dims(self):
+    def test_spatial_index_with_spatial_extend_dims(self) -> None:
         """Test that spatial index builder accepts and uses spatial_extend_dims."""
         from luxar.io.point_spatial_index import build_spatial_index
 
@@ -220,7 +220,7 @@ class TestSpatialIndexIntegration:
         assert "max_radius" in index
         assert index["max_radius"] == 0.5
 
-    def test_spatial_index_cell_size_adjustment(self):
+    def test_spatial_index_cell_size_adjustment(self) -> None:
         """Test that spatial index adjusts cell size for spatial dimensions."""
         from luxar.io.point_spatial_index import build_spatial_index
 
@@ -251,7 +251,7 @@ class TestSpatialIndexIntegration:
         # Note: This might not always be exactly 4.0 due to epsilon adjustments
         assert cell_size[0] >= 3.9  # Allow small tolerance
 
-    def test_spatial_index_handles_no_spatial_dims(self):
+    def test_spatial_index_handles_no_spatial_dims(self) -> None:
         """Test spatial index when no dimensions are marked as spatial."""
         from luxar.io.point_spatial_index import build_spatial_index
 
@@ -274,7 +274,7 @@ class TestSpatialIndexIntegration:
 class TestCompilerIntegration:
     """Test that the compiler correctly extracts and stores spatial metadata."""
 
-    def test_compiler_stores_spatial_metadata(self, tmp_path):
+    def test_compiler_stores_spatial_metadata(self, tmp_path) -> None:
         """Test that LuxarZarrCompiler stores spatial_extend_dims in zarr attributes."""
         import zarr
 

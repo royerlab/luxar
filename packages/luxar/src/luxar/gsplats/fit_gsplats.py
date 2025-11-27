@@ -44,7 +44,7 @@ class GaussianSplatFitter:
         device: Optional[str] = None,
         enable_dynamic_ops: bool = False,
         dynamic_config: Optional[DynamicOpsConfig] = None,
-    ):
+    ) -> None:
         # Auto-detect best performing device: CUDA → CPU
         # Note: MPS is supported but currently slower than CPU for typical workloads
         if device is not None:

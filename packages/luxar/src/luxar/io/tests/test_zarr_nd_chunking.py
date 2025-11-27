@@ -9,7 +9,7 @@ from luxar import LuxarZarrCompiler
 class TestZarrNDChunking:
     """Test suite for nD zarr data chunking and loading."""
 
-    def test_4d_data_chunking_optimization(self, tmp_path):
+    def test_4d_data_chunking_optimization(self, tmp_path) -> None:
         """Test that 4D data is chunked appropriately for temporal slicing."""
         store = tmp_path / "4d_chunked.zarr"
 
@@ -53,7 +53,7 @@ class TestZarrNDChunking:
         loaded_positions = positions_array[:]
         np.testing.assert_array_almost_equal(loaded_positions, positions)
 
-    def test_nd_generic_handling(self, tmp_path):
+    def test_nd_generic_handling(self, tmp_path) -> None:
         """Test that the system handles arbitrary nD data generically."""
         store = tmp_path / "nd_generic.zarr"
 
@@ -74,7 +74,7 @@ class TestZarrNDChunking:
         assert loaded_positions.shape == (n_points, 5)
         np.testing.assert_array_almost_equal(loaded_positions, positions_5d)
 
-    def test_chunk_boundary_alignment(self, tmp_path):
+    def test_chunk_boundary_alignment(self, tmp_path) -> None:
         """Test that chunking aligns well with typical access patterns."""
         store = tmp_path / "chunk_aligned.zarr"
 
@@ -98,7 +98,7 @@ class TestZarrNDChunking:
         last_chunk_data = positions_array[last_chunk_start:]
         assert len(last_chunk_data) == n_points - last_chunk_start
 
-    def test_memory_efficient_slicing(self, tmp_path):
+    def test_memory_efficient_slicing(self, tmp_path) -> None:
         """Test that slicing large datasets is memory efficient."""
         store = tmp_path / "memory_efficient.zarr"
 
@@ -134,7 +134,7 @@ class TestZarrNDChunking:
         assert single_slice.shape == (points_per_slice, 4)
         assert np.all(single_slice[:, 3] == 50)  # All points have slice index 50
 
-    def test_no_hardcoded_dimensions(self, tmp_path):
+    def test_no_hardcoded_dimensions(self, tmp_path) -> None:
         """Ensure the system doesn't assume specific dimension meanings."""
         store = tmp_path / "no_hardcoded.zarr"
 
@@ -157,7 +157,7 @@ class TestZarrNDChunking:
             assert loaded.shape == (n_points, n_dims)
             np.testing.assert_array_almost_equal(loaded, positions)
 
-    def test_optimal_chunk_cache_interaction(self, tmp_path):
+    def test_optimal_chunk_cache_interaction(self, tmp_path) -> None:
         """Test that chunk sizes work well with typical cache sizes."""
         store = tmp_path / "cache_optimized.zarr"
 
@@ -184,7 +184,7 @@ class TestZarrNDChunking:
         assert chunk_shape[0] >= 1000  # At least 1000 points per chunk
         assert chunk_shape[0] <= 1_000_000  # At most 1M points per chunk
 
-    def test_sparse_data_efficiency(self, tmp_path):
+    def test_sparse_data_efficiency(self, tmp_path) -> None:
         """Test that sparse nD data is handled efficiently."""
         store = tmp_path / "sparse.zarr"
 

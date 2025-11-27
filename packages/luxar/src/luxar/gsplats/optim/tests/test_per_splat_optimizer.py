@@ -303,7 +303,7 @@ class TestEdgeCases:
         lrs = optimizer.get_effective_learning_rates()
         assert lrs[0] == 1e-8  # Should match what we set
 
-    def test_gradient_dilution_compensation(self):
+    def test_gradient_dilution_compensation(self) -> None:
         """Test gradient dilution compensation for different dimensions."""
         # 2D model
         model_2d = TestPerSplatAdam.create_test_model(3)
@@ -332,7 +332,7 @@ class TestEdgeCases:
         expected_3d = 0.01 * 1.8
         assert abs(optimizer_3d.effective_lr - expected_3d) < 1e-6
 
-    def test_amsgrad_max_tracking(self):
+    def test_amsgrad_max_tracking(self) -> None:
         """Test that AMSGrad properly tracks max_exp_avg_sq."""
         model = TestPerSplatAdam.create_test_model(2)
         optimizer = PerSplatAdam(model, lr=0.02, amsgrad=True)

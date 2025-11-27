@@ -485,7 +485,7 @@ def generate_4d_fractal_dataset(
     return len(positions_5d)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse arguments
     grid_size = 100  # 100^4 = 100M per fractal, 1M per 3D slice

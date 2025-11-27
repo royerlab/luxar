@@ -84,7 +84,7 @@ def simple_candidates_3d():
 class TestFitGaussianSplatsBasic:
     """Test basic functionality of fit_gaussian_splats."""
 
-    def test_basic_fitting_2d(self, simple_2d_blob, simple_candidates_2d):
+    def test_basic_fitting_2d(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test basic splat fitting in 2D."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -117,7 +117,7 @@ class TestFitGaussianSplatsBasic:
         # Check that amplitudes are non-negative
         assert np.all(result.amplitudes >= 0)
 
-    def test_basic_fitting_3d(self, simple_3d_blob, simple_candidates_3d):
+    def test_basic_fitting_3d(self, simple_3d_blob, simple_candidates_3d) -> None:
         """Test basic splat fitting in 3D."""
         result = fit_gaussian_splats(
             V=simple_3d_blob,
@@ -143,7 +143,7 @@ class TestFitGaussianSplatsBasic:
         assert np.all(result.amplitudes >= 0)
         assert np.all(np.isfinite(result.centers))
 
-    def test_empty_candidates(self, simple_2d_blob):
+    def test_empty_candidates(self, simple_2d_blob) -> None:
         """Test fitting with no candidate centers."""
         empty_candidates = np.zeros((0, 2), dtype=np.float32)
 
@@ -164,7 +164,7 @@ class TestFitGaussianSplatsBasic:
         assert result.sharpnesses.shape == (0,)
         assert result.amplitudes.shape == (0,)
 
-    def test_single_candidate(self, simple_2d_blob):
+    def test_single_candidate(self, simple_2d_blob) -> None:
         """Test fitting with single candidate."""
         single_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
 
@@ -187,7 +187,7 @@ class TestFitGaussianSplatsBasic:
 class TestInputValidation:
     """Test input validation in fit_gaussian_splats."""
 
-    def test_input_validation_basic(self, simple_2d_blob, simple_candidates_2d):
+    def test_input_validation_basic(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test basic input validation."""
 
         # Test empty image
@@ -208,7 +208,7 @@ class TestInputValidation:
         with pytest.raises(ValueError, match="2D array"):
             fit_gaussian_splats(simple_2d_blob, bad_candidates, verbose=False)
 
-    def test_parameter_validation(self, simple_2d_blob, simple_candidates_2d):
+    def test_parameter_validation(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test parameter validation."""
 
         # Test negative init_sigma_vox
@@ -247,7 +247,9 @@ class TestInputValidation:
                 simple_2d_blob, simple_candidates_2d, truncate=-1.0, verbose=False
             )
 
-    def test_sigma_constraints_validation(self, simple_2d_blob, simple_candidates_2d):
+    def test_sigma_constraints_validation(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
         """Test sigma constraint validation."""
 
         # Test wrong dimension for sigma_min_diag
@@ -300,7 +302,7 @@ class TestInputValidation:
 class TestUniformImageHandling:
     """Test handling of uniform images (division by zero protection)."""
 
-    def test_uniform_image(self, simple_candidates_2d):
+    def test_uniform_image(self, simple_candidates_2d) -> None:
         """Test fitting on completely uniform image."""
         uniform_image = np.ones((21, 21), dtype=np.float32) * 5.0
 
@@ -322,7 +324,7 @@ class TestUniformImageHandling:
         assert np.all(np.isfinite(result.sharpnesses))
         assert np.all(np.isfinite(result.amplitudes))
 
-    def test_nearly_uniform_image(self, simple_candidates_2d):
+    def test_nearly_uniform_image(self, simple_candidates_2d) -> None:
         """Test fitting on nearly uniform image."""
         nearly_uniform = np.ones((21, 21), dtype=np.float32) * 5.0
         nearly_uniform[10, 10] = 5.0001  # Tiny variation
@@ -345,7 +347,7 @@ class TestUniformImageHandling:
 class TestLossTypes:
     """Test different loss types."""
 
-    def test_mse_loss(self, simple_2d_blob, simple_candidates_2d):
+    def test_mse_loss(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test MSE loss function."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -363,7 +365,7 @@ class TestLossTypes:
         assert result.amplitudes.shape == (3,)
         assert np.all(result.amplitudes >= 0)
 
-    def test_poisson_loss(self, simple_2d_blob, simple_candidates_2d):
+    def test_poisson_loss(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test Poisson loss function."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -381,7 +383,7 @@ class TestLossTypes:
         assert result.amplitudes.shape == (3,)
         assert np.all(result.amplitudes >= 0)
 
-    def test_l1_loss(self, simple_2d_blob, simple_candidates_2d):
+    def test_l1_loss(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test L1 loss function."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -403,7 +405,7 @@ class TestLossTypes:
 class TestRegularization:
     """Test L1 regularization effects."""
 
-    def test_l1_regularization(self, multi_blob_2d, simple_candidates_2d):
+    def test_l1_regularization(self, multi_blob_2d, simple_candidates_2d) -> None:
         """Test that L1 regularization affects results."""
 
         # Fit without regularization
@@ -438,7 +440,7 @@ class TestRegularization:
         assert np.all(result_reg.amplitudes >= 0)
         assert np.all(result_no_reg.amplitudes >= 0)
 
-    def test_l1_diag_regularization(self, multi_blob_2d, simple_candidates_2d):
+    def test_l1_diag_regularization(self, multi_blob_2d, simple_candidates_2d) -> None:
         """Test that L1 diagonal regularization affects results."""
         # Fit without diagonal regularization
         result_no_reg = fit_gaussian_splats(
@@ -486,7 +488,7 @@ class TestRegularization:
 class TestConstraints:
     """Test sigma constraints."""
 
-    def test_sigma_min_constraint(self, simple_2d_blob, simple_candidates_2d):
+    def test_sigma_min_constraint(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test that minimum sigma constraint is enforced."""
         sigma_min = [0.8, 1.2]  # Different mins for each axis
 
@@ -513,7 +515,7 @@ class TestConstraints:
             )  # Small tolerance for numerical precision
             assert L_matrices[i, 1, 1] >= sigma_min[1] - 1e-6
 
-    def test_sigma_max_constraint(self, simple_2d_blob, simple_candidates_2d):
+    def test_sigma_max_constraint(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test that maximum sigma constraint is enforced."""
         sigma_min = [0.3, 0.3]
         sigma_max = [1.5, 2.0]  # Different maxes for each axis
@@ -543,7 +545,7 @@ class TestConstraints:
 class TestDeviceSupport:
     """Test device support (CPU/CUDA)."""
 
-    def test_cpu_device(self, simple_2d_blob, simple_candidates_2d):
+    def test_cpu_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test explicit CPU device."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -561,7 +563,7 @@ class TestDeviceSupport:
         assert result.amplitudes.shape == (3,)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_device(self, simple_2d_blob, simple_candidates_2d):
+    def test_cuda_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test CUDA device if available."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -582,7 +584,9 @@ class TestDeviceSupport:
 class TestConvergence:
     """Test optimization convergence properties."""
 
-    def test_auto_convergence_threshold(self, simple_2d_blob, simple_candidates_2d):
+    def test_auto_convergence_threshold(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
         """Test automatic convergence threshold setting."""
         result = fit_gaussian_splats(
             V=simple_2d_blob,
@@ -747,7 +751,9 @@ class TestConvergence:
         assert len(result.amplitudes) > 0
         assert result.centers.shape[0] == len(result.amplitudes)
 
-    def test_convergence_with_iterations(self, simple_2d_blob, simple_candidates_2d):
+    def test_convergence_with_iterations(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
         """Test that more iterations generally improve convergence."""
 
         # Short optimization
@@ -788,7 +794,9 @@ class TestConvergence:
             result_short.amplitudes, result_long.amplitudes, atol=1e-3
         )
 
-    def test_different_learning_rates(self, simple_2d_blob, simple_candidates_2d):
+    def test_different_learning_rates(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
         """Test that different learning rates produce different results."""
 
         result_low_lr = fit_gaussian_splats(
@@ -834,7 +842,7 @@ class TestConvergence:
 class TestReconstructionQuality:
     """Test reconstruction quality and meaningful results."""
 
-    def test_single_blob_reconstruction(self, simple_2d_blob):
+    def test_single_blob_reconstruction(self, simple_2d_blob) -> None:
         """Test that we can reasonably reconstruct a single blob."""
         # Use candidate near the center where the blob peak should be
         center_candidate = np.array([[10.0, 10.0]], dtype=np.float32)
@@ -858,7 +866,7 @@ class TestReconstructionQuality:
         assert result.amplitudes[0] > 0.3 * expected_peak  # At least 30% of peak
         assert result.amplitudes[0] < 2.0 * expected_peak  # Not unreasonably large
 
-    def test_reconstruction_improves_with_more_splats(self, multi_blob_2d):
+    def test_reconstruction_improves_with_more_splats(self, multi_blob_2d) -> None:
         """Test that using more splats generally improves reconstruction."""
 
         # Fit with few candidates

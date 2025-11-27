@@ -40,7 +40,7 @@ class DataTypeConfig:
         color_dtype: Optional[ColorDTypeStr] = None,
         radius_dtype: Optional[ScalarDTypeStr] = None,
         sharpness_dtype: Optional[ScalarDTypeStr] = None,
-    ):
+    ) -> None:
         """Initialize data type configuration.
 
         Args:

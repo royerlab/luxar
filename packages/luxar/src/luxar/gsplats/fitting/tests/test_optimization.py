@@ -78,7 +78,7 @@ def simple_2d_setup():
     return config, preprocessed_data
 
 
-def test_compute_max_abs_error():
+def test_compute_max_abs_error() -> None:
     """Test max absolute error computation."""
     pred = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     target = torch.tensor([[1.1, 1.8], [3.2, 3.9]])
@@ -89,7 +89,7 @@ def test_compute_max_abs_error():
     assert abs(max_error - 0.2) < 1e-6
 
 
-def test_run_optimization_loop_basic(simple_2d_setup):
+def test_run_optimization_loop_basic(simple_2d_setup) -> None:
     """Test basic optimization loop execution."""
     config, preprocessed_data = simple_2d_setup
 
@@ -112,7 +112,7 @@ def test_run_optimization_loop_basic(simple_2d_setup):
     assert results.end_time > results.start_time
 
 
-def test_convergence_early_stopping(simple_2d_setup):
+def test_convergence_early_stopping(simple_2d_setup) -> None:
     """Test early stopping when convergence criterion is met."""
     config, preprocessed_data = simple_2d_setup
 
@@ -129,7 +129,7 @@ def test_convergence_early_stopping(simple_2d_setup):
     assert results.actual_iters < config.n_iters
 
 
-def test_iteration_limit(simple_2d_setup):
+def test_iteration_limit(simple_2d_setup) -> None:
     """Test that optimization stops at n_iters if not converged."""
     config, preprocessed_data = simple_2d_setup
 
@@ -149,7 +149,7 @@ def test_iteration_limit(simple_2d_setup):
     assert results.actual_iters == config.n_iters
 
 
-def test_best_state_tracking(simple_2d_setup):
+def test_best_state_tracking(simple_2d_setup) -> None:
     """Test that best state is tracked and can differ from final state."""
     config, preprocessed_data = simple_2d_setup
     config.n_iters = 20
@@ -167,7 +167,7 @@ def test_best_state_tracking(simple_2d_setup):
     assert results.best_max_abs_error >= 0
 
 
-def test_gradient_clipping(simple_2d_setup):
+def test_gradient_clipping(simple_2d_setup) -> None:
     """Test that gradient clipping is applied when configured."""
     config, preprocessed_data = simple_2d_setup
     config.gradient_clip = 1.0  # Enable gradient clipping
@@ -182,7 +182,7 @@ def test_gradient_clipping(simple_2d_setup):
     assert results.actual_iters == 10
 
 
-def test_gradient_clipping_none(simple_2d_setup):
+def test_gradient_clipping_none(simple_2d_setup) -> None:
     """Test that no gradient clipping works when set to None."""
     config, preprocessed_data = simple_2d_setup
     config.gradient_clip = None  # Disable gradient clipping
@@ -197,7 +197,7 @@ def test_gradient_clipping_none(simple_2d_setup):
     assert results.actual_iters == 10
 
 
-def test_learning_rate_scheduling(simple_2d_setup):
+def test_learning_rate_scheduling(simple_2d_setup) -> None:
     """Test that LR scheduler is called during optimization."""
     config, preprocessed_data = simple_2d_setup
     config.n_iters = 20
@@ -216,7 +216,7 @@ def test_learning_rate_scheduling(simple_2d_setup):
     assert results.actual_iters > 0
 
 
-def test_movie_recording_enabled(simple_2d_setup):
+def test_movie_recording_enabled(simple_2d_setup) -> None:
     """Test movie frame recording when enabled."""
     config, preprocessed_data = simple_2d_setup
     config.napari_movie = True
@@ -241,7 +241,7 @@ def test_movie_recording_enabled(simple_2d_setup):
     assert len(results.movie_frames["target"]) >= 2
 
 
-def test_movie_recording_disabled(simple_2d_setup):
+def test_movie_recording_disabled(simple_2d_setup) -> None:
     """Test that no movie is recorded when disabled."""
     config, preprocessed_data = simple_2d_setup
     config.napari_movie = False
@@ -256,7 +256,7 @@ def test_movie_recording_disabled(simple_2d_setup):
     assert results.movie_frames is None
 
 
-def test_dynamic_operations_disabled(simple_2d_setup):
+def test_dynamic_operations_disabled(simple_2d_setup) -> None:
     """Test optimization with dynamic operations disabled."""
     config, preprocessed_data = simple_2d_setup
     config.enable_dynamic_ops = False
@@ -274,7 +274,7 @@ def test_dynamic_operations_disabled(simple_2d_setup):
     assert final_n_splats == initial_n_splats
 
 
-def test_dynamic_operations_enabled(simple_2d_setup):
+def test_dynamic_operations_enabled(simple_2d_setup) -> None:
     """Test optimization with dynamic operations enabled."""
     config, preprocessed_data = simple_2d_setup
     config.enable_dynamic_ops = True
@@ -301,7 +301,7 @@ def test_dynamic_operations_enabled(simple_2d_setup):
     assert final_n_splats > 0
 
 
-def test_loss_decreases_over_iterations(simple_2d_setup):
+def test_loss_decreases_over_iterations(simple_2d_setup) -> None:
     """Test that loss generally decreases during optimization."""
     config, preprocessed_data = simple_2d_setup
     config.n_iters = 30
@@ -321,7 +321,7 @@ def test_loss_decreases_over_iterations(simple_2d_setup):
     assert results.best_loss < initial_loss
 
 
-def test_verbose_logging(simple_2d_setup):
+def test_verbose_logging(simple_2d_setup) -> None:
     """Test that verbose logging doesn't cause errors."""
     config, preprocessed_data = simple_2d_setup
     config.verbose = True
@@ -336,7 +336,7 @@ def test_verbose_logging(simple_2d_setup):
     assert results.actual_iters == 10
 
 
-def test_different_loss_types_in_optimization(simple_2d_setup):
+def test_different_loss_types_in_optimization(simple_2d_setup) -> None:
     """Test optimization works with different loss types."""
     config, preprocessed_data = simple_2d_setup
     config.n_iters = 10

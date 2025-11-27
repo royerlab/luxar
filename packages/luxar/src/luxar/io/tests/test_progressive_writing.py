@@ -13,7 +13,7 @@ from luxar.dimensions import Dimensions
 class TestProgressiveWriting:
     """Test the new progressive writing architecture."""
 
-    def test_compiler_context_manager(self):
+    def test_compiler_context_manager(self) -> None:
         """Test LuxarZarrCompiler as context manager."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -37,7 +37,7 @@ class TestProgressiveWriting:
             assert store.attrs["type"] == "scene"
             assert ".zmetadata" in store.store
 
-    def test_progressive_points_writing(self):
+    def test_progressive_points_writing(self) -> None:
         """Test that points are written immediately without keeping in memory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -70,7 +70,7 @@ class TestProgressiveWriting:
                 stored_positions = store["test_points/positions"][:]
                 np.testing.assert_array_almost_equal(stored_positions, positions)
 
-    def test_scene_with_dimensions(self):
+    def test_scene_with_dimensions(self) -> None:
         """Test scene creation with dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -97,7 +97,7 @@ class TestProgressiveWriting:
                 dims_dict = store.attrs["scene_dimensions"]
                 assert len(dims_dict["dimensions"]) == 4
 
-    def test_hierarchical_structure(self):
+    def test_hierarchical_structure(self) -> None:
         """Test creating hierarchical structure with groups."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -119,7 +119,7 @@ class TestProgressiveWriting:
                 assert "group1" in store
                 assert "group1/group2" in store
 
-    def test_no_memory_accumulation(self):
+    def test_no_memory_accumulation(self) -> None:
         """Test that data is not kept in memory after writing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -140,7 +140,7 @@ class TestProgressiveWriting:
                 # Scene should not have the data
                 assert not hasattr(scene, "_positions")
 
-    def test_compiler_without_context_manager(self):
+    def test_compiler_without_context_manager(self) -> None:
         """Test using compiler without context manager."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -159,7 +159,7 @@ class TestProgressiveWriting:
             # Verify store exists
             assert output_path.exists()
 
-    def test_resizable_dataset_creation(self):
+    def test_resizable_dataset_creation(self) -> None:
         """Test creating resizable datasets for streaming."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"

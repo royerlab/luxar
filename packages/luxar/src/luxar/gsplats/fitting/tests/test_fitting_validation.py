@@ -23,7 +23,7 @@ if HAS_TORCH:
 class MockGaussianSplatFitter:
     """Mock fitter for testing validation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.device = torch.device("cpu")
         self.enable_dynamic_ops = True
         self.dynamic_config = DynamicOpsConfig()

@@ -71,7 +71,7 @@ class PerSplatAdam:
         eps: float = 1e-8,
         weight_decay: float = 0.0,
         amsgrad: bool = False,
-    ):
+    ) -> None:
         """
         Initialize per-splat Adam optimizer.
 
@@ -130,7 +130,7 @@ class PerSplatAdam:
         gradient_dilution_factor = calculate_gradient_dilution_factor(d)
         return base_lr * gradient_dilution_factor
 
-    def _initialize_all_splats(self):
+    def _initialize_all_splats(self) -> None:
         """
         Initialize optimizer state for all current splats in the model.
 
@@ -224,11 +224,11 @@ class PerSplatAdam:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize splat {splat_idx}: {e}") from e
 
-    def zero_grad(self):
+    def zero_grad(self) -> None:
         """Clear gradients of all model parameters."""
         self.model.zero_grad()
 
-    def step(self):
+    def step(self) -> bool:
         """
         Perform single optimization step for all splats.
 
@@ -462,7 +462,7 @@ class PerSplatAdam:
         lr,
         bias_correction1,
         bias_correction2,
-    ):
+    ) -> None:
         """
         Core Adam parameter update following PyTorch's implementation.
 
@@ -630,7 +630,7 @@ class PerSplatAdam:
             "amsgrad": self.amsgrad,
         }
 
-    def load_state_dict(self, state_dict: Dict):
+    def load_state_dict(self, state_dict: Dict) -> None:
         """Load optimizer state from serialization."""
         self.splat_states = state_dict["splat_states"]
         self.global_step = state_dict["global_step"]

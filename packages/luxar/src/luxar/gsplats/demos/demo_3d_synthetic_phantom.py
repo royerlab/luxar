@@ -345,7 +345,7 @@ if not NO_NAPARI:
     viewer.camera.angles = (15, 25, 120)  # Good 3D viewing angle
     viewer.camera.zoom = 0.8
 
-    def _set_overlay_text_3d(t_index: int):
+    def _set_overlay_text_3d(t_index: int) -> None:
         """Update text overlay with 3D-specific information."""
         K = int(keep_counts[t_index])
         bits_model = int(model_bits_frames[t_index])
@@ -359,7 +359,7 @@ if not NO_NAPARI:
             f"|  rel L2 err: {rel:.4f}  |  Volume: {volume_size}³ voxels"
         )
 
-    def _update_layers_for_t_3d(t_index: int):
+    def _update_layers_for_t_3d(t_index: int) -> None:
         """Update 3D layers for given time index."""
         # Update wireframe ellipsoids
         wireframe_layer.data = wireframes_frames[t_index]
@@ -374,7 +374,7 @@ if not NO_NAPARI:
     _update_layers_for_t_3d(0)
 
     # Hook slider to updates
-    def _on_step_change_3d(event=None):
+    def _on_step_change_3d(event=None) -> None:
         t = viewer.dims.current_step[0]
         _update_layers_for_t_3d(int(t))
 

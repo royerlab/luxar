@@ -42,7 +42,7 @@ def simple_model():
 class TestModelOptimizerCoordinatorReplaceAll:
     """Test replace_all_splats - complete model replacement."""
 
-    def test_replace_all_splats_basic(self, simple_model):
+    def test_replace_all_splats_basic(self, simple_model) -> None:
         """Test replacing all splats resets optimizer and scheduler state."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer, patience=2)
@@ -89,7 +89,7 @@ class TestModelOptimizerCoordinatorReplaceAll:
         # Verify operation count incremented
         assert coordinator.operation_count == 1
 
-    def test_replace_all_with_custom_lr(self, simple_model):
+    def test_replace_all_with_custom_lr(self, simple_model) -> None:
         """Test replace_all_splats with custom learning rate."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         coordinator = ModelOptimizerCoordinator(simple_model, optimizer, None)
@@ -106,7 +106,7 @@ class TestModelOptimizerCoordinatorReplaceAll:
         # Verify custom LR was applied
         assert optimizer.get_learning_rate(0) == pytest.approx(0.05)
 
-    def test_replace_all_with_exponential_scheduler(self, simple_model):
+    def test_replace_all_with_exponential_scheduler(self, simple_model) -> None:
         """Test replace_all_splats with exponential scheduler."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9)
@@ -131,7 +131,7 @@ class TestModelOptimizerCoordinatorReplaceAll:
         assert 0 in scheduler.splat_ages
         assert 1 in scheduler.splat_ages
 
-    def test_replace_all_maintains_consistency(self, simple_model):
+    def test_replace_all_maintains_consistency(self, simple_model) -> None:
         """Test that replace_all keeps model/optimizer/scheduler in sync."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer)
@@ -161,7 +161,7 @@ class TestModelOptimizerCoordinatorReplaceAll:
 class TestModelOptimizerCoordinatorPrune:
     """Test prune_splats coordination."""
 
-    def test_prune_splats_with_scheduler(self, simple_model):
+    def test_prune_splats_with_scheduler(self, simple_model) -> None:
         """Test pruning synchronizes all components when scheduler present."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer, patience=2)
@@ -181,7 +181,7 @@ class TestModelOptimizerCoordinatorPrune:
         assert len(scheduler.splat_scheduler_states) == 1
         assert coordinator.operation_count == 1
 
-    def test_prune_splats_without_scheduler(self, simple_model):
+    def test_prune_splats_without_scheduler(self, simple_model) -> None:
         """Test pruning works without scheduler."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         coordinator = ModelOptimizerCoordinator(simple_model, optimizer, None)
@@ -192,7 +192,7 @@ class TestModelOptimizerCoordinatorPrune:
         assert n_removed == 1
         assert simple_model.n_splats() == 1
 
-    def test_prune_maintains_operation_count(self, simple_model):
+    def test_prune_maintains_operation_count(self, simple_model) -> None:
         """Test that prune operations increment counter."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         coordinator = ModelOptimizerCoordinator(simple_model, optimizer, None)
@@ -218,7 +218,7 @@ class TestModelOptimizerCoordinatorPrune:
 class TestModelOptimizerCoordinatorGetStatus:
     """Test get_status method provides useful monitoring info."""
 
-    def test_get_status_structure(self, simple_model):
+    def test_get_status_structure(self, simple_model) -> None:
         """Test get_status returns expected structure."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         coordinator = ModelOptimizerCoordinator(simple_model, optimizer, None)
@@ -235,7 +235,7 @@ class TestModelOptimizerCoordinatorGetStatus:
         assert "min" in lr_stats
         assert "max" in lr_stats
 
-    def test_get_status_reflects_operations(self, simple_model):
+    def test_get_status_reflects_operations(self, simple_model) -> None:
         """Test get_status reflects actual operations."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         scheduler = PerSplatReduceLROnPlateau(optimizer, patience=1, factor=0.5)
@@ -264,7 +264,7 @@ class TestModelOptimizerCoordinatorGetStatus:
         assert final_status["model_splats"] == 3
         assert final_status["operation_count"] == 1
 
-    def test_get_status_with_varying_lrs(self, simple_model):
+    def test_get_status_with_varying_lrs(self, simple_model) -> None:
         """Test get_status correctly reports LR statistics."""
         optimizer = PerSplatAdam(simple_model, lr=0.1)
         coordinator = ModelOptimizerCoordinator(simple_model, optimizer, None)
@@ -284,7 +284,7 @@ class TestModelOptimizerCoordinatorGetStatus:
 class TestFactoryFunctionSchedulers:
     """Test factory function creates correct scheduler types."""
 
-    def test_factory_with_exponential_scheduler(self, simple_model):
+    def test_factory_with_exponential_scheduler(self, simple_model) -> None:
         """Test factory creates exponential scheduler correctly."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model,
@@ -307,7 +307,7 @@ class TestFactoryFunctionSchedulers:
 
         assert final_lr == pytest.approx(initial_lr * 0.92)
 
-    def test_factory_with_exponential_no_age_decay(self, simple_model):
+    def test_factory_with_exponential_no_age_decay(self, simple_model) -> None:
         """Test exponential scheduler with age_based_decay=False."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model,
@@ -320,14 +320,14 @@ class TestFactoryFunctionSchedulers:
         assert isinstance(scheduler, PerSplatExponentialLR)
         assert scheduler.age_based_decay is False
 
-    def test_factory_invalid_scheduler_type(self, simple_model):
+    def test_factory_invalid_scheduler_type(self, simple_model) -> None:
         """Test factory raises error for invalid scheduler type."""
         with pytest.raises(ValueError, match="Unknown scheduler_type"):
             create_per_splat_optimizer_setup(
                 simple_model, lr=0.05, scheduler_type="invalid_scheduler"
             )
 
-    def test_factory_with_plateau_custom_params(self, simple_model):
+    def test_factory_with_plateau_custom_params(self, simple_model) -> None:
         """Test factory respects custom plateau scheduler parameters."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model,
@@ -351,7 +351,7 @@ class TestFactoryFunctionSchedulers:
 class TestFactoryFunctionOptimizerParams:
     """Test factory function respects optimizer parameters."""
 
-    def test_factory_with_custom_optimizer_params(self, simple_model):
+    def test_factory_with_custom_optimizer_params(self, simple_model) -> None:
         """Test factory passes optimizer parameters correctly."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model,
@@ -368,7 +368,7 @@ class TestFactoryFunctionOptimizerParams:
         # Note: These are stored in the underlying optimizer groups
         assert optimizer.amsgrad is True
 
-    def test_factory_creates_working_coordinator(self, simple_model):
+    def test_factory_creates_working_coordinator(self, simple_model) -> None:
         """Test factory-created coordinator works correctly."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model, lr=0.05, scheduler_type="plateau"
@@ -393,7 +393,7 @@ class TestFactoryFunctionOptimizerParams:
 class TestCoordinatorIntegration:
     """Integration tests combining multiple coordinator operations."""
 
-    def test_realistic_training_scenario(self, simple_model):
+    def test_realistic_training_scenario(self, simple_model) -> None:
         """Test coordinator in a realistic training scenario with dynamic ops."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model, lr=0.1, scheduler_type="plateau", patience=2
@@ -443,7 +443,7 @@ class TestCoordinatorIntegration:
         assert final_status["operation_count"] == 2  # 1 add + 1 prune
         assert final_status["model_splats"] <= 4  # Some may have been pruned
 
-    def test_complete_replacement_mid_training(self, simple_model):
+    def test_complete_replacement_mid_training(self, simple_model) -> None:
         """Test complete model replacement doesn't break training."""
         optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
             simple_model, lr=0.1, scheduler_type="exponential", gamma=0.9

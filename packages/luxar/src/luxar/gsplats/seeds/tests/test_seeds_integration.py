@@ -14,7 +14,7 @@ from luxar.gsplats.seeds import (
 )
 
 
-def test_methods_comparison():
+def test_methods_comparison() -> None:
     """Compare the two seed generation methods on the same image."""
     # Create a test image with known structure
     image = np.zeros((64, 64), dtype=np.float32)
@@ -67,7 +67,7 @@ def test_methods_comparison():
     )
 
 
-def test_seeds_integration_with_fitting():
+def test_seeds_integration_with_fitting() -> None:
     """Test that generated seeds work properly with the fitting pipeline."""
     # This is a basic integration test to ensure seeds format is compatible
     # Note: Full fitting test would require importing fit_gaussian_splats which may be slow
@@ -113,7 +113,7 @@ def test_seeds_integration_with_fitting():
     assert np.all(combined >= 0) and np.all(combined < 32)
 
 
-def test_methods_on_noisy_image():
+def test_methods_on_noisy_image() -> None:
     """Test both methods on a noisy image to compare robustness."""
     # Create clean image with structure
     clean = np.zeros((48, 48), dtype=np.float32)
@@ -147,7 +147,7 @@ def test_methods_on_noisy_image():
     )
 
 
-def test_3d_seeds():
+def test_3d_seeds() -> None:
     """Test seed generation in 3D with both methods."""
     # Create simple 3D test image
     image_3d = np.zeros((16, 16, 16), dtype=np.float32)

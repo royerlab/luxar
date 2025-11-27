@@ -52,7 +52,7 @@ def plateau_scheduler(optimizer):
 class TestPerSplatReduceLROnPlateauInitialization:
     """Test scheduler initialization and configuration."""
 
-    def test_default_initialization(self, optimizer):
+    def test_default_initialization(self, optimizer) -> None:
         """Test initialization with default parameters."""
         scheduler = PerSplatReduceLROnPlateau(optimizer)
 
@@ -68,7 +68,7 @@ class TestPerSplatReduceLROnPlateauInitialization:
         assert scheduler.global_bad_epochs == 0
         assert scheduler.last_epoch == 0
 
-    def test_custom_initialization(self, optimizer):
+    def test_custom_initialization(self, optimizer) -> None:
         """Test initialization with custom parameters."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer,
@@ -89,7 +89,7 @@ class TestPerSplatReduceLROnPlateauInitialization:
         assert scheduler.min_lr == 1e-6
         assert scheduler.global_patience == 15
 
-    def test_mode_max_initialization(self, optimizer):
+    def test_mode_max_initialization(self, optimizer) -> None:
         """Test initialization with mode='max'."""
         scheduler = PerSplatReduceLROnPlateau(optimizer, mode="max")
 
@@ -101,7 +101,7 @@ class TestPerSplatReduceLROnPlateauInitialization:
 class TestPerSplatReduceLROnPlateauStepGlobalMetrics:
     """Test step() method with global metrics."""
 
-    def test_step_with_float_metric(self, plateau_scheduler):
+    def test_step_with_float_metric(self, plateau_scheduler) -> None:
         """Test step with float metric (global)."""
         plateau_scheduler.step(1.0)
 
@@ -110,14 +110,14 @@ class TestPerSplatReduceLROnPlateauStepGlobalMetrics:
         # Should initialize states for all 3 splats
         assert len(plateau_scheduler.splat_scheduler_states) == 3
 
-    def test_step_with_int_metric(self, plateau_scheduler):
+    def test_step_with_int_metric(self, plateau_scheduler) -> None:
         """Test step with integer metric."""
         plateau_scheduler.step(5)
 
         assert plateau_scheduler.last_epoch == 1
         assert plateau_scheduler.global_best == 5.0
 
-    def test_step_with_scalar_tensor(self, plateau_scheduler):
+    def test_step_with_scalar_tensor(self, plateau_scheduler) -> None:
         """Test step with scalar tensor metric."""
         metric = torch.tensor(2.5)
         plateau_scheduler.step(metric)
@@ -125,12 +125,12 @@ class TestPerSplatReduceLROnPlateauStepGlobalMetrics:
         assert plateau_scheduler.last_epoch == 1
         assert plateau_scheduler.global_best == 2.5
 
-    def test_step_with_none_raises_error(self, plateau_scheduler):
+    def test_step_with_none_raises_error(self, plateau_scheduler) -> None:
         """Test that None metric raises ValueError."""
         with pytest.raises(ValueError, match="Metrics cannot be None"):
             plateau_scheduler.step(None)
 
-    def test_step_with_invalid_float_raises_error(self, plateau_scheduler):
+    def test_step_with_invalid_float_raises_error(self, plateau_scheduler) -> None:
         """Test that invalid float values raise errors."""
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step(float("nan"))
@@ -142,7 +142,7 @@ class TestPerSplatReduceLROnPlateauStepGlobalMetrics:
 class TestPerSplatReduceLROnPlateauStepPerSplatMetrics:
     """Test step() method with per-splat metrics."""
 
-    def test_step_with_1d_tensor(self, plateau_scheduler):
+    def test_step_with_1d_tensor(self, plateau_scheduler) -> None:
         """Test step with 1D tensor (per-splat metrics)."""
         metrics = torch.tensor([1.0, 2.0, 3.0])
         plateau_scheduler.step(metrics)
@@ -152,7 +152,7 @@ class TestPerSplatReduceLROnPlateauStepPerSplatMetrics:
         # Global metric should be mean
         assert plateau_scheduler.global_best == 2.0
 
-    def test_step_with_dict_metrics(self, plateau_scheduler):
+    def test_step_with_dict_metrics(self, plateau_scheduler) -> None:
         """Test step with dict metrics."""
         metrics = {0: 1.0, 1: 2.0, 2: 3.0}
         plateau_scheduler.step(metrics)
@@ -162,21 +162,21 @@ class TestPerSplatReduceLROnPlateauStepPerSplatMetrics:
         # Global metric should be mean
         assert plateau_scheduler.global_best == 2.0
 
-    def test_step_with_multidim_tensor_raises_error(self, plateau_scheduler):
+    def test_step_with_multidim_tensor_raises_error(self, plateau_scheduler) -> None:
         """Test that multi-dimensional tensors raise error."""
         metrics = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
 
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step(metrics)
 
-    def test_step_with_invalid_tensor_values(self, plateau_scheduler):
+    def test_step_with_invalid_tensor_values(self, plateau_scheduler) -> None:
         """Test that tensors with invalid values raise errors."""
         metrics = torch.tensor([1.0, float("nan"), 3.0])
 
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step(metrics)
 
-    def test_step_with_invalid_dict_keys(self, plateau_scheduler):
+    def test_step_with_invalid_dict_keys(self, plateau_scheduler) -> None:
         """Test that invalid dict keys raise errors."""
         # Negative key
         with pytest.raises(RuntimeError, match="Error processing metrics"):
@@ -186,12 +186,12 @@ class TestPerSplatReduceLROnPlateauStepPerSplatMetrics:
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step({"0": 1.0, 1: 2.0})
 
-    def test_step_with_invalid_dict_values(self, plateau_scheduler):
+    def test_step_with_invalid_dict_values(self, plateau_scheduler) -> None:
         """Test that invalid dict values raise errors."""
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step({0: float("nan"), 1: 2.0})
 
-    def test_step_with_unsupported_type_raises_error(self, plateau_scheduler):
+    def test_step_with_unsupported_type_raises_error(self, plateau_scheduler) -> None:
         """Test that unsupported types raise TypeError."""
         with pytest.raises(RuntimeError, match="Error processing metrics"):
             plateau_scheduler.step([1.0, 2.0, 3.0])  # List not supported
@@ -200,7 +200,7 @@ class TestPerSplatReduceLROnPlateauStepPerSplatMetrics:
 class TestPerSplatReduceLROnPlateauLRReduction:
     """Test learning rate reduction logic."""
 
-    def test_lr_reduction_on_plateau_min_mode(self, optimizer):
+    def test_lr_reduction_on_plateau_min_mode(self, optimizer) -> None:
         """Test that LR is reduced when metric plateaus (min mode)."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer, patience=2, factor=0.5, mode="min"
@@ -218,7 +218,7 @@ class TestPerSplatReduceLROnPlateauLRReduction:
             assert final < initial
             assert final == pytest.approx(initial * 0.5)
 
-    def test_lr_reduction_on_plateau_max_mode(self, optimizer):
+    def test_lr_reduction_on_plateau_max_mode(self, optimizer) -> None:
         """Test LR reduction with mode='max'."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer, patience=2, factor=0.5, mode="max"
@@ -235,7 +235,7 @@ class TestPerSplatReduceLROnPlateauLRReduction:
         for initial, final in zip(initial_lrs, final_lrs):
             assert final < initial
 
-    def test_no_reduction_with_improvement(self, plateau_scheduler):
+    def test_no_reduction_with_improvement(self, plateau_scheduler) -> None:
         """Test that LR is not reduced when metric improves."""
         initial_lrs = [
             plateau_scheduler.optimizer.get_learning_rate(i) for i in range(3)
@@ -250,7 +250,7 @@ class TestPerSplatReduceLROnPlateauLRReduction:
         for initial, final in zip(initial_lrs, final_lrs):
             assert final == pytest.approx(initial)
 
-    def test_min_lr_respected(self, optimizer):
+    def test_min_lr_respected(self, optimizer) -> None:
         """Test that learning rate doesn't go below min_lr."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer, patience=1, factor=0.1, min_lr=0.01
@@ -269,7 +269,7 @@ class TestPerSplatReduceLROnPlateauLRReduction:
 class TestPerSplatReduceLROnPlateauCooldown:
     """Test cooldown behavior."""
 
-    def test_cooldown_prevents_immediate_reduction(self, optimizer):
+    def test_cooldown_prevents_immediate_reduction(self, optimizer) -> None:
         """Test that cooldown prevents immediate consecutive reductions."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer, patience=1, factor=0.5, cooldown=2
@@ -288,7 +288,7 @@ class TestPerSplatReduceLROnPlateauCooldown:
         # LR should not have changed during cooldown
         assert optimizer.get_learning_rate(0) == pytest.approx(lr_after_first_reduction)
 
-    def test_global_cooldown(self, optimizer):
+    def test_global_cooldown(self, optimizer) -> None:
         """Test global cooldown behavior."""
         scheduler = PerSplatReduceLROnPlateau(
             optimizer, patience=1, global_patience=3, cooldown=2
@@ -309,7 +309,7 @@ class TestPerSplatReduceLROnPlateauCooldown:
 class TestPerSplatReduceLROnPlateauComparison:
     """Test _is_better() comparison logic."""
 
-    def test_is_better_min_mode(self, optimizer):
+    def test_is_better_min_mode(self, optimizer) -> None:
         """Test comparison in min mode."""
         scheduler = PerSplatReduceLROnPlateau(optimizer, mode="min", threshold=0.01)
 
@@ -320,7 +320,7 @@ class TestPerSplatReduceLROnPlateauComparison:
         # Worse
         assert scheduler._is_better(1.5, 1.0) is False
 
-    def test_is_better_max_mode(self, optimizer):
+    def test_is_better_max_mode(self, optimizer) -> None:
         """Test comparison in max mode."""
         scheduler = PerSplatReduceLROnPlateau(optimizer, mode="max", threshold=0.01)
 
@@ -335,7 +335,7 @@ class TestPerSplatReduceLROnPlateauComparison:
 class TestPerSplatReduceLROnPlateauTopologyChanges:
     """Test add_splats and remove_splats methods."""
 
-    def test_add_splats_positive(self, plateau_scheduler):
+    def test_add_splats_positive(self, plateau_scheduler) -> None:
         """Test adding new splats."""
         # Initialize some states
         plateau_scheduler.step(1.0)
@@ -352,7 +352,7 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
             assert state["best"] == float("inf")  # min mode
             assert state["num_bad_epochs"] == 0
 
-    def test_add_splats_zero(self, plateau_scheduler):
+    def test_add_splats_zero(self, plateau_scheduler) -> None:
         """Test adding zero splats (no-op)."""
         plateau_scheduler.step(1.0)
         initial_count = len(plateau_scheduler.splat_scheduler_states)
@@ -360,12 +360,12 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
         plateau_scheduler.add_splats(0)
         assert len(plateau_scheduler.splat_scheduler_states) == initial_count
 
-    def test_add_splats_negative_raises_error(self, plateau_scheduler):
+    def test_add_splats_negative_raises_error(self, plateau_scheduler) -> None:
         """Test that negative n_new_splats raises error."""
         with pytest.raises(ValueError, match="non-negative"):
             plateau_scheduler.add_splats(-1)
 
-    def test_remove_splats_basic(self, plateau_scheduler):
+    def test_remove_splats_basic(self, plateau_scheduler) -> None:
         """Test removing splats."""
         # Initialize states
         plateau_scheduler.step(1.0)
@@ -381,12 +381,12 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
         assert 1 in plateau_scheduler.splat_scheduler_states
         assert 2 not in plateau_scheduler.splat_scheduler_states
 
-    def test_remove_splats_invalid_type_raises_error(self, plateau_scheduler):
+    def test_remove_splats_invalid_type_raises_error(self, plateau_scheduler) -> None:
         """Test that non-tensor keep_mask raises error."""
         with pytest.raises(TypeError, match="must be a torch.Tensor"):
             plateau_scheduler.remove_splats([True, False, True])
 
-    def test_remove_splats_invalid_dtype_raises_error(self, plateau_scheduler):
+    def test_remove_splats_invalid_dtype_raises_error(self, plateau_scheduler) -> None:
         """Test that non-boolean tensor raises error."""
         plateau_scheduler.step(1.0)
         keep_mask = torch.tensor([1, 0, 1])  # int tensor
@@ -394,7 +394,7 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
         with pytest.raises(TypeError, match="must be boolean tensor"):
             plateau_scheduler.remove_splats(keep_mask)
 
-    def test_remove_splats_invalid_shape_raises_error(self, plateau_scheduler):
+    def test_remove_splats_invalid_shape_raises_error(self, plateau_scheduler) -> None:
         """Test that non-1D tensor raises error."""
         plateau_scheduler.step(1.0)
         keep_mask = torch.tensor([[True, False], [True, False]])
@@ -402,7 +402,9 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
         with pytest.raises(ValueError, match="must be 1D tensor"):
             plateau_scheduler.remove_splats(keep_mask)
 
-    def test_remove_splats_length_mismatch_raises_error(self, plateau_scheduler):
+    def test_remove_splats_length_mismatch_raises_error(
+        self, plateau_scheduler
+    ) -> None:
         """Test that mismatched length raises error."""
         plateau_scheduler.step(1.0)
         keep_mask = torch.tensor([True, False])  # Only 2 elements, but have 3 splats
@@ -414,7 +416,7 @@ class TestPerSplatReduceLROnPlateauTopologyChanges:
 class TestPerSplatReduceLROnPlateauMonitoring:
     """Test monitoring and introspection methods."""
 
-    def test_get_lr_reduction_counts(self, plateau_scheduler):
+    def test_get_lr_reduction_counts(self, plateau_scheduler) -> None:
         """Test getting LR reduction counts per splat."""
         # Trigger some reductions
         for _ in range(5):
@@ -425,7 +427,7 @@ class TestPerSplatReduceLROnPlateauMonitoring:
         # All splats should have had reductions
         assert torch.all(counts > 0)
 
-    def test_get_lr_reduction_counts_before_init(self, optimizer):
+    def test_get_lr_reduction_counts_before_init(self, optimizer) -> None:
         """Test counts before any steps (all zeros)."""
         scheduler = PerSplatReduceLROnPlateau(optimizer)
         counts = scheduler.get_lr_reduction_counts()
@@ -437,7 +439,7 @@ class TestPerSplatReduceLROnPlateauMonitoring:
 class TestPerSplatReduceLROnPlateauStateSerialization:
     """Test state_dict and load_state_dict."""
 
-    def test_state_dict(self, plateau_scheduler):
+    def test_state_dict(self, plateau_scheduler) -> None:
         """Test state_dict() returns correct structure."""
         # Run a few steps to populate state
         plateau_scheduler.step(1.0)
@@ -454,7 +456,7 @@ class TestPerSplatReduceLROnPlateauStateSerialization:
         assert state["last_epoch"] == 2
         assert state["global_best"] == 1.0  # min mode, so 1.0 is best
 
-    def test_load_state_dict(self, optimizer):
+    def test_load_state_dict(self, optimizer) -> None:
         """Test load_state_dict() restores state."""
         # Create and run scheduler
         scheduler1 = PerSplatReduceLROnPlateau(optimizer, patience=2)
@@ -480,7 +482,7 @@ class TestPerSplatReduceLROnPlateauStateSerialization:
 class TestPerSplatExponentialLRBasic:
     """Test PerSplatExponentialLR basic functionality."""
 
-    def test_initialization(self, optimizer):
+    def test_initialization(self, optimizer) -> None:
         """Test basic initialization."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9)
 
@@ -489,13 +491,13 @@ class TestPerSplatExponentialLRBasic:
         assert scheduler.current_epoch == 0
         assert len(scheduler.splat_ages) == 3
 
-    def test_initialization_no_age_decay(self, optimizer):
+    def test_initialization_no_age_decay(self, optimizer) -> None:
         """Test initialization with age_based_decay=False."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.95, age_based_decay=False)
 
         assert scheduler.age_based_decay is False
 
-    def test_basic_decay(self, optimizer):
+    def test_basic_decay(self, optimizer) -> None:
         """Test basic exponential decay."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9, age_based_decay=False)
 
@@ -507,7 +509,7 @@ class TestPerSplatExponentialLRBasic:
         for initial, final in zip(initial_lrs, final_lrs):
             assert final == pytest.approx(initial * 0.9)
 
-    def test_multiple_steps(self, optimizer):
+    def test_multiple_steps(self, optimizer) -> None:
         """Test multiple decay steps."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9, age_based_decay=False)
 
@@ -520,7 +522,7 @@ class TestPerSplatExponentialLRBasic:
         expected_lr = initial_lr * (0.9**5)
         assert final_lr == pytest.approx(expected_lr, rel=1e-5)
 
-    def test_age_based_decay(self, optimizer):
+    def test_age_based_decay(self, optimizer) -> None:
         """Test age-based decay behavior."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9, age_based_decay=True)
 
@@ -538,7 +540,7 @@ class TestPerSplatExponentialLRBasic:
 class TestPerSplatExponentialLRTopologyChanges:
     """Test add_splats and remove_splats for exponential scheduler."""
 
-    def test_add_splats(self, optimizer):
+    def test_add_splats(self, optimizer) -> None:
         """Test adding new splats."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9)
 
@@ -555,7 +557,7 @@ class TestPerSplatExponentialLRTopologyChanges:
         assert scheduler.splat_ages[3] == 2
         assert scheduler.splat_ages[4] == 2
 
-    def test_remove_splats(self, optimizer):
+    def test_remove_splats(self, optimizer) -> None:
         """Test removing splats."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9)
 
@@ -573,7 +575,7 @@ class TestPerSplatExponentialLRTopologyChanges:
         assert 0 in scheduler.splat_ages
         assert 1 in scheduler.splat_ages
 
-    def test_newer_splats_decay_slower(self, optimizer):
+    def test_newer_splats_decay_slower(self, optimizer) -> None:
         """Test that newer splats have different ages tracked."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.9, age_based_decay=True)
 
@@ -610,7 +612,7 @@ class TestPerSplatExponentialLRTopologyChanges:
 class TestPerSplatSchedulerIntegration:
     """Integration tests combining schedulers with optimization."""
 
-    def test_scheduler_reduces_lr_during_training(self, optimizer):
+    def test_scheduler_reduces_lr_during_training(self, optimizer) -> None:
         """Test that scheduler actually affects training loop."""
         scheduler = PerSplatReduceLROnPlateau(optimizer, patience=2, factor=0.5)
 
@@ -627,7 +629,7 @@ class TestPerSplatSchedulerIntegration:
         final_lr = optimizer.get_learning_rate(0)
         assert final_lr < 0.1  # Started at 0.1
 
-    def test_exponential_scheduler_continuous_decay(self, optimizer):
+    def test_exponential_scheduler_continuous_decay(self, optimizer) -> None:
         """Test exponential scheduler provides continuous decay."""
         scheduler = PerSplatExponentialLR(optimizer, gamma=0.95, age_based_decay=False)
 

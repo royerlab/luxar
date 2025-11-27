@@ -102,7 +102,7 @@ class TestFindSeedsOvercompleteNd:
         # Length may be 0
 
 
-def test_multiscale_gaussian_edge_cases():
+def test_multiscale_gaussian_edge_cases() -> None:
     """Test edge cases for multiscale Gaussian seed generation."""
     # Edge case 1: Uniform image (CLAHE may create artifacts, so check format)
     uniform_image = np.ones((32, 32), dtype=np.float32)
@@ -155,7 +155,7 @@ def test_multiscale_gaussian_edge_cases():
     )
 
 
-def test_multiscale_gaussian_parameter_validation():
+def test_multiscale_gaussian_parameter_validation() -> None:
     """Test parameter validation for multiscale Gaussian."""
     image = np.random.rand(32, 32).astype(np.float32)
 
