@@ -25,7 +25,7 @@ class ModelOptimizerCoordinator:
         scheduler: Optional[
             Union[PerSplatReduceLROnPlateau, PerSplatExponentialLR]
         ] = None,
-    ):
+    ) -> None:
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler

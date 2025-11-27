@@ -14,7 +14,7 @@ from luxar.gsplats import fit_multiscale_gaussian_splats
 class TestMultiScaleFitting:
     """Tests for fit_multiscale_gaussian_splats function."""
 
-    def test_basic_2d(self):
+    def test_basic_2d(self) -> None:
         """Test basic 2D multi-scale fitting."""
         # Create simple 2D Gaussian blob
         x = np.linspace(-2, 2, 64)
@@ -37,7 +37,7 @@ class TestMultiScaleFitting:
         assert "total_splats" in result.stats
         assert result.stats["total_splats"] > 0
 
-    def test_parameter_shapes(self):
+    def test_parameter_shapes(self) -> None:
         """Test that parameter shapes are correct for different dimensions."""
         # 2D case
         V_2d = np.random.rand(32, 32).astype(np.float32)
@@ -61,7 +61,7 @@ class TestMultiScaleFitting:
         assert result_3d.sharpnesses.shape[0] == result_3d.centers.shape[0]
         assert result_3d.centers.shape[0] == len(result_3d.amplitudes)
 
-    def test_multiple_scales(self):
+    def test_multiple_scales(self) -> None:
         """Test fitting with multiple scales."""
         V = np.random.rand(32, 32).astype(np.float32)
         scales = [1, 2, 4]
@@ -77,7 +77,7 @@ class TestMultiScaleFitting:
         # Each scale should have some splats (with high probability)
         assert sum(result.stats["n_splats_per_scale"]) > 0
 
-    def test_default_scales(self):
+    def test_default_scales(self) -> None:
         """Test that default scales work correctly."""
         # Use 64x64 image to allow default scales [1, 2, 4, 8] with 8-pixel minimum
         V = np.random.rand(64, 64).astype(np.float32)
@@ -93,7 +93,7 @@ class TestMultiScaleFitting:
         assert result.stats["per_scale_stats"][2]["scale_factor"] == 4
         assert result.stats["per_scale_stats"][3]["scale_factor"] == 8
 
-    def test_computational_speedup(self):
+    def test_computational_speedup(self) -> None:
         """Test that computational speedup is calculated."""
         V = np.random.rand(64, 64).astype(np.float32)
 
@@ -107,7 +107,7 @@ class TestMultiScaleFitting:
         # For scales [1, 2, 4] in 2D, expected speedup ~ (1 + 1 + 1) / (1 + 0.25 + 0.0625) ≈ 2.3
         assert result.stats["computational_speedup"] > 2.0
 
-    def test_statistics_structure(self):
+    def test_statistics_structure(self) -> None:
         """Test that returned statistics have correct structure."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -132,7 +132,7 @@ class TestMultiScaleFitting:
             assert "final_error" in scale_stat
             assert "time_seconds" in scale_stat
 
-    def test_fit_kwargs_passthrough(self):
+    def test_fit_kwargs_passthrough(self) -> None:
         """Test that fit_kwargs are passed through to fit_gaussian_splats."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -149,7 +149,7 @@ class TestMultiScaleFitting:
         # Should complete without error
         assert result.centers.shape[0] > 0
 
-    def test_input_validation(self):
+    def test_input_validation(self) -> None:
         """Test input validation."""
         V = np.random.rand(64, 64).astype(np.float32)
 
@@ -205,7 +205,7 @@ class TestMultiScaleFitting:
         with pytest.raises(ValueError, match="finite"):
             fit_multiscale_gaussian_splats(V_bad, scales=[1, 2], verbose=False)
 
-    def test_3d_volume(self):
+    def test_3d_volume(self) -> None:
         """Test 3D volume fitting."""
         # Create small 3D Gaussian blob
         x = np.linspace(-1, 1, 16)
@@ -223,7 +223,7 @@ class TestMultiScaleFitting:
         assert result.centers.shape[0] == len(result.amplitudes)
         assert result.stats["total_splats"] > 0
 
-    def test_sharpness_preservation(self):
+    def test_sharpness_preservation(self) -> None:
         """Test that sharpness is preserved (not scaled)."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -239,7 +239,7 @@ class TestMultiScaleFitting:
         assert np.all(sharpness > 0)  # Must be positive
         assert np.all(sharpness < 100)  # Should be reasonable
 
-    def test_verbose_output(self, capsys):
+    def test_verbose_output(self, capsys) -> None:
         """Test that verbose mode produces output."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -256,7 +256,7 @@ class TestMultiScaleFitting:
             "Multi-Scale Decomposition" in captured.out or "Decomposing" in captured.out
         )
 
-    def test_movie_recording(self):
+    def test_movie_recording(self) -> None:
         """Test that movie recording works when enabled."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -298,7 +298,7 @@ class TestMultiScaleFitting:
         assert len(movie_frames["reconstruction"]) == n_frames
         assert len(movie_frames["residual"]) == n_frames
 
-    def test_no_movie_by_default(self):
+    def test_no_movie_by_default(self) -> None:
         """Test that movie recording is disabled by default."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -311,7 +311,7 @@ class TestMultiScaleFitting:
         movie_frames = decomp_stats.get("movie_frames")
         assert movie_frames is None or len(movie_frames) == 0
 
-    def test_per_scale_visualization(self):
+    def test_per_scale_visualization(self) -> None:
         """Test that per-scale visualization data is generated when enabled."""
         V = np.random.rand(32, 32).astype(np.float32)
 
@@ -358,7 +358,7 @@ class TestMultiScaleFitting:
             assert vis["centers"].ndim == 2
             assert vis["centers"].shape[1] == 2
 
-    def test_no_per_scale_visualization_by_default(self):
+    def test_no_per_scale_visualization_by_default(self) -> None:
         """Test that per-scale visualization is disabled by default."""
         V = np.random.rand(32, 32).astype(np.float32)
 

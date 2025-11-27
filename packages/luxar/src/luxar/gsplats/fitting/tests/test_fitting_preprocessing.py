@@ -61,7 +61,7 @@ def mock_config_2d():
 class TestPreprocessData:
     """Test data preprocessing functionality."""
 
-    def test_basic_preprocessing(self, mock_config_2d):
+    def test_basic_preprocessing(self, mock_config_2d) -> None:
         """Test basic data preprocessing."""
         result = preprocess_data(mock_config_2d)
 
@@ -72,7 +72,7 @@ class TestPreprocessData:
         assert result.intensity_range > 0
         assert result.max_abs_error > 0
 
-    def test_normalization_full_range(self, mock_config_2d):
+    def test_normalization_full_range(self, mock_config_2d) -> None:
         """Test full range normalization."""
         # Create data with known range
         V = np.array([[0.1, 0.5], [0.3, 0.9]], dtype=np.float32)
@@ -88,7 +88,7 @@ class TestPreprocessData:
         assert np.min(result.V_normalized) >= 0.0
         assert np.max(result.V_normalized) <= 1.0
 
-    def test_normalization_percentile(self, mock_config_2d):
+    def test_normalization_percentile(self, mock_config_2d) -> None:
         """Test percentile-based normalization."""
         # Create data with outliers
         V = np.array([[0.0, 0.5], [0.3, 10.0]], dtype=np.float32)  # 10.0 is outlier
@@ -101,7 +101,7 @@ class TestPreprocessData:
         assert result.image_min != 0.0
         assert result.image_max != 10.0
 
-    def test_uniform_image_handling(self, mock_config_2d):
+    def test_uniform_image_handling(self, mock_config_2d) -> None:
         """Test handling of nearly uniform images."""
         # Create nearly uniform image
         V = np.full((16, 16), 0.5, dtype=np.float32)
@@ -112,7 +112,7 @@ class TestPreprocessData:
         assert result.intensity_range == 1.0  # Should be set to avoid division by zero
         assert np.allclose(result.V_normalized, 0.5)
 
-    def test_auto_candidate_generation(self, mock_config_2d):
+    def test_auto_candidate_generation(self, mock_config_2d) -> None:
         """Test automatic candidate generation."""
         mock_config_2d.seed_centers = None  # Trigger auto-generation
 
@@ -122,7 +122,7 @@ class TestPreprocessData:
         assert result.seed_centers.shape[1] == 2  # 2D centers
         assert result.N > 0
 
-    def test_convergence_threshold_auto(self, mock_config_2d):
+    def test_convergence_threshold_auto(self, mock_config_2d) -> None:
         """Test automatic convergence threshold setting."""
         mock_config_2d.max_abs_error = None
 
@@ -130,7 +130,7 @@ class TestPreprocessData:
 
         assert result.max_abs_error == 0.01  # 1% of normalized range
 
-    def test_convergence_threshold_custom(self, mock_config_2d):
+    def test_convergence_threshold_custom(self, mock_config_2d) -> None:
         """Test custom convergence threshold."""
         mock_config_2d.max_abs_error = 0.005
 
@@ -138,7 +138,7 @@ class TestPreprocessData:
 
         assert result.max_abs_error == 0.005
 
-    def test_tensor_conversion(self, mock_config_2d):
+    def test_tensor_conversion(self, mock_config_2d) -> None:
         """Test conversion to PyTorch tensor."""
         result = preprocess_data(mock_config_2d)
 

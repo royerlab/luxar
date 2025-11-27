@@ -36,7 +36,7 @@ def high_frequency_2d():
 class TestEnergyDistribution:
     """Tests for energy distribution across scales."""
 
-    def test_energy_sums_to_one(self, gaussian_blob_2d):
+    def test_energy_sums_to_one(self, gaussian_blob_2d) -> None:
         """Test that energy fractions sum to approximately 1.0."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d, scales=[1, 2, 4], n_iters=100, verbose=False
@@ -49,7 +49,7 @@ class TestEnergyDistribution:
             f"Energy fractions should sum to ~1.0, got {total_energy}"
         )
 
-    def test_alpha_effect(self, gaussian_blob_2d):
+    def test_alpha_effect(self, gaussian_blob_2d) -> None:
         """Test that alpha parameter affects energy distribution."""
         results = {}
 
@@ -75,7 +75,7 @@ class TestEnergyDistribution:
                 f"Coarsest scale should have majority of energy, got {coarse_energy:.2f}"
             )
 
-    def test_energy_weight_effect(self, gaussian_blob_2d):
+    def test_energy_weight_effect(self, gaussian_blob_2d) -> None:
         """Test that energy_weight affects coarse scale preference."""
         # Use very weak penalty vs strong penalty to see clear difference
         scales_list_weak, stats_weak = decompose_image(
@@ -104,7 +104,7 @@ class TestEnergyDistribution:
             f"Stronger penalty should maintain or increase coarse energy: {coarse_strong:.3f} vs {coarse_weak:.3f}"
         )
 
-    def test_smooth_content_to_coarse(self, gaussian_blob_2d):
+    def test_smooth_content_to_coarse(self, gaussian_blob_2d) -> None:
         """Test that smooth content goes to coarse scales."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d,
@@ -122,7 +122,7 @@ class TestEnergyDistribution:
             "Smooth content should have more energy in coarse scale"
         )
 
-    def test_high_frequency_to_fine(self, high_frequency_2d):
+    def test_high_frequency_to_fine(self, high_frequency_2d) -> None:
         """Test that decomposition handles high-frequency content."""
         # Use weaker penalty to allow fine scale content
         scales_list, stats = decompose_image(
@@ -148,7 +148,7 @@ class TestEnergyDistribution:
             f"Reconstruction error too high: {stats['final_error']}"
         )
 
-    def test_energy_convergence(self, gaussian_blob_2d):
+    def test_energy_convergence(self, gaussian_blob_2d) -> None:
         """Test that energy distribution stabilizes over iterations."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d,
@@ -176,7 +176,7 @@ class TestEnergyDistribution:
             "Energy distribution should stabilize in later iterations"
         )
 
-    def test_no_trivial_solution(self, gaussian_blob_2d):
+    def test_no_trivial_solution(self, gaussian_blob_2d) -> None:
         """Test that we avoid trivial solution (all energy in finest scale)."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d,
@@ -195,7 +195,7 @@ class TestEnergyDistribution:
             f"Trivial solution detected: finest scale has {finest_scale_energy:.1%} energy"
         )
 
-    def test_four_scale_distribution(self, gaussian_blob_2d):
+    def test_four_scale_distribution(self, gaussian_blob_2d) -> None:
         """Test energy distribution with 4 scales."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d,
@@ -222,7 +222,7 @@ class TestEnergyDistribution:
 class TestEnergyPreservation:
     """Tests for energy preservation during decomposition."""
 
-    def test_total_energy_preserved(self, gaussian_blob_2d):
+    def test_total_energy_preserved(self, gaussian_blob_2d) -> None:
         """Test that total energy is approximately preserved."""
         scales_list, stats = decompose_image(
             gaussian_blob_2d, scales=[1, 2, 4], n_iters=200, verbose=False

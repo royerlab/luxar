@@ -151,7 +151,7 @@ def generate_lorenz_attractor(
         aprint(f"✓ Written to {output_path}")
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse simple command line args (optional)
     n_points = 500000

@@ -268,7 +268,7 @@ def create_zebrahub_scene(
     return n_points
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     aprint("=" * 70)
     aprint("ZEBRAHUB MULTIOME PEAK 3D UMAP DEMO")

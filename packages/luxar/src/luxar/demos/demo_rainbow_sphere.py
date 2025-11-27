@@ -151,7 +151,7 @@ def generate_rainbow_sphere(
         aprint(f"✓ Dataset size: ~{n_points * 40 / 1024 / 1024:.1f} MB (uncompressed)")
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse simple command line args (optional)
     n_points = 400000  # Default: 200k points for high quality

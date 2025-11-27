@@ -344,7 +344,7 @@ def generate_spiral_galaxy(
     return len(positions)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse arguments
     n_stars = 500000  # Half million stars for dense, realistic galaxy

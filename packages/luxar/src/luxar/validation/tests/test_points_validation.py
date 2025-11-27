@@ -6,7 +6,7 @@ from luxar import LuxarZarrCompiler
 from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
 
 
-def test_bad_positions_shape(tmp_path):
+def test_bad_positions_shape(tmp_path) -> None:
     store = tmp_path / "bad.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene()
@@ -14,7 +14,7 @@ def test_bad_positions_shape(tmp_path):
             scene.add_points("Broken", np.ones((3,)), parent=scene)
 
 
-def test_mismatched_colors(tmp_path):
+def test_mismatched_colors(tmp_path) -> None:
     store = tmp_path / "bad2.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene()
@@ -24,7 +24,7 @@ def test_mismatched_colors(tmp_path):
             scene.add_points("Nope", pos, col, parent=scene)
 
 
-def test_valid_radii(tmp_path):
+def test_valid_radii(tmp_path) -> None:
     """Test that valid radii are accepted and stored correctly."""
     store = tmp_path / "radii_test.zarr"
     # Use PRECISION mode to preserve float32 for test consistency
@@ -44,7 +44,7 @@ def test_valid_radii(tmp_path):
     np.testing.assert_array_equal(stored_radii, radii)
 
 
-def test_negative_radii(tmp_path):
+def test_negative_radii(tmp_path) -> None:
     """Radii with negative values should fail."""
     store = tmp_path / "negative_radii.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -60,7 +60,7 @@ def test_negative_radii(tmp_path):
             compiler.write_points("test", positions, radii=radii)
 
 
-def test_mismatched_radii(tmp_path):
+def test_mismatched_radii(tmp_path) -> None:
     """Radii with wrong number of points should fail."""
     store = tmp_path / "mismatched_radii.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -76,7 +76,7 @@ def test_mismatched_radii(tmp_path):
             compiler.write_points("test", positions, radii=radii)
 
 
-def test_wrong_shape_radii(tmp_path):
+def test_wrong_shape_radii(tmp_path) -> None:
     """Radii with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_radii.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -92,7 +92,7 @@ def test_wrong_shape_radii(tmp_path):
             compiler.write_points("test", positions, radii=radii)
 
 
-def test_valid_sharpness(tmp_path):
+def test_valid_sharpness(tmp_path) -> None:
     """Test that valid sharpness values are accepted and stored correctly."""
     store = tmp_path / "sharpness_test.zarr"
     # Use PRECISION mode to preserve float32 for test consistency
@@ -112,7 +112,7 @@ def test_valid_sharpness(tmp_path):
     np.testing.assert_array_equal(stored_sharpness, sharpness)
 
 
-def test_negative_sharpness(tmp_path):
+def test_negative_sharpness(tmp_path) -> None:
     """Sharpness with negative values should fail."""
     store = tmp_path / "negative_sharpness.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -130,7 +130,7 @@ def test_negative_sharpness(tmp_path):
             compiler.write_points("test", positions, sharpness=sharpness)
 
 
-def test_mismatched_sharpness(tmp_path):
+def test_mismatched_sharpness(tmp_path) -> None:
     """Sharpness with wrong number of points should fail."""
     store = tmp_path / "mismatched_sharpness.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -146,7 +146,7 @@ def test_mismatched_sharpness(tmp_path):
             compiler.write_points("test", positions, sharpness=sharpness)
 
 
-def test_wrong_shape_sharpness(tmp_path):
+def test_wrong_shape_sharpness(tmp_path) -> None:
     """Sharpness with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_sharpness.zarr"
     with LuxarZarrCompiler(store) as compiler:
@@ -164,7 +164,7 @@ def test_wrong_shape_sharpness(tmp_path):
             compiler.write_points("test", positions, sharpness=sharpness)
 
 
-def test_sharpness_warning(tmp_path):
+def test_sharpness_warning(tmp_path) -> None:
     """Test that out-of-range sharpness values trigger a warning."""
     store = tmp_path / "sharpness_warning.zarr"
     with LuxarZarrCompiler(store) as compiler:

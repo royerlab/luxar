@@ -100,7 +100,7 @@ def basic_preprocessed_data():
 
 def test_finalize_results_basic(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test basic result finalization."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -120,7 +120,7 @@ def test_finalize_results_basic(
 
 def test_amplitude_rescaling(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that amplitudes are rescaled to original intensity range."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -135,7 +135,7 @@ def test_amplitude_rescaling(
 
 def test_parameter_packing(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that centers and packed Cholesky are correctly stored separately."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -159,7 +159,7 @@ def test_parameter_packing(
 
 def test_sharpness_statistics(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that sharpness statistics are computed correctly."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -181,7 +181,7 @@ def test_sharpness_statistics(
 
 def test_stats_dictionary_structure(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that stats dictionary has all required fields."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -216,7 +216,7 @@ def test_stats_dictionary_structure(
 
 def test_convergence_flag(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test convergence flag in result.stats."""
     # Test converged case
     basic_optimization_results.actual_iters = 50
@@ -241,7 +241,7 @@ def test_convergence_flag(
 
 def test_movie_frames_included(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that movie frames are included in result.stats when enabled."""
     # Add movie frames to optimization results
     movie_frames = {
@@ -265,7 +265,7 @@ def test_movie_frames_included(
 
 def test_movie_frames_excluded(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that movie frames are None when disabled."""
     basic_optimization_results.movie_frames = None
     basic_config.napari_movie = False
@@ -277,7 +277,9 @@ def test_movie_frames_excluded(
     assert result.stats["movie_frames"] is None
 
 
-def test_data_types(basic_optimization_results, basic_config, basic_preprocessed_data):
+def test_data_types(
+    basic_optimization_results, basic_config, basic_preprocessed_data
+) -> None:
     """Test that output arrays are float32."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -289,7 +291,7 @@ def test_data_types(basic_optimization_results, basic_config, basic_preprocessed
     assert result.amplitudes.dtype == np.float32
 
 
-def test_3d_data(basic_config, basic_preprocessed_data):
+def test_3d_data(basic_config, basic_preprocessed_data) -> None:
     """Test finalization works for 3D data."""
     N = 4
     d = 3
@@ -333,7 +335,7 @@ def test_3d_data(basic_config, basic_preprocessed_data):
 
 def test_positive_amplitudes(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that output amplitudes are positive."""
     result = finalize_results(
         basic_optimization_results, basic_config, basic_preprocessed_data
@@ -345,7 +347,7 @@ def test_positive_amplitudes(
 
 def test_time_seconds_calculation(
     basic_optimization_results, basic_config, basic_preprocessed_data
-):
+) -> None:
     """Test that time_seconds is calculated correctly."""
     expected_time = (
         basic_optimization_results.end_time - basic_optimization_results.start_time

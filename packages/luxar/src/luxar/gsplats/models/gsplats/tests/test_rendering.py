@@ -146,7 +146,7 @@ def simple_3d_params():
 class TestRenderGaussiansFullTorch:
     """Test PyTorch-based rendering function."""
 
-    def test_single_gaussian_2d(self, simple_2d_params):
+    def test_single_gaussian_2d(self, simple_2d_params) -> None:
         """Test rendering single 2D Gaussian."""
         params = simple_2d_params
 
@@ -177,7 +177,7 @@ class TestRenderGaussiansFullTorch:
         edge_val = result_np[0, 0]
         assert center_val > edge_val
 
-    def test_multiple_gaussians_2d(self, multi_2d_params):
+    def test_multiple_gaussians_2d(self, multi_2d_params) -> None:
         """Test rendering multiple 2D Gaussians."""
         params = multi_2d_params
 
@@ -199,7 +199,7 @@ class TestRenderGaussiansFullTorch:
         corner_val = result_np[0, 0]
         assert np.max(center_region) > corner_val * 2
 
-    def test_single_gaussian_3d(self, simple_3d_params):
+    def test_single_gaussian_3d(self, simple_3d_params) -> None:
         """Test rendering single 3D Gaussian."""
         params = simple_3d_params
 
@@ -241,7 +241,7 @@ class TestRenderGaussiansFullTorch:
         assert result.shape == shape
         assert torch.all(result == 0)
 
-    def test_device_placement(self, simple_2d_params):
+    def test_device_placement(self, simple_2d_params) -> None:
         """Test rendering on different devices."""
         params = simple_2d_params
 
@@ -267,7 +267,7 @@ class TestRenderGaussiansFullTorch:
                 result_cpu, result_cuda.cpu(), atol=1e-5, rtol=1e-5
             )
 
-    def test_different_truncation(self, simple_2d_params):
+    def test_different_truncation(self, simple_2d_params) -> None:
         """Test effect of different truncation values."""
         params = simple_2d_params
 
@@ -302,7 +302,7 @@ class TestRenderGaussiansFullTorch:
 class TestRenderGaussiansFullNumpy:
     """Test NumPy wrapper for rendering."""
 
-    def test_numpy_wrapper_2d(self, simple_2d_params):
+    def test_numpy_wrapper_2d(self, simple_2d_params) -> None:
         """Test NumPy wrapper function."""
         params = simple_2d_params
 
@@ -321,7 +321,7 @@ class TestRenderGaussiansFullNumpy:
         assert np.all(result >= 0)
         assert np.sum(result) > 0
 
-    def test_numpy_vs_torch_consistency(self, simple_2d_params):
+    def test_numpy_vs_torch_consistency(self, simple_2d_params) -> None:
         """Test that NumPy and PyTorch versions give same results."""
         params = simple_2d_params
 
@@ -349,7 +349,7 @@ class TestRenderGaussiansFullNumpy:
 class TestBatchedRendering:
     """Test batched rendering implementation."""
 
-    def test_batched_rendering_2d(self, multi_2d_params):
+    def test_batched_rendering_2d(self, multi_2d_params) -> None:
         """Test batched rendering in 2D."""
         params = multi_2d_params
 
@@ -370,7 +370,7 @@ class TestBatchedRendering:
         assert np.all(result_np >= 0)
         assert np.sum(result_np) > 0
 
-    def test_batched_vs_sequential_consistency(self, multi_2d_params):
+    def test_batched_vs_sequential_consistency(self, multi_2d_params) -> None:
         """Test that batched rendering matches sequential version."""
         params = multi_2d_params
 
@@ -396,7 +396,7 @@ class TestBatchedRendering:
             result_batched, result_sequential, atol=1e-4, rtol=1e-3
         )
 
-    def test_amplitude_aware_culling(self, multi_2d_params):
+    def test_amplitude_aware_culling(self, multi_2d_params) -> None:
         """Test amplitude-aware culling feature."""
         params = multi_2d_params
 
@@ -451,7 +451,7 @@ class TestBatchedRendering:
         assert result.shape == shape
         assert torch.all(result == 0)
 
-    def test_single_splat_batched(self, simple_2d_params):
+    def test_single_splat_batched(self, simple_2d_params) -> None:
         """Test batched rendering with single splat."""
         params = simple_2d_params
 
@@ -710,7 +710,7 @@ class TestPerformanceAndNumericalStability:
 class TestRenderingWrappersEdgeCases:
     """Test edge cases in rendering wrapper functions."""
 
-    def test_numpy_wrapper_empty_params(self):
+    def test_numpy_wrapper_empty_params(self) -> None:
         """Test numpy wrapper with empty params."""
         shape = (10, 10)
 
@@ -730,7 +730,7 @@ class TestRenderingWrappersEdgeCases:
         assert result.shape == shape
         assert np.all(result == 0)
 
-    def test_numpy_wrapper_with_standard_result(self):
+    def test_numpy_wrapper_with_standard_result(self) -> None:
         """Test numpy wrapper with standard GaussianSplatResult."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -755,7 +755,7 @@ class TestRenderingWrappersEdgeCases:
         assert np.all(np.isfinite(result))
         assert np.sum(result) > 0
 
-    def test_pytorch_wrapper_with_standard_result(self):
+    def test_pytorch_wrapper_with_standard_result(self) -> None:
         """Test pytorch wrapper with standard GaussianSplatResult."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
@@ -780,7 +780,7 @@ class TestRenderingWrappersEdgeCases:
         assert torch.all(torch.isfinite(result))
         assert torch.sum(result) > 0
 
-    def test_batched_wrapper_with_sharpness(self):
+    def test_batched_wrapper_with_sharpness(self) -> None:
         """Test batched wrapper with explicit sharpness."""
         shape = (10, 10)
         centers = torch.tensor([[5.0, 5.0]], dtype=torch.float32)

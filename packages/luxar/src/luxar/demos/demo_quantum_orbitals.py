@@ -276,7 +276,7 @@ def generate_quantum_orbitals(
     return len(positions_4d)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse arguments
     grid_size = 80  # 80³ = 512k samples per orbital

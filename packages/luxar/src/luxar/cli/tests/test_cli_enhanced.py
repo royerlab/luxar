@@ -67,14 +67,14 @@ def complex_scene(tmp_path):
 class TestCLIUtils:
     """Test CLI utility functions."""
 
-    def test_format_memory_size(self):
+    def test_format_memory_size(self) -> None:
         """Test memory size formatting."""
         assert format_memory_size(512) == "512.0 B"
         assert format_memory_size(1024) == "1.0 KB"
         assert format_memory_size(1024 * 1024) == "1.0 MB"
         assert format_memory_size(1024 * 1024 * 1024) == "1.0 GB"
 
-    def test_format_tree_node(self):
+    def test_format_tree_node(self) -> None:
         """Test tree node formatting."""
         # Root node
         result = format_tree_node("/", 0, True)
@@ -94,7 +94,7 @@ class TestCLIUtils:
         assert "└─" in result
         assert "n=1,000" in result
 
-    def test_check_port_available(self):
+    def test_check_port_available(self) -> None:
         """Test port availability checking."""
         # Port 0 should always be available (OS assigns)
         assert check_port_available(0) is True
@@ -114,14 +114,14 @@ class TestCLIUtils:
         time.sleep(0.1)  # Give OS time to release
         assert check_port_available(port) is True
 
-    def test_find_available_port(self):
+    def test_find_available_port(self) -> None:
         """Test finding available port."""
         port = find_available_port(10000)
         assert port is not None
         assert port >= 10000
         assert check_port_available(port) is True
 
-    def test_validate_zarr_store(self, sample_scene, tmp_path):
+    def test_validate_zarr_store(self, sample_scene, tmp_path) -> None:
         """Test zarr store validation."""
         # Valid store
         is_valid, error = validate_zarr_store(sample_scene)
@@ -147,7 +147,7 @@ class TestCLIUtils:
         assert is_valid is False
         assert "Not a valid Zarr store" in error
 
-    def test_get_zarr_info(self, complex_scene):
+    def test_get_zarr_info(self, complex_scene) -> None:
         """Test getting zarr info."""
         info = get_zarr_info(complex_scene)
 
@@ -171,12 +171,12 @@ class TestViewerCommand:
 
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
-    def test_viewer_basic(self, mock_serve, mock_check, runner):
+    def test_viewer_basic(self, mock_serve, mock_check, runner) -> None:
         """Test basic viewer command."""
         mock_check.return_value = True
 
         # Run in a thread to avoid blocking
-        def run_command():
+        def run_command() -> None:
             result = runner.invoke(app, ["viewer", "--no-open"])
             assert result.exit_code == 0
 
@@ -189,7 +189,7 @@ class TestViewerCommand:
 
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main.build_viewer")
-    def test_viewer_auto_build(self, mock_build, mock_check, runner):
+    def test_viewer_auto_build(self, mock_build, mock_check, runner) -> None:
         """Test viewer auto-builds if not built."""
         mock_check.return_value = False
         mock_build.return_value = True
@@ -205,7 +205,7 @@ class TestViewerCommand:
     @patch("luxar.cli.main._serve_data")
     def test_viewer_with_data(
         self, mock_data, mock_viewer, mock_check, runner, sample_scene
-    ):
+    ) -> None:
         """Test viewer with data option."""
         mock_check.return_value = True
 
@@ -220,7 +220,7 @@ class TestDemoCommand:
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
     @patch("luxar.cli.main._serve_data")
-    def test_demo_basic(self, mock_data, mock_viewer, mock_check, runner):
+    def test_demo_basic(self, mock_data, mock_viewer, mock_check, runner) -> None:
         """Test basic demo command."""
         mock_check.return_value = True
 
@@ -231,7 +231,7 @@ class TestDemoCommand:
             call_args = mock_create.call_args
             assert call_args[1]["n_points"] == 100
 
-    def test_demo_with_output(self, runner, tmp_path):
+    def test_demo_with_output(self, runner, tmp_path) -> None:
         """Test demo with specified output."""
         output = tmp_path / "my_demo.zarr"
 
@@ -252,7 +252,7 @@ class TestDemoCommand:
                     # Output should exist
                     assert output.exists()
 
-    def test_demo_invalid_type(self, runner):
+    def test_demo_invalid_type(self, runner) -> None:
         """Test demo with invalid type."""
         result = runner.invoke(app, ["demo", "--type", "invalid", "--no-open"])
         assert result.exit_code == 1
@@ -262,7 +262,7 @@ class TestDemoCommand:
 class TestEnhancedInfoCommand:
     """Test the enhanced info command."""
 
-    def test_info_tree_view(self, runner, complex_scene):
+    def test_info_tree_view(self, runner, complex_scene) -> None:
         """Test info command with tree view."""
         result = runner.invoke(app, ["info", str(complex_scene)])
         assert result.exit_code == 0
@@ -276,19 +276,19 @@ class TestEnhancedInfoCommand:
         assert "SubGroup" in result.stdout
         assert "225" in result.stdout  # Total points
 
-    def test_info_no_tree(self, runner, complex_scene):
+    def test_info_no_tree(self, runner, complex_scene) -> None:
         """Test info command without tree."""
         result = runner.invoke(app, ["info", str(complex_scene), "--no-tree"])
         assert result.exit_code == 0
         assert "Summary Statistics" in result.stdout
 
-    def test_info_with_stats(self, runner, complex_scene):
+    def test_info_with_stats(self, runner, complex_scene) -> None:
         """Test info command with detailed stats."""
         result = runner.invoke(app, ["info", str(complex_scene), "--stats"])
         assert result.exit_code == 0
         assert "Points Objects Details" in result.stdout
 
-    def test_info_json_format(self, runner, complex_scene):
+    def test_info_json_format(self, runner, complex_scene) -> None:
         """Test info command with JSON output."""
         result = runner.invoke(app, ["info", str(complex_scene), "--format", "json"])
         assert result.exit_code == 0
@@ -298,7 +298,7 @@ class TestEnhancedInfoCommand:
         assert "n_points_total" in data
         assert data["n_points_total"] == 225
 
-    def test_info_depth_limit(self, runner, complex_scene):
+    def test_info_depth_limit(self, runner, complex_scene) -> None:
         """Test info command with depth limit."""
         result = runner.invoke(app, ["info", str(complex_scene), "--depth", "1"])
         assert result.exit_code == 0
@@ -311,7 +311,7 @@ class TestEnhancedServeCommand:
     """Test the enhanced serve command."""
 
     @patch("luxar.cli.main.uvicorn.run")
-    def test_serve_basic(self, mock_uvicorn, runner, sample_scene):
+    def test_serve_basic(self, mock_uvicorn, runner, sample_scene) -> None:
         """Test basic serve command (existing functionality)."""
         result = runner.invoke(app, ["serve", str(sample_scene)])
         assert result.exit_code == 0
@@ -319,7 +319,9 @@ class TestEnhancedServeCommand:
 
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.main.check_viewer_built")
-    def test_serve_with_viewer(self, mock_check, mock_uvicorn, runner, sample_scene):
+    def test_serve_with_viewer(
+        self, mock_check, mock_uvicorn, runner, sample_scene
+    ) -> None:
         """Test serve with viewer option."""
         mock_check.return_value = True
 
@@ -329,7 +331,9 @@ class TestEnhancedServeCommand:
 
     @patch("luxar.cli.main.uvicorn.run")
     @patch("luxar.cli.utils.open_browser")
-    def test_serve_with_open(self, mock_browser, mock_uvicorn, runner, sample_scene):
+    def test_serve_with_open(
+        self, mock_browser, mock_uvicorn, runner, sample_scene
+    ) -> None:
         """Test serve with open browser option."""
         result = runner.invoke(app, ["serve", str(sample_scene), "--open"])
         # Browser open might be called depending on timing
@@ -337,7 +341,7 @@ class TestEnhancedServeCommand:
 
     @patch("luxar.cli.main.check_viewer_built")
     @patch("luxar.cli.main._serve_viewer")
-    def test_serve_viewer_only(self, mock_serve, mock_check, runner):
+    def test_serve_viewer_only(self, mock_serve, mock_check, runner) -> None:
         """Test serve viewer only."""
         mock_check.return_value = True
 
@@ -345,7 +349,7 @@ class TestEnhancedServeCommand:
         assert result.exit_code == 0
         mock_check.assert_called()
 
-    def test_serve_no_path_error(self, runner):
+    def test_serve_no_path_error(self, runner) -> None:
         """Test serve without path (and not viewer-only)."""
         result = runner.invoke(app, ["serve"])
         assert result.exit_code == 1
@@ -355,7 +359,7 @@ class TestEnhancedServeCommand:
 class TestCLIIntegration:
     """Integration tests for CLI commands."""
 
-    def test_demo_no_serve_then_info_workflow(self, runner, tmp_path):
+    def test_demo_no_serve_then_info_workflow(self, runner, tmp_path) -> None:
         """Test generating demo data without serving then viewing info."""
         output = tmp_path / "test.zarr"
 
@@ -371,7 +375,7 @@ class TestCLIIntegration:
         assert result2.exit_code == 0
         assert "50" in result2.stdout
 
-    def test_demo_creates_temp_dir(self, runner):
+    def test_demo_creates_temp_dir(self, runner) -> None:
         """Test that demo creates temp directory when no output specified."""
         with patch("luxar.cli.main.check_viewer_built", return_value=True):
             with patch("luxar.cli.main._serve_viewer"):
@@ -381,7 +385,7 @@ class TestCLIIntegration:
                         runner.invoke(app, ["demo", "--points", "10", "--no-open"])
                         mock_temp.assert_called_once()
 
-    def test_all_commands_help(self, runner):
+    def test_all_commands_help(self, runner) -> None:
         """Test that all commands have proper help."""
         commands = ["serve", "info", "viewer", "demo"]
 

@@ -12,7 +12,7 @@ from luxar.validation.types import validate_positions
 class TestDimensionValidation:
     """Test dimension validation functions."""
 
-    def test_validate_positions_nd(self):
+    def test_validate_positions_nd(self) -> None:
         """Test validating nD positions."""
         # 2D positions
         pos_2d = np.random.rand(100, 2).astype(np.float32)
@@ -38,7 +38,7 @@ class TestDimensionValidation:
         with pytest.raises(ValueError, match="Expected 2 dimensions, got 3"):
             validate_positions(pos_3d, ndim=2)
 
-    def test_validate_positions_errors(self):
+    def test_validate_positions_errors(self) -> None:
         """Test position validation errors."""
         # Wrong number of dimensions
         with pytest.raises(ValueError, match="must have shape"):
@@ -52,7 +52,7 @@ class TestDimensionValidation:
 class TestSceneDimensionMetadata:
     """Test dimension metadata in Scene."""
 
-    def test_scene_dimension_metadata(self, tmp_path):
+    def test_scene_dimension_metadata(self, tmp_path) -> None:
         """Test setting and getting scene-level dimensions."""
         import zarr
 
@@ -88,7 +88,7 @@ class TestSceneDimensionMetadata:
             store = zarr.open_group(tmp_path / "test_with_dims.zarr", mode="r")
             assert "scene_dimensions" in store.attrs
 
-    def test_scene_dimension_persistence(self, tmp_path):
+    def test_scene_dimension_persistence(self, tmp_path) -> None:
         """Test dimension metadata persists through save/load."""
         zarr_path = tmp_path / "persist.zarr"
 

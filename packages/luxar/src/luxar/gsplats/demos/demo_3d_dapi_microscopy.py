@@ -450,7 +450,7 @@ if not NO_NAPARI:
     )
 
     # Dynamic wireframe and points layers
-    def _update_3d_layers(t_index: int):
+    def _update_3d_layers(t_index: int) -> None:
         """Update wireframes and centers for current compression level."""
         # Clear existing wireframe and point layers
         for layer in list(viewer.layers):
@@ -504,7 +504,7 @@ if not NO_NAPARI:
     # Initialize and wire slider
     _update_3d_layers(0)
 
-    def _on_step_change(event=None):
+    def _on_step_change(event=None) -> None:
         # Get the first dimension step (compression axis)
         if hasattr(viewer.dims, "current_step"):
             t = viewer.dims.current_step[0]

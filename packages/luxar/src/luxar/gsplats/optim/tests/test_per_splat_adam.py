@@ -14,7 +14,7 @@ from luxar.gsplats.optim import (
 )
 
 
-def test_per_splat_adam():
+def test_per_splat_adam() -> None:
     """Test basic per-splat Adam functionality."""
     print("🧪 Testing Per-Splat Adam Optimizer")
 
@@ -98,7 +98,7 @@ def test_per_splat_adam():
     print("✅ Per-splat Adam test passed!")
 
 
-def test_factory_function():
+def test_factory_function() -> None:
     """Test the factory function."""
     print("\n🏭 Testing factory function...")
 

@@ -40,7 +40,7 @@ def simple_3d_volume():
 class TestLossTypes:
     """Test different loss functions (MSE, Poisson, L1)."""
 
-    def test_mse_loss(self, simple_2d_image):
+    def test_mse_loss(self, simple_2d_image) -> None:
         """Test decomposition with MSE loss."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -56,7 +56,7 @@ class TestLossTypes:
         for img in scales_list:
             assert np.all(img >= 0)
 
-    def test_poisson_loss(self, simple_2d_image):
+    def test_poisson_loss(self, simple_2d_image) -> None:
         """Test decomposition with Poisson loss."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -72,7 +72,7 @@ class TestLossTypes:
         for img in scales_list:
             assert np.all(img >= 0)
 
-    def test_l1_loss_explicit(self, simple_2d_image):
+    def test_l1_loss_explicit(self, simple_2d_image) -> None:
         """Test decomposition with explicit L1 loss."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -85,7 +85,7 @@ class TestLossTypes:
         assert len(scales_list) == 2
         assert stats["final_error"] < 0.05
 
-    def test_different_losses_produce_different_results(self, simple_2d_image):
+    def test_different_losses_produce_different_results(self, simple_2d_image) -> None:
         """Test that different loss types produce different decompositions."""
         results = {}
 
@@ -107,7 +107,7 @@ class TestLossTypes:
 class TestAsymmetricPenalty:
     """Test asymmetric penalty for over-prediction."""
 
-    def test_asymmetric_penalty_with_mse(self, simple_2d_image):
+    def test_asymmetric_penalty_with_mse(self, simple_2d_image) -> None:
         """Test MSE loss with asymmetric penalty."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -122,7 +122,7 @@ class TestAsymmetricPenalty:
         # Should still achieve good quality
         assert stats["final_error"] < 0.1
 
-    def test_asymmetric_penalty_with_poisson(self, simple_2d_image):
+    def test_asymmetric_penalty_with_poisson(self, simple_2d_image) -> None:
         """Test Poisson loss with asymmetric penalty."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -136,7 +136,7 @@ class TestAsymmetricPenalty:
         assert len(scales_list) == 2
         assert stats["final_error"] < 0.1
 
-    def test_no_asymmetric_penalty(self, simple_2d_image):
+    def test_no_asymmetric_penalty(self, simple_2d_image) -> None:
         """Test with asymmetric_penalty=None (symmetric loss)."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -155,7 +155,7 @@ class TestAsymmetricPenalty:
 class TestUniformImageHandling:
     """Test handling of uniform images (edge case)."""
 
-    def test_uniform_image(self):
+    def test_uniform_image(self) -> None:
         """Test decomposition of completely uniform image."""
         uniform_image = np.ones((64, 64), dtype=np.float32) * 5.0
 
@@ -168,7 +168,7 @@ class TestUniformImageHandling:
         # Should have converged (not much to optimize)
         assert stats["converged"]
 
-    def test_nearly_uniform_image(self):
+    def test_nearly_uniform_image(self) -> None:
         """Test decomposition of nearly uniform image."""
         nearly_uniform = np.ones((64, 64), dtype=np.float32) * 5.0
         nearly_uniform[32, 32] = 5.001  # Tiny variation
@@ -189,7 +189,7 @@ class TestDeviceHandling:
     @pytest.mark.skipif(
         not torch.backends.mps.is_available(), reason="MPS not available"
     )
-    def test_mps_device_2d(self, simple_2d_image):
+    def test_mps_device_2d(self, simple_2d_image) -> None:
         """Test decomposition on MPS device with 2D data."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2], n_iters=20, device="mps", verbose=False
@@ -201,7 +201,7 @@ class TestDeviceHandling:
     @pytest.mark.skipif(
         not torch.backends.mps.is_available(), reason="MPS not available"
     )
-    def test_mps_device_3d(self, simple_3d_volume):
+    def test_mps_device_3d(self, simple_3d_volume) -> None:
         """Test decomposition on MPS device with 3D data (uses fallback)."""
         scales_list, stats = decompose_image(
             simple_3d_volume, scales=[1, 2], n_iters=20, device="mps", verbose=False
@@ -211,7 +211,7 @@ class TestDeviceHandling:
         # MPS uses interpolate fallback for 3D, should still work
         assert stats["final_error"] < 0.2
 
-    def test_auto_device_detection(self, simple_2d_image):
+    def test_auto_device_detection(self, simple_2d_image) -> None:
         """Test automatic device detection."""
         # Call without device parameter - should auto-detect
         scales_list, stats = decompose_image(
@@ -224,7 +224,7 @@ class TestDeviceHandling:
 class TestMovieRecording:
     """Test napari movie recording feature."""
 
-    def test_movie_recording_enabled(self, simple_2d_image):
+    def test_movie_recording_enabled(self, simple_2d_image) -> None:
         """Test that movie frames are recorded when enabled."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -253,7 +253,7 @@ class TestMovieRecording:
         assert len(movie_frames["iterations"]) == 4
         assert movie_frames["iterations"] == [5, 10, 15, 20]
 
-    def test_movie_max_frames_limit(self, simple_2d_image):
+    def test_movie_max_frames_limit(self, simple_2d_image) -> None:
         """Test that movie frame limit is respected."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -269,7 +269,7 @@ class TestMovieRecording:
         # Should not exceed max_frames
         assert len(movie_frames["target"]) <= 10
 
-    def test_movie_disabled_by_default(self, simple_2d_image):
+    def test_movie_disabled_by_default(self, simple_2d_image) -> None:
         """Test that movie recording is disabled by default."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2], n_iters=10, verbose=False
@@ -281,7 +281,7 @@ class TestMovieRecording:
 class TestConvergenceEdgeCases:
     """Test convergence edge cases and best state tracking."""
 
-    def test_best_state_restored(self, simple_2d_image):
+    def test_best_state_restored(self, simple_2d_image) -> None:
         """Test that best state is restored if quality degrades."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -299,7 +299,7 @@ class TestConvergenceEdgeCases:
         # Best max abs error should be finite
         assert np.isfinite(stats["best_max_abs_error"])
 
-    def test_convergence_early_termination(self, simple_2d_image):
+    def test_convergence_early_termination(self, simple_2d_image) -> None:
         """Test that optimization stops early when converged."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -317,7 +317,7 @@ class TestConvergenceEdgeCases:
 class TestUpsampleForVisualization:
     """Test upsample_for_visualization helper function."""
 
-    def test_upsample_2d_nearest(self):
+    def test_upsample_2d_nearest(self) -> None:
         """Test upsampling with nearest interpolation."""
         img = np.random.rand(16, 16).astype(np.float32)
         target_shape = (64, 64)
@@ -332,7 +332,7 @@ class TestUpsampleForVisualization:
         assert upsampled.min() >= img.min() - 1e-6
         assert upsampled.max() <= img.max() + 1e-6
 
-    def test_upsample_2d_linear(self):
+    def test_upsample_2d_linear(self) -> None:
         """Test upsampling with linear interpolation."""
         img = np.random.rand(16, 16).astype(np.float32)
         target_shape = (64, 64)
@@ -344,7 +344,7 @@ class TestUpsampleForVisualization:
         assert upsampled.shape == target_shape
         assert np.all(upsampled >= 0)
 
-    def test_upsample_2d_cubic(self):
+    def test_upsample_2d_cubic(self) -> None:
         """Test upsampling with cubic interpolation."""
         img = np.random.rand(16, 16).astype(np.float32)
         target_shape = (64, 64)
@@ -355,7 +355,7 @@ class TestUpsampleForVisualization:
         # Cubic should clamp negatives to zero
         assert np.all(upsampled >= 0)
 
-    def test_upsample_3d_cubic(self):
+    def test_upsample_3d_cubic(self) -> None:
         """Test upsampling 3D with cubic (uses Keys cubic)."""
         img = np.random.rand(8, 8, 8).astype(np.float32)
         target_shape = (32, 32, 32)
@@ -365,7 +365,7 @@ class TestUpsampleForVisualization:
         assert upsampled.shape == target_shape
         assert np.all(upsampled >= 0)
 
-    def test_upsample_no_op_same_shape(self):
+    def test_upsample_no_op_same_shape(self) -> None:
         """Test that upsampling with same shape returns input."""
         img = np.random.rand(32, 32).astype(np.float32)
 
@@ -378,7 +378,7 @@ class TestUpsampleForVisualization:
 class TestScaleFiltering:
     """Test automatic scale filtering for small images."""
 
-    def test_scale_filtering_warning(self):
+    def test_scale_filtering_warning(self) -> None:
         """Test that oversized scales are filtered with warning."""
         small_image = np.random.rand(24, 24).astype(np.float32)
 
@@ -397,7 +397,7 @@ class TestScaleFiltering:
         assert 16 in actual_scales  # 24/16 = 1.5, rounds to 1
         assert len(scales_list) == len(actual_scales)
 
-    def test_all_scales_too_large(self):
+    def test_all_scales_too_large(self) -> None:
         """Test when all scales are too large (fallback to scale=1)."""
         tiny_image = np.random.rand(8, 8).astype(np.float32)
 
@@ -416,7 +416,7 @@ class TestScaleFiltering:
 class TestInitializationEdgeCases:
     """Test edge cases in initialization methods."""
 
-    def test_zero_initialization_coverage(self, simple_2d_image):
+    def test_zero_initialization_coverage(self, simple_2d_image) -> None:
         """Test zero initialization (all scales start at zero)."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -432,7 +432,7 @@ class TestInitializationEdgeCases:
             # Each scale should have very small total energy
             assert total_energy < 1.0  # Much less than typical image energy
 
-    def test_invalid_target_shape_raises_error(self, simple_2d_image):
+    def test_invalid_target_shape_raises_error(self, simple_2d_image) -> None:
         """Test that mismatched target shape raises error."""
         model = MultiScaleDecomposer((64, 64), scales=[1, 2])
 
@@ -457,7 +457,7 @@ class TestInitializationEdgeCases:
 class TestDecompositionLossEdgeCases:
     """Test decomposition_loss function edge cases."""
 
-    def test_loss_with_mse_no_asymmetric(self, simple_2d_image):
+    def test_loss_with_mse_no_asymmetric(self, simple_2d_image) -> None:
         """Test MSE loss without asymmetric penalty."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -470,7 +470,7 @@ class TestDecompositionLossEdgeCases:
         assert torch.isfinite(loss)
         assert stats["recon_loss"] >= 0
 
-    def test_loss_with_poisson_no_asymmetric(self, simple_2d_image):
+    def test_loss_with_poisson_no_asymmetric(self, simple_2d_image) -> None:
         """Test Poisson loss without asymmetric penalty."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -487,7 +487,7 @@ class TestDecompositionLossEdgeCases:
 class TestVerboseOutput:
     """Test verbose mode (covers logging branches)."""
 
-    def test_verbose_mode(self, simple_2d_image):
+    def test_verbose_mode(self, simple_2d_image) -> None:
         """Test with verbose=True to cover logging branches."""
         # This test ensures verbose logging paths are executed
         scales_list, stats = decompose_image(
@@ -502,7 +502,7 @@ class TestVerboseOutput:
         # With enough iterations, should converge and trigger convergence logging
         assert stats["converged"]
 
-    def test_verbose_no_convergence(self, simple_2d_image):
+    def test_verbose_no_convergence(self, simple_2d_image) -> None:
         """Test verbose output when convergence not achieved."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -519,7 +519,7 @@ class TestVerboseOutput:
 class TestBestStateTracking:
     """Test best state tracking and restoration."""
 
-    def test_best_state_tracking_with_oscillation(self, simple_2d_image):
+    def test_best_state_tracking_with_oscillation(self, simple_2d_image) -> None:
         """Test that best state is properly tracked even if quality oscillates."""
         # Use aggressive settings that might cause oscillation
         scales_list, stats = decompose_image(
@@ -543,7 +543,7 @@ class TestBestStateTracking:
 class Test3DInterpolationFallbacks:
     """Test 3D interpolation mode selection."""
 
-    def test_3d_cubic_uses_keys_cubic(self, simple_3d_volume):
+    def test_3d_cubic_uses_keys_cubic(self, simple_3d_volume) -> None:
         """Test that 3D with cubic uses Keys cubic convolution."""
         scales_list, stats = decompose_image(
             simple_3d_volume,
@@ -560,7 +560,7 @@ class Test3DInterpolationFallbacks:
         # Should achieve good quality with cubic
         assert stats["final_error"] < 0.1
 
-    def test_3d_nearest_mode(self, simple_3d_volume):
+    def test_3d_nearest_mode(self, simple_3d_volume) -> None:
         """Test 3D with nearest neighbor interpolation."""
         scales_list, stats = decompose_image(
             simple_3d_volume,
@@ -577,7 +577,7 @@ class Test3DInterpolationFallbacks:
 class TestNormPercentile:
     """Test configurable normalization percentile."""
 
-    def test_norm_percentile_zero(self, simple_2d_image):
+    def test_norm_percentile_zero(self, simple_2d_image) -> None:
         """Test full range normalization (percentile=0)."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -589,7 +589,7 @@ class TestNormPercentile:
 
         assert len(scales_list) == 2
 
-    def test_norm_percentile_robust(self):
+    def test_norm_percentile_robust(self) -> None:
         """Test robust percentile normalization with outliers."""
         image = np.random.rand(64, 64).astype(np.float32)
         image[0, 0] = 100.0  # Extreme outlier
@@ -611,7 +611,7 @@ class TestNormPercentile:
 class TestCubicInterpolationEdgeCases:
     """Test cubic interpolation edge cases and fallbacks."""
 
-    def test_cubic_upsample_fractional_scaling(self):
+    def test_cubic_upsample_fractional_scaling(self) -> None:
         """Test cubic upsampling with non-power-of-2 scale factors."""
         # Create small image and upsample to non-power-of-2 size
         img = np.random.rand(8, 8).astype(np.float32)
@@ -628,7 +628,7 @@ class TestCubicInterpolationEdgeCases:
 class TestInitializationMethodSelection:
     """Test that all initialization method branches are covered."""
 
-    def test_init_method_pyramid_explicit(self, simple_2d_image):
+    def test_init_method_pyramid_explicit(self, simple_2d_image) -> None:
         """Test explicitly selecting pyramid init method."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -640,7 +640,7 @@ class TestInitializationMethodSelection:
 
         assert len(scales_list) == 2
 
-    def test_init_method_finest_explicit(self, simple_2d_image):
+    def test_init_method_finest_explicit(self, simple_2d_image) -> None:
         """Test explicitly selecting finest init method."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -652,7 +652,7 @@ class TestInitializationMethodSelection:
 
         assert len(scales_list) == 2
 
-    def test_init_method_uniform_explicit(self, simple_2d_image):
+    def test_init_method_uniform_explicit(self, simple_2d_image) -> None:
         """Test explicitly selecting uniform init method."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -664,7 +664,7 @@ class TestInitializationMethodSelection:
 
         assert len(scales_list) == 2
 
-    def test_init_method_zero_explicit(self, simple_2d_image):
+    def test_init_method_zero_explicit(self, simple_2d_image) -> None:
         """Test explicitly selecting zero init method."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -680,7 +680,7 @@ class TestInitializationMethodSelection:
 class TestMovieFrameFIFO:
     """Test movie frame FIFO buffer management."""
 
-    def test_movie_fifo_buffer_overflow(self, simple_2d_image):
+    def test_movie_fifo_buffer_overflow(self, simple_2d_image) -> None:
         """Test that old frames are discarded when max_frames exceeded."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -708,7 +708,7 @@ class TestDeviceDetection:
     @pytest.mark.skipif(
         torch.cuda.is_available(), reason="CUDA available, won't test fallback"
     )
-    def test_device_detection_no_cuda(self, simple_2d_image):
+    def test_device_detection_no_cuda(self, simple_2d_image) -> None:
         """Test device detection when CUDA not available."""
         # When CUDA not available, should fall back to MPS or CPU
         scales_list, stats = decompose_image(
@@ -725,7 +725,7 @@ class TestDeviceDetection:
 class TestBestStateFallback:
     """Test best state fallback scenarios."""
 
-    def test_best_state_fallback_when_no_best_saved(self, simple_2d_image):
+    def test_best_state_fallback_when_no_best_saved(self, simple_2d_image) -> None:
         """Test fallback to final state when no best state was saved."""
         # This should be rare, but tests the fallback branch
         scales_list, stats = decompose_image(
@@ -744,7 +744,7 @@ class TestBestStateFallback:
 class TestLossComputationHelpers:
     """Test individual loss computation functions via decomposition_loss."""
 
-    def test_decomposition_loss_l1_symmetric(self, simple_2d_image):
+    def test_decomposition_loss_l1_symmetric(self, simple_2d_image) -> None:
         """Test decomposition loss with L1 and no asymmetric penalty."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -763,7 +763,7 @@ class TestLossComputationHelpers:
         assert "recon_loss" in stats
         assert "energy_loss" in stats
 
-    def test_decomposition_loss_mse_symmetric(self, simple_2d_image):
+    def test_decomposition_loss_mse_symmetric(self, simple_2d_image) -> None:
         """Test decomposition loss with MSE and no asymmetric penalty."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -780,7 +780,7 @@ class TestLossComputationHelpers:
 
         assert torch.isfinite(loss)
 
-    def test_decomposition_loss_poisson_symmetric(self, simple_2d_image):
+    def test_decomposition_loss_poisson_symmetric(self, simple_2d_image) -> None:
         """Test decomposition loss with Poisson and no asymmetric penalty."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])

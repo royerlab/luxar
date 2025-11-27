@@ -38,7 +38,7 @@ from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 
-def main():
+def main() -> None:
     """Main demo with high-level fit function."""
 
     parser = argparse.ArgumentParser(

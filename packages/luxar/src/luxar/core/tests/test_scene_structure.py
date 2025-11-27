@@ -4,7 +4,7 @@ import zarr
 from luxar.utils.demos import create_lorenz_attractor
 
 
-def test_random_demo_roundtrip(tmp_path):
+def test_random_demo_roundtrip(tmp_path) -> None:
     """Lorenz attractor demo writes root attrs & point dataset correctly."""
     store = tmp_path / "demo.zarr"
     n = 7_777

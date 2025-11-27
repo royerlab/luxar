@@ -10,7 +10,7 @@ from luxar import LuxarZarrCompiler, StreamingPoints
 class TestStreamingPointsComprehensive:
     """Comprehensive tests for StreamingPoints class."""
 
-    def test_streaming_basic_workflow(self, tmp_path):
+    def test_streaming_basic_workflow(self, tmp_path) -> None:
         """Test basic streaming workflow."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -41,7 +41,7 @@ class TestStreamingPointsComprehensive:
             assert metadata["dims"] == 3
             assert metadata["streaming"] is True
 
-    def test_streaming_with_colors_late_addition(self, tmp_path):
+    def test_streaming_with_colors_late_addition(self, tmp_path) -> None:
         """Test adding colors to later batches."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -68,7 +68,7 @@ class TestStreamingPointsComprehensive:
         assert np.all(colors[:100] == 0)
         assert np.any(colors[100:150] != 0)
 
-    def test_streaming_with_radii_late_addition(self, tmp_path):
+    def test_streaming_with_radii_late_addition(self, tmp_path) -> None:
         """Test adding radii to later batches."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -88,7 +88,7 @@ class TestStreamingPointsComprehensive:
             metadata = streaming.finalize()
             assert metadata["has_radii"] is True
 
-    def test_streaming_with_sharpness_late_addition(self, tmp_path):
+    def test_streaming_with_sharpness_late_addition(self, tmp_path) -> None:
         """Test adding sharpness to later batches."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -108,7 +108,7 @@ class TestStreamingPointsComprehensive:
             metadata = streaming.finalize()
             assert metadata["has_sharpness"] is True
 
-    def test_streaming_dimension_validation(self, tmp_path):
+    def test_streaming_dimension_validation(self, tmp_path) -> None:
         """Test dimension validation in streaming."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -122,7 +122,7 @@ class TestStreamingPointsComprehensive:
             with pytest.raises(ValueError, match="Expected 3D points, got 5D"):
                 streaming.append_batch(positions_5d)
 
-    def test_streaming_invalid_positions(self, tmp_path):
+    def test_streaming_invalid_positions(self, tmp_path) -> None:
         """Test invalid positions in streaming."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -137,7 +137,7 @@ class TestStreamingPointsComprehensive:
             with pytest.raises(ValueError):
                 streaming.append_batch(positions_3d)
 
-    def test_streaming_from_generator_tuple(self, tmp_path):
+    def test_streaming_from_generator_tuple(self, tmp_path) -> None:
         """Test streaming from generator with tuples."""
 
         def data_generator():
@@ -160,7 +160,7 @@ class TestStreamingPointsComprehensive:
             assert metadata["has_radii"] is True
             assert metadata["has_sharpness"] is True
 
-    def test_streaming_from_generator_positions_only(self, tmp_path):
+    def test_streaming_from_generator_positions_only(self, tmp_path) -> None:
         """Test streaming from generator with positions only."""
 
         def data_generator():
@@ -179,7 +179,7 @@ class TestStreamingPointsComprehensive:
             assert metadata["has_radii"] is False
             assert metadata["has_sharpness"] is False
 
-    def test_streaming_from_generator_max_batches(self, tmp_path):
+    def test_streaming_from_generator_max_batches(self, tmp_path) -> None:
         """Test streaming with max_batches limit."""
 
         def infinite_generator():
@@ -195,7 +195,7 @@ class TestStreamingPointsComprehensive:
             metadata = streaming.finalize()
             assert metadata["n_points"] == 50
 
-    def test_streaming_finalize_with_attrs(self, tmp_path):
+    def test_streaming_finalize_with_attrs(self, tmp_path) -> None:
         """Test finalize with additional attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -221,7 +221,7 @@ class TestStreamingPointsComprehensive:
         assert attrs["blending_mode"] == "additive"
         assert attrs["custom_attr"] == "test_value"
 
-    def test_streaming_empty_finalize(self, tmp_path):
+    def test_streaming_empty_finalize(self, tmp_path) -> None:
         """Test finalizing without any data."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)
@@ -233,7 +233,7 @@ class TestStreamingPointsComprehensive:
             assert metadata["has_radii"] is False
             assert metadata["has_sharpness"] is False
 
-    def test_streaming_mixed_attributes(self, tmp_path):
+    def test_streaming_mixed_attributes(self, tmp_path) -> None:
         """Test streaming with mixed presence of attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             streaming = StreamingPoints("stream", compiler, expected_dims=3)

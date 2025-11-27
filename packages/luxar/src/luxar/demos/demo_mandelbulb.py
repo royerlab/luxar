@@ -260,7 +260,7 @@ def generate_mandelbulb_volumetric(
     return len(positions)
 
 
-def main():
+def main() -> None:
     """Main demo entry point."""
     # Parse command line arguments
     resolution = 256  # Default: 256^3 = 16.8M samples → ~200-400k surface points

@@ -21,7 +21,7 @@ from luxar.typing_utils.datatypes import (
 class TestDataTypeConfig:
     """Test DataTypeConfig class."""
 
-    def test_auto_mode(self):
+    def test_auto_mode(self) -> None:
         """Test auto dtype selection mode."""
         config = DataTypeConfig(mode=DataTypeMode.AUTO)
 
@@ -45,7 +45,7 @@ class TestDataTypeConfig:
         large_radii = np.array([10000.0, 20000.0, 30000.0])
         assert config.get_radius_dtype(large_radii) == np.float32
 
-    def test_precision_mode(self):
+    def test_precision_mode(self) -> None:
         """Test precision mode always uses float32."""
         config = DataTypeConfig(mode=DataTypeMode.PRECISION)
 
@@ -54,7 +54,7 @@ class TestDataTypeConfig:
         assert config.get_radius_dtype() == np.float32
         assert config.get_sharpness_dtype() == np.float32
 
-    def test_memory_mode(self):
+    def test_memory_mode(self) -> None:
         """Test memory mode uses smallest types."""
         config = DataTypeConfig(mode=DataTypeMode.MEMORY)
 
@@ -63,7 +63,7 @@ class TestDataTypeConfig:
         assert config.get_radius_dtype() == np.uint8
         assert config.get_sharpness_dtype() == np.uint8
 
-    def test_custom_mode(self):
+    def test_custom_mode(self) -> None:
         """Test custom mode with explicit dtypes."""
         config = DataTypeConfig(
             mode=DataTypeMode.CUSTOM,
@@ -78,7 +78,7 @@ class TestDataTypeConfig:
         assert config.get_radius_dtype() == np.float16
         assert config.get_sharpness_dtype() == np.uint8
 
-    def test_custom_mode_validation(self):
+    def test_custom_mode_validation(self) -> None:
         """Test that custom mode requires all dtypes."""
         with pytest.raises(ValueError, match="CUSTOM mode requires all dtypes"):
             DataTypeConfig(
@@ -91,7 +91,7 @@ class TestDataTypeConfig:
 class TestArrayConversion:
     """Test array dtype conversion utilities."""
 
-    def test_float_to_uint8_normalized(self):
+    def test_float_to_uint8_normalized(self) -> None:
         """Test float to uint8 conversion with normalization."""
         float_arr = np.array([0.0, 0.5, 1.0], dtype=np.float32)
         uint8_arr = convert_array_dtype(float_arr, np.uint8, normalize=True)
@@ -99,7 +99,7 @@ class TestArrayConversion:
         assert uint8_arr.dtype == np.uint8
         np.testing.assert_array_equal(uint8_arr, [0, 127, 255])
 
-    def test_uint8_to_float_normalized(self):
+    def test_uint8_to_float_normalized(self) -> None:
         """Test uint8 to float conversion with normalization."""
         uint8_arr = np.array([0, 127, 255], dtype=np.uint8)
         float_arr = convert_array_dtype(uint8_arr, np.float32, normalize=True)
@@ -107,7 +107,7 @@ class TestArrayConversion:
         assert float_arr.dtype == np.float32
         np.testing.assert_array_almost_equal(float_arr, [0.0, 127 / 255, 1.0])
 
-    def test_float16_float32_conversion(self):
+    def test_float16_float32_conversion(self) -> None:
         """Test conversion between float16 and float32."""
         float32_arr = np.array([1.5, -2.0, 3.14159], dtype=np.float32)
         float16_arr = convert_array_dtype(float32_arr, np.float16)
@@ -120,7 +120,7 @@ class TestArrayConversion:
         back_to_float32 = convert_array_dtype(float16_arr, np.float32)
         assert back_to_float32.dtype == np.float32
 
-    def test_no_conversion_needed(self):
+    def test_no_conversion_needed(self) -> None:
         """Test that no conversion happens when types match."""
         arr = np.array([1, 2, 3], dtype=np.float32)
         result = convert_array_dtype(arr, np.float32)
@@ -130,13 +130,13 @@ class TestArrayConversion:
 class TestOptimalDtypeInference:
     """Test optimal dtype inference."""
 
-    def test_position_dtype_inference(self):
+    def test_position_dtype_inference(self) -> None:
         """Test dtype inference for positions."""
         positions = np.random.randn(100, 3)
         dtype = infer_optimal_dtype(positions, "position")
         assert dtype == np.float32  # Positions need good precision
 
-    def test_color_dtype_inference(self):
+    def test_color_dtype_inference(self) -> None:
         """Test dtype inference for colors."""
         # SDR colors
         sdr_colors = np.random.rand(100, 3)
@@ -148,7 +148,7 @@ class TestOptimalDtypeInference:
         dtype = infer_optimal_dtype(hdr_colors, "color")
         assert dtype == np.float32
 
-    def test_scalar_dtype_inference(self):
+    def test_scalar_dtype_inference(self) -> None:
         """Test dtype inference for scalar values."""
         # Small range - use uint8
         small_values = np.random.rand(100) * 0.5
@@ -169,7 +169,7 @@ class TestOptimalDtypeInference:
 class TestDtypeInfo:
     """Test dtype information utilities."""
 
-    def test_float32_info(self):
+    def test_float32_info(self) -> None:
         """Test float32 dtype info."""
         info = get_dtype_info(np.float32)
         assert info["name"] == "float32"
@@ -177,7 +177,7 @@ class TestDtypeInfo:
         assert info["kind"] == "f"
         assert info["normalized"] is False
 
-    def test_uint8_info(self):
+    def test_uint8_info(self) -> None:
         """Test uint8 dtype info."""
         info = get_dtype_info(np.uint8)
         assert info["name"] == "uint8"
@@ -190,7 +190,7 @@ class TestDtypeInfo:
 class TestDtypeValidation:
     """Test dtype string validation."""
 
-    def test_valid_position_dtypes(self):
+    def test_valid_position_dtypes(self) -> None:
         """Test valid position dtypes."""
         assert validate_dtype_string("float32", "position")
         assert validate_dtype_string("float16", "position")
@@ -198,7 +198,7 @@ class TestDtypeValidation:
         with pytest.raises(ValueError, match="Invalid dtype"):
             validate_dtype_string("uint8", "position")
 
-    def test_valid_color_dtypes(self):
+    def test_valid_color_dtypes(self) -> None:
         """Test valid color dtypes."""
         assert validate_dtype_string("float32", "color")
         assert validate_dtype_string("uint8", "color")
@@ -207,7 +207,7 @@ class TestDtypeValidation:
         with pytest.raises(ValueError, match="Invalid dtype"):
             validate_dtype_string("float16", "color")
 
-    def test_valid_scalar_dtypes(self):
+    def test_valid_scalar_dtypes(self) -> None:
         """Test valid scalar dtypes."""
         assert validate_dtype_string("float32", "radius")
         assert validate_dtype_string("float16", "radius")
@@ -220,7 +220,7 @@ class TestDtypeValidation:
 class TestCompilerWithDtypes:
     """Test LuxarZarrCompiler with different dtype configurations."""
 
-    def test_compiler_with_memory_config(self):
+    def test_compiler_with_memory_config(self) -> None:
         """Test compiler with memory-efficient configuration."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -252,7 +252,7 @@ class TestCompilerWithDtypes:
             assert points["colors"].dtype == np.uint8
             assert points["radii"].dtype == np.uint8
 
-    def test_compiler_with_custom_config(self):
+    def test_compiler_with_custom_config(self) -> None:
         """Test compiler with custom dtype configuration."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -289,7 +289,7 @@ class TestCompilerWithDtypes:
             assert points["radii"].dtype == np.float16
             assert points["sharpness"].dtype == np.uint8
 
-    def test_hdr_color_detection(self):
+    def test_hdr_color_detection(self) -> None:
         """Test that HDR colors are automatically detected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
@@ -313,7 +313,7 @@ class TestCompilerWithDtypes:
             assert points.attrs.get("color_dtype") == "float32"
             assert points["colors"].dtype == np.float32
 
-    def test_backward_compatibility(self):
+    def test_backward_compatibility(self) -> None:
         """Test that default behavior (no dtype_config) still works."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"

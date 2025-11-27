@@ -25,14 +25,14 @@ from luxar.transforms import (
 class TestTransformUtilities:
     """Test transform utility functions."""
 
-    def test_identity(self):
+    def test_identity(self) -> None:
         """Test identity transform creation."""
         t = identity()
         assert t.shape == (4, 4)
         assert t.dtype == np.float32
         assert np.allclose(t, np.eye(4))
 
-    def test_translate(self):
+    def test_translate(self) -> None:
         """Test translation transform."""
         # Test individual axes
         t = translate(x=5)
@@ -48,7 +48,7 @@ class TestTransformUtilities:
         assert np.allclose(t[:3, :3], np.eye(3))
         assert t[3, 3] == 1
 
-    def test_scale(self):
+    def test_scale(self) -> None:
         """Test scaling transform."""
         # Non-uniform scale
         t = scale(2, 3, 4)
@@ -62,7 +62,7 @@ class TestTransformUtilities:
         t[np.diag_indices(4)] = 0
         assert np.allclose(t, 0)
 
-    def test_rotate_x(self):
+    def test_rotate_x(self) -> None:
         """Test rotation around X axis."""
         # 90 degree rotation
         t = rotate_x(90)
@@ -77,7 +77,7 @@ class TestTransformUtilities:
         rotated = t @ y_axis
         assert np.allclose(rotated[:3], [0, -1, 0], atol=1e-6)
 
-    def test_rotate_y(self):
+    def test_rotate_y(self) -> None:
         """Test rotation around Y axis."""
         # 90 degree rotation
         t = rotate_y(90)
@@ -87,7 +87,7 @@ class TestTransformUtilities:
         rotated = t @ z_axis
         assert np.allclose(rotated[:3], [1, 0, 0], atol=1e-6)
 
-    def test_rotate_z(self):
+    def test_rotate_z(self) -> None:
         """Test rotation around Z axis."""
         # 90 degree rotation
         t = rotate_z(90)
@@ -97,7 +97,7 @@ class TestTransformUtilities:
         rotated = t @ x_axis
         assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)
 
-    def test_rotate_arbitrary_axis(self):
+    def test_rotate_arbitrary_axis(self) -> None:
         """Test rotation around arbitrary axis."""
         # Rotate around diagonal axis
         axis = np.array([1, 1, 1])
@@ -108,7 +108,7 @@ class TestTransformUtilities:
         rotated = t @ x_axis
         assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)  # X -> Y
 
-    def test_rotate_string_axis(self):
+    def test_rotate_string_axis(self) -> None:
         """Test rotation with string axis names."""
         assert np.allclose(rotate(45, "x"), rotate_x(45))
         assert np.allclose(rotate(45, "Y"), rotate_y(45))
@@ -117,7 +117,7 @@ class TestTransformUtilities:
         with pytest.raises(ValueError):
             rotate(45, "w")  # Invalid axis
 
-    def test_compose(self):
+    def test_compose(self) -> None:
         """Test transform composition."""
         # Test that compose works correctly
         t1 = translate(5, 0, 0)
@@ -139,7 +139,7 @@ class TestTransformUtilities:
         # Single transform
         assert np.allclose(compose(t1), t1)
 
-    def test_compose_application_order(self):
+    def test_compose_application_order(self) -> None:
         """Test that compose(T1, T2, T3) applies T1 first, then T2, then T3.
 
         This is critical because matrix multiplication is right-to-left,
@@ -224,7 +224,7 @@ class TestTransformUtilities:
             f"Three-transform composition failed: expected {expected[:3]}, got {result[:3]}"
         )
 
-    def test_inverse(self):
+    def test_inverse(self) -> None:
         """Test transform inversion."""
         # Translation inverse
         t = translate(5, 3, -2)
@@ -246,7 +246,7 @@ class TestTransformUtilities:
         with pytest.raises(ValueError):
             inverse(bad)
 
-    def test_look_at(self):
+    def test_look_at(self) -> None:
         """Test look-at transform."""
         # Look at origin from position
         t = look_at((10, 5, 10), (0, 0, 0))
@@ -265,7 +265,7 @@ class TestTransformUtilities:
         # Y axis should be close to Z (up)
         assert t[1, 2] > 0.9  # Y points mostly in Z direction
 
-    def test_to_from_list(self):
+    def test_to_from_list(self) -> None:
         """Test conversion to/from list."""
         # Create a transform
         t = compose(translate(1, 2, 3), rotate_z(45), scale(2, 2, 2))
@@ -282,7 +282,7 @@ class TestTransformUtilities:
         with pytest.raises(ValueError):
             from_list([1, 2, 3])  # Wrong size
 
-    def test_aliases(self):
+    def test_aliases(self) -> None:
         """Test function aliases."""
         from luxar.transforms import rotation, scaling, translation
 
@@ -294,7 +294,7 @@ class TestTransformUtilities:
 class TestNodeTransformIntegration:
     """Test transform integration with Node class."""
 
-    def test_node_transform_validation(self, tmp_path):
+    def test_node_transform_validation(self, tmp_path) -> None:
         """Test that transforms are validated when creating nodes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -312,7 +312,7 @@ class TestNodeTransformIntegration:
             with pytest.raises(ValueError):
                 scene.add_group("BadType", transform="not a transform")
 
-    def test_node_transform_property(self, tmp_path):
+    def test_node_transform_property(self, tmp_path) -> None:
         """Test the transform property on nodes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -339,7 +339,7 @@ class TestNodeTransformIntegration:
             assert group.transform is None
             assert "transform" not in group.attrs
 
-    def test_nested_transforms(self, tmp_path):
+    def test_nested_transforms(self, tmp_path) -> None:
         """Test nested transform hierarchy."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -354,7 +354,7 @@ class TestNodeTransformIntegration:
             assert np.allclose(g2.transform, rotate_z(45))
             assert np.allclose(g3.transform, scale(2, 2, 2))
 
-    def test_transform_with_points(self, tmp_path):
+    def test_transform_with_points(self, tmp_path) -> None:
         """Test transforms work with points."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()

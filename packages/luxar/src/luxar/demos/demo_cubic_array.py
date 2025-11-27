@@ -189,7 +189,7 @@ def generate_cubic_array(
         aprint(f"✓ Total: {len(positions) + len(star_pos):,} points (cube + stars)")
 
 
-def main():
+def main() -> None:
     """Main demo entry point - generates data and launches viewer."""
     aprint("=" * 70)
     aprint("CUBIC ARRAY DEMO - Depth-of-Field Visualization")

@@ -41,7 +41,7 @@ def simple_3d_volume():
 class TestMultiScaleDecomposer:
     """Tests for MultiScaleDecomposer class."""
 
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test model initialization with different shapes."""
         # 2D
         model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4])
@@ -56,7 +56,7 @@ class TestMultiScaleDecomposer:
         assert model.raw_images[0].shape == (32, 32, 32)
         assert model.raw_images[1].shape == (16, 16, 16)
 
-    def test_forward_pass_shapes(self):
+    def test_forward_pass_shapes(self) -> None:
         """Test forward pass returns correct shapes."""
         model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4])
 
@@ -78,7 +78,7 @@ class TestMultiScaleDecomposer:
         # Check reconstruction shape
         assert reconstruction.shape == (64, 64)
 
-    def test_non_negativity(self):
+    def test_non_negativity(self) -> None:
         """Test that all outputs are non-negative."""
         # Use 'linear' interpolation for this test - bicubic can undershoot
         model = MultiScaleDecomposer((64, 64), scales=[1, 2, 4], interpolation="linear")
@@ -100,7 +100,7 @@ class TestMultiScaleDecomposer:
         # Reconstruction should be non-negative
         assert torch.all(reconstruction >= 0), "Reconstruction has negative values"
 
-    def test_pyramid_initialization(self, simple_2d_image):
+    def test_pyramid_initialization(self, simple_2d_image) -> None:
         """Test Gaussian pyramid initialization."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2, 4])
@@ -123,7 +123,7 @@ class TestMultiScaleDecomposer:
             f"Pyramid initialization error too high: {error_after}"
         )
 
-    def test_finest_scale_initialization(self, simple_2d_image):
+    def test_finest_scale_initialization(self, simple_2d_image) -> None:
         """Test finest scale initialization puts all energy in finest scale."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2, 4])
@@ -165,7 +165,7 @@ class TestMultiScaleDecomposer:
             f"Reconstruction energy ratio unreasonable: {energy_ratio:.2f}"
         )
 
-    def test_uniform_initialization(self, simple_2d_image):
+    def test_uniform_initialization(self, simple_2d_image) -> None:
         """Test uniform initialization splits energy equally across scales when upsampled."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2, 4])
@@ -199,7 +199,7 @@ class TestMultiScaleDecomposer:
             f"Reconstruction energy ratio should be ~1.0, got {energy_ratio:.2f}"
         )
 
-    def test_coarse_initialization(self, simple_2d_image):
+    def test_coarse_initialization(self, simple_2d_image) -> None:
         """Test coarse initialization weights energy toward coarse scales."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         scales = [1, 2, 4]
@@ -253,7 +253,7 @@ class TestMultiScaleDecomposer:
 class TestDecompositionLoss:
     """Tests for decomposition_loss function."""
 
-    def test_loss_computation(self, simple_2d_image):
+    def test_loss_computation(self, simple_2d_image) -> None:
         """Test that loss is computed correctly."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -276,7 +276,7 @@ class TestDecompositionLoss:
         for key, value in stats.items():
             assert np.isfinite(value), f"{key} is not finite: {value}"
 
-    def test_gradients_flow(self, simple_2d_image):
+    def test_gradients_flow(self, simple_2d_image) -> None:
         """Test that gradients flow through the loss."""
         target = torch.tensor(simple_2d_image, dtype=torch.float32)
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
@@ -298,7 +298,7 @@ class TestDecompositionLoss:
 class TestDecomposeImage:
     """Tests for decompose_image function."""
 
-    def test_basic_decomposition_2d(self, simple_2d_image):
+    def test_basic_decomposition_2d(self, simple_2d_image) -> None:
         """Test basic 2D decomposition."""
         scales_list, stats = decompose_image(
             simple_2d_image,
@@ -321,7 +321,7 @@ class TestDecomposeImage:
         for img in scales_list:
             assert np.all(img >= 0), "Output contains negative values"
 
-    def test_basic_decomposition_3d(self, simple_3d_volume):
+    def test_basic_decomposition_3d(self, simple_3d_volume) -> None:
         """Test basic 3D decomposition."""
         scales_list, stats = decompose_image(
             simple_3d_volume, scales=[1, 2], n_iters=50, verbose=False
@@ -331,7 +331,7 @@ class TestDecomposeImage:
         assert scales_list[0].shape == simple_3d_volume.shape
         assert scales_list[1].shape == tuple(s // 2 for s in simple_3d_volume.shape)
 
-    def test_reconstruction_quality(self, simple_2d_image):
+    def test_reconstruction_quality(self, simple_2d_image) -> None:
         """Test that reconstruction is close to original."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2, 4], n_iters=200, verbose=False
@@ -361,7 +361,7 @@ class TestDecomposeImage:
             f"Relative reconstruction error too high: {relative_error}"
         )
 
-    def test_device_cpu(self, simple_2d_image):
+    def test_device_cpu(self, simple_2d_image) -> None:
         """Test decomposition on CPU."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2], n_iters=10, device="cpu", verbose=False
@@ -369,14 +369,14 @@ class TestDecomposeImage:
         assert len(scales_list) == 2
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_device_cuda(self, simple_2d_image):
+    def test_device_cuda(self, simple_2d_image) -> None:
         """Test decomposition on CUDA."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2], n_iters=10, device="cuda", verbose=False
         )
         assert len(scales_list) == 2
 
-    def test_convergence_tracking(self, simple_2d_image):
+    def test_convergence_tracking(self, simple_2d_image) -> None:
         """Test that optimization improves over iterations and convergence tracking works."""
         # Test with auto-convergence disabled (very low threshold) to ensure full iteration count
         scales_list, stats = decompose_image(
@@ -415,7 +415,7 @@ class TestDecomposeImage:
         assert stats2["actual_iters"] < 100, "Should converge before max iterations"
         assert stats2["best_max_abs_error"] < 1e-2, "Should achieve good convergence"
 
-    def test_initialization_methods(self, simple_2d_image):
+    def test_initialization_methods(self, simple_2d_image) -> None:
         """Test all initialization methods produce valid results."""
         for init_method in ["pyramid", "finest", "uniform", "coarse", "zero"]:
             # Zero initialization needs more iterations to converge
@@ -461,7 +461,7 @@ class TestDecomposeImage:
                     f"Output contains negative values for {init_method}"
                 )
 
-    def test_interpolation_modes_2d(self, simple_2d_image):
+    def test_interpolation_modes_2d(self, simple_2d_image) -> None:
         """Test all three interpolation modes for 2D images."""
         for interpolation in ["nearest", "linear", "cubic"]:
             scales_list, stats = decompose_image(
@@ -504,7 +504,7 @@ class TestDecomposeImage:
                 f"Reconstruction MSE too high for {interpolation}: {mse}"
             )
 
-    def test_interpolation_modes_3d(self, simple_3d_volume):
+    def test_interpolation_modes_3d(self, simple_3d_volume) -> None:
         """Test all three interpolation modes for 3D volumes."""
         for interpolation in ["nearest", "linear", "cubic"]:
             scales_list, stats = decompose_image(
@@ -550,7 +550,7 @@ class TestDecomposeImage:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_single_scale(self, simple_2d_image):
+    def test_single_scale(self, simple_2d_image) -> None:
         """Test decomposition with single scale."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1], n_iters=50, verbose=False
@@ -559,14 +559,14 @@ class TestEdgeCases:
         # Should reconstruct perfectly with single scale
         assert stats["final_error"] < 0.01
 
-    def test_many_scales(self, simple_2d_image):
+    def test_many_scales(self, simple_2d_image) -> None:
         """Test decomposition with many scales."""
         scales_list, stats = decompose_image(
             simple_2d_image, scales=[1, 2, 4, 8, 16], n_iters=50, verbose=False
         )
         assert len(scales_list) == 5
 
-    def test_small_image(self):
+    def test_small_image(self) -> None:
         """Test with very small image."""
         small_image = np.random.rand(16, 16).astype(np.float32)
         scales_list, stats = decompose_image(
@@ -574,7 +574,7 @@ class TestEdgeCases:
         )
         assert len(scales_list) == 2
 
-    def test_different_alpha_values(self, simple_2d_image):
+    def test_different_alpha_values(self, simple_2d_image) -> None:
         """Test with different alpha values."""
         for alpha in [1.0, 1.5, 2.0, 3.0]:
             scales_list, stats = decompose_image(
