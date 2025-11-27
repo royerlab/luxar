@@ -38,7 +38,7 @@ class TestPrepareConfig:
         V = np.random.rand(16, 16).astype(np.float32)
 
         config = prepare_fit_config(fitter, V)
-
+        # type: ignore[arg-type]
         assert config.V.shape == (16, 16)
         assert config.device == torch.device("cpu")
         assert config.enable_dynamic_ops
@@ -53,6 +53,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="Input image V cannot be empty"):
             prepare_fit_config(fitter, V)
 
+    # type: ignore[arg-type]
     def test_input_validation_scalar_image(self) -> None:
         """Test validation of scalar image."""
         fitter = MockGaussianSplatFitter()
@@ -63,6 +64,7 @@ class TestPrepareConfig:
         ):
             prepare_fit_config(fitter, V)
 
+    # type: ignore[arg-type]
     def test_candidates_validation_wrong_dimensions(self) -> None:
         """Test validation of candidate centers with wrong dimensions."""
         fitter = MockGaussianSplatFitter()
@@ -74,6 +76,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="seeds must have 2 columns"):
             prepare_fit_config(fitter, V, seeds=centers)
 
+    # type: ignore[arg-type]
     def test_candidates_validation_wrong_shape(self) -> None:
         """Test validation of candidate centers with wrong shape."""
         fitter = MockGaussianSplatFitter()
@@ -83,6 +86,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="seeds must be a 2D array"):
             prepare_fit_config(fitter, V, seeds=centers)
 
+    # type: ignore[arg-type]
     def test_parameter_validation_negative_sigma(self) -> None:
         """Test validation of negative sigma."""
         fitter = MockGaussianSplatFitter()
@@ -91,6 +95,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="init_sigma_vox must be positive"):
             prepare_fit_config(fitter, V, init_sigma_vox=-1.0)
 
+    # type: ignore[arg-type]
     def test_parameter_validation_negative_iterations(self) -> None:
         """Test validation of negative iterations."""
         fitter = MockGaussianSplatFitter()
@@ -99,6 +104,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="n_iters must be positive"):
             prepare_fit_config(fitter, V, n_iters=-10)
 
+    # type: ignore[arg-type]
     def test_parameter_validation_negative_lr(self) -> None:
         """Test validation of negative learning rate."""
         fitter = MockGaussianSplatFitter()
@@ -107,6 +113,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="lr must be positive"):
             prepare_fit_config(fitter, V, lr=-0.01)
 
+    # type: ignore[arg-type]
     def test_parameter_validation_invalid_loss_type(self) -> None:
         """Test validation of invalid loss type."""
         fitter = MockGaussianSplatFitter()
@@ -117,6 +124,7 @@ class TestPrepareConfig:
         ):
             prepare_fit_config(fitter, V, loss_type="invalid")
 
+    # type: ignore[arg-type]
     def test_sigma_constraints_validation_wrong_length(self) -> None:
         """Test validation of sigma constraints with wrong length."""
         fitter = MockGaussianSplatFitter()
@@ -125,7 +133,7 @@ class TestPrepareConfig:
         with pytest.raises(ValueError, match="sigma_min_diag must have length 2"):
             prepare_fit_config(
                 fitter, V, sigma_min_diag=[0.1, 0.1, 0.1]
-            )  # Wrong: 3 values for 2D
+            )  # Wrong: 3 values for 2D  # type: ignore[arg-type]
 
     def test_sigma_constraints_validation_negative_values(self) -> None:
         """Test validation of negative sigma constraints."""
@@ -137,6 +145,7 @@ class TestPrepareConfig:
         ):
             prepare_fit_config(fitter, V, sigma_min_diag=[0.1, -0.1])
 
+    # type: ignore[arg-type]
     def test_sigma_max_less_than_min(self) -> None:
         """Test validation when sigma_max is less than sigma_min."""
         fitter = MockGaussianSplatFitter()
@@ -147,7 +156,7 @@ class TestPrepareConfig:
         ):
             prepare_fit_config(
                 fitter, V, sigma_min_diag=[1.0, 1.0], sigma_max_diag=[0.5, 0.5]
-            )
+            )  # type: ignore[arg-type]
 
     def test_l1_regularization_default(self) -> None:
         """Test that L1 regularization is None by default."""
@@ -155,7 +164,7 @@ class TestPrepareConfig:
         V = np.random.rand(16, 16).astype(np.float32)
 
         config = prepare_fit_config(fitter, V, lr=0.02)
-
+        # type: ignore[arg-type]
         # L1 defaults set in preprocessing.py after gradient dilution calc
         assert config.l1_amp is None
         assert config.l1_diag is None
@@ -167,7 +176,7 @@ class TestPrepareConfig:
         V = np.random.rand(16, 16).astype(np.float32)
 
         config = prepare_fit_config(fitter, V, lr=0.01, l1_diag=0.005)
-
+        # type: ignore[arg-type]
         assert config.l1_diag == 0.005  # Custom value preserved
 
     def test_custom_parameters_preserved(self) -> None:
@@ -178,7 +187,7 @@ class TestPrepareConfig:
 
         config = prepare_fit_config(
             fitter,
-            V,
+            V,  # type: ignore[arg-type]
             seeds=centers,
             n_iters=500,
             lr=0.05,
