@@ -56,7 +56,7 @@ def apply_dynamic_operations(
                operations_occurred=True if any splats were added/removed
     """
     # Create coordinator for seamless optimizer state management
-    coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)  # type: ignore[arg-type]
+    coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)
 
     with torch.no_grad():
         # Compute residual image
