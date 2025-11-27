@@ -127,7 +127,7 @@ class DataTypeConfig:
         else:  # AUTO
             if data is not None:
                 # Check data range for appropriate dtype
-                max_val = np.max(np.abs(data))
+                max_val: float = float(np.max(np.abs(data)))
                 if max_val <= 1.0:
                     return np.uint8  # Can use normalized uint8
                 elif max_val < 1000:
@@ -156,7 +156,7 @@ class DataTypeConfig:
             if data is not None:
                 from .constants import SHARPNESS_MAX
 
-                max_val = np.max(np.abs(data))
+                max_val: float = float(np.max(np.abs(data)))
                 if max_val <= SHARPNESS_MAX:
                     return np.uint8  # Use uint8 with [0, 15] → [0, 255] mapping
                 elif max_val < 1000:
@@ -270,8 +270,8 @@ def infer_optimal_dtype(
 
     elif attribute_type in ["radius", "sharpness"]:
         # Check data range
-        max_val = np.max(np.abs(array))
-        min_val = np.min(array)
+        max_val: float = float(np.max(np.abs(array)))
+        min_val: float = float(np.min(array))
 
         if min_val >= 0 and max_val <= 1.0:
             return np.uint8  # Can use normalized uint8
