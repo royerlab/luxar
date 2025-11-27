@@ -1,7 +1,7 @@
 # Luxar Encoding Package Specifications
 
 **Status**: Draft
-**Version**: 0.2
+**Version**: 0.3
 
 ---
 
@@ -95,7 +95,7 @@ Note: negative color values are an error (see Section 13), not HDR.
 
 **Definition**: Scalar values with known minimum and maximum bounds.
 
-**Examples**: sharpness [0.16, 24.4], opacity [0, 1]
+**Examples**: sharpness [0, 32], opacity [0, 1]
 
 **Characteristics**:
 - Known finite range
@@ -1192,9 +1192,13 @@ These are not in scope for v1.0 but the architecture should not preclude them.
 
 ## Changelog
 
+- **v0.3**: Unified sharpness bounds
+  - Changed sharpness bounds example from [0.16, 24.4] to [0, 32] to align with core SPECIFICATIONS.md
+  - All Luxar specs now use unified bounds [0, 32] for sharpness
+
 - **v0.2**: Cross-specification consistency review
   - Removed "Last Updated" placeholder
   - Added broadcasting support note to CHOLESKY semantic type
   - Added "AUTO Lossy?" column to mode behavior table
-  - Updated bounded scalar example to use realistic sharpness bounds [0.16, 24.4]
+  - Updated bounded scalar example to use sharpness bounds (later unified to [0, 32] in v0.3)
 - **v0.1**: Initial specification draft

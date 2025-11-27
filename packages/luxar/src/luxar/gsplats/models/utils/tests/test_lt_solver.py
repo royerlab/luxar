@@ -172,7 +172,7 @@ class TestSolveLowerTriangular:
 
         x = solve_lower_triangular(L, b)
         loss = torch.sum(x**2)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
 
         # Check that gradients were computed
         assert L.grad is not None
