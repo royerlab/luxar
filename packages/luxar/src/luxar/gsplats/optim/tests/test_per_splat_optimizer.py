@@ -74,7 +74,7 @@ class TestPerSplatAdam:
         optimizer.zero_grad()
         pred = model()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
 
         # Parameters should have changed
@@ -137,7 +137,7 @@ class TestPerSplatAdam:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Check that splats have momentum
@@ -193,7 +193,7 @@ class TestPerSplatAdam:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Check that AMSGrad states exist
@@ -284,7 +284,7 @@ class TestEdgeCases:
         optimizer.zero_grad()
         pred = model()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
 
         assert torch.isfinite(loss)
@@ -343,7 +343,7 @@ class TestEdgeCases:
         optimizer.zero_grad()
         pred = model()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
 
         # Store first max values
@@ -354,7 +354,7 @@ class TestEdgeCases:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Verify max values are monotonically non-decreasing

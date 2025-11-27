@@ -25,7 +25,7 @@ Each Gaussian splat is parameterized by:
 | `centers` | (N, d) | float32 | COORDINATE | Splat center positions (not broadcastable) |
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors` | (N, d*(d+1)/2) or (1, d*(d+1)/2) | float32 | CHOLESKY | Packed lower-triangular L where Σ = LLᵀ |
-| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0.16, 24.4]) |
+| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 32]) |
 
 **Note**: Cholesky factors are packed in row-major order. For d=3: `[L00, L10, L11, L20, L21, L22]`
 
@@ -98,7 +98,7 @@ fitted.gsplats.zarr/
   "ordering_resolution": 65536,   // Only present when ordering != "none"
   "chunk_size": 8192,             // Chunk size used
   "amplitude_range": {"min": 0.01, "max": 1.5},   // Actual data range for rendering
-  "sharpness_bounds": {"min": 0.16, "max": 24.4}, // Model constraints (valid range)
+  "sharpness_bounds": {"min": 0.0, "max": 32.0},  // Model constraints (valid range)
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -254,7 +254,7 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | `centers` | COORDINATE | `float16` (half precision) |
 | `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
 | `cholesky_factors` | CHOLESKY | `float16` (~0.1% error, see encoding spec Section 4.5) |
-| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (8-bit, bounds [0.16, 24.4]) |
+| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (8-bit, bounds [0, 32]) |
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -486,6 +486,10 @@ This will be designed after the gsplats I/O module is complete.
 
 ## Changelog
 
+- **v0.7 (Draft)**: Unified sharpness bounds
+  - Changed sharpness bounds from [0.16, 24.4] to [0, 32] to align with core SPECIFICATIONS.md
+  - All node types (Points, Lines, GSplats) now use unified bounds [0, 32]
+
 - **v0.6 (Draft)**: Cross-specification consistency
   - Fixed AUTO mode description to match encoding spec (can be lossy)
   - Added CUSTOM mode to encoding modes list
@@ -505,7 +509,7 @@ This will be designed after the gsplats I/O module is complete.
 - **v0.3 (Draft)**: Critical review fixes
   - Moved `n_splats`/`ndim` to splats group only (single source of truth)
   - Removed redundant `max_amplitude` (use `amplitude_range[1]`)
-  - Added `sharpness_bounds` [0.16, 24.4] based on model constraints
+  - Added `sharpness_bounds` based on model constraints (later unified to [0, 32] in v0.7)
   - Fixed CHOLESKY MEMORY mode to use `float16` (not uint16)
   - Fixed PRECISION mode description (broadcasting still allowed)
   - Clarified semantic type is from array name, not stored in metadata

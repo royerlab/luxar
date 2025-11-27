@@ -282,7 +282,7 @@ class TestDecompositionLoss:
         model = MultiScaleDecomposer(simple_2d_image.shape, scales=[1, 2])
 
         loss, _ = decomposition_loss(model, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
 
         # Check that gradients exist and are non-zero for at least some parameters
         has_nonzero_grad = False

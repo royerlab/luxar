@@ -53,7 +53,7 @@ class TestModelOptimizerCoordinatorReplaceAll:
             simple_model.zero_grad()
             pred = simple_model()
             loss = torch.mean(pred)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
             scheduler.step(float(loss))
 
@@ -407,7 +407,7 @@ class TestCoordinatorIntegration:
             optimizer.zero_grad()
             pred = simple_model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
             scheduler.step(float(loss))
 
@@ -429,7 +429,7 @@ class TestCoordinatorIntegration:
             optimizer.zero_grad()
             pred = simple_model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
             scheduler.step(float(loss))
 
@@ -455,7 +455,7 @@ class TestCoordinatorIntegration:
             optimizer.zero_grad()
             pred = simple_model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
             scheduler.step()
 
@@ -475,7 +475,7 @@ class TestCoordinatorIntegration:
             optimizer.zero_grad()
             pred = simple_model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
             scheduler.step()
 

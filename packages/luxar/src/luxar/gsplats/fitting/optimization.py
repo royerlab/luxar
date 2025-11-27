@@ -109,7 +109,7 @@ def run_optimization_loop(
         optimizer.zero_grad()
         pred = model()
         loss = loss_fn(pred)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
 
         # Gradient clipping for stability
         if config.gradient_clip is not None:
