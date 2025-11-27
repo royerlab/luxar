@@ -53,7 +53,7 @@ class PerSplatAdam:
         >>> for epoch in range(num_epochs):
         ...     optimizer.zero_grad()
         ...     loss = compute_loss(model())
-        ...     loss.backward()
+        ...     loss.backward()  # type: ignore[no-untyped-call]
         ...     optimizer.step()
     """
 

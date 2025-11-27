@@ -48,7 +48,7 @@ def test_per_splat_adam() -> None:
         optimizer.zero_grad()
         pred = model()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
         scheduler.step(loss.item())
 
@@ -89,7 +89,7 @@ def test_per_splat_adam() -> None:
         optimizer.zero_grad()
         pred = model()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
         scheduler.step(loss.item())
 

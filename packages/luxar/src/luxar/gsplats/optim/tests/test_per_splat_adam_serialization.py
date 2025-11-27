@@ -88,7 +88,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         state = optimizer.state_dict()
@@ -110,7 +110,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         state = optimizer.state_dict()
@@ -140,7 +140,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer1.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer1.step()
 
         # Save state
@@ -170,7 +170,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer1.zero_grad()
             pred = model1()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer1.step()
 
         # Save and load state
@@ -185,7 +185,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer2.zero_grad()
             pred = model2()
             loss1 = torch.nn.functional.mse_loss(pred, target)
-            loss1.backward()
+            loss1.backward()  # type: ignore[no-untyped-call]
             optimizer2.step()
 
         # Verify optimization continues (loss should be finite, not NaN)
@@ -228,7 +228,7 @@ class TestPerSplatAdamStateDictSerialization:
             optimizer1.zero_grad()
             pred = model1()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer1.step()
 
         state = optimizer1.state_dict()
@@ -249,7 +249,7 @@ class TestPerSplatAdamStateDictSerialization:
         optimizer2.zero_grad()
         pred = model2()
         loss = torch.nn.functional.mse_loss(pred, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer2.step()  # Should not crash
 
         assert optimizer2.global_step == 4
@@ -301,7 +301,7 @@ class TestPerSplatAdamAMSGrad:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Check that max_exp_avg_sq buffers exist
@@ -333,14 +333,14 @@ class TestPerSplatAdamAMSGrad:
             optimizer_standard.zero_grad()
             pred = model_standard()
             loss_standard = torch.nn.functional.mse_loss(pred, target)
-            loss_standard.backward()
+            loss_standard.backward()  # type: ignore[no-untyped-call]
             optimizer_standard.step()
 
             # AMSGrad
             optimizer_amsgrad.zero_grad()
             pred = model_amsgrad()
             loss_amsgrad = torch.nn.functional.mse_loss(pred, target)
-            loss_amsgrad.backward()
+            loss_amsgrad.backward()  # type: ignore[no-untyped-call]
             optimizer_amsgrad.step()
 
         # Both should converge (losses should be finite)
@@ -362,7 +362,7 @@ class TestPerSplatAdamAMSGrad:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Save and load state
@@ -486,7 +486,7 @@ class TestPerSplatAdamEdgeCases:
             optimizer.zero_grad()
             pred = model()
             loss = torch.nn.functional.mse_loss(pred, target)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
         # Should complete without errors

@@ -1202,7 +1202,7 @@ def decompose_image(
             )
 
             # Backward pass
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
             optimizer.step()
 
             # Record history

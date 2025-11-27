@@ -1,6 +1,6 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.3
+**Version**: 0.5
 **Last Updated**: 2025-01-26
 
 ## Purpose
@@ -64,6 +64,13 @@ This discriminator enables the viewer to determine how to render each node.
 - Transforms compose hierarchically: `final_transform = parent_transform @ local_transform`
 - Attribute changes are immediately persisted through writer interface
 
+**Node Name Rules**:
+- Names must be non-empty strings
+- Names must NOT contain `/` (used as path separator)
+- Names must NOT contain null characters
+- Names should be valid Zarr group names (alphanumeric, underscore, hyphen recommended)
+- Names must be unique among siblings (no two children of same parent with same name)
+
 **Key Operations**:
 - `add_group(name, **attrs)` - Create child group node
 - `walk()` - Depth-first traversal yielding (depth, node) tuples
@@ -82,8 +89,8 @@ This discriminator enables the viewer to determine how to render each node.
 
 **Key Operations**:
 - `add_group(name, **attrs)` - Create top-level group
-- `add_points(name, positions, ...)` - Create Points node
-- `add_lines(name, vertices, ...)` - Create Lines node
+- `add_points(name, positions, radii, ...)` - Create Points node (radii required)
+- `add_lines(name, vertices, widths, ...)` - Create Lines node (widths required)
 - `add_gsplats(name, centers, ...)` - Create GSplats node
 - `dimensions` property - Get/set scene-level dimensional specifications
 
@@ -91,14 +98,14 @@ This discriminator enables the viewer to determine how to render each node.
 ```json
 {
   "type": "scene",
-  "luxar_version": "0.3.0",
+  "luxar_version": "0.5.0",
   "scene_dimensions": { ... }
 }
 ```
 
 ---
 
-### 2b. Group (Container Node)
+### 3. Group (Container Node)
 
 **Specification**:
 - Container node for organizing data nodes hierarchically
@@ -113,15 +120,16 @@ This discriminator enables the viewer to determine how to render each node.
 - `opacity`, `gamma`, `blending_mode`: Rendering attributes (inherited by children)
 
 **Zarr Attributes**:
-```json
+```
 {
   "type": "group",
-  "transform": [...],       // optional, 16-element column-major
-  "opacity": 1.0,           // optional
-  "gamma": 1.0,             // optional
-  "blending_mode": "additive"  // optional
+  "transform": [...],         # optional, 16-element column-major
+  "opacity": 1.0,             # optional
+  "gamma": 1.0,               # optional
+  "blending_mode": "additive" # optional
 }
 ```
+*Note: Comments shown for documentation; actual JSON has no comments.*
 
 **Use Cases**:
 - Organizing related data (e.g., "cells" group containing multiple Points)
@@ -130,7 +138,7 @@ This discriminator enables the viewer to determine how to render each node.
 
 ---
 
-### 3. DataNode (Abstract Base Class)
+### 4. DataNode (Abstract Base Class)
 
 **Specification**:
 `DataNode` is an abstract base class that all data-bearing nodes inherit from. It extends `Node` and adds data-specific capabilities.
@@ -174,13 +182,17 @@ class DataNode(Node, ABC):
 
 **Note**: `path` is a Node attribute computed from the hierarchy (`parent.path + "/" + name`), not stored in the metadata dict. The metadata dict contains only data-specific information.
 
+**Open Question**: The root path for Scene is not yet specified. Options include `""` (empty string) or `"/"`. This affects how child paths are computed and should be decided during implementation.
+
 **Type-Specific Properties**:
 
-| Node Type | Primary Data | Optional Data | Metadata Fields |
-|-----------|--------------|---------------|-----------------|
-| Points | positions (N, d) | colors, radii, sharpness | n_points, ndim, has_colors, has_radii, has_sharpness, max_radius |
-| Lines | vertices (N, d) | colors, widths, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_widths, has_sharpness, max_width |
-| GSplats | centers (N, d) | amplitudes, cholesky_factors, sharpnesses | n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering |
+| Node Type | Primary Data | Also Required | Optional Data | Metadata Fields |
+|-----------|--------------|---------------|---------------|-----------------|
+| Points | positions (N, d) | radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
+| Lines | vertices (N, d) | widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
+| GSplats | centers (N, d) | — | amplitudes, cholesky_factors, sharpnesses | n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds |
+
+*Note: "Primary Data" is always required. "Also Required" lists additional required arrays beyond primary data.*
 
 **Constructor Order Invariant**:
 When subclass and parent both initialize the same attribute:
@@ -189,7 +201,7 @@ When subclass and parent both initialize the same attribute:
 
 ---
 
-### 4. Points Node
+### 5. Points Node
 
 **Specification**:
 - Data node for point cloud visualization
@@ -202,7 +214,7 @@ When subclass and parent both initialize the same attribute:
 |-------|-------|-------|----------|-------------|
 | positions | (N, d) | float32 | Yes | Point centers in d dimensions |
 | colors | (N, 3) or (1, 3) | float32/uint8 | No | RGB colors (HDR or SDR) |
-| radii | (N,) or (1,) | float32 | No | Point radii |
+| radii | (N,) or (1,) | float32 | Yes | Point radii in scene units |
 | sharpness | (N,) or (1,) | float32 | No | Edge sharpness (gaussian falloff) |
 
 **Metadata**:
@@ -211,7 +223,6 @@ When subclass and parent both initialize the same attribute:
     "n_points": int,        # Number of points
     "ndim": int,            # Dimensionality (d)
     "has_colors": bool,
-    "has_radii": bool,
     "has_sharpness": bool,
     "max_radius": float,    # Maximum radius (for spatial queries)
 }
@@ -219,8 +230,12 @@ When subclass and parent both initialize the same attribute:
 
 **Default Values** (when optional arrays not provided):
 - colors: white `[1.0, 1.0, 1.0]`
-- radii: `0.1` (in scene units)
 - sharpness: `1.0` (standard gaussian falloff)
+
+**Validation Rules**:
+- N ≥ 1 (at least one point)
+- Empty Points (N=0) are NOT valid
+- All validation failures raise `ValueError`
 
 **Encoding**: Uses `luxar.encoding` with semantic types:
 - positions: COORDINATE
@@ -230,7 +245,7 @@ When subclass and parent both initialize the same attribute:
 
 ---
 
-### 5. Lines Node
+### 6. Lines Node
 
 **Specification**:
 - Data node for line/curve visualization
@@ -244,7 +259,7 @@ When subclass and parent both initialize the same attribute:
 |-------|-------|-------|----------|-------------|
 | vertices | (N, d) | float32 | Yes | Vertex positions in d dimensions |
 | colors | (N, 3) or (1, 3) | float32/uint8 | No | Per-vertex RGB colors (interpolated along segments) |
-| widths | (N,) or (1,) | float32 | No | Per-vertex line thickness (interpolated along segments) |
+| widths | (N,) or (1,) | float32 | Yes | Per-vertex line thickness in scene units (interpolated along segments) |
 | sharpness | (N,) or (1,) | float32 | No | Per-vertex edge softness (interpolated along segments) |
 | indices | (M*2,) | uint32 | Conditional | Flat array of vertex indices for `indexed` type only |
 
@@ -313,7 +328,6 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
     "ndim": int,            # Dimensionality (d)
     "line_type": str,       # "segments", "polyline", "loop", "indexed"
     "has_colors": bool,
-    "has_widths": bool,
     "has_sharpness": bool,
     "max_width": float,     # Maximum width (for rendering bounds)
 }
@@ -321,21 +335,28 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 
 **Default Values** (when optional arrays not provided):
 - colors: white `[1.0, 1.0, 1.0]`
-- widths: `0.1` (in scene units)
 - sharpness: `1.0` (standard gaussian edge falloff)
 
-**Segment Count Formula**:
-- `segments`: N / 2 (must have even N)
+**Segment Count Formula** (integer division):
+- `segments`: N // 2 (must have even N)
 - `polyline`: N - 1
 - `loop`: N
-- `indexed`: len(indices) / 2
+- `indexed`: len(indices) // 2
 
 **Validation Rules**:
 - `line_type` must be one of: `"segments"`, `"polyline"`, `"loop"`, `"indexed"`
+- Minimum vertex counts:
+  - `segments`: N ≥ 2 (at least one segment)
+  - `polyline`: N ≥ 2 (at least one segment)
+  - `loop`: N ≥ 3 (minimum closed shape is a triangle)
+  - `indexed`: N ≥ 2 (at least two vertices to form a segment)
 - For `segments` type: N must be even (pairs of vertices)
-- For `indexed` type: `indices` array is required
+- For `indexed` type: `indices` array is required and must have len ≥ 2
+- For `indexed` type: `len(indices)` must be even (pairs form segments)
 - For `indexed` type: all index values must be < N (valid vertex references)
 - For non-`indexed` types: `indices` array must not be present
+- Empty Lines (N=0) are NOT valid
+- All validation failures raise `ValueError`
 
 **Encoding**: Uses `luxar.encoding` with semantic types:
 - vertices: COORDINATE
@@ -346,7 +367,7 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 
 ---
 
-### 6. GSplats Node
+### 7. GSplats Node
 
 **Specification**:
 - Data node for Gaussian splat visualization
@@ -375,15 +396,23 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
     "has_sharpnesses": bool,
     "ordering": str,         # "none", "morton", "hilbert"
     "amplitude_range": {"min": float, "max": float},
-    "sharpness_bounds": {"min": 0.0, "max": 32.0},
     "center_bounds": {"min": [...], "max": [...]},
 }
 ```
 
+**Note**: Sharpness bounds [0, 32] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
+
 **Default Values** (when optional arrays not provided):
 - amplitudes: `1.0`
-- cholesky_factors: identity (isotropic unit sphere)
 - sharpnesses: `1.0`
+
+**Note on cholesky_factors**: If not provided, the viewer/implementation should render isotropic (spherical) splats. The specific identity Cholesky for d dimensions is: diagonal with 1.0 values, packed as `[1, 0, 1, 0, 0, 1, ...]`. This is a rendering default, not a storage default.
+
+**Validation Rules**:
+- N ≥ 1 (at least one splat)
+- Empty GSplats (N=0) are NOT valid
+- `centers` array must have shape `(N, d)` - NOT broadcastable (unlike other arrays)
+- All validation failures raise `ValueError`
 
 **Cholesky Packing**:
 Lower-triangular matrix packed row-major:
@@ -401,7 +430,7 @@ Lower-triangular matrix packed row-major:
 
 ---
 
-### 7. Dimension System
+### 8. Dimension System
 
 **Specification**:
 
@@ -437,8 +466,9 @@ Lower-triangular matrix packed row-major:
 #### Dimensions (Collection)
 **Specification**:
 - Container for list of Dimension objects
+- Empty Dimensions collection is valid (no dimensional constraints on data)
 - Maximum 3 displayed dimensions
-- At least 1 displayed dimension if any exist
+- If the collection is non-empty, at least one dimension must have `display=True`
 - Dimension names must be unique
 
 **Key Properties**:
@@ -450,7 +480,7 @@ Lower-triangular matrix packed row-major:
 
 ---
 
-### 8. Transformation System
+### 9. Transformation System
 
 **Specification**:
 
@@ -463,7 +493,7 @@ Lower-triangular matrix packed row-major:
 
 #### nD Limitation
 **Transforms only apply to the 3 displayed dimensions**. For nD data (d > 3):
-- Transforms affect the first 3 spatial coordinates only
+- Transforms affect only the displayed dimensions (whichever 3 are currently visualized)
 - Non-displayed dimensions are unaffected by transforms
 - This is a fundamental limitation of 4x4 homogeneous matrices
 
@@ -559,7 +589,8 @@ All data nodes can have arbitrary dimensions (not limited to 3D).
 - Maximum 3 dimensions can be displayed simultaneously
 - Non-displayed dimensions are "sliced"
 - Elements visible when within tolerance of current slice position
-- Tolerance determined by element size (radius, width) for spatial dimensions
+- Tolerance determined by element size (radius for Points, width for Lines) for spatial dimensions
+- GSplats tolerance: implementation-specific (derived from Cholesky factors) - deferred for future specification
 - Exact match required for discrete dimensions
 
 **Spatial Extension**:
@@ -597,7 +628,11 @@ Data arrays are stored using the `luxar.encoding` infrastructure:
 | INDEX | indices | [0, N) | Integer references (adaptive uint8/16/32) |
 
 **Broadcasting Support**:
-Arrays with shape `(1,)` or `(1, d)` are broadcast to all elements.
+Arrays with shape `(1,)` or `(1, k)` are broadcast to all elements:
+- Scalars (radii, widths, sharpness, amplitudes): `(1,)` broadcasts to `(N,)`
+- Colors: `(1, 3)` broadcasts to `(N, 3)`
+- Cholesky factors: `(1, k)` broadcasts to `(N, k)` where k = d*(d+1)/2
+
 Metadata: `{"encoding": {"name": "broadcasted", "n_elements": N}}`
 
 ---
@@ -608,17 +643,22 @@ The `ZarrWriterProtocol` defines the interface for progressive writing:
 
 ```python
 class ZarrWriterProtocol(Protocol):
+    @property
+    def store_path(self) -> str:
+        """Path to the underlying Zarr store."""
+        ...
+
     def write_group(self, path, **attrs) -> None: ...
 
     def write_points(
-        self, path, positions,
-        colors=None, radii=None, sharpness=None,
+        self, path, positions, radii,
+        colors=None, sharpness=None,
         **attrs
     ) -> PointsMetadata: ...
 
     def write_lines(
-        self, path, vertices,
-        colors=None, widths=None, sharpness=None, indices=None,
+        self, path, vertices, widths,
+        colors=None, sharpness=None, indices=None,
         line_type="polyline",
         **attrs
     ) -> LinesMetadata: ...
@@ -628,6 +668,12 @@ class ZarrWriterProtocol(Protocol):
         amplitudes=None, cholesky_factors=None, sharpnesses=None,
         **attrs
     ) -> GSplatsMetadata: ...
+
+    def create_resizable_dataset(
+        self, path, dtype, shape, maxshape=None, chunks=True
+    ) -> "zarr.Array":
+        """Create a resizable dataset for streaming writes."""
+        ...
 
     def finalize(self) -> None: ...
 ```
@@ -640,9 +686,9 @@ Each `write_*` method:
 
 **Metadata Type Aliases**:
 ```python
-PointsMetadata = Dict[str, Any]   # n_points, dims, has_colors, has_radii, has_sharpness, max_radius
-LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, dims, line_type, has_colors, has_widths, has_sharpness, max_width
-GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering
+PointsMetadata = Dict[str, Any]   # n_points, ndim, has_colors, has_sharpness, max_radius
+LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
+GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
 ```
 
 ---
@@ -675,17 +721,17 @@ DataNode (abstract base class, extends Node)
 Points (extends DataNode)
   └─ type: "points"
   └─ n_elements: n_points
-  └─ metadata: n_points, ndim, has_colors, has_radii, has_sharpness, max_radius
+  └─ metadata: n_points, ndim, has_colors, has_sharpness, max_radius
 
 Lines (extends DataNode)
   └─ type: "lines"
   └─ n_elements: n_vertices
-  └─ metadata: n_vertices, n_segments, ndim, line_type, has_colors, has_widths, has_sharpness, max_width
+  └─ metadata: n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
 
 GSplats (extends DataNode)
   └─ type: "gsplats"
   └─ n_elements: n_splats
-  └─ metadata: n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering
+  └─ metadata: n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
 
 Dimensions
   └─ contains: list of Dimension
@@ -749,10 +795,14 @@ Matrix multiplication is right-to-left:
 ```python
 # CORRECT:
 result = identity()
-for transform in reversed([T1, T2, T3]):  # [T3, T2, T1]
+for transform in reversed([T1, T2, T3]):  # iterates [T3, T2, T1]
     result = result @ transform  # right-multiply
 
-# Produces: I @ T1 = T1, then T1 @ T2, then (T1@T2) @ T3 = T3 @ T2 @ T1
+# Step by step:
+#   result = I @ T3 = T3
+#   result = T3 @ T2
+#   result = T3 @ T2 @ T1
+# Final: T3 @ T2 @ T1 (applies T1 first when multiplied with vector)
 ```
 
 ### 3. Dimension Spatial Flags
@@ -837,3 +887,52 @@ super().__init__(name, parent=parent, writer=writer, type="points", **attrs)
 ---
 
 This specification is sufficient to re-implement the core package in any language while maintaining compatibility with the Luxar ecosystem.
+
+---
+
+## Changelog
+
+- **v0.5**: Required arrays and validation
+  - Made `radii` required for Points (no universal default)
+  - Made `widths` required for Lines (no universal default)
+  - Removed `has_radii` and `has_widths` from metadata (now always present)
+  - Updated Writer Protocol signatures to show radii/widths as required positional args
+  - Updated Scene factory methods to show required params (`add_points(name, positions, radii, ...)`)
+  - Added node name validation rules (no `/`, unique among siblings)
+  - Fixed transform composition code comment (was describing wrong iteration order)
+  - Added `amplitude_range` and `center_bounds` to GSplats metadata summary and aliases
+  - Updated Type-Specific Properties table: renamed "Required" to "Also Required", added clarifying note
+  - Added validation: empty data nodes (N=0) are NOT valid
+  - Added validation: indexed Lines must have len(indices) ≥ 2
+  - Added validation: GSplats centers must be (N, d), NOT broadcastable
+  - Added validation: all validation failures raise `ValueError`
+  - Clarified cholesky_factors rendering default (isotropic splats if not provided)
+  - Fixed JSON comments in code blocks (added note about documentation-only comments)
+  - Fixed segment count formula to use integer division (`//`)
+  - Added Open Question about Scene root path
+  - Clarified nD tolerance is node-type specific (GSplats deferred)
+  - Clarified Dimensions display requirement wording
+  - Clarified empty Dimensions collection is valid
+  - Clarified broadcasting shapes for colors `(1, 3)` and cholesky `(1, k)`
+
+- **v0.4**: Critical review fixes
+  - Fixed `dims` → `ndim` consistency in metadata aliases
+  - Clarified transform nD limitation wording ("displayed dimensions" not "first 3")
+  - Renumbered sections (removed "2b" awkwardness)
+  - Added `store_path` property and `create_resizable_dataset` method to Writer Protocol
+  - Added minimum vertex count validation rules for Lines
+  - Clarified `indices` array must have even length
+  - Removed redundant `sharpness_bounds` from GSplats metadata (stored in encoding)
+  - Clarified radii/widths have no universal default (must be specified)
+
+- **v0.3**: Extended node types
+  - Added Lines node type with full specification
+  - Added GSplats node type (referencing GSPLATS_ZARR_FORMAT.md)
+  - Added Group node section
+  - Added DataNode abstract base class
+  - Standardized on `ndim` (not `dims`)
+  - Unified sharpness bounds to [0, 32] across all node types
+  - Added transform nD limitation documentation
+  - Added validation rules for Lines
+
+- **v0.2**: Initial version with Points only

@@ -426,7 +426,7 @@ class TestGradientFlow:
         loss = torch.nn.functional.mse_loss(output, target)
 
         # Backward pass
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
 
         # Check that all parameters have gradients
         assert model.raw_mu.grad is not None
@@ -460,7 +460,7 @@ class TestGradientFlow:
         optimizer.zero_grad()
         output = model()
         loss = torch.nn.functional.mse_loss(output, target)
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
 
         # New loss
