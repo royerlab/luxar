@@ -125,8 +125,8 @@ export async function loadPointSpatialIndex(
 
     return {
       metadata,
-      occupiedCells: new Uint32Array(occupiedCellsData.data as ArrayBuffer),
-      cellRanges: new BigUint64Array(cellRangesData.data as ArrayBuffer),
+      occupiedCells: new Uint32Array(occupiedCellsData.data as unknown as ArrayBuffer),
+      cellRanges: new BigUint64Array(cellRangesData.data as unknown as ArrayBuffer),
     };
   } catch (error) {
     log.error(Modules.SPATIAL_INDEX, 'Failed to load spatial index:', error);

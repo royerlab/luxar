@@ -56,7 +56,7 @@ def apply_dynamic_operations(
                operations_occurred=True if any splats were added/removed
     """
     # Create coordinator for seamless optimizer state management
-    coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)
+    coordinator = ModelOptimizerCoordinator(model, optimizer, scheduler)  # type: ignore[arg-type]
 
     with torch.no_grad():
         # Compute residual image
@@ -73,7 +73,7 @@ def apply_dynamic_operations(
             cfg.k_max_residuals,
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
-            num_tiles_per_dim=cfg.num_tiles_per_dim,
+            num_tiles_per_dim=cfg.num_tiles_per_dim,  # type: ignore[arg-type]
         )
 
         if verbose and len(peak_locations) > 0:
