@@ -8,7 +8,7 @@ import torch
 class TestPerSplatAdamStateDictSerialization:
     """Test state_dict() and load_state_dict() methods."""
 
-    def create_simple_model(self, n_splats=5, device="cpu"):
+    def create_simple_model(self, n_splats=5, device="cpu"):  # type: ignore[no-untyped-def]
         """Helper to create a simple model for testing."""
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 

@@ -93,7 +93,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def create_icosahedral_projection_matrices():
+def create_icosahedral_projection_matrices():  # type: ignore[no-untyped-def]
     """Create projection matrices for icosahedral quasicrystal.
 
     Uses golden ratio φ = (1+√5)/2 to create irrational slopes, ensuring

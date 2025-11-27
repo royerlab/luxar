@@ -203,7 +203,7 @@ class TestCompilerIntegration:
         """Test streaming from a data generator."""
         output_path = tmp_path / "test.zarr"
 
-        def data_generator(n_batches=5, batch_size=1000):
+        def data_generator(n_batches=5, batch_size=1000):  # type: ignore[no-untyped-def]
             """Generate batches of data."""
             for i in range(n_batches):
                 positions = np.random.randn(batch_size, 3).astype(np.float32)
