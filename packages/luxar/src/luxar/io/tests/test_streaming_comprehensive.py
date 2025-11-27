@@ -140,7 +140,7 @@ class TestStreamingPointsComprehensive:
     def test_streaming_from_generator_tuple(self, tmp_path) -> None:
         """Test streaming from generator with tuples."""
 
-        def data_generator():
+        def data_generator():  # type: ignore[no-untyped-def]
             for i in range(3):
                 positions = np.random.randn(50, 3).astype(np.float32)
                 colors = np.random.rand(50, 3).astype(np.float32)
@@ -163,7 +163,7 @@ class TestStreamingPointsComprehensive:
     def test_streaming_from_generator_positions_only(self, tmp_path) -> None:
         """Test streaming from generator with positions only."""
 
-        def data_generator():
+        def data_generator():  # type: ignore[no-untyped-def]
             for i in range(5):
                 yield np.random.randn(20, 3).astype(np.float32)
 
@@ -182,7 +182,7 @@ class TestStreamingPointsComprehensive:
     def test_streaming_from_generator_max_batches(self, tmp_path) -> None:
         """Test streaming with max_batches limit."""
 
-        def infinite_generator():
+        def infinite_generator():  # type: ignore[no-untyped-def]
             while True:
                 yield np.random.randn(10, 3).astype(np.float32)
 

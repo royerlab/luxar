@@ -143,7 +143,7 @@ def cantor_dust_4d(
     zi = ((Z + 1) * scale / 2).astype(np.int32)
 
     # Check if in Cantor set for each dimension
-    def in_cantor(coord, lev):
+    def in_cantor(coord, lev):  # type: ignore[no-untyped-def]
         in_set = np.ones(coord.shape, dtype=bool)
         for level_idx in range(lev):
             div = 3**level_idx

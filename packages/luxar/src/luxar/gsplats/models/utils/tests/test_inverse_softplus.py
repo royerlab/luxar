@@ -206,7 +206,7 @@ class TestErrorHandling:
 class TestNumericalStability:
     """Test numerical stability compared to naive implementation."""
 
-    def naive_inverse_softplus(self, y, beta=1.0):
+    def naive_inverse_softplus(self, y, beta=1.0):  # type: ignore[no-untyped-def]
         """Naive implementation that may be numerically unstable."""
         return np.log(np.exp(beta * y) - 1) / beta
 

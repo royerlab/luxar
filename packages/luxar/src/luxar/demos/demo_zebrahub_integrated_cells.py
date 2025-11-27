@@ -21,7 +21,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
-def load_cells_data():
+def load_cells_data():  # type: ignore[no-untyped-def]
     """Load integrated cells UMAP from Zebrahub."""
     base = "https://public.czbiohub.org/royerlab/zebrahub/sequencing/3d-umaps/integrated_umap_3d_annotated"
 
@@ -56,7 +56,7 @@ def load_cells_data():
     return coords, attrs
 
 
-def attr_to_colors(values):
+def attr_to_colors(values):  # type: ignore[no-untyped-def]
     """Generate distinct colors per unique value."""
     unique_vals = np.unique(values)
     n_unique = len(unique_vals)
