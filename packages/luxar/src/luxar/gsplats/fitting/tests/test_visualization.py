@@ -189,7 +189,7 @@ def test_show_optimization_movie_3d_structure() -> None:
 
 def test_empty_movie_frames() -> None:
     """Test handling of empty movie frames."""
-    movie_frames = {
+    movie_frames: dict[str, list] = {
         "target": [],
         "reconstruction": [],
         "residual": [],

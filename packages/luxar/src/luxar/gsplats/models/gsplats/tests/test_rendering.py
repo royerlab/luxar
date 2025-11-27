@@ -289,13 +289,13 @@ class TestRenderGaussiansFullTorch:
         result_large_np = result_large.cpu().numpy()
 
         # Large truncation should have non-zero values in more locations
-        nonzero_small = np.sum(result_small_np > 1e-6)
-        nonzero_large = np.sum(result_large_np > 1e-6)
+        nonzero_small: int = int(np.sum(result_small_np > 1e-6))
+        nonzero_large: int = int(np.sum(result_large_np > 1e-6))
         assert nonzero_large >= nonzero_small
 
         # But peak values should be similar
-        peak_small = np.max(result_small_np)
-        peak_large = np.max(result_large_np)
+        peak_small: float = float(np.max(result_small_np))
+        peak_large: float = float(np.max(result_large_np))
         assert abs(peak_small - peak_large) / max(peak_small, peak_large) < 0.1
 
 
@@ -596,8 +596,8 @@ class TestRenderingEdgeCases:
         center_col = result_np[:, 7]  # Vertical slice through center
 
         # Count pixels above 10% of max in each direction
-        h_spread = np.sum(center_row > 0.1 * np.max(center_row))
-        v_spread = np.sum(center_col > 0.1 * np.max(center_col))
+        h_spread: int = int(np.sum(center_row > 0.1 * np.max(center_row)))
+        v_spread: int = int(np.sum(center_col > 0.1 * np.max(center_col)))
 
         # Verify anisotropic behavior (spreads should be different)
         assert h_spread != v_spread, (

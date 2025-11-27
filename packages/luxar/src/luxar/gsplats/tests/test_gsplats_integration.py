@@ -279,7 +279,7 @@ class TestGaussianSplatsIntegration:
         recon_torch_np = recon_torch.cpu().numpy()
 
         # Should be nearly identical
-        max_diff = np.max(np.abs(recon_numpy - recon_torch_np))
+        max_diff: float = float(np.max(np.abs(recon_numpy - recon_torch_np)))
         assert max_diff < 1e-5
 
     def test_loss_functions(self) -> None:
@@ -353,8 +353,8 @@ class TestGaussianSplatsIntegration:
         )
 
         # Regularization should produce sparser solution
-        n_active_no_reg = np.sum(result_no_reg.amplitudes > 0.01)
-        n_active_reg = np.sum(result_reg.amplitudes > 0.01)
+        n_active_no_reg: int = int(np.sum(result_no_reg.amplitudes > 0.01))
+        n_active_reg: int = int(np.sum(result_reg.amplitudes > 0.01))
 
         assert n_active_reg <= n_active_no_reg
 

@@ -242,8 +242,8 @@ class TestEnergyPreservation:
                 img_upsampled = img
             reconstruction += img_upsampled
 
-        original_energy = np.sum(gaussian_blob_2d)
-        reconstructed_energy = np.sum(reconstruction)
+        original_energy: float = float(np.sum(gaussian_blob_2d))
+        reconstructed_energy: float = float(np.sum(reconstruction))
 
         # Energy should be approximately preserved (within 10%)
         energy_ratio = reconstructed_energy / original_energy

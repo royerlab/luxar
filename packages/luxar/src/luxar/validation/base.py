@@ -142,14 +142,14 @@ def validate_colors_for_writing(
 
     # Check for invalid values
     if np.any(colors < 0):
-        min_val = np.min(colors)
+        min_val: float = float(np.min(colors))
         raise ValidationError(
             f"{context}: Colors cannot be negative. Found minimum value: {min_val:.3f}",
             "Ensure all color values are >= 0. Use np.clip(colors, 0, None) to fix",
         )
 
     # Warn about extreme HDR values
-    max_val = np.max(colors)
+    max_val: float = float(np.max(colors))
     if max_val > 10.0:
         import warnings
 
@@ -199,7 +199,7 @@ def validate_radii_for_writing(
 
     # Check for invalid values
     if np.any(radii <= 0):
-        min_val = np.min(radii)
+        min_val: float = float(np.min(radii))
         if min_val == 0:
             raise ValidationError(
                 f"{context}: Radii must be positive (> 0). Found zero values.",
@@ -252,7 +252,7 @@ def validate_sharpness_for_writing(
 
     # Check for invalid values
     if np.any(sharpness <= 0):
-        min_val = np.min(sharpness)
+        min_val: float = float(np.min(sharpness))
         raise ValidationError(
             f"{context}: Sharpness must be positive. Found minimum value: {min_val:.3f}",
             f"Use values between {SHARPNESS_MIN} and {SHARPNESS_MAX} for valid range",
@@ -260,7 +260,7 @@ def validate_sharpness_for_writing(
 
     # Check for values exceeding the maximum allowed (for uint8 mapping)
     if np.any(sharpness > SHARPNESS_MAX):
-        max_val = np.max(sharpness)
+        max_val: float = float(np.max(sharpness))
         raise ValidationError(
             f"{context}: Sharpness values exceed maximum allowed value ({SHARPNESS_MAX}). "
             f"Found maximum: {max_val:.3f}",
