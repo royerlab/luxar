@@ -1,7 +1,7 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.9.0
-**Last Updated**: 2025-11-27
+**Version**: 0.9.1
+**Last Updated**: 2025-11-28
 
 ## Purpose
 
@@ -9,7 +9,7 @@ The `core` package defines the fundamental data structures and scene graph syste
 
 **Related Specifications**:
 - `luxar.encoding` - Array encoding, semantic types, and quantization (see `encoding/SPECIFICATIONS.md`)
-- `luxar.io` - I/O operations and writer protocol (see `io/README.md`)
+- `luxar.io` - I/O operations and writer protocol (see `io/SPECIFICATIONS.md`)
 - `gsplats/GSPLATS_ZARR_FORMAT.md` - Detailed GSplats storage format
 
 ---
@@ -1271,6 +1271,9 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.9.1** (2025-11-28): Cross-reference fix
+  - Fixed: Related Specifications now correctly references `io/SPECIFICATIONS.md` (was `io/README.md`)
 
 - **v0.9.0**: Broadcasting, nD slicing semantics, and dimension flag resolution
   - **broadcast_dims**: New API for Points to appear across all values of specified dimensions

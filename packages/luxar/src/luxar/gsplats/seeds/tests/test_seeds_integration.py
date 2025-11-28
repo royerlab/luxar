@@ -46,8 +46,12 @@ def test_methods_comparison() -> None:
     # (other blobs may or may not be detected depending on parameters)
     center_blob = np.array([32, 32])
 
-    dist_multiscale: float = float(np.min(np.linalg.norm(seeds_multiscale - center_blob, axis=1)))
-    dist_decomp: float = float(np.min(np.linalg.norm(seeds_decomp - center_blob, axis=1)))
+    dist_multiscale: float = float(
+        np.min(np.linalg.norm(seeds_multiscale - center_blob, axis=1))
+    )
+    dist_decomp: float = float(
+        np.min(np.linalg.norm(seeds_decomp - center_blob, axis=1))
+    )
 
     # At least one method should find something reasonably close
     assert dist_multiscale < 20.0 or dist_decomp < 20.0, (

@@ -1,7 +1,7 @@
 # luxar.io - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-11-27
+**Version**: 1.2.0
+**Last Updated**: 2025-11-28
 
 ## Purpose
 
@@ -48,9 +48,7 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 
 ---
 
-## Point Data Writing Algorithm
-
-### write_points() Specification
+## write_points() Specification
 
 **Input**:
 - `positions`: (N, D) float32 array
@@ -58,27 +56,21 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 - `colors`: Optional (N, 3) or (1, 3) float32/uint8 array
 - `color_mode`: Required for float32 colors: `"sdr"` or `"hdr"`
 - `sharpness`: Optional (N,) or (1,) float32 array
-- `**attrs`: Additional attributes (transform, opacity, etc.)
+- `scene_dimensions`: Optional dimension specifications for compound ordering
+- `**attrs`: Additional attributes (transform, opacity, broadcast_dims, etc.)
 
 **Output**:
 - Metadata dictionary: {n_points, ndim, path, has_colors, has_sharpness, max_radius}
 
-**Algorithm**:
-1. **Validate** positions (must be 2D array, N ≥ 1 points, D ≥ 1 dimensions)
-2. **Validate** radii (must be positive, > 0)
-3. **Validate** colors (if float32, requires explicit color_mode)
-4. **Validate** sharpness (if present, must be in [0, 31])
-5. **Compute Morton codes** for all points (see Spatial Index section)
-6. **Sort all arrays** by Morton code (positions, radii, colors, sharpness)
-7. **Write sorted arrays** to Zarr with optimal chunking
-8. **Compute chunk_bounds** for each Zarr chunk (including radii extent)
-9. **Write chunk_bounds** array
-10. **Process transform** (if present) using centralized conversion
-11. **Set default attributes** (opacity=1.0, gamma=1.0, blending_mode="additive")
-12. **Write Morton metadata** (morton_min, morton_max, morton_bits_per_dim, chunk_size)
-13. **Return metadata** (no data retained in memory)
+**Validation**:
+1. Positions must be 2D array with N ≥ 1 points, D ≥ 1 dimensions
+2. Radii must be positive (> 0)
+3. Float32 colors require explicit `color_mode` ("sdr" or "hdr")
+4. Sharpness must be in [0, 31]
 
-**Key Invariant**: All arrays (positions, colors, radii, sharpness) must stay synchronized during Morton sorting
+**Algorithm**: See [Write Algorithm](#write-algorithm) in Spatial Index section for the full compound ordering algorithm.
+
+**Key Invariant**: All arrays (positions, colors, radii, sharpness) must stay synchronized during sorting.
 
 ---
 
@@ -197,18 +189,20 @@ Where `min[d]` and `max[d]` are the coordinate bounds for dimension d.
 **Edge Case**: When all coordinates in a dimension are identical (`max[d] == min[d]`), set normalized value to 0 to avoid division by zero. This is valid because the dimension provides no spatial discrimination.
 
 **Precision**: 64-bit Morton codes
-- Bits per dimension: `B = floor(64 / n_dims)` (integer division)
-- Unused bits: `64 - (B * n_dims)` remain zero (left-padded)
-- 3D: 21 bits each (~2M levels), 1 unused bit
-- 4D: 16 bits each (~65K levels), 0 unused bits
-- 5D: 12 bits each (~4K levels), 4 unused bits
-- 6D: 10 bits each (~1K levels), 4 unused bits
-- 7D: 9 bits each (~512 levels), 1 unused bit
+- **Important**: With compound ordering, Morton codes only cover `morton_dims` (not all dimensions)
+- Bits per dimension: `B = floor(64 / len(morton_dims))` (integer division)
+- Unused bits: `64 - (B * len(morton_dims))` remain zero (left-padded)
+
+Examples (for `len(morton_dims)`):
+- 3 dims: 21 bits each (~2M levels), 1 unused bit
+- 4 dims: 16 bits each (~65K levels), 0 unused bits
+- 5 dims: 12 bits each (~4K levels), 4 unused bits
+- 6 dims: 10 bits each (~1K levels), 4 unused bits
 
 **Metadata stored**:
-- `morton_min`: (n_dims,) float32 - minimum coordinate per dimension
-- `morton_max`: (n_dims,) float32 - maximum coordinate per dimension
-- `morton_bits_per_dim`: int - bits allocated per dimension
+- `morton_min`: (len(morton_dims),) float32 - minimum coordinate per morton dimension
+- `morton_max`: (len(morton_dims),) float32 - maximum coordinate per morton dimension
+- `morton_bits_per_dim`: int - bits allocated per morton dimension
 
 ---
 
@@ -270,9 +264,9 @@ MAX_CHUNK_BYTES = 256 * 1024     # 256KB - keep streaming responsive
 
 **Bytes per point** (conservative estimate):
 ```python
-bytes_per_point = n_morton_dims * 4 + 16
+bytes_per_point = n_dims * 4 + 16
 # positions (n_dims * 4) + colors (12) + radii (4) + sharpness (4) ≈ n_dims*4 + 16
-# Note: Only morton_dims affect spatial locality within chunks
+# Note: Positions store ALL dimensions; morton_dims only affects spatial locality
 ```
 
 **Target elements per chunk**:
@@ -423,11 +417,14 @@ chunk_bounds        # (num_chunks, D, 2) float32, single chunk
   "morton_min": [0.0, 0.0, 0.0],
   "morton_max": [100.0, 100.0, 100.0],
   "morton_bits_per_dim": 21,
-  "chunk_size": 2000
+  "chunk_size": 2000,
+  "broadcast_dims": ["Time"]
 }
 ```
 
-**Note**: `morton_min/max` only covers continuous dimensions (used for Morton normalization). Discrete dimensions are not Morton-encoded.
+**Notes**:
+- `morton_min/max` only covers morton dimensions (used for Morton normalization)
+- `broadcast_dims` is optional - only present if points should appear at all values of specified dimensions (see core/SPECIFICATIONS.md)
 
 **GSplats Group** (`/splats_name/`):
 ```
@@ -463,31 +460,25 @@ metadata_bytes = num_chunks × n_dims × 2 × 4
               = (n_points / chunk_size) × n_dims × 8
 ```
 
-Example: 10M points, 5D, chunk_size=10K → 1000 chunks × 5 × 8 = 40KB metadata
+Example: 10M points, 5D, chunk_size=2K → 5000 chunks × 5 × 8 = 200KB metadata
 
----
+### Zarr Array Chunking Rules
 
-## Chunking Strategy
+**1D arrays** (radii, sharpness, amplitudes):
+- Chunk shape: `(chunk_size,)`
 
-**Purpose**: Optimize chunk size for efficient spatial queries and I/O
+**2D arrays** (positions, colors, cholesky_factors):
+- Chunk along first dimension only
+- Shape: `(chunk_size, n_cols)` - keep all columns together
 
-**Key Principle**: With Morton ordering, chunk boundaries naturally align with spatial regions. Chunk size directly determines query granularity.
+**chunk_bounds array**:
+- Single chunk (loaded entirely for queries)
 
-**Recommended Chunk Sizes**:
-- **Default**: 10,000 elements per chunk
-- **Small datasets** (< 100K points): 1,000-5,000 elements (finer culling)
-- **Large datasets** (> 10M points): 50,000-100,000 elements (reduce metadata)
+### Compression Interaction
 
-**Chunking Rules**:
-- 1D arrays (radii, sharpness, amplitudes): chunk size = target elements
-- 2D arrays (positions, colors, cholesky_factors): chunk along first dimension only
-  - Shape: `(chunk_size, n_cols)` - keep all columns together
-- chunk_bounds array: single chunk (loaded entirely for queries)
-
-**Compression Interaction**:
-- Morton ordering improves compression by grouping similar values
+- Compound ordering improves compression by grouping similar values
 - Blosc bitshuffle works well with sorted floating-point data
-- Larger chunks = better compression ratio, slower random access
+- Larger chunks = better compression ratio, slower random access (trade-off)
 
 ---
 
@@ -614,41 +605,43 @@ This is a known limitation - current implementation requires all points to fit i
 
 ---
 
-## Zarr Store Structure
+## Zarr Store Structure (Summary)
 
 **Root Attributes** (minimum required):
 - `type`: "scene"
 - `luxar_format_version`: "1.0"
-- `scene_dimensions`: Optional dimension specifications
+- `scene_dimensions`: Dimension specifications (names, display, discrete, spatial flags)
+- `spatial_extend_dims`: Boolean array indicating which dimensions are spatial (for query tolerance calculation)
 
 **Points Group**:
-- `positions`: (N, D) float32 array, Morton-sorted
-- `radii`: (N,) or (1,) float32 array, Morton-sorted (required)
-- `colors`: (N, 3) or (1, 3) float32/uint8 array, Morton-sorted (optional)
-- `sharpness`: (N,) or (1,) float32 array, Morton-sorted (optional)
+- `positions`: (N, D) float32 array, compound-sorted
+- `radii`: (N,) or (1,) float32 array, compound-sorted (required)
+- `colors`: (N, 3) or (1, 3) float32/uint8 array, compound-sorted (optional)
+- `sharpness`: (N,) or (1,) float32 array, compound-sorted (optional)
 - `chunk_bounds`: (num_chunks, D, 2) float32 array
 
 **Points Attributes**:
 - `type`: "points"
 - `n_points`: Number of points
-- `opacity`, `gamma`, `blending_mode`: Rendering attributes
-- `transform`: Optional 16-element list (column-major)
-- `morton_min`: (D,) float32 - coordinate minimums for Morton normalization
-- `morton_max`: (D,) float32 - coordinate maximums for Morton normalization
-- `morton_bits_per_dim`: int - bits per dimension in Morton code
+- `slice_dims`, `morton_dims`: Dimension indices for compound ordering
+- `morton_min`, `morton_max`: Bounds for morton dimensions only
+- `morton_bits_per_dim`: int - bits per morton dimension
 - `chunk_size`: int - elements per chunk
 - `max_radius`: Maximum radius
+- `broadcast_dims`: Optional list of dimension names for broadcasting
+- `opacity`, `gamma`, `blending_mode`: Rendering attributes
+- `transform`: Optional 16-element list (column-major)
 
 **GSplats Group**:
-- `centers`: (N, D) float32 array, Morton-sorted
-- `colors`: (N, 3) float32/uint8 array, Morton-sorted (optional)
-- `amplitudes`: (N,) float32 array, Morton-sorted
-- `cholesky_factors`: (N, k) float32 array, Morton-sorted
-- `sharpness`: (N,) float32 array, Morton-sorted (optional)
+- `centers`: (N, D) float32 array, compound-sorted
+- `colors`: (N, 3) float32/uint8 array, compound-sorted (optional)
+- `amplitudes`: (N,) float32 array, compound-sorted
+- `cholesky_factors`: (N, k) float32 array, compound-sorted
+- `sharpness`: (N,) float32 array, compound-sorted (optional)
 - `chunk_bounds`: (num_chunks, D, 2) float32 array
 
 **Lines Group** (no spatial indexing):
-- `vertices`: (N, D) float32 array (NOT Morton-sorted)
+- `vertices`: (N, D) float32 array (NOT sorted - connectivity matters)
 - `colors`: (N, 3) float32/uint8 array (optional)
 - `widths`: (N,) float32 array
 - `sharpness`: (N,) float32 array (optional)
@@ -715,6 +708,16 @@ This is a known limitation - current implementation requires all points to fit i
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-11-28): Consolidation and clarifications
+  - Consolidated write_points() specification (removed duplicate algorithm section)
+  - Consolidated chunking sections (removed outdated "Chunking Strategy" section)
+  - Morton bits calculation clarified: uses `len(morton_dims)`, not total dimensions
+  - Fixed bytes_per_point formula: uses `n_dims` (all dimensions), not `n_morton_dims`
+  - Added `broadcast_dims` to Points Attributes schema
+  - Added `spatial_extend_dims` to Root Attributes schema
+  - Fixed examples to use `chunk_size: 2000` consistently
+  - Updated all array descriptions to say "compound-sorted" instead of "Morton-sorted"
 
 - **v1.1.0** (2025-11-27): Compound ordering and chunk sizing strategy
   - **Compound ordering**: Discrete dimensions sorted first, then Morton within each slice

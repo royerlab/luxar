@@ -1,7 +1,7 @@
 # luxar.typing_utils - Technical Specification
 
-**Version**: 1.0.2
-**Last Updated**: 2025-11-27
+**Version**: 1.0.3
+**Last Updated**: 2025-11-28
 
 ## Purpose
 
@@ -95,8 +95,9 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `DEFAULT_OPACITY/GAMMA/BLENDING_MODE = 1.0, 1.0, "additive"`
 
 ### Data Constants
-- `CHUNK_SIZE_DEFAULT = 32768` - 32KB elements per chunk
-- `CHUNK_SIZE_MIN/MAX = 1024, 1048576` - Valid range
+- `TARGET_CHUNK_BYTES = 65536` - 64KB target chunk size (see io/SPECIFICATIONS.md for sizing strategy)
+- `MIN_CHUNK_BYTES = 16384` - 16KB minimum to amortize HTTP overhead
+- `MAX_CHUNK_BYTES = 262144` - 256KB maximum for responsive streaming
 - `COMPRESSION_LEVEL_DEFAULT = 3` - Blosc compression level
 - `DEFAULT_COMPRESSOR = "blosc"` - Default algorithm
 
@@ -226,6 +227,12 @@ total = n_points * memory_per_point
 ---
 
 ## Changelog
+
+- **v1.0.3** (2025-11-28): Chunk size constants alignment
+  - Changed from element-based to byte-based chunk sizing
+  - `CHUNK_SIZE_DEFAULT` → `TARGET_CHUNK_BYTES = 65536` (64KB)
+  - Added `MIN_CHUNK_BYTES = 16384` (16KB) and `MAX_CHUNK_BYTES = 262144` (256KB)
+  - See io/SPECIFICATIONS.md "Chunk Sizing Strategy" for full rationale
 
 - **v1.0.2** (2025-11-27): Gamma and sharpness range updates
   - Updated GAMMA_MIN/MAX from [0.2, 2.0] to [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)
