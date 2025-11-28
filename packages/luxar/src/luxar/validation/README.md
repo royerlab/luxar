@@ -8,11 +8,49 @@ This package ensures data integrity throughout the Luxar pipeline by validating 
 
 ## Modules
 
-### `base.py`
-Core validation functions for basic data types.
+### `types.py`
+Core type validation functions with runtime type checking.
 
-**Key Classes:**
-- `ValidationError`: Custom exception with helpful error messages
+**Purpose:**
+Provides basic validation functions used for type guards, property validation, and runtime type checking. These are simpler validators focusing on type conversion and basic checks.
+
+**Key Functions:**
+- `validate_positions()`: Validate position arrays (N, D) with optional dimensionality check
+- `validate_colors()`: Validate color arrays in HDR float32 format
+- `validate_radii()`: Validate radii arrays (positive values)
+- `validate_sharpness()`: Validate sharpness arrays (positive values, warns on atypical range)
+- `validate_transform()`: Validate 4x4 transformation matrices
+- `validate_node_type()`: Validate node type strings
+- `validate_physical_unit()`: Validate physical unit strings
+- `validate_opacity()`: Validate opacity values (0.0-1.0)
+- `validate_gamma()`: Validate gamma values (0.2-2.0)
+- `validate_blending_mode()`: Validate blending mode strings
+- **`validate_categories()`**: **NEW** - Validate category lists for categorical dimensions
+- **`validate_category_indices()`**: **NEW** - Validate category index arrays
+
+**Type Guards:**
+- `is_position_array()`: Check if object is valid position array
+- `is_color_array()`: Check if object is valid color array
+- `is_transform_matrix()`: Check if object is valid transform
+
+**Usage Example:**
+```python
+from luxar.validation.types import validate_positions, validate_categories
+
+# Basic validation
+positions = np.random.randn(1000, 3)
+validated = validate_positions(positions, ndim=3)
+
+# Categorical validation
+categories = ['DAPI', 'GFP', 'mCherry']
+validate_categories(categories)  # Checks uniqueness, non-empty, etc.
+```
+
+### `base.py`
+Detailed validation for write operations with comprehensive error messages.
+
+**Purpose:**
+Provides detailed validation functions specifically for write-time validation, with helpful error messages and suggestions for users writing data.
 
 **Key Functions:**
 - `validate_positions_for_writing()`: Validate positions before Zarr writing
@@ -40,6 +78,194 @@ Validation for n-dimensional data and dimensional coverage.
 - nD slicing validation
 - Dimensional consistency checks
 - Broadcasting helpers for nD data
+
+## Categorical Dimension Validation
+
+### Overview
+
+Categorical dimensions require special validation to ensure:
+1. Category labels are valid strings
+2. Labels are unique and non-empty
+3. Position values are integer indices into the category list
+4. Indices are within valid range
+
+### `validate_categories()`
+
+Validates a list of category labels.
+
+**Purpose:**
+Ensures category lists meet all requirements for categorical dimensions.
+
+**Signature:**
+```python
+def validate_categories(categories: CategoryList) -> CategoryList
+```
+
+**Parameters:**
+- `categories`: List of category labels, or None for non-categorical dimensions
+
+**Returns:**
+- Validated category list (or None if input is None)
+
+**Raises:**
+- `TypeError`: If categories is not a list or None
+- `ValueError`: If categories is invalid
+
+**Validation Checks:**
+1. Must be a list or None
+2. Must have at least 1 category (MIN_CATEGORIES=1)
+3. Each category must be a string
+4. No empty strings allowed
+5. No duplicate category names
+6. Each label must be ≤ 1024 characters (MAX_CATEGORY_LABEL_LENGTH)
+
+**Usage Example:**
+```python
+from luxar.validation import validate_categories
+
+# Valid categories
+categories = ['DAPI', 'GFP', 'mCherry', 'Cy5']
+validate_categories(categories)  # Returns validated list
+
+# None is valid (non-categorical)
+validate_categories(None)  # Returns None
+
+# Invalid: duplicate names
+try:
+    validate_categories(['DAPI', 'GFP', 'DAPI'])
+except ValueError as e:
+    print(e)  # "duplicate category name: 'DAPI' appears at indices 0 and 2"
+
+# Invalid: empty string
+try:
+    validate_categories(['DAPI', '', 'GFP'])
+except ValueError as e:
+    print(e)  # "category at index 1 is empty string"
+
+# Invalid: not a list
+try:
+    validate_categories('DAPI')
+except TypeError as e:
+    print(e)  # "categories must be a list or None, got str"
+```
+
+**Integration with Dimensions:**
+```python
+from luxar.core.dimensions import Dimension
+
+# Dimension automatically validates categories
+dim = Dimension(
+    'channel',
+    categories=['DAPI', 'GFP', 'mCherry']  # Validated internally
+)
+
+# Invalid categories will raise during dimension creation
+try:
+    dim = Dimension('channel', categories=['DAPI', 'DAPI'])
+except ValueError as e:
+    print(e)  # Duplicate category error
+```
+
+### `validate_category_indices()`
+
+Validates that array values are valid indices into a category list.
+
+**Purpose:**
+Ensures position data for categorical dimensions contains only valid integer indices.
+
+**Signature:**
+```python
+def validate_category_indices(
+    values: np.ndarray,
+    categories: List[str],
+    context: str = "values"
+) -> None
+```
+
+**Parameters:**
+- `values`: 1D array of values to validate (position data for one dimension)
+- `categories`: List of category labels
+- `context`: Context string for error messages (e.g., "channel dimension")
+
+**Raises:**
+- `ValueError`: If values contain invalid category indices
+
+**Validation Checks:**
+1. All values must be integers (or very close to integers)
+2. All values must be ≥ 0
+3. All values must be ≤ len(categories)-1
+4. Provides helpful error messages with position of first invalid value
+
+**Usage Example:**
+```python
+from luxar.validation import validate_category_indices
+import numpy as np
+
+categories = ['DAPI', 'GFP', 'mCherry']  # 3 categories: indices 0, 1, 2
+
+# Valid indices
+values = np.array([0, 1, 2, 1, 0, 2])  # All in range [0, 2]
+validate_category_indices(values, categories, context='channel')  # OK
+
+# Valid: float values that are exactly integers
+values = np.array([0.0, 1.0, 2.0])
+validate_category_indices(values, categories, context='channel')  # OK
+
+# Invalid: negative index
+try:
+    values = np.array([0, -1, 2])
+    validate_category_indices(values, categories, context='channel')
+except ValueError as e:
+    print(e)
+    # "negative category index -1 at position 1 in channel"
+
+# Invalid: out of range
+try:
+    values = np.array([0, 1, 3])  # 3 is out of range [0,2]
+    validate_category_indices(values, categories, context='channel')
+except ValueError as e:
+    print(e)
+    # "category index 3 at position 2 is out of range [0, 2] in channel.
+    #  Valid categories: ['DAPI', 'GFP', 'mCherry']"
+
+# Invalid: non-integer
+try:
+    values = np.array([0.0, 1.5, 2.0])  # 1.5 is not an integer
+    validate_category_indices(values, categories, context='channel')
+except ValueError as e:
+    print(e)
+    # "non-integer category index 1.5 at position 1 in channel"
+```
+
+**Integration with Position Validation:**
+```python
+from luxar.core.dimensions import Dimension, Dimensions
+
+# Define categorical dimension
+dims = Dimensions([
+    Dimension('x', display=True),
+    Dimension('y', display=True),
+    Dimension('z', display=True),
+    Dimension('channel', categories=['DAPI', 'GFP', 'mCherry'], display=False)
+])
+
+# Position data: [x, y, z, channel_index]
+positions = np.array([
+    [10.0, 20.0, 5.0, 0.0],  # Channel 0 (DAPI)
+    [11.0, 21.0, 5.5, 1.0],  # Channel 1 (GFP)
+    [12.0, 22.0, 6.0, 2.0],  # Channel 2 (mCherry)
+])
+
+# Validate position values for categorical dimensions
+channel_dim = dims.get_dimension('channel')
+if channel_dim and channel_dim.is_categorical:
+    channel_indices = positions[:, dims.get_index('channel')]
+    validate_category_indices(
+        channel_indices,
+        channel_dim.categories,
+        context='channel dimension'
+    )
+```
 
 ## Validation Philosophy
 
@@ -86,6 +312,19 @@ Luxar expects RGB colors. If you have RGBA, use colors[:, :3] to extract RGB."
 ```python
 Warning: "Sharpness values outside typical range [0.5, 10.0] detected.
 Values < 0.5 create uniform disks, values > 10 create hard edges."
+```
+
+### Categorical Validation Errors
+```python
+# Duplicate categories
+ValueError: "duplicate category name: 'GFP' appears at indices 1 and 3"
+
+# Invalid index
+ValueError: "category index 5 at position 42 is out of range [0, 3] in channel.
+Valid categories: ['DAPI', 'GFP', 'mCherry', 'Cy5']"
+
+# Non-integer index
+ValueError: "non-integer category index 1.5 at position 10 in time_phase"
 ```
 
 ## Usage Examples
@@ -137,6 +376,20 @@ validate_dimensional_coverage(groups, dimensions)
 # Raises if groups have inconsistent dimensionality
 ```
 
+### Categorical Dimension Validation
+```python
+from luxar.validation import validate_categories, validate_category_indices
+
+# Validate category definition
+categories = ['Control', 'Treatment_A', 'Treatment_B']
+validate_categories(categories)
+
+# Validate experimental group assignments
+positions = np.random.randn(100, 4)  # [x, y, z, group]
+group_indices = positions[:, 3]
+validate_category_indices(group_indices, categories, context='experimental_group')
+```
+
 ## Validation Patterns
 
 ### Shape Validation
@@ -180,6 +433,20 @@ def validate_range(values, min_val, max_val, name):
         )
 ```
 
+### Categorical Index Validation Pattern
+```python
+def validate_categorical_positions(positions, dimensions):
+    """Validate all categorical dimensions in position array."""
+    for i, dim in enumerate(dimensions.dimensions):
+        if dim.is_categorical:
+            values = positions[:, i]
+            validate_category_indices(
+                values,
+                dim.categories,
+                context=f"{dim.name} dimension"
+            )
+```
+
 ## Best Practices
 
 1. **Validate at boundaries**: At API entry points and before expensive operations
@@ -188,6 +455,9 @@ def validate_range(values, min_val, max_val, name):
 4. **Suggest fixes**: Include remediation steps in error messages
 5. **Allow warnings**: Some issues warrant warnings, not errors
 6. **Preserve types**: Maintain dtype precision when possible
+7. **Context matters**: Provide context in error messages (which dimension, which node, etc.)
+8. **Validate categories early**: Check category definitions when creating dimensions
+9. **Validate indices during write**: Check that position data has valid category indices
 
 ## Performance Considerations
 
@@ -195,6 +465,17 @@ def validate_range(values, min_val, max_val, name):
 - Cache validation results when possible
 - Use numpy operations for batch validation
 - Skip redundant validation in tight loops
+- Category validation is O(n) for uniqueness check
+- Index validation is O(n) for range check
+
+## Constants
+
+**From `typing_utils.constants`:**
+- `MIN_CATEGORIES = 1` - Minimum number of categories
+- `MAX_CATEGORY_LABEL_LENGTH = 1024` - Maximum length per label
+- `OPACITY_MIN = 0.0`, `OPACITY_MAX = 1.0` - Opacity range
+- `GAMMA_MIN = 0.2`, `GAMMA_MAX = 2.0` - Gamma range
+- `SHARPNESS_MAX = 31.0` - Maximum typical sharpness value
 
 ## Dependencies
 
@@ -205,3 +486,23 @@ Internal:
 External:
 - `numpy`: Array operations and validation
 - Standard library only otherwise
+
+## Testing
+
+Tests are located in `validation/tests/`:
+- `test_types.py` - Type validation tests (including categorical)
+- `test_base.py` - Write-time validation tests
+- `test_nd.py` - nD validation tests
+- `test_categories.py` - Categorical dimension validation tests
+
+Run tests:
+```bash
+hatch run pytest packages/luxar/src/luxar/validation/tests/
+```
+
+## See Also
+
+- [core/README.md](../core/README.md) - Core data structures (Dimension, Dimensions)
+- [typing_utils/README.md](../typing_utils/README.md) - Type system and constants
+- [encoding/README.md](../encoding/README.md) - Data encoding and semantic types
+- [Main README](../../../../README.md) - Project overview
