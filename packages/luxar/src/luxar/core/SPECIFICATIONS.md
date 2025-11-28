@@ -54,7 +54,7 @@ This discriminator enables the viewer to determine how to render each node.
 - Nodes form a hierarchical tree structure
 - Each node has: name, parent reference, list of children
 - Each node can have a 4x4 transformation matrix
-- Each node has rendering attributes: opacity (0-1), gamma (0.2-5.0), blending_mode
+- Each node has rendering attributes: opacity (0-1), gamma (0.2-2.2), blending_mode
 - Container nodes do NOT store array data - only metadata and references
 - Nodes write data immediately through a writer interface (progressive writing)
 
@@ -186,13 +186,13 @@ class DataNode(Node, ABC):
 
 **Type-Specific Properties**:
 
-| Node Type | Primary Data | Also Required | Optional Data | Metadata Fields |
-|-----------|--------------|---------------|---------------|-----------------|
-| Points | positions (N, d) | radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
-| Lines | vertices (N, d) | widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
-| GSplats | centers (N, d) | — | colors, amplitudes, cholesky_factors, sharpnesses | n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds |
+| Node Type | Required Arrays | Optional Arrays | Metadata Fields |
+|-----------|-----------------|-----------------|-----------------|
+| Points | positions (N, d), radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
+| Lines | vertices (N, d), widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
+| GSplats | centers (N, d), amplitudes, cholesky_factors | colors, sharpnesses | n_splats, ndim, has_colors, has_sharpnesses, ordering, amplitude_range, center_bounds |
 
-*Note: "Primary Data" is always required. "Also Required" lists additional required arrays beyond primary data.*
+*Note: All "Required Arrays" must be provided. "Optional Arrays" have defaults if not provided.*
 
 **Constructor Order Invariant**:
 When subclass and parent both initialize the same attribute:
@@ -216,6 +216,19 @@ When subclass and parent both initialize the same attribute:
 | colors | (N, 3) or (1, 3) | float32/uint8 | No | RGB colors (HDR or SDR) |
 | radii | (N,) or (1,) | float32 | Yes | Point radii in scene units |
 | sharpness | (N,) or (1,) | float32 | No | Edge sharpness (gaussian falloff) |
+
+**Sharpness Parameter**:
+Sharpness controls the edge falloff profile of points. The intensity falloff from center to edge follows:
+```
+intensity(r) = exp(-(r/radius)^sharpness)
+```
+Where `r` is the distance from center and `radius` is the point radius.
+- **sharpness = 2.0**: Standard Gaussian falloff (default)
+- **sharpness < 2.0**: Softer edges, more gradual falloff
+- **sharpness > 2.0**: Sharper edges, more abrupt falloff
+- **sharpness → ∞**: Approaches hard-edged disk
+
+Valid range: [0, 32]. Values near 0 create nearly uniform disks; values near 32 create very sharp edges.
 
 **Metadata**:
 ```python
@@ -392,27 +405,24 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 {
     "n_splats": int,         # Number of splats
     "ndim": int,             # Dimensionality (d)
-    "has_colors": bool,
-    "has_sharpnesses": bool,
+    "has_colors": bool,      # Only for optional arrays
+    "has_sharpnesses": bool, # Only for optional arrays
     "ordering": str,         # "none", "morton", "hilbert"
     "amplitude_range": {"min": float, "max": float},
     "center_bounds": {"min": [...], "max": [...]},
 }
 ```
 
-**Note**: Sharpness bounds [0, 32] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
+**Note**: `has_colors` and `has_sharpnesses` track optional arrays only. Required arrays (`centers`, `amplitudes`, `cholesky_factors`) are always present and don't need tracking flags. Sharpness bounds [0, 32] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
 
-**Default Values** (when optional arrays not provided):
+**Default Values** (for optional arrays only):
 - colors: white `[1.0, 1.0, 1.0]`
-- amplitudes: `1.0`
 - sharpnesses: `1.0`
-
-**Note on cholesky_factors**: If not provided, the viewer/implementation should render isotropic (spherical) splats. The specific identity Cholesky for d dimensions is: diagonal with 1.0 values, packed as `[1, 0, 1, 0, 0, 1, ...]`. This is a rendering default, not a storage default.
 
 **Validation Rules**:
 - N ≥ 1 (at least one splat)
 - Empty GSplats (N=0) are NOT valid
-- `centers` array must have shape `(N, d)` - NOT broadcastable (unlike other arrays)
+- `centers` array must have shape `(N, d)` - NOT broadcastable (unlike other arrays). Rationale: Broadcasting centers would place all N splats at the same location, which is degenerate and not meaningful for visualization. Each splat must have a distinct center position.
 - All validation failures raise `ValueError`
 
 **Cholesky Packing**:
@@ -522,19 +532,44 @@ numpy_matrix = np.array(storage_list).reshape(4, 4).T
 - `rotate(degrees, axis)` - Rotation around arbitrary axis (uses Rodrigues' formula)
 
 **Composition**:
-- `compose(T1, T2, T3, ...)` - Combines transforms
-- **Critical**: Applies T1 first, then T2, then T3
-- **Implementation**: Produces T3 @ T2 @ T1 (right-to-left matrix multiplication)
-- **Accumulation**: iterate reversed transforms, right-multiply: `result = result @ transform`
+- `compose(T1, T2, T3, ...)` - Combines transforms in application order
+- Transforms are applied left-to-right: T1 first, then T2, then T3
 
 **Mathematical Formula**:
+Given `compose(T1, T2, T3)`, the resulting matrix M satisfies:
 ```
-compose(T1, T2, T3) = T3 @ T2 @ T1
+M = T3 @ T2 @ T1
 
-Applied to vector v:
-(T3 @ T2 @ T1) @ v = T3 @ (T2 @ (T1 @ v))
+When applied to a point p:
+M @ p = T3 @ (T2 @ (T1 @ p))
+```
 
-This applies T1 first, then T2, then T3.
+The matrix multiplication is right-to-left, but transforms apply left-to-right to points.
+
+**Concrete Example**:
+```python
+# Goal: Move object to (5,0,0), then rotate it 90° around Z
+T1 = translate(5, 0, 0)   # First: translate
+T2 = rotate_z(90)          # Second: rotate
+
+combined = compose(T1, T2)
+# Internally: combined = T2 @ T1
+
+# Applied to origin point [0, 0, 0]:
+# Step 1: T1 @ [0,0,0] → [5, 0, 0]  (translated)
+# Step 2: T2 @ [5,0,0] → [0, 5, 0]  (rotated around origin)
+
+# Final position: [0, 5, 0]
+```
+
+**Implementation Algorithm**:
+```python
+def compose(*transforms):
+    result = identity()
+    for T in reversed(transforms):  # Iterate [T3, T2, T1]
+        result = result @ T          # Right-multiply
+    return result
+    # Result: I @ T3 @ T2 @ T1 = T3 @ T2 @ T1
 ```
 
 **Utilities**:
@@ -567,7 +602,7 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
-- `gamma`: 0.2 to 5.0 (float)
+- `gamma`: 0.2 to 2.2 (float)
 - `blending_mode`: "normal" | "additive" (string)
 
 **Validation**: All values validated on assignment, invalid values raise ValueError
