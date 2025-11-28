@@ -10,7 +10,7 @@ The `core` package defines the fundamental data structures and scene graph syste
 **Related Specifications**:
 - `luxar.encoding` - Array encoding, semantic types, and quantization (see `encoding/SPECIFICATIONS.md`)
 - `luxar.io` - I/O operations and writer protocol (see `io/SPECIFICATIONS.md`)
-- `gsplats/GSPLATS_ZARR_FORMAT.md` - Detailed GSplats storage format
+- `luxar.gsplats.io` - GSplats storage format (see `gsplats/io/SPECIFICATIONS.md`)
 
 ---
 
@@ -280,7 +280,10 @@ Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
 
 **Validation Rules**:
 - N ≥ 1 (at least one point)
-- Empty Points (N=0) are NOT valid
+- Empty Points (N=0) are NOT valid for finalized nodes
+  - **Exception**: During streaming writes (see `../../io/SPECIFICATIONS.md` → "Streaming Points")
+  - StreamingPoints starts empty (N=0), becomes valid after first `append_batch()`
+  - Validation enforced at write/finalize time, not construction time
 - `radii` must be positive (> 0)
 - `sharpness` must be in [0, 31] range
 - `colors` (SDR float): values must be in [0, 1] range. Values outside this range raise `ValueError`.
@@ -500,7 +503,7 @@ sharpness_t = sharpness[v0] * (1-t) + sharpness[v1] * t
 - For `indexed` type: `len(indices)` must be even (pairs form segments)
 - For `indexed` type: all index values must be < N (valid vertex references)
 - For non-`indexed` types: `indices` array must not be present
-- Empty Lines (N=0) are NOT valid
+- Empty Lines (N=0) are NOT valid for finalized nodes (see Points validation for streaming exception)
 - **Zero segments is always an error**: Lines must have at least one segment. For `indexed` type, this means `len(indices) >= 2`. For other types, this means sufficient vertices per the segment count formula.
 - All validation failures raise `ValueError`
 
@@ -530,7 +533,7 @@ This is a known limitation - spatial indexing for lines will be addressed in a f
 - Data node for Gaussian splat visualization
 - Each splat is an oriented ellipsoid defined by center, covariance, color, amplitude
 - Supports RGB colors with scalar amplitude multiplier
-- Full specification in `gsplats/GSPLATS_ZARR_FORMAT.md`
+- Full storage specification in `gsplats/io/SPECIFICATIONS.md`
 
 **Data Arrays**:
 
@@ -578,7 +581,7 @@ This is NOT the same as the polynomial falloff used by Points/Lines.
 
 **Validation Rules**:
 - N ≥ 1 (at least one splat)
-- Empty GSplats (N=0) are NOT valid
+- Empty GSplats (N=0) are NOT valid for finalized nodes (see Points validation for streaming exception)
 - `centers` array must have shape `(N, d)` - NOT broadcastable (unlike other arrays). Rationale: Broadcasting centers would place all N splats at the same location, which is degenerate and not meaningful for visualization. Each splat must have a distinct center position.
 - `amplitudes` must be non-negative (>= 0)
 - `sharpness` must be in [0, 31] range
@@ -612,7 +615,7 @@ GSplats support chunk-level spatial indexing:
 - The factor 3.0 corresponds to ~99.7% coverage (3 standard deviations)
 - Bounds calculation: `min(center - extent)`, `max(center + extent)` per chunk
 
-**Reference**: See `luxar/gsplats/GSPLATS_ZARR_FORMAT.md` for complete specification.
+**Reference**: See `gsplats/io/SPECIFICATIONS.md` for complete storage format specification.
 
 ---
 
@@ -1271,6 +1274,14 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.9.3** (2025-11-28): Empty nodes clarification
+  - Clarified empty nodes (N=0) are invalid for finalized nodes only
+  - Added exception for streaming writes (StreamingPoints starts empty)
+  - Validation enforced at write/finalize time, not construction time
+
+- **v0.9.2** (2025-11-28): GSplats I/O reference update
+  - Updated GSplats storage format references to `gsplats/io/SPECIFICATIONS.md` (moved from `gsplats/GSPLATS_ZARR_FORMAT.md`)
 
 - **v0.9.1** (2025-11-28): Cross-reference fix
   - Fixed: Related Specifications now correctly references `io/SPECIFICATIONS.md` (was `io/README.md`)

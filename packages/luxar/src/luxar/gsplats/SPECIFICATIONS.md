@@ -250,6 +250,15 @@ vals = torch.exp(-0.5 * torch.pow(expo, sharpness[:, None] / 2.0)) * amplitude[:
 **Configuration Parameters:**
 - `l1_sharpness`: L1 regularization strength on `s'` (default 0.01 * lr, 1% of base learning rate)
 
+**Sharpness Bounds**:
+- **Official range**: [0, 31] (BOUNDED_SCALAR semantic type, encoding layer)
+- **Fitting implementation range**: [0.164, 24.47] (due to `s' ∈ [-2.5, 2.5]` clamping in `current_params()`)
+- **Rationale**:
+  - The [0, 31] bounds are the maximum theoretical range supported by the encoding layer
+  - The fitting package uses a narrower range for numerical stability during optimization
+  - Other fitters or manual splat creation can use the full [0, 31] range
+  - The clamping in `current_params()` is an implementation detail, not a format constraint
+
 **Example sharpness values:**
 - Smooth blobs: `s ≈ 1.5-2.0` (soft Gaussian-like)
 - Medium features: `s ≈ 2.0-3.0` (standard to slightly sharp)
@@ -1348,6 +1357,10 @@ This specification provides complete implementation details for a mathematically
 ---
 
 ## Changelog
+
+- **v1.0.1** (2025-11-28): Sharpness bounds clarification
+  - Added explicit clarification of official [0, 31] bounds vs fitting implementation [0.164, 24.47]
+  - Documented that narrower fitting range is implementation detail, not format constraint
 
 - **v1.0.0** (2025-11-27): Initial versioned specification
   - Documented hub structure linking to sub-specifications
