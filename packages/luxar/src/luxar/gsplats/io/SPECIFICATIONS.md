@@ -1,6 +1,6 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 1.0.0
+**Version**: 1.1.1
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -90,7 +90,7 @@ fitted.gsplats.zarr/
 {
   "format_version": "1.0",
   "format_type": "gsplats_zarr",
-  "creation_timestamp": "2025-01-15T14:30:00Z",  // ISO 8601 format
+  "timestamp": "2025-01-15T14:30:00Z",  // ISO 8601 format (creation time)
   "luxar_gsplats_version": "X.Y.Z",
   "description": "Optional user description"
 }
@@ -372,33 +372,40 @@ compressor = Blosc(
 
 ### Chunk Sizing
 
-**Strategy**: Byte-based chunking aligned with Luxar standards (see `../../typing_utils/SPECIFICATIONS.md`).
+**Strategy**: Byte-based target converted to element counts (Zarr chunks by elements, not bytes).
 
-**Target**: 64KB chunks for optimal HTTP/compression balance.
+**Constants** (from `../../typing_utils/SPECIFICATIONS.md` - single source of truth):
+- `TARGET_CHUNK_BYTES = 65536` (64KB) - target chunk size
 
-**Bytes per splat** (full precision, including optional arrays):
-```
-base = 4*d (centers) + 4 (amplitudes) + 4*d*(d+1)/2 (cholesky)
-optional = 12 (colors, if present) + 4 (sharpness, if present)
+**IMPORTANT**: Zarr's chunking system operates on **element counts**, not byte counts. Therefore:
+1. The byte target is defined once in `typing_utils`
+2. At write time, we convert bytes → elements based on each array's dtype
+3. Metadata stores the resulting **element count** (what Zarr needs)
 
-Conservative estimate: bytes_per_splat = 4*d + 4*d*(d+1)/2 + 20
-```
-
-**Examples**:
-- **2D**: 4*2 + 4*3 + 20 = 40 bytes/splat
-- **3D**: 4*3 + 4*6 + 20 = 56 bytes/splat
-- **4D**: 4*4 + 4*10 + 20 = 76 bytes/splat
-
-**Target elements per chunk**:
+**Bytes-to-elements conversion** (per array):
 ```python
-TARGET_CHUNK_BYTES = 64 * 1024  # 64KB (from typing_utils)
-bytes_per_splat = 4*d + 4*d*(d+1)//2 + 20
-target_chunk_elements = TARGET_CHUNK_BYTES // bytes_per_splat
+from luxar.typing_utils import TARGET_CHUNK_BYTES  # 65536 (64KB)
 
-# Examples:
-# 3D: 64KB / 56 bytes ≈ 1,170 splats per chunk
-# 4D: 64KB / 76 bytes ≈ 860 splats per chunk
+# For each array, compute elements per chunk based on its specific layout:
+# - centers (N, d) float32:     bytes_per_row = d * 4
+# - amplitudes (N,) float32:    bytes_per_row = 4
+# - cholesky_factors (N, k):    bytes_per_row = k * 4  (where k = d*(d+1)/2)
+# - colors (N, 3) uint8/float32: bytes_per_row = 3 or 12
+# - sharpnesses (N,) float32:   bytes_per_row = 4
+
+chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 ```
+
+**Example: 3D splats with all arrays**:
+| Array | Shape per row | Bytes/row | Elements/chunk (64KB) |
+|-------|---------------|-----------|----------------------|
+| centers | (3,) float32 | 12 | 5,461 |
+| amplitudes | () float32 | 4 | 16,384 |
+| cholesky_factors | (6,) float32 | 24 | 2,730 |
+| colors | (3,) float32 | 12 | 5,461 |
+| sharpnesses | () float32 | 4 | 16,384 |
+
+**Note**: Each array has its own optimal chunk size. The `chunk_size` in group metadata is a **reference value** for the primary arrays (centers), not a universal constant.
 
 **Chunk shape specification**:
 ```python
@@ -409,7 +416,7 @@ chunks = (chunk_elements,)
 chunks = (chunk_elements, n_cols)  # Keep all columns together
 ```
 
-**Stored in metadata**: `splats/.zattrs["chunk_size"]` records elements per chunk.
+**Stored in metadata**: `splats/.zattrs["chunk_size"]` records the **element count** for reference (typically computed from centers array).
 
 ---
 
@@ -661,6 +668,17 @@ This will be designed after the gsplats I/O module is complete.
 ---
 
 ## Changelog
+
+- **v1.1.1** (2025-11-28): Chunk sizing source of truth
+  - Removed local TARGET_CHUNK_BYTES redefinition
+  - Now explicitly imports from `typing_utils` (single source of truth)
+  - Code example shows `from luxar.typing_utils import TARGET_CHUNK_BYTES`
+
+- **v1.1.0** (2025-11-28): Chunk sizing clarification
+  - Clarified that Zarr chunks by elements, not bytes
+  - Documented the bytes→elements conversion formula per array
+  - Added example table showing different chunk sizes per array type
+  - Clarified that `chunk_size` in metadata is an element count (Zarr's requirement)
 
 - **v1.0.0** (2025-11-28): Initial versioned specification
   - Moved from `gsplats/GSPLATS_ZARR_FORMAT.md` to `gsplats/io/SPECIFICATIONS.md`

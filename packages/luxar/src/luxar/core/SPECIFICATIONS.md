@@ -1,6 +1,6 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.9.1
+**Version**: 0.10.2
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -630,13 +630,35 @@ GSplats support chunk-level spatial indexing:
 - `range` (tuple[float, float] | None) - Optional bounds
 - `step` (float | None) - Navigation step size (auto if None)
 - `display` (bool, default True) - Whether dimension is visualized (max 3)
-- `discrete` (bool, default False) - Whether values are categorical/discrete
+- `discrete` (bool, default False) - Whether values are integer steps
+- `categories` (List[str] | None, default None) - Category labels for categorical dimensions
 - `cyclic` (bool, default False) - Whether dimension wraps around
 - `scale` (float, default 1.0) - Physical scale factor
 - `spatial` (bool | None) - Whether elements extend through dimension (auto if None)
 - `description` (str) - Optional human-readable description
 
+**Dimension Types**:
+- **Continuous**: Standard dimension with any numeric value (e.g., spatial coordinates)
+- **Discrete (numeric)**: Integer-stepped dimension where values are meaningful numbers (e.g., time=0,1,2)
+- **Categorical**: Dimension where values are labels, not numbers (e.g., channel=["DAPI","GFP","mCherry"])
+
+Categorical dimensions are discrete dimensions with string labels. Values are stored as integer indices into the `categories` list:
+- Index 0 → categories[0]
+- Index 1 → categories[1]
+- etc.
+
 **Auto-behaviors** (applied in order during `__post_init__`):
+
+0. **Categorical dimension handling** (if `categories` is not None):
+   ```
+   if categories is not None:
+       discrete = True  # Categories are inherently discrete
+       if range is None:
+           range = (0, len(categories) - 1)  # Implicit range
+       step = 1.0  # Always step by one category
+   ```
+
+   **Rationale**: Categorical dimensions are a special case of discrete dimensions where values are indices into a label list. The range and step are fully determined by the categories list.
 
 1. **Spatial flag auto-determination** (if `spatial` is None):
    ```
@@ -668,12 +690,13 @@ GSplats support chunk-level spatial indexing:
 
 **Flag Combinations and Meanings**:
 
-| display | spatial | discrete | Meaning | Example |
-|---------|---------|----------|---------|---------|
-| True | True | False | Visible, continuous spatial axis | x, y, z |
-| True | True | True | Visible, discrete spatial axis | quantized z |
-| False | False | True | Navigated dimension with discrete values | time, channel |
-| False | True | False | Non-displayed spatial dimension (smooth slicing) | depth, z-stack |
+| display | spatial | discrete | categories | Meaning | Example |
+|---------|---------|----------|------------|---------|---------|
+| True | True | False | None | Visible, continuous spatial axis | x, y, z |
+| True | True | True | None | Visible, discrete spatial axis | quantized z |
+| False | False | True | None | Navigated dimension with discrete numeric values | time (0,1,2...) |
+| False | False | True | [...] | Navigated categorical dimension | channel=["DAPI","GFP"] |
+| False | True | False | None | Non-displayed spatial dimension (smooth slicing) | depth, z-stack |
 
 Note: `display=False` + `spatial=True` requires explicit `spatial=True` - auto-determination sets `spatial=False` for non-displayed dimensions.
 
@@ -694,6 +717,11 @@ When `display=False, spatial=True, discrete=False`:
 - step > 0 (if specified)
 - scale > 0
 - Cannot be discrete AND spatial unless displayed (raises `ValueError`)
+- If `categories` provided:
+  - Must have at least 1 element
+  - All category names must be non-empty strings
+  - Category names must be unique (no duplicates)
+  - Point coordinate values must be valid indices: `0 ≤ value < len(categories)`
 
 #### Dimensions (Collection)
 **Specification**:
@@ -786,22 +814,42 @@ When querying the spatial index for visible elements, the tolerance per dimensio
 
 **Storage**: The `spatial_extend_dims` boolean array (stored as zarr attribute) indicates which dimensions are spatial for efficient query tolerance calculation.
 
-#### Example: 5D Dataset (X, Y, Z, Time, Depth)
+#### Example: 6D Dataset (X, Y, Z, Time, Channel, Depth)
 
 ```python
 dimensions = [
     Dimension("X", display=True),              # Displayed, spatial
     Dimension("Y", display=True),              # Displayed, spatial
     Dimension("Z", display=True),              # Displayed, spatial
-    Dimension("Time", display=False, discrete=True),  # Non-displayed, discrete
+    Dimension("Time", display=False, discrete=True),  # Non-displayed, discrete numeric
+    Dimension("Channel", display=False,               # Non-displayed, categorical
+              categories=["DAPI", "GFP", "mCherry"]),
     Dimension("Depth", display=False, spatial=True),  # Non-displayed, spatial
 ]
 ```
 
-At slice position `[*, *, *, time=5, depth=10.0]`:
+At slice position `[*, *, *, time=5, channel=1, depth=10.0]`:
 - X, Y, Z: All in view are visible (standard 3D rendering)
 - Time: Only elements with `time == 5` are visible (exact match)
+- Channel: Only elements with `channel == 1` (i.e., "GFP") are visible (exact match)
 - Depth: Elements with `|depth - 10.0| < radius` are visible (hypersphere intersection)
+
+**Viewer Navigation for Categorical Dimensions**:
+- Keyboard navigation ([ / ]) steps through categories
+- **Cyclic behavior respects the `cyclic` flag**:
+  - If `cyclic=True`: At last category, pressing ] wraps to first category; at first, pressing [ wraps to last
+  - If `cyclic=False` (default): Navigation stops at boundaries (first/last category)
+- UI shows category label (e.g., "Channel: GFP") not index ("Channel: 1")
+- UI shows dropdown/selector instead of slider for category selection
+
+**Example with cyclic**:
+```python
+# Cyclic categorical (e.g., angles, periodic states)
+Dimension("Phase", categories=["G1", "S", "G2", "M"], cyclic=True)  # Wraps: M → G1
+
+# Non-cyclic categorical (default)
+Dimension("Channel", categories=["DAPI", "GFP", "mCherry"])  # Stops at ends
+```
 
 ---
 
@@ -1236,6 +1284,60 @@ super().__init__(name, parent=parent, writer=writer, type="points", **attrs)
 - All fields stored (including computed ones like spatial)
 - Deserialized via from_dict()
 
+**Dimension Serialization Format** (JSON in zarr `.zattrs`):
+```json
+// Continuous spatial dimension
+{
+  "name": "X",
+  "unit": "um",
+  "range": [0.0, 256.0],
+  "step": 1.0,
+  "display": true,
+  "discrete": false,
+  "categories": null,
+  "cyclic": false,
+  "scale": 1.0,
+  "spatial": true,
+  "description": ""
+}
+
+// Discrete numeric dimension
+{
+  "name": "Time",
+  "unit": "",
+  "range": [0, 100],
+  "step": 1.0,
+  "display": false,
+  "discrete": true,
+  "categories": null,
+  "cyclic": false,
+  "scale": 1.0,
+  "spatial": false,
+  "description": "Time point index"
+}
+
+// Categorical dimension
+{
+  "name": "Channel",
+  "unit": "",
+  "range": [0, 2],
+  "step": 1.0,
+  "display": false,
+  "discrete": true,
+  "categories": ["DAPI", "GFP", "mCherry"],
+  "cyclic": false,
+  "scale": 1.0,
+  "spatial": false,
+  "description": "Fluorescence channel"
+}
+```
+
+**Categories Field**:
+- `null` if not categorical
+- Array of strings if categorical (0-indexed: first string = index 0)
+- Must have at least 1 element
+- All strings must be non-empty and unique
+
 **Data Node Metadata**:
 - Stored in Zarr group attributes
 - Type-specific structure per node type
@@ -1274,6 +1376,26 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.10.2** (2025-11-28): Cyclic flag + categorical clarification
+  - Clarified that `cyclic` flag controls navigation wrapping for categorical dimensions
+  - `cyclic=True`: wraps at boundaries (M → G1)
+  - `cyclic=False` (default): stops at boundaries
+  - Added example showing cyclic vs non-cyclic categorical dimensions
+
+- **v0.10.1** (2025-11-28): Dimension serialization format
+  - Added explicit JSON examples for dimension serialization
+  - Shows continuous, discrete numeric, and categorical dimension formats
+  - Documents `categories` field serialization (null vs array of strings)
+
+- **v0.10.0** (2025-11-28): Categorical dimensions
+  - Added `categories` field to Dimension for labeled discrete values
+  - Categorical dimensions store integer indices mapping to string labels
+  - Auto-behaviors: categories implies discrete=True, auto-sets range and step
+  - Validation: categories must be non-empty, unique, non-empty strings
+  - Viewer navigation: categorical dimensions cycle (wrap around at ends)
+  - Updated flag combinations table to include categories column
+  - Updated 5D→6D example with categorical Channel dimension
 
 - **v0.9.3** (2025-11-28): Empty nodes clarification
   - Clarified empty nodes (N=0) are invalid for finalized nodes only
