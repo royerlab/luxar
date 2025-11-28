@@ -1,7 +1,13 @@
-# Luxar Encoding Package Specifications
+# luxar.encoding - Technical Specification
 
-**Status**: Draft
-**Version**: 0.3
+**Version**: 0.5
+**Last Updated**: 2025-11-27
+
+**Related Specifications**:
+- `luxar.core` - Data structures that use encoding (see `core/SPECIFICATIONS.md`)
+- `luxar.io` - I/O layer that invokes encoding (see `io/SPECIFICATIONS.md`)
+- `luxar.validation` - Input validation before encoding (see `validation/SPECIFICATIONS.md`)
+- `luxar.typing_utils` - Type definitions and constants (see `typing_utils/SPECIFICATIONS.md`)
 
 ---
 
@@ -83,11 +89,15 @@ Arrays have inherent semantics that constrain valid encodings. The package recog
 - SDR: uint8, uint16, float16, float32
 - HDR: float16, float32
 
-**SDR Detection**: SDR vs HDR detection depends on input dtype:
+**SDR vs HDR Determination**:
 - **Integer input** (uint8, uint16): Always treated as SDR. Integer color data is already in quantized format.
-- **Float input** (float16, float32, float64): SDR if `np.all(data <= 1.0)`, otherwise HDR.
+- **Float input** (float16, float32, float64): **Requires explicit `color_mode` parameter**:
+  - `color_mode="sdr"`: Values must be in [0, 1], out-of-range raises error
+  - `color_mode="hdr"`: Unbounded non-negative values allowed
 
-Note: negative color values are an error (see Section 13), not HDR.
+**IMPORTANT**: Auto-detection (values > 1 = HDR) was rejected because buggy SDR data would silently be treated as HDR instead of raising an error. Explicit `color_mode` is required for float color arrays.
+
+Note: Negative color values are an error (see Section 13), regardless of color_mode.
 
 **Constraints**: values ≥ 0
 
@@ -95,7 +105,7 @@ Note: negative color values are an error (see Section 13), not HDR.
 
 **Definition**: Scalar values with known minimum and maximum bounds.
 
-**Examples**: sharpness [0, 32], opacity [0, 1]
+**Examples**: sharpness [0, 31], opacity [0, 1]
 
 **Characteristics**:
 - Known finite range
@@ -1192,13 +1202,21 @@ These are not in scope for v1.0 but the architecture should not preclude them.
 
 ## Changelog
 
+- **v0.5** (2025-11-27): Sharpness bounds finalized
+  - Updated sharpness bounds from [0, 32] to [0, 31] (final unified value)
+
+- **v0.4** (2025-11-27): Explicit color_mode requirement
+  - **BREAKING**: Float color arrays now require explicit `color_mode` parameter ("sdr" or "hdr")
+  - Removed auto-detection (values > 1 = HDR) to prevent buggy SDR data silently becoming HDR
+  - Added clear error for float colors without color_mode specification
+
 - **v0.3**: Unified sharpness bounds
   - Changed sharpness bounds example from [0.16, 24.4] to [0, 32] to align with core SPECIFICATIONS.md
-  - All Luxar specs now use unified bounds [0, 32] for sharpness
+  - (Note: Later changed to [0, 31] in v0.5)
 
 - **v0.2**: Cross-specification consistency review
   - Removed "Last Updated" placeholder
   - Added broadcasting support note to CHOLESKY semantic type
   - Added "AUTO Lossy?" column to mode behavior table
-  - Updated bounded scalar example to use sharpness bounds (later unified to [0, 32] in v0.3)
+  - Updated bounded scalar example to use sharpness bounds (later finalized to [0, 31])
 - **v0.1**: Initial specification draft

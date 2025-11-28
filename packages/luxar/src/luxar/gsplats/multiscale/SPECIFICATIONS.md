@@ -1,5 +1,8 @@
 # Multi-Scale Image Decomposition for Gaussian Splatting
 
+**Version**: 0.1.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 This module implements n-dimensional multi-scale image decomposition for efficient Gaussian splat fitting. The core idea is to decompose an image into a sum of non-negative components at different resolutions, enabling:
@@ -1091,7 +1094,7 @@ The `show_optimization_movie()` function displays:
 - **Total Variation (TV)**: Sum of absolute gradients, measures high-frequency content
 - **Interpolation modes**: `'nearest'` (fastest), `'linear'` (smooth), `'cubic'` (highest quality, default)
 
-## Version History
+## Changelog
 
 - **v0.1.0** (2025-01-XX): Initial specification with hierarchical energy loss
   - Basic decomposition with softplus constraints

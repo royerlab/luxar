@@ -1,8 +1,15 @@
 # luxar.utils - Technical Specification
 
+**Version**: 1.0.1
+**Last Updated**: 2025-11-27
+
 ## Purpose
 
 The `utils` package provides utility functions for array manipulation, broadcasting, and demo scene generation. These are helper functions used throughout Luxar.
+
+**Related Specifications**:
+- `luxar.core` - Data structures using these utilities (see `core/SPECIFICATIONS.md`)
+- `luxar.validation` - Uses array utilities for validation (see `validation/SPECIFICATIONS.md`)
 
 ---
 
@@ -51,7 +58,7 @@ The `utils` package provides utility functions for array manipulation, broadcast
 #### Specialized Broadcasters
 
 - `broadcast_radii_to_points()`: Calls broadcast_scalar with require_positive=True
-- `broadcast_sharpness_to_points()`: Calls broadcast_scalar + warns if outside [0.5, 10.0]
+- `broadcast_sharpness_to_points()`: Calls broadcast_scalar with require_positive=False
 
 ### Array Utilities
 
@@ -221,3 +228,15 @@ RGB = (r+m, g+m, b+m)
 ---
 
 ## This specification provides sufficient detail to re-implement the utility functions and demo generators.
+
+---
+
+## Changelog
+
+- **v1.0.1** (2025-11-27): Removed sharpness warning
+  - Removed arbitrary sharpness "typical range" warning (was unhelpful)
+
+- **v1.0.0** (2025-11-27): Initial versioned specification
+  - Documented array utilities and broadcasting
+  - Specified demo generation functions
+  - Defined error handling patterns

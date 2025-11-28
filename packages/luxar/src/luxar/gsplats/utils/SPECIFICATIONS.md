@@ -1,5 +1,8 @@
 # Gaussian Splatting Utilities Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 The utils package provides essential mathematical utilities for Gaussian splatting implementation. These utilities handle:
@@ -466,7 +469,7 @@ d = len(model.shape)
 gradient_dilution_factor = calculate_gradient_dilution_factor(d)
 self.effective_lr = self.base_lr * gradient_dilution_factor
 
-# Result: 3D model gets 2.0× learning rate automatically
+# Result: 3D model gets 1.8× learning rate automatically
 ```
 
 ### Parameter Count Calculation
@@ -487,7 +490,7 @@ print(f"Parameters per splat: {params_per_splat}")  # Output: 4 + 10 + 1 + 1 = 1
 - [models/SPECIFICATIONS.md](../models/SPECIFICATIONS.md) - Cholesky parameterization
 - [GLOSSARY.md](../GLOSSARY.md) - Terminology and naming conventions
 
-## Version History
+## Changelog
 
 - **v1.0.0** (January 2025): Initial implementation
   - Lower-triangular packing/unpacking utilities

@@ -1,5 +1,8 @@
 # Gaussian Splat Fitting Pipeline Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 The fitting package implements a modular, type-safe pipeline for fitting n-dimensional Gaussian splats to image/volume data through gradient-based optimization. The pipeline is decomposed into six well-defined stages with clear data flow and separation of concerns.
@@ -993,8 +996,8 @@ napari.run()
 
 **Parameter Counts**:
 - 2D: 5 parameters (2 pos + 3 cov)
-- 3D: 10 parameters (3 pos + 6 cov)
-- 4D: 15 parameters (4 pos + 10 cov)
+- 3D: 9 parameters (3 pos + 6 cov)
+- 4D: 14 parameters (4 pos + 10 cov)
 - nD: `d + d*(d+1)//2` parameters
 
 **Solution**: Scale learning rate based on parameter count relative to 2D baseline.
@@ -1017,8 +1020,8 @@ effective_lr = base_lr * gradient_dilution_factor
 
 **Examples**:
 - 2D: 5/5 = 1.0× (baseline)
-- 3D: 10/5 = 2.0×
-- 4D: 4^0.8 × 15/5 = 3.03 × 3.0 ≈ 7.1×
+- 3D: 9/5 = 1.8×
+- 4D: 4^0.8 × 14/5 = 3.03 × 2.8 ≈ 8.5×
 
 **Important**: Gradient dilution compensation is applied internally by the optimizer (`PerSplatAdam`), not by the fitting pipeline.
 
@@ -1248,9 +1251,9 @@ Key extension points in `optimization.py`:
 - [multiscale/SPECIFICATIONS.md](../multiscale/SPECIFICATIONS.md) - Multi-scale decomposition
 - [GLOSSARY.md](../GLOSSARY.md) - Terminology and naming conventions
 
-## Version History
+## Changelog
 
-- **v1.0.0** (January 2025): Initial modular pipeline with 6-stage architecture
+- **v1.0.0** (2025-11-27): Initial modular pipeline with 6-stage architecture
   - Refactored from monolithic 480+ line method
   - Added type-safe dataclasses for configuration
   - Implemented best state tracking (quality guarantee)

@@ -1,5 +1,8 @@
 # Per-Splat Optimization Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 The optim package implements specialized per-splat optimizers and schedulers for Gaussian splatting that maintain separate learning rates and momentum states for each individual splat. This enables:
@@ -984,8 +987,8 @@ def create_per_splat_optimizer_setup(
 **Parameter Counts**:
 - d dimensions → `d + d*(d+1)//2` parameters per splat
 - 2D: 2 + 3 = 5 parameters (baseline)
-- 3D: 3 + 6 = 10 parameters (2.0× dilution)
-- 4D: 4 + 10 = 15 parameters (3.0× parameter dilution)
+- 3D: 3 + 6 = 9 parameters (1.8× dilution)
+- 4D: 4 + 10 = 14 parameters (2.8× parameter dilution)
 
 **Solution**: Scale learning rate based on parameter count and spatial complexity.
 
@@ -1007,8 +1010,8 @@ gradient_dilution_factor = dimensional_complexity × parameter_complexity
 
 **Examples**:
 - 2D: 5/5 = 1.0×
-- 3D: 10/5 = 2.0×
-- 4D: 4^0.8 × 15/5 = 3.03 × 3.0 ≈ 7.1×
+- 3D: 9/5 = 1.8×
+- 4D: 4^0.8 × 14/5 = 3.03 × 2.8 ≈ 8.5×
 
 **Application**: Automatically applied by `PerSplatAdam` during initialization.
 
@@ -1266,7 +1269,7 @@ Follow same per-splat state management pattern as `PerSplatAdam`:
 - [fitting/SPECIFICATIONS.md](../fitting/SPECIFICATIONS.md) - Pipeline integration
 - [GLOSSARY.md](../GLOSSARY.md) - Terminology and naming conventions
 
-## Version History
+## Changelog
 
 - **v1.0.0** (January 2025): Initial implementation with per-splat Adam
   - Gradient dilution compensation

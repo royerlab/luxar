@@ -197,8 +197,8 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 **Cause**: Parameter count scales as `d + d*(d+1)//2`
 - 2D: 5 parameters → baseline
-- 3D: 10 parameters → 2× dilution
-- 4D: 15 parameters → 3× dilution
+- 3D: 9 parameters → 1.8× dilution
+- 4D: 14 parameters → ~8.5× dilution (enhanced with dimensional complexity)
 
 **Standard terms**:
 - ✅ **Gradient dilution** (the phenomenon)

@@ -159,6 +159,39 @@ Note: When possible, use `make` commands for convenience (see below).
   - Focuses on WHAT and WHY, not HOW
   - Serves as the authoritative specification for the package
   - Should be implementation-agnostic (could re-implement in another language)
+  - **MUST include version and changelog** (see format below)
+
+**SPECIFICATIONS.md Format Requirements**:
+```markdown
+# luxar.{package} - Technical Specification
+
+**Version**: X.Y.Z
+**Last Updated**: YYYY-MM-DD
+
+## Purpose
+{Brief description of the package's purpose}
+
+---
+
+{... specification content ...}
+
+---
+
+## Changelog
+
+- **vX.Y.Z** (YYYY-MM-DD): {Summary of changes}
+  - {Detail 1}
+  - {Detail 2}
+  - **BREAKING**: {Breaking change if any}
+
+- **vX.Y.Z-1** (YYYY-MM-DD): {Previous version changes}
+  ...
+```
+
+**Version numbering**: Use semantic versioning (MAJOR.MINOR.PATCH):
+- MAJOR: Breaking changes to the specification
+- MINOR: New features or sections added
+- PATCH: Clarifications, typo fixes, minor updates
 
 **CRITICAL**:
 1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md

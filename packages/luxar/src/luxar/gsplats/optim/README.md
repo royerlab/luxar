@@ -23,10 +23,10 @@ Each Gaussian splat has its own optimizer state (momentum, learning rate, step c
 - Efficient topology changes without global state disruption
 
 ### Gradient Dilution Compensation
-Higher dimensions have more parameters per splat (2D: 5, 3D: 10, 4D: 15), which dilutes gradients. The optimizer automatically compensates:
+Higher dimensions have more parameters per splat (2D: 5, 3D: 9, 4D: 14), which dilutes gradients. The optimizer automatically compensates:
 - **2D**: lr × 1.0 (baseline)
-- **3D**: lr × 2.0
-- **4D**: lr × 7.1 (enhanced with dimensional complexity factor)
+- **3D**: lr × 1.8
+- **4D**: lr × 8.5 (enhanced with dimensional complexity factor)
 
 ### Parameter-Type-Specific Learning Rates
 Different parameter types optimize at different rates (hard-coded multipliers):
@@ -427,8 +427,8 @@ gradient_dilution_factor = dimensional_complexity × parameter_complexity
 
 **Examples**:
 - **2D** (5 params): factor = 5/5 = **1.0×** (baseline)
-- **3D** (10 params): factor = 10/5 = **2.0×**
-- **4D** (15 params): factor = 4^0.8 × 15/5 ≈ **7.1×**
+- **3D** (9 params): factor = 9/5 = **1.8×**
+- **4D** (14 params): factor = 4^0.8 × 14/5 ≈ **8.5×**
 
 **Application**:
 ```python
@@ -436,7 +436,7 @@ gradient_dilution_factor = dimensional_complexity × parameter_complexity
 optimizer = PerSplatAdam(model_3d, lr=0.01)
 
 # Internally calculated:
-# effective_lr = 0.01 × 2.0 = 0.02 (for 3D)
+# effective_lr = 0.01 × 1.8 = 0.018 (for 3D)
 # Applied to position: 0.02 × 0.1 = 0.002
 # Applied to variance: 0.02 × 1.0 = 0.02
 # Applied to amplitude: 0.02 × 2.0 = 0.04
