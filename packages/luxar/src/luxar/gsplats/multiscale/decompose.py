@@ -164,7 +164,7 @@ def _cubic_upsample_recursive(
             mode=mode,
             align_corners=False if mode != "nearest" else None,
         )
-        return upsampled[0, 0]
+        return upsampled[0, 0]  # type: ignore[no-any-return]
     else:
         raise ValueError(f"Cannot upsample {current_shape} to {target_shape}")
 
