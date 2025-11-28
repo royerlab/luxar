@@ -102,7 +102,7 @@ def simple_noise_3d(
     # Interpolate along z
     nxyz = nxy0 * (1 - w) + nxy1 * w
 
-    return nxyz
+    return nxyz  # type: ignore[no-any-return]
 
 
 def fractal_noise_3d(
@@ -141,7 +141,7 @@ def fractal_noise_3d(
         frequency *= 2.0
 
     # Normalize to approximately [-1, 1]
-    return noise / max_amplitude
+    return noise / max_amplitude  # type: ignore[no-any-return]
 
 
 def generate_volumetric_cloud(

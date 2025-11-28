@@ -62,7 +62,7 @@ def xor_fractal_4d(
     zi: np.ndarray = Z.astype(np.int32)
 
     result = wi ^ xi ^ yi ^ zi
-    return result
+    return result  # type: ignore[no-any-return]
 
 
 def menger_sponge_4d(
@@ -99,7 +99,7 @@ def menger_sponge_4d(
         middle_count = wm.astype(int) + xm.astype(int) + ym.astype(int) + zm.astype(int)
         solid &= middle_count < 2
 
-    return solid.astype(np.int16)
+    return solid.astype(np.int16)  # type: ignore[no-any-return]
 
 
 def sierpinski_4d(
@@ -120,7 +120,7 @@ def sierpinski_4d(
 
     # Sierpinski condition: bitwise AND of all coordinates
     result = (wi & xi & yi & zi) == 0
-    return result.astype(np.int16)
+    return result.astype(np.int16)  # type: ignore[no-any-return]
 
 
 def cantor_dust_4d(
@@ -157,7 +157,7 @@ def cantor_dust_4d(
         & in_cantor(yi, level)
         & in_cantor(zi, level)
     )
-    return result.astype(np.int16)
+    return result.astype(np.int16)  # type: ignore[no-any-return]
 
 
 def checkerboard_4d(
@@ -178,7 +178,7 @@ def checkerboard_4d(
     zi: np.ndarray = (Z * scale).astype(np.int32)
 
     result = (wi + xi + yi + zi) % 2
-    return result
+    return result  # type: ignore[no-any-return]
 
 
 def diamond_fractal_4d(
@@ -198,7 +198,7 @@ def diamond_fractal_4d(
     # Create fractal pattern from distance
     result = (dist * 5).astype(np.int32) % 7
 
-    return result
+    return result  # type: ignore[no-any-return]
 
 
 def generate_4d_fractal(

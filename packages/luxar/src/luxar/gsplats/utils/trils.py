@@ -101,7 +101,7 @@ def pack_tril(L: np.ndarray) -> np.ndarray:
         for j in range(i + 1):
             out[:, k] = L[:, i, j]
             k += 1
-    return out
+    return out  # type: ignore[no-any-return]
 
 
 def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
@@ -142,4 +142,4 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
         for j in range(i + 1):  # Column index (j <= i, lower triangle)
             L[:, i, j] = v[:, k]
             k += 1
-    return L
+    return L  # type: ignore[no-any-return]
