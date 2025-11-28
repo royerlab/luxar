@@ -60,7 +60,7 @@ def local_maxima(
 
     # Handle empty result case
     if coords.size == 0:
-        return coords
+        return coords  # type: ignore[no-any-return]
 
     # Optionally limit to top_k strongest peaks
     if top_k is not None and len(coords) > top_k:
@@ -69,7 +69,7 @@ def local_maxima(
         # Select indices of top_k strongest peaks (highest intensities)
         keep = np.argsort(vals)[-top_k:]
         coords = coords[keep]
-    return coords
+    return coords  # type: ignore[no-any-return]
 
 
 def dedupe_farthest_first(
@@ -171,7 +171,7 @@ def dedupe_farthest_first(
         selected_array = np.array(selected)
         tree = cKDTree(selected_array)
 
-    return np.array(selected, dtype=float)
+    return np.array(selected, dtype=float)  # type: ignore[no-any-return]
 
 
 def _dedupe_simple(
@@ -208,7 +208,7 @@ def _dedupe_simple(
         dist2 = np.sum(diffs**2, axis=1) if coords_sorted.ndim > 1 else diffs**2
         used |= dist2 < (min_distance**2)
 
-    return np.array(selected, dtype=float)
+    return np.array(selected, dtype=float)  # type: ignore[no-any-return]
 
 
 def combine_seeds(
@@ -277,8 +277,8 @@ def combine_seeds(
         # Infer ndim from first non-None array, or default to 2
         for arr in candidate_arrays:
             if arr is not None:
-                return np.zeros((0, arr.shape[1]), dtype=float)
-        return np.zeros((0, 2), dtype=float)  # Default to 2D
+                return np.zeros((0, arr.shape[1]), dtype=float)  # type: ignore[no-any-return]
+        return np.zeros((0, 2), dtype=float)  # type: ignore[no-any-return]  # Default to 2D
 
     # Concatenate all non-empty arrays
     combined = np.vstack(non_empty)
@@ -287,4 +287,4 @@ def combine_seeds(
     if min_distance is not None:
         combined = dedupe_farthest_first(combined, min_distance=min_distance)
 
-    return combined
+    return combined  # type: ignore[no-any-return]
