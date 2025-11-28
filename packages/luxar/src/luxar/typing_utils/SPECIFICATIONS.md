@@ -109,6 +109,29 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `MAX_DISPLAYED_DIMENSIONS = 3` - Viewer limitation
 - `DEFAULT_DIMENSION_STEP_PERCENT = 0.01` - 1% of range
 
+### Timestamp Format
+- `TIMESTAMP_FORMAT = "ISO 8601"` - Standard timestamp format for all Luxar metadata
+- **Format specification**: `"YYYY-MM-DDTHH:MM:SSZ"` (UTC timezone)
+- **Example**: `"2025-11-28T14:30:00Z"`
+- **Usage**: Fitting timestamps, provenance, creation dates
+
+**Utility function specification**:
+```python
+def format_timestamp(dt: datetime) -> str:
+    """
+    Format datetime to ISO 8601 string with UTC.
+
+    Returns: String in format "YYYY-MM-DDTHH:MM:SSZ"
+    Example: "2025-11-28T14:30:00Z"
+    """
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+```
+
+**Where used**:
+- GSplats fitting metadata (`fitting/.zattrs["timestamp"]`)
+- Provenance metadata (`provenance/.zattrs["creation_timestamp"]`)
+- Root format metadata (`.gsplats.zarr`, Luxar scenes)
+
 ---
 
 ## Configuration (config.py)
@@ -227,6 +250,11 @@ total = n_points * memory_per_point
 ---
 
 ## Changelog
+
+- **v1.0.4** (2025-11-28): Timestamp format standardization
+  - Added `TIMESTAMP_FORMAT` constant: ISO 8601 standard
+  - Specified format: "YYYY-MM-DDTHH:MM:SSZ" (UTC)
+  - Documented usage in fitting, provenance, and format metadata
 
 - **v1.0.3** (2025-11-28): Chunk size constants alignment
   - Changed from element-based to byte-based chunk sizing
