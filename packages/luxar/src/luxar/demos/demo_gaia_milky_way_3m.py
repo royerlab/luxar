@@ -153,7 +153,7 @@ def compute_colors(bp_rp: np.ndarray, phot_g_mean_mag: np.ndarray) -> np.ndarray
     colors = np.stack([r * brightness, g * brightness, b * brightness], axis=1).astype(
         np.float32
     )
-    return colors
+    return colors  # type: ignore[no-any-return]
 
 
 def compute_radii(phot_g_mean_mag: np.ndarray) -> np.ndarray:
@@ -171,7 +171,7 @@ def compute_radii(phot_g_mean_mag: np.ndarray) -> np.ndarray:
     mag_norm = np.clip((21 - phot_g_mean_mag) / 18.0, 0, 1)
     # Visualization scale: 0.001 to 0.011 kpc (1 to 11 pc)
     # Larger than physical stars but visible at galactic scales
-    return (0.001 + 0.01 * mag_norm**2).astype(np.float32)
+    return (0.001 + 0.01 * mag_norm**2).astype(np.float32)  # type: ignore[no-any-return]
 
 
 def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:

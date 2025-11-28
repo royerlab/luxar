@@ -84,7 +84,7 @@ def hydrogen_radial_wavefunction(
     # Radial wavefunction
     R = norm * np.exp(-rho / 2) * (rho**l_quantum) * laguerre(rho)
 
-    return R
+    return R  # type: ignore[no-any-return]
 
 
 def compute_orbital_density(

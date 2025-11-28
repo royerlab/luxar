@@ -347,7 +347,7 @@ def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
     """
     # Handle empty array case
     if len(values) == 0:
-        return np.zeros((0, 3), dtype=np.float32)
+        return np.zeros((0, 3), dtype=np.float32)  # type: ignore[no-any-return]
 
     # Normalize to [0, 1]
     v_min, v_max = values.min(), values.max()
@@ -365,7 +365,7 @@ def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
     # Moderate brightness to prevent saturation with additive blending
     colors *= 0.8
 
-    return colors
+    return colors  # type: ignore[no-any-return]
 
 
 def generate_4d_fractal_dataset(
