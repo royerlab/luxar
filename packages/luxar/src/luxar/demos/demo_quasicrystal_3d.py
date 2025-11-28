@@ -170,7 +170,7 @@ def generate_6d_lattice_chunk(center: tuple, radius: int) -> np.ndarray:
     # Stack into (N, 6) array
     points = np.column_stack([g.ravel() for g in grids])
 
-    return points.astype(np.float64)
+    return points.astype(np.float64)  # type: ignore[no-any-return]
 
 
 def adaptive_window_size(
@@ -202,7 +202,7 @@ def adaptive_window_size(
     # Window radius (rough geometric estimate)
     r_window = (density * lattice_radius) ** (1 / 3)
 
-    return max(0.5, r_window)  # At least 0.5
+    return max(0.5, r_window)  # type: ignore[no-any-return]  # At least 0.5
 
 
 def generate_quasicrystal_3d(

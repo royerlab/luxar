@@ -202,7 +202,7 @@ def age_to_color(ages: np.ndarray) -> np.ndarray:
     colors[old, 1] = 0.6 - 0.3 * t  # Some orange
     colors[old, 2] = 0.2 - 0.2 * t  # Little blue
 
-    return colors
+    return colors  # type: ignore[no-any-return]
 
 
 def generate_spiral_galaxy(
