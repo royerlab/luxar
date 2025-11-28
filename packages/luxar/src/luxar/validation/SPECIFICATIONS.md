@@ -1,7 +1,7 @@
 # luxar.validation - Technical Specification
 
-**Version**: 1.0.2
-**Last Updated**: 2025-11-27
+**Version**: 1.1.0
+**Last Updated**: 2025-11-28
 
 ## Purpose
 
@@ -122,10 +122,59 @@ Error Messages: Distinguish between wrong count vs wrong channels
 
 ### Enum Validation
 
-**NodeType**: Must be "scene", "group", or "points"
+**NodeType**: Must be "scene", "group", "points", or "gsplats"
 **PhysicalUnit**: Must be one of supported units (nm, um, mm, cm, m, metre, meter, km, inch, foot, px, au)
 - Handles variations (meter/metre, micrometer/micron/μm)
 - Case-insensitive matching with normalization map
+
+### Categorical Dimension Validation
+
+**Purpose**: Validate categorical dimension definitions and category index values in point coordinates.
+
+**Category List Validation** (`validate_categories()`):
+```
+Input: categories (List[str] | None)
+Requirements:
+  - If None: Valid (non-categorical dimension)
+  - If provided:
+    - Must be a list (not tuple, set, or other iterable)
+    - Must have at least 1 element (MIN_CATEGORIES = 1)
+    - All elements must be non-empty strings
+    - All category names must be unique (no duplicates)
+    - Maximum length per label: 1024 characters (practical limit)
+Output: Validated list or None
+Error Messages:
+  - "categories must have at least 1 element"
+  - "category at index {i} is empty string"
+  - "duplicate category name: '{name}' appears at indices {i} and {j}"
+  - "category at index {i} exceeds maximum length (1024 chars)"
+```
+
+**Category Index Validation** (`validate_category_indices()`):
+```
+Input: values (array), categories (List[str])
+Requirements:
+  - Values must be integers (or convertible to int without loss)
+  - All values must be valid indices: 0 ≤ value < len(categories)
+Output: None (raises on error)
+Error Messages:
+  - "category index {value} at position {i} is out of range [0, {max}]"
+  - "negative category index {value} at position {i}"
+  - "non-integer category index {value} at position {i}"
+```
+
+**Integration with Dimension Validation**:
+When validating a `Dimension` object:
+1. If `categories` is not None, validate the category list
+2. Automatically set `discrete = True` (if not already)
+3. Validate that `range` is consistent: should be `(0, len(categories) - 1)`
+4. Validate that `step` is 1.0 (categorical dimensions step by one category)
+
+**Point Coordinate Validation** (for categorical dimensions):
+When validating point positions against scene dimensions:
+1. Identify which dimensions are categorical
+2. For categorical dimensions, validate that all point values are valid indices
+3. Provide helpful error messages: "point {i} has channel=5, but valid channels are: DAPI (0), GFP (1), mCherry (2)"
 
 ---
 
@@ -263,6 +312,14 @@ def is_position_array(obj: Any) -> bool:
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-11-28): Categorical dimension validation
+  - Added `validate_categories()` for category list validation
+  - Added `validate_category_indices()` for point coordinate validation
+  - Category constraints: non-empty, unique, max 1024 chars per label
+  - Integration with Dimension validation (auto-set discrete, validate range/step)
+  - Helpful error messages showing valid category names
+  - Updated NodeType to include "gsplats"
 
 - **v1.0.2** (2025-11-27): Gamma and sharpness range updates
   - Updated GAMMA_MIN/MAX from [0.2, 2.0] to [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)

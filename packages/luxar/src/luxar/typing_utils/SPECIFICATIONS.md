@@ -1,6 +1,6 @@
 # luxar.typing_utils - Technical Specification
 
-**Version**: 1.0.3
+**Version**: 1.0.7
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -36,6 +36,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `PathLike = str | Path`
 - `ChunkSpec = None | bool | int | Tuple[int, ...]`
 - `NodePath = str`  # Hierarchical path like "group1/group2/points"
+- `CategoryList = List[str] | None`  # Category labels for categorical dimensions
 
 ### protocols.py - Protocol Definitions
 **Purpose**: Define structural contracts for duck typing
@@ -64,6 +65,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `SCENE = "scene"` - Root node
 - `GROUP = "group"` - Container node
 - `POINTS = "points"` - Point cloud node
+- `GSPLATS = "gsplats"` - Gaussian splat node
 
 **PhysicalUnit**:
 - Metric: nm, um, mm, cm, m, metre, km
@@ -95,9 +97,15 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `DEFAULT_OPACITY/GAMMA/BLENDING_MODE = 1.0, 1.0, "additive"`
 
 ### Data Constants
-- `TARGET_CHUNK_BYTES = 65536` - 64KB target chunk size (see io/SPECIFICATIONS.md for sizing strategy)
+
+**Chunk Size Constants** (SINGLE SOURCE OF TRUTH):
+- `TARGET_CHUNK_BYTES = 65536` - 64KB target chunk size
 - `MIN_CHUNK_BYTES = 16384` - 16KB minimum to amortize HTTP overhead
 - `MAX_CHUNK_BYTES = 262144` - 256KB maximum for responsive streaming
+
+**Note**: Zarr chunks by elements, not bytes. Consumers (io, gsplats.io) import these constants and convert to element counts based on each array's dtype. See `io/SPECIFICATIONS.md` for the conversion strategy.
+
+**Compression Constants**:
 - `COMPRESSION_LEVEL_DEFAULT = 3` - Blosc compression level
 - `DEFAULT_COMPRESSOR = "blosc"` - Default algorithm
 
@@ -108,6 +116,8 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 ### Dimension Constants
 - `MAX_DISPLAYED_DIMENSIONS = 3` - Viewer limitation
 - `DEFAULT_DIMENSION_STEP_PERCENT = 0.01` - 1% of range
+- `MIN_CATEGORIES = 1` - Minimum categories for categorical dimensions
+- `CATEGORICAL_STEP = 1.0` - Step size for categorical dimensions (always 1)
 
 ### Timestamp Format
 - `TIMESTAMP_FORMAT = "ISO 8601"` - Standard timestamp format for all Luxar metadata
@@ -250,6 +260,18 @@ total = n_points * memory_per_point
 ---
 
 ## Changelog
+
+- **v1.0.7** (2025-11-28): Chunk size documentation enhancement
+  - Added "SINGLE SOURCE OF TRUTH" emphasis for chunk size constants
+  - Added note explaining consumers (io, gsplats.io) convert bytes→elements
+
+- **v1.0.6** (2025-11-28): NodeType GSPLATS
+  - Added `GSPLATS = "gsplats"` to NodeType enum
+
+- **v1.0.5** (2025-11-28): Categorical dimension support
+  - Added `CategoryList = List[str] | None` type alias
+  - Added `MIN_CATEGORIES = 1` constant
+  - Added `CATEGORICAL_STEP = 1.0` constant
 
 - **v1.0.4** (2025-11-28): Timestamp format standardization
   - Added `TIMESTAMP_FORMAT` constant: ISO 8601 standard
