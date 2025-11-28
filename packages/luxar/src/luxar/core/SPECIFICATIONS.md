@@ -190,7 +190,7 @@ class DataNode(Node, ABC):
 |-----------|--------------|---------------|---------------|-----------------|
 | Points | positions (N, d) | radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
 | Lines | vertices (N, d) | widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
-| GSplats | centers (N, d) | — | amplitudes, cholesky_factors, sharpnesses | n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds |
+| GSplats | centers (N, d) | — | colors, amplitudes, cholesky_factors, sharpnesses | n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds |
 
 *Note: "Primary Data" is always required. "Also Required" lists additional required arrays beyond primary data.*
 
@@ -371,8 +371,8 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 
 **Specification**:
 - Data node for Gaussian splat visualization
-- Each splat is an oriented ellipsoid defined by center, covariance, amplitude
-- **Single-channel intensity**: GSplats use amplitude (scalar) for intensity, not RGB colors
+- Each splat is an oriented ellipsoid defined by center, covariance, color, amplitude
+- Supports RGB colors with scalar amplitude multiplier
 - Full specification in `gsplats/GSPLATS_ZARR_FORMAT.md`
 
 **Data Arrays**:
@@ -380,19 +380,19 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 | Array | Shape | Dtype | Required | Description |
 |-------|-------|-------|----------|-------------|
 | centers | (N, d) | float32 | Yes | Splat centers (not broadcastable) |
-| amplitudes | (N,) or (1,) | float32 | No | Non-negative intensity values (single-channel, not RGB) |
-| cholesky_factors | (N, k) or (1, k) | float32 | No | Packed Cholesky factors, k = d*(d+1)/2 |
+| amplitudes | (N,) or (1,) | float32 | Yes | Non-negative intensity values (scalar multiplier) |
+| cholesky_factors | (N, k) or (1, k) | float32 | Yes | Packed Cholesky factors, k = d*(d+1)/2 |
+| colors | (N, 3) or (1, 3) | float32/uint8 | No | RGB colors (HDR or SDR) |
 | sharpnesses | (N,) or (1,) | float32 | No | Gaussian sharpness [0, 32] |
 
-**Note on Colors**: Unlike Points and Lines, GSplats do not have RGB colors. The `amplitudes` array provides single-channel intensity. Color mapping (e.g., colormap lookup, channel assignment) is handled by the viewer or post-processing, not stored in the data format.
+**Note on Colors and Amplitudes**: The final rendered color is `color * amplitude`. When `colors` is not provided, white `[1.0, 1.0, 1.0]` is used, so amplitudes alone determine grayscale intensity.
 
 **Metadata**:
 ```python
 {
     "n_splats": int,         # Number of splats
     "ndim": int,             # Dimensionality (d)
-    "has_amplitudes": bool,
-    "has_cholesky": bool,
+    "has_colors": bool,
     "has_sharpnesses": bool,
     "ordering": str,         # "none", "morton", "hilbert"
     "amplitude_range": {"min": float, "max": float},
@@ -403,6 +403,7 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 **Note**: Sharpness bounds [0, 32] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
 
 **Default Values** (when optional arrays not provided):
+- colors: white `[1.0, 1.0, 1.0]`
 - amplitudes: `1.0`
 - sharpnesses: `1.0`
 
@@ -422,6 +423,7 @@ Lower-triangular matrix packed row-major:
 
 **Encoding**: Uses `luxar.encoding` with semantic types:
 - centers: COORDINATE
+- colors: COLOR
 - amplitudes: POSITIVE_SCALAR
 - cholesky_factors: CHOLESKY
 - sharpnesses: BOUNDED_SCALAR [0, 32]
@@ -665,7 +667,7 @@ class ZarrWriterProtocol(Protocol):
 
     def write_gsplats(
         self, path, centers,
-        amplitudes=None, cholesky_factors=None, sharpnesses=None,
+        colors=None, amplitudes=None, cholesky_factors=None, sharpnesses=None,
         **attrs
     ) -> GSplatsMetadata: ...
 
@@ -688,7 +690,7 @@ Each `write_*` method:
 ```python
 PointsMetadata = Dict[str, Any]   # n_points, ndim, has_colors, has_sharpness, max_radius
 LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
-GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
+GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
 ```
 
 ---
@@ -731,7 +733,7 @@ Lines (extends DataNode)
 GSplats (extends DataNode)
   └─ type: "gsplats"
   └─ n_elements: n_splats
-  └─ metadata: n_splats, ndim, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
+  └─ metadata: n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
 
 Dimensions
   └─ contains: list of Dimension
@@ -892,7 +894,8 @@ This specification is sufficient to re-implement the core package in any languag
 
 ## Changelog
 
-- **v0.5**: Required arrays and validation
+- **v0.5**: Required arrays, validation, and GSplats colors
+  - Added `colors` array to GSplats (RGB, optional, default white) for consistency with Points/Lines
   - Made `radii` required for Points (no universal default)
   - Made `widths` required for Lines (no universal default)
   - Removed `has_radii` and `has_widths` from metadata (now always present)
