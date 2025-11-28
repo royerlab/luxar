@@ -287,8 +287,8 @@ gradient_dilution_factor = dimensional_complexity * parameter_complexity
 
 **Scaling Results:**
 - 2D (5 params): 1.0× → lr = 0.01
-- 3D (10 params): 2.0× → lr = 0.02
-- 4D (15 params): 7.1× → lr = 0.071
+- 3D (9 params): 1.8× → lr = 0.018
+- 4D (14 params): 8.5× → lr = 0.085
 
 **Strengths:**
 - **Empirically validated**: The 0.8 exponent is well-chosen for 4D performance

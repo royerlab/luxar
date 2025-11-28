@@ -1,8 +1,17 @@
 # luxar.typing_utils - Technical Specification
 
+**Version**: 1.0.2
+**Last Updated**: 2025-11-27
+
 ## Purpose
 
 The `typing_utils` package centralizes all type definitions, constants, protocols, and configuration for Luxar. It provides the type system foundation for the entire codebase.
+
+**Related Specifications**:
+- `luxar.core` - Uses type definitions from this package (see `core/SPECIFICATIONS.md`)
+- `luxar.io` - Uses constants and types (see `io/SPECIFICATIONS.md`)
+- `luxar.validation` - Uses constants for bounds validation (see `validation/SPECIFICATIONS.md`)
+- `luxar.encoding` - Uses type aliases (see `encoding/SPECIFICATIONS.md`)
 
 ---
 
@@ -81,8 +90,8 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 
 ### Rendering Constants
 - `OPACITY_MIN/MAX = 0.0, 1.0`
-- `GAMMA_MIN/MAX = 0.2, 2.0`
-- `SHARPNESS_MIN/MAX = 0.0, 15.0`
+- `GAMMA_MIN/MAX = 0.1, 10.0` (symmetric: gamma and 1/gamma have equal range)
+- `SHARPNESS_MIN/MAX = 0.0, 31.0`
 - `DEFAULT_OPACITY/GAMMA/BLENDING_MODE = 1.0, 1.0, "additive"`
 
 ### Data Constants
@@ -90,13 +99,6 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `CHUNK_SIZE_MIN/MAX = 1024, 1048576` - Valid range
 - `COMPRESSION_LEVEL_DEFAULT = 3` - Blosc compression level
 - `DEFAULT_COMPRESSOR = "blosc"` - Default algorithm
-
-### Spatial Index Constants
-- `SPATIAL_INDEX_MAX_CELLS_DISCRETE = 10000` - Max for categorical dims
-- `SPATIAL_INDEX_MAX_CELLS_CONTINUOUS = 10` - Max for continuous dims
-- `SPATIAL_INDEX_MIN_CELLS = 3` - Minimum cells
-- `SPATIAL_INDEX_TARGET_POINTS_PER_CELL = 10000` - Target density
-- Plus 5 more for multi-dim grids, single-dim grids, fallback values
 
 ### Point Radius Constants
 - `MIN_POINT_RADIUS = 0.001` - Minimum visible
@@ -124,12 +126,12 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `get_position_dtype(data)` - Usually float32 (accuracy critical)
 - `get_color_dtype(data)` - Auto: float32 if HDR, uint8 if SDR
 - `get_radius_dtype(data)` - Auto: based on value range
-- `get_sharpness_dtype(data)` - Auto: uint8 if ≤15, else float32
+- `get_sharpness_dtype(data)` - Auto: uint8 if ≤31, else float32
 
 **Optimization Strategy**:
 - HDR detection: Check if any color > 1.0
 - Range detection: Check min/max for appropriate dtype
-- Normalization: uint8 can represent [0,1] range or [0,15] for sharpness
+- Normalization: uint8 can represent [0,1] range or [0,31] for sharpness
 
 ### Other Config
 
@@ -163,7 +165,7 @@ result = normalized * (output_max - output_min) + output_min
 
 **Normalization Ranges**:
 - Colors: [0, 1] typical input range
-- Sharpness: [0, 15] for uint8 mapping
+- Sharpness: [0, 31] for uint8 mapping
 - Radii: [0, max_radius] for uint8 mapping
 
 ### infer_optimal_dtype(array, attribute_type)
@@ -220,3 +222,20 @@ total = n_points * memory_per_point
 ---
 
 ## This specification provides sufficient detail to re-implement the type system and configuration management.
+
+---
+
+## Changelog
+
+- **v1.0.2** (2025-11-27): Gamma and sharpness range updates
+  - Updated GAMMA_MIN/MAX from [0.2, 2.0] to [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)
+  - Updated SHARPNESS_MAX from 32.0 to 31.0 (final value)
+  - Removed deprecated SPATIAL_INDEX_* constants (Morton ordering replaces grid-based indexing)
+
+- **v1.0.1** (2025-11-27): Sharpness range fix
+  - Fixed SHARPNESS_MAX from 15.0 to 32.0
+
+- **v1.0.0** (2025-11-27): Initial versioned specification
+  - Documented type aliases and protocols
+  - Specified constants and configuration
+  - Defined memory estimation formulas

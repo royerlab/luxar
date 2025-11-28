@@ -1,5 +1,8 @@
 # Seed Generation for Gaussian Splatting
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 This subpackage provides two complementary methods for generating seed Gaussian splat locations from n-dimensional images. Seeds serve as initial positions for Gaussian splat fitting, determining where splats should be placed to approximate image features.
@@ -1735,9 +1738,9 @@ def find_candidates_learned(V, model, threshold=0.5):
 - **KD-Tree**: Bentley, J. L. (1975). "Multidimensional binary search trees used for associative searching." Communications of the ACM.
 - **Farthest-First Traversal**: Hochbaum, D. S., & Shmoys, D. B. (1985). "A best possible heuristic for the k-center problem." Mathematics of Operations Research.
 
-## Revision History
+## Changelog
 
-- **v1.0 (2025-01-19)**: Initial comprehensive specification
+- **v1.0 (2025-11-27)**: Initial comprehensive specification
   - Documented both multiscale Gaussian and decomposition methods
   - Detailed shared utilities (peak detection, deduplication, combination)
   - Algorithmic comparisons and performance trade-offs

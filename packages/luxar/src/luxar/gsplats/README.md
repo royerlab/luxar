@@ -369,7 +369,7 @@ Sharpness parameters (s'):   ×0.5  # Conservative shape adaptation (no gradient
 The system automatically handles nD optimization challenges through intelligent learning rate scaling:
 
 ### **Problem**: Multi-Factor Gradient Dilution in Higher Dimensions
-- **Parameter growth**: 2D (5 params), 3D (10 params), 4D (15 params) per splat
+- **Parameter growth**: 2D (5 params), 3D (9 params), 4D (14 params) per splat
 - **Signal dilution**: Same loss gradient distributed across more parameters
 - **Spatial complexity**: 4D optimization landscape much more challenging than 2D/3D
 - **Volume effects**: Higher dimensional spaces require more aggressive optimization

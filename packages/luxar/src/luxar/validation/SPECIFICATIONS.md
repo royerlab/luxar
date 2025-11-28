@@ -1,8 +1,16 @@
 # luxar.validation - Technical Specification
 
+**Version**: 1.0.2
+**Last Updated**: 2025-11-27
+
 ## Purpose
 
 The `validation` package provides comprehensive validation for all Luxar data structures with helpful, actionable error messages. It's organized into three modules serving different purposes.
+
+**Related Specifications**:
+- `luxar.core` - Data structures being validated (see `core/SPECIFICATIONS.md`)
+- `luxar.io` - Uses validation during write operations (see `io/SPECIFICATIONS.md`)
+- `luxar.typing_utils` - Constants for validation bounds (see `typing_utils/SPECIFICATIONS.md`)
 
 ---
 
@@ -78,12 +86,11 @@ Error Messages: Distinguish between wrong count vs wrong channels
 - Must be 1D array
 - Must have N elements (match n_points)
 - All values must be positive (> 0)
-- Sharpness: must be in range [0, 15] (for uint8 mapping)
+- Sharpness: must be in range [0, 31]
 
 **Error Handling**:
 - Detect zeros vs negatives (different suggestions)
 - Suggest np.clip() or replacement strategies
-- Warn if sharpness outside typical range [0.5, 10.0]
 
 ### Transform Validation
 
@@ -103,7 +110,7 @@ Error Messages: Distinguish between wrong count vs wrong channels
 - Raises TypeError if not convertible
 
 **Gamma**:
-- Range: [0.2, 2.0]
+- Range: [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)
 - Accepts: int, float, np.number
 - Converts to float
 - Raises ValueError if out of range
@@ -201,8 +208,8 @@ Format: Includes breakdown of missing values per dimension
 
 **From constants.py**:
 - `OPACITY_MIN = 0.0`, `OPACITY_MAX = 1.0`
-- `GAMMA_MIN = 0.2`, `GAMMA_MAX = 2.0`
-- `SHARPNESS_MIN = 0.0`, `SHARPNESS_MAX = 15.0`
+- `GAMMA_MIN = 0.1`, `GAMMA_MAX = 10.0`
+- `SHARPNESS_MIN = 0.0`, `SHARPNESS_MAX = 31.0`
 - `MIN_POINT_RADIUS = 0.001`, `MAX_POINT_RADIUS = 1000.0`
 
 ---
@@ -252,3 +259,20 @@ def is_position_array(obj: Any) -> bool:
 ---
 
 ## This specification provides sufficient detail to re-implement the validation system with equivalent behavior and error messages.
+
+---
+
+## Changelog
+
+- **v1.0.2** (2025-11-27): Gamma and sharpness range updates
+  - Updated GAMMA_MIN/MAX from [0.2, 2.0] to [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)
+  - Updated SHARPNESS_MAX from 32.0 to 31.0 (final value)
+  - Removed sharpness "typical range" warning (was arbitrary and unhelpful)
+
+- **v1.0.1** (2025-11-27): Sharpness range fix
+  - Fixed SHARPNESS_MAX from 15.0 to 32.0
+
+- **v1.0.0** (2025-11-27): Initial versioned specification
+  - Documented three-module organization (types, base, nd)
+  - Defined validation functions and error handling
+  - Specified type guard patterns

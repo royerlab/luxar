@@ -301,7 +301,7 @@ gradient_dilution_factor = dimensional_complexity * parameter_complexity
 effective_lr = base_lr * gradient_dilution_factor
 ```
 
-**Impact:** 2D: 1.0×, 3D: 2.0×, 4D: 7.1× learning rate multiplier.
+**Impact:** 2D: 1.0×, 3D: 1.8×, 4D: 8.5× learning rate multiplier.
 
 **Sharpness Exception:** Sharpness parameters always use `base_lr` without gradient dilution, since sharpness is a single scalar value regardless of dimension (no parameter dilution occurs).
 

@@ -1,5 +1,8 @@
 # Gaussian Splat Models Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 The models package contains PyTorch model implementations and rendering engines for n-dimensional oriented Gaussian splatting. The main components are:
@@ -772,7 +775,7 @@ Note: Ensure new activation has appropriate inverse for initialization.
 - NumPy documentation: expm1 (for numerical stability)
 - Gaussian splatting literature (various papers on 3D reconstruction)
 
-## Version History
+## Changelog
 
 - **v1.0.0** (January 2025): Initial implementation
   - nD Gaussian splatting with full covariance
