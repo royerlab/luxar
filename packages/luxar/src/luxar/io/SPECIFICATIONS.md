@@ -1,6 +1,6 @@
 # luxar.io - Technical Specification
 
-**Version**: 1.2.0
+**Version**: 1.2.1
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -298,14 +298,14 @@ extent[d] = sqrt(covariance[d, d]) * k  # k = 3.0 for 99.7% coverage
 
 **Goal**: Balance between HTTP overhead (too many small chunks) and wasted data (too few large chunks).
 
-**Constants**:
-```python
-TARGET_CHUNK_BYTES = 64 * 1024   # 64KB - good HTTP/memory balance
-MIN_CHUNK_BYTES = 16 * 1024      # 16KB - minimum to amortize overhead
-MAX_CHUNK_BYTES = 256 * 1024     # 256KB - keep streaming responsive
-```
+**Constants** (defined in `typing_utils/SPECIFICATIONS.md` - single source of truth):
+- `TARGET_CHUNK_BYTES = 65536` (64KB) - target chunk size
+- `MIN_CHUNK_BYTES = 16384` (16KB) - minimum to amortize HTTP overhead
+- `MAX_CHUNK_BYTES = 262144` (256KB) - maximum for responsive streaming
 
-**Bytes per point** (conservative estimate):
+**IMPORTANT**: Zarr chunks by **elements**, not bytes. This package is responsible for converting the byte target to element counts based on each array's dtype and shape.
+
+**Bytes per point** (conservative estimate for points):
 ```python
 bytes_per_point = n_dims * 4 + 16
 # positions (n_dims * 4) + colors (12) + radii (4) + sharpness (4) ≈ n_dims*4 + 16
@@ -751,6 +751,11 @@ This is a known limitation - current implementation requires all points to fit i
 ---
 
 ## Changelog
+
+- **v1.2.1** (2025-11-28): Chunk sizing source of truth clarification
+  - Clarified that chunk size constants are defined in `typing_utils/SPECIFICATIONS.md` (single source of truth)
+  - Removed local constant redefinition, now references typing_utils
+  - Added note that this package is responsible for bytes→elements conversion
 
 - **v1.2.0** (2025-11-28): Consolidation and clarifications
   - Consolidated write_points() specification (removed duplicate algorithm section)
