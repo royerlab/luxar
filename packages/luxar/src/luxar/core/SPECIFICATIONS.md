@@ -1,11 +1,16 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.5
-**Last Updated**: 2025-01-26
+**Version**: 0.9.0
+**Last Updated**: 2025-11-27
 
 ## Purpose
 
 The `core` package defines the fundamental data structures and scene graph system for organizing and manipulating large-scale visualization data. It provides a hierarchical scene graph with transformation support, nD dimensional specifications, and extensible data node types (Points, Lines, GSplats).
+
+**Related Specifications**:
+- `luxar.encoding` - Array encoding, semantic types, and quantization (see `encoding/SPECIFICATIONS.md`)
+- `luxar.io` - I/O operations and writer protocol (see `io/README.md`)
+- `gsplats/GSPLATS_ZARR_FORMAT.md` - Detailed GSplats storage format
 
 ---
 
@@ -20,7 +25,7 @@ Nodes that organize the hierarchy but don't hold visualization data:
 
 ### Data Nodes
 Nodes that hold actual visualization data (positions, colors, etc.):
-- **Points**: Point cloud data (spheres/gaussians at positions)
+- **Points**: Point cloud data (spheres at positions)
 - **Lines**: Line/curve data (connected vertices)
 - **GSplats**: Gaussian splat data (oriented ellipsoids)
 
@@ -54,14 +59,18 @@ This discriminator enables the viewer to determine how to render each node.
 - Nodes form a hierarchical tree structure
 - Each node has: name, parent reference, list of children
 - Each node can have a 4x4 transformation matrix
-- Each node has rendering attributes: opacity (0-1), gamma (0.2-2.2), blending_mode
+- Each node has rendering attributes: opacity (0-1), gamma (0.1-10), blending_mode
 - Container nodes do NOT store array data - only metadata and references
 - Nodes write data immediately through a writer interface (progressive writing)
 
 **Invariants**:
 - Parent-child relationships are bidirectional (parent knows children, children know parent)
 - Root node has no parent (parent = None)
-- Transforms compose hierarchically: `final_transform = parent_transform @ local_transform`
+- Transforms compose hierarchically: `world_transform = parent_world_transform @ local_transform`
+  - `local_transform`: The node's own transform (stored in Zarr as `transform` attribute)
+  - `parent_world_transform`: The world transform of the parent node (computed recursively)
+  - `world_transform`: The effective transform that positions this node in world coordinates
+  - For root nodes: `world_transform = local_transform` (since there's no parent)
 - Attribute changes are immediately persisted through writer interface
 
 **Node Name Rules**:
@@ -70,6 +79,7 @@ This discriminator enables the viewer to determine how to render each node.
 - Names must NOT contain null characters
 - Names should be valid Zarr group names (alphanumeric, underscore, hyphen recommended)
 - Names must be unique among siblings (no two children of same parent with same name)
+- **Duplicate names raise `ValueError`**: Attempting to add a child with the same name as an existing sibling is an error. No auto-renaming or silent overwriting.
 
 **Key Operations**:
 - `add_group(name, **attrs)` - Create child group node
@@ -86,22 +96,24 @@ This discriminator enables the viewer to determine how to render each node.
 - Requires a writer interface (cannot exist without one)
 - Holds scene-level dimension definitions
 - Provides factory methods for creating data nodes
+- **Can have a transform** like any other Node (applies to all children)
 
 **Key Operations**:
 - `add_group(name, **attrs)` - Create top-level group
 - `add_points(name, positions, radii, ...)` - Create Points node (radii required)
 - `add_lines(name, vertices, widths, ...)` - Create Lines node (widths required)
-- `add_gsplats(name, centers, ...)` - Create GSplats node
+- `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` - Create GSplats node
 - `dimensions` property - Get/set scene-level dimensional specifications
 
 **Zarr Attributes**:
 ```json
 {
   "type": "scene",
-  "luxar_version": "0.5.0",
+  "luxar_format_version": "1.0",
   "scene_dimensions": { ... }
 }
 ```
+*Note: `luxar_format_version` is the data format version, not the spec document version. This version changes only when the zarr storage format has breaking changes.*
 
 ---
 
@@ -135,6 +147,12 @@ This discriminator enables the viewer to determine how to render each node.
 - Organizing related data (e.g., "cells" group containing multiple Points)
 - Applying shared transform to multiple children
 - Applying shared rendering attributes
+
+**Nesting Rules**:
+- Groups can contain other Groups (arbitrary nesting depth allowed)
+- Groups can contain any DataNode type (Points, Lines, GSplats)
+- Empty Groups (zero children) are valid but should raise a warning during `finalize()` - the user may have forgotten to add children
+- A Group with only Group children is valid (for purely organizational purposes)
 
 ---
 
@@ -180,9 +198,19 @@ class DataNode(Node, ABC):
 | Rendering attrs | float/str | opacity, gamma, blending_mode (inherited from Node) |
 | Transform | 4x4 matrix | Optional transformation (inherited from Node) |
 
-**Note**: `path` is a Node attribute computed from the hierarchy (`parent.path + "/" + name`), not stored in the metadata dict. The metadata dict contains only data-specific information.
+**Note**: `path` is a Node attribute computed from the hierarchy, not stored in the metadata dict. The metadata dict contains only data-specific information.
 
-**Open Question**: The root path for Scene is not yet specified. Options include `""` (empty string) or `"/"`. This affects how child paths are computed and should be decided during implementation.
+**Path Computation**:
+```
+child.path = f"{parent.path}/{name}" if parent.path else name
+```
+This handles the empty root path correctly: `"" + child` → `"child"`, not `"/child"`.
+
+**Scene Root Path**: The Scene node has `path = ""` (empty string). This was chosen for the following reasons:
+- Avoids double-slash issues (`"//" + "child"` vs `"" + "child"`)
+- Matches Zarr internal path conventions (no leading slash)
+- Simplifies path computation: if `parent.path` is empty, child path is just `name`
+- Child paths are naturally relative: `"child"`, `"parent/child"`, `"parent/child/grandchild"`
 
 **Type-Specific Properties**:
 
@@ -190,7 +218,7 @@ class DataNode(Node, ABC):
 |-----------|-----------------|-----------------|-----------------|
 | Points | positions (N, d), radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
 | Lines | vertices (N, d), widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
-| GSplats | centers (N, d), amplitudes, cholesky_factors | colors, sharpnesses | n_splats, ndim, has_colors, has_sharpnesses, ordering, amplitude_range, center_bounds |
+| GSplats | centers (N, d), amplitudes, cholesky_factors | colors, sharpness | n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds |
 
 *Note: All "Required Arrays" must be provided. "Optional Arrays" have defaults if not provided.*
 
@@ -205,7 +233,7 @@ When subclass and parent both initialize the same attribute:
 
 **Specification**:
 - Data node for point cloud visualization
-- Each point is rendered as a sphere/gaussian at a position
+- Each point is rendered as a sphere with soft edges at a position
 - Inherits all Node capabilities
 
 **Data Arrays**:
@@ -215,20 +243,22 @@ When subclass and parent both initialize the same attribute:
 | positions | (N, d) | float32 | Yes | Point centers in d dimensions |
 | colors | (N, 3) or (1, 3) | float32/uint8 | No | RGB colors (HDR or SDR) |
 | radii | (N,) or (1,) | float32 | Yes | Point radii in scene units |
-| sharpness | (N,) or (1,) | float32 | No | Edge sharpness (gaussian falloff) |
+| sharpness | (N,) or (1,) | float32 | No | Edge sharpness (polynomial falloff) |
 
-**Sharpness Parameter**:
-Sharpness controls the edge falloff profile of points. The intensity falloff from center to edge follows:
+**Sharpness Parameter** (Points/Lines):
+Sharpness controls the edge falloff profile. The intensity falloff from center to edge follows a **polynomial** formula:
 ```
-intensity(r) = exp(-(r/radius)^sharpness)
+intensity(r) = (1 - r/radius)^sharpness
 ```
-Where `r` is the distance from center and `radius` is the point radius.
-- **sharpness = 2.0**: Standard Gaussian falloff (default)
-- **sharpness < 2.0**: Softer edges, more gradual falloff
+Where `r` is the distance from center (0 at center, radius at edge).
+- **sharpness = 1.0**: Linear falloff
+- **sharpness = 2.0**: Quadratic falloff (default)
 - **sharpness > 2.0**: Sharper edges, more abrupt falloff
 - **sharpness → ∞**: Approaches hard-edged disk
 
-Valid range: [0, 32]. Values near 0 create nearly uniform disks; values near 32 create very sharp edges.
+Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
+
+**Note**: GSplats use a different formula (generalized Gaussian) - see GSplats section and `gsplats/SPECIFICATIONS.md`.
 
 **Metadata**:
 ```python
@@ -241,20 +271,110 @@ Valid range: [0, 32]. Values near 0 create nearly uniform disks; values near 32 
 }
 ```
 
+**Computed Metadata**:
+- `max_radius`: `max(radii)` - the maximum value in the radii array. For broadcast radii `(1,)`, this is that single value.
+
 **Default Values** (when optional arrays not provided):
 - colors: white `[1.0, 1.0, 1.0]`
-- sharpness: `1.0` (standard gaussian falloff)
+- sharpness: `2.0` (quadratic polynomial falloff)
 
 **Validation Rules**:
 - N ≥ 1 (at least one point)
 - Empty Points (N=0) are NOT valid
+- `radii` must be positive (> 0)
+- `sharpness` must be in [0, 31] range
+- `colors` (SDR float): values must be in [0, 1] range. Values outside this range raise `ValueError`.
+- `colors` (HDR float): unbounded, any values allowed.
+- `colors` (uint8): implicitly [0, 255], converted to [0, 1].
 - All validation failures raise `ValueError`
+
+**Color Mode (SDR vs HDR)**:
+Float colors require an explicit `color_mode` parameter to distinguish SDR from HDR:
+- `color_mode="sdr"`: Values must be in [0, 1] range. Values outside raise `ValueError`.
+- `color_mode="hdr"`: Unbounded, any non-negative values allowed.
+
+This explicit flag is **required** for float32 colors to avoid ambiguity. Auto-detection (values > 1 = HDR) was rejected because buggy SDR data with out-of-range values would silently be treated as HDR instead of raising an error.
+
+**Implementation notes**:
+- The `color_mode` flag must be passed to `write_points()`, `write_lines()`, `write_gsplats()`
+- The flag is stored in array metadata: `{"encoding": {..., "color_mode": "sdr"|"hdr"}}`
+- uint8 colors are implicitly SDR (no flag needed)
+- The encoding layer uses this flag to determine validation and encoding strategy
 
 **Encoding**: Uses `luxar.encoding` with semantic types:
 - positions: COORDINATE
 - colors: COLOR
 - radii: POSITIVE_SCALAR
-- sharpness: BOUNDED_SCALAR [0, 32]
+- sharpness: BOUNDED_SCALAR [0, 31]
+
+**Storage Order** (Morton/Z-Order):
+All point arrays are stored sorted by Morton code for spatial locality:
+1. Coordinates are normalized to integer range based on data bounds
+2. Morton code computed by bit-interleaving normalized coordinates
+3. All arrays (positions, colors, radii, sharpness) sorted by Morton code
+4. This ordering improves compression and enables efficient spatial queries
+
+**Spatial Index** (`chunk_bounds`):
+Points support chunk-level spatial indexing:
+- `chunk_bounds`: (num_chunks, n_dims, 2) float32 array
+- Each chunk's axis-aligned bounding box, **including point radii**
+- Enables client to determine visible chunks without loading point data
+- Bounds calculation: `min(position - radius)`, `max(position + radius)` per chunk
+
+**Broadcasting** (`broadcast_dims`):
+For nD scenes with non-displayed dimensions (e.g., Time, Channel), points can be broadcast to appear at all values of specified dimensions without data duplication.
+
+*Parameter*: `broadcast_dims: Optional[Union[List[str], str]]`
+
+| Value | Behavior |
+|-------|----------|
+| `None` (default) | No broadcasting - points only visible at their explicit dimension values |
+| `["Time"]` | Broadcast across Time dimension only |
+| `["Time", "Channel"]` | Broadcast across both Time and Channel |
+| `"all"` | Broadcast across ALL non-displayed dimensions |
+
+*Example*:
+```python
+# Points at time=0, channel=0 - only visible at that slice
+scene.add_points("static", positions, broadcast_dims=None)
+
+# Points appear at all time values (channel=0 only)
+scene.add_points("time_invariant", positions, broadcast_dims=["Time"])
+
+# Points appear everywhere (all times, all channels)
+scene.add_points("global_markers", positions, broadcast_dims="all")
+```
+
+*Storage*:
+- `broadcast_dims` is stored as a zarr attribute: `{"broadcast_dims": ["Time", "Channel"]}`
+- **Position values**: Original input coordinates are stored unchanged
+  - Example: If input has `time=0`, the stored position has `time=0`
+  - The viewer ignores these values for broadcast dimensions
+- **Compound ordering**: Points are sorted normally (by their actual time value)
+  - Broadcast points end up in their "natural" position in the sorted order
+  - This is intentional - the viewer handles loading specially
+
+*Query Behavior* (viewer-side):
+- When querying the spatial index, the viewer checks `broadcast_dims` attribute
+- If any broadcast dimension matches the current navigation dimension:
+  - **Bypass spatial index entirely**
+  - **Load ALL points** for this group (return full range `[0, totalPoints]`)
+- This simple approach works because broadcast groups are typically small (markers, labels)
+
+*Use Cases*:
+- Reference markers that should be visible regardless of time/channel
+- Axis labels or coordinate guides
+- Background structures that don't change over time
+- Reducing storage for data that's constant across dimensions
+
+*Performance Note*:
+- Broadcast groups should be **small** (hundreds to thousands of points)
+- Large broadcast groups will be loaded entirely on every frame
+- For large static data, consider writing separate groups per slice instead
+
+*Validation*:
+- Dimension names must exist in scene dimensions
+- Only non-displayed dimensions can be broadcast (broadcasting displayed dimensions is meaningless)
 
 ---
 
@@ -264,7 +384,7 @@ Valid range: [0, 32]. Values near 0 create nearly uniform disks; values near 32 
 - Data node for line/curve visualization
 - Represents connected sequences of vertices with interpolated attributes
 - Supports multiple connectivity types: segments, polylines, closed loops, indexed
-- Rendered as thick, anti-aliased tubes/ribbons with gaussian edge falloff
+- Rendered as thick, anti-aliased tubes/ribbons with polynomial edge falloff
 
 **Data Arrays**:
 
@@ -346,9 +466,19 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 }
 ```
 
+**Computed Metadata**:
+- `max_width`: `max(widths)` - the maximum value in the widths array. For broadcast widths `(1,)`, this is that single value.
+- `n_segments`: computed from `n_vertices` and `line_type` per the segment count formula below.
+
+**Sharpness Interpolation**:
+Sharpness is linearly interpolated along each segment, affecting the cross-sectional falloff at each point along the line. The interpolated sharpness value at position `t` along segment `(v0, v1)` is:
+```
+sharpness_t = sharpness[v0] * (1-t) + sharpness[v1] * t
+```
+
 **Default Values** (when optional arrays not provided):
 - colors: white `[1.0, 1.0, 1.0]`
-- sharpness: `1.0` (standard gaussian edge falloff)
+- sharpness: `2.0` (quadratic polynomial falloff)
 
 **Segment Count Formula** (integer division):
 - `segments`: N // 2 (must have even N)
@@ -358,6 +488,8 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 
 **Validation Rules**:
 - `line_type` must be one of: `"segments"`, `"polyline"`, `"loop"`, `"indexed"`
+- `widths` must be positive (> 0)
+- `sharpness` must be in [0, 31] range
 - Minimum vertex counts:
   - `segments`: N ≥ 2 (at least one segment)
   - `polyline`: N ≥ 2 (at least one segment)
@@ -369,14 +501,26 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 - For `indexed` type: all index values must be < N (valid vertex references)
 - For non-`indexed` types: `indices` array must not be present
 - Empty Lines (N=0) are NOT valid
+- **Zero segments is always an error**: Lines must have at least one segment. For `indexed` type, this means `len(indices) >= 2`. For other types, this means sufficient vertices per the segment count formula.
 - All validation failures raise `ValueError`
 
 **Encoding**: Uses `luxar.encoding` with semantic types:
 - vertices: COORDINATE
 - colors: COLOR
 - widths: POSITIVE_SCALAR
-- sharpness: BOUNDED_SCALAR [0, 32]
+- sharpness: BOUNDED_SCALAR [0, 31]
 - indices: INDEX (adaptive bit-depth: uint8/uint16/uint32 based on max vertex count)
+
+**Storage Order**:
+Lines are stored in their original order (NOT Morton-sorted). The connectivity constraints (segments, polylines, loops, indexed) make spatial reordering non-trivial.
+
+**Spatial Index**:
+**Lines do NOT support spatial indexing** in the current version. A different indexing approach is needed due to:
+- Segments span between two vertices (can't assign to single cell)
+- Indexed lines have complex vertex sharing
+- Polylines/loops must maintain vertex sequence
+
+This is a known limitation - spatial indexing for lines will be addressed in a future version.
 
 ---
 
@@ -396,9 +540,22 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
 | amplitudes | (N,) or (1,) | float32 | Yes | Non-negative intensity values (scalar multiplier) |
 | cholesky_factors | (N, k) or (1, k) | float32 | Yes | Packed Cholesky factors, k = d*(d+1)/2 |
 | colors | (N, 3) or (1, 3) | float32/uint8 | No | RGB colors (HDR or SDR) |
-| sharpnesses | (N,) or (1,) | float32 | No | Gaussian sharpness [0, 32] |
+| sharpness | (N,) or (1,) | float32 | No | Generalized Gaussian exponent [0, 31] |
 
 **Note on Colors and Amplitudes**: The final rendered color is `color * amplitude`. When `colors` is not provided, white `[1.0, 1.0, 1.0]` is used, so amplitudes alone determine grayscale intensity.
+
+**Sharpness Parameter** (GSplats):
+GSplats use a **generalized Gaussian** formula, different from Points/Lines:
+```
+I(x) = amplitude * exp(-0.5 * ||y||^s)
+```
+Where s is the sharpness exponent and y is the Mahalanobis-transformed coordinate.
+- **s = 2**: Standard Gaussian (default)
+- **s > 2**: Sharper edges, faster decay
+
+This is NOT the same as the polynomial falloff used by Points/Lines.
+
+**Note on Effective Bounds**: The `gsplats.fitting` package uses an internal parameterization `s = 2 * exp(s')` where `s'` is clamped to `[-2.5, 2.5]`, producing effective bounds of `s ∈ [0.164, 24.47]`. This is narrower than the full [0, 31] range but is sufficient for practical use cases. The narrower range is a consequence of the parameterization chosen for numerical stability during optimization.
 
 **Metadata**:
 ```python
@@ -406,23 +563,26 @@ This enables smooth color gradients, tapered lines, and varying edge softness.
     "n_splats": int,         # Number of splats
     "ndim": int,             # Dimensionality (d)
     "has_colors": bool,      # Only for optional arrays
-    "has_sharpnesses": bool, # Only for optional arrays
+    "has_sharpness": bool,   # Only for optional arrays
     "ordering": str,         # "none", "morton", "hilbert"
     "amplitude_range": {"min": float, "max": float},
     "center_bounds": {"min": [...], "max": [...]},
 }
 ```
 
-**Note**: `has_colors` and `has_sharpnesses` track optional arrays only. Required arrays (`centers`, `amplitudes`, `cholesky_factors`) are always present and don't need tracking flags. Sharpness bounds [0, 32] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
+**Note**: `has_colors` and `has_sharpness` track optional arrays only. Required arrays (`centers`, `amplitudes`, `cholesky_factors`) are always present and don't need tracking flags. Sharpness bounds [0, 31] are stored in the encoding metadata (BOUNDED_SCALAR), not duplicated in node metadata.
 
 **Default Values** (for optional arrays only):
 - colors: white `[1.0, 1.0, 1.0]`
-- sharpnesses: `1.0`
+- sharpness: `2.0` (standard Gaussian, s=2)
 
 **Validation Rules**:
 - N ≥ 1 (at least one splat)
 - Empty GSplats (N=0) are NOT valid
 - `centers` array must have shape `(N, d)` - NOT broadcastable (unlike other arrays). Rationale: Broadcasting centers would place all N splats at the same location, which is degenerate and not meaningful for visualization. Each splat must have a distinct center position.
+- `amplitudes` must be non-negative (>= 0)
+- `sharpness` must be in [0, 31] range
+- `cholesky_factors` diagonal elements must be positive (> 0) for valid positive-definite covariance. The packed diagonal elements are at indices 0, 2, 5, 9, ... (triangular numbers).
 - All validation failures raise `ValueError`
 
 **Cholesky Packing**:
@@ -436,7 +596,21 @@ Lower-triangular matrix packed row-major:
 - colors: COLOR
 - amplitudes: POSITIVE_SCALAR
 - cholesky_factors: CHOLESKY
-- sharpnesses: BOUNDED_SCALAR [0, 32]
+- sharpness: BOUNDED_SCALAR [0, 31]
+
+**Storage Order** (Morton/Z-Order):
+All GSplat arrays are stored sorted by Morton code (same as Points):
+1. Center coordinates normalized to integer range based on data bounds
+2. Morton code computed by bit-interleaving normalized coordinates
+3. All arrays (centers, colors, amplitudes, cholesky_factors, sharpness) sorted by Morton code
+
+**Spatial Index** (`chunk_bounds`):
+GSplats support chunk-level spatial indexing:
+- `chunk_bounds`: (num_chunks, n_dims, 2) float32 array
+- Each chunk's axis-aligned bounding box, **including ellipsoid extent**
+- Ellipsoid extent computed from Cholesky factors: `extent[d] = sqrt(covariance[d,d]) * 3.0`
+- The factor 3.0 corresponds to ~99.7% coverage (3 standard deviations)
+- Bounds calculation: `min(center - extent)`, `max(center + extent)` per chunk
 
 **Reference**: See `luxar/gsplats/GSPLATS_ZARR_FORMAT.md` for complete specification.
 
@@ -459,21 +633,64 @@ Lower-triangular matrix packed row-major:
 - `spatial` (bool | None) - Whether elements extend through dimension (auto if None)
 - `description` (str) - Optional human-readable description
 
-**Auto-behaviors**:
-1. `spatial` flag: If None, auto-determined:
-   - displayed → always spatial
-   - non-displayed → never spatial
-2. Non-spatial, non-displayed dimensions → automatically discrete (with warning)
-3. Step size: If None, auto-calculated:
-   - discrete → 1.0
-   - continuous with range → 1% of range
-   - fallback → 0.1
+**Auto-behaviors** (applied in order during `__post_init__`):
+
+1. **Spatial flag auto-determination** (if `spatial` is None):
+   ```
+   if display == True:
+       spatial = True   # Displayed dimensions are always spatial
+   else:
+       spatial = False  # Non-displayed dimensions are never spatial
+   ```
+
+   **Rationale**: Displayed dimensions define the visible coordinate space, so elements naturally extend through them. Non-displayed dimensions are navigated via slicing, so elements exist at discrete positions within them.
+
+2. **Discrete auto-correction** (if `spatial=False` and `display=False`):
+   ```
+   if discrete == False:
+       discrete = True  # With warning
+   ```
+
+   **Rationale**: A non-spatial, non-displayed dimension represents categorical data (time points, channels, etc.) where elements exist at specific values, not continuously through the dimension.
+
+3. **Step size auto-calculation** (if `step` is None):
+   ```
+   if discrete:
+       step = 1.0       # Discrete dimensions step by 1
+   elif range is not None:
+       step = (range[1] - range[0]) * 0.01  # 1% of range
+   else:
+       step = 0.1       # Fallback default
+   ```
+
+**Flag Combinations and Meanings**:
+
+| display | spatial | discrete | Meaning | Example |
+|---------|---------|----------|---------|---------|
+| True | True | False | Visible, continuous spatial axis | x, y, z |
+| True | True | True | Visible, discrete spatial axis | quantized z |
+| False | False | True | Navigated dimension with discrete values | time, channel |
+| False | True | False | Non-displayed spatial dimension (smooth slicing) | depth, z-stack |
+
+Note: `display=False` + `spatial=True` requires explicit `spatial=True` - auto-determination sets `spatial=False` for non-displayed dimensions.
+
+**RESOLVED - Explicit spatial=True with display=False**:
+This configuration IS valid and useful. Use cases:
+- **Z-stack slicing**: Microscopy data where Z is not displayed but elements extend through it
+- **Continuous depth**: 4D data where the 4th dimension represents physical depth
+- **Smooth transitions**: Elements fade in/out smoothly as you navigate (hypersphere intersection)
+
+When `display=False, spatial=True, discrete=False`:
+- Elements extend as hyperspheres through this dimension
+- Visibility determined by `R_effective = √(R² - D²)` formula
+- Query tolerance = max_radius (not exact match)
+- NOT included in `slice_dims` for compound ordering (treated as Morton-sorted dimension)
 
 **Validation Rules**:
 - range[0] < range[1]
 - step > 0 (if specified)
 - scale > 0
-- Cannot be discrete AND spatial unless displayed
+- Cannot be discrete AND spatial unless displayed (raises `ValueError`)
 
 #### Dimensions (Collection)
 **Specification**:
@@ -492,7 +709,100 @@ Lower-triangular matrix packed row-major:
 
 ---
 
-### 9. Transformation System
+### 9. nD Slicing Visual Semantics
+
+When navigating through non-displayed dimensions, the viewer must determine which elements are visible. This section specifies the intended visual behavior.
+
+#### Dimension Types and Visibility
+
+| Dimension Type | Visibility Rule | Example |
+|----------------|-----------------|---------|
+| Displayed (spatial) | Always visible if in view frustum | x, y, z |
+| Non-displayed, spatial | Visible if hypersphere intersects slice plane | continuous depth |
+| Non-displayed, discrete | Visible only at exact value match | time, channel |
+
+**Key Principle**: Non-spatial dimensions are always discrete by design (auto-corrected in `Dimension.__post_init__`).
+
+#### Hypersphere Intersection for Spatial Dimensions
+
+For non-displayed spatial dimensions, elements (points, splats) extend as hyperspheres through those dimensions. The viewer computes visibility using the Pythagorean theorem:
+
+**Formula**:
+```
+Given:
+- R = element radius
+- D = distance from element center to current slice position (in non-displayed spatial dimensions only)
+
+Effective radius at slice:
+R_effective = √(R² - D²)   if D < R
+            = 0             if D ≥ R (element not visible)
+```
+
+**Algorithm** (per element):
+```python
+# Calculate distance only in non-displayed SPATIAL dimensions
+distance_squared = 0
+for d in non_displayed_dimensions:
+    if dimensions[d].spatial:  # Only spatial dimensions contribute
+        delta = element_position[d] - current_slice[d]
+        distance_squared += delta * delta
+
+# Apply Pythagorean theorem
+if distance_squared < radius**2:
+    effective_radius = sqrt(radius**2 - distance_squared)
+    # Element is visible with effective_radius
+else:
+    # Element is not visible at this slice
+```
+
+**Visual Result**: As you navigate through a spatial dimension, spheres appear to grow from zero radius, reach their full size when the slice passes through their center, then shrink back to zero.
+
+#### Discrete Dimension Matching
+
+For non-displayed discrete dimensions (time, channel, category), elements are only visible when the slice position exactly matches their value:
+
+```python
+for d in non_displayed_dimensions:
+    if dimensions[d].discrete:
+        if element_position[d] != current_slice[d]:
+            # Element is not visible - dimension value doesn't match
+            return False
+```
+
+**Visual Result**: As you navigate through time or channels, elements instantly appear/disappear rather than smoothly transitioning.
+
+#### Spatial Query Tolerance
+
+When querying the spatial index for visible elements, the tolerance per dimension depends on dimension type:
+
+| Dimension | Query Tolerance |
+|-----------|-----------------|
+| Displayed | 0 (query all, frustum culling later) |
+| Non-displayed, spatial | max_radius (elements may extend into view) |
+| Non-displayed, discrete | 0 (exact match only) |
+
+**Storage**: The `spatial_extend_dims` boolean array (stored as zarr attribute) indicates which dimensions are spatial for efficient query tolerance calculation.
+
+#### Example: 5D Dataset (X, Y, Z, Time, Depth)
+
+```python
+dimensions = [
+    Dimension("X", display=True),              # Displayed, spatial
+    Dimension("Y", display=True),              # Displayed, spatial
+    Dimension("Z", display=True),              # Displayed, spatial
+    Dimension("Time", display=False, discrete=True),  # Non-displayed, discrete
+    Dimension("Depth", display=False, spatial=True),  # Non-displayed, spatial
+]
+```
+
+At slice position `[*, *, *, time=5, depth=10.0]`:
+- X, Y, Z: All in view are visible (standard 3D rendering)
+- Time: Only elements with `time == 5` are visible (exact match)
+- Depth: Elements with `|depth - 10.0| < radius` are visible (hypersphere intersection)
+
+---
+
+### 10. Transformation System
 
 **Specification**:
 
@@ -502,6 +812,15 @@ Lower-triangular matrix packed row-major:
 - NumPy uses row-major, storage uses column-major
 - Translation components at indices [0,3], [1,3], [2,3] in row-major
 - Translation components at indices [12], [13], [14] in column-major (storage)
+
+#### Coordinate System Conventions
+Luxar follows THREE.js conventions for consistency with the WebGL viewer:
+- **Right-handed coordinate system**
+- **Y-axis is up** by default
+- **Positive rotation**: Counter-clockwise when looking down the positive axis toward the origin (right-hand rule)
+- **Camera looks down -Z**: Standard OpenGL/WebGL convention
+
+These conventions ensure that transforms created in Python render correctly in the THREE.js viewer without additional conversion.
 
 #### nD Limitation
 **Transforms only apply to the 3 displayed dimensions**. For nD data (d > 3):
@@ -602,12 +921,21 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
-- `gamma`: 0.2 to 2.2 (float)
+- `gamma`: 0.1 to 10.0 (float)
 - `blending_mode`: "normal" | "additive" (string)
 
 **Validation**: All values validated on assignment, invalid values raise ValueError
 
-**Inheritance**: Child nodes can override parent rendering attributes
+**Hierarchical Composition**: Rendering attributes compose (multiply) through the hierarchy, they do NOT override:
+- `effective_opacity = clamp(parent_opacity × child_opacity, 0.0, 1.0)`
+- `effective_gamma = clamp(parent_gamma × child_gamma, 0.1, 10.0)`
+- `blending_mode`: Child inherits parent's mode if not explicitly set; if set, child's mode is used
+
+Example: If parent has `opacity=0.5` and child has `opacity=0.5`, the effective opacity is `0.25`.
+
+**Clamping**: Effective values are clamped to valid ranges after composition to prevent invalid states.
+
+**No Transform = Identity**: Nodes without an explicit transform use the identity matrix (no transformation).
 
 **Default Values**:
 - opacity: 1.0
@@ -660,9 +988,15 @@ Data arrays are stored using the `luxar.encoding` infrastructure:
 | COORDINATE | positions, vertices, centers | unbounded | Spatial coordinates |
 | COLOR | colors | [0, 1] SDR or unbounded HDR | RGB values |
 | POSITIVE_SCALAR | radii, widths, amplitudes | [0, ∞) | Non-negative values |
-| BOUNDED_SCALAR | sharpness, sharpnesses | [0, 32] | Edge sharpness (all node types) |
+| BOUNDED_SCALAR | sharpness | [0, 31] | Edge sharpness (all node types) |
 | CHOLESKY | cholesky_factors | unbounded | Covariance decomposition |
 | INDEX | indices | [0, N) | Integer references (adaptive uint8/16/32) |
+
+**Two-Layer Validation Note**:
+The `POSITIVE_SCALAR` semantic type accepts values >= 0 at the encoding layer. However, the core layer applies stricter validation for specific arrays:
+- `radii` must be > 0 (strictly positive) - zero radius is degenerate
+- `widths` must be > 0 (strictly positive) - zero width is invisible
+- `amplitudes` can be >= 0 (non-negative) - zero amplitude = invisible splat, valid use case
 
 **Broadcasting Support**:
 Arrays with shape `(1,)` or `(1, k)` are broadcast to all elements:
@@ -701,8 +1035,8 @@ class ZarrWriterProtocol(Protocol):
     ) -> LinesMetadata: ...
 
     def write_gsplats(
-        self, path, centers,
-        colors=None, amplitudes=None, cholesky_factors=None, sharpnesses=None,
+        self, path, centers, amplitudes, cholesky_factors,
+        colors=None, sharpness=None,
         **attrs
     ) -> GSplatsMetadata: ...
 
@@ -725,7 +1059,7 @@ Each `write_*` method:
 ```python
 PointsMetadata = Dict[str, Any]   # n_points, ndim, has_colors, has_sharpness, max_radius
 LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
-GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
+GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds
 ```
 
 ---
@@ -768,7 +1102,7 @@ Lines (extends DataNode)
 GSplats (extends DataNode)
   └─ type: "gsplats"
   └─ n_elements: n_splats
-  └─ metadata: n_splats, ndim, has_colors, has_amplitudes, has_cholesky, has_sharpnesses, ordering, amplitude_range, center_bounds
+  └─ metadata: n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds
 
 Dimensions
   └─ contains: list of Dimension
@@ -792,7 +1126,7 @@ The system is designed for reasonable extensibility:
 7. Implement viewer support
 
 **Current Node Types**:
-- Points: Point clouds (spheres/gaussians)
+- Points: Point clouds (soft-edged spheres)
 - Lines: Line segments, polylines, loops
 - GSplats: Oriented Gaussian ellipsoids
 
@@ -801,6 +1135,13 @@ The system is designed for reasonable extensibility:
 - Volumes: Voxel/volumetric data
 - Arrows: Directed vectors
 - Text: 3D labels
+
+**Future API Extensions** (planned):
+- **Node Deletion**: `remove_child(name)` method to remove nodes from hierarchy. Requires careful handling of Zarr group cleanup.
+- **Scene Loading**: `Scene.load(path)` to load an existing scene from Zarr for reading/modification. Enables round-trip testing and scene editing workflows.
+- **Node Moving**: `move_to(new_parent)` to reorganize hierarchy without re-writing data.
+
+These features depend on implementing scene loading from Zarr, which is a prerequisite for any modification operations.
 
 ---
 
@@ -912,9 +1253,11 @@ super().__init__(name, parent=parent, writer=writer, type="points", **attrs)
 - Each node yielded once
 
 **Transform Composition**:
-- Composition is O(k) where k is number of transforms
+- Composition is O(k) where k is number of transforms in hierarchy depth
 - Each composition is 4x4 matrix multiplication (64 FLOPs)
-- Result cached, not recomputed on each access
+- **Memoization**: `world_transform` should be memoized (cached) per node
+- Cache invalidation: When a node's `local_transform` changes, invalidate its `world_transform` cache and all descendants' caches
+- This ensures repeated access to `world_transform` is O(1) after first computation
 
 **Data Writing**:
 - Immediate write to Zarr (no buffering)
@@ -928,6 +1271,89 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.9.0**: Broadcasting, nD slicing semantics, and dimension flag resolution
+  - **broadcast_dims**: New API for Points to appear across all values of specified dimensions
+    - `broadcast_dims=None` (default): No broadcasting
+    - `broadcast_dims=["Time"]`: Broadcast across Time dimension
+    - `broadcast_dims="all"`: Broadcast across ALL non-displayed dimensions
+    - Clarified storage: Original position values stored unchanged, viewer ignores them
+    - Clarified query: Viewer bypasses spatial index, loads all points for broadcast groups
+    - Added performance note: Broadcast groups should be small (markers, labels)
+  - **nD Slicing Visual Semantics**: New section documenting viewer behavior
+    - Hypersphere intersection formula: `R_effective = √(R² - D²)`
+    - Spatial dimensions: Smooth visibility based on hypersphere intersection
+    - Discrete dimensions: Exact matching only
+    - Spatial query tolerance specification per dimension type
+  - **RESOLVED**: `display=False, spatial=True, discrete=False` is now explicitly valid
+    - Use cases: Z-stack slicing, continuous depth, smooth transitions
+    - Added to flag combinations table with "depth, z-stack" example
+  - Section renumbered: Transformation System is now Section 10 (was 9)
+
+- **v0.8.0**: Gamma and sharpness range updates
+  - Updated gamma range from [0.2, 2.0] to [0.1, 10.0] (symmetric: gamma and 1/gamma have equal range)
+  - Updated sharpness range from [0, 32] to [0, 31]
+  - Added note about GSplats effective bounds [0.164, 24.47] due to internal parameterization
+  - Fixed stale sharpness reference in v0.6.3 changelog entry
+
+- **v0.7.0**: Morton ordering and chunk-based spatial indexing
+  - **BREAKING**: Replaced grid-based spatial index with Morton ordering + chunk bounding boxes
+  - Points: All arrays stored Morton-sorted, with `chunk_bounds` for spatial queries
+  - GSplats: All arrays stored Morton-sorted, with `chunk_bounds` including ellipsoid extent
+  - Lines: Explicitly documented as NOT supporting spatial indexing (connectivity constraints)
+  - Morton codes: 64-bit, bits per dimension = 64 / n_dims
+  - `chunk_bounds`: (num_chunks, n_dims, 2) float32 - AABB per chunk including element extent
+  - Query algorithm: Simple AABB intersection test between chunk bounds and view/slice bounds
+  - Removed: `occupied_cells`, `cell_ranges`, grid-based metadata
+
+- **v0.6.3**: Validation rules and color mode
+  - Renamed `luxar_version` to `luxar_format_version` with clarifying note (format version vs spec version)
+  - Fixed path computation formula to handle empty root path correctly
+  - Fixed "gaussian" terminology → "soft-edged spheres" for Points (polynomial falloff, not Gaussian)
+  - **RESOLVED**: SDR vs HDR requires explicit `color_mode` flag - auto-detection rejected due to error-masking risk
+  - **OPEN QUESTION**: Explicit `spatial=True` with `display=False` case - behavior may change
+  - Added "Two-Layer Validation Note" explaining POSITIVE_SCALAR (>= 0) vs radii/widths (> 0)
+  - Added `widths > 0` validation to Lines (was implicit, now explicit)
+  - Added `sharpness` validation [0, 31] to Points, Lines, GSplats
+  - Clarified transform composition memoization (cache `world_transform`, invalidate on change)
+  - Clarified empty Groups warning triggers on `finalize()`
+
+- **v0.6.2**: Clarifications and validation rules
+  - Clarified transform hierarchy: distinguished `local_transform`, `parent_world_transform`, and `world_transform`
+  - Rewrote dimension auto-behavior section with explicit code, rationale, and flag combination table
+  - Clarified Scene can have a transform like any other Node
+  - Added validation: `amplitudes` must be non-negative (>= 0)
+  - Added validation: `cholesky_factors` diagonal elements must be positive (> 0)
+  - Added documentation for `max_radius` and `max_width` computed metadata
+  - Added validation: SDR float colors must be in [0, 1] range
+  - Added Lines sharpness interpolation documentation
+  - Fixed terminology: "polynomial edge falloff" for Points/Lines (not "gaussian")
+
+- **v0.6.1**: Formula corrections and cleanup
+  - **CRITICAL**: Fixed Points/Lines sharpness formula: polynomial `(1-r/radius)^s`, NOT Gaussian
+  - **CRITICAL**: Fixed sharpness default to `2.0` (was incorrectly `1.0`)
+  - Added explicit GSplats sharpness formula: generalized Gaussian `exp(-0.5 * ||y||^s)`
+  - Fixed Writer Protocol: `amplitudes` and `cholesky_factors` now shown as required parameters
+  - Removed `has_amplitudes` and `has_cholesky` from GSplats metadata (required arrays don't need tracking flags)
+  - Standardized `sharpness` naming (singular) across all node types
+  - Added gamma/opacity clamping after hierarchical composition
+  - Clarified blending mode inheritance: child inherits parent's mode if not explicitly set
+
+- **v0.6**: Specification consistency and clarifications
+  - Standardized gamma range to 0.1-10.0 (was inconsistent)
+  - Added sharpness parameter documentation (formula was incorrect, fixed in v0.6.1)
+  - Fixed GSplats contradiction: `amplitudes` and `cholesky_factors` are now clearly required (removed conflicting defaults)
+  - Simplified Type-Specific Properties table: "Required Arrays" and "Optional Arrays" columns
+  - Added rationale for non-broadcastable `centers` in GSplats
+  - Rewrote transform composition section with concrete example and clearer mathematical formula
+  - Resolved Scene root path: `path = ""` (empty string), with rationale
+  - Clarified rendering attribute composition: opacity and gamma **multiply** through hierarchy (not override)
+  - Added coordinate system conventions section (Three.js compatible: right-handed, Y-up)
+  - Added Group nesting rules: Groups can contain Groups, empty Groups raise warning
+  - Added Future API Extensions section: node deletion, scene loading, node moving
+  - Clarified duplicate node names raise `ValueError`
+  - Clarified zero segments in Lines is always an error
+  - Added Related Specifications cross-references at top of document
 
 - **v0.5**: Required arrays, validation, and GSplats colors
   - Added `colors` array to GSplats (RGB, optional, default white) for consistency with Points/Lines
