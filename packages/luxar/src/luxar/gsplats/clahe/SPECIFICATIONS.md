@@ -1,5 +1,8 @@
 # CLAHE Subpackage Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Overview
 
 This subpackage provides a PyTorch-based implementation of CLAHE (Contrast Limited Adaptive Histogram Equalization) for arbitrary-dimensional tensors. CLAHE is a computer vision technique that enhances local contrast by performing histogram equalization on small tiles while preventing noise amplification through contrast limiting.
@@ -532,7 +535,7 @@ assert enhanced_gpu.device.type == 'cuda'
 
 3. Pisano, E. D., et al. (1998). "Contrast Limited Adaptive Histogram Equalization Image Processing to Improve the Detection of Simulated Spiculations in Dense Mammograms." *Journal of Digital Imaging*, 11(4), 193-200.
 
-## Version History
+## Changelog
 
 - **v1.0.0** (January 2025): Initial implementation
   - nD support for arbitrary dimensions

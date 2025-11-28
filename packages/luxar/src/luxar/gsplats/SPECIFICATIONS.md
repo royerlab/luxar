@@ -1,4 +1,7 @@
-# Gaussian Splatting Implementation Specification
+# luxar.gsplats - Technical Specification
+
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
 
 ## Documentation Structure
 
@@ -1341,4 +1344,14 @@ When referencing other specifications, use this format:
 This specification provides complete implementation details for a mathematically rigorous, computationally efficient, and feature-rich Gaussian splatting system with dynamic optimization capabilities validated from 2D to 4D and beyond.
 
 **For detailed information on specific components**, see the [Documentation Structure](#documentation-structure) section at the top of this document.
+
+---
+
+## Changelog
+
+- **v1.0.0** (2025-11-27): Initial versioned specification
+  - Documented hub structure linking to sub-specifications
+  - Specified core mathematical formulations
+  - Defined multi-scale decomposition approach
+  - Established cross-package reference format
 

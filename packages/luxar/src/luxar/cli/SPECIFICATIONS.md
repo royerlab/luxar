@@ -1,5 +1,8 @@
 # luxar.cli - Technical Specification
 
+**Version**: 1.0.0
+**Last Updated**: 2025-11-27
+
 ## Purpose
 
 The `cli` package provides command-line interface for building, serving, and inspecting Luxar Zarr scenes. Built using Typer for argument parsing and FastAPI/uvicorn for HTTP serving.
@@ -253,3 +256,12 @@ If all fail: return None
 ---
 
 ## This specification provides sufficient detail to re-implement the CLI with equivalent user experience and behavior.
+
+---
+
+## Changelog
+
+- **v1.0.0** (2025-11-27): Initial versioned specification
+  - Documented demo, serve, viewer, info commands
+  - Specified HTTP serving architecture
+  - Defined exit codes and dependencies
