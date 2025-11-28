@@ -1,12 +1,19 @@
-# GSplats Zarr Format Design Document
+# luxar.gsplats.io - Technical Specification
 
-**Status**: Draft / Discussion
+**Version**: 1.0.0
+**Last Updated**: 2025-11-28
 
-## Overview
+## Purpose
 
-This document captures the design discussion for a dedicated zarr format for storing Gaussian splats (`.gsplats.zarr`). The goal is to enable efficient persistence, loading, and potential compression of fitted Gaussian splat results.
+The `gsplats.io` package provides I/O operations for persisting and loading Gaussian splat data in a dedicated zarr format (`.gsplats.zarr`). This enables efficient storage, compression, and retrieval of fitted Gaussian splat results.
 
-**Encoding Integration**: This format uses the `luxar.encoding` package for array transformations (quantization, broadcasting, deduplication). See `luxar/encoding/SPECIFICATIONS.md` for the complete encoding specification. This ensures consistent encoding behavior across all Luxar data types.
+**Related Specifications**:
+- `luxar.encoding` - Array encoding and semantic types (see `../../encoding/SPECIFICATIONS.md`)
+- `luxar.io` - Spatial ordering algorithms (see `../../io/SPECIFICATIONS.md`)
+- `luxar.core` - GSplats node specification (see `../../core/SPECIFICATIONS.md`)
+- `luxar.gsplats` - Gaussian splatting algorithms (see `../SPECIFICATIONS.md`)
+
+---
 
 ## Use Cases
 
@@ -25,7 +32,8 @@ Each Gaussian splat is parameterized by:
 | `centers` | (N, d) | float32 | COORDINATE | Splat center positions (not broadcastable) |
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors` | (N, d*(d+1)/2) or (1, d*(d+1)/2) | float32 | CHOLESKY | Packed lower-triangular L where Σ = LLᵀ |
-| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 32]) |
+| `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional, default white) |
+| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 31]) |
 
 **Note**: Cholesky factors are packed in row-major order. For d=3: `[L00, L10, L11, L20, L21, L22]`
 
@@ -51,7 +59,7 @@ The `n_splats` attribute in `splats/.zattrs` always reflects the true count (N),
 
 ---
 
-## Proposed Zarr Structure
+## Zarr Structure
 
 ```
 fitted.gsplats.zarr/
@@ -59,11 +67,13 @@ fitted.gsplats.zarr/
 ├── .zmetadata                   # Consolidated metadata for fast loading
 │
 ├── splats/                      # Core splat data
-│   ├── centers                  # (N, d) float32
-│   ├── amplitudes               # (N,) float32
-│   ├── cholesky_factors         # (N, d*(d+1)/2) float32
-│   ├── sharpnesses              # (N,) float32
-│   └── .zattrs                  # n_splats, ndim, ordering info
+│   ├── centers                  # (N, d) float32, spatially ordered
+│   ├── amplitudes               # (N,) or (1,) float32, spatially ordered
+│   ├── cholesky_factors         # (N, k) or (1, k) float32, spatially ordered
+│   ├── colors                   # (N, 3) or (1, 3) float32/uint8, spatially ordered (optional)
+│   ├── sharpnesses              # (N,) or (1,) float32, spatially ordered (optional)
+│   ├── chunk_bounds             # (num_chunks, d, 2) float32, single chunk
+│   └── .zattrs                  # n_splats, ndim, ordering info, spatial index metadata
 │
 ├── fitting/                     # Optimization info (optional, fitter-specific)
 │   ├── .zattrs                  # Common: time_seconds, fitter_name, fitter_version
@@ -94,11 +104,15 @@ fitted.gsplats.zarr/
 {
   "n_splats": 10000,
   "ndim": 3,
+  "has_colors": true,
+  "has_sharpness": true,
   "ordering": "morton",           // "morton", "hilbert", or "none"
-  "ordering_resolution": 65536,   // Only present when ordering != "none"
-  "chunk_size": 8192,             // Chunk size used
-  "amplitude_range": {"min": 0.01, "max": 1.5},   // Actual data range for rendering
-  "sharpness_bounds": {"min": 0.0, "max": 32.0},  // Model constraints (valid range)
+  "morton_min": [0.0, 0.0, 0.0],  // Bounds for Morton normalization (all dimensions)
+  "morton_max": [256.0, 256.0, 128.0],
+  "morton_bits_per_dim": 21,      // Bits per dimension in Morton code
+  "chunk_size": 2048,             // Elements per chunk
+  "amplitude_range": {"min": 0.01, "max": 1.5},
+  "sharpness_bounds": {"min": 0.0, "max": 31.0},
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
@@ -165,6 +179,49 @@ The `provenance/` group records information about the source image:
 
 ---
 
+## Spatial Ordering and Indexing
+
+GSplats arrays are spatially ordered for compression and efficient spatial queries using the same algorithms as Points.
+
+**Algorithm Reference**: See `../../io/SPECIFICATIONS.md` → "Spatial Index Specification" for complete details on:
+- Morton/Hilbert ordering algorithms
+- Compound ordering (discrete dimensions first, then Morton)
+- Chunk bounds calculation
+
+**Implementation Location**: Spatial ordering is implemented in `luxar.io` and reused by `gsplats.io` (single code path).
+
+### GSplats-Specific Details
+
+**Extent Calculation for Chunk Bounds**:
+
+GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this extent:
+
+```python
+# For each dimension d, compute extent from Cholesky factors
+# Covariance diagonal: covariance[d,d] = sum(L[start_idx + i]^2 for i in 0..d)
+# For packed Cholesky (row-major):
+#   2D: [L00, L10, L11] → cov[0,0]=L00², cov[1,1]=L10²+L11²
+#   3D: [L00, L10, L11, L20, L21, L22] → cov[2,2]=L20²+L21²+L22²
+
+extent[d] = sqrt(covariance[d, d]) * 3.0  # 3σ coverage (99.7%)
+
+# Chunk bounds include extent
+chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
+chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
+```
+
+**Ordering Metadata** (stored in `splats/.zattrs`):
+- `ordering`: "morton", "hilbert", or "none"
+- `morton_min`, `morton_max`: Coordinate bounds for normalization
+- `morton_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
+
+**Spatial Index Array**:
+- `chunk_bounds`: (num_chunks, d, 2) float32 array
+- Enables efficient spatial queries without loading splat data
+- Same query algorithm as Points (AABB intersection test)
+
+---
+
 ## Splat Ordering for Compression
 
 ### Why Order Matters
@@ -217,9 +274,9 @@ def morton_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
 - [`numpy-hilbert-curve`](https://github.com/PrincetonLIPS/numpy-hilbert-curve) - Princeton LIPS, numpy-native
 - [`hilbertcurve`](https://pypi.org/project/hilbertcurve/) - Supports nD, based on Skilling 2004
 
-### Implementation Decision
+### Ordering Specification
 
-**Support both Morton and Hilbert** with a parameter:
+The system supports both Morton and Hilbert ordering methods:
 
 ```python
 def sort_splats_spatially(
@@ -254,7 +311,7 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 | `centers` | COORDINATE | `float16` (half precision) |
 | `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
 | `cholesky_factors` | CHOLESKY | `float16` (~0.1% error, see encoding spec Section 4.5) |
-| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (8-bit, bounds [0, 32]) |
+| `sharpnesses` | BOUNDED_SCALAR | `bounded_scalar_uint8` (8-bit, bounds [0, 31]) |
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -289,7 +346,7 @@ For our case, could factorize:
 - Cholesky factors → shared basis shapes + per-splat coefficients
 - Would require fitting a basis during save (more complex)
 
-**Decision**: Defer to v2.0 - start simple with ordering + standard compression.
+**Status**: Deferred to future version - initial implementation uses ordering + standard compression.
 
 ### 4. Pruning Before Storage
 
@@ -313,41 +370,112 @@ compressor = Blosc(
 )
 ```
 
-### Chunk Size
+### Chunk Sizing
 
-Chunk size is **configurable** with an optimal default for compression.
+**Strategy**: Byte-based chunking aligned with Luxar standards (see `../../typing_utils/SPECIFICATIONS.md`).
 
-**Blosc optimal chunk size**: Blosc works best with chunks in the 16KB-1MB range. For float32 splats:
-- Bytes per splat: `4*d + 4 + 4*d*(d+1)/2 + 4` = `4*(d + 1 + d*(d+1)/2 + 1)`
-- **2D**: 28 bytes/splat (8 centers + 4 amp + 12 cholesky + 4 sharp)
-- **3D**: 44 bytes/splat (12 centers + 4 amp + 24 cholesky + 4 sharp)
-- **4D**: 64 bytes/splat (16 centers + 4 amp + 40 cholesky + 4 sharp)
+**Target**: 64KB chunks for optimal HTTP/compression balance.
 
-For 3D (most common):
-- 16KB / 44 bytes ≈ 370 splats (minimum efficient)
-- 256KB / 44 bytes ≈ 6,000 splats (sweet spot)
-- 1MB / 44 bytes ≈ 24,000 splats (maximum efficient)
+**Bytes per splat** (full precision, including optional arrays):
+```
+base = 4*d (centers) + 4 (amplitudes) + 4*d*(d+1)/2 (cholesky)
+optional = 12 (colors, if present) + 4 (sharpness, if present)
 
-**Default**: `chunk_size = 8192` splats (~360KB for 3D) - good balance for compression and random access.
-
-```python
-# Configurable chunk size with sensible default
-DEFAULT_CHUNK_SIZE = 8192  # Optimal for blosc compression
-
-def get_chunk_size(n_splats: int, chunk_size: int | None = None) -> int:
-    """Get chunk size, using default if not specified."""
-    if chunk_size is not None:
-        return min(n_splats, chunk_size)
-    return min(n_splats, DEFAULT_CHUNK_SIZE)
-
-# All arrays chunked the same way for coherent access
-centers_chunks = (chunk_size, ndim)
-amplitudes_chunks = (chunk_size,)
-cholesky_chunks = (chunk_size, ndim * (ndim + 1) // 2)
-sharpnesses_chunks = (chunk_size,)
+Conservative estimate: bytes_per_splat = 4*d + 4*d*(d+1)/2 + 20
 ```
 
-**Stored in metadata**: `splats/.zattrs["chunk_size"]` for reproducibility.
+**Examples**:
+- **2D**: 4*2 + 4*3 + 20 = 40 bytes/splat
+- **3D**: 4*3 + 4*6 + 20 = 56 bytes/splat
+- **4D**: 4*4 + 4*10 + 20 = 76 bytes/splat
+
+**Target elements per chunk**:
+```python
+TARGET_CHUNK_BYTES = 64 * 1024  # 64KB (from typing_utils)
+bytes_per_splat = 4*d + 4*d*(d+1)//2 + 20
+target_chunk_elements = TARGET_CHUNK_BYTES // bytes_per_splat
+
+# Examples:
+# 3D: 64KB / 56 bytes ≈ 1,170 splats per chunk
+# 4D: 64KB / 76 bytes ≈ 860 splats per chunk
+```
+
+**Chunk shape specification**:
+```python
+# 1D arrays (amplitudes, sharpnesses)
+chunks = (chunk_elements,)
+
+# 2D arrays (centers, cholesky_factors, colors)
+chunks = (chunk_elements, n_cols)  # Keep all columns together
+```
+
+**Stored in metadata**: `splats/.zattrs["chunk_size"]` records elements per chunk.
+
+---
+
+## Encoding Metadata Preservation
+
+When arrays are written to `.gsplats.zarr`, encoding transformations are applied and metadata is preserved for automatic decoding on load.
+
+### Encoding Metadata Storage
+
+**Format**: Each array stores encoding metadata in its `.zattrs` file:
+```json
+// Example: sharpnesses/.zattrs
+{
+  "encoding": {
+    "name": "bounded_scalar_uint8",
+    "min": 0.0,
+    "max": 31.0,
+    "bits": 8,
+    "original_dtype": "float32"
+  }
+}
+```
+
+**Color Mode Storage**:
+For float32 colors, the `color_mode` is stored in encoding metadata:
+```json
+// colors/.zattrs - SDR colors
+{
+  "encoding": {
+    "name": "rgb_uint8",
+    "original_dtype": "float32",
+    "color_mode": "sdr"
+  }
+}
+
+// colors/.zattrs - HDR colors (no quantization)
+{
+  "encoding": {
+    "name": "none",
+    "color_mode": "hdr"
+  }
+}
+```
+
+**Broadcasting Metadata** (when all splats share same value):
+```json
+// amplitudes/.zattrs - all splats have amplitude=1.5
+{
+  "encoding": {
+    "name": "broadcasted",
+    "n_elements": 10000
+  }
+}
+```
+
+### Automatic Decoding on Load
+
+When loading `.gsplats.zarr`:
+1. Read array from zarr
+2. Check for `encoding` metadata in `.zattrs`
+3. Apply appropriate decoder based on `encoding.name`
+4. Return decoded float32 array
+
+**Transparency**: Encoding is a storage detail - users always work with float32 arrays. Quantization and broadcasting are transparent.
+
+**Implementation**: Uses `luxar.encoding.ArrayDecoder` (see `../../encoding/SPECIFICATIONS.md` Section 11.4).
 
 ---
 
@@ -369,6 +497,7 @@ result.save(
     "fitted.gsplats.zarr",
     ordering="morton",           # or "hilbert", "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
+    color_mode="sdr",            # Required if colors present and float32: "sdr" or "hdr"
     include_fitting_info=True,   # Store stats and config
     include_provenance=True,     # Store image metadata
     description="DAPI nuclei fitting",
@@ -418,6 +547,63 @@ print(info)
 
 ---
 
+## Standalone vs Embedded Formats
+
+There are two ways to store Gaussian splats, serving different purposes:
+
+### 1. Standalone Format (`.gsplats.zarr`)
+
+**Purpose**: Persist fitted results as independent files
+
+**Structure**: This specification
+- Root container with format metadata
+- `splats/` group with arrays
+- Optional `fitting/` and `provenance/` groups
+- Spatially ordered with `chunk_bounds`
+
+**Use cases**:
+- Save/load fitted results between sessions
+- Share fitted splats with others
+- Lightweight rendering without full scene
+- Archive expensive computation results
+
+### 2. Embedded Format (Luxar Scene)
+
+**Purpose**: Multi-object visualization with scene graph
+
+**Structure**: See `../../core/SPECIFICATIONS.md` Section 7
+- GSplats as node in scene hierarchy
+- Same arrays: centers, amplitudes, cholesky_factors, colors, sharpness
+- Spatially ordered with `chunk_bounds`
+- Inherits scene dimensions, transforms, rendering attributes
+
+**Use cases**:
+- Visualize splats alongside other data (points, lines)
+- Apply hierarchical transforms
+- Multi-layer scenes with groups
+
+### Relationship
+
+**Common Foundation**:
+- Both use same spatial ordering (Morton/Hilbert) via `luxar.io`
+- Both use same encoding system (`luxar.encoding`)
+- Both store `chunk_bounds` for spatial queries
+- Both use identical array structure and semantics
+
+**Key Difference**: Container structure
+- Standalone: Self-contained with provenance/fitting metadata
+- Embedded: Part of larger scene graph with inherited attributes
+
+**Code Reuse**: The `luxar.io` package provides the shared implementation:
+- Spatial ordering functions
+- Chunk bounds calculation
+- Encoding application
+- Both formats call the same underlying functions
+
+**Future Integration**: `scene.add_gsplats()` will support loading from `.gsplats.zarr` files directly (planned).
+
+---
+
 ## Luxar Integration (Future)
 
 Once `.gsplats.zarr` format is stable, integrate with Luxar visualization:
@@ -442,7 +628,7 @@ This will be designed after the gsplats I/O module is complete.
 
 ---
 
-## Design Decisions (Agreed)
+## Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -464,21 +650,11 @@ This will be designed after the gsplats I/O module is complete.
 
 ---
 
-## Open Questions
-
-*None currently - all questions resolved.*
-
-### Resolved Questions
-
-1. **Log-scale amplitudes**: ✅ Resolved - Use `positive_scalar_encoding="log"` parameter with `EncodingMode.MEMORY`. See Quantization section above.
-
----
-
 ## References
 
 - [3DGS Compression Survey](https://arxiv.org/html/2502.19457v1) - Comprehensive overview of compression techniques
 - [3DGS.zip Survey](https://arxiv.org/abs/2407.09510) - Another survey on compression methods
-- [OMG: Optimized Minimal Gaussians](https://arxiv.org/html/2503.16924) - 100-300× compression
+- [OMG: Optimized  MinimalGaussians](https://arxiv.org/html/2503.16924) - 100-300× compression
 - [numpy-hilbert-curve](https://github.com/PrincetonLIPS/numpy-hilbert-curve) - nD Hilbert implementation
 - [Skilling 2004](https://doi.org/10.1063/1.1751381) - "Programming the Hilbert Curve" algorithm
 
@@ -486,38 +662,17 @@ This will be designed after the gsplats I/O module is complete.
 
 ## Changelog
 
-- **v0.7 (Draft)**: Unified sharpness bounds
-  - Changed sharpness bounds from [0.16, 24.4] to [0, 32] to align with core SPECIFICATIONS.md
-  - All node types (Points, Lines, GSplats) now use unified bounds [0, 32]
-
-- **v0.6 (Draft)**: Cross-specification consistency
-  - Fixed AUTO mode description to match encoding spec (can be lossy)
-  - Added CUSTOM mode to encoding modes list
-- **v0.5 (Draft)**: Polish and consistency
-  - Removed "Last Updated" placeholder (changelog tracks history)
-  - Removed version from "Proposed Zarr Structure" heading
-  - Made bounds format consistent (all use `{min, max}` objects)
-  - Clarified `ordering_resolution` only present when `ordering != "none"`
-  - Added bytes-per-splat formula for all dimensions (2D/3D/4D)
-  - Fixed byte calculations (44 bytes for 3D, not 40)
-- **v0.4 (Draft)**: Documentation improvements
-  - Clarified `ordering_resolution` is for reproducibility/debugging only
-  - Specified ISO 8601 timestamp format for all timestamps
-  - Added provenance group JSON example
-  - Added note about automatic decoding on load
-  - Clarified distinction: group attrs = model constraints, encoding = quantization params
-- **v0.3 (Draft)**: Critical review fixes
-  - Moved `n_splats`/`ndim` to splats group only (single source of truth)
-  - Removed redundant `max_amplitude` (use `amplitude_range[1]`)
-  - Added `sharpness_bounds` based on model constraints (later unified to [0, 32] in v0.7)
-  - Fixed CHOLESKY MEMORY mode to use `float16` (not uint16)
-  - Fixed PRECISION mode description (broadcasting still allowed)
-  - Clarified semantic type is from array name, not stored in metadata
-  - Clarified centers cannot be broadcasted
-- **v0.2 (Draft)**: Integrated `luxar.encoding` package
-  - Added semantic types for all splat arrays (COORDINATE, POSITIVE_SCALAR, CHOLESKY, BOUNDED_SCALAR)
-  - Updated broadcasting to use standard encoding metadata format
-  - Added `encoding_mode` parameter to save() API
-  - Simplified quantization section to reference encoding spec
-  - Resolved log-scale amplitudes question with `positive_scalar_encoding="log"`
-- **v0.1 (Draft)**: Initial design discussion
+- **v1.0.0** (2025-11-28): Initial versioned specification
+  - Moved from `gsplats/GSPLATS_ZARR_FORMAT.md` to `gsplats/io/SPECIFICATIONS.md`
+  - Converted from design document to technical specification format
+  - Updated sharpness bounds from [0, 32] to [0, 31] for consistency
+  - **Spatial ordering**: Added Morton/Hilbert ordering with chunk_bounds (aligned with embedded format)
+  - **Byte-based chunking**: Changed from element-based (8192) to byte-based (64KB target) for Luxar consistency
+  - **Colors support**: Added optional colors array to core data structure and zarr schema
+  - **Color mode**: Specified color_mode storage in encoding metadata (sdr/hdr)
+  - **Encoding metadata**: Documented how encoding metadata is preserved for automatic decoding
+  - **Code reuse**: Specified that spatial ordering implementation lives in `luxar.io` (single code path)
+  - **Format relationship**: Added section clarifying standalone vs embedded format relationship
+  - **Cross-references**: Updated to use proper relative paths (../../)
+  - Fitter-agnostic metadata design
+  - Integration with `luxar.encoding` for semantic types

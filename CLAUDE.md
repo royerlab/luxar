@@ -193,6 +193,21 @@ Note: When possible, use `make` commands for convenience (see below).
 - MINOR: New features or sections added
 - PATCH: Clarifications, typo fixes, minor updates
 
+**Cross-Reference Format**:
+When referencing other specifications, use this standard format:
+```markdown
+**Related Specifications**:
+- `luxar.package` - Brief description (see `relative/path/SPECIFICATIONS.md`)
+```
+
+Examples from different package locations:
+- From root package (e.g., `core/`): `(see `encoding/SPECIFICATIONS.md`)`
+- From sub-package (e.g., `gsplats/io/`): `(see `../../encoding/SPECIFICATIONS.md`)`
+- From sibling: `(see `../other/SPECIFICATIONS.md`)`
+- To parent: `(see `../SPECIFICATIONS.md`)`
+
+Use **relative paths** from the specification file's location.
+
 **CRITICAL**:
 1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
 2. When making changes to Python code:

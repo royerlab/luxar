@@ -199,6 +199,49 @@ Examples (for `len(morton_dims)`):
 - 5 dims: 12 bits each (~4K levels), 4 unused bits
 - 6 dims: 10 bits each (~1K levels), 4 unused bits
 
+**Concrete Example: 5D Dataset (X, Y, Z, Time, Channel)**
+
+Consider a 5D point cloud with dimensions:
+```python
+Dimensions:
+- X (dim 0): displayed, spatial
+- Y (dim 1): displayed, spatial
+- Z (dim 2): displayed, spatial
+- Time (dim 3): non-displayed, discrete
+- Channel (dim 4): non-displayed, discrete
+```
+
+**Compound Ordering Result**:
+```python
+# Dimension categorization
+slice_dims = [3, 4]      # Time, Channel (discrete, non-displayed)
+morton_dims = [0, 1, 2]  # X, Y, Z (displayed/spatial)
+
+# Morton code calculation
+morton_bits_per_dim = floor(64 / 3) = 21 bits per dimension
+morton_min = [x_min, y_min, z_min]  # Only for X, Y, Z
+morton_max = [x_max, y_max, z_max]  # Only for X, Y, Z
+
+# Positions array shape
+positions.shape = (N, 5)  # Stores ALL dimensions
+
+# Sort key for each point
+sort_key = (
+    (time_value, channel_value),  # Primary: discrete dimensions (lexicographic)
+    morton_code(x, y, z)          # Secondary: Morton code of X, Y, Z only
+)
+
+# Result: Points grouped by (time, channel), Morton-sorted within each group
+# Example ordering:
+#   [time=0, channel=0]: Morton-sorted by (x,y,z)
+#   [time=0, channel=1]: Morton-sorted by (x,y,z)
+#   [time=0, channel=2]: Morton-sorted by (x,y,z)
+#   [time=1, channel=0]: Morton-sorted by (x,y,z)
+#   ...
+```
+
+**Key Insight**: Morton codes only use **spatial/continuous dimensions**. Discrete dimensions are sorted separately (lexicographically) for slice-aligned chunking.
+
 **Metadata stored**:
 - `morton_min`: (len(morton_dims),) float32 - minimum coordinate per morton dimension
 - `morton_max`: (len(morton_dims),) float32 - maximum coordinate per morton dimension
