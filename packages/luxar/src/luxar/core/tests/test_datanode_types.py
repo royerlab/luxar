@@ -11,7 +11,9 @@ class TestLinesNode:
 
     def test_add_lines_polyline(self, tmp_path) -> None:
         """Test creating a polyline."""
-        vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float32)
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float32
+        )
         widths = np.array([0.1, 0.1, 0.1, 0.1], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
@@ -30,7 +32,9 @@ class TestLinesNode:
 
     def test_add_lines_segments(self, tmp_path) -> None:
         """Test creating independent segments."""
-        vertices = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], dtype=np.float32)
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], dtype=np.float32
+        )
         widths = np.array([0.1, 0.1, 0.2, 0.2], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
@@ -190,7 +194,9 @@ class TestGSplatsNode:
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
-            gsplats = scene.add_gsplats("colored", centers, amplitudes, cholesky, colors=colors)
+            gsplats = scene.add_gsplats(
+                "colored", centers, amplitudes, cholesky, colors=colors
+            )
 
             assert gsplats.has_colors is True
 
@@ -213,7 +219,9 @@ class TestGSplatsNode:
         """Test gsplats with single amplitude value (broadcast)."""
         centers = np.array([[0, 0], [1, 0], [2, 0]], dtype=np.float32)  # 2D
         amplitude = 2.0  # Single value
-        cholesky = np.array([1, 0, 1], dtype=np.float32)  # Broadcast cholesky: 1D array will be broadcast
+        cholesky = np.array(
+            [1, 0, 1], dtype=np.float32
+        )  # Broadcast cholesky: 1D array will be broadcast
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -250,7 +258,9 @@ class TestGSplatsNode:
         centers = np.array([[0, 0], [1, 0], [2, 0]], dtype=np.float32)  # 2D, 3 splats
         amplitudes = np.array([1.0, 1.0, 1.0], dtype=np.float32)
         # Single cholesky: will be broadcast to all splats
-        cholesky = np.array([1, 0, 1], dtype=np.float32)  # 1D array: shape (3,) → 2D: k=3
+        cholesky = np.array(
+            [1, 0, 1], dtype=np.float32
+        )  # 1D array: shape (3,) → 2D: k=3
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene()
@@ -300,6 +310,8 @@ class TestDataNodeAbstraction:
 
             # metadata property should be accessible
             assert "n_points" in points.metadata
-            assert "dims" in points.metadata  # Note: it's "dims" not "ndim" in Points metadata
+            assert (
+                "dims" in points.metadata
+            )  # Note: it's "dims" not "ndim" in Points metadata
             assert points.metadata["n_points"] == 1
             assert points.metadata["dims"] == 3

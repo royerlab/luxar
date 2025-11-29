@@ -3,7 +3,7 @@ import pytest
 import zarr
 
 from luxar import LuxarZarrCompiler
-from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
+from luxar.encoding import EncodingMode
 
 
 def test_bad_positions_shape(tmp_path) -> None:
@@ -26,10 +26,11 @@ def test_mismatched_colors(tmp_path) -> None:
 
 def test_valid_radii(tmp_path) -> None:
     """Test that valid radii are accepted and stored correctly."""
+    from luxar.encoding import ArrayDecoder
+
     store = tmp_path / "radii_test.zarr"
-    # Use PRECISION mode to preserve float32 for test consistency
-    dtype_config = DataTypeConfig(mode=DataTypeMode.PRECISION)
-    with LuxarZarrCompiler(store, dtype_config=dtype_config) as compiler:
+    # Use PRECISION mode to preserve float32 and avoid quantization
+    with LuxarZarrCompiler(store, encoding_mode=EncodingMode.PRECISION) as compiler:
         compiler.create_scene()
 
         positions = np.random.randn(100, 3).astype(np.float32)
@@ -37,10 +38,12 @@ def test_valid_radii(tmp_path) -> None:
 
         compiler.write_points("test", positions, radii=radii)
 
-    # Verify radii were stored
+    # Verify radii were stored (use decoder to handle any encoding)
     root = zarr.open_group(store, mode="r")
     assert "test/radii" in root
-    stored_radii = root["test/radii"][:]
+
+    decoder = ArrayDecoder()
+    stored_radii = decoder.decode(root["test/radii"], root)
     np.testing.assert_array_equal(stored_radii, radii)
 
 
@@ -94,10 +97,11 @@ def test_wrong_shape_radii(tmp_path) -> None:
 
 def test_valid_sharpness(tmp_path) -> None:
     """Test that valid sharpness values are accepted and stored correctly."""
+    from luxar.encoding import ArrayDecoder
+
     store = tmp_path / "sharpness_test.zarr"
-    # Use PRECISION mode to preserve float32 for test consistency
-    dtype_config = DataTypeConfig(mode=DataTypeMode.PRECISION)
-    with LuxarZarrCompiler(store, dtype_config=dtype_config) as compiler:
+    # Use PRECISION mode to preserve float32 and avoid quantization
+    with LuxarZarrCompiler(store, encoding_mode=EncodingMode.PRECISION) as compiler:
         compiler.create_scene()
 
         positions = np.random.randn(100, 3).astype(np.float32)
@@ -105,10 +109,12 @@ def test_valid_sharpness(tmp_path) -> None:
 
         compiler.write_points("test", positions, sharpness=sharpness)
 
-    # Verify sharpness was stored
+    # Verify sharpness was stored (use decoder to handle any encoding)
     root = zarr.open_group(store, mode="r")
     assert "test/sharpness" in root
-    stored_sharpness = root["test/sharpness"][:]
+
+    decoder = ArrayDecoder()
+    stored_sharpness = decoder.decode(root["test/sharpness"], root)
     np.testing.assert_array_equal(stored_sharpness, sharpness)
 
 

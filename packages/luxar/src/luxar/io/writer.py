@@ -11,13 +11,20 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
+from ..typing_utils.aliases import (
+    ChunkSpec,
+    GSplatsMetadata,
+    LinesMetadata,
+    MaxShape,
+    NodePath,
+    PointsMetadata,
+)
 
 if TYPE_CHECKING:
     import zarr
 
 # Type aliases for arrays that can be written with different dtypes
-# The actual dtype used depends on the DataTypeConfig settings
+# Actual dtype is selected by ArrayEncoder based on semantic type and mode
 PositionArray = Union[NDArray[np.float32], NDArray[np.float16]]
 ColorArray = Union[NDArray[np.float32], NDArray[np.uint8], NDArray[np.uint16]]
 ScalarArray = Union[NDArray[np.float32], NDArray[np.float16], NDArray[np.uint8]]
@@ -55,11 +62,10 @@ class ZarrWriterProtocol(Protocol):
         Data is written directly to disk without being kept in memory.
         Only metadata about the written data is returned.
 
-        The actual dtypes used for storage depend on the DataTypeConfig:
-        - AUTO mode: Automatically selects optimal dtype based on data range
+        The actual dtypes used for storage depend on EncodingMode:
+        - AUTO mode: Analyzes data and selects optimal encoding
         - PRECISION mode: Uses float32 for maximum precision
-        - MEMORY mode: Uses smallest viable dtype (float16/uint8)
-        - CUSTOM mode: Uses explicitly specified dtypes
+        - MEMORY mode: Aggressively quantizes (float16/uint8)
 
         Args:
             path: Path within the Zarr store for this points
@@ -77,6 +83,60 @@ class ZarrWriterProtocol(Protocol):
             - has_colors: Whether colors were written
             - has_radii: Whether radii were written
             - has_sharpness: Whether sharpness was written
+        """
+        ...
+
+    def write_lines(
+        self,
+        path: NodePath,
+        vertices: PositionArray,
+        widths: ScalarArray,
+        colors: Optional[ColorArray] = None,
+        sharpness: Optional[ScalarArray] = None,
+        indices: Optional[NDArray[np.uint32]] = None,
+        line_type: str = "polyline",
+        **attrs: Any,
+    ) -> LinesMetadata:
+        """Write lines data immediately to Zarr.
+
+        Args:
+            path: Path within the Zarr store for this lines node
+            vertices: Vertex positions array of shape (N, D)
+            widths: Line widths array of shape (N,)
+            colors: Optional colors array of shape (N, 3)
+            sharpness: Optional sharpness array of shape (N,)
+            indices: Optional vertex indices for indexed line type
+            line_type: Type of line connectivity
+            **attrs: Additional attributes for the lines
+
+        Returns:
+            Dictionary containing metadata about the written lines
+        """
+        ...
+
+    def write_gsplats(
+        self,
+        path: NodePath,
+        centers: PositionArray,
+        amplitudes: ScalarArray,
+        cholesky_factors: NDArray[np.float32],
+        colors: Optional[ColorArray] = None,
+        sharpness: Optional[ScalarArray] = None,
+        **attrs: Any,
+    ) -> GSplatsMetadata:
+        """Write Gaussian splats data immediately to Zarr.
+
+        Args:
+            path: Path within the Zarr store for this gsplats node
+            centers: Splat center positions array of shape (N, D)
+            amplitudes: Amplitude values array of shape (N,)
+            cholesky_factors: Packed Cholesky factors array of shape (N, k)
+            colors: Optional colors array of shape (N, 3)
+            sharpness: Optional generalized Gaussian exponent array of shape (N,)
+            **attrs: Additional attributes for the gsplats
+
+        Returns:
+            Dictionary containing metadata about the written gsplats
         """
         ...
 

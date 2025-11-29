@@ -44,6 +44,8 @@ class NodeType(str, Enum):
     SCENE = "scene"
     GROUP = "group"
     POINTS = "points"
+    LINES = "lines"
+    GSPLATS = "gsplats"
 
     @classmethod
     def validate(cls, value: str) -> "NodeType":
@@ -140,10 +142,10 @@ class RenderingLimits:
 
     OPACITY_MIN = 0.0
     OPACITY_MAX = 1.0
-    GAMMA_MIN = 0.2
-    GAMMA_MAX = 5.0
-    SHARPNESS_MIN = 0.1
-    SHARPNESS_MAX = 20.0
+    GAMMA_MIN = 0.1  # Symmetric: gamma and 1/gamma have equal range
+    GAMMA_MAX = 10.0  # Symmetric: gamma and 1/gamma have equal range
+    SHARPNESS_MIN = 0.0
+    SHARPNESS_MAX = 31.0
 
     # HDR color ranges
     COLOR_SDR_MIN = 0.0  # Standard dynamic range minimum

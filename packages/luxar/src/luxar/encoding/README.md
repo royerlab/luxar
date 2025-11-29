@@ -1,425 +1,544 @@
 # luxar.encoding
 
-The `encoding` package provides semantic type definitions, data type configuration, and array encoding utilities for efficient storage and transmission of visualization data.
+The `encoding` package provides semantic type definitions, encoding modes, and array encoding/decoding utilities for efficient storage and transmission of visualization data.
 
 ## Overview
 
-This package handles the mapping between semantic data types (like "position", "color", "scalar") and concrete NumPy dtypes, with support for automatic optimization based on data characteristics. It enables efficient storage while preserving data fidelity.
+This package handles the transformation of arrays between representations optimized for different purposes:
+- **Precision**: Full floating-point accuracy
+- **Storage**: Reduced byte size through quantization
+- **Compression**: Better compressibility through ordering and normalization
+
+The encoding system serves as a shared foundation for encoding arrays across all Luxar data types (points, Gaussian splats, future primitives), eliminating code duplication and ensuring consistency.
 
 ## Purpose
 
-The encoding system serves several critical functions:
+The encoding system provides:
 
-1. **Semantic Type System**: Map high-level concepts (positions, colors) to appropriate dtypes
-2. **Storage Optimization**: Choose optimal dtypes based on data range and precision needs
-3. **Format Conversion**: Convert between different numeric representations (float32 ↔ uint8)
-4. **Normalization**: Handle value range mapping (e.g., 0-1 float ↔ 0-255 uint8)
+1. **Semantic Type System**: Define what data represents (positions, colors, radii) to inform encoding choices
+2. **Storage Optimization**: Automatically choose optimal dtypes based on data range and precision needs
+3. **Format Conversion**: Convert between numeric representations (float32 ↔ uint8)
+4. **Multiple Encoding Strategies**: Broadcasting, array references, LUT encoding, dtype encoding
 5. **HDR Support**: Preserve high dynamic range data where needed
-
-## Key Concepts
-
-### Semantic Types
-
-Rather than directly specifying dtypes everywhere, Luxar uses semantic types:
-
-- **COORDINATE/POSITION**: Spatial coordinates (typically float32 for precision)
-- **COLOR**: RGB color values (uint8 for LDR, float32 for HDR)
-- **POSITIVE_SCALAR**: Positive values like radii, widths (float32/float16/uint8)
-- **BOUNDED_SCALAR**: Values in fixed range like sharpness (uint8/float16/float32)
-
-This abstraction allows the encoding system to choose appropriate dtypes based on:
-- Data value range
-- Precision requirements
-- Memory constraints
-- Storage mode (precision vs memory)
-
-### Data Type Modes
-
-The package supports different optimization strategies:
-
-1. **AUTO**: Automatically select dtype based on data analysis (default)
-2. **PRECISION**: Prioritize precision (use float32 everywhere)
-3. **MEMORY**: Prioritize memory efficiency (use uint8/float16 where safe)
-4. **CUSTOM**: Use explicitly specified dtypes
 
 ## Key Components
 
-### 1. DataTypeConfig (`datatypes.py`)
+### 1. ArrayEncoder (`encoder.py`)
 
-Configuration class for controlling dtype selection across all attributes.
+**Main entry point for encoding arrays.** Writes directly to zarr groups and follows a strict priority order.
 
 **Purpose:**
-Centralized control over how data is encoded for storage.
+Unified encoding system with automatic deduplication and intelligent encoding selection.
 
 **Usage Example:**
 ```python
-from luxar.encoding import DataTypeConfig, DataTypeMode
+from luxar.encoding import ArrayEncoder, SemanticType, EncodingMode
+import zarr
+import numpy as np
 
-# Auto mode (default) - analyzes data to choose dtypes
-config = DataTypeConfig(mode=DataTypeMode.AUTO)
+# Create encoder
+encoder = ArrayEncoder()
 
-# Precision mode - always use float32
-config = DataTypeConfig(mode=DataTypeMode.PRECISION)
+# Create zarr group
+store = zarr.DirectoryStore("output.zarr")
+root = zarr.group(store=store)
 
-# Memory mode - use smallest safe dtypes
-config = DataTypeConfig(mode=DataTypeMode.MEMORY)
-
-# Custom mode - explicit control
-config = DataTypeConfig(
-    mode=DataTypeMode.CUSTOM,
-    position_dtype='float32',
-    color_dtype='uint8',
-    radius_dtype='float16',
-    sharpness_dtype='uint8'
+# Encode positions (COORDINATE semantic type)
+positions = np.random.randn(1000, 3).astype(np.float32)
+encoder.encode(
+    data=positions,
+    zarr_group=root,
+    name="positions",
+    semantic_type=SemanticType.COORDINATE,
+    mode=EncodingMode.AUTO
 )
 
-# Query dtypes (may analyze data array if in AUTO mode)
-positions = np.random.randn(1000, 3)
-dtype = config.get_position_dtype(positions)
+# Encode colors (COLOR semantic type, explicit mode required)
+colors = np.random.rand(1000, 3).astype(np.float32)  # SDR colors in [0, 1]
+encoder.encode(
+    data=colors,
+    zarr_group=root,
+    name="colors",
+    semantic_type=SemanticType.COLOR,
+    mode=EncodingMode.AUTO,
+    color_mode="sdr"  # Required for float colors
+)
+
+# Encode radii (POSITIVE_SCALAR semantic type)
+radii = np.random.rand(1000).astype(np.float32) * 0.5
+encoder.encode(
+    data=radii,
+    zarr_group=root,
+    name="radii",
+    semantic_type=SemanticType.POSITIVE_SCALAR,
+    mode=EncodingMode.MEMORY  # Aggressive compression
+)
+
+# Encode sharpness (BOUNDED_SCALAR semantic type)
+sharpness = np.random.rand(1000).astype(np.float32) * 31
+encoder.encode(
+    data=sharpness,
+    zarr_group=root,
+    name="sharpness",
+    semantic_type=SemanticType.BOUNDED_SCALAR,
+    mode=EncodingMode.AUTO,
+    bounds=(0.0, 31.0)  # Explicit bounds
+)
 ```
 
 **Methods:**
-- `get_position_dtype(data=None)` - Get dtype for positions
-- `get_color_dtype(data=None)` - Get dtype for colors (HDR-aware)
-- `get_radius_dtype(data=None)` - Get dtype for radii
-- `get_sharpness_dtype(data=None)` - Get dtype for sharpness
+- `encode(data, zarr_group, name, semantic_type, mode, ...)` - Encode and write array
+- `reset()` - Clear internal registry (call between scenes)
 
-**Pre-configured Instances:**
+**Encoding Priority Order:**
+1. **Broadcasting** - If all values are identical (stores only 1 value)
+2. **Array Reference** - If exact duplicate exists in registry (stores pointer)
+3. **LUT Encoding** - If ≤256 unique values (stores indices + lookup table)
+4. **Dtype Encoding** - Standard encoding based on semantic type and mode
+
+### 2. ArrayDecoder (`decoder.py`)
+
+**Decodes encoded arrays back to numpy.**
+
+**Purpose:**
+Read encoded arrays and apply appropriate inverse transformations.
+
+**Usage Example:**
 ```python
-from luxar.encoding import DEFAULT_CONFIG, PRECISION_CONFIG, MEMORY_CONFIG
+from luxar.encoding import ArrayDecoder
+import zarr
 
-# Ready-to-use configurations
-DEFAULT_CONFIG   # mode=AUTO
-PRECISION_CONFIG # mode=PRECISION
-MEMORY_CONFIG    # mode=MEMORY
+# Open zarr archive
+root = zarr.open("output.zarr", mode="r")
+
+# Create decoder
+decoder = ArrayDecoder()
+
+# Decode arrays (automatically handles all encoding types)
+positions = decoder.decode(root["positions"], zarr_root=root)
+colors = decoder.decode(root["colors"], zarr_root=root)
+radii = decoder.decode(root["radii"], zarr_root=root)
+
+print(f"Positions: {positions.shape}, {positions.dtype}")
+print(f"Colors: {colors.shape}, {colors.dtype}")
+print(f"Radii: {radii.shape}, {radii.dtype}")
 ```
 
-### 2. DataTypeMode (`datatypes.py`)
+**Methods:**
+- `decode(zarr_array, zarr_root)` - Decode array based on metadata
 
-Enum defining dtype selection strategies.
+**Supports:**
+- Broadcasting (expansion)
+- Array references (recursive decoding)
+- LUT encoding (lookup table expansion)
+- Quantized encodings (inverse transformation)
+- Passthrough (direct read)
 
-**Values:**
-- `AUTO` - Analyze data and choose optimal dtype
-- `PRECISION` - Use float32 for everything
-- `MEMORY` - Use smallest safe dtype (uint8/float16)
-- `CUSTOM` - Use explicitly specified dtypes
+### 3. SemanticType Enum (`semantic_types.py`)
+
+**Defines what array data represents**, which constrains valid encodings.
+
+**Types:**
+
+| Type | Description | Constraints | Valid Dtypes |
+|------|-------------|-------------|--------------|
+| **COORDINATE** | Spatial positions/centers | Can be negative | float32, float16 |
+| **COLOR** | RGB/RGBA colors | Non-negative, SDR [0,1] or HDR | uint8, uint16, float16, float32 |
+| **BOUNDED_SCALAR** | Scalars with known [min, max] | Within bounds | uint8, uint16, float16, float32 |
+| **POSITIVE_SCALAR** | Non-negative scalars | ≥ 0 | uint8, uint16, float16, float32 |
+| **CHOLESKY** | Packed Cholesky factors | Shape (N, d(d+1)/2) | float32, float16 |
+| **INDEX** | Non-negative integer indices | Non-negative integers | uint8, uint16, uint32, uint64 |
+| **UNIT_VECTOR** | Normalized vectors (‖v‖=1) | Unit length | float32, float16 |
+
+**Usage Example:**
+```python
+from luxar.encoding import SemanticType
+
+# Semantic types are explicitly specified by caller
+encoder.encode(
+    data=positions,
+    zarr_group=root,
+    name="positions",
+    semantic_type=SemanticType.COORDINATE  # Required, no inference
+)
+```
+
+**IMPORTANT:** Semantic type must be explicitly specified. The encoder does NOT attempt to infer semantic type from array values.
+
+### 4. EncodingMode Enum (`modes.py`)
+
+**Controls precision vs storage trade-off.**
+
+**Modes:**
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **AUTO** | Analyze data and select optimal encoding | Default, balanced approach |
+| **PRECISION** | Preserve maximum precision (float32) | Scientific accuracy |
+| **MEMORY** | Minimize storage aggressively | Large datasets, streaming |
+| **CUSTOM** | User specifies encoder explicitly | Full control |
+
+**Mode Behavior by Semantic Type:**
+
+| Semantic Type | AUTO | PRECISION | MEMORY |
+|---------------|------|-----------|--------|
+| COORDINATE | float32 | float32 | float16 |
+| COLOR (SDR) | uint8 | float32 | uint8 |
+| COLOR (HDR) | float32 | float32 | float16 |
+| BOUNDED_SCALAR | uint8 | float32 | uint8 |
+| POSITIVE_SCALAR | Analyze range | float32 | uint8 |
+| CHOLESKY | float32 | float32 | float16 |
+| INDEX | Smallest uint | Smallest uint | Smallest uint |
+
+**Usage Example:**
+```python
+from luxar.encoding import EncodingMode
+
+# AUTO mode (default) - balanced
+encoder.encode(..., mode=EncodingMode.AUTO)
+
+# PRECISION mode - maximum accuracy
+encoder.encode(..., mode=EncodingMode.PRECISION)
+
+# MEMORY mode - aggressive compression
+encoder.encode(..., mode=EncodingMode.MEMORY)
+
+# CUSTOM mode - explicit control
+encoder.encode(
+    ...,
+    mode=EncodingMode.CUSTOM,
+    custom_encoder="bounded_scalar_uint8",
+    bounds=(0.0, 31.0)
+)
+```
+
+### 5. ArrayRefRegistry (`registry.py`)
+
+**Internal registry for deduplication via array references.**
+
+**Purpose:**
+Track arrays and detect duplicates using efficient two-stage hashing.
 
 **Usage:**
 ```python
-from luxar.encoding import DataTypeMode
+from luxar.encoding import ArrayRefRegistry, ArrayRefMatch
 
-config = DataTypeConfig(mode=DataTypeMode.AUTO)
+# Registry is used internally by ArrayEncoder
+# Manual usage example:
+registry = ArrayRefRegistry()
+
+# Check if array is duplicate
+match = registry.check(data, "path/to/array")
+if match.is_duplicate:
+    print(f"Duplicate found at: {match.target_path}")
+    print(f"Hash: {match.hash}")
+else:
+    print("New array registered")
+
+# Clear registry between scenes
+registry.clear()
 ```
 
-### 3. Type Aliases (`datatypes.py`)
+**Detection Algorithm:**
+1. **Quick Check** (for arrays > 32KB): Hash first 32KB + dtype + shape
+2. **Full Hash** (if quick check matches): xxhash64 of entire array
 
-Type-safe aliases for supported dtypes.
+**Result:**
+- `ArrayRefMatch(is_duplicate, target_path, hash)`
 
-**Position Types:**
+## Encoding Strategies
+
+### 1. Broadcasting (Uniform Values)
+
+When all elements share the same value, store only one value with metadata.
+
+**Storage Format:**
+- Array shape: `(1,)` or `(1, d)` instead of `(N,)` or `(N, d)`
+- Metadata: `{"encoding": {"name": "broadcasted", "n_elements": N}}`
+
+**Example:**
 ```python
-PositionDType = Union[np.float32, np.float16]
-PositionDTypeStr = Literal["float32", "float16"]
+# All points have same color (red)
+colors = np.ones((10000, 3), dtype=np.float32) * [1.0, 0.0, 0.0]
+
+# Encoded as: (1, 3) array + metadata
+# Savings: 10000x compression!
 ```
 
-**Color Types:**
+**Decoding:**
 ```python
-ColorDType = Union[np.float32, np.uint8, np.uint16]
-ColorDTypeStr = Literal["float32", "uint8", "uint16"]
+# Decoder expands (1, d) to (N, d) by repeating
+decoded = np.repeat(broadcasted_value, n_elements, axis=0)
 ```
 
-**Scalar Types:**
-```python
-ScalarDType = Union[np.float32, np.float16, np.uint8]
-ScalarDTypeStr = Literal["float32", "float16", "uint8"]
+### 2. Array References (Deduplication)
+
+When the same array appears multiple times in a scene, store it once and reference it elsewhere.
+
+**Storage Format:**
+- Empty array: shape `(0,)` or `(0, d)`
+- Metadata:
+```json
+{
+  "encoding": {
+    "name": "array_ref",
+    "target": "../points_1/colors",
+    "hash": "xxh64:a1b2c3d4e5f6",
+    "original_shape": [10000, 3],
+    "original_dtype": "float32"
+  }
+}
 ```
 
-### 4. Conversion Functions (`datatypes.py`)
-
-#### `convert_array_dtype()`
-
-Convert arrays between dtypes with optional normalization.
-
-**Purpose:**
-Safe dtype conversion with value range mapping.
-
-**Usage Example:**
+**Example:**
 ```python
-from luxar.encoding import convert_array_dtype
+# Multiple point clouds with identical colors
+for i in range(10):
+    encoder.encode(
+        data=same_colors,
+        zarr_group=root[f"points_{i}"],
+        name="colors",
+        semantic_type=SemanticType.COLOR,
+        mode=EncodingMode.AUTO
+    )
+# First instance stored normally
+# Subsequent 9 instances stored as references
+```
 
-# Float to uint8 with normalization (0-1 → 0-255)
-colors_float = np.array([[1.0, 0.5, 0.0], [0.2, 0.8, 0.6]])
-colors_uint8 = convert_array_dtype(
-    colors_float,
-    target_dtype=np.uint8,
-    normalize=True,
-    input_range=(0.0, 1.0)
+**Decoding:**
+```python
+# Decoder follows reference path and recursively decodes target
+target_array = zarr_root[target_path]
+decoded = decoder.decode(target_array, zarr_root)
+```
+
+### 3. LUT Encoding (Limited Unique Values)
+
+When an array has ≤256 unique values, store indices into a lookup table.
+
+**Storage Format:**
+- Indices: uint8 array, shape depends on mode
+- Metadata:
+```json
+{
+  "encoding": {
+    "name": "lut_uint8",
+    "lut": [0.0, 0.5, 1.0, 2.5, 3.7],
+    "original_dtype": "float32",
+    "lut_mode": "scalar",
+    "original_shape": [10000]
+  }
+}
+```
+
+**LUT Modes:**
+- **Row mode** (for colors): Each row (color tuple) is a value
+  - Indices: `(N,)` uint8
+  - LUT: nested list `[[r,g,b], ...]`
+- **Scalar mode** (for everything else): Each element is a value
+  - Indices: same shape as original
+  - LUT: flat list `[v1, v2, ...]`
+
+**Example:**
+```python
+# Array with few unique values
+radii = np.random.choice([0.1, 0.2, 0.3, 0.4], size=10000)
+
+# Encoded as:
+# - Indices: 10000 uint8 values (1 byte each)
+# - LUT: [0.1, 0.2, 0.3, 0.4] (4 float32 = 16 bytes)
+# Savings: 10000×4 = 40KB → 10KB + 16B = 75% reduction
+```
+
+**When Used:**
+- ≤256 unique values
+- Array length ≥ 4× unique count
+- Mode != PRECISION
+
+**Decoding:**
+```python
+# Lookup indices in table
+decoded = lut[indices]
+```
+
+### 4. Dtype Encoding (Quantization)
+
+Standard encoding based on semantic type and mode. Includes quantization for storage optimization.
+
+**Types:**
+
+#### Bounded Scalar Encoding
+```python
+# Quantize to uint8: [min, max] → [0, 255]
+encoder.encode(
+    data=sharpness,
+    semantic_type=SemanticType.BOUNDED_SCALAR,
+    mode=EncodingMode.MEMORY,
+    bounds=(0.0, 31.0)
 )
+```
 
-# Result: [[255, 127, 0], [51, 204, 153]]
+**Formula:**
+```
+normalized = (value - min) / (max - min)
+encoded = round(normalized * 255)
 
-# Uint8 to float with normalization (0-255 → 0-1)
-restored = convert_array_dtype(
-    colors_uint8,
-    target_dtype=np.float32,
-    normalize=True,
-    input_range=(0.0, 1.0)
+# Decode:
+normalized = encoded / 255
+value = normalized * (max - min) + min
+```
+
+#### Log Scalar Encoding (POSITIVE_SCALAR)
+```python
+# For wide dynamic range (multiple orders of magnitude)
+encoder.encode(
+    data=radii,
+    semantic_type=SemanticType.POSITIVE_SCALAR,
+    mode=EncodingMode.MEMORY,
+    positive_scalar_encoding="log"
 )
+```
 
-# HDR colors (no normalization, preserve >1.0 values)
-hdr_colors = np.array([[2.5, 1.2, 0.8]])  # HDR values
-hdr_stored = convert_array_dtype(
-    hdr_colors,
-    target_dtype=np.float32,
-    normalize=False  # Keep HDR range
+**Formula:**
+```
+log_val = log1p(value)  # log(1 + value)
+max_log = log1p(max_value)
+normalized = log_val / max_log
+encoded = round(normalized * 255)
+
+# Decode:
+value = expm1(encoded / 255 * max_log)  # exp(x) - 1
+```
+
+#### Color Encoding (SDR)
+```python
+# Quantize float [0, 1] to uint8 [0, 255]
+encoder.encode(
+    data=colors,
+    semantic_type=SemanticType.COLOR,
+    mode=EncodingMode.MEMORY,
+    color_mode="sdr"
 )
 ```
 
-**Parameters:**
-- `array` - Input array to convert
-- `target_dtype` - Target NumPy dtype
-- `normalize` - Whether to normalize during conversion
-- `input_range` - Range for normalization (min, max)
-
-**Conversion Types:**
-- Float → uint8/uint16 (with/without normalization)
-- Uint8/uint16 → float (with/without denormalization)
-- Float16 ↔ float32 (precision change)
-
-#### `infer_optimal_dtype()`
-
-Analyze data and infer optimal dtype.
-
-**Purpose:**
-Automatic dtype selection based on data characteristics.
-
-**Usage Example:**
-```python
-from luxar.encoding import infer_optimal_dtype
-
-# Positions - need precision
-positions = np.random.randn(1000, 3)
-dtype = infer_optimal_dtype(positions, 'position')
-# Returns: np.float32 (positions need precision)
-
-# Colors in [0,1] - can use uint8
-colors = np.random.rand(1000, 3)
-dtype = infer_optimal_dtype(colors, 'color')
-# Returns: np.uint8 (normalized colors)
-
-# HDR colors - need float32
-hdr_colors = np.random.rand(1000, 3) * 3.0  # Values > 1.0
-dtype = infer_optimal_dtype(hdr_colors, 'color')
-# Returns: np.float32 (HDR preservation)
-
-# Small radii - can use uint8
-radii = np.random.rand(1000) * 0.5  # Range [0, 0.5]
-dtype = infer_optimal_dtype(radii, 'radius')
-# Returns: np.uint8 (small range, normalized)
+**Formula:**
 ```
+encoded = clip(value * 255, 0, 255).astype(uint8)
 
-**Parameters:**
-- `array` - Input array to analyze
-- `attribute_type` - Semantic type: "position", "color", "radius", "sharpness"
-
-**Returns:**
-Optimal NumPy dtype for the array
-
-#### `get_dtype_info()`
-
-Get detailed information about a dtype.
-
-**Purpose:**
-Inspect dtype properties for debugging and validation.
-
-**Usage Example:**
-```python
-from luxar.encoding import get_dtype_info
-
-info = get_dtype_info(np.float32)
-# Returns:
-# {
-#     'name': 'float32',
-#     'bytes': 4,
-#     'kind': 'f',
-#     'range': (-3.4e38, 3.4e38),
-#     'normalized': False
-# }
-
-info = get_dtype_info(np.uint8)
-# Returns:
-# {
-#     'name': 'uint8',
-#     'bytes': 1,
-#     'kind': 'u',
-#     'range': (0, 255),
-#     'normalized': True  # WebGL can normalize to [0,1]
-# }
-```
-
-#### `validate_dtype_string()`
-
-Validate dtype string for attribute type.
-
-**Purpose:**
-Ensure dtype is valid for given semantic type.
-
-**Usage Example:**
-```python
-from luxar.encoding import validate_dtype_string
-
-# Valid combinations
-validate_dtype_string('float32', 'position')  # True
-validate_dtype_string('uint8', 'color')       # True
-validate_dtype_string('float16', 'radius')    # True
-
-# Invalid combination (raises ValueError)
-try:
-    validate_dtype_string('int32', 'position')
-except ValueError as e:
-    print(e)  # "Invalid dtype 'int32' for position. Valid: float32, float16"
-```
-
-## Supported Data Types
-
-### Positions/Coordinates
-- **float32** - Full precision (default)
-- **float16** - Half precision (compact, but be careful with range)
-
-### Colors
-- **float32** - HDR colors, unlimited range
-- **uint8** - Standard LDR colors (0-255), normalized to [0,1] in viewer
-- **uint16** - High-precision LDR (0-65535), normalized to [0,1]
-
-### Scalars (Radii, Widths, Amplitudes)
-- **float32** - Full precision and range
-- **float16** - Half precision (good for moderate ranges)
-- **uint8** - Normalized to [0,1] or specific range
-
-### Sharpness
-- **float32** - Full precision
-- **float16** - Adequate for typical range
-- **uint8** - Mapped to [0, 15] range (sufficient for most cases)
-
-## Encoding Workflow
-
-### 1. Writer Configuration
-
-The LuxarZarrCompiler accepts a DataTypeConfig:
-
-```python
-from luxar import LuxarZarrCompiler
-from luxar.encoding import DataTypeConfig, DataTypeMode
-
-# Create compiler with encoding config
-config = DataTypeConfig(mode=DataTypeMode.MEMORY)
-with LuxarZarrCompiler('output.zarr', dtype_config=config) as compiler:
-    scene = compiler.create_scene()
-    # All data will use memory-optimized dtypes
-```
-
-### 2. Automatic Dtype Selection
-
-In AUTO mode, dtypes are selected per-array:
-
-```python
-config = DataTypeConfig(mode=DataTypeMode.AUTO)
-
-# Array 1: Standard colors [0,1]
-colors1 = np.random.rand(1000, 3)
-# → Stored as uint8 (memory efficient)
-
-# Array 2: HDR colors [0,3]
-colors2 = np.random.rand(1000, 3) * 3.0
-# → Stored as float32 (preserves HDR)
-
-# Array 3: Small radii [0,1]
-radii = np.random.rand(1000)
-# → Stored as uint8 (normalized)
-
-# Array 4: Large radii [0,100]
-large_radii = np.random.rand(1000) * 100
-# → Stored as float32 (range too large for uint8)
-```
-
-### 3. Manual Dtype Control
-
-For precise control, use CUSTOM mode:
-
-```python
-config = DataTypeConfig(
-    mode=DataTypeMode.CUSTOM,
-    position_dtype='float32',    # High precision positions
-    color_dtype='float32',       # HDR colors
-    radius_dtype='float16',      # Compact radii
-    sharpness_dtype='uint8'      # Very compact sharpness
-)
+# Decode:
+value = encoded / 255.0
 ```
 
 ## HDR Color Support
 
-The encoding system has special handling for HDR (High Dynamic Range) colors:
+The encoding system has special handling for HDR (High Dynamic Range) colors.
 
-### Detection
+### SDR vs HDR Determination
+
+**Float color arrays require explicit `color_mode` parameter:**
+
 ```python
-# Standard colors [0,1] → uint8
-colors = np.random.rand(1000, 3)
-dtype = infer_optimal_dtype(colors, 'color')
-# Returns: np.uint8
+# SDR colors (values in [0, 1])
+encoder.encode(
+    data=sdr_colors,
+    semantic_type=SemanticType.COLOR,
+    color_mode="sdr",  # Required for float colors
+    mode=EncodingMode.AUTO
+)
 
-# HDR colors [0,∞) → float32
-hdr_colors = np.array([[2.5, 1.5, 0.8], [0.2, 3.0, 0.5]])
-dtype = infer_optimal_dtype(hdr_colors, 'color')
-# Returns: np.float32 (preserves values > 1.0)
-```
-
-### Conversion
-```python
-# HDR-aware conversion
-hdr_data = np.array([[1.5, 2.0, 0.5]])
-
-# DO NOT normalize HDR colors
-float_colors = convert_array_dtype(
-    hdr_data,
-    target_dtype=np.float32,
-    normalize=False  # Critical: preserve HDR range
+# HDR colors (values > 1.0 allowed)
+encoder.encode(
+    data=hdr_colors,
+    semantic_type=SemanticType.COLOR,
+    color_mode="hdr",  # Required for float colors
+    mode=EncodingMode.AUTO
 )
 ```
+
+**Integer colors (uint8, uint16) are always treated as SDR** (already quantized).
+
+### Mode Behavior
+
+| Color Type | AUTO | PRECISION | MEMORY |
+|------------|------|-----------|--------|
+| SDR float | uint8 | float32 | uint8 |
+| HDR float | float32 | float32 | float16 |
+| Integer | Keep as-is | Keep as-is | Keep as-is |
+
+### Why Explicit color_mode?
+
+**IMPORTANT:** Auto-detection (values > 1 = HDR) was rejected because buggy SDR data would silently be treated as HDR instead of raising an error. Explicit `color_mode` prevents silent bugs.
+
+## Usage with Compiler
+
+The encoding system is used by the Luxar compiler:
+
+```python
+from luxar import LuxarZarrCompiler
+from luxar.encoding import EncodingMode
+
+# Create compiler with encoding mode
+with LuxarZarrCompiler(
+    "output.zarr",
+    encoding_mode=EncodingMode.MEMORY  # Use aggressive compression
+) as compiler:
+    scene = compiler.create_scene()
+    points = scene.create_points()
+    points.set_positions(positions)
+    points.set_colors(colors, color_mode="sdr")  # Explicit mode
+    points.set_radii(radii)
+```
+
+**Internal Flow:**
+1. Compiler creates `ArrayEncoder` instance
+2. For each attribute (positions, colors, radii):
+   - Compiler calls `encoder.encode()` with appropriate semantic type
+   - Encoder follows priority order (broadcast → ref → LUT → dtype)
+   - Data written to zarr with encoding metadata
+3. Decoder reads zarr and reconstructs original arrays
 
 ## Performance Considerations
 
 ### Memory Savings
 
-Different dtypes have different memory footprints:
+**Example: 1M points with colors**
 
-```python
-# Example: 1M points with colors
+```
+float32 colors: 1M × 3 × 4 bytes = 12 MB
+uint8 colors:   1M × 3 × 1 byte  = 3 MB   (75% savings!)
 
-# float32 colors: 1M × 3 × 4 bytes = 12 MB
-# uint8 colors:   1M × 3 × 1 byte  = 3 MB  (75% savings!)
-
-# float32 radii:  1M × 4 bytes = 4 MB
-# float16 radii:  1M × 2 bytes = 2 MB  (50% savings)
-# uint8 radii:    1M × 1 byte  = 1 MB  (75% savings)
+float32 radii:  1M × 4 bytes = 4 MB
+float16 radii:  1M × 2 bytes = 2 MB   (50% savings)
+uint8 radii:    1M × 1 byte  = 1 MB   (75% savings)
 ```
 
-### Precision Trade-offs
+### LUT Decode Performance
 
-```python
-# float32 range: ±3.4e38, precision: ~7 decimal digits
-# float16 range: ±65504, precision: ~3 decimal digits
-# uint8 range: 0-255, precision: 256 discrete values
-# uint16 range: 0-65535, precision: 65536 discrete values
+Benchmarks (JavaScript):
+
+| Elements | LUT Decode | Direct Copy | Slowdown |
+|----------|------------|-------------|----------|
+| 100K | 0.08 ms | 0.03 ms | 2.8x |
+| 1M | 0.7 ms | 0.2 ms | 3.5x |
+
+**Acceptable overhead** given the storage benefits. 256-entry LUT fits in L1 cache.
+
+### Quantization Error
+
+**Linear quantization (uint8):**
+```
+Max error: 1/512 ≈ 0.2% of range
 ```
 
-### Conversion Overhead
+**Log quantization (uint8):**
+```
+Relative error: ~0.4% per value
+```
 
-```python
-# Conversion has minimal overhead
-colors_float = np.random.rand(1000000, 3)
-
-# Fast conversion (vectorized NumPy operations)
-colors_uint8 = convert_array_dtype(colors_float, np.uint8, normalize=True)
-# Typical time: <10ms for 1M points
+**float16 vs float32:**
+```
+float16: ~3 significant decimal digits, ~0.1% relative error
+float32: ~7 significant decimal digits
 ```
 
 ## Best Practices
@@ -427,64 +546,104 @@ colors_uint8 = convert_array_dtype(colors_float, np.uint8, normalize=True)
 ### 1. Use AUTO Mode by Default
 ```python
 # Let the system analyze and optimize
-config = DataTypeConfig(mode=DataTypeMode.AUTO)
+encoder.encode(..., mode=EncodingMode.AUTO)
 ```
 
 ### 2. Use PRECISION Mode for Critical Data
 ```python
 # When accuracy is paramount
-config = DataTypeConfig(mode=DataTypeMode.PRECISION)
+encoder.encode(..., mode=EncodingMode.PRECISION)
 ```
 
 ### 3. Use MEMORY Mode for Large Datasets
 ```python
 # When dataset size is a concern
-config = DataTypeConfig(mode=DataTypeMode.MEMORY)
+encoder.encode(..., mode=EncodingMode.MEMORY)
 ```
 
-### 4. Preserve HDR Colors
+### 4. Always Specify Semantic Type
 ```python
-# Don't normalize HDR data
-hdr_colors = load_hdr_image()  # Values > 1.0
-config = DataTypeConfig(mode=DataTypeMode.PRECISION)  # Use float32
-```
-
-### 5. Validate Before Conversion
-```python
-# Check if conversion is safe
-from luxar.encoding import validate_dtype_string
-
-validate_dtype_string('uint8', 'color')  # OK
-validate_dtype_string('int32', 'color')  # Raises ValueError
-```
-
-### 6. Document Encoding Choices
-```python
-# When using CUSTOM mode, document why
-config = DataTypeConfig(
-    mode=DataTypeMode.CUSTOM,
-    position_dtype='float32',  # Precision needed for large coordinates
-    color_dtype='float32',     # HDR emission data
-    radius_dtype='float16',    # Range [0,1000], float16 sufficient
-    sharpness_dtype='uint8'    # Range [0,15], uint8 optimal
+# REQUIRED - no inference
+encoder.encode(
+    data=positions,
+    semantic_type=SemanticType.COORDINATE  # Explicit
 )
 ```
+
+### 5. Explicit color_mode for Float Colors
+```python
+# REQUIRED for float color arrays
+encoder.encode(
+    data=colors,
+    semantic_type=SemanticType.COLOR,
+    color_mode="sdr"  # or "hdr"
+)
+```
+
+### 6. Provide Bounds for BOUNDED_SCALAR
+```python
+# Explicit bounds preferred over auto-detection
+encoder.encode(
+    data=sharpness,
+    semantic_type=SemanticType.BOUNDED_SCALAR,
+    bounds=(0.0, 31.0)  # Known logical range
+)
+```
+
+### 7. Clear Registry Between Scenes
+```python
+encoder = ArrayEncoder()
+
+# Encode scene 1
+# ... encode arrays ...
+
+# Clear before scene 2
+encoder.reset()
+
+# Encode scene 2
+# ... encode arrays ...
+```
+
+## Error Handling
+
+The encoder raises errors for invalid input:
+
+| Condition | Behavior |
+|-----------|----------|
+| Missing semantic type | **ValueError** |
+| Semantic type constraint violation | **ValueError** (e.g., negative COLOR) |
+| NaN or Inf values | **ValueError** |
+| Float COLOR without color_mode | **ValueError** |
+| CUSTOM mode without custom_encoder | **ValueError** |
+| Data outside specified bounds | **ValueError** |
+
+**Philosophy:** Silent clamping or modification can hide bugs. The caller should validate before encoding.
+
+### Empty Arrays
+
+Empty arrays (shape `(0,)` or `(0, d)`) are valid input:
+- Pass through without encoding
+- No metadata written
+- Preserved dtype
 
 ## Dependencies
 
 **Internal:**
-- `luxar.typing_utils` - Type definitions and protocols
+- `luxar.typing_utils` - Type definitions
+- `luxar.validation` - Input validation
 
 **External:**
-- `numpy` - Array operations and dtypes
-- Standard library only otherwise
+- `numpy` - Array operations
+- `zarr` - Storage backend
+- `xxhash` - Fast hashing for deduplication
 
 ## Testing
 
 Tests are located in `encoding/tests/`:
-- `test_datatypes.py` - DataTypeConfig and mode tests
-- `test_conversion.py` - Array conversion tests
-- `test_inference.py` - Optimal dtype inference tests
+- `test_encoder.py` - Encoder tests
+- `test_decoder.py` - Decoder tests
+- `test_registry.py` - Registry and deduplication tests
+- `test_semantic_types.py` - Semantic type validation tests
 
 Run tests:
 ```bash
@@ -496,26 +655,25 @@ hatch run pytest packages/luxar/src/luxar/encoding/tests/
 ### WebGL Compatibility
 
 The encoding system considers WebGL capabilities:
-- Uint8/uint16 can be auto-normalized to [0,1] in shaders
-- Float32 is native WebGL type
-- Float16 support varies (emulated if needed)
+- uint8/uint16 can be auto-normalized to [0,1] in shaders
+- float32 is native WebGL type
+- float16 support varies (emulated if needed)
 
-### Normalization Strategy
+### Metadata Format
 
-For integer types, normalization maps:
-- Uint8: [0, 255] ↔ [0.0, 1.0]
-- Uint16: [0, 65535] ↔ [0.0, 1.0]
+All encoding metadata stored in zarr `.zattrs` under the `"encoding"` key:
 
-Custom ranges can be specified:
-```python
-# Map [0,255] to [0.5, 1.5]
-convert_array_dtype(
-    data,
-    np.float32,
-    normalize=True,
-    input_range=(0.5, 1.5)
-)
+```json
+{
+  "encoding": {
+    "name": "<encoder_name>",
+    "<param1>": "<value1>",
+    ...
+  }
+}
 ```
+
+The metadata format is **language-agnostic** and uses standard JSON types (integers, floats, strings, arrays). Any language that can read zarr and JSON can decode the arrays.
 
 ### Precision Loss Warning
 
@@ -526,8 +684,9 @@ When AUTO mode selects a lower-precision dtype, it ensures:
 
 ## See Also
 
+- [SPECIFICATIONS.md](SPECIFICATIONS.md) - Complete technical specification
 - [core/README.md](../core/README.md) - Core data structures
-- [io/README.md](../io/README.md) - I/O operations and writers
+- [io/README.md](../io/README.md) - I/O operations
 - [validation/README.md](../validation/README.md) - Validation utilities
 - [typing_utils/README.md](../typing_utils/README.md) - Type system
 - [Main README](../../../../README.md) - Project overview

@@ -1,0 +1,471 @@
+"""Tests for ArrayEncoder class.
+
+Tests cover all semantic types, encoding modes, and special encodings
+(broadcasting, LUT, array references).
+"""
+
+import tempfile
+
+import numpy as np
+import pytest
+import zarr
+
+from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
+
+
+class TestBroadcasting:
+    """Test broadcasting detection and encoding."""
+
+    def test_uniform_1d_float(self):
+        """Test broadcasting uniform 1D float array."""
+        data = np.full(1000, 2.5, dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            # Check stored data
+            arr = group["test"]
+            assert arr.shape == (1,)
+            assert arr[:][0] == 2.5
+
+            # Check metadata
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+
+    def test_uniform_2d_color(self):
+        """Test broadcasting uniform 2D color array."""
+        data = np.full((1000, 3), [1.0, 0.5, 0.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
+
+            # Check stored data
+            arr = group["test"]
+            assert arr.shape == (1, 3)
+
+            # Check metadata
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+
+    def test_non_uniform_not_broadcasted(self):
+        """Test non-uniform array is not broadcasted."""
+        data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            # Check not broadcasted
+            arr = group["test"]
+            assert arr.shape == (3,)
+            enc = arr.attrs["encoding"]
+            assert enc["name"] != "broadcasted"
+
+
+class TestLUTEncoding:
+    """Test LUT encoding for arrays with limited unique values."""
+
+    def test_lut_1d_few_unique(self):
+        """Test LUT encoding for 1D array with few unique values."""
+        # 1000 elements with only 5 unique values
+        data = np.random.choice([0.0, 0.25, 0.5, 0.75, 1.0], size=1000).astype(
+            np.float32
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            # Check LUT encoding used
+            arr = group["test"]
+            assert arr.dtype == np.uint8  # Indices
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "lut_uint8"
+            assert len(enc["lut"]) == 5
+            assert enc["original_dtype"] == "float32"
+
+    def test_lut_color_row_mode(self):
+        """Test LUT encoding for colors (row mode)."""
+        # 1000 points with only 3 unique colors
+        colors = np.random.choice([0, 1, 2], size=1000)  # Indices into color palette
+        palette = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8)
+        data = palette[colors]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR)
+
+            # Check LUT encoding used
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "lut_uint8"
+            assert enc["lut_mode"] == "row"
+            assert len(enc["lut"]) == 3  # 3 unique colors
+
+    def test_lut_skipped_in_precision_mode(self):
+        """Test LUT encoding is skipped in PRECISION mode."""
+        data = np.random.choice([0.0, 0.5, 1.0], size=1000).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data,
+                group,
+                "test",
+                SemanticType.POSITIVE_SCALAR,
+                mode=EncodingMode.PRECISION,
+            )
+
+            # Check LUT NOT used
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] != "lut_uint8"
+
+    def test_lut_not_used_for_uint8(self):
+        """Test LUT not used when data is already uint8."""
+        data = np.random.choice([0, 127, 255], size=1000).astype(np.uint8)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.INDEX)
+
+            # Check LUT NOT used (already optimal)
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] != "lut_uint8"
+
+
+class TestArrayReferences:
+    """Test array reference encoding for deduplication."""
+
+    def test_duplicate_detection(self):
+        """Test duplicate arrays are detected and referenced."""
+        data1 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        data2 = data1.copy()  # Identical content
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            # Encode first array
+            encoder.encode(data1, group, "array1", SemanticType.POSITIVE_SCALAR)
+
+            # Encode duplicate array
+            encoder.encode(data2, group, "array2", SemanticType.POSITIVE_SCALAR)
+
+            # Check array2 is a reference
+            arr2 = group["array2"]
+            assert arr2.shape == (0,)  # Empty array
+            enc = arr2.attrs["encoding"]
+            assert enc["name"] == "array_ref"
+            assert enc["target"] == "array1"
+            assert "hash" in enc
+
+    def test_different_arrays_not_referenced(self):
+        """Test different arrays are not referenced."""
+        data1 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        data2 = np.array([4.0, 5.0, 6.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            encoder.encode(data1, group, "array1", SemanticType.POSITIVE_SCALAR)
+            encoder.encode(data2, group, "array2", SemanticType.POSITIVE_SCALAR)
+
+            # Check array2 is NOT a reference
+            arr2 = group["array2"]
+            assert arr2.shape == (3,)
+            enc = arr2.attrs["encoding"]
+            assert enc["name"] != "array_ref"
+
+
+class TestCoordinateEncoding:
+    """Test COORDINATE semantic type encoding."""
+
+    def test_coordinate_auto_mode(self):
+        """Test coordinates use float32 in AUTO mode."""
+        data = np.random.randn(1000, 3).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COORDINATE)
+
+            arr = group["test"]
+            assert arr.dtype == np.float32
+
+    def test_coordinate_memory_mode(self):
+        """Test coordinates use float16 in MEMORY mode."""
+        data = np.random.randn(1000, 3).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.MEMORY
+            )
+
+            arr = group["test"]
+            assert arr.dtype == np.float16
+
+
+class TestColorEncoding:
+    """Test COLOR semantic type encoding."""
+
+    def test_color_sdr_auto_mode(self):
+        """Test SDR colors quantized to uint8 in AUTO mode."""
+        data = np.random.rand(1000, 3).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "rgb_uint8"
+
+    def test_color_hdr_auto_mode(self):
+        """Test HDR colors use float32 in AUTO mode."""
+        data = np.random.rand(1000, 3).astype(np.float32) * 2.0  # HDR range
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="hdr")
+
+            arr = group["test"]
+            assert arr.dtype == np.float32
+
+    def test_color_missing_color_mode_error(self):
+        """Test float colors without color_mode raise error."""
+        data = np.random.rand(1000, 3).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="color_mode"):
+                encoder.encode(data, group, "test", SemanticType.COLOR)
+
+
+class TestBoundedScalarEncoding:
+    """Test BOUNDED_SCALAR semantic type encoding."""
+
+    def test_bounded_scalar_auto_mode(self):
+        """Test bounded scalar quantized to uint8 in AUTO mode."""
+        data = np.random.rand(1000).astype(np.float32) * 31  # [0, 31] range
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint8"
+            assert "min" in enc
+            assert "max" in enc
+
+    def test_bounded_scalar_explicit_bounds(self):
+        """Test bounded scalar with explicit bounds."""
+        data = np.random.rand(1000).astype(np.float32) * 31
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data,
+                group,
+                "test",
+                SemanticType.BOUNDED_SCALAR,
+                bounds=(0.0, 31.0),
+            )
+
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["min"] == 0.0
+            assert enc["max"] == 31.0
+
+
+class TestPositiveScalarEncoding:
+    """Test POSITIVE_SCALAR semantic type encoding."""
+
+    def test_positive_scalar_small_range(self):
+        """Test positive scalar with small range uses uint8."""
+        data = np.random.rand(1000).astype(np.float32) * 0.5  # [0, 0.5]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+
+    def test_positive_scalar_log_encoding(self):
+        """Test positive scalar with log encoding."""
+        data = np.random.rand(1000).astype(np.float32) * 100  # Wide range
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data,
+                group,
+                "test",
+                SemanticType.POSITIVE_SCALAR,
+                positive_scalar_encoding="log",
+            )
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "log_scalar_uint8"
+            assert "max_log" in enc
+
+
+class TestIndexEncoding:
+    """Test INDEX semantic type encoding."""
+
+    def test_index_selects_smallest_uint(self):
+        """Test index selects smallest uint dtype."""
+        # Test uint8 range
+        data = np.array([0, 100, 255], dtype=np.int32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.INDEX)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+
+        # Test uint16 range
+        data = np.array([0, 1000, 60000], dtype=np.int32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.INDEX)
+
+            arr = group["test"]
+            assert arr.dtype == np.uint16
+
+
+class TestInputValidation:
+    """Test input validation and error handling."""
+
+    def test_nan_values_rejected(self):
+        """Test NaN values raise error."""
+        data = np.array([1.0, np.nan, 3.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="NaN"):
+                encoder.encode(data, group, "test", SemanticType.COORDINATE)
+
+    def test_inf_values_rejected(self):
+        """Test Inf values raise error."""
+        data = np.array([1.0, np.inf, 3.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="Inf"):
+                encoder.encode(data, group, "test", SemanticType.COORDINATE)
+
+    def test_negative_color_rejected(self):
+        """Test negative color values raise error."""
+        data = np.array([[1.0, -0.5, 0.0]], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="non-negative"):
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="sdr"
+                )
+
+    def test_negative_positive_scalar_rejected(self):
+        """Test negative positive scalar values raise error."""
+        data = np.array([1.0, -0.5, 2.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="non-negative"):
+                encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+    def test_empty_array_passthrough(self):
+        """Test empty arrays are passed through."""
+        data = np.array([], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COORDINATE)
+
+            arr = group["test"]
+            assert arr.shape == (0,)
+            assert arr.attrs["encoding"]["name"] == "none"
+
+
+class TestCustomMode:
+    """Test CUSTOM encoding mode."""
+
+    def test_custom_mode_requires_encoder(self):
+        """Test CUSTOM mode without custom_encoder raises error."""
+        data = np.random.rand(100).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+
+            with pytest.raises(ValueError, match="custom_encoder"):
+                encoder.encode(
+                    data,
+                    group,
+                    "test",
+                    SemanticType.POSITIVE_SCALAR,
+                    mode=EncodingMode.CUSTOM,
+                )
+
+    def test_custom_mode_float16(self):
+        """Test CUSTOM mode with float16 encoder."""
+        data = np.random.rand(100).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                data,
+                group,
+                "test",
+                SemanticType.POSITIVE_SCALAR,
+                mode=EncodingMode.CUSTOM,
+                custom_encoder="float16",
+            )
+
+            arr = group["test"]
+            assert arr.dtype == np.float16

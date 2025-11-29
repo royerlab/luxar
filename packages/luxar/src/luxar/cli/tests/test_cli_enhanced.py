@@ -330,7 +330,7 @@ class TestEnhancedServeCommand:
         mock_check.assert_called()
 
     @patch("luxar.cli.main.uvicorn.run")
-    @patch("luxar.cli.utils.open_browser")
+    @patch("luxar.cli.main.open_browser_func")
     def test_serve_with_open(
         self, mock_browser, mock_uvicorn, runner, sample_scene
     ) -> None:

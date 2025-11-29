@@ -27,6 +27,7 @@ from ..validation.types import (
 )
 from .aliases import (
     ArrayLike,
+    CategoryList,
     ChunkSpec,
     ColorArray,
     ColorRGB,
@@ -37,6 +38,8 @@ from .aliases import (
     DimensionRange,
     Float32Array,
     GroupAttrs,
+    GSplatsMetadata,
+    LinesMetadata,
     MaxShape,
     NodeAttributes,
     NodePath,
@@ -54,6 +57,7 @@ from .aliases import (
     ZarrAttrs,
 )
 from .constants import (
+    CATEGORICAL_STEP,
     DEFAULT_BLENDING_MODE,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_COMPRESSOR,
@@ -62,12 +66,22 @@ from .constants import (
     DEFAULT_ZARR_VERSION,
     GAMMA_MAX,
     GAMMA_MIN,
+    MAX_CHUNK_BYTES,
     MAX_POINT_RADIUS,
+    MIN_CATEGORIES,
+    MIN_CHUNK_BYTES,
     MIN_POINT_RADIUS,
+    NODE_TYPE_GSPLATS,
+    NODE_TYPE_LINES,
     OPACITY_MAX,
     OPACITY_MIN,
+    SHARPNESS_MAX,
+    SHARPNESS_MIN,
+    TARGET_CHUNK_BYTES,
 )
 from .enums import BlendingMode, Defaults, NodeType, PhysicalUnit, RenderingLimits
+
+# Encoding system now in luxar.encoding package
 from .protocols import (
     CompressorProtocol,
     NodeProtocol,
@@ -81,6 +95,7 @@ from .protocols import (
 __all__ = [
     # From aliases
     "ArrayLike",
+    "CategoryList",
     "ChunkSpec",
     "ColorArray",
     "ColorRGB",
@@ -91,6 +106,8 @@ __all__ = [
     "DimensionRange",
     "Float32Array",
     "GroupAttrs",
+    "GSplatsMetadata",
+    "LinesMetadata",
     "MaxShape",
     "NodeAttributes",
     "NodePath",
@@ -132,6 +149,7 @@ __all__ = [
     "NodeType",
     "PhysicalUnit",
     # From constants
+    "CATEGORICAL_STEP",
     "DEFAULT_BLENDING_MODE",
     "DEFAULT_CHUNK_SIZE",
     "DEFAULT_COMPRESSOR",
@@ -140,10 +158,18 @@ __all__ = [
     "DEFAULT_ZARR_VERSION",
     "GAMMA_MAX",
     "GAMMA_MIN",
+    "MAX_CHUNK_BYTES",
     "MAX_POINT_RADIUS",
+    "MIN_CATEGORIES",
+    "MIN_CHUNK_BYTES",
     "MIN_POINT_RADIUS",
+    "NODE_TYPE_GSPLATS",
+    "NODE_TYPE_LINES",
     "OPACITY_MAX",
     "OPACITY_MIN",
+    "SHARPNESS_MAX",
+    "SHARPNESS_MIN",
+    "TARGET_CHUNK_BYTES",
     # From config
     "Defaults",
     "RenderingLimits",
