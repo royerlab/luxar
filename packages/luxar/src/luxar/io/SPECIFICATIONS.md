@@ -698,32 +698,37 @@ scene.get_lines(name: str) -> Dict[str, Any]
 {
     # Data arrays (decoded via ArrayDecoder)
     'positions': ndarray,      # (N, D) float32
-    'colors': ndarray,         # (N, 3) float32 (if present)
-    'radii': ndarray,          # (N,) float32 (if present)
-    'sharpness': ndarray,      # (N,) float32 (if present)
+    'colors': ndarray,         # (N, 3) float32 (if present, else None)
+    'radii': ndarray,          # (N,) float32 (if present, else None)
+    'sharpness': ndarray,      # (N,) float32 (if present, else None)
 
-    # Spatial ordering
-    'chunk_bounds': ndarray,   # (num_chunks, D, 2) float32 (if present)
+    # Spatial ordering (from spatial_index sub-group, if present)
+    'spatial_index': {         # None if no spatial_index group
+        'ordering': str,         # 'morton' or 'hilbert'
+        'slice_dims': List[int], # Discrete dimension indices
+        'morton_dims': List[int],  # Spatial dimension indices
+        'morton_min': List[float], # Min bounds for Morton dims
+        'morton_max': List[float], # Max bounds for Morton dims
+        'morton_bits_per_dim': int,  # Bits per dimension
+        'chunk_size': int,       # Elements per chunk
+        'chunk_bounds': ndarray, # (num_chunks, D, 2) float32
+        'num_chunks': int,
+        'build_version': str,    # Index format version
+    }
 
-    # Metadata
+    # Node metadata (from points group .zattrs)
     'metadata': {
+        'type': 'points',
         'n_points': int,
-        'ordering': str,         # 'morton', 'hilbert', or 'none'
-        'slice_dims': List[int], # Discrete dimension indices (if ordered)
-        'morton_dims': List[int],  # Spatial dimension indices (if ordered)
-        'morton_min': List[float], # Min bounds for Morton dims (if ordered)
-        'morton_max': List[float], # Max bounds for Morton dims (if ordered)
-        'morton_bits_per_dim': int,  # Bits per dimension (if ordered)
-        'chunk_size': int,       # Elements per chunk (if ordered)
-        'has_colors': bool,
-        'has_radii': bool,
-        'has_sharpness': bool,
-        'max_radius': float,     # (if radii present)
-        'opacity': float,
-        'gamma': float,
-        'blending_mode': str,
-        'transform': ndarray,    # (4, 4) if present
+        'max_radius': float,     # (if radii present, else not in attrs)
+        'opacity': float,        # (default 1.0)
+        'gamma': float,          # (default 1.0)
+        'blending_mode': str,    # (default 'additive')
+        'transform': ndarray,    # (4, 4) if present, else None
+        'broadcast_dims': List[str],  # (if present, else not in attrs)
         # ... any custom attrs
+        # Note: has_colors, has_radii, has_sharpness are NOT stored in attrs
+        # Reader detects presence by checking if arrays exist
     }
 }
 ```
@@ -735,17 +740,18 @@ scene.get_lines(name: str) -> Dict[str, Any]
     'centers': ndarray,           # (N, D) float32
     'amplitudes': ndarray,        # (N,) float32
     'cholesky_factors': ndarray,  # (N, k) float32
-    'colors': ndarray,            # (N, 3) float32 (if present)
-    'sharpness': ndarray,         # (N,) float32 (if present)
+    'colors': ndarray,            # (N, 3) float32 (if present, else None)
+    'sharpness': ndarray,         # (N,) float32 (if present, else None)
 
-    # Spatial ordering
-    'chunk_bounds': ndarray,      # (num_chunks, D, 2) (if present)
+    # Spatial ordering (NOTE: stored DIRECTLY in gsplats group, not sub-group like Points)
+    'chunk_bounds': ndarray,      # (num_chunks, D, 2) (if ordered, else None)
 
-    # Metadata
+    # Metadata (from gsplats group .zattrs, includes ordering metadata)
     'metadata': {
+        'type': 'gsplats',
         'n_splats': int,
         'ndim': int,
-        'ordering': str,
+        'ordering': str,          # 'morton', 'hilbert', or 'none'
         'morton_min': List[float],  # (if ordered)
         'morton_max': List[float],  # (if ordered)
         'morton_bits_per_dim': int,  # (if ordered)
@@ -754,11 +760,13 @@ scene.get_lines(name: str) -> Dict[str, Any]
         'has_sharpness': bool,
         'amplitude_range': Dict[str, float],  # min/max
         'center_bounds': Dict[str, List[float]],  # min/max
-        'transform': ndarray,  # (4, 4) if present
+        'transform': ndarray,  # (4, 4) if present, else None
         # ... custom attrs
     }
 }
 ```
+
+**Note**: GSplats store ordering metadata directly in group attrs (not in spatial_index sub-group like Points). This is due to implementation history - Points use spatial_index for backward compatibility with viewer.
 
 **get_lines() returns**:
 ```python
@@ -807,13 +815,15 @@ for node in scene.nodes:
 # Load points data
 points = scene.get_points('my_cloud')
 positions = points['positions']  # Already decoded to float32
-colors = points['colors']        # Decoded
+colors = points['colors']        # Decoded (or None if not present)
 metadata = points['metadata']
 
 # Check spatial ordering
-if metadata['ordering'] != 'none':
-    print(f"Ordered with {metadata['ordering']}")
-    print(f"Chunks: {len(points['chunk_bounds'])}")
+if points['spatial_index'] is not None:
+    si = points['spatial_index']
+    print(f"Ordered with {si['ordering']}")
+    print(f"Chunks: {si['num_chunks']}")
+    print(f"Chunk bounds shape: {si['chunk_bounds'].shape}")
 ```
 
 **Round-trip test**:
@@ -830,8 +840,9 @@ data = scene_r.get_points('test')
 # Verify
 assert np.allclose(data['positions'], positions)
 assert np.allclose(data['colors'], colors)
-assert data['metadata']['ordering'] in ('morton', 'hilbert')
-assert 'chunk_bounds' in data
+assert data['spatial_index'] is not None
+assert data['spatial_index']['ordering'] in ('morton', 'hilbert')
+assert data['spatial_index']['chunk_bounds'].shape[0] > 0
 ```
 
 ### Implementation Notes
