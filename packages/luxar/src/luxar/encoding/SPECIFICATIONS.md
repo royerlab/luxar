@@ -1,7 +1,7 @@
 # luxar.encoding - Technical Specification
 
-**Version**: 0.5
-**Last Updated**: 2025-11-27
+**Version**: 0.5.1
+**Last Updated**: 2025-11-28
 
 **Related Specifications**:
 - `luxar.core` - Data structures that use encoding (see `core/SPECIFICATIONS.md`)
@@ -71,10 +71,13 @@ Arrays have inherent semantics that constrain valid encodings. The package recog
 - Can be negative
 - Precision directly affects spatial accuracy
 - Range varies widely (sub-pixel to astronomical scales)
+- **NOT broadcastable** - positions must always be stored in full (broadcasting is skipped)
 
 **Valid encodings**: float32 (default), float16 (with precision loss)
 
 **Constraints**: None (any real value)
+
+**Broadcasting**: Explicitly disabled for COORDINATE type. Even if all positions are identical, they are stored in full. This ensures spatial ordering and chunking work correctly.
 
 ### 4.2 Color
 
@@ -1201,6 +1204,12 @@ These are not in scope for v1.0 but the architecture should not preclude them.
 ---
 
 ## Changelog
+
+- **v0.5.1** (2025-11-28): COORDINATE broadcasting fix
+  - **BREAKING**: COORDINATE type now explicitly blocks broadcasting
+  - Even if all positions are identical, they are stored in full
+  - Updated Section 4.1 to document this restriction
+  - Ensures compatibility with spatial ordering and chunking
 
 - **v0.5** (2025-11-27): Sharpness bounds finalized
   - Updated sharpness bounds from [0, 32] to [0, 31] (final unified value)

@@ -104,8 +104,8 @@ class ArrayEncoder:
         # Get path for registry (relative to zarr root)
         array_path = f"{zarr_group.path}/{name}" if zarr_group.path else name
 
-        # Priority 1: Broadcasting
-        if self._is_uniform(data):
+        # Priority 1: Broadcasting (skip for COORDINATE - positions must not be broadcasted)
+        if self._is_uniform(data) and semantic_type != SemanticType.COORDINATE:
             self._encode_broadcasted(zarr_group, name, data, chunks, compressor)
             return
 
