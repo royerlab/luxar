@@ -148,9 +148,9 @@ class ZarrWriterProtocol(Protocol):
         maxshape: MaxShape = None,
         chunks: ChunkSpec = True,
     ) -> "zarr.Array":
-        """Create a resizable dataset for streaming writes.
+        """Create a resizable dataset.
 
-        This enables appending data in batches without loading existing data.
+        Part of writer protocol for potential future extensions.
 
         Args:
             path: Path for the dataset within the Zarr store
