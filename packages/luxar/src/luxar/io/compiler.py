@@ -240,7 +240,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         path: NodePath,
         positions: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ] = None,
         radii: Optional[Union[NDArray[np.float32], float]] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
@@ -281,36 +283,36 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
 
-        # 2. Convert scalar conveniences to arrays (auto-broadcast)
+        # 2. Log scalar inputs (no expansion - passed to encoder)
         if radii is not None and isinstance(radii, (int, float)):
-            radii = np.full(n_points, float(radii), dtype=np.float32)
-            aprint(f"  → Uniform radius {radii[0]:.3f} for all points")
-
+            aprint(f"  → Uniform radius {radii:.3f} for all points")
         if sharpness is not None and isinstance(sharpness, (int, float)):
-            sharpness = np.full(n_points, float(sharpness), dtype=np.float32)
-            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all points")
+            aprint(f"  → Uniform sharpness {sharpness:.1f} for all points")
+        if colors is not None and isinstance(colors, (list, tuple)):
+            aprint(f"  → Uniform color RGB{list(colors)} for all points")
 
-        if colors is not None and not isinstance(colors, np.ndarray):
-            # Handle list/tuple RGB → uniform color for all points
-            if isinstance(colors, (list, tuple)) and len(colors) == 3:
-                colors = np.full((n_points, 3), colors, dtype=np.float32)
-                aprint(f"  → Uniform color RGB{list(colors[0])} for all points")
+        # 3. Apply spatial ordering if enabled (reorders arrays only)
+        # Note: Spatial ordering requires radii to compute chunk_bounds
+        # If radii is scalar, create temp array just for ordering
+        radii_for_ordering = radii
+        if radii is not None and isinstance(radii, (int, float)):
+            radii_for_ordering = np.full(n_points, float(radii), dtype=np.float32)
 
-        # 3. Apply spatial ordering if enabled (reorders arrays)
         ordering_data = self._build_spatial_ordering_if_enabled(
-            positions, n_points, n_dims, radii
+            positions, n_points, n_dims, radii_for_ordering
         )
 
-        # Apply spatial reordering if ordering was applied
+        # Apply spatial reordering to arrays only (skip scalars)
         if ordering_data is not None:
             positions = ordering_data["sorted_positions"]
-            # Apply sort order to other arrays
-            if colors is not None:
+            # Apply sort order only to array attributes
+            if colors is not None and isinstance(colors, np.ndarray):
                 colors = colors[ordering_data["sort_order"]]
-            if radii is not None:
+            if radii is not None and isinstance(radii, np.ndarray):
                 radii = radii[ordering_data["sort_order"]]
-            if sharpness is not None:
+            if sharpness is not None and isinstance(sharpness, np.ndarray):
                 sharpness = sharpness[ordering_data["sort_order"]]
+            # Scalars stay as-is (they're uniform, order doesn't matter)
 
         # 3. Write positions dataset
         self._write_positions_dataset(group, positions, ordering_data)
@@ -327,19 +329,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # 5. Write optional datasets
         if colors is not None:
-            validate_colors_for_writing(colors, n_points)
+            # Validate arrays only (scalars validated by encoder)
+            if isinstance(colors, np.ndarray):
+                validate_colors_for_writing(colors, n_points)
             self._write_colors_dataset(group, colors, ordering_data)
             metadata["has_colors"] = True
 
         if radii is not None:
-            validate_radii_for_writing(radii, n_points)
+            # Validate arrays only (scalars validated by encoder)
+            if isinstance(radii, np.ndarray):
+                validate_radii_for_writing(radii, n_points)
             max_radius = self._write_radii_dataset(group, radii, ordering_data)
             metadata["max_radius"] = max_radius
             metadata["has_radii"] = True
             group.attrs["max_radius"] = max_radius
 
         if sharpness is not None:
-            validate_sharpness_for_writing(sharpness, n_points)
+            # Validate arrays only (scalars validated by encoder)
+            if isinstance(sharpness, np.ndarray):
+                validate_sharpness_for_writing(sharpness, n_points)
             self._write_sharpness_dataset(group, sharpness, ordering_data)
             metadata["has_sharpness"] = True
 
@@ -378,7 +386,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         vertices: NDArray[np.float32],
         widths: Union[NDArray[np.float32], float],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
@@ -418,19 +428,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
 
-        # Convert scalar conveniences to arrays
+        # Scalars are now passed directly to encoder - no expansion needed
+        # Just log what we're receiving
         if isinstance(widths, (int, float)):
-            widths = np.full(n_vertices, float(widths), dtype=np.float32)
-            aprint(f"  → Uniform width {widths[0]:.3f} for all vertices")
-
+            aprint(f"  → Uniform width {widths:.3f} for all vertices")
         if sharpness is not None and isinstance(sharpness, (int, float)):
-            sharpness = np.full(n_vertices, float(sharpness), dtype=np.float32)
-            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all vertices")
-
-        if colors is not None and not isinstance(colors, np.ndarray):
-            if isinstance(colors, (list, tuple)) and len(colors) == 3:
-                colors = np.full((n_vertices, 3), colors, dtype=np.float32)
-                aprint(f"  → Uniform color RGB{list(colors[0])} for all vertices")
+            aprint(f"  → Uniform sharpness {sharpness:.1f} for all vertices")
+        if colors is not None and isinstance(colors, (list, tuple)):
+            aprint(f"  → Uniform color RGB{list(colors)} for all vertices")
 
         # Validate line type
         valid_line_types = ("segments", "polyline", "loop", "indexed")
@@ -459,15 +464,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
 
         # Validate widths (must be positive like radii)
-        if widths.shape[0] != n_vertices:
-            raise ValueError(
-                f"Widths shape {widths.shape} doesn't match n_vertices {n_vertices}"
-            )
-        if np.any(widths <= 0):
-            min_val = float(np.min(widths))
-            raise ValueError(
-                f"Widths must be positive (> 0). Found minimum value: {min_val:.3f}"
-            )
+        # Skip array-specific validation for scalars (handled by encoder)
+        if isinstance(widths, np.ndarray):
+            if widths.shape[0] != n_vertices:
+                raise ValueError(
+                    f"Widths shape {widths.shape} doesn't match n_vertices {n_vertices}"
+                )
+            if np.any(widths <= 0):
+                min_val = float(np.min(widths))
+                raise ValueError(
+                    f"Widths must be positive (> 0). Found minimum value: {min_val:.3f}"
+                )
+        elif isinstance(widths, (int, float)) and widths <= 0:
+            raise ValueError(f"Width must be positive (> 0). Got {widths}")
 
         # Calculate n_segments
         if line_type == "segments":
@@ -492,14 +501,23 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Write widths using ArrayEncoder (POSITIVE_SCALAR)
-        max_width = float(np.max(widths))
-        chunks_1d = _calculate_intelligent_chunks((n_vertices,))
+        # Handle both scalar and array inputs
+        if isinstance(widths, (int, float)):
+            max_width = float(widths)
+            n_elems = n_vertices
+            chunks_1d = None  # Scalar doesn't need chunks
+        else:
+            max_width = float(np.max(widths))
+            n_elems = None  # Array already has correct size
+            chunks_1d = _calculate_intelligent_chunks((n_vertices,))
+
         self._encoder.encode(
             data=widths,
             zarr_group=group,
             name="widths",
             semantic_type=SemanticType.POSITIVE_SCALAR,
             mode=self._encoding_mode,
+            n_elements=n_elems,
             chunks=chunks_1d,
             compressor=self.compressor,
         )
@@ -517,13 +535,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Write optional datasets
         if colors is not None:
-            validate_colors_for_writing(colors, n_vertices)
-            chunks_colors = _calculate_intelligent_chunks(colors.shape)
+            # Handle both scalar/tuple and array inputs
+            if isinstance(colors, (tuple, list)):
+                # Scalar color input - detect HDR vs SDR
+                max_val = max(colors)
+                color_mode = "hdr" if max_val > 1.0 else "sdr"
+                n_elems_color = n_vertices
+                chunks_colors = None
+            elif isinstance(colors, np.ndarray):
+                validate_colors_for_writing(colors, n_vertices)
+                chunks_colors = _calculate_intelligent_chunks(colors.shape)
+                n_elems_color = None
 
-            # Detect color_mode
-            color_mode = None
-            if np.issubdtype(colors.dtype, np.floating):
-                color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+                # Detect color_mode for arrays
+                color_mode = None
+                if np.issubdtype(colors.dtype, np.floating):
+                    color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+            else:
+                raise ValueError(f"Unsupported colors type: {type(colors)}")
 
             self._encoder.encode(
                 data=colors,
@@ -532,6 +561,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 semantic_type=SemanticType.COLOR,
                 mode=self._encoding_mode,
                 color_mode=color_mode,
+                n_elements=n_elems_color,
                 chunks=chunks_colors,
                 compressor=self.compressor,
             )
@@ -540,7 +570,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if sharpness is not None:
             from ..validation.base import validate_sharpness_for_writing
 
-            validate_sharpness_for_writing(sharpness, n_vertices)
+            # Handle both scalar and array inputs
+            if isinstance(sharpness, (int, float)):
+                n_elems_sharp = n_vertices
+                chunks_sharp = None
+            else:
+                validate_sharpness_for_writing(sharpness, n_vertices)
+                n_elems_sharp = None
+                chunks_sharp = _calculate_intelligent_chunks((n_vertices,))
+
             self._encoder.encode(
                 data=sharpness,
                 zarr_group=group,
@@ -548,7 +586,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 semantic_type=SemanticType.BOUNDED_SCALAR,
                 mode=self._encoding_mode,
                 bounds=(0.0, SHARPNESS_MAX),
-                chunks=chunks_1d,
+                n_elements=n_elems_sharp,
+                chunks=chunks_sharp,
                 compressor=self.compressor,
             )
             metadata["has_sharpness"] = True
@@ -591,7 +630,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         centers: NDArray[np.float32],
         amplitudes: Union[NDArray[np.float32], float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ] = None,
         sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
@@ -626,19 +667,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
 
-        # Convert scalar conveniences to arrays
+        # Log scalar inputs (no expansion - passed to encoder)
         if isinstance(amplitudes, (int, float)):
-            amplitudes = np.full(n_splats, float(amplitudes), dtype=np.float32)
-            aprint(f"  → Uniform amplitude {amplitudes[0]:.3f} for all splats")
-
+            aprint(f"  → Uniform amplitude {amplitudes:.3f} for all splats")
         if sharpness is not None and isinstance(sharpness, (int, float)):
-            sharpness = np.full(n_splats, float(sharpness), dtype=np.float32)
-            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all splats")
-
-        if colors is not None and not isinstance(colors, np.ndarray):
-            if isinstance(colors, (list, tuple)) and len(colors) == 3:
-                colors = np.full((n_splats, 3), colors, dtype=np.float32)
-                aprint(f"  → Uniform color RGB{list(colors[0])} for all splats")
+            aprint(f"  → Uniform sharpness {sharpness:.1f} for all splats")
+        if colors is not None and isinstance(colors, (list, tuple)):
+            aprint(f"  → Uniform color RGB{list(colors)} for all splats")
 
         # Validate cholesky_factors shape FIRST (before spatial ordering)
         expected_k = n_dims * (n_dims + 1) // 2
@@ -668,13 +703,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 centers, method=self.ordering_method
             )
 
-            # Reorder all arrays
+            # Reorder arrays only (skip scalars)
             centers = centers[sort_indices]
-            amplitudes = amplitudes[sort_indices]
             cholesky_factors = cholesky_factors[sort_indices]
-            if colors is not None:
+            if isinstance(amplitudes, np.ndarray):
+                amplitudes = amplitudes[sort_indices]
+            # Scalars stay as-is (uniform, order doesn't matter)
+            if colors is not None and isinstance(colors, np.ndarray):
                 colors = colors[sort_indices]
-            if sharpness is not None:
+            if sharpness is not None and isinstance(sharpness, np.ndarray):
                 sharpness = sharpness[sort_indices]
 
             # Compute chunk size
@@ -700,15 +737,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
 
         # Validate amplitudes (must be non-negative: >= 0, zero is valid but invisible)
-        if amplitudes.shape[0] != n_splats:
-            raise ValueError(
-                f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
-            )
-        if np.any(amplitudes < 0):
-            min_val = float(np.min(amplitudes))
-            raise ValueError(
-                f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
-            )
+        if isinstance(amplitudes, np.ndarray):
+            if amplitudes.shape[0] != n_splats:
+                raise ValueError(
+                    f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
+                )
+            if np.any(amplitudes < 0):
+                min_val = float(np.min(amplitudes))
+                raise ValueError(
+                    f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
+                )
+        elif isinstance(amplitudes, (int, float)) and amplitudes < 0:
+            raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
 
         # Write centers using ArrayEncoder (COORDINATE)
         chunks_centers = _calculate_intelligent_chunks(centers.shape)
@@ -723,18 +763,26 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Write amplitudes using ArrayEncoder (POSITIVE_SCALAR, can be zero)
-        amplitude_min, amplitude_max = (
-            float(np.min(amplitudes)),
-            float(np.max(amplitudes)),
-        )
-        chunks_1d = _calculate_intelligent_chunks((n_splats,))
+        if isinstance(amplitudes, (int, float)):
+            amplitude_min = amplitude_max = float(amplitudes)
+            n_elems_amp = n_splats
+            chunks_amp = None
+        else:
+            amplitude_min, amplitude_max = (
+                float(np.min(amplitudes)),
+                float(np.max(amplitudes)),
+            )
+            n_elems_amp = None
+            chunks_amp = _calculate_intelligent_chunks((n_splats,))
+
         self._encoder.encode(
             data=amplitudes,
             zarr_group=group,
             name="amplitudes",
             semantic_type=SemanticType.POSITIVE_SCALAR,
             mode=self._encoding_mode,
-            chunks=chunks_1d,
+            n_elements=n_elems_amp,
+            chunks=chunks_amp,
             compressor=self.compressor,
         )
 
@@ -778,13 +826,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Write optional datasets
         if colors is not None:
-            validate_colors_for_writing(colors, n_splats)
-            chunks_colors = _calculate_intelligent_chunks(colors.shape)
+            # Handle scalar/tuple vs array
+            if isinstance(colors, (tuple, list)):
+                # Detect HDR vs SDR from values
+                max_val = max(colors)
+                color_mode = "hdr" if max_val > 1.0 else "sdr"
+                n_elems_color = n_splats
+                chunks_colors = None
+            elif isinstance(colors, np.ndarray):
+                validate_colors_for_writing(colors, n_splats)
+                chunks_colors = _calculate_intelligent_chunks(colors.shape)
+                n_elems_color = None
 
-            # Detect color_mode
-            color_mode = None
-            if np.issubdtype(colors.dtype, np.floating):
-                color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+                # Detect color_mode
+                color_mode = None
+                if np.issubdtype(colors.dtype, np.floating):
+                    color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+            else:
+                raise ValueError(f"Unsupported colors type: {type(colors)}")
 
             self._encoder.encode(
                 data=colors,
@@ -793,6 +852,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 semantic_type=SemanticType.COLOR,
                 mode=self._encoding_mode,
                 color_mode=color_mode,
+                n_elements=n_elems_color,
                 chunks=chunks_colors,
                 compressor=self.compressor,
             )
@@ -801,7 +861,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if sharpness is not None:
             from ..validation.base import validate_sharpness_for_writing
 
-            validate_sharpness_for_writing(sharpness, n_splats)
+            # Handle scalar vs array
+            if isinstance(sharpness, (int, float)):
+                n_elems_sharp = n_splats
+                chunks_sharp = None
+            else:
+                validate_sharpness_for_writing(sharpness, n_splats)
+                n_elems_sharp = None
+                chunks_sharp = _calculate_intelligent_chunks((n_splats,))
+
             self._encoder.encode(
                 data=sharpness,
                 zarr_group=group,
@@ -809,7 +877,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 semantic_type=SemanticType.BOUNDED_SCALAR,
                 mode=self._encoding_mode,
                 bounds=(0.0, SHARPNESS_MAX),
-                chunks=chunks_1d,
+                n_elements=n_elems_sharp,
+                chunks=chunks_sharp,
                 compressor=self.compressor,
             )
             metadata["has_sharpness"] = True
@@ -1019,28 +1088,38 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _write_colors_dataset(
         self,
         group: zarr.Group,
-        colors: NDArray[np.float32],
+        colors: Union[NDArray[np.float32], tuple, list],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
         """Write colors dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
-            colors: Colors array
+            colors: Colors array or tuple/list
             spatial_index_data: Optional spatial index for chunk optimization
         """
-        # Calculate chunks
-        color_chunks = _calculate_intelligent_chunks(colors.shape)
-
-        # Detect color_mode for float arrays
-        color_mode = None
-        if np.issubdtype(colors.dtype, np.floating):
-            # Float colors require explicit color_mode
-            if np.any(colors > 1.0):
-                color_mode = "hdr"
+        # Handle scalar vs array
+        if isinstance(colors, (tuple, list)):
+            # Detect HDR vs SDR from values
+            max_val = max(colors)
+            color_mode = "hdr" if max_val > 1.0 else "sdr"
+            if color_mode == "hdr":
                 aprint("  ✓ Detected HDR colors (values > 1.0)")
-            else:
-                color_mode = "sdr"
+            n_elems = group["positions"].shape[0]
+            color_chunks = None
+        else:
+            n_elems = None
+            color_chunks = _calculate_intelligent_chunks(colors.shape)
+
+            # Detect color_mode for float arrays
+            color_mode = None
+            if np.issubdtype(colors.dtype, np.floating):
+                # Float colors require explicit color_mode
+                if np.any(colors > 1.0):
+                    color_mode = "hdr"
+                    aprint("  ✓ Detected HDR colors (values > 1.0)")
+                else:
+                    color_mode = "sdr"
 
         # Use ArrayEncoder with all optimizations
         self._encoder.encode(
@@ -1050,6 +1129,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             semantic_type=SemanticType.COLOR,
             mode=self._encoding_mode,
             color_mode=color_mode,
+            n_elements=n_elems,
             chunks=color_chunks,
             compressor=self.compressor,
         )
@@ -1075,25 +1155,30 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _write_radii_dataset(
         self,
         group: zarr.Group,
-        radii: NDArray[np.float32],
+        radii: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> float:
         """Write radii dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
-            radii: Radii array
+            radii: Radii array or scalar value
             spatial_index_data: Optional spatial index for chunk optimization
 
         Returns:
             Maximum radius value
         """
-        # Calculate max radius before encoding
-        max_radius = float(np.max(radii))
-        aprint(f"  ✓ Max radius: {max_radius:.3f}")
+        # Handle scalar vs array
+        if isinstance(radii, (int, float)):
+            max_radius = float(radii)
+            n_elems = group["positions"].shape[0]  # Get from positions
+            radii_chunks = None
+        else:
+            max_radius = float(np.max(radii))
+            n_elems = None
+            radii_chunks = _calculate_intelligent_chunks(radii.shape)
 
-        # Calculate chunks
-        radii_chunks = _calculate_intelligent_chunks(radii.shape)
+        aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
         # Use ArrayEncoder for radii (POSITIVE_SCALAR semantic type)
         self._encoder.encode(
@@ -1102,6 +1187,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             name="radii",
             semantic_type=SemanticType.POSITIVE_SCALAR,
             mode=self._encoding_mode,
+            n_elements=n_elems,
             chunks=radii_chunks,
             compressor=self.compressor,
         )
@@ -1123,18 +1209,23 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _write_sharpness_dataset(
         self,
         group: zarr.Group,
-        sharpness: NDArray[np.float32],
+        sharpness: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
         """Write sharpness dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
-            sharpness: Sharpness array
+            sharpness: Sharpness array or scalar value
             spatial_index_data: Optional spatial index for chunk optimization
         """
-        # Calculate chunks
-        sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
+        # Handle scalar vs array
+        if isinstance(sharpness, (int, float)):
+            n_elems = group["positions"].shape[0]
+            sharp_chunks = None
+        else:
+            n_elems = None
+            sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
 
         # Use ArrayEncoder for sharpness (BOUNDED_SCALAR with [0, 31] range)
         self._encoder.encode(
@@ -1144,6 +1235,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             semantic_type=SemanticType.BOUNDED_SCALAR,
             mode=self._encoding_mode,
             bounds=(0.0, SHARPNESS_MAX),
+            n_elements=n_elems,
             chunks=sharp_chunks,
             compressor=self.compressor,
         )

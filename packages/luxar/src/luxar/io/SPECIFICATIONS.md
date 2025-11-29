@@ -1,7 +1,7 @@
 # luxar.io - Technical Specification
 
-**Version**: 1.3.1
-**Last Updated**: 2025-11-28
+**Version**: 1.4.0
+**Last Updated**: 2025-11-29
 
 ## Purpose
 
@@ -51,26 +51,34 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 ## write_points() Specification
 
 **Input**:
-- `positions`: (N, D) float32 array
-- `radii`: (N,) or (1,) float32 array (required)
-- `colors`: Optional (N, 3) or (1, 3) float32/uint8 array
+- `positions`: (N, D) float32 array (required - **NOT** broadcastable, see encoding/SPECIFICATIONS.md)
+- `radii`: (N,) float32 array, (1,) array, or scalar float (required)
+- `colors`: Optional - (N, 3) array, (1, 3) array, scalar tuple/list, or None
 - `color_mode`: Required for float32 colors: `"sdr"` or `"hdr"`
-- `sharpness`: Optional (N,) or (1,) float32 array
+- `sharpness`: Optional - (N,) array, (1,) array, scalar float, or None
 - `scene_dimensions`: Optional dimension specifications for compound ordering
 - `**attrs`: Additional attributes (transform, opacity, broadcast_dims, etc.)
+
+**Scalar Convenience** (v1.4.0):
+For uniform attributes, callers can provide scalars directly instead of arrays:
+- `radii=0.5` instead of `np.full(N, 0.5)`
+- `colors=(1.0, 0.0, 0.0)` instead of `np.full((N, 3), [1.0, 0.0, 0.0])`
+- `sharpness=2.0` instead of `np.full(N, 2.0)`
+
+The compiler passes scalars directly to the encoder with `n_elements=N`, eliminating intermediate array allocation. See `encoding/SPECIFICATIONS.md` v0.6.0 for complete scalar passthrough specification.
 
 **Output**:
 - Metadata dictionary: {n_points, ndim, path, has_colors, has_sharpness, max_radius}
 
 **Validation**:
-1. Positions must be 2D array with N ≥ 1 points, D ≥ 1 dimensions
-2. Radii must be positive (> 0)
+1. Positions must be 2D array with N ≥ 1 points, D ≥ 1 dimensions (arrays only, no broadcasting)
+2. Radii must be positive (> 0) - validated whether scalar or array
 3. Float32 colors require explicit `color_mode` ("sdr" or "hdr")
-4. Sharpness must be in [0, 31]
+4. Sharpness must be in [0, 31] - validated whether scalar or array
 
 **Algorithm**: See [Write Algorithm](#write-algorithm) in Spatial Index section for the full compound ordering algorithm.
 
-**Key Invariant**: All arrays (positions, colors, radii, sharpness) must stay synchronized during sorting.
+**Key Invariant**: All arrays (positions, colors, radii, sharpness) must stay synchronized during sorting. Scalars are passed directly to encoder and don't participate in sorting.
 
 ---
 
@@ -959,6 +967,17 @@ assert len(data['chunk_bounds']) > 0
 ---
 
 ## Changelog
+
+- **v1.4.0** (2025-11-29): Scalar input support for uniform attributes
+  - **NEW FEATURE**: Compiler accepts scalar inputs directly for uniform attributes
+  - `radii=0.5` instead of `np.full(N, 0.5)` - no intermediate array created
+  - `colors=(1.0, 0.0, 0.0)` instead of `np.full((N, 3), [1.0, 0.0, 0.0])`
+  - `sharpness=2.0` instead of `np.full(N, 2.0)`
+  - Compiler passes scalars directly to encoder with `n_elements=N`
+  - **Performance**: Zero memory allocation for uniform attributes
+  - Applies to write_points(), write_lines(), write_gsplats()
+  - Requires `luxar.encoding` v0.6.0 (ArrayEncoder scalar support)
+  - **Note**: Positions cannot be scalar (COORDINATE type blocks broadcasting)
 
 - **v1.3.1** (2025-11-28): StreamingPoints removed
   - **BREAKING**: Deleted StreamingPoints class (incompatible with spatial ordering)

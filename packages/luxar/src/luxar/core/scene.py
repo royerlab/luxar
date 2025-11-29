@@ -22,11 +22,7 @@ from ..typing_utils.protocols import (
     ColorArray,
     PositionArray,
 )
-from ..utils.array import (
-    broadcast_color_to_points,
-    broadcast_radii_to_points,
-    broadcast_sharpness_to_points,
-)
+# Scalar broadcasting is now handled by ArrayEncoder - no utils needed
 
 
 class Scene(Node):
@@ -220,11 +216,7 @@ class Scene(Node):
                 attrs["broadcast_dims"] = final_broadcast_dims
                 aprint(f"  📡 Broadcasting across dimensions: {final_broadcast_dims}")
 
-            # Process colors, radii, and sharpness using helper functions
-            processed_colors = broadcast_color_to_points(colors, n_points)
-            processed_radii = broadcast_radii_to_points(radii, n_points)
-            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_points)
-
+            # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
 
             # Use writer to write points immediately
@@ -232,9 +224,9 @@ class Scene(Node):
             metadata = self._writer.write_points(
                 path,
                 positions.astype(np.float32),
-                colors=processed_colors,
-                radii=processed_radii,
-                sharpness=processed_sharpness,
+                colors=colors,  # Pass directly (scalar, tuple, or array)
+                radii=radii,  # Pass directly (scalar or array)
+                sharpness=sharpness,  # Pass directly (scalar or array)
                 grid_shape=grid_shape,
                 **attrs,
             )
@@ -302,17 +294,7 @@ class Scene(Node):
                 f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
             )
 
-            # Process widths (similar to radii for points)
-            from ..utils.array import broadcast_scalar_to_points
-
-            processed_widths = broadcast_scalar_to_points(
-                widths, n_vertices, name="widths"
-            )
-
-            # Process colors and sharpness
-            processed_colors = broadcast_color_to_points(colors, n_vertices)
-            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_vertices)
-
+            # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
 
             # Use writer to write lines immediately
@@ -320,9 +302,9 @@ class Scene(Node):
             metadata = self._writer.write_lines(
                 path,
                 vertices.astype(np.float32),
-                widths=processed_widths,
-                colors=processed_colors,
-                sharpness=processed_sharpness,
+                widths=widths,  # Pass directly (scalar or array)
+                colors=colors,  # Pass directly (scalar, tuple, or array)
+                sharpness=sharpness,  # Pass directly (scalar or array)
                 indices=indices,
                 line_type=line_type,
                 **attrs,
@@ -389,17 +371,7 @@ class Scene(Node):
             ndim = centers.shape[1]
             aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
 
-            # Process amplitudes (similar to radii/widths, but can be zero)
-            from ..utils.array import broadcast_scalar_to_points
-
-            processed_amplitudes = broadcast_scalar_to_points(
-                amplitudes, n_splats, name="amplitudes", require_positive=False
-            )
-
-            # Process colors and sharpness
-            processed_colors = broadcast_color_to_points(colors, n_splats)
-            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_splats)
-
+            # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
 
             # Use writer to write gsplats immediately
@@ -407,10 +379,10 @@ class Scene(Node):
             metadata = self._writer.write_gsplats(
                 path,
                 centers.astype(np.float32),
-                amplitudes=processed_amplitudes,
+                amplitudes=amplitudes,  # Pass directly (scalar or array)
                 cholesky_factors=cholesky_factors,
-                colors=processed_colors,
-                sharpness=processed_sharpness,
+                colors=colors,  # Pass directly (scalar, tuple, or array)
+                sharpness=sharpness,  # Pass directly (scalar or array)
                 **attrs,
             )
 
