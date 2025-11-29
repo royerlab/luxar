@@ -63,7 +63,7 @@ def validate_positions_for_writing(
             raise ValidationError(
                 f"{context}: Got 3D array with shape {positions.shape}. "
                 "Positions must be a 2D array with shape (n_points, n_dimensions).",
-                "If you have multiple time steps, flatten them or use StreamingPoints",
+                "If you have multiple time steps, split them into separate nodes (e.g., points_t0, points_t1, ...)",
             )
         else:
             raise ValidationError(

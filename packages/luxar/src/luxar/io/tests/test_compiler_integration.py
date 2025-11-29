@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler, StreamingPoints, transforms
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
 
 
 class TestCompilerIntegration:
@@ -91,37 +91,6 @@ class TestCompilerIntegration:
         assert len(stored_dims["dimensions"]) == 5
         assert stored_dims["dimensions"][3]["name"] == "time"
 
-    def test_streaming_points_integration(self, tmp_path) -> None:
-        """Test StreamingPoints for huge datasets."""
-        output_path = tmp_path / "test.zarr"
-
-        with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
-
-            # Create streaming points
-            streaming = StreamingPoints("huge_cloud", compiler, expected_dims=3)
-
-            # Stream data in batches
-            total_points = 0
-            for i in range(5):
-                batch_positions = np.random.randn(1000, 3).astype(np.float32)
-                batch_colors = np.random.rand(1000, 3).astype(np.float32) * 2.0  # HDR
-
-                streaming.append_batch(batch_positions, colors=batch_colors)
-                total_points += 1000
-
-            # Finalize streaming
-            metadata = streaming.finalize(opacity=0.8)
-
-            assert metadata["n_points"] == total_points
-            assert metadata["has_colors"] is True
-
-        # Verify streamed data
-        store = zarr.open_group(output_path, mode="r")
-        assert store["huge_cloud/positions"].shape == (5000, 3)
-        assert store["huge_cloud/colors"].shape == (5000, 3)
-        assert store["huge_cloud"].attrs["streaming"] is True
-
     def test_hdr_colors_and_attributes(self, tmp_path) -> None:
         """Test HDR colors and rendering attributes."""
         output_path = tmp_path / "test.zarr"
@@ -198,33 +167,3 @@ class TestCompilerIntegration:
         # Even with error, context manager should clean up
         # Store should still be finalized (though incomplete)
         assert output_path.exists()
-
-    def test_streaming_from_generator(self, tmp_path) -> None:
-        """Test streaming from a data generator."""
-        output_path = tmp_path / "test.zarr"
-
-        def data_generator(n_batches=5, batch_size=1000):  # type: ignore[no-untyped-def]
-            """Generate batches of data."""
-            for i in range(n_batches):
-                positions = np.random.randn(batch_size, 3).astype(np.float32)
-                colors = np.random.rand(batch_size, 3).astype(np.float32)
-                yield positions, colors
-
-        with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
-
-            streaming = StreamingPoints("generated_cloud", compiler)
-
-            # Stream from generator
-            total = streaming.append_from_generator(
-                data_generator(),
-                max_batches=3,  # Only take 3 batches
-            )
-
-            assert total == 3000
-            streaming.finalize()
-
-        # Verify
-        store = zarr.open_group(output_path, mode="r")
-        assert store["generated_cloud/positions"].shape == (3000, 3)
-        assert store["generated_cloud/colors"].shape == (3000, 3)
