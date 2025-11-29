@@ -62,7 +62,7 @@ class TestPositionValidation:
             validate_positions_for_writing(positions)
 
         assert "Got 3D array" in str(exc_info.value)
-        assert "StreamingPoints" in str(exc_info.value)
+        assert "split them into separate nodes" in str(exc_info.value)
 
     def test_empty_positions(self) -> None:
         """Test error for empty positions."""

@@ -280,10 +280,8 @@ Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
 
 **Validation Rules**:
 - N ≥ 1 (at least one point)
-- Empty Points (N=0) are NOT valid for finalized nodes
-  - **Exception**: During streaming writes (see `../../io/SPECIFICATIONS.md` → "Streaming Points")
-  - StreamingPoints starts empty (N=0), becomes valid after first `append_batch()`
-  - Validation enforced at write/finalize time, not construction time
+- Empty Points (N=0) are NOT valid
+- Validation enforced at write/finalize time, not construction time
 - `radii` must be positive (> 0)
 - `sharpness` must be in [0, 31] range
 - `colors` (SDR float): values must be in [0, 1] range. Values outside this range raise `ValueError`.
@@ -1398,8 +1396,7 @@ This specification is sufficient to re-implement the core package in any languag
   - Updated 5D→6D example with categorical Channel dimension
 
 - **v0.9.3** (2025-11-28): Empty nodes clarification
-  - Clarified empty nodes (N=0) are invalid for finalized nodes only
-  - Added exception for streaming writes (StreamingPoints starts empty)
+  - Clarified empty nodes (N=0) are invalid
   - Validation enforced at write/finalize time, not construction time
 
 - **v0.9.2** (2025-11-28): GSplats I/O reference update
