@@ -240,9 +240,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         path: NodePath,
         positions: NDArray[np.float32],
-        colors: Optional[NDArray[np.float32]] = None,
-        radii: Optional[NDArray[np.float32]] = None,
-        sharpness: Optional[NDArray[np.float32]] = None,
+        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        radii: Optional[Union[NDArray[np.float32], float]] = None,
+        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
@@ -250,12 +250,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Data is written immediately to disk without being kept in memory.
         If spatial ordering is enabled, points are reordered using Morton/Hilbert curves.
 
+        Scalar convenience: radii, sharpness, and colors accept scalars:
+        - radii=0.5 → all points get radius 0.5 (broadcasted)
+        - colors=[1.0, 0, 0] → all points red (broadcasted)
+        - sharpness=2.0 → all points standard Gaussian (broadcasted)
+
         Args:
             path: Path for the points within the store
             positions: Point positions of shape (N, D)
-            colors: Optional HDR colors of shape (N, 3)
-            radii: Optional radii of shape (N,)
-            sharpness: Optional sharpness of shape (N,)
+            colors: Colors - array (N, 3), RGB tuple/list, or None
+            radii: Radii - array (N,), scalar float, or None
+            sharpness: Sharpness - array (N,), scalar float, or None
             **attrs: Additional attributes
 
         Returns:
@@ -276,7 +281,22 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
 
-        # 2. Apply spatial ordering if enabled (reorders arrays)
+        # 2. Convert scalar conveniences to arrays (auto-broadcast)
+        if radii is not None and isinstance(radii, (int, float)):
+            radii = np.full(n_points, float(radii), dtype=np.float32)
+            aprint(f"  → Uniform radius {radii[0]:.3f} for all points")
+
+        if sharpness is not None and isinstance(sharpness, (int, float)):
+            sharpness = np.full(n_points, float(sharpness), dtype=np.float32)
+            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all points")
+
+        if colors is not None and not isinstance(colors, np.ndarray):
+            # Handle list/tuple RGB → uniform color for all points
+            if isinstance(colors, (list, tuple)) and len(colors) == 3:
+                colors = np.full((n_points, 3), colors, dtype=np.float32)
+                aprint(f"  → Uniform color RGB{list(colors[0])} for all points")
+
+        # 3. Apply spatial ordering if enabled (reorders arrays)
         ordering_data = self._build_spatial_ordering_if_enabled(
             positions, n_points, n_dims, radii
         )
@@ -357,9 +377,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         path: NodePath,
         vertices: NDArray[np.float32],
-        widths: NDArray[np.float32],
-        colors: Optional[NDArray[np.float32]] = None,
-        sharpness: Optional[NDArray[np.float32]] = None,
+        widths: Union[NDArray[np.float32], float],
+        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         **attrs: Any,
@@ -368,12 +388,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Lines do NOT support spatial indexing (per spec) - arrays stored in original order.
 
+        Scalar convenience: widths, colors, and sharpness accept scalars:
+        - widths=0.1 → all vertices get width 0.1
+        - colors=[1.0, 0, 0] → all vertices red
+        - sharpness=2.0 → uniform sharpness
+
         Args:
             path: Path for the lines within the store
             vertices: Vertex positions of shape (N, D)
-            widths: Line widths of shape (N,)
-            colors: Optional colors of shape (N, 3)
-            sharpness: Optional sharpness of shape (N,)
+            widths: Line widths - array (N,) or scalar float
+            colors: Colors - array (N, 3), RGB tuple/list, or None
+            sharpness: Sharpness - array (N,), scalar float, or None
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
             **attrs: Additional attributes
@@ -392,6 +417,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_vertices, n_dims = validate_positions_for_writing(vertices)
 
         aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
+
+        # Convert scalar conveniences to arrays
+        if isinstance(widths, (int, float)):
+            widths = np.full(n_vertices, float(widths), dtype=np.float32)
+            aprint(f"  → Uniform width {widths[0]:.3f} for all vertices")
+
+        if sharpness is not None and isinstance(sharpness, (int, float)):
+            sharpness = np.full(n_vertices, float(sharpness), dtype=np.float32)
+            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all vertices")
+
+        if colors is not None and not isinstance(colors, np.ndarray):
+            if isinstance(colors, (list, tuple)) and len(colors) == 3:
+                colors = np.full((n_vertices, 3), colors, dtype=np.float32)
+                aprint(f"  → Uniform color RGB{list(colors[0])} for all vertices")
 
         # Validate line type
         valid_line_types = ("segments", "polyline", "loop", "indexed")
@@ -550,21 +589,26 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self,
         path: NodePath,
         centers: NDArray[np.float32],
-        amplitudes: NDArray[np.float32],
+        amplitudes: Union[NDArray[np.float32], float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[NDArray[np.float32]] = None,
-        sharpness: Optional[NDArray[np.float32]] = None,
+        colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+        sharpness: Optional[Union[NDArray[np.float32], float]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Write Gaussian splats data to Zarr.
 
+        Scalar convenience: amplitudes, colors, and sharpness accept scalars:
+        - amplitudes=1.0 → all splats get amplitude 1.0
+        - colors=[1.0, 0, 0] → all splats red
+        - sharpness=2.0 → standard Gaussian for all
+
         Args:
             path: Path for the gsplats within the store
             centers: Splat centers of shape (N, D)
-            amplitudes: Amplitudes of shape (N,)
+            amplitudes: Amplitudes - array (N,) or scalar float
             cholesky_factors: Packed Cholesky factors of shape (N, k)
-            colors: Optional colors of shape (N, 3)
-            sharpness: Optional sharpness of shape (N,)
+            colors: Colors - array (N, 3), RGB tuple/list, or None
+            sharpness: Sharpness - array (N,), scalar float, or None
             **attrs: Additional attributes
 
         Returns:
@@ -581,6 +625,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_splats, n_dims = validate_positions_for_writing(centers)
 
         aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
+
+        # Convert scalar conveniences to arrays
+        if isinstance(amplitudes, (int, float)):
+            amplitudes = np.full(n_splats, float(amplitudes), dtype=np.float32)
+            aprint(f"  → Uniform amplitude {amplitudes[0]:.3f} for all splats")
+
+        if sharpness is not None and isinstance(sharpness, (int, float)):
+            sharpness = np.full(n_splats, float(sharpness), dtype=np.float32)
+            aprint(f"  → Uniform sharpness {sharpness[0]:.1f} for all splats")
+
+        if colors is not None and not isinstance(colors, np.ndarray):
+            if isinstance(colors, (list, tuple)) and len(colors) == 3:
+                colors = np.full((n_splats, 3), colors, dtype=np.float32)
+                aprint(f"  → Uniform color RGB{list(colors[0])} for all splats")
 
         # Validate cholesky_factors shape FIRST (before spatial ordering)
         expected_k = n_dims * (n_dims + 1) // 2
