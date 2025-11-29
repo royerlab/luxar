@@ -37,7 +37,7 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 1. `create_scene(dimensions=None)` - Create scene with optional dimension specs
 2. `write_group(path, **attrs)` - Create group structure
 3. `write_points(path, positions, radii, ...)` - Write point data with attributes
-4. `create_resizable_dataset(...)` - For streaming writes
+4. `create_resizable_dataset(...)` - Part of protocol (rarely used directly)
 5. `finalize()` - Consolidate metadata, close store
 
 **Finalization**:
@@ -356,7 +356,7 @@ extent[d] = sqrt(covariance[d, d]) * k  # k = 3.0 for 99.7% coverage
 **Constants** (defined in `typing_utils/SPECIFICATIONS.md` - single source of truth):
 - `TARGET_CHUNK_BYTES = 65536` (64KB) - target chunk size
 - `MIN_CHUNK_BYTES = 16384` (16KB) - minimum to amortize HTTP overhead
-- `MAX_CHUNK_BYTES = 262144` (256KB) - maximum for responsive streaming
+- `MAX_CHUNK_BYTES = 262144` (256KB) - maximum for responsive loading
 
 **IMPORTANT**: Zarr chunks by **elements**, not bytes. This package is responsible for converting the byte target to element counts based on each array's dtype and shape.
 
