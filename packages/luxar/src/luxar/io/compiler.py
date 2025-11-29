@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -32,20 +32,10 @@ from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
 from ..typing_utils.constants import (
     SHARPNESS_MAX,
     SPATIAL_INDEX_CHUNK_SIZE,
-    SPATIAL_INDEX_FALLBACK_CELLS,
-    SPATIAL_INDEX_MAX_CELLS_CONTINUOUS,
-    SPATIAL_INDEX_MAX_CELLS_DISCRETE,
-    SPATIAL_INDEX_MIN_CELLS,
-    SPATIAL_INDEX_TARGET_POINTS_PER_CELL,
 )
 from ..typing_utils.protocols import CompressorProtocol
 
-# Validation functions imported locally to avoid circular imports
-from .point_spatial_index import (
-    apply_sort_order,
-    build_spatial_index,
-    validate_spatial_index,
-)
+# Ordering functions will be imported locally where needed to avoid circular imports
 
 
 def _calculate_intelligent_chunks(
@@ -55,13 +45,12 @@ def _calculate_intelligent_chunks(
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
 
-    When spatial index data is available, aligns chunks with spatial cells
-    for better query performance during lazy loading.
+    When spatial ordering data is available, uses chunk_size from ordering.
 
     Args:
         shape: Shape of the dataset
         target_chunk_size: Target size for chunks in elements
-        spatial_index_data: Optional spatial index data for optimization
+        spatial_index_data: Optional ordering data (with chunk_size)
 
     Returns:
         Optimized chunk shape
@@ -74,23 +63,10 @@ def _calculate_intelligent_chunks(
         # 2D array (e.g., positions) - chunk along first dimension
         n_points, n_dims = shape
 
-        # If spatial index is available, align chunks with spatial cells
-        if spatial_index_data and "grid_shape" in spatial_index_data:
-            grid_shape = spatial_index_data["grid_shape"]
-            total_cells = int(np.prod(grid_shape))
-
-            if total_cells > 0:
-                # Calculate average points per cell
-                avg_points_per_cell = max(1, n_points // total_cells)
-
-                # Try to make chunks contain 4-8 cells worth of points for balance
-                # between I/O efficiency and spatial locality
-                cells_per_chunk = max(1, min(8, total_cells // 10))
-                chunk_points = avg_points_per_cell * cells_per_chunk
-
-                # Clamp to reasonable bounds
-                chunk_points = max(1024, min(target_chunk_size, chunk_points))
-                return (chunk_points, n_dims)
+        # If ordering data is available, use its chunk_size
+        if spatial_index_data and "chunk_size" in spatial_index_data:
+            chunk_points = spatial_index_data["chunk_size"]
+            return (chunk_points, n_dims)
 
         # Fallback to standard chunking
         chunk_points = min(n_points, target_chunk_size // n_dims)
@@ -149,6 +125,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
+        ordering_method: Literal["morton", "hilbert"] = "morton",
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -156,8 +133,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             store_path: Path for the Zarr store, or None for temporary
             compressor: Compressor for datasets
             version: Luxar format version
-            enable_spatial_index: Whether to build spatial indices for points (default: True)
+            enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)
             encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
+            ordering_method: Spatial ordering method ("morton" or "hilbert", default: "morton")
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -174,8 +152,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._store_path = Path(store_path)
             aprint(f"📁 Creating scene at: {self._store_path}")
 
-        # Store spatial index flag
+        # Store spatial ordering configuration
         self.enable_spatial_index = enable_spatial_index
+        self.ordering_method = ordering_method
 
         # Create array encoder with specified encoding mode
         self._encoder = ArrayEncoder()
@@ -264,13 +243,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: Optional[NDArray[np.float32]] = None,
         radii: Optional[NDArray[np.float32]] = None,
         sharpness: Optional[NDArray[np.float32]] = None,
-        grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data progressively to Zarr.
 
         Data is written immediately to disk without being kept in memory.
-        If spatial indexing is enabled, points are reordered for spatial locality.
+        If spatial ordering is enabled, points are reordered using Morton/Hilbert curves.
 
         Args:
             path: Path for the points within the store
@@ -278,7 +256,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Optional HDR colors of shape (N, 3)
             radii: Optional radii of shape (N,)
             sharpness: Optional sharpness of shape (N,)
-            grid_shape: Optional grid resolution for spatial index (auto if None)
             **attrs: Additional attributes
 
         Returns:
@@ -299,20 +276,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_points:,} points ({n_dims}D) to {path}")
 
-        # 2. Build spatial index if enabled (also reorders arrays)
-        spatial_index_data, spatial_extend_dims = self._build_spatial_index_if_enabled(
-            positions, n_points, n_dims, grid_shape, attrs, radii
+        # 2. Apply spatial ordering if enabled (reorders arrays)
+        ordering_data = self._build_spatial_ordering_if_enabled(
+            positions, n_points, n_dims, radii
         )
 
-        # Apply spatial reordering if index was built
-        if spatial_index_data is not None:
-            positions = spatial_index_data["sorted_positions"]
-            colors = apply_sort_order(colors, spatial_index_data["sort_order"])
-            radii = apply_sort_order(radii, spatial_index_data["sort_order"])
-            sharpness = apply_sort_order(sharpness, spatial_index_data["sort_order"])
+        # Apply spatial reordering if ordering was applied
+        if ordering_data is not None:
+            positions = ordering_data["sorted_positions"]
+            # Apply sort order to other arrays
+            if colors is not None:
+                colors = colors[ordering_data["sort_order"]]
+            if radii is not None:
+                radii = radii[ordering_data["sort_order"]]
+            if sharpness is not None:
+                sharpness = sharpness[ordering_data["sort_order"]]
 
         # 3. Write positions dataset
-        self._write_positions_dataset(group, positions, spatial_index_data)
+        self._write_positions_dataset(group, positions, ordering_data)
 
         # 4. Initialize metadata
         metadata: PointsMetadata = {
@@ -327,19 +308,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # 5. Write optional datasets
         if colors is not None:
             validate_colors_for_writing(colors, n_points)
-            self._write_colors_dataset(group, colors, spatial_index_data)
+            self._write_colors_dataset(group, colors, ordering_data)
             metadata["has_colors"] = True
 
         if radii is not None:
             validate_radii_for_writing(radii, n_points)
-            max_radius = self._write_radii_dataset(group, radii, spatial_index_data)
+            max_radius = self._write_radii_dataset(group, radii, ordering_data)
             metadata["max_radius"] = max_radius
             metadata["has_radii"] = True
             group.attrs["max_radius"] = max_radius
 
         if sharpness is not None:
             validate_sharpness_for_writing(sharpness, n_points)
-            self._write_sharpness_dataset(group, sharpness, spatial_index_data)
+            self._write_sharpness_dataset(group, sharpness, ordering_data)
             metadata["has_sharpness"] = True
 
         # 6. Process transform if present using centralized conversion
@@ -356,21 +337,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if "blending_mode" not in attrs:
             attrs["blending_mode"] = "additive"
 
-        # 8. Store spatial extension dimensions if available
-        if spatial_extend_dims is not None:
-            attrs["spatial_extend_dims"] = spatial_extend_dims
-
-        # 9. Store attributes
+        # 8. Store attributes
         group.attrs.update(attrs)
         group.attrs["type"] = "points"
         group.attrs["n_points"] = n_points
 
-        # 10. Write spatial index if built
-        if spatial_index_data is not None:
-            self._write_spatial_index_to_zarr(group, spatial_index_data)
+        # 9. Write spatial ordering metadata if built
+        if ordering_data is not None:
+            self._write_spatial_ordering_to_zarr(group, ordering_data)
             metadata["has_spatial_index"] = True
 
-        # 11. Cache metadata and finish
+        # 10. Cache metadata and finish
         self._metadata_cache[path] = metadata
         aprint(f"✅ Points written to {path}")
 
@@ -788,224 +765,81 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         aprint(f"📝 Created resizable dataset: {path}")
         return dataset
 
-    def _determine_displayed_and_indexed_dims(
-        self, n_dims: int
-    ) -> Tuple[List[int], List[int], Optional[List[bool]]]:
-        """Determine which dimensions are displayed vs indexed from scene metadata.
-
-        Args:
-            n_dims: Total number of dimensions in the data
-
-        Returns:
-            Tuple of (displayed_dims, non_displayed_dims, spatial_extend_dims)
-        """
-        displayed_dims = None
-        spatial_extend_dims = None
-
-        if "scene_dimensions" in self.store.attrs:
-            scene_dims = self.store.attrs["scene_dimensions"]
-            dims_list = (
-                scene_dims.get("dimensions", []) if isinstance(scene_dims, dict) else []
-            )
-
-            # Find which dimensions are displayed
-            displayed_dims = []
-            for i, dim in enumerate(dims_list):
-                if dim.get("display", True):  # Default to True if not specified
-                    displayed_dims.append(i)
-
-            # Limit to max 3 displayed dimensions
-            displayed_dims = displayed_dims[:3]
-
-            # Get spatial flags from each dimension
-            spatial_extend_dims = [
-                dim.get("spatial", True if dim.get("display", True) else False)
-                for dim in dims_list
-            ]
-
-        # If no dimension metadata, default to first 3 dimensions as displayed
-        if displayed_dims is None:
-            displayed_dims = list(range(min(3, n_dims)))
-
-        # Calculate non-displayed dimensions
-        non_displayed_dims = [d for d in range(n_dims) if d not in displayed_dims]
-
-        return displayed_dims, non_displayed_dims, spatial_extend_dims
-
-    def _calculate_spatial_index_grid_shape(
-        self,
-        positions: NDArray[np.float32],
-        non_displayed_dims: List[int],
-        grid_shape: Optional[Tuple[int, ...]],
-    ) -> Optional[NDArray[np.uint32]]:
-        """Calculate grid shape for spatial index based on data characteristics.
-
-        Args:
-            positions: Point positions array
-            non_displayed_dims: Indices of non-displayed dimensions to index
-            grid_shape: User-provided grid shape (if any)
-
-        Returns:
-            Grid shape array or None
-        """
-        # Use provided grid shape if available
-        if grid_shape is not None:
-            if len(grid_shape) == len(non_displayed_dims):
-                return np.array(grid_shape, dtype=np.uint32)
-            else:
-                aprint(
-                    f"    ⚠️ Provided grid_shape has {len(grid_shape)} dims "
-                    f"but {len(non_displayed_dims)} non-displayed dims"
-                )
-
-        # Auto-determine grid shape
-        if "scene_dimensions" not in self.store.attrs:
-            return None
-
-        scene_dims = self.store.attrs["scene_dimensions"]
-        grid_shape_list = []
-
-        # Calculate position ranges for non-displayed dimensions only
-        indexed_positions = positions[:, non_displayed_dims]
-        min_coords = np.min(indexed_positions, axis=0)
-        max_coords = np.max(indexed_positions, axis=0)
-        n_points = positions.shape[0]
-
-        # Get dimension list if available
-        dims_list = (
-            scene_dims.get("dimensions", []) if isinstance(scene_dims, dict) else []
-        )
-
-        for idx, d in enumerate(non_displayed_dims):
-            # Determine if this dimension contains discrete values (categorical/time)
-            is_discrete = False
-            if d < len(dims_list) and dims_list[d].get("discrete", False):
-                is_discrete = True
-
-            if is_discrete:
-                # For discrete dimensions (time, channel, category):
-                # Use one grid cell per unique value for precise indexing
-                # This enables exact lookups (e.g., "give me all points at time=5")
-                unique_vals = len(np.unique(indexed_positions[:, idx]))
-                cells = min(
-                    SPATIAL_INDEX_MAX_CELLS_DISCRETE, unique_vals
-                )  # Safety cap to prevent memory issues
-                grid_shape_list.append(cells)
-                aprint(
-                    f"    Non-displayed dim {d}: discrete with {unique_vals} "
-                    f"unique values → {cells} cells"
-                )
-            else:
-                # For continuous dimensions (depth, intensity):
-                # Use fewer cells with adaptive sizing based on data density
-                # Goal: Balance between index size and query precision
-                dim_range = max_coords[idx] - min_coords[idx]
-                if dim_range > 0:
-                    # Heuristic: sqrt(n_points / TARGET) gives reasonable cell count
-                    # More points → more cells (up to max)
-                    # Ensures each cell has roughly 100-1000 points
-                    cells = min(
-                        SPATIAL_INDEX_MAX_CELLS_CONTINUOUS,
-                        max(
-                            SPATIAL_INDEX_MIN_CELLS,
-                            int(
-                                np.sqrt(n_points / SPATIAL_INDEX_TARGET_POINTS_PER_CELL)
-                            ),
-                        ),
-                    )
-                else:
-                    # Degenerate case: all points at same value
-                    cells = SPATIAL_INDEX_FALLBACK_CELLS  # Minimal grid
-                grid_shape_list.append(cells)
-                aprint(f"    Non-displayed dim {d}: continuous → {cells} cells")
-
-        if grid_shape_list:
-            result = np.array(grid_shape_list, dtype=np.uint32)
-            aprint(f"  📊 Grid shape for non-displayed dims: {result}")
-            return result
-
-        return None
-
-    def _build_spatial_index_if_enabled(
+    def _build_spatial_ordering_if_enabled(
         self,
         positions: NDArray[np.float32],
         n_points: int,
         n_dims: int,
-        grid_shape: Optional[Tuple[int, ...]],
-        attrs: Dict[str, Any],
         radii: Optional[NDArray[np.float32]],
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[List[bool]]]:
-        """Build spatial index for points if enabled.
+    ) -> Optional[Dict[str, Any]]:
+        """Apply spatial ordering using Morton/Hilbert curves.
 
         Args:
             positions: Point positions
             n_points: Number of points
             n_dims: Number of dimensions
-            grid_shape: Optional user-provided grid shape
-            attrs: Point attributes (may contain max_radius)
             radii: Optional radii array
 
         Returns:
-            Tuple of (spatial_index_data, spatial_extend_dims)
+            Dict with:
+            - sorted_positions: Reordered positions
+            - sort_order: Indices to apply to other arrays
+            - chunk_bounds: (num_chunks, n_dims, 2) array
+            - ordering_metadata: Dict from sort_points_compound
+            Or None if ordering disabled/not applicable
         """
         if not self.enable_spatial_index or n_points == 0:
-            return None, None
+            return None
 
-        # Determine displayed and indexed dimensions
-        displayed_dims, non_displayed_dims, spatial_extend_dims = (
-            self._determine_displayed_and_indexed_dims(n_dims)
-        )
+        # Get scene dimensions from attrs
+        if "scene_dimensions" not in self.store.attrs:
+            aprint("  ⚠️ No scene dimensions - skipping spatial ordering")
+            return None
 
-        # Skip if all dimensions are displayed
-        if len(non_displayed_dims) == 0:
-            aprint(
-                f"  ⚠️ All {n_dims} dimensions are displayed - skipping spatial index"
-            )
-            return None, spatial_extend_dims
+        from ..core.dimensions import Dimensions
 
-        aprint("  🔍 Building spatial index...")
-        aprint(f"    Displayed dimensions: {displayed_dims}")
-        aprint(f"    Non-displayed dimensions to index: {non_displayed_dims}")
+        scene_dims_dict = self.store.attrs["scene_dimensions"]
+        dimensions = Dimensions.from_dict(scene_dims_dict)
 
-        # Calculate grid shape
-        grid_shape_array = self._calculate_spatial_index_grid_shape(
-            positions, non_displayed_dims, grid_shape
-        )
+        aprint(f"  🔍 Applying {self.ordering_method} ordering...")
 
-        # Determine discrete dimensions
-        discrete_dims = []
-        if "scene_dimensions" in self.store.attrs:
-            scene_dims = self.store.attrs["scene_dimensions"]
-            dims_list = (
-                scene_dims.get("dimensions", []) if isinstance(scene_dims, dict) else []
-            )
-            for d in range(n_dims):
-                if d < len(dims_list) and dims_list[d].get("discrete", False):
-                    discrete_dims.append(d)
+        # Apply compound ordering
+        from .ordering import compute_chunk_bounds_points, sort_points_compound
 
-        # Get max_radius for spatial dimensions
-        max_radius = attrs.get("max_radius", 0.1)
-        if radii is not None:
-            max_radius = float(np.max(radii))
-
-        # Build the spatial index
-        spatial_index_data = build_spatial_index(
+        sort_indices, ordering_metadata = sort_points_compound(
             positions,
-            grid_shape_array,
-            displayed_dims=displayed_dims,
-            discrete_dims=discrete_dims,
-            spatial_extend_dims=spatial_extend_dims,
-            max_radius=max_radius,
+            dimensions.dimensions,  # List of Dimension objects
+            method=self.ordering_method,
         )
 
-        # Validate the index
-        if spatial_index_data is not None:
-            validate_spatial_index(spatial_index_data, n_points, n_dims)
-            aprint(
-                f"  ✓ Spatial index built: {len(spatial_index_data['occupied_cells'])} occupied cells"
-            )
+        # Reorder positions
+        sorted_positions = positions[sort_indices]
 
-        return spatial_index_data, spatial_extend_dims
+        # Compute chunk size (from TARGET_CHUNK_BYTES)
+        from ..typing_utils import TARGET_CHUNK_BYTES
+
+        bytes_per_point = n_dims * 4 + 16  # Conservative estimate
+        chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_point)
+        chunk_size = min(chunk_size, n_points)
+
+        # Compute chunk bounds
+        sorted_radii = radii[sort_indices] if radii is not None else None
+        chunk_bounds = compute_chunk_bounds_points(
+            sorted_positions, sorted_radii, chunk_size
+        )
+
+        aprint(
+            f"  ✓ Ordering complete: {len(ordering_metadata['slice_dims'])} discrete dims, "
+            f"{len(ordering_metadata['morton_dims'])} spatial dims"
+        )
+
+        return {
+            "sorted_positions": sorted_positions,
+            "sort_order": sort_indices,
+            "chunk_bounds": chunk_bounds,
+            "chunk_size": chunk_size,
+            **ordering_metadata,  # ordering, slice_dims, morton_dims, etc.
+        }
 
     def _write_positions_dataset(
         self,
@@ -1190,78 +1024,54 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             aprint(f"  ✓ Wrote sharpness ({enc_name})")
 
-    def _write_spatial_index_to_zarr(
-        self, group: zarr.Group, spatial_index_data: Dict[str, Any]
+    def _write_spatial_ordering_to_zarr(
+        self, group: zarr.Group, ordering_data: Dict[str, Any]
     ) -> None:
-        """Write spatial index metadata and data to Zarr.
+        """Write spatial ordering metadata and chunk bounds to Zarr.
 
         Args:
             group: Parent Zarr group
-            spatial_index_data: Spatial index data to write
+            ordering_data: Ordering data with chunk_bounds and metadata
         """
-        aprint("  📝 Writing spatial index...")
+        aprint("  📝 Writing spatial ordering metadata...")
 
-        # Create spatial_index group
+        # Create spatial_index group (keeping name for backward compatibility with viewer)
         index_group = group.require_group("spatial_index")
 
-        # Store index metadata
+        # Store ordering metadata
         index_metadata = {
-            "grid_shape": spatial_index_data["grid_shape"].tolist(),
-            "grid_origin": spatial_index_data["grid_origin"].tolist(),
-            "cell_size": spatial_index_data["cell_size"].tolist(),
-            "num_occupied": len(spatial_index_data["occupied_cells"]),
-            "total_cells": (
-                int(np.prod(spatial_index_data["grid_shape"]))
-                if len(spatial_index_data["grid_shape"]) > 0
-                else 0
-            ),
-            "total_points": spatial_index_data["total_points"],
-            "dimensions": len(spatial_index_data["indexed_dimensions"]),
-            "full_dimensions": spatial_index_data["full_dimensions"],
-            "indexed_dimensions": spatial_index_data["indexed_dimensions"],
-            "displayed_dimensions": spatial_index_data["displayed_dimensions"],
-            "build_version": "0.1",
+            "ordering": ordering_data["ordering"],
+            "slice_dims": ordering_data["slice_dims"],
+            "morton_dims": ordering_data["morton_dims"],
+            "morton_min": ordering_data["morton_min"],
+            "morton_max": ordering_data["morton_max"],
+            "morton_bits_per_dim": ordering_data["morton_bits_per_dim"],
+            "chunk_size": ordering_data["chunk_size"],
+            "num_chunks": len(ordering_data["chunk_bounds"]),
+            "build_version": "1.0",  # New version for Morton/Hilbert ordering
         }
-
-        # Calculate max points per cell
-        if len(spatial_index_data["cell_ranges"]) > 0:
-            cell_sizes = np.diff(spatial_index_data["cell_ranges"], axis=1).flatten()
-            index_metadata["max_points_per_cell"] = int(np.max(cell_sizes))
-        else:
-            index_metadata["max_points_per_cell"] = 0
 
         index_group.attrs.update(index_metadata)
 
-        # Store occupied cells
-        if len(spatial_index_data["occupied_cells"]) > 0:
-            occupied_chunks = _calculate_intelligent_chunks(
-                spatial_index_data["occupied_cells"].shape,
+        # Store chunk bounds array: (num_chunks, n_dims, 2)
+        chunk_bounds = ordering_data["chunk_bounds"]
+        if len(chunk_bounds) > 0:
+            bounds_chunks = _calculate_intelligent_chunks(
+                chunk_bounds.shape,
                 target_chunk_size=SPATIAL_INDEX_CHUNK_SIZE,
             )
             index_group.create_dataset(
-                "occupied_cells",
-                data=spatial_index_data["occupied_cells"],
-                chunks=occupied_chunks,
+                "chunk_bounds",
+                data=chunk_bounds,
+                chunks=bounds_chunks,
                 compressor=self.compressor,
-                dtype=np.uint32,
+                dtype=np.float32,
                 overwrite=True,
             )
 
-            # Store cell ranges
-            ranges_chunks = _calculate_intelligent_chunks(
-                spatial_index_data["cell_ranges"].shape,
-                target_chunk_size=SPATIAL_INDEX_CHUNK_SIZE,
-            )
-            index_group.create_dataset(
-                "cell_ranges",
-                data=spatial_index_data["cell_ranges"],
-                chunks=ranges_chunks,
-                compressor=self.compressor,
-                dtype=np.uint64,
-                overwrite=True,
-            )
-
-        aprint("  ✓ Spatial index written")
+        aprint(
+            f"  ✓ Spatial ordering written: {ordering_data['ordering']} with {len(chunk_bounds)} chunks"
+        )
 
     def finalize(self) -> None:
         """Finalize the Zarr store with metadata consolidation."""

@@ -9,7 +9,6 @@ import zarr
 
 from luxar import LuxarZarrCompiler
 from luxar.core.transforms import prepare_transform_for_zarr, translate
-from luxar.io.point_spatial_index import build_spatial_index, validate_spatial_index
 from luxar.validation.base import ValidationError, validate_zarr_attributes
 
 
@@ -35,23 +34,32 @@ class TestVersionUpdate:
 class TestChunkAlignment:
     """Test improved chunk alignment with spatial index."""
 
-    def test_chunk_alignment_with_spatial_index(self) -> None:
-        """Verify chunks are aligned with spatial index when available."""
+    def test_chunk_alignment_with_spatial_ordering(self) -> None:
+        """Verify chunks are aligned with spatial ordering when available."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
-            # Create dataset with spatial index
+            # Create dataset with spatial ordering
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
-                scene = compiler.create_scene()
+                from luxar.core.dimensions import Dimension, Dimensions
+
+                dims = Dimensions(
+                    [
+                        Dimension("x", unit="m", display=True),
+                        Dimension("y", unit="m", display=True),
+                        Dimension("z", unit="m", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
                 positions = np.random.randn(10000, 3).astype(np.float32)
-                scene.add_points("test", positions, grid_shape=(5, 5, 5))
+                scene.add_points("test", positions)
 
             # Check that chunks were created
             store = zarr.open_group(zarr_path, mode="r")
             positions_array = store["test/positions"]
             chunks = positions_array.chunks
 
-            # Should have reasonable chunk size aligned with spatial cells
+            # Should have reasonable chunk size
             assert chunks[0] > 0
             assert chunks[0] <= 32768  # Default max chunk size
             assert chunks[1] == 3  # Dimensions should not be chunked
@@ -146,61 +154,40 @@ class TestTransformCentralization:
             assert attrs["transform"][14] == 30.0
 
 
-class TestSpatialIndexValidation:
-    """Test spatial index validation."""
+class TestSpatialOrdering:
+    """Test spatial ordering with Morton/Hilbert curves."""
 
-    def test_validate_spatial_index_correct(self) -> None:
-        """Test validation passes for correct spatial index."""
-        positions = np.random.randn(1000, 3).astype(np.float32)
-        index_data = build_spatial_index(positions)
-
-        # Should not raise
-        validate_spatial_index(index_data, 1000, 3)
-
-    def test_validate_spatial_index_wrong_dimensions(self) -> None:
-        """Test validation fails for dimension mismatch."""
-        positions = np.random.randn(1000, 3).astype(np.float32)
-        index_data = build_spatial_index(positions)
-
-        with pytest.raises(ValueError, match="doesn't match expected"):
-            validate_spatial_index(index_data, 1000, 4)  # Wrong dimensions
-
-    def test_validate_spatial_index_wrong_points(self) -> None:
-        """Test validation fails for point count mismatch."""
-        positions = np.random.randn(1000, 3).astype(np.float32)
-        index_data = build_spatial_index(positions)
-
-        with pytest.raises(ValueError, match="doesn't match expected"):
-            validate_spatial_index(index_data, 500, 3)  # Wrong point count
-
-    def test_validate_spatial_index_missing_keys(self) -> None:
-        """Test validation fails for missing keys."""
-        incomplete_data = {
-            "occupied_cells": np.array([]),
-            "cell_ranges": np.array([]),
-            # Missing other required keys
-        }
-
-        with pytest.raises(ValueError, match="missing required keys"):
-            validate_spatial_index(incomplete_data, 0, 3)
-
-    def test_spatial_index_in_compiler(self) -> None:
-        """Test that compiler validates spatial index."""
+    def test_spatial_ordering_in_compiler(self) -> None:
+        """Test that compiler applies spatial ordering."""
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
-            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
-                scene = compiler.create_scene()
-                # Use 4D positions so that the 4th dimension is not displayed and gets indexed
+            with LuxarZarrCompiler(
+                zarr_path, enable_spatial_index=True, ordering_method="morton"
+            ) as compiler:
+                from luxar.core.dimensions import Dimension, Dimensions
+
+                # Create 4D scene so we have discrete dimensions to order
+                dims = Dimensions(
+                    [
+                        Dimension("x", unit="m", display=True),
+                        Dimension("y", unit="m", display=True),
+                        Dimension("z", unit="m", display=True),
+                        Dimension("t", unit="s", display=False, discrete=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
                 positions = np.random.randn(1000, 4).astype(np.float32)
-                # This should build and validate spatial index internally
                 scene.add_points("test", positions)
 
-            # Check that spatial index was created
+            # Check that spatial ordering metadata was created
             store = zarr.open_group(zarr_path, mode="r")
             assert "test/spatial_index" in store
-            assert "occupied_cells" in store["test/spatial_index"]
-            assert "cell_ranges" in store["test/spatial_index"]
+            assert "chunk_bounds" in store["test/spatial_index"]
+            attrs = dict(store["test/spatial_index"].attrs)
+            assert "ordering" in attrs
+            assert attrs["ordering"] == "morton"
+            assert "chunk_size" in attrs
 
 
 class TestZarrAttributeValidation:
@@ -318,15 +305,3 @@ class TestEmptyDatasets:
                     scene = compiler.create_scene()
                     positions = np.array([], dtype=np.float32).reshape(0, 3)
                     scene.add_points("test", positions)
-
-    def test_spatial_index_empty_data(self) -> None:
-        """Test spatial index handles empty data gracefully."""
-        positions = np.array([], dtype=np.float32).reshape(0, 3)
-        index_data = build_spatial_index(positions)
-
-        # Should return valid but empty index
-        # For 3D data where all dimensions are displayed, occupied_cells has shape (0, 0)
-        assert index_data["occupied_cells"].shape == (0, 0)
-        assert index_data["cell_ranges"].shape == (0, 2)
-        assert index_data["sorted_positions"].shape == (0, 3)
-        assert len(index_data["sort_order"]) == 0
