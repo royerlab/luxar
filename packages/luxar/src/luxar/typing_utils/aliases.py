@@ -42,8 +42,13 @@ DimensionRange = Tuple[float, float]
 DimensionIndex = int
 DimensionIndices = List[int]
 
+# Categorical dimension type aliases
+CategoryList = Optional[List[str]]  # Category labels for categorical dimensions
+
 # Metadata type aliases
 PointsMetadata = Dict[str, Any]
+LinesMetadata = Dict[str, Any]
+GSplatsMetadata = Dict[str, Any]
 SceneMetadata = Dict[str, Any]
 
 # Color value type aliases

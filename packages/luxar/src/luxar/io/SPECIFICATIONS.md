@@ -31,7 +31,7 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 - `compressor`: Zarr compression (default: Blosc with zstd, level 3, bitshuffle)
 - `version`: Luxar format version (default: "0.1")
 - `enable_spatial_index`: Whether to build spatial indices (default: True)
-- `dtype_config`: Data type configuration (default: auto-detect)
+- `encoding_mode`: Encoding mode for array storage (default: AUTO) - see encoding/SPECIFICATIONS.md
 
 **Operations**:
 1. `create_scene(dimensions=None)` - Create scene with optional dimension specs
@@ -751,6 +751,12 @@ This is a known limitation - current implementation requires all points to fit i
 ---
 
 ## Changelog
+
+- **v1.2.2** (2025-11-28): Encoding system integration
+  - **BREAKING**: Replaced `dtype_config` parameter with `encoding_mode` (EncodingMode enum)
+  - All array writes use ArrayEncoder from luxar.encoding package
+  - Supports broadcasting, LUT encoding, and array reference deduplication
+  - See encoding/SPECIFICATIONS.md for encoding system details
 
 - **v1.2.1** (2025-11-28): Chunk sizing source of truth clarification
   - Clarified that chunk size constants are defined in `typing_utils/SPECIFICATIONS.md` (single source of truth)

@@ -15,18 +15,16 @@ OPACITY_MIN: Final[float] = 0.0
 OPACITY_MAX: Final[float] = 1.0
 DEFAULT_OPACITY: Final[float] = 1.0
 
-GAMMA_MIN: Final[float] = 0.2
-GAMMA_MAX: Final[float] = 2.0
+GAMMA_MIN: Final[float] = 0.1  # Symmetric: gamma and 1/gamma have equal range
+GAMMA_MAX: Final[float] = 10.0  # Symmetric: gamma and 1/gamma have equal range
 DEFAULT_GAMMA: Final[float] = 1.0
 
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
 # Sharpness constants
-SHARPNESS_MIN: Final[float] = 0.0  # Technical minimum (must be positive)
-SHARPNESS_MAX: Final[float] = (
-    15.0  # Maximum allowed value (computer-science friendly, uint8 mapping)
-)
+SHARPNESS_MIN: Final[float] = 0.0  # Technical minimum
+SHARPNESS_MAX: Final[float] = 31.0  # Maximum allowed value
 SHARPNESS_DEFAULT: Final[float] = 2.0
 
 # HDR color constants
@@ -35,11 +33,17 @@ COLOR_SDR_MAX: Final[float] = 1.0  # Standard dynamic range maximum
 COLOR_HDR_TYPICAL_MAX: Final[float] = 10.0  # Typical HDR maximum
 COLOR_HDR_THEORETICAL_MAX: Final[float] = float("inf")  # No theoretical limit
 
-# Chunk size constants
-CHUNK_SIZE_MIN: Final[int] = 1_024  # Minimum chunk size in elements (1KB)
-CHUNK_SIZE_DEFAULT: Final[int] = 32_768  # Default chunk size in elements (32KB)
-DEFAULT_CHUNK_SIZE: Final[int] = 32_768  # Alias for backward compatibility
-CHUNK_SIZE_MAX: Final[int] = 1_048_576  # Maximum chunk size in elements (1MB)
+# Chunk size constants (SINGLE SOURCE OF TRUTH - bytes, not elements)
+# Consumers (io, gsplats.io) convert to element counts based on array dtype
+TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size
+MIN_CHUNK_BYTES: Final[int] = 16_384  # 16KB minimum to amortize HTTP overhead
+MAX_CHUNK_BYTES: Final[int] = 262_144  # 256KB maximum for responsive streaming
+
+# Legacy aliases (deprecated, use byte-based constants above)
+CHUNK_SIZE_MIN: Final[int] = 1_024  # Deprecated: use MIN_CHUNK_BYTES
+CHUNK_SIZE_DEFAULT: Final[int] = 32_768  # Deprecated: use TARGET_CHUNK_BYTES
+DEFAULT_CHUNK_SIZE: Final[int] = 32_768  # Deprecated: use TARGET_CHUNK_BYTES
+CHUNK_SIZE_MAX: Final[int] = 1_048_576  # Deprecated: use MAX_CHUNK_BYTES
 
 # Memory constants
 KB_TO_BYTES: Final[int] = 1024
@@ -65,6 +69,10 @@ MAX_DISPLAYED_DIMENSIONS: Final[int] = 3  # Maximum dimensions shown in viewer
 MIN_DISPLAYED_DIMENSIONS: Final[int] = 1  # Minimum dimensions shown in viewer
 DEFAULT_DIMENSION_STEP_PERCENT: Final[float] = 0.01  # 1% of range for navigation
 
+# Categorical dimension constants
+MIN_CATEGORIES: Final[int] = 1  # Minimum categories for categorical dimensions
+CATEGORICAL_STEP: Final[float] = 1.0  # Step size for categorical dimensions (always 1)
+
 # Decimal precision for display
 POSITION_DISPLAY_DECIMALS: Final[int] = 3
 RADIUS_DISPLAY_DECIMALS: Final[int] = 3
@@ -81,6 +89,8 @@ ZARR_ATTRS_KEY: Final[str] = ".zattrs"
 NODE_TYPE_SCENE: Final[str] = "scene"
 NODE_TYPE_GROUP: Final[str] = "group"
 NODE_TYPE_POINTS: Final[str] = "points"
+NODE_TYPE_LINES: Final[str] = "lines"
+NODE_TYPE_GSPLATS: Final[str] = "gsplats"
 
 # Point radius constants
 MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius

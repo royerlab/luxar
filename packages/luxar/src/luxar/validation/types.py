@@ -11,12 +11,18 @@ users writing data.
 
 from __future__ import annotations
 
-from typing import Any, Optional, cast
+from typing import Any, List, Optional, cast
 
 import numpy as np
 
-from ..typing_utils.aliases import PositionArray, TransformMatrix
-from ..typing_utils.constants import GAMMA_MAX, GAMMA_MIN, OPACITY_MAX, OPACITY_MIN
+from ..typing_utils.aliases import CategoryList, PositionArray, TransformMatrix
+from ..typing_utils.constants import (
+    GAMMA_MAX,
+    GAMMA_MIN,
+    MIN_CATEGORIES,
+    OPACITY_MAX,
+    OPACITY_MIN,
+)
 from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
 
 
@@ -179,7 +185,13 @@ def validate_node_type(node_type: str) -> NodeType:
     Raises:
         ValueError: If node type is invalid
     """
-    valid_types = (NodeType.POINTS.value, NodeType.GROUP.value, NodeType.SCENE.value)
+    valid_types = (
+        NodeType.POINTS.value,
+        NodeType.LINES.value,
+        NodeType.GROUP.value,
+        NodeType.SCENE.value,
+        NodeType.GSPLATS.value,
+    )
     if node_type not in valid_types:
         raise ValueError(
             f"Invalid node type '{node_type}'. Must be one of {valid_types}"
@@ -325,3 +337,109 @@ def is_transform_matrix(obj: Any) -> bool:
         return True
     except (ValueError, TypeError):
         return False
+
+
+# Categorical dimension validation
+MAX_CATEGORY_LABEL_LENGTH = 1024  # Practical limit per label
+
+
+def validate_categories(categories: CategoryList) -> CategoryList:
+    """Validate category list for categorical dimensions.
+
+    Categories define the discrete values for a categorical dimension.
+    Each category is a string label (e.g., ["DAPI", "GFP", "mCherry"]).
+
+    Args:
+        categories: List of category labels, or None for non-categorical
+
+    Returns:
+        Validated category list (or None)
+
+    Raises:
+        TypeError: If categories is not a list or None
+        ValueError: If categories is invalid (empty, duplicates, etc.)
+    """
+    if categories is None:
+        return None
+
+    if not isinstance(categories, list):
+        raise TypeError(
+            f"categories must be a list or None, got {type(categories).__name__}"
+        )
+
+    if len(categories) < MIN_CATEGORIES:
+        raise ValueError(
+            f"categories must have at least {MIN_CATEGORIES} element, got {len(categories)}"
+        )
+
+    # Check each category
+    seen: dict[str, int] = {}
+    for i, cat in enumerate(categories):
+        if not isinstance(cat, str):
+            raise TypeError(
+                f"category at index {i} must be a string, got {type(cat).__name__}"
+            )
+        if len(cat) == 0:
+            raise ValueError(f"category at index {i} is empty string")
+        if len(cat) > MAX_CATEGORY_LABEL_LENGTH:
+            raise ValueError(
+                f"category at index {i} exceeds maximum length ({MAX_CATEGORY_LABEL_LENGTH} chars)"
+            )
+        if cat in seen:
+            raise ValueError(
+                f"duplicate category name: '{cat}' appears at indices {seen[cat]} and {i}"
+            )
+        seen[cat] = i
+
+    return categories
+
+
+def validate_category_indices(
+    values: np.ndarray, categories: List[str], context: str = "values"
+) -> None:
+    """Validate that array values are valid category indices.
+
+    For categorical dimensions, point coordinates should be integer indices
+    into the categories list (0-indexed).
+
+    Args:
+        values: 1D array of values to validate
+        categories: List of category labels
+        context: Context string for error messages
+
+    Raises:
+        ValueError: If values contain invalid category indices
+    """
+    if len(categories) == 0:
+        raise ValueError("categories list cannot be empty")
+
+    max_index = len(categories) - 1
+
+    # Check for out-of-range values
+    min_val = np.min(values)
+    max_val = np.max(values)
+
+    if min_val < 0:
+        # Find first negative index for error message
+        neg_indices = np.where(values < 0)[0]
+        first_neg = neg_indices[0]
+        raise ValueError(
+            f"negative category index {values[first_neg]} at position {first_neg} in {context}"
+        )
+
+    if max_val > max_index:
+        # Find first out-of-range index for error message
+        out_indices = np.where(values > max_index)[0]
+        first_out = out_indices[0]
+        raise ValueError(
+            f"category index {int(values[first_out])} at position {first_out} is out of range "
+            f"[0, {max_index}] in {context}. Valid categories: {categories}"
+        )
+
+    # Check that values are integers (or very close to integers)
+    if not np.allclose(values, np.round(values)):
+        non_int_indices = np.where(~np.isclose(values, np.round(values)))[0]
+        first_non_int = non_int_indices[0]
+        raise ValueError(
+            f"non-integer category index {values[first_non_int]} at position {first_non_int} in {context}"
+        )

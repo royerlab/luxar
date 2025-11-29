@@ -13,6 +13,8 @@ import numpy as np
 from arbol import aprint
 
 from ..core.dimensions import Dimensions
+from ..core.gsplats import GSplats
+from ..core.lines import Lines
 from ..core.node import Node
 from ..core.points import Points
 from ..io.writer import ZarrWriterProtocol
@@ -251,6 +253,181 @@ class Scene(Node):
         except Exception as e:
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
+
+    def add_lines(
+        self,
+        name: str,
+        vertices: Union[PositionArray, np.ndarray[Any, Any]],
+        widths: Union[
+            np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float
+        ],
+        colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        sharpness: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
+        indices: Optional[np.ndarray[Any, Any]] = None,
+        line_type: str = "polyline",
+        parent: Optional[Node] = None,
+        **attrs: Any,
+    ) -> Lines:
+        """Add a lines node to the scene.
+
+        Args:
+            name: Name of the lines node
+            vertices: Array of shape (N, D) for vertex positions
+            widths: Array of shape (N,) for line widths, or single width value
+            colors: Optional array of shape (N, 3) for per-vertex colors
+            sharpness: Optional array of shape (N,) for edge sharpness
+            indices: Optional array of vertex indices for indexed line type
+            line_type: Type of line connectivity ("segments", "polyline", "loop", "indexed")
+            parent: Parent node, defaults to scene root
+            **attrs: Additional attributes for the node
+
+        Returns:
+            The created Lines node
+
+        Raises:
+            ValueError: If lines creation fails or parameters are invalid
+        """
+        try:
+            # Ensure vertices is array-like
+            if not hasattr(vertices, "shape"):
+                vertices = np.asarray(vertices)
+
+            if vertices.ndim != 2:
+                raise ValueError(
+                    f"Vertices must have shape (N, D), got shape {vertices.shape}"
+                )
+
+            n_vertices = vertices.shape[0]
+            ndim = vertices.shape[1]
+            aprint(
+                f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
+            )
+
+            # Process widths (similar to radii for points)
+            from ..utils.array import broadcast_scalar_to_points
+
+            processed_widths = broadcast_scalar_to_points(
+                widths, n_vertices, name="widths"
+            )
+
+            # Process colors and sharpness
+            processed_colors = broadcast_color_to_points(colors, n_vertices)
+            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_vertices)
+
+            parent_node = parent or self
+
+            # Use writer to write lines immediately
+            path = f"{parent_node.path}/{name}" if parent_node.path else name
+            metadata = self._writer.write_lines(
+                path,
+                vertices.astype(np.float32),
+                widths=processed_widths,
+                colors=processed_colors,
+                sharpness=processed_sharpness,
+                indices=indices,
+                line_type=line_type,
+                **attrs,
+            )
+
+            # Return lightweight Lines node with only metadata
+            return Lines(
+                name,
+                metadata=metadata,
+                parent=parent_node,
+                writer=self._writer,
+                **attrs,
+            )
+        except Exception as e:
+            aprint(f"Failed to add lines node '{name}': {e}")
+            raise ValueError(f"Could not add lines '{name}': {e}") from e
+
+    def add_gsplats(
+        self,
+        name: str,
+        centers: Union[PositionArray, np.ndarray[Any, Any]],
+        amplitudes: Union[
+            np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any], float
+        ],
+        cholesky_factors: Union[
+            np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]
+        ],
+        colors: Optional[Union[ColorArray, np.ndarray[Any, Any]]] = None,
+        sharpness: Optional[
+            Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
+        ] = None,
+        parent: Optional[Node] = None,
+        **attrs: Any,
+    ) -> GSplats:
+        """Add a Gaussian splats node to the scene.
+
+        Args:
+            name: Name of the gsplats node
+            centers: Array of shape (N, D) for splat centers
+            amplitudes: Array of shape (N,) for intensities, or single value
+            cholesky_factors: Array of shape (N, k) for packed Cholesky factors, k=D*(D+1)/2
+            colors: Optional array of shape (N, 3) for splat colors
+            sharpness: Optional array of shape (N,) for generalized Gaussian exponent
+            parent: Parent node, defaults to scene root
+            **attrs: Additional attributes for the node
+
+        Returns:
+            The created GSplats node
+
+        Raises:
+            ValueError: If gsplats creation fails or parameters are invalid
+        """
+        try:
+            # Ensure centers is array-like
+            if not hasattr(centers, "shape"):
+                centers = np.asarray(centers)
+
+            if centers.ndim != 2:
+                raise ValueError(
+                    f"Centers must have shape (N, D), got shape {centers.shape}"
+                )
+
+            n_splats = centers.shape[0]
+            ndim = centers.shape[1]
+            aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
+
+            # Process amplitudes (similar to radii/widths, but can be zero)
+            from ..utils.array import broadcast_scalar_to_points
+
+            processed_amplitudes = broadcast_scalar_to_points(
+                amplitudes, n_splats, name="amplitudes", require_positive=False
+            )
+
+            # Process colors and sharpness
+            processed_colors = broadcast_color_to_points(colors, n_splats)
+            processed_sharpness = broadcast_sharpness_to_points(sharpness, n_splats)
+
+            parent_node = parent or self
+
+            # Use writer to write gsplats immediately
+            path = f"{parent_node.path}/{name}" if parent_node.path else name
+            metadata = self._writer.write_gsplats(
+                path,
+                centers.astype(np.float32),
+                amplitudes=processed_amplitudes,
+                cholesky_factors=cholesky_factors,
+                colors=processed_colors,
+                sharpness=processed_sharpness,
+                **attrs,
+            )
+
+            # Return lightweight GSplats node with only metadata
+            return GSplats(
+                name,
+                metadata=metadata,
+                parent=parent_node,
+                writer=self._writer,
+                **attrs,
+            )
+        except Exception as e:
+            aprint(f"Failed to add gsplats node '{name}': {e}")
+            raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
     def _auto_detect_broadcast_dims(self, positions: np.ndarray) -> List[str]:
         """Auto-detect which dimensions should be broadcast based on data.

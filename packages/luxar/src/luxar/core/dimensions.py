@@ -6,10 +6,66 @@ including dimension names, units, ranges, and navigation properties.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+# Type alias (defined inline to avoid circular import with typing_utils)
+CategoryList = Optional[List[str]]
+
+# Constants (defined inline to avoid circular import with typing_utils)
+CATEGORICAL_STEP = 1.0
+MIN_CATEGORIES = 1
+MAX_CATEGORY_LABEL_LENGTH = 1024
+
+
+def _validate_categories(categories: CategoryList) -> CategoryList:
+    """Validate category list for categorical dimensions (inline to avoid circular import).
+
+    Args:
+        categories: List of category labels, or None for non-categorical
+
+    Returns:
+        Validated category list (or None)
+
+    Raises:
+        TypeError: If categories is not a list or None
+        ValueError: If categories is invalid
+    """
+    if categories is None:
+        return None
+
+    if not isinstance(categories, list):
+        raise TypeError(
+            f"categories must be a list or None, got {type(categories).__name__}"
+        )
+
+    if len(categories) < MIN_CATEGORIES:
+        raise ValueError(
+            f"categories must have at least {MIN_CATEGORIES} element, got {len(categories)}"
+        )
+
+    seen: dict[str, int] = {}
+    for i, cat in enumerate(categories):
+        if not isinstance(cat, str):
+            raise TypeError(
+                f"category at index {i} must be a string, got {type(cat).__name__}"
+            )
+        if len(cat) == 0:
+            raise ValueError(f"category at index {i} is empty string")
+        if len(cat) > MAX_CATEGORY_LABEL_LENGTH:
+            raise ValueError(
+                f"category at index {i} exceeds maximum length ({MAX_CATEGORY_LABEL_LENGTH} chars)"
+            )
+        if cat in seen:
+            raise ValueError(
+                f"duplicate category name: '{cat}' appears at indices {seen[cat]} and {i}"
+            )
+        seen[cat] = i
+
+    return categories
 
 
 @dataclass
@@ -23,9 +79,10 @@ class Dimension:
         step: Default step size for navigation (None = auto-calculate)
         display: Whether dimension should be displayed (max 3 can be True)
         discrete: Whether dimension has discrete values (for channels, indices)
-        cyclic: Whether dimension wraps around (for angles)
+        cyclic: Whether dimension wraps around (for angles, periodic states)
         scale: Physical scale factor (default 1.0)
         spatial: Whether points extend through this dimension (None = auto-determine)
+        categories: Optional category labels for categorical dimensions
         description: Optional human-readable description
     """
 
@@ -38,10 +95,26 @@ class Dimension:
     cyclic: bool = False
     scale: float = 1.0
     spatial: Optional[bool] = None
+    categories: CategoryList = None
     description: str = ""
 
     def __post_init__(self) -> None:
         """Validate dimension parameters and auto-determine spatial flag."""
+        # Validate and handle categorical dimensions
+        self.categories = _validate_categories(self.categories)
+        if self.categories is not None:
+            # Categorical dimensions are inherently discrete
+            if not self.discrete:
+                self.discrete = True
+
+            # Auto-set range if not provided
+            if self.range is None:
+                self.range = (0, len(self.categories) - 1)
+
+            # Step is always 1 for categories
+            if self.step is None:
+                self.step = CATEGORICAL_STEP
+
         if self.range is not None:
             if len(self.range) != 2:
                 raise ValueError("Range must be a tuple of (min, max)")
@@ -66,8 +139,6 @@ class Dimension:
             if not self.discrete:
                 # Auto-correct to discrete with a warning
                 self.discrete = True
-                import warnings
-
                 warnings.warn(
                     f"Dimension '{self.name}' is non-spatial and non-displayed, "
                     f"so it must be discrete. Setting discrete=True automatically.",
@@ -106,9 +177,14 @@ class Dimension:
         # Default fallback
         return 0.1
 
+    @property
+    def is_categorical(self) -> bool:
+        """Check if this dimension is categorical."""
+        return self.categories is not None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "name": self.name,
             "unit": self.unit,
             "range": list(self.range) if self.range else None,
@@ -120,6 +196,10 @@ class Dimension:
             "spatial": self.spatial,
             "description": self.description,
         }
+        # Only include categories if set (avoid null in most cases)
+        if self.categories is not None:
+            result["categories"] = self.categories
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Dimension:
@@ -138,6 +218,7 @@ class Dimension:
             cyclic=data.get("cyclic", False),
             scale=data.get("scale", 1.0),
             spatial=data.get("spatial"),  # Let __post_init__ auto-determine if None
+            categories=data.get("categories"),  # None if not present
             description=data.get("description", ""),
         )
 

@@ -295,7 +295,7 @@ class TestNodeMethodChaining:
 
             # Invalid gamma should raise ValueError
             with pytest.raises(ValueError, match="Gamma must be between"):
-                group.set_gamma(0.1)  # < 0.2
+                group.set_gamma(0.05)  # < 0.1 (new minimum per spec)
 
             # Invalid blending mode should raise ValueError
             with pytest.raises(ValueError, match="Invalid blending mode"):

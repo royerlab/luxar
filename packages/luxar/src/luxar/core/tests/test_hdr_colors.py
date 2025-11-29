@@ -117,12 +117,25 @@ class TestHDRColorSupport:
 
             scene.add_points("broadcast_points", positions, colors=single_hdr_color)
 
-        # Verify broadcast HDR color
+        # Verify broadcast HDR color (NEW: encoder detects uniform and uses broadcasting)
         store = zarr.open_group(tmp_path / "broadcast_hdr.zarr", mode="r")
-        stored_colors = store["broadcast_points/colors"][:]
-        assert stored_colors.shape == (100, 3)
-        assert np.all(stored_colors[0] == [2.0, 3.0, 1.5])
-        assert np.all(stored_colors == stored_colors[0])  # All same
+        colors_arr = store["broadcast_points/colors"]
+        stored_colors = colors_arr[:]
+
+        # With broadcasting encoding, shape is (1, 3) with metadata
+        assert stored_colors.shape == (1, 3), (
+            f"Expected broadcasted shape (1, 3), got {stored_colors.shape}"
+        )
+        assert np.allclose(stored_colors[0], [2.0, 3.0, 1.5])
+
+        # Check encoding metadata
+        enc = colors_arr.attrs.get("encoding", {})
+        assert enc["name"] == "broadcasted", (
+            "Should use broadcasted encoding for uniform colors"
+        )
+        assert enc["n_elements"] == 100, (
+            "Broadcasting metadata should indicate 100 elements"
+        )
 
     def test_color_precision(self, tmp_path) -> None:
         """Test that float32 precision is maintained."""
@@ -146,8 +159,12 @@ class TestHDRColorSupport:
             scene.add_points("precision_points", positions, colors=colors)
 
         # Verify precision is maintained to float32 limits
+        # Use ArrayDecoder to properly decode (may be LUT/broadcasted/etc)
+        from luxar.encoding import ArrayDecoder
+
         store = zarr.open_group(tmp_path / "precision.zarr", mode="r")
-        stored_colors = store["precision_points/colors"][:]
+        decoder = ArrayDecoder()
+        stored_colors = decoder.decode(store["precision_points/colors"], store)
 
         # Float32 has ~7 decimal digits of precision
         np.testing.assert_array_almost_equal(stored_colors, colors, decimal=5)

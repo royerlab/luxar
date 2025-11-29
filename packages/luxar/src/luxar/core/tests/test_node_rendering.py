@@ -90,12 +90,12 @@ class TestNodeRenderingAttributes:
             scene = compiler.create_scene()
             node = scene.add_group("test_node")
 
-        # Test invalid values
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
-            node.gamma = 0.1
+        # Test invalid values (range is now 0.1 to 10.0 per spec)
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
+            node.gamma = 0.05
 
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
-            node.gamma = 2.5
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
+            node.gamma = 15.0
 
         with pytest.raises(TypeError, match="Gamma must be convertible to float"):
             node.gamma = "not_a_number"

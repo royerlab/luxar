@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from arbol import aprint
 
-from ..core.node import Node
 from ..typing_utils.enums import NodeType
+from .datanode import DataNode
 
 if TYPE_CHECKING:
     from ..io.writer import ZarrWriterProtocol
 
 
-class Points(Node):
+class Points(DataNode):
     """Points node that holds metadata about points data.
 
     This class is a lightweight metadata container. Actual point data is written
@@ -34,8 +34,8 @@ class Points(Node):
         self,
         name: str,
         metadata: Optional[Dict[str, Any]] = None,
-        parent: Optional[Node] = None,
-        writer: Optional[ZarrWriterProtocol] = None,
+        parent: Optional["DataNode"] = None,
+        writer: Optional["ZarrWriterProtocol"] = None,
         **attrs: Any,
     ) -> None:
         """Initialize a Points node.
@@ -47,31 +47,38 @@ class Points(Node):
             writer: Writer interface for progressive writing
             **attrs: Additional attributes for the node
         """
-        # Initialize parent Node FIRST
+        # Initialize parent DataNode (which handles metadata storage)
         node_type = NodeType.POINTS.value
-        super().__init__(name, parent=parent, writer=writer, type=node_type, **attrs)
-
-        # Store metadata AFTER super().__init__() to avoid being overwritten
-        # (Node.__init__() sets self._metadata = {}, which would overwrite ours)
-        self._metadata = metadata or {}
+        super().__init__(
+            name,
+            parent=parent,
+            writer=writer,
+            type=node_type,
+            metadata=metadata,
+            **attrs,
+        )
 
         # Log creation
         if metadata:
             n_points = metadata.get("n_points", 0)
-            n_dims = metadata.get("dims", 3)
+            n_dims = metadata.get("ndim", 3)
             aprint(
                 f"✓ Points node '{name}' created with {n_points:,} points in {n_dims}D."
             )
 
     @property
-    def metadata(self) -> Dict[str, Any]:
-        """Get metadata about the points."""
-        return self._metadata
+    def n_elements(self) -> int:
+        """Number of primary elements (points).
+
+        Returns:
+            Number of points
+        """
+        return int(self._metadata.get("n_points", 0))
 
     @property
     def n_points(self) -> int:
-        """Get number of points."""
-        return int(self._metadata.get("n_points", 0))
+        """Get number of points (alias for n_elements)."""
+        return self.n_elements
 
     @property
     def has_colors(self) -> bool:
