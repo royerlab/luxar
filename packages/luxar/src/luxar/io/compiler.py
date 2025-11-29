@@ -582,18 +582,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
 
-        # Validate amplitudes (must be non-negative: >= 0, zero is valid but invisible)
-        if amplitudes.shape[0] != n_splats:
-            raise ValueError(
-                f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
-            )
-        if np.any(amplitudes < 0):
-            min_val = float(np.min(amplitudes))
-            raise ValueError(
-                f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
-            )
-
-        # Validate cholesky_factors shape
+        # Validate cholesky_factors shape FIRST (before spatial ordering)
         expected_k = n_dims * (n_dims + 1) // 2
         if cholesky_factors.ndim == 1:
             if cholesky_factors.shape[0] != expected_k:
@@ -609,6 +598,58 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             raise ValueError(
                 f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
                 f"got {cholesky_factors.shape}"
+            )
+
+        # Apply spatial ordering if enabled
+        ordering_data = None
+        if self.enable_spatial_index and n_splats > 0:
+            from .ordering import compute_chunk_bounds_gsplats, sort_splats_spatial
+
+            aprint(f"  🔍 Applying {self.ordering_method} ordering to gsplats...")
+            sort_indices, ordering_metadata = sort_splats_spatial(
+                centers, method=self.ordering_method
+            )
+
+            # Reorder all arrays
+            centers = centers[sort_indices]
+            amplitudes = amplitudes[sort_indices]
+            cholesky_factors = cholesky_factors[sort_indices]
+            if colors is not None:
+                colors = colors[sort_indices]
+            if sharpness is not None:
+                sharpness = sharpness[sort_indices]
+
+            # Compute chunk size
+            from ..typing_utils import TARGET_CHUNK_BYTES
+
+            bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
+            chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
+            chunk_size = min(chunk_size, n_splats)
+
+            # Compute chunk bounds
+            chunk_bounds = compute_chunk_bounds_gsplats(
+                centers, cholesky_factors, chunk_size
+            )
+
+            ordering_data = {
+                "chunk_bounds": chunk_bounds,
+                "chunk_size": chunk_size,
+                **ordering_metadata,
+            }
+
+            aprint(
+                f"  ✓ Spatial ordering complete: {ordering_metadata['ordering']} with {len(chunk_bounds)} chunks"
+            )
+
+        # Validate amplitudes (must be non-negative: >= 0, zero is valid but invisible)
+        if amplitudes.shape[0] != n_splats:
+            raise ValueError(
+                f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
+            )
+        if np.any(amplitudes < 0):
+            min_val = float(np.min(amplitudes))
+            raise ValueError(
+                f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
             )
 
         # Write centers using ArrayEncoder (COORDINATE)
@@ -659,10 +700,23 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "ndim": n_dims,
             "has_colors": False,
             "has_sharpness": False,
-            "ordering": "none",  # TODO: Implement Morton ordering
             "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
             "center_bounds": {"min": center_min, "max": center_max},
         }
+
+        # Add ordering metadata if spatial ordering was applied
+        if ordering_data is not None:
+            metadata.update(
+                {
+                    "ordering": ordering_data["ordering"],
+                    "morton_min": ordering_data["morton_min"],
+                    "morton_max": ordering_data["morton_max"],
+                    "morton_bits_per_dim": ordering_data["morton_bits_per_dim"],
+                    "chunk_size": ordering_data["chunk_size"],
+                }
+            )
+        else:
+            metadata["ordering"] = "none"
 
         # Write optional datasets
         if colors is not None:
@@ -702,6 +756,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             metadata["has_sharpness"] = True
 
+        # Write chunk_bounds if ordering was applied
+        if ordering_data is not None:
+            chunk_bounds = ordering_data["chunk_bounds"]
+            if len(chunk_bounds) > 0:
+                group.create_dataset(
+                    "chunk_bounds",
+                    data=chunk_bounds,
+                    chunks=(chunk_bounds.shape[0], n_dims, 2),
+                    dtype=np.float32,
+                )
+                aprint(f"  ✓ Chunk bounds written: {len(chunk_bounds)} chunks")
+
         # Process transform if present
         if "transform" in attrs:
             from ..core.transforms import prepare_transform_for_zarr
@@ -714,6 +780,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_splats"] = n_splats
         group.attrs["amplitude_range"] = metadata["amplitude_range"]
         group.attrs["center_bounds"] = metadata["center_bounds"]
+
+        # Add ordering metadata to attrs if present
+        if ordering_data is not None:
+            for key in [
+                "ordering",
+                "morton_min",
+                "morton_max",
+                "morton_bits_per_dim",
+                "chunk_size",
+            ]:
+                if key in metadata:
+                    group.attrs[key] = metadata[key]
 
         self._metadata_cache[path] = metadata
         aprint(f"✅ GSplats written to {path}")
