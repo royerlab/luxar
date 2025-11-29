@@ -1,7 +1,7 @@
 # luxar.encoding - Technical Specification
 
-**Version**: 0.5.1
-**Last Updated**: 2025-11-28
+**Version**: 0.6.0
+**Last Updated**: 2025-11-29
 
 **Related Specifications**:
 - `luxar.core` - Data structures that use encoding (see `core/SPECIFICATIONS.md`)
@@ -253,7 +253,61 @@ A **broadcasted array** stores a single value that applies to all N elements:
 - Storage: 1 value instead of N values
 - Metadata explicitly indicates broadcasting
 
-### 5.2 Storage Format
+### 5.2 Scalar Input Support
+
+**IMPORTANT**: The encoder accepts **scalar inputs directly** (Python `int`, `float`, or scalar numpy values) without requiring the caller to expand them into full arrays. This eliminates wasteful intermediate array creation.
+
+**Supported scalar input types**:
+- Python scalar: `float`, `int`
+- NumPy scalar: `np.float32(value)`, `np.uint8(value)`, etc.
+- Single-element array: `np.array([value])`
+- Tuple/list for colors: `(r, g, b)` or `[r, g, b]`
+
+**Encoder behavior with scalar input**:
+```python
+# User provides scalar + n_elements
+encoder.encode(
+    data=0.5,  # Scalar input (float or int)
+    n_elements=10000,  # How many elements this represents
+    zarr_group=group,
+    name="radii",
+    semantic_type=SemanticType.POSITIVE_SCALAR,
+)
+
+# Encoder creates (1,) array internally and stores with broadcasting metadata
+# NO intermediate (10000,) array is ever created
+```
+
+**When `n_elements` is provided**:
+- Scalar or (1,) array input → stored as `(1,)` with `n_elements` in metadata
+- Full array input (N,) where all values are identical → same storage (with uniformity check)
+- Full array input (N,) with varying values → error (data doesn't match scalar input)
+
+**When `n_elements` is omitted**:
+- Scalar input → error (must specify how many elements)
+- Array input `(N,)` → check uniformity, if uniform store as `(1,)` with `n_elements=N`
+
+**Color tuples**: For colors, tuples/lists of length 3 or 4 are automatically converted to `(1, 3)` or `(1, 4)` arrays:
+```python
+encoder.encode(
+    data=(1.0, 0.0, 0.0),  # RGB tuple
+    n_elements=5000,
+    semantic_type=SemanticType.COLOR,
+    color_mode="sdr",
+)
+# Stored as (1, 3) array with n_elements=5000
+```
+
+**Optimization**: This approach completely eliminates intermediate array allocation. The flow is:
+```
+Old (wasteful):
+scalar → full array (Scene) → full array (Compiler) → broadcasted storage
+
+New (optimal):
+scalar → broadcasted storage (no intermediate arrays)
+```
+
+### 5.3 Storage Format
 
 Broadcasted arrays are stored with shape `(1,)` or `(1, d)` instead of `(N,)` or `(N, d)`.
 
@@ -269,7 +323,7 @@ Broadcasted arrays are stored with shape `(1,)` or `(1, d)` instead of `(N,)` or
 
 The `n_elements` field indicates how many elements the single value represents.
 
-### 5.3 Examples
+### 5.4 Examples
 
 **Uniform sharpness (all splats have sharpness=2.0)**:
 ```
@@ -283,11 +337,14 @@ Array shape: (1, 3) with value [[1.0, 0.0, 0.0]]
 Metadata: {"encoding": {"name": "broadcasted", "n_elements": 50000}}
 ```
 
-### 5.4 Dtype Preservation
+### 5.5 Dtype Preservation
 
-Broadcasting preserves the original dtype of the data. If the input is float32, the broadcasted value is stored as float32. If the input is uint8, the broadcasted value is stored as uint8. No dtype transformation occurs during broadcasting.
+Broadcasting preserves the dtype determined by semantic type and encoding mode. For scalar inputs, the dtype is selected based on:
+- Semantic type (e.g., POSITIVE_SCALAR → float32 in AUTO mode)
+- Encoding mode (PRECISION vs MEMORY vs AUTO)
+- For AUTO mode with scalars: uses the natural dtype for the value (int → appropriate uint, float → float32)
 
-### 5.5 Decoder Behavior
+### 5.6 Decoder Behavior
 
 When loading a broadcasted array:
 - If consumer needs full array: expand to (N, ...) by repeating
@@ -893,23 +950,47 @@ class ArrayEncoder:
 
     def encode(
         self,
-        data: np.ndarray,
+        data: np.ndarray | float | int | tuple | list,  # Accepts scalars and arrays!
         zarr_group: zarr.Group,
         name: str,
         semantic_type: SemanticType,  # REQUIRED - must be explicit
         mode: EncodingMode = EncodingMode.AUTO,
+        n_elements: int | None = None,  # Required for scalar input, optional for arrays
         bounds: tuple[float, float] | None = None,  # For BOUNDED_SCALAR
         positive_scalar_encoding: Literal["linear", "log"] = "linear",  # For POSITIVE_SCALAR
         custom_encoder: str | None = None,  # For CUSTOM mode
+        color_mode: Literal["sdr", "hdr"] | None = None,  # For COLOR semantic type
     ) -> None:
         """
-        Encode array and write to zarr group.
+        Encode array or scalar and write to zarr group.
 
         Follows priority order:
-        1. Broadcasting (if all values identical within tolerance)
+        1. Broadcasting (if scalar input OR all values identical within tolerance)
         2. Array reference (if duplicate exists)
         3. LUT encoding (if ≤256 unique values)
         4. Dtype encoding (based on semantic type and mode)
+
+        Args:
+            data: Input data - can be:
+                  - NumPy array: standard path
+                  - Python scalar (float, int): requires n_elements
+                  - Tuple/list (for colors): e.g., (1.0, 0.0, 0.0)
+            zarr_group: Zarr group to write to
+            name: Array name within the group
+            semantic_type: Semantic type (REQUIRED)
+            mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
+            n_elements: Number of elements the scalar represents.
+                        - Required if data is scalar
+                        - Optional if data is array (for validation)
+            bounds: Min/max bounds for BOUNDED_SCALAR
+            positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
+            custom_encoder: Explicit encoder name for CUSTOM mode
+            color_mode: "sdr" or "hdr" for COLOR semantic type (required for float)
+
+        Raises:
+            ValueError: If scalar input lacks n_elements
+            ValueError: If n_elements provided but data has different length
+            ValueError: If semantic type constraints are violated
         """
         ...
 
@@ -1204,6 +1285,15 @@ These are not in scope for v1.0 but the architecture should not preclude them.
 ---
 
 ## Changelog
+
+- **v0.6.0** (2025-11-29): Scalar input support - eliminate intermediate arrays
+  - **NEW FEATURE**: `ArrayEncoder.encode()` now accepts scalar inputs directly (float, int, tuple, list)
+  - Added `n_elements` parameter to specify how many elements a scalar represents
+  - Scalars passed through entire chain without creating intermediate arrays
+  - Eliminates wasteful "scalar → array → array → broadcasted" flow
+  - Updated Section 5.2 with complete scalar input specification
+  - Updated Section 11.3 with new `encode()` signature
+  - **Performance**: No memory allocation for uniform attributes (radii=0.5 for 1M points = 0 bytes intermediate)
 
 - **v0.5.1** (2025-11-28): COORDINATE broadcasting fix
   - **BREAKING**: COORDINATE type now explicitly blocks broadcasting

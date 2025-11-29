@@ -7,7 +7,7 @@ The encoder follows a strict priority order:
 4. Dtype Encoding (based on semantic type and mode)
 """
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import zarr
@@ -46,11 +46,12 @@ class ArrayEncoder:
 
     def encode(
         self,
-        data: np.ndarray,
+        data: Union[np.ndarray, float, int, tuple, list],
         zarr_group: zarr.Group,
         name: str,
         semantic_type: SemanticType,
         mode: EncodingMode = EncodingMode.AUTO,
+        n_elements: Optional[int] = None,
         bounds: Optional[tuple[float, float]] = None,
         positive_scalar_encoding: Literal["linear", "log"] = "linear",
         custom_encoder: Optional[str] = None,
@@ -58,20 +59,26 @@ class ArrayEncoder:
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
     ) -> None:
-        """Encode array and write to zarr group.
+        """Encode array or scalar and write to zarr group.
 
         Follows priority order:
-        1. Broadcasting (if all values identical within tolerance)
+        1. Broadcasting (if scalar input OR all values identical within tolerance)
         2. Array reference (if duplicate exists)
         3. LUT encoding (if ≤256 unique values and mode != PRECISION)
         4. Dtype encoding (based on semantic type and mode)
 
         Args:
-            data: Input array to encode
+            data: Input data - can be:
+                  - NumPy array: standard path
+                  - Python scalar (float, int): requires n_elements
+                  - Tuple/list (for colors): e.g., (1.0, 0.0, 0.0)
             zarr_group: Zarr group to write to
             name: Array name within the group
             semantic_type: Semantic type (REQUIRED - must be explicit)
             mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
+            n_elements: Number of elements the scalar represents.
+                        - Required if data is scalar
+                        - Optional if data is array (for validation)
             bounds: Min/max bounds for BOUNDED_SCALAR (None = auto-detect)
             positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
             custom_encoder: Explicit encoder name for CUSTOM mode
@@ -80,6 +87,8 @@ class ArrayEncoder:
             compressor: Optional compressor for zarr dataset
 
         Raises:
+            ValueError: If scalar input lacks n_elements
+            ValueError: If n_elements provided but data has different length
             ValueError: If semantic type constraints are violated
             ValueError: If NaN or Inf values are present
             ValueError: If CUSTOM mode lacks custom_encoder
@@ -92,6 +101,42 @@ class ArrayEncoder:
         # Validate CUSTOM mode
         if mode == EncodingMode.CUSTOM and custom_encoder is None:
             raise ValueError("CUSTOM mode requires custom_encoder parameter")
+
+        # Handle scalar input - convert to array for broadcasting path
+        if not isinstance(data, np.ndarray):
+            # Scalar input detected
+            if n_elements is None:
+                raise ValueError(
+                    "Scalar input requires n_elements parameter "
+                    "(how many elements this scalar represents)"
+                )
+
+            # COORDINATE type blocks broadcasting
+            if semantic_type == SemanticType.COORDINATE:
+                raise ValueError(
+                    "COORDINATE semantic type does not support scalar/broadcasting. "
+                    "Positions must always be provided as full arrays."
+                )
+
+            # Convert scalar to appropriate array format
+            data = self._scalar_to_array(data, semantic_type)
+
+            # Validate the converted scalar array
+            self._validate_input(data, semantic_type, color_mode)
+
+            # Directly encode as broadcasted (skip uniformity check)
+            self._encode_broadcasted_scalar(
+                zarr_group, name, data, n_elements, chunks, compressor
+            )
+            return
+
+        # Array input path - validate n_elements if provided
+        if n_elements is not None:
+            if data.shape[0] != n_elements and data.shape[0] != 1:
+                raise ValueError(
+                    f"n_elements={n_elements} but data has shape {data.shape}. "
+                    f"Expected either ({n_elements}, ...) or (1, ...) for broadcasting"
+                )
 
         # Empty array handling: pass through without encoding
         if data.size == 0:
@@ -355,6 +400,83 @@ class ArrayEncoder:
         zarr_group[name].attrs["encoding"] = {
             "name": "broadcasted",
             "n_elements": data.shape[0],
+        }
+
+    def _scalar_to_array(
+        self,
+        data: Union[float, int, tuple, list],
+        semantic_type: SemanticType,
+    ) -> np.ndarray:
+        """Convert scalar input to (1,) or (1, d) array.
+
+        Args:
+            data: Scalar value (float, int, tuple, or list)
+            semantic_type: Semantic type to determine array format
+
+        Returns:
+            NumPy array with shape (1,) or (1, d)
+
+        Raises:
+            ValueError: If tuple/list length is invalid for semantic type
+        """
+        if isinstance(data, (tuple, list)):
+            # Color tuple/list: (R, G, B) or (R, G, B, A)
+            if semantic_type != SemanticType.COLOR:
+                raise ValueError(
+                    f"Tuple/list input only supported for COLOR semantic type, "
+                    f"got {semantic_type}"
+                )
+            if len(data) not in (3, 4):
+                raise ValueError(
+                    f"Color tuple/list must have 3 or 4 elements, got {len(data)}"
+                )
+            # Convert to (1, d) array
+            return np.array([data], dtype=np.float32)
+        else:
+            # Python scalar: float or int
+            if isinstance(data, (int, float)):
+                # Convert to (1,) array
+                return np.array([float(data)], dtype=np.float32)
+            elif isinstance(data, np.number):
+                # NumPy scalar
+                return np.array([data], dtype=np.float32)
+            else:
+                raise ValueError(
+                    f"Unsupported scalar type: {type(data)}. "
+                    f"Expected float, int, tuple, list, or numpy scalar."
+                )
+
+    def _encode_broadcasted_scalar(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        n_elements: int,
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Encode scalar as broadcasted array.
+
+        This is called when scalar input is detected. The data is already
+        converted to (1,) or (1, d) format by _scalar_to_array().
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data with shape (1,) or (1, d)
+            n_elements: Number of elements this scalar represents
+            chunks: Optional chunk shape (ignored for broadcast)
+            compressor: Optional compressor
+        """
+        # Write the single value
+        zarr_group.create_dataset(
+            name, data=data, compressor=compressor, overwrite=True
+        )
+
+        # Set encoding metadata
+        zarr_group[name].attrs["encoding"] = {
+            "name": "broadcasted",
+            "n_elements": n_elements,
         }
 
     def _encode_array_ref(
