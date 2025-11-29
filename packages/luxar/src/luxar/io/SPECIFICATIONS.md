@@ -641,6 +641,209 @@ with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
 
 ---
 
+## Reading Luxar Scenes
+
+### Purpose
+
+Provide Python API to read and validate Luxar scene files (.zarr format). Enables:
+- Round-trip testing (write → read → verify)
+- Python-based scene analysis and inspection
+- Format validation and debugging
+- Data extraction for processing
+
+### API Design
+
+#### LuxarScene Class
+
+```python
+from luxar.io import LuxarScene
+
+# Load scene (read-only)
+scene = LuxarScene.load('scene.zarr')
+
+# Scene metadata
+scene.version: str                    # Luxar format version
+scene.dimensions: Optional[Dimensions]  # Scene dimensions (if present)
+scene.root_attrs: Dict[str, Any]      # All root attributes
+scene.path: Path                      # Path to zarr store
+
+# Node discovery
+scene.nodes: List[Dict[str, Any]]     # All node metadata
+# Returns: [
+#   {'name': 'my_points', 'type': 'points', 'n_points': 1000,
+#    'ordering': 'morton', 'has_colors': True, ...},
+#   {'name': 'my_splats', 'type': 'gsplats', 'n_splats': 500, ...},
+# ]
+
+scene.list_points() -> List[str]      # Names of all points nodes
+scene.list_gsplats() -> List[str]     # Names of all gsplats nodes
+scene.list_lines() -> List[str]       # Names of all lines nodes
+scene.list_groups() -> List[str]      # Names of all group nodes
+
+# Node queries
+scene.has_node(name: str) -> bool
+scene.get_node_type(name: str) -> str  # 'points', 'gsplats', 'lines', 'group'
+scene.get_node_metadata(name: str) -> Dict[str, Any]  # Metadata only, no data
+
+# Load node data (automatic decoding via ArrayDecoder)
+scene.get_points(name: str) -> Dict[str, Any]
+scene.get_gsplats(name: str) -> Dict[str, Any]
+scene.get_lines(name: str) -> Dict[str, Any]
+```
+
+#### Return Value Structure
+
+**get_points() returns**:
+```python
+{
+    # Data arrays (decoded via ArrayDecoder)
+    'positions': ndarray,      # (N, D) float32
+    'colors': ndarray,         # (N, 3) float32 (if present)
+    'radii': ndarray,          # (N,) float32 (if present)
+    'sharpness': ndarray,      # (N,) float32 (if present)
+
+    # Spatial ordering
+    'chunk_bounds': ndarray,   # (num_chunks, D, 2) float32 (if present)
+
+    # Metadata
+    'metadata': {
+        'n_points': int,
+        'ordering': str,         # 'morton', 'hilbert', or 'none'
+        'slice_dims': List[int], # Discrete dimension indices (if ordered)
+        'morton_dims': List[int],  # Spatial dimension indices (if ordered)
+        'morton_min': List[float], # Min bounds for Morton dims (if ordered)
+        'morton_max': List[float], # Max bounds for Morton dims (if ordered)
+        'morton_bits_per_dim': int,  # Bits per dimension (if ordered)
+        'chunk_size': int,       # Elements per chunk (if ordered)
+        'has_colors': bool,
+        'has_radii': bool,
+        'has_sharpness': bool,
+        'max_radius': float,     # (if radii present)
+        'opacity': float,
+        'gamma': float,
+        'blending_mode': str,
+        'transform': ndarray,    # (4, 4) if present
+        # ... any custom attrs
+    }
+}
+```
+
+**get_gsplats() returns**:
+```python
+{
+    # Data arrays (decoded)
+    'centers': ndarray,           # (N, D) float32
+    'amplitudes': ndarray,        # (N,) float32
+    'cholesky_factors': ndarray,  # (N, k) float32
+    'colors': ndarray,            # (N, 3) float32 (if present)
+    'sharpness': ndarray,         # (N,) float32 (if present)
+
+    # Spatial ordering
+    'chunk_bounds': ndarray,      # (num_chunks, D, 2) (if present)
+
+    # Metadata
+    'metadata': {
+        'n_splats': int,
+        'ndim': int,
+        'ordering': str,
+        'morton_min': List[float],  # (if ordered)
+        'morton_max': List[float],  # (if ordered)
+        'morton_bits_per_dim': int,  # (if ordered)
+        'chunk_size': int,          # (if ordered)
+        'has_colors': bool,
+        'has_sharpness': bool,
+        'amplitude_range': Dict[str, float],  # min/max
+        'center_bounds': Dict[str, List[float]],  # min/max
+        'transform': ndarray,  # (4, 4) if present
+        # ... custom attrs
+    }
+}
+```
+
+**get_lines() returns**:
+```python
+{
+    # Data arrays (decoded)
+    'vertices': ndarray,     # (N, D) float32
+    'widths': ndarray,       # (N,) float32
+    'colors': ndarray,       # (N, 3) float32 (if present)
+    'sharpness': ndarray,    # (N,) float32 (if present)
+    'indices': ndarray,      # (M,) uint32 (if indexed line type)
+
+    # Metadata
+    'metadata': {
+        'n_vertices': int,
+        'n_segments': int,
+        'ndim': int,
+        'line_type': str,  # 'segments', 'polyline', 'loop', 'indexed'
+        'has_colors': bool,
+        'has_sharpness': bool,
+        'max_width': float,
+        'transform': ndarray,  # (4, 4) if present
+        # ... custom attrs
+    }
+}
+```
+
+### Usage Examples
+
+**Inspection**:
+```python
+scene = LuxarScene.load('scene.zarr')
+
+# Scene overview
+print(f"Luxar version: {scene.version}")
+if scene.dimensions:
+    print(f"Dimensions: {[d.name for d in scene.dimensions.dimensions]}")
+
+# List all nodes
+print(f"Scene has {len(scene.nodes)} nodes:")
+for node in scene.nodes:
+    print(f"  - {node['name']} ({node['type']})")
+```
+
+**Data loading**:
+```python
+# Load points data
+points = scene.get_points('my_cloud')
+positions = points['positions']  # Already decoded to float32
+colors = points['colors']        # Decoded
+metadata = points['metadata']
+
+# Check spatial ordering
+if metadata['ordering'] != 'none':
+    print(f"Ordered with {metadata['ordering']}")
+    print(f"Chunks: {len(points['chunk_bounds'])}")
+```
+
+**Round-trip test**:
+```python
+# Write
+with LuxarZarrCompiler('test.zarr') as compiler:
+    scene_w = compiler.create_scene()
+    scene_w.add_points('test', positions, colors, radii)
+
+# Read back
+scene_r = LuxarScene.load('test.zarr')
+data = scene_r.get_points('test')
+
+# Verify
+assert np.allclose(data['positions'], positions)
+assert np.allclose(data['colors'], colors)
+assert data['metadata']['ordering'] in ('morton', 'hilbert')
+assert 'chunk_bounds' in data
+```
+
+### Implementation Notes
+
+- Uses `ArrayDecoder` from `luxar.encoding` for automatic decoding
+- Transforms are read and un-transposed (reverse of prepare_transform_for_zarr)
+- Read-only (no modification)
+- Lazy loading (data only loaded when get_* methods called)
+- Validates format version on load
+
+---
+
 ## Zarr Store Structure (Summary)
 
 **Root Attributes** (minimum required):
