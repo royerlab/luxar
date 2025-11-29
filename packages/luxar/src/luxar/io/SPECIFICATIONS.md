@@ -702,21 +702,10 @@ scene.get_lines(name: str) -> Dict[str, Any]
     'radii': ndarray,          # (N,) float32 (if present, else None)
     'sharpness': ndarray,      # (N,) float32 (if present, else None)
 
-    # Spatial ordering (from spatial_index sub-group, if present)
-    'spatial_index': {         # None if no spatial_index group
-        'ordering': str,         # 'morton' or 'hilbert'
-        'slice_dims': List[int], # Discrete dimension indices
-        'morton_dims': List[int],  # Spatial dimension indices
-        'morton_min': List[float], # Min bounds for Morton dims
-        'morton_max': List[float], # Max bounds for Morton dims
-        'morton_bits_per_dim': int,  # Bits per dimension
-        'chunk_size': int,       # Elements per chunk
-        'chunk_bounds': ndarray, # (num_chunks, D, 2) float32
-        'num_chunks': int,
-        'build_version': str,    # Index format version
-    }
+    # Spatial ordering (arrays and metadata in points group directly)
+    'chunk_bounds': ndarray,   # (num_chunks, D, 2) float32 (if ordered, else None)
 
-    # Node metadata (from points group .zattrs)
+    # Metadata (from points group .zattrs)
     'metadata': {
         'type': 'points',
         'n_points': int,
@@ -724,11 +713,21 @@ scene.get_lines(name: str) -> Dict[str, Any]
         'opacity': float,        # (default 1.0)
         'gamma': float,          # (default 1.0)
         'blending_mode': str,    # (default 'additive')
-        'transform': ndarray,    # (4, 4) if present, else None
+        'transform': ndarray,    # (4, 4) if present, else None)
         'broadcast_dims': List[str],  # (if present, else not in attrs)
+
+        # Spatial ordering metadata (if ordered)
+        'ordering': str,          # 'morton', 'hilbert', or 'none'
+        'slice_dims': List[int],  # Discrete dimension indices (if ordered)
+        'morton_dims': List[int], # Spatial dimension indices (if ordered)
+        'morton_min': List[float],  # Min bounds for Morton dims (if ordered)
+        'morton_max': List[float],  # Max bounds for Morton dims (if ordered)
+        'morton_bits_per_dim': int,  # Bits per dimension (if ordered)
+        'chunk_size': int,        # Elements per chunk (if ordered)
+
         # ... any custom attrs
-        # Note: has_colors, has_radii, has_sharpness are NOT stored in attrs
-        # Reader detects presence by checking if arrays exist
+        # Note: has_colors, has_radii, has_sharpness are NOT stored
+        # Reader detects presence by checking if arrays exist in group
     }
 }
 ```
@@ -766,7 +765,7 @@ scene.get_lines(name: str) -> Dict[str, Any]
 }
 ```
 
-**Note**: GSplats store ordering metadata directly in group attrs (not in spatial_index sub-group like Points). This is due to implementation history - Points use spatial_index for backward compatibility with viewer.
+**Note**: Both Points and GSplats now store ordering metadata and chunk_bounds directly in their group (simple, consistent structure).
 
 **get_lines() returns**:
 ```python
@@ -819,11 +818,11 @@ colors = points['colors']        # Decoded (or None if not present)
 metadata = points['metadata']
 
 # Check spatial ordering
-if points['spatial_index'] is not None:
-    si = points['spatial_index']
-    print(f"Ordered with {si['ordering']}")
-    print(f"Chunks: {si['num_chunks']}")
-    print(f"Chunk bounds shape: {si['chunk_bounds'].shape}")
+if points['chunk_bounds'] is not None:
+    print(f"Ordered with {metadata['ordering']}")
+    print(f"Chunks: {len(points['chunk_bounds'])}")
+    print(f"Discrete dims: {metadata['slice_dims']}")
+    print(f"Spatial dims: {metadata['morton_dims']}")
 ```
 
 **Round-trip test**:
@@ -837,12 +836,14 @@ with LuxarZarrCompiler('test.zarr') as compiler:
 scene_r = LuxarScene.load('test.zarr')
 data = scene_r.get_points('test')
 
-# Verify
+# Verify data
 assert np.allclose(data['positions'], positions)
 assert np.allclose(data['colors'], colors)
-assert data['spatial_index'] is not None
-assert data['spatial_index']['ordering'] in ('morton', 'hilbert')
-assert data['spatial_index']['chunk_bounds'].shape[0] > 0
+
+# Verify spatial ordering
+assert data['chunk_bounds'] is not None
+assert data['metadata']['ordering'] in ('morton', 'hilbert')
+assert len(data['chunk_bounds']) > 0
 ```
 
 ### Implementation Notes
