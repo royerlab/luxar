@@ -19,17 +19,19 @@ from luxar.gsplats.io.inspect_gsplats import (
     inspect_gsplats_zarr,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplats
-from luxar.gsplats.io.ordering import (
-    compute_chunk_bounds,
-    sort_splats_spatially,
-)
 from luxar.gsplats.io.save_gsplats import save_gsplats
+
+# Re-export ordering functions from luxar.io for convenience
+from luxar.io.ordering import (
+    compute_chunk_bounds_gsplats,
+    sort_splats_spatial,
+)
 
 __all__ = [
     "save_gsplats",
     "load_gsplats",
     "inspect_gsplats_zarr",
     "format_gsplats_info",
-    "sort_splats_spatially",
-    "compute_chunk_bounds",
+    "sort_splats_spatial",
+    "compute_chunk_bounds_gsplats",
 ]

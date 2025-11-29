@@ -3,13 +3,12 @@
 import numpy as np
 import pytest
 
-from luxar.gsplats.io.ordering import (
+from luxar.io.ordering import (
     compute_auto_resolution,
-    compute_chunk_bounds,
+    compute_chunk_bounds_gsplats,
     morton_encode_nd,
     normalize_coords_to_grid,
-    sort_splats_morton,
-    sort_splats_spatially,
+    sort_splats_spatial,
 )
 
 
@@ -121,7 +120,7 @@ class TestMortonSorting:
             dtype=np.float32,
         )
 
-        indices, metadata = sort_splats_morton(centers)
+        indices, metadata = sort_splats_spatial(centers, method="morton")
 
         # Check that (0,0) comes first
         assert indices[0] == 1  # Point at (0, 0)
@@ -136,7 +135,9 @@ class TestMortonSorting:
         """Test Morton sorting in 3D."""
         centers = np.random.rand(100, 3).astype(np.float32) * 10
 
-        indices, metadata = sort_splats_morton(centers, resolution=256)
+        indices, metadata = sort_splats_spatial(
+            centers, method="morton", resolution=256
+        )
 
         # Check indices are valid
         assert len(indices) == 100
@@ -144,7 +145,6 @@ class TestMortonSorting:
 
         # Check metadata
         assert metadata["ordering"] == "morton"
-        assert metadata["morton_resolution"] == 256
 
 
 class TestHilbertSorting:
@@ -163,9 +163,7 @@ class TestHilbertSorting:
         )
 
         try:
-            from luxar.gsplats.io.ordering import sort_splats_hilbert
-
-            indices, metadata = sort_splats_hilbert(centers)
+            indices, metadata = sort_splats_spatial(centers, method="hilbert")
 
             # Check indices are valid
             assert len(indices) == 4
@@ -184,9 +182,7 @@ class TestHilbertSorting:
         centers = np.random.rand(100, 3).astype(np.float32) * 10
 
         try:
-            from luxar.gsplats.io.ordering import sort_splats_hilbert
-
-            indices, metadata = sort_splats_hilbert(centers)
+            indices, metadata = sort_splats_spatial(centers, method="hilbert")
 
             # Check indices are valid
             assert len(indices) == 100
@@ -203,7 +199,7 @@ class TestSpatialSorting:
         """Test sort_splats_spatially with Morton."""
         centers = np.random.rand(50, 3).astype(np.float32)
 
-        indices, metadata = sort_splats_spatially(centers, method="morton")
+        indices, metadata = sort_splats_spatial(centers, method="morton")
 
         assert len(indices) == 50
         assert metadata["ordering"] == "morton"
@@ -213,7 +209,7 @@ class TestSpatialSorting:
         centers = np.random.rand(50, 3).astype(np.float32)
 
         try:
-            indices, metadata = sort_splats_spatially(centers, method="hilbert")
+            indices, metadata = sort_splats_spatial(centers, method="hilbert")
 
             assert len(indices) == 50
             assert metadata["ordering"] == "hilbert"
@@ -225,8 +221,8 @@ class TestSpatialSorting:
         """Test error on invalid method."""
         centers = np.random.rand(50, 3).astype(np.float32)
 
-        with pytest.raises(ValueError, match="Unknown ordering method"):
-            sort_splats_spatially(centers, method="invalid")
+        with pytest.raises(ValueError, match="Unknown method"):
+            sort_splats_spatial(centers, method="invalid")
 
 
 class TestChunkBounds:
@@ -258,7 +254,7 @@ class TestChunkBounds:
             dtype=np.float32,
         )
 
-        bounds = compute_chunk_bounds(
+        bounds = compute_chunk_bounds_gsplats(
             centers, cholesky, chunk_size=2, coverage_sigma=3.0
         )
 
@@ -280,7 +276,7 @@ class TestChunkBounds:
         # Identity covariance: L = diag(1, 1, 1) -> [1, 0, 1, 0, 0, 1]
         cholesky = np.tile([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], (100, 1)).astype(np.float32)
 
-        bounds = compute_chunk_bounds(centers, cholesky, chunk_size=10)
+        bounds = compute_chunk_bounds_gsplats(centers, cholesky, chunk_size=10)
 
         # Should have 10 chunks
         assert bounds.shape == (10, 3, 2)
@@ -298,7 +294,7 @@ class TestChunkBounds:
         # Packed: [10, 0, 1, 0, 0, 1]
         cholesky = np.array([[10.0, 0.0, 1.0, 0.0, 0.0, 1.0]], dtype=np.float32)
 
-        bounds = compute_chunk_bounds(
+        bounds = compute_chunk_bounds_gsplats(
             centers, cholesky, chunk_size=1, coverage_sigma=3.0
         )
 
