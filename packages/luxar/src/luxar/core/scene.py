@@ -159,9 +159,6 @@ class Scene(Node):
                   e.g., ["Time", "Channel"] makes points appear at all times and channels
                 - "auto": Auto-detect broadcast dimensions (use with caution - can be ambiguous)
                 - "all": Broadcast to all non-displayed dimensions
-            grid_shape: Optional grid resolution for spatial index (if enabled in compiler).
-                Tuple of integers specifying number of cells per dimension, e.g., (10, 10, 10, 5)
-                for a 4D dataset. If None, grid shape is auto-determined.
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction

@@ -816,6 +816,7 @@ This is a known limitation - current implementation requires all points to fit i
   - Requires `hilbertcurve>=2.0.5` package for Hilbert support
   - Metadata format unchanged (same morton_min/max/bits_per_dim for both methods)
   - `ordering` attribute distinguishes: "morton" or "hilbert"
+  - **Note on StreamingPoints**: Spatial ordering is NOT applied to StreamingPoints (data already written progressively). Only regular write_points() applies ordering. Use regular write_points() if ordering is needed.
 
 - **v1.2.2** (2025-11-28): Encoding system integration
   - **BREAKING**: Replaced `dtype_config` parameter with `encoding_mode` (EncodingMode enum)
@@ -854,7 +855,7 @@ This is a known limitation - current implementation requires all points to fit i
   - All dimensions indexed (not just non-displayed)
   - Radius-aware bounds include element extent
   - Added Cholesky→Covariance formula for GSplat extent calculation
-  - Streaming points: Morton ordering applied at `finalize()`
+  - Streaming points: Morton ordering NOT implemented (incompatible with progressive writes)
   - Explicit `color_mode` flag required for float32 colors (SDR vs HDR)
   - `radii` now required (not optional)
   - Sharpness range fixed to [0, 31]
