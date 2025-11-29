@@ -86,10 +86,16 @@ class GaussianSplatResult:
         if include_fitting_info and self.stats:
             # Extract common fitting fields
             fitting_info = {
-                k: v for k, v in self.stats.items()
-                if k in [
-                    "time_seconds", "iterations", "converged",
-                    "fitter_name", "fitter_version", "timestamp"
+                k: v
+                for k, v in self.stats.items()
+                if k
+                in [
+                    "time_seconds",
+                    "iterations",
+                    "converged",
+                    "fitter_name",
+                    "fitter_version",
+                    "timestamp",
                 ]
             }
 

@@ -1,6 +1,12 @@
 """Input/Output operations for Luxar data."""
 
 from .compiler import LuxarZarrCompiler
+from .ordering import (
+    compute_chunk_bounds_gsplats,
+    compute_chunk_bounds_points,
+    sort_points_compound,
+    sort_splats_spatial,
+)
 from .reader import DEFAULT_COMP
 from .streaming import StreamingPoints
 from .writer import ZarrWriterProtocol
@@ -10,4 +16,8 @@ __all__ = [
     "StreamingPoints",
     "ZarrWriterProtocol",
     "DEFAULT_COMP",
+    "sort_points_compound",
+    "sort_splats_spatial",
+    "compute_chunk_bounds_points",
+    "compute_chunk_bounds_gsplats",
 ]

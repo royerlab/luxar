@@ -11,9 +11,9 @@ import zarr
 from zarr.storage import DirectoryStore
 
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
-from luxar.gsplats.io.ordering import (
-    compute_chunk_bounds,
-    sort_splats_spatially,
+from luxar.io.ordering import (
+    compute_chunk_bounds_gsplats,
+    sort_splats_spatial,
 )
 from luxar.typing_utils import TARGET_CHUNK_BYTES
 
@@ -124,9 +124,7 @@ def save_gsplats(
 
     # Apply spatial ordering
     if ordering != "none":
-        sort_indices, ordering_metadata = sort_splats_spatially(
-            centers, method=ordering
-        )
+        sort_indices, ordering_metadata = sort_splats_spatial(centers, method=ordering)
 
         # Reorder all arrays
         centers = centers[sort_indices]
@@ -143,7 +141,7 @@ def save_gsplats(
     chunk_size = _compute_chunk_size(n_splats, ndim)
 
     # Compute chunk bounds
-    chunk_bounds = compute_chunk_bounds(centers, cholesky_factors, chunk_size)
+    chunk_bounds = compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size)
 
     # Create zarr store
     store = DirectoryStore(str(path))

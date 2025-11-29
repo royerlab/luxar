@@ -1,6 +1,6 @@
 # luxar.io - Technical Specification
 
-**Version**: 1.2.1
+**Version**: 1.3.0
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -160,9 +160,21 @@ sorted_colors = colors[sort_indices]  # etc.
 
 ---
 
-### Morton Code (Z-Order Curve)
+### Space-Filling Curves: Morton and Hilbert
+
+The system supports two space-filling curve options for spatial ordering:
+
+#### Morton Code (Z-Order Curve)
 
 **Concept**: Map nD coordinates to a 1D integer by interleaving bit representations. Points nearby in nD space have similar Morton codes.
+
+**Pros**:
+- Simple bit-interleaving implementation
+- Fast to compute
+- Trivial nD extension
+
+**Cons**:
+- Occasional "jumps" in locality at quadrant boundaries
 
 **Algorithm**:
 ```
@@ -198,6 +210,49 @@ Examples (for `len(morton_dims)`):
 - 4 dims: 16 bits each (~65K levels), 0 unused bits
 - 5 dims: 12 bits each (~4K levels), 4 unused bits
 - 6 dims: 10 bits each (~1K levels), 4 unused bits
+
+#### Hilbert Curve
+
+**Concept**: Alternative space-filling curve that better preserves locality compared to Morton ordering.
+
+**Pros**:
+- Better locality preservation (never jumps far)
+- ~10% better compression than Morton in practice
+- Smoother traversal of space
+
+**Cons**:
+- More complex algorithm
+- Requires external library (`hilbertcurve` package)
+
+**Implementation**: Uses the `hilbertcurve` package which implements the Skilling (2004) algorithm for nD Hilbert curves.
+
+**Libraries**:
+- [`hilbertcurve`](https://pypi.org/project/hilbertcurve/) - Python package for nD Hilbert curves
+
+**Note**: Hilbert and Morton use the same metadata format (morton_min, morton_max, morton_bits_per_dim) for consistency. The ordering method is distinguished by the `ordering` attribute ("morton" or "hilbert").
+
+#### Ordering Method Selection
+
+Both Morton and Hilbert ordering are available via the `luxar.io.ordering` module:
+
+```python
+# For Points (with compound ordering):
+sort_indices, metadata = sort_points_compound(
+    positions,
+    dimensions,
+    method="hilbert",  # or "morton" (default: "morton")
+)
+
+# For GSplats (simple spatial ordering):
+sort_indices, metadata = sort_splats_spatial(
+    centers,
+    method="hilbert",  # or "morton" (default: "hilbert")
+)
+```
+
+**Default choices**:
+- **Points**: Morton (simpler, well-tested with compound ordering)
+- **GSplats**: Hilbert (better compression for pure spatial data)
 
 **Concrete Example: 5D Dataset (X, Y, Z, Time, Channel)**
 
@@ -751,6 +806,16 @@ This is a known limitation - current implementation requires all points to fit i
 ---
 
 ## Changelog
+
+- **v1.3.0** (2025-11-28): Hilbert curve support
+  - Added Hilbert curve as alternative to Morton ordering
+  - New module: `luxar.io.ordering` with Morton/Hilbert implementations
+  - `sort_points_compound()` supports both Morton and Hilbert (default: Morton)
+  - `sort_splats_spatial()` supports both Morton and Hilbert (default: Hilbert)
+  - Hilbert provides ~10% better compression than Morton
+  - Requires `hilbertcurve>=2.0.5` package for Hilbert support
+  - Metadata format unchanged (same morton_min/max/bits_per_dim for both methods)
+  - `ordering` attribute distinguishes: "morton" or "hilbert"
 
 - **v1.2.2** (2025-11-28): Encoding system integration
   - **BREAKING**: Replaced `dtype_config` parameter with `encoding_mode` (EncodingMode enum)

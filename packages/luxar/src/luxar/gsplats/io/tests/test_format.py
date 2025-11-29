@@ -102,7 +102,6 @@ class TestFormatCompliance:
             assert "morton_min" in attrs
             assert "morton_max" in attrs
             assert "morton_bits_per_dim" in attrs
-            assert "morton_resolution" in attrs
 
             # Value ranges (spec Section "Splats Group Attributes")
             assert "amplitude_range" in attrs
