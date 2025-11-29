@@ -20,6 +20,11 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 from ..core.dimensions import Dimensions
+from ..encoding import (
+    ArrayEncoder,
+    EncodingMode,
+    SemanticType,
+)
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
@@ -32,11 +37,6 @@ from ..typing_utils.constants import (
     SPATIAL_INDEX_MAX_CELLS_DISCRETE,
     SPATIAL_INDEX_MIN_CELLS,
     SPATIAL_INDEX_TARGET_POINTS_PER_CELL,
-)
-from ..typing_utils.datatypes import (
-    DEFAULT_CONFIG,
-    DataTypeConfig,
-    convert_array_dtype,
 )
 from ..typing_utils.protocols import CompressorProtocol
 
@@ -111,7 +111,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         compressor: Compression configuration for datasets
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
-        dtype_config: Configuration for data types
+        encoding_mode: Encoding mode for array storage
 
     Examples:
         Basic usage with context manager:
@@ -148,7 +148,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         compressor: Optional[CompressorProtocol] = DEFAULT_COMP,
         version: str = DEFAULT_VERSION,
         enable_spatial_index: bool = True,
-        dtype_config: Optional[DataTypeConfig] = None,
+        encoding_mode: EncodingMode = EncodingMode.AUTO,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -157,7 +157,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor: Compressor for datasets
             version: Luxar format version
             enable_spatial_index: Whether to build spatial indices for points (default: True)
-            dtype_config: Configuration for data types (default: auto-detection)
+            encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -177,8 +177,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Store spatial index flag
         self.enable_spatial_index = enable_spatial_index
 
-        # Store dtype configuration
-        self.dtype_config = dtype_config or DEFAULT_CONFIG
+        # Create array encoder with specified encoding mode
+        self._encoder = ArrayEncoder()
+        self._encoding_mode = encoding_mode
 
         # Create root Zarr group
         self.store = zarr.open_group(self._store_path, mode="w")
@@ -372,6 +373,373 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # 11. Cache metadata and finish
         self._metadata_cache[path] = metadata
         aprint(f"✅ Points written to {path}")
+
+        return metadata
+
+    def write_lines(
+        self,
+        path: NodePath,
+        vertices: NDArray[np.float32],
+        widths: NDArray[np.float32],
+        colors: Optional[NDArray[np.float32]] = None,
+        sharpness: Optional[NDArray[np.float32]] = None,
+        indices: Optional[NDArray[np.uint32]] = None,
+        line_type: str = "polyline",
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write lines data to Zarr.
+
+        Lines do NOT support spatial indexing (per spec) - arrays stored in original order.
+
+        Args:
+            path: Path for the lines within the store
+            vertices: Vertex positions of shape (N, D)
+            widths: Line widths of shape (N,)
+            colors: Optional colors of shape (N, 3)
+            sharpness: Optional sharpness of shape (N,)
+            indices: Optional vertex indices for indexed line type
+            line_type: Type of line connectivity
+            **attrs: Additional attributes
+
+        Returns:
+            Metadata dictionary about the written lines
+        """
+        from ..validation.base import (
+            validate_colors_for_writing,
+            validate_positions_for_writing,
+        )
+
+        # Setup and validation
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+        n_vertices, n_dims = validate_positions_for_writing(vertices)
+
+        aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
+
+        # Validate line type
+        valid_line_types = ("segments", "polyline", "loop", "indexed")
+        if line_type not in valid_line_types:
+            raise ValueError(
+                f"Invalid line_type '{line_type}'. Must be one of {valid_line_types}"
+            )
+
+        # Validate type-specific requirements
+        if line_type == "segments" and n_vertices % 2 != 0:
+            raise ValueError(
+                f"Segments require even number of vertices, got {n_vertices}"
+            )
+        if line_type == "polyline" and n_vertices < 2:
+            raise ValueError(f"Polyline requires at least 2 vertices, got {n_vertices}")
+        if line_type == "loop" and n_vertices < 3:
+            raise ValueError(f"Loop requires at least 3 vertices, got {n_vertices}")
+        if line_type == "indexed":
+            if indices is None:
+                raise ValueError("Indexed line type requires indices array")
+            if len(indices) < 2:
+                raise ValueError("Indexed requires at least 2 indices")
+            if len(indices) % 2 != 0:
+                raise ValueError("Indices must have even length (pairs)")
+            if np.max(indices) >= n_vertices:
+                raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
+
+        # Validate widths (must be positive like radii)
+        if widths.shape[0] != n_vertices:
+            raise ValueError(
+                f"Widths shape {widths.shape} doesn't match n_vertices {n_vertices}"
+            )
+        if np.any(widths <= 0):
+            min_val = float(np.min(widths))
+            raise ValueError(
+                f"Widths must be positive (> 0). Found minimum value: {min_val:.3f}"
+            )
+
+        # Calculate n_segments
+        if line_type == "segments":
+            n_segments = n_vertices // 2
+        elif line_type == "polyline":
+            n_segments = n_vertices - 1
+        elif line_type == "loop":
+            n_segments = n_vertices
+        elif line_type == "indexed":
+            n_segments = len(indices) // 2
+
+        # Write vertices using ArrayEncoder (COORDINATE)
+        chunks_2d = _calculate_intelligent_chunks((n_vertices, n_dims))
+        self._encoder.encode(
+            data=vertices,
+            zarr_group=group,
+            name="vertices",
+            semantic_type=SemanticType.COORDINATE,
+            mode=self._encoding_mode,
+            chunks=chunks_2d,
+            compressor=self.compressor,
+        )
+
+        # Write widths using ArrayEncoder (POSITIVE_SCALAR)
+        max_width = float(np.max(widths))
+        chunks_1d = _calculate_intelligent_chunks((n_vertices,))
+        self._encoder.encode(
+            data=widths,
+            zarr_group=group,
+            name="widths",
+            semantic_type=SemanticType.POSITIVE_SCALAR,
+            mode=self._encoding_mode,
+            chunks=chunks_1d,
+            compressor=self.compressor,
+        )
+
+        # Initialize metadata
+        metadata: dict[str, Any] = {
+            "n_vertices": n_vertices,
+            "n_segments": n_segments,
+            "ndim": n_dims,
+            "line_type": line_type,
+            "has_colors": False,
+            "has_sharpness": False,
+            "max_width": max_width,
+        }
+
+        # Write optional datasets
+        if colors is not None:
+            validate_colors_for_writing(colors, n_vertices)
+            chunks_colors = _calculate_intelligent_chunks(colors.shape)
+
+            # Detect color_mode
+            color_mode = None
+            if np.issubdtype(colors.dtype, np.floating):
+                color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+
+            self._encoder.encode(
+                data=colors,
+                zarr_group=group,
+                name="colors",
+                semantic_type=SemanticType.COLOR,
+                mode=self._encoding_mode,
+                color_mode=color_mode,
+                chunks=chunks_colors,
+                compressor=self.compressor,
+            )
+            metadata["has_colors"] = True
+
+        if sharpness is not None:
+            from ..validation.base import validate_sharpness_for_writing
+
+            validate_sharpness_for_writing(sharpness, n_vertices)
+            self._encoder.encode(
+                data=sharpness,
+                zarr_group=group,
+                name="sharpness",
+                semantic_type=SemanticType.BOUNDED_SCALAR,
+                mode=self._encoding_mode,
+                bounds=(0.0, SHARPNESS_MAX),
+                chunks=chunks_1d,
+                compressor=self.compressor,
+            )
+            metadata["has_sharpness"] = True
+
+        # Write indices if provided (INDEX semantic type)
+        if indices is not None:
+            chunks_indices = _calculate_intelligent_chunks((len(indices),))
+            self._encoder.encode(
+                data=indices,
+                zarr_group=group,
+                name="indices",
+                semantic_type=SemanticType.INDEX,
+                mode=self._encoding_mode,
+                chunks=chunks_indices,
+                compressor=self.compressor,
+            )
+
+        # Process transform if present
+        if "transform" in attrs:
+            from ..core.transforms import prepare_transform_for_zarr
+
+            attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+
+        # Set attributes
+        group.attrs.update(attrs)
+        group.attrs["type"] = "lines"
+        group.attrs["line_type"] = line_type
+        group.attrs["n_vertices"] = n_vertices
+        group.attrs["n_segments"] = n_segments
+        group.attrs["max_width"] = max_width
+
+        self._metadata_cache[path] = metadata
+        aprint(f"✅ Lines written to {path}")
+
+        return metadata
+
+    def write_gsplats(
+        self,
+        path: NodePath,
+        centers: NDArray[np.float32],
+        amplitudes: NDArray[np.float32],
+        cholesky_factors: NDArray[np.float32],
+        colors: Optional[NDArray[np.float32]] = None,
+        sharpness: Optional[NDArray[np.float32]] = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write Gaussian splats data to Zarr.
+
+        Args:
+            path: Path for the gsplats within the store
+            centers: Splat centers of shape (N, D)
+            amplitudes: Amplitudes of shape (N,)
+            cholesky_factors: Packed Cholesky factors of shape (N, k)
+            colors: Optional colors of shape (N, 3)
+            sharpness: Optional sharpness of shape (N,)
+            **attrs: Additional attributes
+
+        Returns:
+            Metadata dictionary about the written gsplats
+        """
+        from ..validation.base import (
+            validate_colors_for_writing,
+            validate_positions_for_writing,
+        )
+
+        # Setup and validation
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+        n_splats, n_dims = validate_positions_for_writing(centers)
+
+        aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
+
+        # Validate amplitudes (must be non-negative: >= 0, zero is valid but invisible)
+        if amplitudes.shape[0] != n_splats:
+            raise ValueError(
+                f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
+            )
+        if np.any(amplitudes < 0):
+            min_val = float(np.min(amplitudes))
+            raise ValueError(
+                f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
+            )
+
+        # Validate cholesky_factors shape
+        expected_k = n_dims * (n_dims + 1) // 2
+        if cholesky_factors.ndim == 1:
+            if cholesky_factors.shape[0] != expected_k:
+                raise ValueError(
+                    f"Cholesky factors shape mismatch: expected ({expected_k},), "
+                    f"got {cholesky_factors.shape}"
+                )
+            # Broadcast to all splats
+            cholesky_factors = np.broadcast_to(
+                cholesky_factors, (n_splats, expected_k)
+            ).copy()
+        elif cholesky_factors.shape != (n_splats, expected_k):
+            raise ValueError(
+                f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
+                f"got {cholesky_factors.shape}"
+            )
+
+        # Write centers using ArrayEncoder (COORDINATE)
+        chunks_centers = _calculate_intelligent_chunks(centers.shape)
+        self._encoder.encode(
+            data=centers,
+            zarr_group=group,
+            name="centers",
+            semantic_type=SemanticType.COORDINATE,
+            mode=self._encoding_mode,
+            chunks=chunks_centers,
+            compressor=self.compressor,
+        )
+
+        # Write amplitudes using ArrayEncoder (POSITIVE_SCALAR, can be zero)
+        amplitude_min, amplitude_max = (
+            float(np.min(amplitudes)),
+            float(np.max(amplitudes)),
+        )
+        chunks_1d = _calculate_intelligent_chunks((n_splats,))
+        self._encoder.encode(
+            data=amplitudes,
+            zarr_group=group,
+            name="amplitudes",
+            semantic_type=SemanticType.POSITIVE_SCALAR,
+            mode=self._encoding_mode,
+            chunks=chunks_1d,
+            compressor=self.compressor,
+        )
+
+        # Write cholesky_factors using ArrayEncoder (CHOLESKY)
+        chunks_cholesky = _calculate_intelligent_chunks(cholesky_factors.shape)
+        self._encoder.encode(
+            data=cholesky_factors,
+            zarr_group=group,
+            name="cholesky_factors",
+            semantic_type=SemanticType.CHOLESKY,
+            mode=self._encoding_mode,
+            chunks=chunks_cholesky,
+            compressor=self.compressor,
+        )
+
+        # Initialize metadata
+        center_min = centers.min(axis=0).tolist()
+        center_max = centers.max(axis=0).tolist()
+        metadata: dict[str, Any] = {
+            "n_splats": n_splats,
+            "ndim": n_dims,
+            "has_colors": False,
+            "has_sharpness": False,
+            "ordering": "none",  # TODO: Implement Morton ordering
+            "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
+            "center_bounds": {"min": center_min, "max": center_max},
+        }
+
+        # Write optional datasets
+        if colors is not None:
+            validate_colors_for_writing(colors, n_splats)
+            chunks_colors = _calculate_intelligent_chunks(colors.shape)
+
+            # Detect color_mode
+            color_mode = None
+            if np.issubdtype(colors.dtype, np.floating):
+                color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
+
+            self._encoder.encode(
+                data=colors,
+                zarr_group=group,
+                name="colors",
+                semantic_type=SemanticType.COLOR,
+                mode=self._encoding_mode,
+                color_mode=color_mode,
+                chunks=chunks_colors,
+                compressor=self.compressor,
+            )
+            metadata["has_colors"] = True
+
+        if sharpness is not None:
+            from ..validation.base import validate_sharpness_for_writing
+
+            validate_sharpness_for_writing(sharpness, n_splats)
+            self._encoder.encode(
+                data=sharpness,
+                zarr_group=group,
+                name="sharpness",
+                semantic_type=SemanticType.BOUNDED_SCALAR,
+                mode=self._encoding_mode,
+                bounds=(0.0, SHARPNESS_MAX),
+                chunks=chunks_1d,
+                compressor=self.compressor,
+            )
+            metadata["has_sharpness"] = True
+
+        # Process transform if present
+        if "transform" in attrs:
+            from ..core.transforms import prepare_transform_for_zarr
+
+            attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
+
+        # Set attributes
+        group.attrs.update(attrs)
+        group.attrs["type"] = "gsplats"
+        group.attrs["n_splats"] = n_splats
+        group.attrs["amplitude_range"] = metadata["amplitude_range"]
+        group.attrs["center_bounds"] = metadata["center_bounds"]
+
+        self._metadata_cache[path] = metadata
+        aprint(f"✅ GSplats written to {path}")
 
         return metadata
 
@@ -645,36 +1013,38 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         positions: NDArray[np.float32],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
-        """Write positions dataset to Zarr with optimal chunking.
+        """Write positions dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
             positions: Positions array (may be reordered by spatial index)
             spatial_index_data: Optional spatial index data for chunk optimization
         """
-        # Determine optimal dtype
-        position_dtype = self.dtype_config.get_position_dtype(positions)
-        positions_converted = convert_array_dtype(positions, position_dtype)
-
         # Calculate intelligent chunks (aligned with spatial index if available)
         chunks = _calculate_intelligent_chunks(
-            positions_converted.shape,
+            positions.shape,
             target_chunk_size=DEFAULT_CHUNK_SIZE,
             spatial_index_data=spatial_index_data,
         )
 
-        # Write dataset
-        group.create_dataset(
-            "positions",
-            data=positions_converted,
+        # Use ArrayEncoder for positions (COORDINATE semantic type)
+        self._encoder.encode(
+            data=positions,
+            zarr_group=group,
+            name="positions",
+            semantic_type=SemanticType.COORDINATE,
+            mode=self._encoding_mode,
             chunks=chunks,
             compressor=self.compressor,
-            dtype=position_dtype,
-            overwrite=True,
         )
 
-        # Store dtype metadata
-        group.attrs["position_dtype"] = np.dtype(position_dtype).name
+        # Log encoding result
+        enc = group["positions"].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "float16":
+            aprint("  ✓ Wrote positions (float16 - MEMORY mode)")
+        else:
+            aprint("  ✓ Wrote positions (float32)")
 
     def _write_colors_dataset(
         self,
@@ -682,42 +1052,55 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: NDArray[np.float32],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
-        """Write colors dataset to Zarr.
+        """Write colors dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
             colors: Colors array
             spatial_index_data: Optional spatial index for chunk optimization
         """
-        # Determine optimal dtype for colors
-        color_dtype = self.dtype_config.get_color_dtype(colors)
-        colors_converted = convert_array_dtype(
-            colors, color_dtype, normalize=(color_dtype == np.uint8)
-        )
-
         # Calculate chunks
-        color_chunks = _calculate_intelligent_chunks(colors_converted.shape)
+        color_chunks = _calculate_intelligent_chunks(colors.shape)
 
-        # Write dataset
-        group.create_dataset(
-            "colors",
-            data=colors_converted,
+        # Detect color_mode for float arrays
+        color_mode = None
+        if np.issubdtype(colors.dtype, np.floating):
+            # Float colors require explicit color_mode
+            if np.any(colors > 1.0):
+                color_mode = "hdr"
+                aprint("  ✓ Detected HDR colors (values > 1.0)")
+            else:
+                color_mode = "sdr"
+
+        # Use ArrayEncoder with all optimizations
+        self._encoder.encode(
+            data=colors,
+            zarr_group=group,
+            name="colors",
+            semantic_type=SemanticType.COLOR,
+            mode=self._encoding_mode,
+            color_mode=color_mode,
             chunks=color_chunks,
             compressor=self.compressor,
-            dtype=color_dtype,
-            overwrite=True,
         )
 
-        # Store metadata
-        group.attrs["color_dtype"] = np.dtype(color_dtype).name
-
-        # Log appropriate message based on dtype
-        if color_dtype == np.float32:
-            aprint("  ✓ Wrote HDR colors (float32)")
-        elif color_dtype == np.uint16:
-            aprint("  ✓ Wrote colors (uint16)")
-        else:
+        # Log encoding result
+        enc = group["colors"].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "broadcasted":
+            aprint("  ✓ Wrote colors (broadcasted - uniform)")
+        elif enc_name == "array_ref":
+            aprint(f"  ✓ Wrote colors (reference to {enc['target']})")
+        elif enc_name == "lut_uint8":
+            aprint(f"  ✓ Wrote colors (LUT with {len(enc['lut'])} unique values)")
+        elif enc_name in ("rgb_uint8", "uint8"):
             aprint("  ✓ Wrote colors (uint8)")
+        elif enc_name in ("rgb_uint16", "uint16"):
+            aprint("  ✓ Wrote colors (uint16)")
+        elif enc_name == "float32":
+            aprint("  ✓ Wrote HDR colors (float32)")
+        else:
+            aprint(f"  ✓ Wrote colors ({enc_name})")
 
     def _write_radii_dataset(
         self,
@@ -725,7 +1108,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         radii: NDArray[np.float32],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> float:
-        """Write radii dataset to Zarr.
+        """Write radii dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
@@ -735,32 +1118,35 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Maximum radius value
         """
-        # Calculate max radius before conversion
+        # Calculate max radius before encoding
         max_radius = float(np.max(radii))
         aprint(f"  ✓ Max radius: {max_radius:.3f}")
 
-        # Determine optimal dtype
-        radius_dtype = self.dtype_config.get_radius_dtype(radii)
-        radii_converted = convert_array_dtype(
-            radii, radius_dtype, normalize=(radius_dtype == np.uint8)
-        )
-
         # Calculate chunks
-        radii_chunks = _calculate_intelligent_chunks(radii_converted.shape)
+        radii_chunks = _calculate_intelligent_chunks(radii.shape)
 
-        # Write dataset
-        group.create_dataset(
-            "radii",
-            data=radii_converted,
+        # Use ArrayEncoder for radii (POSITIVE_SCALAR semantic type)
+        self._encoder.encode(
+            data=radii,
+            zarr_group=group,
+            name="radii",
+            semantic_type=SemanticType.POSITIVE_SCALAR,
+            mode=self._encoding_mode,
             chunks=radii_chunks,
             compressor=self.compressor,
-            dtype=radius_dtype,
-            overwrite=True,
         )
 
-        # Store metadata
-        group.attrs["radius_dtype"] = np.dtype(radius_dtype).name
-        aprint(f"  ✓ Wrote radii ({radius_dtype})")
+        # Log encoding result
+        enc = group["radii"].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "broadcasted":
+            aprint("  ✓ Wrote radii (broadcasted - uniform)")
+        elif enc_name == "array_ref":
+            aprint(f"  ✓ Wrote radii (reference to {enc['target']})")
+        elif enc_name.startswith("log_scalar"):
+            aprint(f"  ✓ Wrote radii ({enc_name} - log encoding)")
+        else:
+            aprint(f"  ✓ Wrote radii ({enc_name})")
 
         return max_radius
 
@@ -770,43 +1156,39 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         sharpness: NDArray[np.float32],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
-        """Write sharpness dataset to Zarr.
+        """Write sharpness dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
             sharpness: Sharpness array
             spatial_index_data: Optional spatial index for chunk optimization
         """
-        # Determine optimal dtype
-        sharpness_dtype = self.dtype_config.get_sharpness_dtype(sharpness)
-
-        # Always use [0, 15] range for uint8 sharpness
-        input_range = (
-            (0.0, SHARPNESS_MAX) if sharpness_dtype == np.uint8 else (0.0, 1.0)
-        )
-        sharpness_converted = convert_array_dtype(
-            sharpness,
-            sharpness_dtype,
-            normalize=(sharpness_dtype == np.uint8),
-            input_range=input_range,
-        )
-
         # Calculate chunks
-        sharp_chunks = _calculate_intelligent_chunks(sharpness_converted.shape)
+        sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
 
-        # Write dataset
-        group.create_dataset(
-            "sharpness",
-            data=sharpness_converted,
+        # Use ArrayEncoder for sharpness (BOUNDED_SCALAR with [0, 31] range)
+        self._encoder.encode(
+            data=sharpness,
+            zarr_group=group,
+            name="sharpness",
+            semantic_type=SemanticType.BOUNDED_SCALAR,
+            mode=self._encoding_mode,
+            bounds=(0.0, SHARPNESS_MAX),
             chunks=sharp_chunks,
             compressor=self.compressor,
-            dtype=sharpness_dtype,
-            overwrite=True,
         )
 
-        # Store metadata
-        group.attrs["sharpness_dtype"] = np.dtype(sharpness_dtype).name
-        aprint(f"  ✓ Wrote sharpness ({sharpness_dtype})")
+        # Log encoding result
+        enc = group["sharpness"].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "broadcasted":
+            aprint("  ✓ Wrote sharpness (broadcasted - uniform)")
+        elif enc_name == "array_ref":
+            aprint(f"  ✓ Wrote sharpness (reference to {enc['target']})")
+        elif enc_name == "bounded_scalar_uint8":
+            aprint("  ✓ Wrote sharpness (uint8, quantized to [0, 31])")
+        else:
+            aprint(f"  ✓ Wrote sharpness ({enc_name})")
 
     def _write_spatial_index_to_zarr(
         self, group: zarr.Group, spatial_index_data: Dict[str, Any]

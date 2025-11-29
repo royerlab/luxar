@@ -109,8 +109,8 @@ POSITION_SHAPE_CHANNELS: Final[int] = 3
 COLOR_SHAPE_CHANNELS: Final[int] = 3
 TRANSFORM_MATRIX_SIZE: Final[tuple[int, int]] = (4, 4)
 
-# Data type validation - Default dtypes (can be overridden with DataTypeConfig)
-POSITION_DTYPE: Final[str] = "float32"  # Default, supports float16 with DataTypeConfig
+# Data type defaults - Encoding system handles actual dtype selection
+POSITION_DTYPE: Final[str] = "float32"  # Default for COORDINATE semantic type
 COLOR_DTYPE: Final[str] = "float32"  # Changed to float32 for HDR, supports uint8/uint16
 TRANSFORM_DTYPE: Final[str] = "float32"  # Always float32 for accuracy
 

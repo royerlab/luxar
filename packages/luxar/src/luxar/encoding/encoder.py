@@ -1,0 +1,1024 @@
+"""Array encoder with priority-based encoding selection.
+
+The encoder follows a strict priority order:
+1. Broadcasting (if all values identical)
+2. Array Reference (if duplicate exists)
+3. LUT Encoding (if ≤256 unique values)
+4. Dtype Encoding (based on semantic type and mode)
+"""
+
+from typing import Any, Literal, Optional
+
+import numpy as np
+import zarr
+
+from .modes import EncodingMode
+from .registry import ArrayRefRegistry
+from .semantic_types import SemanticType
+
+
+class ArrayEncoder:
+    """Unified encoder with internal registry for deduplication.
+
+    The encoder writes directly to zarr groups and maintains an internal
+    registry for detecting duplicate arrays. It follows the priority order
+    specified in the encoding specification.
+    """
+
+    def __init__(
+        self, broadcast_rtol: float = 0.0, broadcast_atol: float = 0.0
+    ) -> None:
+        """Initialize encoder with optional broadcasting tolerance.
+
+        Args:
+            broadcast_rtol: Relative tolerance for broadcasting check
+                (default: 0.0 = exact equality)
+            broadcast_atol: Absolute tolerance for broadcasting check
+                (default: 0.0 = exact equality)
+
+        Note: Using non-zero tolerance is experimental and should be used
+        with caution. Exact equality (default) is safe for all semantic types
+        including indices and colors.
+        """
+        self._registry = ArrayRefRegistry()
+        self._broadcast_rtol = broadcast_rtol
+        self._broadcast_atol = broadcast_atol
+
+    def encode(
+        self,
+        data: np.ndarray,
+        zarr_group: zarr.Group,
+        name: str,
+        semantic_type: SemanticType,
+        mode: EncodingMode = EncodingMode.AUTO,
+        bounds: Optional[tuple[float, float]] = None,
+        positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        custom_encoder: Optional[str] = None,
+        color_mode: Optional[Literal["sdr", "hdr"]] = None,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode array and write to zarr group.
+
+        Follows priority order:
+        1. Broadcasting (if all values identical within tolerance)
+        2. Array reference (if duplicate exists)
+        3. LUT encoding (if ≤256 unique values and mode != PRECISION)
+        4. Dtype encoding (based on semantic type and mode)
+
+        Args:
+            data: Input array to encode
+            zarr_group: Zarr group to write to
+            name: Array name within the group
+            semantic_type: Semantic type (REQUIRED - must be explicit)
+            mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
+            bounds: Min/max bounds for BOUNDED_SCALAR (None = auto-detect)
+            positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
+            custom_encoder: Explicit encoder name for CUSTOM mode
+            color_mode: "sdr" or "hdr" for COLOR semantic type (required for float)
+            chunks: Optional chunk shape for zarr dataset
+            compressor: Optional compressor for zarr dataset
+
+        Raises:
+            ValueError: If semantic type constraints are violated
+            ValueError: If NaN or Inf values are present
+            ValueError: If CUSTOM mode lacks custom_encoder
+            ValueError: If COLOR with float dtype lacks color_mode
+        """
+        # Validate semantic type is provided
+        if not isinstance(semantic_type, SemanticType):
+            raise ValueError("semantic_type must be explicitly specified")
+
+        # Validate CUSTOM mode
+        if mode == EncodingMode.CUSTOM and custom_encoder is None:
+            raise ValueError("CUSTOM mode requires custom_encoder parameter")
+
+        # Empty array handling: pass through without encoding
+        if data.size == 0:
+            self._write_passthrough(zarr_group, name, data, chunks, compressor)
+            return
+
+        # Validate input data
+        self._validate_input(data, semantic_type, color_mode)
+
+        # Get path for registry (relative to zarr root)
+        array_path = f"{zarr_group.path}/{name}" if zarr_group.path else name
+
+        # Priority 1: Broadcasting
+        if self._is_uniform(data):
+            self._encode_broadcasted(zarr_group, name, data, chunks, compressor)
+            return
+
+        # Priority 2: Array Reference
+        match = self._registry.check(data, array_path)
+        if match.is_duplicate:
+            self._encode_array_ref(
+                zarr_group,
+                name,
+                match.target_path,
+                match.hash,
+                data.shape,
+                data.dtype,
+                chunks,
+                compressor,
+            )
+            return
+
+        # Priority 3: LUT Encoding (skip in PRECISION mode)
+        if mode != EncodingMode.PRECISION:
+            if self._should_use_lut(data, semantic_type):
+                self._encode_lut(
+                    zarr_group, name, data, semantic_type, chunks, compressor
+                )
+                return
+
+        # Priority 4: Dtype Encoding
+        self._encode_dtype(
+            zarr_group,
+            name,
+            data,
+            semantic_type,
+            mode,
+            bounds,
+            positive_scalar_encoding,
+            custom_encoder,
+            color_mode,
+            chunks,
+            compressor,
+        )
+
+    def reset(self) -> None:
+        """Clear registry (call between independent scenes)."""
+        self._registry.clear()
+
+    def _is_uniform(self, data: np.ndarray) -> bool:
+        """Check if all values are identical (within tolerance).
+
+        For 1D arrays: checks if all elements equal the first element.
+        For 2D arrays: checks if all rows equal the first row.
+
+        Args:
+            data: Array to check
+
+        Returns:
+            True if array is uniform (all values or rows identical)
+        """
+        if self._broadcast_rtol == 0.0 and self._broadcast_atol == 0.0:
+            # Exact equality (default, safe for all types)
+            if data.ndim == 1:
+                return bool(np.all(data == data[0]))
+            else:
+                # For 2D arrays, check if all rows equal first row
+                return bool(np.all(data == data[0]))
+        else:
+            # Approximate equality (use with caution)
+            if data.ndim == 1:
+                reference = data[0]
+            else:
+                reference = data[0]
+
+            return bool(
+                np.allclose(
+                    data,
+                    reference,
+                    rtol=self._broadcast_rtol,
+                    atol=self._broadcast_atol,
+                )
+            )
+
+    def _validate_input(
+        self,
+        data: np.ndarray,
+        semantic_type: SemanticType,
+        color_mode: Optional[str],
+    ) -> None:
+        """Validate input data meets semantic type constraints.
+
+        Args:
+            data: Input array
+            semantic_type: Semantic type to validate against
+            color_mode: Color mode for COLOR type
+
+        Raises:
+            ValueError: If constraints are violated
+        """
+        # Check for NaN or Inf
+        if np.issubdtype(data.dtype, np.floating):
+            if np.any(np.isnan(data)):
+                raise ValueError("Input data contains NaN values")
+            if np.any(np.isinf(data)):
+                raise ValueError("Input data contains Inf values")
+
+        # Semantic type specific validation
+        if semantic_type == SemanticType.COLOR:
+            # Colors must be non-negative
+            if np.any(data < 0):
+                raise ValueError("COLOR semantic type requires non-negative values")
+
+            # Float colors require explicit color_mode
+            if np.issubdtype(data.dtype, np.floating):
+                if color_mode is None:
+                    raise ValueError(
+                        "Float COLOR arrays require explicit color_mode "
+                        "parameter ('sdr' or 'hdr')"
+                    )
+                if color_mode == "sdr":
+                    # SDR mode: values must be in [0, 1]
+                    if np.any(data > 1.0):
+                        raise ValueError(
+                            "SDR color_mode requires values in [0, 1] "
+                            f"(found max={np.max(data)})"
+                        )
+
+        elif semantic_type == SemanticType.POSITIVE_SCALAR:
+            # Positive scalars must be non-negative
+            if np.any(data < 0):
+                raise ValueError(
+                    "POSITIVE_SCALAR semantic type requires non-negative values"
+                )
+
+        elif semantic_type == SemanticType.BOUNDED_SCALAR:
+            # No specific constraint (bounds will be validated in encoding)
+            pass
+
+        elif semantic_type == SemanticType.INDEX:
+            # Indices must be non-negative integers
+            if not np.issubdtype(data.dtype, np.integer):
+                raise ValueError("INDEX semantic type requires integer dtype")
+            if np.any(data < 0):
+                raise ValueError("INDEX semantic type requires non-negative values")
+
+    def _should_use_lut(self, data: np.ndarray, semantic_type: SemanticType) -> bool:
+        """Determine if LUT encoding should be used.
+
+        Args:
+            data: Input array
+            semantic_type: Semantic type
+
+        Returns:
+            True if LUT encoding is beneficial
+        """
+        # LUT encoding criteria:
+        # 1. ≤256 unique values (fits in uint8 indices)
+        # 2. Array length >> unique count (meaningful savings)
+        # 3. For 1D uint8: skip (already optimal)
+        # 4. For 2D uint8 colors: check unique rows (LUT can still help)
+
+        # For 2D arrays with COLOR semantic type, check unique rows
+        if data.ndim == 2 and semantic_type == SemanticType.COLOR:
+            if data.shape[1] <= 4:  # RGB or RGBA
+                # Row mode: check unique rows
+                # Use a view trick to compare entire rows
+                unique_rows = np.unique(data, axis=0)
+                unique_count = len(unique_rows)
+
+                # For uint8 colors, LUT is beneficial if few unique rows
+                # Original: N × d × 1 byte
+                # LUT: N × 1 byte + K × d × 1 byte
+                # Beneficial if N > 2*K (at least 2x savings)
+                if data.dtype == np.uint8:
+                    if unique_count > 256:
+                        return False
+                    if data.shape[0] < 2 * unique_count:
+                        return False
+                    return True
+            else:
+                # Fallback to scalar mode
+                unique_count = len(np.unique(data))
+        else:
+            # Scalar mode: check unique values
+            if data.dtype == np.uint8 and data.ndim == 1:
+                return False  # 1D uint8 already optimal
+
+            unique_count = len(np.unique(data))
+
+        if unique_count > 256:
+            return False
+
+        # Require at least 4x savings for non-color arrays
+        if data.size < 4 * unique_count:
+            return False
+
+        return True
+
+    def _write_passthrough(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Write array without encoding (passthrough).
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        zarr_group.create_dataset(
+            name, data=data, chunks=chunks, compressor=compressor, overwrite=True
+        )
+        # Set encoding metadata to "none"
+        zarr_group[name].attrs["encoding"] = {"name": "none"}
+
+    def _encode_broadcasted(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Encode uniform array as broadcasted.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Uniform array data
+            chunks: Optional chunk shape (ignored for broadcast, uses minimal)
+            compressor: Optional compressor
+        """
+        # Store single value with shape (1,) or (1, d)
+        if data.ndim == 1:
+            broadcast_data = data[:1]
+        else:
+            broadcast_data = data[:1, :]
+
+        zarr_group.create_dataset(
+            name, data=broadcast_data, compressor=compressor, overwrite=True
+        )
+
+        # Set encoding metadata
+        zarr_group[name].attrs["encoding"] = {
+            "name": "broadcasted",
+            "n_elements": data.shape[0],
+        }
+
+    def _encode_array_ref(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        target_path: str,
+        hash_str: str,
+        shape: tuple,
+        dtype: np.dtype,
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Encode array as reference to existing array.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            target_path: Path to original array
+            hash_str: Full content hash
+            shape: Original array shape
+            dtype: Original array dtype
+            chunks: Optional chunk shape (minimal for empty array)
+            compressor: Optional compressor
+        """
+        # Create empty array with preserved dimensionality
+        if len(shape) == 1:
+            empty_shape = (0,)
+        else:
+            empty_shape = (0, *shape[1:])
+
+        empty_data = np.array([], dtype=dtype).reshape(empty_shape)
+        zarr_group.create_dataset(
+            name, data=empty_data, compressor=compressor, overwrite=True
+        )
+
+        # Set encoding metadata
+        zarr_group[name].attrs["encoding"] = {
+            "name": "array_ref",
+            "target": target_path,
+            "hash": hash_str,
+            "original_shape": list(shape),
+            "original_dtype": str(dtype),
+        }
+
+    def _encode_lut(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        semantic_type: SemanticType,
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Encode array using lookup table.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            semantic_type: Semantic type for row vs scalar mode
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        # Determine LUT mode
+        is_color_2d = (
+            data.ndim == 2
+            and semantic_type == SemanticType.COLOR
+            and data.shape[1] <= 4
+        )
+        if is_color_2d:
+            # Row mode: treat each row as a value
+            unique_rows, indices = np.unique(data, axis=0, return_inverse=True)
+            lut = unique_rows.tolist()
+            lut_mode = "row"
+            indices_array = indices.astype(np.uint8)
+            # Adjust chunks for 1D indices array
+            if chunks is not None and len(chunks) > 1:
+                indices_chunks = (chunks[0],)  # Use only first dimension
+            else:
+                indices_chunks = chunks
+        else:
+            # Scalar mode: treat each element individually
+            unique_vals, indices = np.unique(data.ravel(), return_inverse=True)
+            lut = unique_vals.tolist()
+            lut_mode = "scalar"
+            indices_array = indices.reshape(data.shape).astype(np.uint8)
+            # Chunks match data shape
+            indices_chunks = chunks
+
+        # Write indices
+        zarr_group.create_dataset(
+            name,
+            data=indices_array,
+            chunks=indices_chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+
+        # Set encoding metadata
+        metadata = {
+            "name": "lut_uint8",
+            "lut": lut,
+            "original_dtype": str(data.dtype),
+        }
+
+        # Add lut_mode and original_shape for 2D arrays
+        if data.ndim > 1:
+            metadata["lut_mode"] = lut_mode
+            metadata["original_shape"] = list(data.shape)
+
+        zarr_group[name].attrs["encoding"] = metadata
+
+    def _encode_dtype(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        semantic_type: SemanticType,
+        mode: EncodingMode,
+        bounds: Optional[tuple[float, float]],
+        positive_scalar_encoding: str,
+        custom_encoder: Optional[str],
+        color_mode: Optional[str],
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Encode array using dtype-based encoding.
+
+        This is the fallback encoding that handles quantization and dtype
+        conversion based on semantic type and mode.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            semantic_type: Semantic type
+            mode: Encoding mode
+            bounds: Bounds for BOUNDED_SCALAR
+            positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
+            custom_encoder: Explicit encoder for CUSTOM mode
+            color_mode: "sdr" or "hdr" for COLOR
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        if mode == EncodingMode.CUSTOM:
+            # Use explicitly specified encoder
+            self._encode_custom(
+                zarr_group, name, data, custom_encoder, bounds, chunks, compressor
+            )
+        elif semantic_type == SemanticType.COORDINATE:
+            self._encode_coordinate(zarr_group, name, data, mode, chunks, compressor)
+        elif semantic_type == SemanticType.COLOR:
+            self._encode_color(
+                zarr_group, name, data, mode, color_mode, chunks, compressor
+            )
+        elif semantic_type == SemanticType.BOUNDED_SCALAR:
+            self._encode_bounded_scalar(
+                zarr_group, name, data, mode, bounds, chunks, compressor
+            )
+        elif semantic_type == SemanticType.POSITIVE_SCALAR:
+            self._encode_positive_scalar(
+                zarr_group,
+                name,
+                data,
+                mode,
+                positive_scalar_encoding,
+                chunks,
+                compressor,
+            )
+        elif semantic_type == SemanticType.CHOLESKY:
+            self._encode_cholesky(zarr_group, name, data, mode, chunks, compressor)
+        elif semantic_type == SemanticType.INDEX:
+            self._encode_index(zarr_group, name, data, mode, chunks, compressor)
+        elif semantic_type == SemanticType.UNIT_VECTOR:
+            self._encode_unit_vector(zarr_group, name, data, mode, chunks, compressor)
+        else:
+            raise ValueError(f"Unknown semantic type: {semantic_type}")
+
+    def _encode_coordinate(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode COORDINATE semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+            target_dtype = np.float32
+        elif mode == EncodingMode.MEMORY:
+            target_dtype = np.float16
+        else:
+            raise ValueError(f"Unexpected mode for COORDINATE: {mode}")
+
+        encoded_data = data.astype(target_dtype)
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {"name": np.dtype(target_dtype).name}
+
+    def _encode_color(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        color_mode: Optional[str],
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode COLOR semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            color_mode: "sdr" or "hdr" for COLOR
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        # Determine target dtype based on mode and color_mode
+        if np.issubdtype(data.dtype, np.integer):
+            # Integer input: already quantized, keep as-is
+            encoded_data = data
+            encoder_name = str(data.dtype)
+        elif color_mode == "hdr":
+            # HDR colors: use float
+            if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+                encoded_data = data.astype(np.float32)
+                encoder_name = "float32"
+            elif mode == EncodingMode.MEMORY:
+                encoded_data = data.astype(np.float16)
+                encoder_name = "float16"
+            else:
+                raise ValueError("HDR colors require float dtype")
+        elif color_mode == "sdr":
+            # SDR colors: can quantize
+            if mode == EncodingMode.PRECISION:
+                encoded_data = data.astype(np.float32)
+                encoder_name = "float32"
+            elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
+                # Quantize to uint8: [0, 1] → [0, 255]
+                encoded_data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
+                encoder_name = "rgb_uint8"
+            else:
+                raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")
+        else:
+            raise ValueError("color_mode required for float COLOR arrays")
+
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": encoder_name,
+            "original_dtype": original_dtype,
+        }
+
+    def _encode_bounded_scalar(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        bounds: Optional[tuple[float, float]],
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode BOUNDED_SCALAR semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            bounds: Min/max bounds (None = auto-detect)
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        # Determine bounds
+        if bounds is None:
+            min_val = float(np.min(data))
+            max_val = float(np.max(data))
+        else:
+            min_val, max_val = bounds
+            # Validate data is within bounds
+            if np.any(data < min_val) or np.any(data > max_val):
+                raise ValueError(
+                    f"Data outside specified bounds [{min_val}, {max_val}]: "
+                    f"found [{np.min(data)}, {np.max(data)}]"
+                )
+
+        # Select encoding based on mode
+        if mode == EncodingMode.PRECISION:
+            # No quantization
+            encoded_data = data.astype(np.float32)
+            encoder_name = "float32"
+            metadata = {"name": encoder_name, "original_dtype": original_dtype}
+        elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
+            # Quantize to uint8
+            bits = 8
+            span = max_val - min_val
+            if span == 0:
+                # Degenerate case: all values equal
+                encoded_data = np.zeros_like(data, dtype=np.uint8)
+            else:
+                normalized = (data - min_val) / span
+                encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
+
+            encoder_name = "bounded_scalar_uint8"
+            metadata = {
+                "name": encoder_name,
+                "min": min_val,
+                "max": max_val,
+                "bits": bits,
+                "original_dtype": original_dtype,
+            }
+        else:
+            raise ValueError(f"Unexpected mode for BOUNDED_SCALAR: {mode}")
+
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = metadata
+
+    def _encode_positive_scalar(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        encoding_type: str,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode POSITIVE_SCALAR semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            encoding_type: "linear" or "log" encoding
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        if mode == EncodingMode.PRECISION:
+            # No quantization
+            encoded_data = data.astype(np.float32)
+            encoder_name = "float32"
+            metadata = {"name": encoder_name, "original_dtype": original_dtype}
+        elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
+            # Analyze range
+            max_val = float(np.max(data))
+
+            if encoding_type == "log":
+                # Logarithmic encoding
+                bits = 8
+                max_log = float(np.log1p(max_val))
+                log_vals = np.log1p(data)
+                normalized = log_vals / max_log
+                encoded_data = np.clip(normalized * 255, 0, 255).astype(np.uint8)
+
+                encoder_name = "log_scalar_uint8"
+                metadata = {
+                    "name": encoder_name,
+                    "max_log": max_log,
+                    "bits": bits,
+                    "original_dtype": original_dtype,
+                }
+            else:
+                # Linear encoding
+                if max_val <= 1.0:
+                    # Normalize to uint8
+                    encoded_data = np.clip(data * 255, 0, 255).astype(np.uint8)
+                    encoder_name = "bounded_scalar_uint8"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "bits": 8,
+                        "original_dtype": original_dtype,
+                    }
+                elif max_val < 1000:
+                    # Use float16
+                    encoded_data = data.astype(np.float16)
+                    encoder_name = "float16"
+                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
+                else:
+                    # Use float32
+                    encoded_data = data.astype(np.float32)
+                    encoder_name = "float32"
+                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
+        else:
+            raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")
+
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = metadata
+
+    def _encode_cholesky(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode CHOLESKY semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+            target_dtype = np.float32
+        elif mode == EncodingMode.MEMORY:
+            target_dtype = np.float16
+        else:
+            raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
+
+        encoded_data = data.astype(target_dtype)
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": np.dtype(target_dtype).name,
+            "original_dtype": original_dtype,
+        }
+
+    def _encode_index(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode INDEX semantic type.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        # Select smallest uint dtype that fits max value
+        max_val = int(np.max(data))
+
+        if max_val <= 255:
+            target_dtype = np.uint8
+        elif max_val <= 65535:
+            target_dtype = np.uint16
+        elif max_val <= 4294967295:
+            target_dtype = np.uint32
+        else:
+            target_dtype = np.uint64
+
+        encoded_data = data.astype(target_dtype)
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": np.dtype(target_dtype).name,
+            "original_dtype": original_dtype,
+        }
+
+    def _encode_unit_vector(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode UNIT_VECTOR semantic type.
+
+        Currently uses standard float encoding. Specialized encodings
+        (octahedral) are not yet implemented.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            mode: Encoding mode
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+            target_dtype = np.float32
+        elif mode == EncodingMode.MEMORY:
+            target_dtype = np.float16
+        else:
+            raise ValueError(f"Unexpected mode for UNIT_VECTOR: {mode}")
+
+        encoded_data = data.astype(target_dtype)
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": np.dtype(target_dtype).name,
+            "original_dtype": original_dtype,
+        }
+
+    def _encode_custom(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        encoder_name: str,
+        bounds: Optional[tuple[float, float]],
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Encode using explicitly specified encoder.
+
+        Args:
+            zarr_group: Zarr group to write to
+            name: Array name
+            data: Array data
+            encoder_name: Explicit encoder name
+            bounds: Bounds for bounded_scalar encoders
+            chunks: Optional chunk shape
+            compressor: Optional compressor
+        """
+        original_dtype = str(data.dtype)
+
+        if encoder_name in ("float32", "float16"):
+            # Passthrough with dtype conversion
+            target_dtype = np.dtype(encoder_name)
+            encoded_data = data.astype(target_dtype)
+            metadata = {"name": encoder_name, "original_dtype": original_dtype}
+
+        elif encoder_name in ("uint8", "uint16", "uint32", "uint64"):
+            # Direct uint conversion (for INDEX)
+            target_dtype = np.dtype(encoder_name)
+            encoded_data = data.astype(target_dtype)
+            metadata = {"name": encoder_name, "original_dtype": original_dtype}
+
+        elif encoder_name in ("bounded_scalar_uint8", "bounded_scalar_uint16"):
+            # Bounded scalar encoding
+            if bounds is None:
+                raise ValueError(f"{encoder_name} requires bounds parameter")
+
+            min_val, max_val = bounds
+            bits = 8 if "uint8" in encoder_name else 16
+            max_int = (2**bits) - 1
+
+            span = max_val - min_val
+            if span == 0:
+                encoded_data = np.zeros_like(
+                    data, dtype=np.uint8 if bits == 8 else np.uint16
+                )
+            else:
+                normalized = (data - min_val) / span
+                encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
+                    np.uint8 if bits == 8 else np.uint16
+                )
+
+            metadata = {
+                "name": encoder_name,
+                "min": min_val,
+                "max": max_val,
+                "bits": bits,
+                "original_dtype": original_dtype,
+            }
+
+        elif encoder_name in ("log_scalar_uint8", "log_scalar_uint16"):
+            # Log scalar encoding
+            bits = 8 if "uint8" in encoder_name else 16
+            max_int = (2**bits) - 1
+
+            max_val = float(np.max(data))
+            max_log = float(np.log1p(max_val))
+            log_vals = np.log1p(data)
+            normalized = log_vals / max_log
+            encoded_data = np.clip(normalized * max_int, 0, max_int).astype(
+                np.uint8 if bits == 8 else np.uint16
+            )
+
+            metadata = {
+                "name": encoder_name,
+                "max_log": max_log,
+                "bits": bits,
+                "original_dtype": original_dtype,
+            }
+
+        elif encoder_name in ("rgb_uint8", "rgb_uint16"):
+            # Color encoding (SDR)
+            max_int = 255 if "uint8" in encoder_name else 65535
+            encoded_data = np.clip(data * max_int, 0, max_int).astype(
+                np.uint8 if "uint8" in encoder_name else np.uint16
+            )
+            metadata = {"name": encoder_name, "original_dtype": original_dtype}
+
+        else:
+            raise ValueError(f"Unknown custom encoder: {encoder_name}")
+
+        zarr_group.create_dataset(
+            name,
+            data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = metadata

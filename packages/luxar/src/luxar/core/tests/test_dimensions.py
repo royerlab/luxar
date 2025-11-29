@@ -271,3 +271,102 @@ class TestSceneIntegration:
         loaded_dims = Dimensions.from_dict(root.attrs["scene_dimensions"])
         assert loaded_dims.ndim == 4
         assert loaded_dims.names == ["t", "x", "y", "z"]
+
+
+class TestCategoricalDimensions:
+    """Test categorical dimension support."""
+
+    def test_categorical_dimension_creation(self) -> None:
+        """Test creating a categorical dimension with categories."""
+        dim = Dimension(
+            "channel",
+            categories=["DAPI", "GFP", "mCherry"],
+            display=False,
+        )
+
+        # Auto-behaviors
+        assert dim.is_categorical is True
+        assert dim.discrete is True  # Auto-set
+        assert dim.range == (0, 2)  # Auto-set from len(categories)
+        assert dim.step == 1.0  # Auto-set for categories
+        assert dim.categories == ["DAPI", "GFP", "mCherry"]
+
+    def test_categorical_dimension_serialization(self) -> None:
+        """Test serialization/deserialization of categorical dimension."""
+        dim = Dimension(
+            "channel",
+            categories=["DAPI", "GFP", "mCherry"],
+            display=False,
+            cyclic=True,
+        )
+
+        # Serialize
+        data = dim.to_dict()
+        assert data["categories"] == ["DAPI", "GFP", "mCherry"]
+        assert data["discrete"] is True
+        assert data["cyclic"] is True
+        assert data["range"] == [0, 2]
+
+        # Deserialize
+        loaded = Dimension.from_dict(data)
+        assert loaded.categories == ["DAPI", "GFP", "mCherry"]
+        assert loaded.is_categorical is True
+        assert loaded.discrete is True
+        assert loaded.cyclic is True
+        assert loaded.range == (0, 2)
+
+    def test_categorical_with_explicit_range(self) -> None:
+        """Test that explicit range overrides auto-calculation."""
+        dim = Dimension(
+            "channel",
+            categories=["A", "B", "C"],
+            range=(0, 5),  # Explicit range
+            display=False,
+        )
+        # Explicit range should be respected
+        assert dim.range == (0, 5)
+
+    def test_non_categorical_dimension(self) -> None:
+        """Test that non-categorical dimensions don't have categories."""
+        dim = Dimension("x", unit="um", display=True)
+        assert dim.is_categorical is False
+        assert dim.categories is None
+
+    def test_invalid_categories_rejected(self) -> None:
+        """Test that invalid categories are rejected."""
+        # Empty categories list
+        with pytest.raises(ValueError, match="must have at least 1 element"):
+            Dimension("channel", categories=[], display=False)
+
+        # Duplicate categories
+        with pytest.raises(ValueError, match="duplicate category name"):
+            Dimension("channel", categories=["A", "B", "A"], display=False)
+
+        # Empty string category
+        with pytest.raises(ValueError, match="is empty string"):
+            Dimension("channel", categories=["A", "", "C"], display=False)
+
+    def test_categorical_in_dimensions_collection(self) -> None:
+        """Test categorical dimension in a Dimensions collection."""
+        dims = Dimensions(
+            [
+                Dimension(
+                    "channel",
+                    categories=["DAPI", "GFP"],
+                    display=False,
+                ),
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+            ]
+        )
+
+        assert dims.ndim == 4
+        assert dims.dimensions[0].is_categorical is True
+        assert dims.dimensions[0].categories == ["DAPI", "GFP"]
+
+        # Serialize and reload
+        data = dims.to_dict()
+        loaded = Dimensions.from_dict(data)
+        assert loaded.dimensions[0].is_categorical is True
+        assert loaded.dimensions[0].categories == ["DAPI", "GFP"]

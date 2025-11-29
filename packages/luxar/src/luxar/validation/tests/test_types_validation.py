@@ -8,6 +8,8 @@ from luxar.validation.types import (
     is_position_array,
     is_transform_matrix,
     validate_blending_mode,
+    validate_categories,
+    validate_category_indices,
     validate_colors,
     validate_gamma,
     validate_node_type,
@@ -177,18 +179,21 @@ class TestGammaValidation:
         assert validate_gamma(np.float32(1.8)) == pytest.approx(1.8)
 
     def test_invalid_gamma(self) -> None:
-        """Test that invalid gamma values raise ValueError."""
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
+        """Test that invalid gamma values raise ValueError.
+
+        Note: GAMMA range is now [0.1, 10.0] per spec (symmetric: gamma and 1/gamma have equal range).
+        """
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
             validate_gamma(0.0)
 
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
-            validate_gamma(0.1)
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
+            validate_gamma(0.05)
 
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
-            validate_gamma(2.5)
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
+            validate_gamma(15.0)
 
-        with pytest.raises(ValueError, match="Gamma must be between 0.2 and 2.0"):
-            validate_gamma(3.0)
+        with pytest.raises(ValueError, match="Gamma must be between 0.1 and 10.0"):
+            validate_gamma(100.0)
 
         with pytest.raises(TypeError, match="Gamma must be convertible to float"):
             validate_gamma("not_a_number")
@@ -627,3 +632,119 @@ class TestTypeGuards:
 
         # Wrong ndim (1D)
         assert is_transform_matrix(np.array([1, 2, 3, 4])) is False
+
+
+class TestCategoriesValidation:
+    """Test validate_categories function."""
+
+    def test_valid_categories(self) -> None:
+        """Test that valid category lists are accepted."""
+        # Simple categories
+        result = validate_categories(["DAPI", "GFP", "mCherry"])
+        assert result == ["DAPI", "GFP", "mCherry"]
+
+        # Single category
+        result = validate_categories(["Channel1"])
+        assert result == ["Channel1"]
+
+        # Many categories
+        categories = [f"cat_{i}" for i in range(100)]
+        result = validate_categories(categories)
+        assert len(result) == 100
+
+    def test_none_categories(self) -> None:
+        """Test that None is accepted (non-categorical dimension)."""
+        result = validate_categories(None)
+        assert result is None
+
+    def test_empty_categories_rejected(self) -> None:
+        """Test that empty list is rejected."""
+        with pytest.raises(ValueError, match="must have at least 1 element"):
+            validate_categories([])
+
+    def test_non_list_rejected(self) -> None:
+        """Test that non-list types are rejected."""
+        with pytest.raises(TypeError, match="must be a list or None"):
+            validate_categories(("a", "b", "c"))  # tuple
+
+        with pytest.raises(TypeError, match="must be a list or None"):
+            validate_categories({"a", "b", "c"})  # set
+
+        with pytest.raises(TypeError, match="must be a list or None"):
+            validate_categories("abc")  # string
+
+    def test_empty_string_category_rejected(self) -> None:
+        """Test that empty string categories are rejected."""
+        with pytest.raises(ValueError, match="index 1 is empty string"):
+            validate_categories(["DAPI", "", "GFP"])
+
+    def test_non_string_category_rejected(self) -> None:
+        """Test that non-string categories are rejected."""
+        with pytest.raises(TypeError, match="must be a string"):
+            validate_categories(["DAPI", 123, "GFP"])  # type: ignore
+
+        with pytest.raises(TypeError, match="must be a string"):
+            validate_categories([None, "GFP"])  # type: ignore
+
+    def test_duplicate_categories_rejected(self) -> None:
+        """Test that duplicate category names are rejected."""
+        with pytest.raises(
+            ValueError, match="duplicate category name.*DAPI.*indices 0 and 2"
+        ):
+            validate_categories(["DAPI", "GFP", "DAPI"])
+
+    def test_long_category_rejected(self) -> None:
+        """Test that overly long category names are rejected."""
+        long_name = "x" * 2000  # Exceeds 1024 char limit
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            validate_categories(["Short", long_name])
+
+
+class TestCategoryIndicesValidation:
+    """Test validate_category_indices function."""
+
+    def test_valid_indices(self) -> None:
+        """Test that valid category indices are accepted."""
+        categories = ["DAPI", "GFP", "mCherry"]
+        values = np.array([0, 1, 2, 0, 1])
+        # Should not raise
+        validate_category_indices(values, categories)
+
+    def test_valid_indices_boundary(self) -> None:
+        """Test boundary indices are accepted."""
+        categories = ["A", "B", "C"]
+        values = np.array([0, 2])  # min and max valid
+        validate_category_indices(values, categories)
+
+    def test_negative_index_rejected(self) -> None:
+        """Test that negative indices are rejected."""
+        categories = ["A", "B", "C"]
+        values = np.array([0, -1, 2])
+        with pytest.raises(ValueError, match="negative category index"):
+            validate_category_indices(values, categories)
+
+    def test_out_of_range_index_rejected(self) -> None:
+        """Test that out-of-range indices are rejected."""
+        categories = ["A", "B", "C"]  # valid: 0, 1, 2
+        values = np.array([0, 1, 3])  # 3 is out of range
+        with pytest.raises(ValueError, match="out of range.*Valid categories"):
+            validate_category_indices(values, categories)
+
+    def test_non_integer_index_rejected(self) -> None:
+        """Test that non-integer indices are rejected."""
+        categories = ["A", "B", "C"]
+        values = np.array([0.0, 1.5, 2.0])  # 1.5 is not integer
+        with pytest.raises(ValueError, match="non-integer category index"):
+            validate_category_indices(values, categories)
+
+    def test_integer_floats_accepted(self) -> None:
+        """Test that float values that are integers are accepted."""
+        categories = ["A", "B", "C"]
+        values = np.array([0.0, 1.0, 2.0])  # All are integer-valued floats
+        validate_category_indices(values, categories)
+
+    def test_empty_categories_rejected(self) -> None:
+        """Test that empty categories list is rejected."""
+        values = np.array([0, 1])
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_category_indices(values, [])

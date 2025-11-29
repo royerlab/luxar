@@ -1,6 +1,9 @@
 """Core data structures for Luxar scene graph and points."""
 
+from .datanode import DataNode
 from .dimensions import Dimension, Dimensions
+from .gsplats import GSplats
+from .lines import Lines
 from .node import Node
 from .points import Points
 from .scene import Scene
@@ -25,8 +28,11 @@ from .transforms import (
 __all__ = [
     # Classes
     "Node",
+    "DataNode",
     "Scene",
     "Points",
+    "Lines",
+    "GSplats",
     "Dimension",
     "Dimensions",
     # Transform functions
