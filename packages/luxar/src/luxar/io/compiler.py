@@ -108,14 +108,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     colors = np.random.rand(1000, 3).astype(np.float32) * 5.0
         ...     scene.add_points('bright_points', positions, colors=colors)
 
-        Progressive writing for huge datasets:
-        >>> with LuxarZarrCompiler('huge.zarr') as compiler:
+        Large datasets (split into multiple nodes):
+        >>> with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
         ...     scene = compiler.create_scene()
-        ...     # Process data in chunks to avoid memory issues
+        ...     # Process chunks one at a time, each becomes a separate node
         ...     for i in range(100):
-        ...         chunk = load_chunk(i)  # Load chunk from disk
-        ...         scene.add_points(f'chunk_{i}', chunk)
-        ...         # Data written immediately, memory freed
+        ...         chunk_positions, chunk_colors = load_chunk(i)  # 10M points
+        ...         scene.add_points(f'chunk_{i}', chunk_positions, colors=chunk_colors)
+        ...         # Each node: sorted, has chunk_bounds, memory freed after write
     """
 
     def __init__(
