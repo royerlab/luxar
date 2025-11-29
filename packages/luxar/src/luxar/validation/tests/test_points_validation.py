@@ -20,7 +20,7 @@ def test_mismatched_colors(tmp_path) -> None:
         scene = compiler.create_scene()
         pos = np.ones((10, 3), np.float32)
         col = np.ones((5, 3), np.uint8)
-        with pytest.raises(ValueError, match="Colors must"):
+        with pytest.raises(ValueError, match="colors.*doesn't match"):
             scene.add_points("Nope", pos, col, parent=scene)
 
 
