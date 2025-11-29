@@ -1113,11 +1113,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         aprint("  📝 Writing spatial ordering metadata...")
 
-        # Create spatial_index group (keeping name for backward compatibility with viewer)
-        index_group = group.require_group("spatial_index")
-
-        # Store ordering metadata
-        index_metadata = {
+        # Write ordering metadata directly to group attrs (simple, clean)
+        ordering_metadata = {
             "ordering": ordering_data["ordering"],
             "slice_dims": ordering_data["slice_dims"],
             "morton_dims": ordering_data["morton_dims"],
@@ -1125,26 +1122,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "morton_max": ordering_data["morton_max"],
             "morton_bits_per_dim": ordering_data["morton_bits_per_dim"],
             "chunk_size": ordering_data["chunk_size"],
-            "num_chunks": len(ordering_data["chunk_bounds"]),
-            "build_version": "1.0",  # New version for Morton/Hilbert ordering
         }
+        group.attrs.update(ordering_metadata)
 
-        index_group.attrs.update(index_metadata)
-
-        # Store chunk bounds array: (num_chunks, n_dims, 2)
+        # Write chunk_bounds array directly to group
         chunk_bounds = ordering_data["chunk_bounds"]
         if len(chunk_bounds) > 0:
-            bounds_chunks = _calculate_intelligent_chunks(
-                chunk_bounds.shape,
-                target_chunk_size=SPATIAL_INDEX_CHUNK_SIZE,
-            )
-            index_group.create_dataset(
+            group.create_dataset(
                 "chunk_bounds",
                 data=chunk_bounds,
-                chunks=bounds_chunks,
-                compressor=self.compressor,
+                shape=chunk_bounds.shape,
                 dtype=np.float32,
-                overwrite=True,
+                chunks=(chunk_bounds.shape[0], chunk_bounds.shape[1], 2),
+                compressor=self.compressor,
             )
 
         aprint(

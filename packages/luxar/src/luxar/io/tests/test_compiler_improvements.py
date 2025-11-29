@@ -182,12 +182,15 @@ class TestSpatialOrdering:
 
             # Check that spatial ordering metadata was created
             store = zarr.open_group(zarr_path, mode="r")
-            assert "test/spatial_index" in store
-            assert "chunk_bounds" in store["test/spatial_index"]
-            attrs = dict(store["test/spatial_index"].attrs)
-            assert "ordering" in attrs
-            assert attrs["ordering"] == "morton"
-            assert "chunk_size" in attrs
+            # Check chunk_bounds written directly to points group
+            assert "test/chunk_bounds" in store
+
+            # Check ordering metadata in points group attrs (not sub-group)
+            test_attrs = dict(store["test"].attrs)
+            assert test_attrs["ordering"] == "morton"
+            assert "slice_dims" in test_attrs
+            assert "morton_dims" in test_attrs
+            assert "chunk_size" in test_attrs
 
 
 class TestZarrAttributeValidation:
