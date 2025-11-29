@@ -8,12 +8,10 @@ from .ordering import (
     sort_splats_spatial,
 )
 from .reader import DEFAULT_COMP
-from .streaming import StreamingPoints
 from .writer import ZarrWriterProtocol
 
 __all__ = [
     "LuxarZarrCompiler",
-    "StreamingPoints",
     "ZarrWriterProtocol",
     "DEFAULT_COMP",
     "sort_points_compound",

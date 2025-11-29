@@ -97,7 +97,7 @@ class TestValidatePositionsForWriting:
         try:
             validate_positions_for_writing(positions_3d)
         except ValidationError as e:
-            assert "flatten" in str(e) or "StreamingPoints" in str(e)
+            assert "split them into separate nodes" in str(e)
 
     def test_empty_positions(self) -> None:
         """Test empty positions (0 points) raises ValidationError."""

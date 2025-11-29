@@ -1,6 +1,6 @@
 # luxar.io - Technical Specification
 
-**Version**: 1.3.0
+**Version**: 1.3.1
 **Last Updated**: 2025-11-28
 
 ## Purpose
@@ -615,91 +615,29 @@ float_value = normalized * (output_max - output_min) + output_min
 
 ---
 
-## Streaming Points
+## Large Dataset Strategy
 
-### Purpose
-Append point data in batches without loading existing data into memory, then apply Morton ordering at finalization.
+For very large datasets (TB-scale), the recommended approach is:
 
-### Specification
-
-**Initialization**:
-- Create **temporary** resizable datasets with initial shape (0, D)
-- Set maxshape to (None, D) for unlimited growth
-- No data written to final arrays initially
-- Temporary arrays are NOT Morton-sorted
-
-**Batch Appending**:
-1. Validate batch (must match expected_dims)
-2. Resize temporary datasets to accommodate new points
-3. Write batch to slice [current_position:new_position]
-4. Update position counter
-5. Create attribute datasets lazily (when first batch with that attribute arrives)
-
-**Generator Convenience** (`append_from_generator`):
-A convenience method for appending from Python generators:
-
+**Split into Multiple Nodes**:
 ```python
-def append_from_generator(
-    generator,           # Yields batches of data
-    batch_size=None,     # Optional: accumulate before writing (future)
-    max_batches=None     # Optional: limit number of batches
-) -> int:               # Returns total points appended
-```
+with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
+    scene = compiler.create_scene()
 
-*Generator Protocol*:
-- Generator can yield 1-4 items per iteration:
-  - `positions` (required)
-  - `(positions, colors)`
-  - `(positions, colors, radii)`
-  - `(positions, colors, radii, sharpness)`
-- Non-tuple yields are treated as positions only
-- Each yield triggers one `append_batch()` call
-
-*Example*:
-```python
-def data_generator():
+    # Process in chunks, each chunk becomes a separate node
     for i in range(100):
-        positions = load_positions_chunk(i)
-        colors = load_colors_chunk(i)
-        yield positions, colors
-
-streaming = StreamingPoints("huge_cloud", compiler)
-total = streaming.append_from_generator(data_generator())
-streaming.finalize()
+        chunk_positions = load_chunk(i)  # Load 10M points at a time
+        scene.add_points(f'chunk_{i}', chunk_positions, colors, radii)
+        # Each node is independently sorted and has chunk_bounds
 ```
 
-*Benefits*:
-- Memory efficient: Only one batch in memory at a time
-- Clean API: Works with any Python iterator/generator
-- Progress tracking: Returns total points processed
+**Benefits**:
+- Each node fits in memory for spatial ordering
+- Each node has proper chunk_bounds for efficient queries
+- Viewer can query all nodes in parallel
+- Better than single unsorted blob
 
-**Finalization** (Morton ordering applied here):
-1. Read all temporary data
-2. Compute Morton codes for all points
-3. Sort all arrays by Morton code
-4. Write sorted arrays to final datasets
-5. Compute and write chunk_bounds
-6. Delete temporary arrays
-7. Write Morton metadata
-8. Write group metadata (type="points", n_points=total, etc.)
-9. Return metadata
-
-**Key Invariant**: All datasets must be resized together to stay synchronized
-
-### Memory Considerations for Large Datasets
-
-**OPEN QUESTION**: For very large streaming datasets that don't fit in memory, a chunked external sort may be needed:
-
-1. **Chunk-wise Morton sorting**: Sort each batch independently by Morton code before writing to temporary storage
-2. **External merge sort**: At finalize, perform k-way merge of pre-sorted chunks
-3. **Trade-off**: More I/O operations vs. bounded memory usage
-
-This is a known limitation - current implementation requires all points to fit in memory during finalization. Future versions may implement external sorting for TB-scale streaming datasets.
-
-**Workaround for large datasets**: If data is too large for in-memory sorting:
-- Write multiple smaller point groups instead of one large streaming group
-- Each group is Morton-sorted independently
-- Client queries all groups in parallel
+**Memory**: Process one chunk at a time (10M points ~1GB), not entire dataset.
 
 ---
 
@@ -807,6 +745,14 @@ This is a known limitation - current implementation requires all points to fit i
 
 ## Changelog
 
+- **v1.3.1** (2025-11-28): StreamingPoints removed
+  - **BREAKING**: Deleted StreamingPoints class (incompatible with spatial ordering)
+  - Streaming appends data progressively but can't apply spatial ordering
+  - Without ordering → no chunk_bounds → viewer must load all data
+  - **Solution**: Split large datasets into multiple nodes (see "Large Dataset Strategy")
+  - Each node fits in memory, gets proper spatial ordering and chunk_bounds
+  - Deleted streaming.py (301 lines) and test_streaming_comprehensive.py (12 tests)
+
 - **v1.3.0** (2025-11-28): Hilbert curve support
   - Added Hilbert curve as alternative to Morton ordering
   - New module: `luxar.io.ordering` with Morton/Hilbert implementations
@@ -816,7 +762,7 @@ This is a known limitation - current implementation requires all points to fit i
   - Requires `hilbertcurve>=2.0.5` package for Hilbert support
   - Metadata format unchanged (same morton_min/max/bits_per_dim for both methods)
   - `ordering` attribute distinguishes: "morton" or "hilbert"
-  - **Note on StreamingPoints**: Spatial ordering is NOT applied to StreamingPoints (data already written progressively). Only regular write_points() applies ordering. Use regular write_points() if ordering is needed.
+  - **StreamingPoints removed**: Incompatible with spatial ordering (see v1.3.1)
 
 - **v1.2.2** (2025-11-28): Encoding system integration
   - **BREAKING**: Replaced `dtype_config` parameter with `encoding_mode` (EncodingMode enum)
@@ -843,7 +789,6 @@ This is a known limitation - current implementation requires all points to fit i
   - **Compound ordering**: Discrete dimensions sorted first, then Morton within each slice
   - Dramatically improves discrete dimension slicing (time, channel queries load contiguous chunks)
   - **Chunk sizing strategy**: Target 64KB chunks, aligned with discrete slice boundaries
-  - **Generator streaming**: `append_from_generator()` convenience method documented
   - New metadata: `slice_dims`, `morton_dims` arrays
   - `morton_min/max` now only covers morton dimensions (not slice dimensions)
   - Write algorithm updated for compound key sorting
@@ -855,7 +800,6 @@ This is a known limitation - current implementation requires all points to fit i
   - All dimensions indexed (not just non-displayed)
   - Radius-aware bounds include element extent
   - Added Cholesky→Covariance formula for GSplat extent calculation
-  - Streaming points: Morton ordering NOT implemented (incompatible with progressive writes)
   - Explicit `color_mode` flag required for float32 colors (SDR vs HDR)
   - `radii` now required (not optional)
   - Sharpness range fixed to [0, 31]

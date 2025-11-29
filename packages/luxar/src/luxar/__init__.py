@@ -8,22 +8,24 @@ on GB-scale machines.
 Key Features:
     - Progressive writing to Zarr for memory-efficient processing
     - Support for nD points (not limited to 3D)
+    - Morton/Hilbert spatial ordering for better compression
     - HDR color support with float32 precision
     - Hierarchical scene graphs with transforms
-    - Streaming API for datasets larger than RAM
     - Type-safe API with comprehensive validation
+    - Semantic type-based encoding (quantization, broadcasting, LUT)
 
 Basic Usage:
     >>> import luxar
     >>> with luxar.LuxarZarrCompiler('output.zarr') as compiler:
     ...     scene = compiler.create_scene()
-    ...     scene.add_points('my_points', positions)
+    ...     scene.add_points('my_points', positions, colors, radii)
 
-Streaming Large Datasets:
-    >>> streaming = luxar.StreamingPoints('huge_cloud', compiler)
-    >>> for batch in data_generator():
-    ...     streaming.append_batch(batch)
-    >>> metadata = streaming.finalize()  # Returns metadata dict
+Large Datasets (process in chunks):
+    >>> with luxar.LuxarZarrCompiler('huge.zarr') as compiler:
+    ...     scene = compiler.create_scene()
+    ...     for i in range(100):
+    ...         chunk = load_chunk(i)  # 10M points each
+    ...         scene.add_points(f'chunk_{i}', chunk)
 
 For detailed documentation, see: https://github.com/royerlab/luxar
 """
@@ -58,7 +60,6 @@ from .core.transforms import (
 
 # I/O classes
 from .io.compiler import LuxarZarrCompiler
-from .io.streaming import StreamingPoints
 
 # Type definitions
 from .typing_utils.aliases import (
@@ -84,7 +85,7 @@ import sys
 from . import core, io, typing_utils, utils
 from . import validation as validation_module
 from .core import dimensions, node, points, scene
-from .io import compiler, streaming, writer
+from .io import compiler, writer
 from .utils import array as array_utils
 from .utils import demos
 from .validation import base as validation
@@ -96,7 +97,6 @@ sys.modules["luxar.node"] = node
 sys.modules["luxar.points"] = points
 sys.modules["luxar.scene"] = scene
 sys.modules["luxar.compiler"] = compiler
-sys.modules["luxar.streaming"] = streaming
 sys.modules["luxar.writer"] = writer
 sys.modules["luxar.demos"] = demos
 # sys.modules["luxar.validation"] = validation  # Removed to allow proper package resolution
@@ -112,7 +112,6 @@ __all__: list[str] = [
     "Node",
     # Progressive writing
     "LuxarZarrCompiler",
-    "StreamingPoints",
     # Dimension system
     "Dimensions",
     "Dimension",

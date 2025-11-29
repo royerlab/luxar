@@ -73,29 +73,6 @@ This ensures:
 - `morton_encode_nd()`: Morton (Z-order) encoding
 - `hilbert_encode_nd()`: Hilbert curve encoding
 
-### StreamingPoints
-
-Append-only API for datasets larger than RAM.
-
-```python
-from luxar.io import StreamingPoints
-
-streaming = StreamingPoints('huge_cloud', compiler)
-for batch in data_generator():
-    streaming.append_batch(
-        positions=batch['positions'],
-        colors=batch['colors'],
-        radii=batch['radii'],
-    )
-streaming.finalize()
-```
-
-**Features**:
-- Append data in arbitrary-sized batches
-- No loading of existing data
-- Automatic shape tracking
-- Spatial ordering applied at finalize()
-
 ### Writer Protocol
 
 `ZarrWriterProtocol` defines the interface for Zarr writers, enabling different implementations while maintaining API consistency.
@@ -175,8 +152,7 @@ User Code → Scene API → Compiler → Spatial Ordering → Encoding → Zarr 
 
 - **Zero-copy writing**: Data goes directly to disk
 - **Chunked storage**: Optimal chunk sizes (64KB target)
-- **Streaming support**: Process unlimited data in fixed memory
-- **Spatial ordering**: Applied in-place or via streaming finalize
+- **Spatial ordering**: Morton/Hilbert ordering with compound sorting for nD data
 
 ## Examples
 
