@@ -54,7 +54,8 @@ dependencies = [
     "requests>=2.31.0",
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
-    "xxhash>=3.0.0"
+    "xxhash>=3.0.0",
+    "hilbertcurve>=2.0.5"
 ]
 
 [project.urls]
