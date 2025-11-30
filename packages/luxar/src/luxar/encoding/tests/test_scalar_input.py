@@ -185,6 +185,49 @@ class TestScalarInputErrors:
                     n_elements=100,  # Mismatched!
                 )
 
+    def test_array_with_n_elements_non_uniform_raises(self) -> None:
+        """Test that full array with n_elements must be uniform."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            encoder = ArrayEncoder()
+
+            # Non-uniform array
+            data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+
+            # Providing n_elements=3 implies "I expect this to be broadcast"
+            # But data is not uniform, so should raise error
+            with pytest.raises(ValueError, match="varying values"):
+                encoder.encode(
+                    data=data,  # Varying values!
+                    zarr_group=store,
+                    name="radii",
+                    semantic_type=SemanticType.POSITIVE_SCALAR,
+                    n_elements=3,  # Implies broadcasting expectation
+                )
+
+    def test_uniform_array_with_n_elements_works(self) -> None:
+        """Test that uniform array with n_elements is accepted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            encoder = ArrayEncoder()
+
+            # Uniform array - all same value
+            data = np.full(100, 0.5, dtype=np.float32)
+
+            # Should work - array is uniform
+            encoder.encode(
+                data=data,
+                zarr_group=store,
+                name="radii",
+                semantic_type=SemanticType.POSITIVE_SCALAR,
+                n_elements=100,
+            )
+
+            # Verify broadcasted storage
+            radii = store["radii"]
+            assert radii.shape == (1,)
+            assert radii.attrs["encoding"]["name"] == "broadcasted"
+
 
 class TestScalarInputSemanticTypes:
     """Test scalar input with different semantic types."""

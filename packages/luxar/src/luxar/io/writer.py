@@ -52,9 +52,9 @@ class ZarrWriterProtocol(Protocol):
         self,
         path: NodePath,
         positions: PositionArray,
-        colors: Optional[ColorArray] = None,
-        radii: Optional[ScalarArray] = None,
-        sharpness: Optional[ScalarArray] = None,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        radii: Optional[Union[ScalarArray, float]] = None,
+        sharpness: Optional[Union[ScalarArray, float]] = None,
         **attrs: Any,
     ) -> PointsMetadata:
         """Write points data immediately to Zarr.
@@ -67,12 +67,18 @@ class ZarrWriterProtocol(Protocol):
         - PRECISION mode: Uses float32 for maximum precision
         - MEMORY mode: Aggressively quantizes (float16/uint8)
 
+        Scalar Convenience (v1.4.0): Optional attributes accept scalars:
+        - radii=0.5 instead of np.full(N, 0.5)
+        - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
+        - sharpness=2.0 instead of np.full(N, 2.0)
+
         Args:
             path: Path within the Zarr store for this points
             positions: Point positions array of shape (N, D) - float32 or float16
-            colors: Optional colors array of shape (N, 3) - float32 (HDR), uint8/uint16 (SDR)
-            radii: Optional radii array of shape (N,) - float32, float16, or uint8
-            sharpness: Optional sharpness array of shape (N,) - float32, float16, or uint8
+                       (NOT scalar - positions must be full arrays)
+            colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
+            radii: Optional - array of shape (N,), scalar float, or None
+            sharpness: Optional - array of shape (N,), scalar float, or None
             **attrs: Additional attributes for the points
 
         Returns:
@@ -90,21 +96,26 @@ class ZarrWriterProtocol(Protocol):
         self,
         path: NodePath,
         vertices: PositionArray,
-        widths: ScalarArray,
-        colors: Optional[ColorArray] = None,
-        sharpness: Optional[ScalarArray] = None,
+        widths: Union[ScalarArray, float],
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        sharpness: Optional[Union[ScalarArray, float]] = None,
         indices: Optional[NDArray[np.uint32]] = None,
         line_type: str = "polyline",
         **attrs: Any,
     ) -> LinesMetadata:
         """Write lines data immediately to Zarr.
 
+        Scalar Convenience (v1.4.0): Uniform attributes accept scalars:
+        - widths=0.1 instead of np.full(N, 0.1)
+        - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
+        - sharpness=2.0 instead of np.full(N, 2.0)
+
         Args:
             path: Path within the Zarr store for this lines node
             vertices: Vertex positions array of shape (N, D)
-            widths: Line widths array of shape (N,)
-            colors: Optional colors array of shape (N, 3)
-            sharpness: Optional sharpness array of shape (N,)
+            widths: Line widths - array of shape (N,) or scalar float
+            colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
+            sharpness: Optional - array of shape (N,), scalar float, or None
             indices: Optional vertex indices for indexed line type
             line_type: Type of line connectivity
             **attrs: Additional attributes for the lines
@@ -118,21 +129,26 @@ class ZarrWriterProtocol(Protocol):
         self,
         path: NodePath,
         centers: PositionArray,
-        amplitudes: ScalarArray,
+        amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
-        colors: Optional[ColorArray] = None,
-        sharpness: Optional[ScalarArray] = None,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        sharpness: Optional[Union[ScalarArray, float]] = None,
         **attrs: Any,
     ) -> GSplatsMetadata:
         """Write Gaussian splats data immediately to Zarr.
 
+        Scalar Convenience (v1.4.0): Uniform attributes accept scalars:
+        - amplitudes=1.0 instead of np.full(N, 1.0)
+        - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
+        - sharpness=2.0 instead of np.full(N, 2.0)
+
         Args:
             path: Path within the Zarr store for this gsplats node
             centers: Splat center positions array of shape (N, D)
-            amplitudes: Amplitude values array of shape (N,)
+            amplitudes: Amplitude values - array of shape (N,) or scalar float
             cholesky_factors: Packed Cholesky factors array of shape (N, k)
-            colors: Optional colors array of shape (N, 3)
-            sharpness: Optional generalized Gaussian exponent array of shape (N,)
+            colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
+            sharpness: Optional - array of shape (N,), scalar float, or None
             **attrs: Additional attributes for the gsplats
 
         Returns:
