@@ -48,6 +48,9 @@ importers:
       '@vitest/ui':
         specifier: ^3.2.4
         version: 3.2.4(vitest@3.2.4)
+      '@zarrita/storage':
+        specifier: ^0.1.3
+        version: 0.1.3
       eslint:
         specifier: ^9.39.1
         version: 9.39.1
