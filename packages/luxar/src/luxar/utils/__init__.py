@@ -1,10 +1,10 @@
-"""Utility functions for Luxar."""
+"""Utility functions for Luxar.
+
+Note: As of v1.4.0, scalar broadcasting is handled by ArrayEncoder in luxar.encoding.
+The broadcast_*_to_points() functions have been removed (obsolete).
+"""
 
 from .array import (
-    broadcast_color_to_points,
-    broadcast_radii_to_points,
-    broadcast_scalar_to_points,
-    broadcast_sharpness_to_points,
     ensure_float32,
     validate_array_shape,
 )
@@ -16,10 +16,6 @@ from .demos import (
 
 __all__ = [
     # From array
-    "broadcast_color_to_points",
-    "broadcast_radii_to_points",
-    "broadcast_scalar_to_points",
-    "broadcast_sharpness_to_points",
     "ensure_float32",
     "validate_array_shape",
     # From demos
