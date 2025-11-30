@@ -115,29 +115,31 @@ def validate_colors_for_writing(
             "Convert colors to numpy array: np.array(colors)",
         )
 
+    # Allow broadcast shape (1, 3) or full shape (n_points, 3)
+    broadcast_shape = (1, 3)
     expected_shape = (n_points, 3)
 
-    if colors.shape != expected_shape:
+    if colors.shape != expected_shape and colors.shape != broadcast_shape:
         if colors.ndim == 1 and len(colors) == 3:
             raise ValidationError(
                 f"{context}: Got single RGB color {colors.shape}. "
-                f"Expected shape {expected_shape} for {n_points} points.",
-                "For a single color, use Scene.add_points() which handles broadcasting",
+                f"Expected shape {expected_shape} for {n_points} points or {broadcast_shape} for broadcasting.",
+                "For a single color, use shape (1, 3) for broadcasting",
             )
         elif colors.ndim == 2 and colors.shape[1] != 3:
             raise ValidationError(
                 f"{context}: Colors must have 3 channels (RGB), got {colors.shape[1]} channels",
-                "Ensure colors have shape (n_points, 3) for RGB values",
+                "Ensure colors have shape (n_points, 3) or (1, 3) for broadcasting",
             )
-        elif colors.shape[0] != n_points:
+        elif colors.shape[0] != n_points and colors.shape[0] != 1:
             raise ValidationError(
                 f"{context}: Number of colors ({colors.shape[0]}) doesn't match "
-                f"number of points ({n_points})",
-                f"Provide exactly {n_points} colors or use a single color for all points",
+                f"number of points ({n_points}) and is not 1 (broadcast)",
+                f"Provide exactly {n_points} colors or (1, 3) for broadcasting",
             )
         else:
             raise ValidationError(
-                f"{context}: Expected shape {expected_shape}, got {colors.shape}"
+                f"{context}: Expected shape {expected_shape} or {broadcast_shape}, got {colors.shape}"
             )
 
     # Check for invalid values
@@ -191,10 +193,12 @@ def validate_radii_for_writing(
                 "Radii must be a 1D array with one value per point",
             )
 
-    if len(radii) != n_points:
+    # Allow broadcast shape (1,) or full shape (n_points,)
+    if len(radii) != n_points and len(radii) != 1:
         raise ValidationError(
-            f"{context}: Number of radii ({len(radii)}) doesn't match number of points ({n_points})",
-            f"Provide exactly {n_points} radii values or use a single radius for all points",
+            f"{context}: Number of radii ({len(radii)}) doesn't match "
+            f"number of points ({n_points}) and is not 1 (broadcast)",
+            f"Provide exactly {n_points} radii values or use shape (1,) for broadcasting",
         )
 
     # Check for invalid values
@@ -243,11 +247,12 @@ def validate_sharpness_for_writing(
                 "Sharpness must be a 1D array with one value per point",
             )
 
-    if len(sharpness) != n_points:
+    # Allow broadcast shape (1,) or full shape (n_points,)
+    if len(sharpness) != n_points and len(sharpness) != 1:
         raise ValidationError(
             f"{context}: Number of sharpness values ({len(sharpness)}) doesn't match "
-            f"number of points ({n_points})",
-            f"Provide exactly {n_points} sharpness values or use a single value for all points",
+            f"number of points ({n_points}) and is not 1 (broadcast)",
+            f"Provide exactly {n_points} sharpness values or use shape (1,) for broadcasting",
         )
 
     # Check for invalid values

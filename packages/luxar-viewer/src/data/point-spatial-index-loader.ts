@@ -43,6 +43,7 @@ import type {
   LoaderMetrics,
   QueryInfo,
 } from '../ui/data-monitor-types';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
@@ -69,6 +70,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     sharpness?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
+  // Array decoder for handling encoded arrays
+  private decoder: ArrayDecoder;
+
   // Monitoring
   private eventListeners = new Set<MonitorEventListener>();
   private metrics: LoaderMetrics;
@@ -78,11 +82,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   constructor(
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
-    config: LoaderConfig = {}
+    config: LoaderConfig = {},
+    refRegistry?: ArrayRefRegistry
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.cache = new RangeCache(config);
+    this.decoder = new ArrayDecoder(refRegistry || new ArrayRefRegistry());
 
     // Initialize metrics
     this.metrics = {
@@ -608,22 +614,50 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       output = new Float32Array(totalElements);
     }
 
-    // Load each range
-    let destOffset = 0;
-    for (const range of ranges) {
-      // Build slice specification
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)] // [points, dims]
-          : [slice(range.start, range.end)]; // [points]
+    // Check if array is encoded (requires full array load + decode)
+    const attrs = (array.attrs as unknown) as ArrayMetadata;
+    const isEncoded = ArrayDecoder.isEncoded(attrs);
 
-      // Load data from zarr
-      const chunkData = await get(array, sliceSpec);
-      const data = chunkData.data as Float32Array | Uint8Array | Uint16Array | Float16Array;
+    let destOffset = 0; // Declare here for both branches
 
-      // Copy to output buffer
-      output.set(data, destOffset);
-      destOffset += data.length;
+    if (isEncoded) {
+      // Encoded arrays: Load full array once and decode
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Decoding ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode)`
+      );
+
+      const decoded = await this.decoder.decode(array, attrs, totalElements);
+
+      // Extract ranges from decoded full array
+      for (const range of ranges) {
+        const rangeSize = (range.end - range.start) * elementsPerPoint;
+        const srcOffset = range.start * elementsPerPoint;
+
+        // Copy from decoded array
+        (output as Float32Array).set(
+          decoded.subarray(srcOffset, srcOffset + rangeSize),
+          destOffset
+        );
+        destOffset += rangeSize;
+      }
+    } else {
+      // Direct arrays: Load only needed ranges
+      for (const range of ranges) {
+        // Build slice specification
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)] // [points, dims]
+            : [slice(range.start, range.end)]; // [points]
+
+        // Load data from zarr
+        const chunkData = await get(array, sliceSpec);
+        const data = chunkData.data as Float32Array | Uint8Array | Uint16Array | Float16Array;
+
+        // Copy to output buffer
+        output.set(data, destOffset);
+        destOffset += data.length;
+      }
     }
 
     // Cache the result (only Float32Array for now to save memory)

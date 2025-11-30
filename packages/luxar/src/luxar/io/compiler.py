@@ -299,16 +299,23 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             positions, n_points, n_dims, radii_for_ordering
         )
 
-        # Apply spatial reordering to arrays only (skip scalars)
+        # Apply spatial reordering to arrays only (skip scalars and broadcasted arrays)
         if ordering_data is not None:
             positions = ordering_data["sorted_positions"]
-            # Apply sort order only to array attributes
+            # Apply sort order only to non-broadcasted array attributes
+            # Broadcasted arrays (shape[0] == 1) should NOT be reordered
             if colors is not None and isinstance(colors, np.ndarray):
-                colors = colors[ordering_data["sort_order"]]
+                if colors.shape[0] > 1:  # Not broadcasted
+                    colors = colors[ordering_data["sort_order"]]
+                # else: broadcasted, skip reordering
             if radii is not None and isinstance(radii, np.ndarray):
-                radii = radii[ordering_data["sort_order"]]
+                if radii.shape[0] > 1:  # Not broadcasted
+                    radii = radii[ordering_data["sort_order"]]
+                # else: broadcasted, skip reordering
             if sharpness is not None and isinstance(sharpness, np.ndarray):
-                sharpness = sharpness[ordering_data["sort_order"]]
+                if sharpness.shape[0] > 1:  # Not broadcasted
+                    sharpness = sharpness[ordering_data["sort_order"]]
+                # else: broadcasted, skip reordering
             # Scalars stay as-is (they're uniform, order doesn't matter)
 
         # 3. Write positions dataset
@@ -1038,10 +1045,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         chunk_size = min(chunk_size, n_points)
 
         # Compute chunk bounds
-        # Handle scalar radii vs array radii
+        # Handle scalar radii vs array radii vs broadcasted radii
         if radii is not None:
             if isinstance(radii, np.ndarray):
-                sorted_radii = radii[sort_indices]
+                # Check if radii are broadcasted (shape (1,) or (1, k))
+                if radii.shape[0] == 1:
+                    # Broadcasted radii - replicate to all points (no reordering needed)
+                    sorted_radii = np.full(n_points, radii.flat[0], dtype=np.float32)
+                else:
+                    # Regular array radii - apply reordering
+                    sorted_radii = radii[sort_indices]
             else:
                 # Scalar radii - no reordering needed
                 sorted_radii = np.full(n_points, float(radii), dtype=np.float32)
