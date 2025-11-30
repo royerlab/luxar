@@ -12,6 +12,7 @@ import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './da
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
 import { DataMonitorManager } from './data-monitor-manager';
+import { ArrayRefRegistry } from './array-decoder';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 
@@ -32,6 +33,7 @@ export class SceneLoader {
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   private monitorId: string | null = null;
+  private arrayRefRegistry: ArrayRefRegistry;
 
   constructor(config: LoaderConfig = {}, id?: string) {
     this.config = config;
@@ -40,6 +42,7 @@ export class SceneLoader {
       slicePosition: [],
       tolerance: [],
     };
+    this.arrayRefRegistry = new ArrayRefRegistry();
 
     // Use the DataMonitorManager to get or create a monitor
     if (typeof document !== 'undefined' && config.enableMonitor !== false) {
@@ -310,7 +313,7 @@ export class SceneLoader {
 
     // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
     log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
-    const loader = new PointSpatialIndexLoader(nodeLoc, node, this.config);
+    const loader = new PointSpatialIndexLoader(nodeLoc, node, this.config, this.arrayRefRegistry);
 
     // Connect to monitor if available
     if (this.monitorId) {

@@ -84,13 +84,20 @@ Error Messages: Distinguish between wrong count vs wrong channels
 
 **Requirements**:
 - Must be 1D array
-- Must have N elements (match n_points)
+- Must have N elements (match n_points) **OR 1 element (broadcast)**
 - All values must be positive (> 0)
 - Sharpness: must be in range [0, 31]
+
+**Broadcast Support** (added v0.2.0):
+- **Radii**: Shape `(1,)` broadcasts single radius to all points
+- **Sharpness**: Shape `(1,)` broadcasts single sharpness to all points
+- **Validation**: Accepts `len(array) == n_points` OR `len(array) == 1`
+- **Morton Ordering**: Broadcasted arrays are NOT reordered (skip indexing)
 
 **Error Handling**:
 - Detect zeros vs negatives (different suggestions)
 - Suggest np.clip() or replacement strategies
+- Clarify broadcast shape in error messages
 
 ### Transform Validation
 
