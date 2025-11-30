@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Memory optimization example using different data types.
+"""Memory optimization example using different encoding modes.
 
-This example demonstrates how to use different data types for Luxar points
+This example demonstrates how to use different encoding modes for Luxar scenes
 to optimize memory usage and bandwidth. It shows the trade-offs between precision
 and memory efficiency.
+
+The new encoding system uses EncodingMode from luxar.encoding:
+- AUTO: Automatically analyze data and select appropriate encoding
+- PRECISION: Full float32 precision for all arrays
+- MEMORY: Aggressive quantization for minimum storage
 """
 
 import os
@@ -13,21 +18,21 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import LuxarZarrCompiler
-from luxar.typing_utils.datatypes import DataTypeConfig, DataTypeMode
+from luxar.encoding import EncodingMode
 
 
 def create_test_data(n_points: int = 100000):
     """Create test points data with known ranges."""
-    # Create positions in a reasonable range (can use float16)
+    # Create positions in a reasonable range
     positions = np.random.randn(n_points, 3).astype(np.float32) * 10
 
-    # Create SDR colors (0-1 range, suitable for uint8)
+    # Create SDR colors (0-1 range)
     colors = np.random.rand(n_points, 3).astype(np.float32)
 
-    # Create radii in a small range (suitable for uint8 with normalization)
+    # Create radii in a small range
     radii = np.random.rand(n_points).astype(np.float32) * 0.5 + 0.1
 
-    # Create sharpness values (small range, suitable for uint8)
+    # Create sharpness values
     sharpness = np.random.rand(n_points).astype(np.float32) * 3 + 0.5
 
     return positions, colors, radii, sharpness
@@ -43,22 +48,23 @@ def get_zarr_size(path: Path) -> int:
     return total_size
 
 
-def create_dataset_with_dtype_config(
+def create_dataset_with_encoding_mode(
     output_path: Path,
-    dtype_config: DataTypeConfig,
+    encoding_mode: EncodingMode,
     positions: np.ndarray,
     colors: np.ndarray,
     radii: np.ndarray,
     sharpness: np.ndarray,
     description: str,
 ):
-    """Create a dataset with specific dtype configuration."""
+    """Create a dataset with specific encoding mode."""
     aprint(f"\n{'=' * 60}")
     aprint(f"Creating dataset: {description}")
     aprint(f"Output: {output_path}")
+    aprint(f"Encoding mode: {encoding_mode.value}")
 
     # Create the dataset
-    with LuxarZarrCompiler(output_path, dtype_config=dtype_config) as compiler:
+    with LuxarZarrCompiler(output_path, encoding_mode=encoding_mode) as compiler:
         scene = compiler.create_scene()
         scene.add_points(
             "optimized_points",
@@ -72,19 +78,7 @@ def create_dataset_with_dtype_config(
 
     # Report file size
     size_mb = get_zarr_size(output_path) / (1024 * 1024)
-    aprint(f"✓ Dataset created: {size_mb:.2f} MB")
-
-    # Report data types used
-    import zarr
-
-    store = zarr.open_group(output_path, mode="r")
-    points_group = store["optimized_points"]
-
-    aprint("Data types used:")
-    aprint(f"  - positions: {points_group.attrs.get('position_dtype', 'float32')}")
-    aprint(f"  - colors: {points_group.attrs.get('color_dtype', 'float32')}")
-    aprint(f"  - radii: {points_group.attrs.get('radius_dtype', 'float32')}")
-    aprint(f"  - sharpness: {points_group.attrs.get('sharpness_dtype', 'float32')}")
+    aprint(f"Dataset created: {size_mb:.2f} MB")
 
     return size_mb
 
@@ -105,43 +99,38 @@ def main():
         output_dir = Path("delme")
         output_dir.mkdir(exist_ok=True)
 
-    with asection("DataType Configuration Comparison"):
-        # Test different dtype configurations
+    with asection("Encoding Mode Comparison"):
+        # Test different encoding modes
         configs = [
             (
-                DataTypeConfig(mode=DataTypeMode.PRECISION),
+                EncodingMode.PRECISION,
                 "memory_precision_example.zarr",
-                "Maximum Precision (all float32)",
+                "Maximum Precision (float32 for all arrays)",
             ),
             (
-                DataTypeConfig(mode=DataTypeMode.MEMORY),
+                EncodingMode.MEMORY,
                 "memory_efficient_example.zarr",
-                "Memory Efficient (mixed types)",
+                "Memory Efficient (aggressive quantization)",
             ),
             (
-                DataTypeConfig(mode=DataTypeMode.AUTO),
+                EncodingMode.AUTO,
                 "memory_auto_example.zarr",
-                "Auto-detected types",
-            ),
-            (
-                DataTypeConfig(
-                    mode=DataTypeMode.CUSTOM,
-                    position_dtype="float32",
-                    color_dtype="uint8",
-                    radius_dtype="uint8",
-                    sharpness_dtype="uint8",
-                ),
-                "memory_custom_example.zarr",
-                "Custom (float32 positions, uint8 attributes)",
+                "Auto-detected encoding",
             ),
         ]
 
-        aprint(f"Testing {len(configs)} different dtype configurations...")
+        aprint(f"Testing {len(configs)} different encoding modes...")
         sizes = []
-        for config, filename, description in configs:
+        for encoding_mode, filename, description in configs:
             output_path = output_dir / filename
-            size_mb = create_dataset_with_dtype_config(
-                output_path, config, positions, colors, radii, sharpness, description
+            size_mb = create_dataset_with_encoding_mode(
+                output_path,
+                encoding_mode,
+                positions,
+                colors,
+                radii,
+                sharpness,
+                description,
             )
             sizes.append((description, size_mb))
 
@@ -161,33 +150,29 @@ def main():
             else:
                 aprint(f"{description:50s}: {size_mb:6.2f} MB (baseline)")
 
-    with asection("Theoretical Memory Analysis"):
-        # Calculate theoretical memory usage
+    with asection("Encoding Mode Guide"):
         aprint("=" * 60)
-        aprint("THEORETICAL MEMORY USAGE (uncompressed)")
+        aprint("ENCODING MODE GUIDE")
         aprint("=" * 60)
-
-        # Float32 everything (baseline)
-        float32_size = (
-            n_points * (3 * 4 + 3 * 4 + 4 + 4) / (1024 * 1024)
-        )  # positions + colors + radius + sharpness
-        aprint(f"All float32:                     {float32_size:6.2f} MB")
-
-        # Mixed precision
-        mixed_size = (
-            n_points * (3 * 4 + 3 * 1 + 1 + 1) / (1024 * 1024)
-        )  # float32 pos + uint8 rest
-        aprint(f"Float32 pos + uint8 attributes:  {mixed_size:6.2f} MB")
-        reduction = ((float32_size - mixed_size) / float32_size) * 100
-        aprint(f"Theoretical reduction:            {reduction:.1f}%")
-
-    with asection("Usage Notes and Viewing Instructions"):
-        aprint("=" * 60)
-        aprint("NOTES:")
-        aprint("- Actual file sizes are smaller due to compression")
-        aprint("- uint8 types use normalization for 0-1 range in WebGL")
-        aprint("- Float16 support depends on browser/hardware capabilities")
-        aprint("- Choose dtype based on your precision requirements")
+        aprint("")
+        aprint("EncodingMode.PRECISION:")
+        aprint("  - Uses float32 for all arrays")
+        aprint("  - Maximum precision, no quantization error")
+        aprint("  - Best for scientific accuracy requirements")
+        aprint("")
+        aprint("EncodingMode.MEMORY:")
+        aprint("  - Aggressive quantization (uint8, uint16, float16)")
+        aprint("  - Smallest file size")
+        aprint("  - May introduce small quantization errors")
+        aprint("  - Best for large datasets and streaming")
+        aprint("")
+        aprint("EncodingMode.AUTO:")
+        aprint("  - Analyzes data and selects appropriate encoding")
+        aprint("  - Balanced approach between precision and size")
+        aprint("  - Good default choice")
+        aprint("")
+        aprint("Note: Broadcasting and LUT optimizations apply in ALL modes")
+        aprint("as they are lossless. Mode only affects quantization.")
         aprint("=" * 60)
 
         # Serve the most memory-efficient example

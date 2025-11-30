@@ -40,6 +40,7 @@ Controls:
     - Ctrl+C to stop
 """
 
+import math
 import subprocess
 import sys
 import tempfile
@@ -74,8 +75,8 @@ def hydrogen_radial_wavefunction(
     # Normalization constant
     norm = np.sqrt(
         (2 / (n * a0)) ** 3
-        * np.math.factorial(n - l_quantum - 1)
-        / (2 * n * np.math.factorial(n + l_quantum))
+        * math.factorial(n - l_quantum - 1)
+        / (2 * n * math.factorial(n + l_quantum))
     )
 
     # Associated Laguerre polynomial
@@ -345,6 +346,10 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
+
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
 
         try:
             subprocess.run(

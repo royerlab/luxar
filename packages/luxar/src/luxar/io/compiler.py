@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 
@@ -29,10 +29,7 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
-from ..typing_utils.constants import (
-    SHARPNESS_MAX,
-    SPATIAL_INDEX_CHUNK_SIZE,
-)
+from ..typing_utils.constants import SHARPNESS_MAX
 from ..typing_utils.protocols import CompressorProtocol
 
 # Ordering functions will be imported locally where needed to avoid circular imports
@@ -1041,7 +1038,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         chunk_size = min(chunk_size, n_points)
 
         # Compute chunk bounds
-        sorted_radii = radii[sort_indices] if radii is not None else None
+        # Handle scalar radii vs array radii
+        if radii is not None:
+            if isinstance(radii, np.ndarray):
+                sorted_radii = radii[sort_indices]
+            else:
+                # Scalar radii - no reordering needed
+                sorted_radii = np.full(n_points, float(radii), dtype=np.float32)
+        else:
+            sorted_radii = None
         chunk_bounds = compute_chunk_bounds_points(
             sorted_positions, sorted_radii, chunk_size
         )

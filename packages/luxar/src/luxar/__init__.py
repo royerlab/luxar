@@ -60,6 +60,7 @@ from .core.transforms import (
 
 # I/O classes
 from .io.compiler import LuxarZarrCompiler
+from .io.reader import LuxarScene
 
 # Type definitions
 from .typing_utils.aliases import (
@@ -112,6 +113,8 @@ __all__: list[str] = [
     "Node",
     # Progressive writing
     "LuxarZarrCompiler",
+    # Reading
+    "LuxarScene",
     # Dimension system
     "Dimensions",
     "Dimension",
@@ -130,19 +133,19 @@ __all__: list[str] = [
     "transforms",
     "identity",
     "translate",
+    "translation",
+    "rotate",
     "rotate_x",
     "rotate_y",
     "rotate_z",
     "rotation",
     "scale",
     "scaling",
-    "to_list",
-    "translate",
-    "translation",
     "compose",
-    "from_list",
     "inverse",
     "look_at",
+    "to_list",
+    "from_list",
     "prepare_transform_for_zarr",
     "read_transform_from_zarr",
     # Version

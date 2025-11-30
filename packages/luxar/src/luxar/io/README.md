@@ -1,10 +1,14 @@
 # luxar.io - I/O Operations
 
-Progressive writing to Zarr format with spatial ordering for memory-efficient processing of massive datasets.
+Progressive writing and reading of Luxar Zarr scenes with spatial ordering for memory-efficient processing of massive datasets.
 
 ## Purpose
 
-This package provides infrastructure for writing Points and GSplats data progressively to Zarr archives, enabling processing of TB-scale datasets on GB-scale machines.
+This package provides infrastructure for:
+- **Writing**: Progressive writing of Points and GSplats data to Zarr archives
+- **Reading**: Full read-only access to Luxar scenes via `LuxarScene`
+
+Both paths enable processing of TB-scale datasets on GB-scale machines.
 
 ## Main Components
 
@@ -42,6 +46,56 @@ with LuxarZarrCompiler(
 - Semantic type-based encoding (via `luxar.encoding`)
 - Automatic chunk size calculation
 - Metadata consolidation for fast loading
+
+### LuxarScene (Reading)
+
+Read-only access to Luxar zarr scenes with automatic decoding.
+
+```python
+from luxar.io import LuxarScene
+
+# Load a scene
+scene = LuxarScene.load('scene.zarr')
+
+# Scene metadata
+print(scene.version)        # "1.0.0"
+print(scene.dimensions)     # Dimensions object or None
+print(scene.path)           # Path to zarr store
+
+# List nodes by type
+print(scene.list_points())  # ['cloud1', 'cloud2']
+print(scene.list_gsplats()) # ['splats1']
+print(scene.list_lines())   # []
+print(scene.list_groups())  # ['group1']
+
+# Check if a node exists
+if scene.has_node('cloud1'):
+    print(scene.get_node_type('cloud1'))  # 'points'
+
+# Get node metadata (without loading array data)
+metadata = scene.get_node_metadata('cloud1')
+print(metadata['type'])            # 'points'
+print(metadata['n_points'])        # Number of points
+
+# Get full point data with automatic decoding
+points = scene.get_points('cloud1')
+print(points['positions'].shape)   # (N, 3)
+print(points['colors'].shape)      # (N, 3) or None
+print(points['radii'].shape)       # (N,) or None
+print(points['metadata']['transform'])  # 4x4 numpy array (if present)
+
+# Similarly for GSplats and Lines
+splats = scene.get_gsplats('splats1')
+print(splats['centers'].shape)           # (N, 3)
+print(splats['cholesky_factors'].shape)  # (N, 6)
+```
+
+**Key Features**:
+- Automatic decoding (broadcasting, LUT, quantization, array_ref)
+- Full scene introspection (list nodes, check types, get metadata)
+- Lazy loading (arrays only loaded when requested)
+- Node types as strings ('points', 'gsplats', 'lines', 'group')
+- Transform matrices automatically converted from zarr storage format
 
 ### Spatial Ordering Module
 
@@ -157,6 +211,22 @@ User Code → Scene API → Compiler → Spatial Ordering → Encoding → Zarr 
 5. Data written immediately to Zarr
 6. Only metadata kept in memory
 
+### Reading Flow
+
+```
+Zarr Store → LuxarScene → ArrayDecoder → Decoded Arrays → User Code
+                  ↓
+            Node introspection
+            Dimension parsing
+            Transform conversion
+```
+
+1. Open zarr store read-only
+2. Parse scene metadata (version, dimensions)
+3. Build node index from zarr groups
+4. On `get_*()` call: load arrays with automatic decoding
+5. Return decoded data with proper numpy shapes/dtypes
+
 ### Memory Management
 
 - **Zero-copy writing**: Data goes directly to disk
@@ -194,15 +264,38 @@ from luxar.encoding import EncodingMode
 
 with LuxarZarrCompiler(
     'compressed.zarr',
-    encoding_mode=EncodingMode.MEMORY,  // Aggressive quantization
+    encoding_mode=EncodingMode.MEMORY,  # Aggressive quantization
     ordering_method="hilbert",
 ) as compiler:
     scene = compiler.create_scene()
     scene.add_points('cloud', positions, colors, radii)
     # Positions: float16
-    // Colors: uint8 (if SDR)
-    // Radii: log_scalar_uint8
-    // With Hilbert ordering for better compression
+    # Colors: uint8 (if SDR)
+    # Radii: log_scalar_uint8
+    # With Hilbert ordering for better compression
+```
+
+### Round-Trip (Write and Read)
+
+```python
+from luxar.io import LuxarZarrCompiler, LuxarScene
+import numpy as np
+
+# Write data
+positions = np.random.randn(1000, 3).astype(np.float32)
+colors = np.random.rand(1000, 3).astype(np.float32)
+
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene()
+    scene.add_points('cloud', positions, colors, radii=0.1)
+
+# Read it back
+scene = LuxarScene.load('scene.zarr')
+points = scene.get_points('cloud')
+
+# Verify data (accounting for encoding precision)
+np.testing.assert_allclose(points['positions'], positions, atol=1e-5)
+np.testing.assert_allclose(points['colors'], colors, atol=1e-5)
 ```
 
 ## Performance

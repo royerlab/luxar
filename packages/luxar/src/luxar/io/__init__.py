@@ -7,11 +7,12 @@ from .ordering import (
     sort_points_compound,
     sort_splats_spatial,
 )
-from .reader import DEFAULT_COMP
+from .reader import DEFAULT_COMP, LuxarScene
 from .writer import ZarrWriterProtocol
 
 __all__ = [
     "LuxarZarrCompiler",
+    "LuxarScene",
     "ZarrWriterProtocol",
     "DEFAULT_COMP",
     "sort_points_compound",

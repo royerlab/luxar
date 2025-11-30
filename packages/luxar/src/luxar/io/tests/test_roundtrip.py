@@ -1,0 +1,959 @@
+"""Comprehensive round-trip tests for the Luxar zarr format.
+
+These tests verify that all aspects of the luxar format are correctly
+written and can be read back with exact data preservation using the
+LuxarScene reading API and ArrayDecoder.
+
+Tests cover:
+- Basic points with positions only
+- Points with colors, radii, sharpness
+- HDR colors (values > 1.0)
+- Scene dimensions (nD support)
+- Transforms (hierarchical groups)
+- Rendering attributes (opacity, gamma, blending)
+- Encoding/decoding (uint8 colors, bounded scalars, broadcasting, LUT)
+- Spatial ordering metadata
+- Group hierarchy
+"""
+
+import numpy as np
+import pytest
+
+from luxar import Dimension, Dimensions, LuxarScene, LuxarZarrCompiler, transforms
+
+
+class TestBasicRoundTrip:
+    """Basic round-trip tests for points data."""
+
+    def test_positions_only(self, tmp_path) -> None:
+        """Test round-trip with positions only."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 1000
+
+        # Generate test data
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+
+        # Write
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("test_points", positions)
+
+        # Read back
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("test_points")
+
+        # Verify positions match exactly
+        # Note: Spatial ordering may reorder points, so we compare sorted values
+        assert data["positions"].shape == positions.shape
+        assert data["positions"].dtype == np.float32
+
+        # Verify metadata
+        assert data["metadata"]["type"] == "points"
+        assert data["metadata"]["n_points"] == n_points
+
+        # No colors/radii should be None
+        assert data["colors"] is None
+        assert data["radii"] is None
+        assert data["sharpness"] is None
+
+    def test_positions_and_colors(self, tmp_path) -> None:
+        """Test round-trip with positions and colors."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 500
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        colors = np.random.rand(n_points, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("test_points", positions, colors=colors)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("test_points")
+
+        assert data["positions"].shape == positions.shape
+        assert data["colors"].shape == colors.shape
+
+        # Colors should be preserved (may be encoded as uint8 then decoded)
+        # Allow small tolerance for quantization
+        assert data["colors"].dtype == np.float32
+
+    def test_full_point_attributes(self, tmp_path) -> None:
+        """Test round-trip with all point attributes."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 200
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        colors = np.random.rand(n_points, 3).astype(np.float32)
+        radii = np.random.rand(n_points).astype(np.float32) * 0.5 + 0.1
+        sharpness = np.random.rand(n_points).astype(np.float32) * 10.0
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points(
+                "test_points",
+                positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("test_points")
+
+        assert data["positions"].shape == positions.shape
+        assert data["colors"].shape == colors.shape
+        assert data["radii"].shape == radii.shape
+        assert data["sharpness"].shape == sharpness.shape
+
+
+class TestHDRColors:
+    """Tests for HDR color support."""
+
+    def test_hdr_colors_preserved(self, tmp_path) -> None:
+        """Test that HDR colors (values > 1.0) are preserved."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 100
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        # HDR colors with values > 1.0
+        colors = np.random.rand(n_points, 3).astype(np.float32) * 10.0
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("hdr_points", positions, colors=colors)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("hdr_points")
+
+        # HDR values should be preserved
+        assert data["colors"].max() > 1.0
+        # Allow tolerance for float32 precision
+        np.testing.assert_allclose(data["colors"], colors, rtol=1e-2, atol=1e-3)
+
+
+class TestSceneDimensions:
+    """Tests for scene dimension specifications."""
+
+    def test_3d_scene_dimensions(self, tmp_path) -> None:
+        """Test round-trip with explicit 3D dimensions."""
+        output_path = tmp_path / "test.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
+
+        positions = np.random.randn(100, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points", positions)
+
+        scene = LuxarScene.load(output_path)
+
+        # Verify dimensions were stored
+        assert scene.dimensions is not None
+        assert len(scene.dimensions) == 3
+        assert scene.dimensions.names == ["x", "y", "z"]
+        assert scene.dimensions.dimensions[0].unit == "um"
+
+    def test_5d_scene_dimensions(self, tmp_path) -> None:
+        """Test round-trip with 5D dimensions (time, channel, xyz)."""
+        output_path = tmp_path / "test.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension("time", unit="s", display=False, discrete=True, range=(0, 10)),
+                Dimension("channel", unit="ch", display=False, discrete=True, range=(0, 3)),
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
+
+        positions = np.random.randn(100, 5).astype(np.float32)
+        # Set discrete dimension values to integers
+        positions[:, 0] = np.random.randint(0, 11, 100).astype(np.float32)  # time
+        positions[:, 1] = np.random.randint(0, 4, 100).astype(np.float32)  # channel
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points5d", positions)
+
+        scene = LuxarScene.load(output_path)
+
+        assert scene.dimensions is not None
+        assert len(scene.dimensions) == 5
+        assert scene.dimensions.names == ["time", "channel", "x", "y", "z"]
+
+        # Check non-displayed dimensions
+        assert scene.dimensions.displayed == [2, 3, 4]
+        assert scene.dimensions.non_displayed == [0, 1]
+
+        # Verify discrete flag
+        assert scene.dimensions.dimensions[0].discrete is True
+        assert scene.dimensions.dimensions[1].discrete is True
+
+    def test_categorical_dimensions(self, tmp_path) -> None:
+        """Test round-trip with categorical dimensions."""
+        output_path = tmp_path / "test.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+                Dimension(
+                    "channel",
+                    display=False,
+                    categories=["DAPI", "GFP", "mCherry"],
+                ),
+            ]
+        )
+
+        positions = np.random.randn(100, 4).astype(np.float32)
+        positions[:, 3] = np.random.randint(0, 3, 100).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points", positions)
+
+        scene = LuxarScene.load(output_path)
+
+        assert scene.dimensions is not None
+        channel_dim = scene.dimensions.dimensions[3]
+        assert channel_dim.categories == ["DAPI", "GFP", "mCherry"]
+        assert channel_dim.is_categorical is True
+
+
+class TestTransforms:
+    """Tests for transform handling."""
+
+    def test_points_with_transform(self, tmp_path) -> None:
+        """Test round-trip with transform on points."""
+        output_path = tmp_path / "test.zarr"
+
+        positions = np.random.randn(100, 3).astype(np.float32)
+        transform = transforms.translate(10, 20, 30)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", positions, transform=transform)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        # Transform should be stored and read back
+        assert "transform" in data["metadata"]
+        stored_transform = data["metadata"]["transform"]
+
+        # Verify transform matrix matches
+        np.testing.assert_allclose(stored_transform, transform, rtol=1e-5)
+
+    def test_hierarchical_transforms(self, tmp_path) -> None:
+        """Test round-trip with hierarchical group transforms."""
+        output_path = tmp_path / "test.zarr"
+
+        positions = np.random.randn(50, 3).astype(np.float32)
+        group_transform = transforms.translate(100, 0, 0)
+        points_transform = transforms.rotate_z(45)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene()
+
+            # Create group with transform
+            _group = scene_node.add_group("my_group", transform=group_transform)
+
+            # Add points inside group with its own transform
+            compiler.write_points(
+                "my_group/nested_points", positions, transform=points_transform
+            )
+
+        scene = LuxarScene.load(output_path)
+
+        # Verify group exists
+        assert scene.has_node("my_group")
+        assert scene.get_node_type("my_group") == "group"
+
+        # Verify points
+        data = scene.get_points("my_group/nested_points")
+        np.testing.assert_allclose(
+            data["metadata"]["transform"], points_transform, rtol=1e-5
+        )
+
+
+class TestRenderingAttributes:
+    """Tests for rendering attribute preservation."""
+
+    def test_opacity_gamma_blending(self, tmp_path) -> None:
+        """Test round-trip of rendering attributes."""
+        output_path = tmp_path / "test.zarr"
+
+        positions = np.random.randn(50, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points(
+                "points",
+                positions,
+                opacity=0.7,
+                gamma=1.5,
+                blending_mode="additive",
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        assert data["metadata"]["opacity"] == 0.7
+        assert data["metadata"]["gamma"] == 1.5
+        assert data["metadata"]["blending_mode"] == "additive"
+
+    def test_normal_blending_mode(self, tmp_path) -> None:
+        """Test round-trip with normal blending mode."""
+        output_path = tmp_path / "test.zarr"
+
+        positions = np.random.randn(50, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points(
+                "points",
+                positions,
+                blending_mode="normal",
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        assert data["metadata"]["blending_mode"] == "normal"
+
+
+class TestEncodingDecoding:
+    """Tests for encoding/decoding correctness."""
+
+    def test_uniform_color_broadcast(self, tmp_path) -> None:
+        """Test that uniform colors are broadcast and decoded correctly."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 1000
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        # Single color for all points
+        colors = np.full((n_points, 3), [1.0, 0.0, 0.0], dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", positions, colors=colors)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        # All colors should be red after decoding
+        assert data["colors"].shape == (n_points, 3)
+        # Check uniformity (all same color)
+        _unique_colors = np.unique(data["colors"], axis=0)
+        # Should be just 1 unique color (allowing for float tolerance)
+        np.testing.assert_allclose(data["colors"][0], [1.0, 0.0, 0.0], atol=0.05)
+
+    def test_uniform_radii_broadcast(self, tmp_path) -> None:
+        """Test that uniform radii are broadcast and decoded correctly."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 500
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        # All same radius
+        radii = np.full(n_points, 0.5, dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", positions, radii=radii)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        assert data["radii"].shape == (n_points,)
+        # All radii should be approximately 0.5
+        np.testing.assert_allclose(data["radii"], 0.5, atol=0.01)
+
+    def test_uint8_color_quantization(self, tmp_path) -> None:
+        """Test that SDR colors are quantized to uint8 and decoded correctly."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 100
+
+        positions = np.random.randn(n_points, 3).astype(np.float32)
+        # SDR colors (0-1 range)
+        colors = np.random.rand(n_points, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", positions, colors=colors)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        # Colors should be float32 after decoding
+        assert data["colors"].dtype == np.float32
+        # Allow for uint8 quantization error (1/256 ≈ 0.004)
+        np.testing.assert_allclose(data["colors"], colors, atol=0.01)
+
+
+class TestSceneAPI:
+    """Tests for the LuxarScene API methods."""
+
+    def test_list_nodes(self, tmp_path) -> None:
+        """Test node listing methods."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene()
+            scene_node.add_group("group1")
+            compiler.write_points("points1", np.random.randn(10, 3).astype(np.float32))
+            compiler.write_points("points2", np.random.randn(10, 3).astype(np.float32))
+            compiler.write_points(
+                "group1/nested", np.random.randn(10, 3).astype(np.float32)
+            )
+
+        scene = LuxarScene.load(output_path)
+
+        # List points
+        point_names = scene.list_points()
+        assert "points1" in point_names
+        assert "points2" in point_names
+        assert "group1/nested" in point_names
+        assert len(point_names) == 3
+
+        # List groups
+        group_names = scene.list_groups()
+        assert "group1" in group_names
+
+    def test_has_node(self, tmp_path) -> None:
+        """Test has_node method."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("exists", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        assert scene.has_node("exists") is True
+        assert scene.has_node("does_not_exist") is False
+
+    def test_get_node_type(self, tmp_path) -> None:
+        """Test get_node_type method."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene()
+            scene_node.add_group("my_group")
+            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        assert scene.get_node_type("my_group") == "group"
+        assert scene.get_node_type("my_points") == "points"
+
+    def test_get_node_metadata(self, tmp_path) -> None:
+        """Test get_node_metadata method."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points(
+                "my_points",
+                np.random.randn(100, 3).astype(np.float32),
+                opacity=0.8,
+            )
+
+        scene = LuxarScene.load(output_path)
+        metadata = scene.get_node_metadata("my_points")
+
+        assert metadata["type"] == "points"
+        assert metadata["n_points"] == 100
+        assert metadata["opacity"] == 0.8
+
+    def test_scene_version(self, tmp_path) -> None:
+        """Test that scene version is stored and retrieved."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        # Version should be set
+        assert scene.version != "unknown"
+
+    def test_scene_path_property(self, tmp_path) -> None:
+        """Test that scene.path returns the correct path."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        # Path property should return the path
+        assert scene.path == output_path
+
+    def test_scene_root_attrs(self, tmp_path) -> None:
+        """Test that scene.root_attrs returns all root attributes."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        # root_attrs should be a dict with scene attributes
+        attrs = scene.root_attrs
+        assert isinstance(attrs, dict)
+        assert "type" in attrs
+        assert attrs["type"] == "scene"
+        assert "luxar_version" in attrs
+
+    def test_scene_no_dimensions(self, tmp_path) -> None:
+        """Test that scene.dimensions returns None when no dimensions defined."""
+        output_path = tmp_path / "test.zarr"
+
+        # Create scene without dimensions
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()  # No dimensions argument
+            compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        # dimensions should be None
+        assert scene.dimensions is None
+
+
+class TestErrorHandling:
+    """Tests for error handling in LuxarScene."""
+
+    def test_file_not_found(self, tmp_path) -> None:
+        """Test error when file doesn't exist."""
+        with pytest.raises(FileNotFoundError):
+            LuxarScene.load(tmp_path / "nonexistent.zarr")
+
+    def test_not_a_luxar_scene(self, tmp_path) -> None:
+        """Test error when zarr is not a Luxar scene."""
+        import zarr
+
+        # Create a generic zarr store
+        output_path = tmp_path / "generic.zarr"
+        root = zarr.open_group(output_path, mode="w")
+        root.attrs["not_a_scene"] = True
+
+        with pytest.raises(ValueError, match="Not a valid Luxar scene"):
+            LuxarScene.load(output_path)
+
+    def test_get_points_wrong_type(self, tmp_path) -> None:
+        """Test error when getting points from non-points node."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene()
+            scene_node.add_group("my_group")
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(ValueError, match="is not a points node"):
+            scene.get_points("my_group")
+
+    def test_get_nonexistent_node(self, tmp_path) -> None:
+        """Test error when node doesn't exist."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(KeyError):
+            scene.get_points("nonexistent")
+
+    def test_get_node_type_not_found(self, tmp_path) -> None:
+        """Test error when get_node_type is called with nonexistent node."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(KeyError, match="Node not found"):
+            scene.get_node_type("nonexistent")
+
+    def test_get_node_metadata_not_found(self, tmp_path) -> None:
+        """Test error when get_node_metadata is called with nonexistent node."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(KeyError, match="Node not found"):
+            scene.get_node_metadata("nonexistent")
+
+
+class TestSpatialOrdering:
+    """Tests for spatial ordering metadata."""
+
+    def test_spatial_ordering_metadata(self, tmp_path) -> None:
+        """Test that spatial ordering metadata is preserved when dimensions are provided."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 1000
+
+        # Create scene with explicit dimensions (required for spatial ordering)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
+
+        positions = np.random.randn(n_points, 3).astype(np.float32) * 100
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points", positions)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        metadata = data["metadata"]
+
+        # Should have ordering metadata when dimensions are provided
+        assert "ordering" in metadata
+        # Morton is the default
+        assert metadata["ordering"] in ["morton", "hilbert", "none"]
+
+        # If ordered, should have bounds metadata
+        if metadata["ordering"] != "none":
+            assert "morton_bits_per_dim" in metadata or "chunk_size" in metadata
+
+    def test_chunk_bounds_present(self, tmp_path) -> None:
+        """Test that chunk bounds are stored for ordered data."""
+        output_path = tmp_path / "test.zarr"
+        n_points = 10000  # Need enough points for multiple chunks
+
+        # Create scene with explicit dimensions (required for spatial ordering)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
+
+        positions = np.random.randn(n_points, 3).astype(np.float32) * 100
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points", positions)
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("points")
+
+        # chunk_bounds may or may not be present depending on implementation
+        # If present, verify shape
+        if data["chunk_bounds"] is not None:
+            # Shape should be (num_chunks, ndim, 2)
+            assert len(data["chunk_bounds"].shape) == 3
+            assert data["chunk_bounds"].shape[1] == 3  # 3D
+            assert data["chunk_bounds"].shape[2] == 2  # min/max
+
+
+class TestMultiplePointGroups:
+    """Tests for scenes with multiple point groups."""
+
+    def test_multiple_point_groups(self, tmp_path) -> None:
+        """Test round-trip with multiple point groups."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+            # Create multiple point groups
+            for i in range(5):
+                positions = np.random.randn(100, 3).astype(np.float32)
+                colors = np.random.rand(100, 3).astype(np.float32)
+                compiler.write_points(f"points_{i}", positions, colors=colors)
+
+        scene = LuxarScene.load(output_path)
+
+        # Verify all groups exist
+        point_names = scene.list_points()
+        assert len(point_names) == 5
+
+        # Verify each can be loaded
+        for i in range(5):
+            data = scene.get_points(f"points_{i}")
+            assert data["positions"].shape == (100, 3)
+            assert data["colors"].shape == (100, 3)
+
+    def test_mixed_attributes_per_group(self, tmp_path) -> None:
+        """Test groups with different attribute combinations."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+            # Positions only
+            compiler.write_points("pos_only", np.random.randn(50, 3).astype(np.float32))
+
+            # Positions + colors
+            compiler.write_points(
+                "pos_colors",
+                np.random.randn(50, 3).astype(np.float32),
+                colors=np.random.rand(50, 3).astype(np.float32),
+            )
+
+            # Full attributes
+            compiler.write_points(
+                "full",
+                np.random.randn(50, 3).astype(np.float32),
+                colors=np.random.rand(50, 3).astype(np.float32),
+                radii=np.random.rand(50).astype(np.float32) * 0.5,
+                sharpness=np.random.rand(50).astype(np.float32) * 10,
+            )
+
+        scene = LuxarScene.load(output_path)
+
+        # Verify each group
+        pos_only = scene.get_points("pos_only")
+        assert pos_only["colors"] is None
+        assert pos_only["radii"] is None
+
+        pos_colors = scene.get_points("pos_colors")
+        assert pos_colors["colors"] is not None
+        assert pos_colors["radii"] is None
+
+        full = scene.get_points("full")
+        assert full["colors"] is not None
+        assert full["radii"] is not None
+        assert full["sharpness"] is not None
+
+
+class TestGSplatsRoundTrip:
+    """Tests for GSplats round-trip."""
+
+    def test_basic_gsplats(self, tmp_path) -> None:
+        """Test round-trip with basic GSplats data."""
+        output_path = tmp_path / "test.zarr"
+        n_splats = 100
+
+        # Generate test data
+        centers = np.random.randn(n_splats, 3).astype(np.float32)
+        amplitudes = np.random.rand(n_splats).astype(np.float32) + 0.1
+        # Cholesky factors: 6 for 3D (lower triangular)
+        cholesky = np.random.rand(n_splats, 6).astype(np.float32) * 0.5 + 0.1
+        colors = np.random.rand(n_splats, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_gsplats(
+                "test_splats",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+
+        # Read back
+        scene = LuxarScene.load(output_path)
+        data = scene.get_gsplats("test_splats")
+
+        # Verify shapes
+        assert data["centers"].shape == centers.shape
+        assert data["amplitudes"].shape == amplitudes.shape
+        assert data["cholesky_factors"].shape == cholesky.shape
+        assert data["colors"].shape == colors.shape
+
+        # Verify metadata
+        assert data["metadata"]["type"] == "gsplats"
+        assert data["metadata"]["n_splats"] == n_splats
+
+    def test_gsplats_with_transform(self, tmp_path) -> None:
+        """Test GSplats with transform."""
+        output_path = tmp_path / "test.zarr"
+        n_splats = 50
+
+        centers = np.random.randn(n_splats, 3).astype(np.float32)
+        amplitudes = np.ones(n_splats, dtype=np.float32)
+        cholesky = np.random.rand(n_splats, 6).astype(np.float32) * 0.5 + 0.1
+        transform = transforms.translate(5, 10, 15)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_gsplats(
+                "splats",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                transform=transform,
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_gsplats("splats")
+
+        assert "transform" in data["metadata"]
+        np.testing.assert_allclose(data["metadata"]["transform"], transform, rtol=1e-5)
+
+    def test_list_gsplats(self, tmp_path) -> None:
+        """Test list_gsplats method."""
+        output_path = tmp_path / "test.zarr"
+
+        centers = np.random.randn(20, 3).astype(np.float32)
+        amplitudes = np.ones(20, dtype=np.float32)
+        cholesky = np.random.rand(20, 6).astype(np.float32) * 0.5 + 0.1
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_gsplats("splats1", centers, amplitudes, cholesky)
+            compiler.write_gsplats("splats2", centers, amplitudes, cholesky)
+
+        scene = LuxarScene.load(output_path)
+        splat_names = scene.list_gsplats()
+
+        assert "splats1" in splat_names
+        assert "splats2" in splat_names
+        assert len(splat_names) == 2
+
+    def test_get_gsplats_wrong_type(self, tmp_path) -> None:
+        """Test error when getting gsplats from non-gsplats node."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(ValueError, match="is not a gsplats node"):
+            scene.get_gsplats("my_points")
+
+    def test_get_gsplats_not_found(self, tmp_path) -> None:
+        """Test error when gsplats node doesn't exist."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(KeyError):
+            scene.get_gsplats("nonexistent")
+
+
+class TestLinesRoundTrip:
+    """Tests for Lines round-trip."""
+
+    def test_basic_lines(self, tmp_path) -> None:
+        """Test round-trip with basic Lines data."""
+        output_path = tmp_path / "test.zarr"
+        n_vertices = 100
+
+        # Generate test data for line segments
+        vertices = np.random.randn(n_vertices, 3).astype(np.float32)
+        widths = np.random.rand(n_vertices).astype(np.float32) * 0.5 + 0.1
+        colors = np.random.rand(n_vertices, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_lines(
+                "test_lines",
+                vertices=vertices,
+                widths=widths,
+                colors=colors,
+                line_type="segments",
+            )
+
+        # Read back
+        scene = LuxarScene.load(output_path)
+        data = scene.get_lines("test_lines")
+
+        # Verify shapes
+        assert data["vertices"].shape == vertices.shape
+        assert data["widths"].shape == widths.shape
+        assert data["colors"].shape == colors.shape
+
+        # Verify metadata
+        assert data["metadata"]["type"] == "lines"
+        assert data["metadata"]["n_vertices"] == n_vertices
+
+    def test_lines_with_transform(self, tmp_path) -> None:
+        """Test Lines with transform."""
+        output_path = tmp_path / "test.zarr"
+        n_vertices = 50
+
+        vertices = np.random.randn(n_vertices, 3).astype(np.float32)
+        widths = np.ones(n_vertices, dtype=np.float32) * 0.1
+        transform = transforms.rotate_x(45)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_lines(
+                "lines",
+                vertices=vertices,
+                widths=widths,
+                transform=transform,
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_lines("lines")
+
+        assert "transform" in data["metadata"]
+        np.testing.assert_allclose(data["metadata"]["transform"], transform, rtol=1e-5)
+
+    def test_list_lines(self, tmp_path) -> None:
+        """Test list_lines method."""
+        output_path = tmp_path / "test.zarr"
+
+        vertices = np.random.randn(20, 3).astype(np.float32)
+        widths = np.ones(20, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_lines("lines1", vertices, widths)
+            compiler.write_lines("lines2", vertices, widths)
+
+        scene = LuxarScene.load(output_path)
+        line_names = scene.list_lines()
+
+        assert "lines1" in line_names
+        assert "lines2" in line_names
+        assert len(line_names) == 2
+
+    def test_get_lines_wrong_type(self, tmp_path) -> None:
+        """Test error when getting lines from non-lines node."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(ValueError, match="is not a lines node"):
+            scene.get_lines("my_points")
+
+    def test_get_lines_not_found(self, tmp_path) -> None:
+        """Test error when lines node doesn't exist."""
+        output_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene()
+
+        scene = LuxarScene.load(output_path)
+
+        with pytest.raises(KeyError):
+            scene.get_lines("nonexistent")

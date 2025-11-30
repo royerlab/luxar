@@ -188,6 +188,10 @@ def main() -> None:
         aprint("   - Rainbow flows smoothly along the spiral")
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             # Use luxar CLI to serve - it handles server lifecycle
             subprocess.run(

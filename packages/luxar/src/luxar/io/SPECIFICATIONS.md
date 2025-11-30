@@ -868,7 +868,7 @@ assert len(data['chunk_bounds']) > 0
 
 **Root Attributes** (minimum required):
 - `type`: "scene"
-- `luxar_format_version`: "1.0"
+- `luxar_version`: "0.1"
 - `scene_dimensions`: Dimension specifications (names, display, discrete, spatial flags)
 - `spatial_extend_dims`: Boolean array indicating which dimensions are spatial (for query tolerance calculation)
 
