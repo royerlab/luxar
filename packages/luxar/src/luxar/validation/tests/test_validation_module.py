@@ -105,7 +105,7 @@ class TestColorValidation:
             validate_colors_for_writing(colors, 100)
 
         assert "Got single RGB color" in str(exc_info.value)
-        assert "Scene.add_points()" in str(exc_info.value)
+        assert "(1, 3) for broadcasting" in str(exc_info.value)
 
     def test_wrong_channel_count(self) -> None:
         """Test error for wrong number of color channels."""
