@@ -677,16 +677,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Validate cholesky_factors shape FIRST (before spatial ordering)
         expected_k = n_dims * (n_dims + 1) // 2
+        cholesky_is_uniform = False  # Track if cholesky is uniform (for encoder)
+
         if cholesky_factors.ndim == 1:
+            # Shape (k,) - uniform cholesky for all splats
             if cholesky_factors.shape[0] != expected_k:
                 raise ValueError(
                     f"Cholesky factors shape mismatch: expected ({expected_k},), "
                     f"got {cholesky_factors.shape}"
                 )
-            # Broadcast to all splats
-            cholesky_factors = np.broadcast_to(
-                cholesky_factors, (n_splats, expected_k)
-            ).copy()
+            # Reshape to (1, k) for encoder passthrough (no intermediate array)
+            cholesky_factors = cholesky_factors.reshape(1, expected_k)
+            cholesky_is_uniform = True
+            aprint(f"  → Uniform Cholesky factors (shape {expected_k}) for all splats")
+
         elif cholesky_factors.shape != (n_splats, expected_k):
             raise ValueError(
                 f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
@@ -703,12 +707,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 centers, method=self.ordering_method
             )
 
-            # Reorder arrays only (skip scalars)
+            # Reorder arrays only (skip scalars and uniform cholesky)
             centers = centers[sort_indices]
-            cholesky_factors = cholesky_factors[sort_indices]
+            if not cholesky_is_uniform:
+                cholesky_factors = cholesky_factors[sort_indices]
+            # Scalars stay as-is (uniform, order doesn't matter)
             if isinstance(amplitudes, np.ndarray):
                 amplitudes = amplitudes[sort_indices]
-            # Scalars stay as-is (uniform, order doesn't matter)
             if colors is not None and isinstance(colors, np.ndarray):
                 colors = colors[sort_indices]
             if sharpness is not None and isinstance(sharpness, np.ndarray):
@@ -787,13 +792,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Write cholesky_factors using ArrayEncoder (CHOLESKY)
-        chunks_cholesky = _calculate_intelligent_chunks(cholesky_factors.shape)
+        if cholesky_is_uniform:
+            # Pass (1, k) array with n_elements for broadcasting
+            n_elems_chol = n_splats
+            chunks_cholesky = None
+        else:
+            n_elems_chol = None
+            chunks_cholesky = _calculate_intelligent_chunks(cholesky_factors.shape)
+
         self._encoder.encode(
             data=cholesky_factors,
             zarr_group=group,
             name="cholesky_factors",
             semantic_type=SemanticType.CHOLESKY,
             mode=self._encoding_mode,
+            n_elements=n_elems_chol,
             chunks=chunks_cholesky,
             compressor=self.compressor,
         )

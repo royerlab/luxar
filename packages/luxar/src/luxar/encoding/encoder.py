@@ -159,7 +159,11 @@ class ArrayEncoder:
 
         # Priority 1: Broadcasting (skip for COORDINATE - positions must not be broadcasted)
         if self._is_uniform(data) and semantic_type != SemanticType.COORDINATE:
-            self._encode_broadcasted(zarr_group, name, data, chunks, compressor)
+            # Use n_elements if provided, otherwise infer from data shape
+            broadcast_n_elements = n_elements if n_elements is not None else data.shape[0]
+            self._encode_broadcasted(
+                zarr_group, name, data, broadcast_n_elements, chunks, compressor
+            )
             return
 
         # Priority 2: Array Reference
@@ -382,6 +386,7 @@ class ArrayEncoder:
         zarr_group: zarr.Group,
         name: str,
         data: np.ndarray,
+        n_elements: int,
         chunks: Optional[tuple],
         compressor: Optional[Any],
     ) -> None:
@@ -391,6 +396,7 @@ class ArrayEncoder:
             zarr_group: Zarr group to write to
             name: Array name
             data: Uniform array data
+            n_elements: Number of elements this represents
             chunks: Optional chunk shape (ignored for broadcast, uses minimal)
             compressor: Optional compressor
         """
@@ -407,7 +413,7 @@ class ArrayEncoder:
         # Set encoding metadata
         zarr_group[name].attrs["encoding"] = {
             "name": "broadcasted",
-            "n_elements": data.shape[0],
+            "n_elements": n_elements,
         }
 
     def _scalar_to_array(
