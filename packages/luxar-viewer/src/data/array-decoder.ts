@@ -14,7 +14,35 @@ import { get } from 'zarrita';
 import { log, Modules } from '../utils/log';
 
 /**
+ * Encoding metadata (nested under "encoding" key per Python spec)
+ */
+export interface EncodingMetadata {
+  /** Encoding name/type */
+  name?: string;
+
+  /** Number of elements (for broadcasting) */
+  n_elements?: number;
+
+  /** Lookup table values */
+  lut?: number[];
+
+  /** Quantization bounds [min, max] */
+  bounds?: [number, number];
+
+  /** Array reference target path */
+  target?: string;
+
+  /** Array reference hash */
+  hash?: string;
+
+  /** Quantization bits */
+  bits?: number;
+}
+
+/**
  * Array metadata from zarr .zattrs
+ *
+ * NOTE: Per Python encoding spec, encoding metadata is nested under "encoding" key
  */
 export interface ArrayMetadata {
   /** Shape of the array as written */
@@ -23,23 +51,8 @@ export interface ArrayMetadata {
   /** Data type */
   dtype?: string;
 
-  /** Number of elements this array represents (for broadcasting) */
-  n_elements?: number;
-
-  /** Encoding mode */
-  encoding_mode?: 'direct' | 'lut' | 'broadcasted' | 'array_ref';
-
-  /** Lookup table for LUT encoding */
-  lut?: number[];
-
-  /** Quantization bounds [min, max] */
-  quantization_bounds?: [number, number];
-
-  /** Array reference hash (for deduplication) */
-  array_ref?: string;
-
-  /** Original array hash (for debugging) */
-  array_hash?: string;
+  /** Encoding metadata (nested) */
+  encoding?: EncodingMetadata;
 }
 
 /**
@@ -113,9 +126,11 @@ export class ArrayDecoder {
     attrs: ArrayMetadata,
     expectedElements?: number
   ): Promise<Float32Array> {
+    const enc = attrs.encoding;
+
     // Check for array reference first (highest priority)
-    if (attrs.array_ref) {
-      return this.decodeArrayRef(attrs.array_ref, expectedElements);
+    if (enc?.target && enc?.hash) {
+      return this.decodeArrayRef(enc.hash, expectedElements);
     }
 
     // Load raw data from zarr
@@ -127,31 +142,35 @@ export class ArrayDecoder {
         ? rawArray
         : new Float32Array(rawArray as ArrayBuffer | number[]);
 
-    // Check for broadcasting
-    if (attrs.n_elements && attrs.n_elements > data.length) {
-      return this.decodeBroadcasted(data, attrs, expectedElements);
+    // Check for broadcasting (name: "broadcasted", n_elements > data.length)
+    if (enc?.name === 'broadcasted' && enc?.n_elements && enc.n_elements > data.length) {
+      const shape = attrs.shape || [];
+      const k = shape.length > 1 ? shape[1] : 1;
+      const result = this.decodeBroadcasted(data, enc.n_elements, k, expectedElements);
+
+      // Register for potential array ref usage
+      if (enc?.hash) {
+        this.refRegistry.register(enc.hash, result);
+      }
+
+      return result;
     }
 
-    // Check for LUT encoding
-    if (attrs.encoding_mode === 'lut' && attrs.lut) {
-      return this.decodeLUT(data, attrs.lut, expectedElements);
+    // Check for LUT encoding (name: "lut", lut array present)
+    if (enc?.name === 'lut' && enc?.lut) {
+      return this.decodeLUT(data, enc.lut, expectedElements);
     }
 
-    // Check for quantization
-    if (
-      attrs.quantization_bounds &&
-      (attrs.dtype === 'uint8' ||
-        attrs.dtype === '<u1' ||
-        attrs.dtype === 'uint16' ||
-        attrs.dtype === '<u2')
-    ) {
-      return this.dequantize(data, attrs.quantization_bounds, attrs.dtype);
+    // Check for quantization (name contains "uint", bounds present)
+    if (enc?.bounds && enc?.name && (enc.name.includes('uint') || enc.name.includes('scalar'))) {
+      const dtype = attrs.dtype || enc.name; // Use encoding name as fallback dtype
+      return this.dequantize(data, enc.bounds, dtype);
     }
 
-    // Direct mode (no encoding)
+    // Direct mode (no encoding or name: "none" / "float16" / "float32")
     // Register for potential array ref usage
-    if (attrs.array_hash) {
-      this.refRegistry.register(attrs.array_hash, data);
+    if (enc?.hash) {
+      this.refRegistry.register(enc.hash, data);
     }
 
     return data;
@@ -161,23 +180,18 @@ export class ArrayDecoder {
    * Decode broadcasted array (uniform values)
    *
    * Format: Shape (1, k) replicated to (n_elements, k)
+   *
+   * @param data - Raw data array (shape: (1, k))
+   * @param n_elements - Target number of elements to replicate to
+   * @param k - Feature dimension (e.g., 3 for RGB, 1 for scalar)
+   * @param _expectedElements - Expected total elements (for validation, currently unused)
    */
   private decodeBroadcasted(
     data: Float32Array,
-    attrs: ArrayMetadata,
+    n_elements: number,
+    k: number,
     _expectedElements?: number
   ): Float32Array {
-    const n_elements = attrs.n_elements!;
-    const shape = attrs.shape || [];
-
-    // Validate: first dimension should be 1
-    if (shape[0] !== 1) {
-      throw new Error(`Broadcasting: expected shape[0] == 1, got ${shape[0]}`);
-    }
-
-    // Feature dimension (typically 3 for positions/colors, 1 for radii)
-    const k = shape.length > 1 ? shape[1] : 1;
-
     log.info(
       Modules.ZARR_LOADER,
       `Broadcasting: (1, ${k}) → (${n_elements}, ${k}) = ${n_elements * k} elements`
@@ -191,11 +205,6 @@ export class ArrayDecoder {
       for (let j = 0; j < k; j++) {
         result[i * k + j] = data[j];
       }
-    }
-
-    // Register for potential array ref usage
-    if (attrs.array_hash) {
-      this.refRegistry.register(attrs.array_hash, result);
     }
 
     return result;
@@ -303,24 +312,37 @@ export class ArrayDecoder {
 
   /**
    * Helper: Determine if array is encoded
+   *
+   * Checks for any encoding metadata in attrs.encoding structure
    */
   static isEncoded(attrs: ArrayMetadata): boolean {
+    const enc = attrs.encoding;
+    if (!enc) return false;
+
+    // Check for any encoding mode
     return !!(
-      attrs.array_ref ||
-      attrs.n_elements ||
-      attrs.encoding_mode === 'lut' ||
-      attrs.quantization_bounds
+      enc.target || // array reference
+      enc.name === 'broadcasted' || // broadcasting
+      enc.name === 'lut' || // LUT encoding
+      enc.bounds // quantization
     );
   }
 
   /**
    * Helper: Get encoding mode from metadata
+   *
+   * Returns a string describing the encoding mode
    */
   static getEncodingMode(attrs: ArrayMetadata): string {
-    if (attrs.array_ref) return 'array_ref';
-    if (attrs.n_elements) return 'broadcasted';
-    if (attrs.encoding_mode === 'lut') return 'lut';
-    if (attrs.quantization_bounds) return 'quantized';
+    const enc = attrs.encoding;
+    if (!enc || !enc.name) return 'direct';
+
+    // Map encoding name to mode
+    if (enc.target) return 'array_ref';
+    if (enc.name === 'broadcasted') return 'broadcasted';
+    if (enc.name === 'lut') return 'lut';
+    if (enc.bounds) return 'quantized';
+
     return 'direct';
   }
 }
