@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../data/array-decoder';
 import type { ArrayMetadata } from '../data/array-decoder';
 import * as zarr from 'zarrita';
+import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -31,22 +32,23 @@ const FIXTURES_DIR = path.resolve(__dirname, '../../tests/fixtures');
 /**
  * Helper to load array with attributes from a zarr dataset
  *
- * TODO: Fix zarrita API usage for Node.js filesystem
- * Current implementation doesn't work - zarr.open() needs proper store/location objects
+ * Uses FileSystemStore for Node.js filesystem access
  */
 async function loadArrayWithAttrs(
   datasetName: string,
   arrayPath: string
 ): Promise<{ array: zarr.Array<zarr.DataType, zarr.Readable>; attrs: ArrayMetadata }> {
   const storePath = path.join(FIXTURES_DIR, datasetName);
-  const fullPath = `file://${storePath}/${arrayPath}`;
 
-  // TODO: Replace with correct zarrita API for Node.js
-  // @ts-expect-error - Placeholder implementation, will be fixed
-  const array = (await zarr.open(fullPath, { kind: 'array' })) as zarr.Array<
-    zarr.DataType,
-    zarr.Readable
-  >;
+  // Create filesystem store for Node.js (not FetchStore - that's for HTTP)
+  const rawStore = new FileSystemStore(storePath);
+  const store = await zarr.tryWithConsolidated(rawStore);
+  const rootLoc = zarr.root(store);
+
+  // Navigate to the array using resolve
+  const arrayLoc = rootLoc.resolve(arrayPath);
+  const array = await zarr.open(arrayLoc, { kind: 'array' });
+
   const attrs = array.attrs as unknown as ArrayMetadata;
   return { array, attrs };
 }
@@ -56,8 +58,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should decode broadcasted colors (1, 3) → (1000, 3)', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/colors');
 
-      // Verify metadata indicates broadcasting
-      expect(attrs.n_elements).toBe(1000);
+      // Verify metadata indicates broadcasting (nested under "encoding")
+      expect(attrs.encoding?.n_elements).toBe(1000);
+      expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
@@ -85,8 +88,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should decode broadcasted radii (1,) → (1000,)', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
-      // Verify metadata
-      expect(attrs.n_elements).toBe(1000);
+      // Verify metadata (nested under "encoding")
+      expect(attrs.encoding?.n_elements).toBe(1000);
+      expect(attrs.encoding?.name).toBe('broadcasted');
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
@@ -111,7 +115,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
       // Positions should NOT be encoded (each point has unique position)
       expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
-      expect(attrs.n_elements).toBeUndefined();
+      expect(attrs.encoding?.n_elements).toBeUndefined();
     });
   });
 
@@ -119,8 +123,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should decode LUT-encoded colors with 10 unique values', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
 
-      // Verify metadata indicates LUT encoding
-      expect(attrs.encoding_mode).toBe('lut');
+      // Verify metadata indicates LUT encoding (nested under "encoding")
+      expect(attrs.encoding?.name).toBe('lut');
+      expect(attrs.encoding?.lut).toBeDefined();
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
@@ -175,8 +180,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should dequantize colors from uint8 to float32', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/colors');
 
-      // Verify metadata indicates quantization
-      expect(attrs.quantization_bounds).toBeDefined();
+      // Verify metadata indicates quantization (nested under "encoding")
+      expect(attrs.encoding?.bounds).toBeDefined();
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
@@ -201,8 +206,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should dequantize radii from uint8 with bounds [0.1, 2.0]', async () => {
       const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/radii');
 
-      // Verify metadata
-      expect(attrs.quantization_bounds).toBeDefined();
+      // Verify metadata (nested under "encoding")
+      expect(attrs.encoding?.bounds).toBeDefined();
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
       // Decode
@@ -236,14 +241,16 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         'points2/colors'
       );
 
-      // Verify both use array references
-      expect(attrs1.array_ref).toBeDefined();
-      expect(attrs2.array_ref).toBeDefined();
+      // Verify both use array references (nested under "encoding")
+      expect(attrs1.encoding?.target).toBeDefined();
+      expect(attrs1.encoding?.hash).toBeDefined();
+      expect(attrs2.encoding?.target).toBeDefined();
+      expect(attrs2.encoding?.hash).toBeDefined();
       expect(ArrayDecoder.isEncoded(attrs1)).toBe(true);
       expect(ArrayDecoder.isEncoded(attrs2)).toBe(true);
 
       // Verify both reference the same hash
-      expect(attrs1.array_ref).toBe(attrs2.array_ref);
+      expect(attrs1.encoding?.hash).toBe(attrs2.encoding?.hash);
 
       // Create shared registry
       const registry = new ArrayRefRegistry();
@@ -273,8 +280,10 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // First decode - should register in cache
       const decoded1 = await decoder.decode(array, attrs, 500);
 
-      // Manually verify registry has the array
-      const cachedArray = registry.get(attrs.array_ref!);
+      // Manually verify registry has the array (using hash from encoding)
+      const hash = attrs.encoding?.hash;
+      expect(hash).toBeDefined();
+      const cachedArray = registry.get(hash!);
       expect(cachedArray).toBeDefined();
       expect(cachedArray!.length).toBe(decoded1.length);
 
@@ -298,9 +307,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const lut = await loadArrayWithAttrs('test_mixed.zarr', 'lut/colors');
       const direct = await loadArrayWithAttrs('test_mixed.zarr', 'direct/colors');
 
-      // Verify encoding modes
-      expect(uniform.attrs.n_elements).toBeDefined(); // Broadcasting
-      expect(lut.attrs.encoding_mode).toBe('lut'); // LUT
+      // Verify encoding modes (nested under "encoding")
+      expect(uniform.attrs.encoding?.name).toBe('broadcasted'); // Broadcasting
+      expect(lut.attrs.encoding?.name).toBe('lut'); // LUT
       expect(ArrayDecoder.isEncoded(direct.attrs)).toBe(false); // Direct (no encoding)
 
       // Create decoder
@@ -428,9 +437,12 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should handle missing array_ref in registry', async () => {
-      // Create fake attrs with non-existent array_ref
+      // Create fake attrs with non-existent array_ref (nested under "encoding")
       const fakeAttrs: ArrayMetadata = {
-        array_ref: 'nonexistent-hash-12345678',
+        encoding: {
+          target: 'some/target/path',
+          hash: 'nonexistent-hash-12345678',
+        },
       };
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -459,15 +471,19 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should handle empty arrays gracefully', async () => {
-      // Create fake empty array metadata
+      // Create fake empty array metadata (nested under "encoding")
       const emptyAttrs: ArrayMetadata = {
-        n_elements: 0,
+        encoding: {
+          name: 'broadcasted',
+          n_elements: 0,
+        },
+        shape: [1, 3],
       };
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
       // Create a mock empty array
-      const emptyData = new Float32Array(0);
+      const emptyData = new Float32Array(3); // Shape (1, 3) but broadcasting to 0 elements
       const mockArray = {
         get: async () => ({ data: emptyData }),
       };
