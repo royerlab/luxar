@@ -56,13 +56,13 @@ export interface AppConfig {
 
 ```typescript
 interface CameraConfig {
-    fov: number              // Default FOV (47° = 50mm equivalent)
-    near: number             // Near clipping plane (0.1)
-    far: number              // Far clipping plane (1000)
-    initialPosition: { x: number, y: number, z: number }
-    fovMin: number           // Min FOV (10°)
-    fovMax: number           // Max FOV (200°)
-    fovSensitivity: number   // Shift+wheel sensitivity (0.05)
+  fov: number; // Default FOV (47° = 50mm equivalent)
+  near: number; // Near clipping plane (0.1)
+  far: number; // Far clipping plane (1000)
+  initialPosition: { x: number; y: number; z: number };
+  fovMin: number; // Min FOV (10°)
+  fovMax: number; // Max FOV (200°)
+  fovSensitivity: number; // Shift+wheel sensitivity (0.05)
 }
 ```
 
@@ -70,62 +70,62 @@ interface CameraConfig {
 
 ```typescript
 interface ControlsConfig {
-    fly: {
-        inertialMode: { default: boolean }
-        movement: {
-            speed: { min: number, max: number, default: number, step: number }
-            damping: { min: number, max: number, default: number, step: number }
-            acceleration: { min: number, max: number, default: number, step: number }
-        }
-        rotation: {
-            speed: { min: number, max: number, default: number, step: number }
-            damping: { min: number, max: number, default: number, step: number }
-        }
-        physics: {
-            velocityThreshold: number
-            angularVelocityThreshold: number
-        }
-    }
-    orbit: {
-        autoRotate: {
-            speed: { min: number, max: number, default: number }
-        }
-        zoom: {
-            minDistance: number
-            maxDistance: number
-        }
-    }
+  fly: {
+    inertialMode: { default: boolean };
+    movement: {
+      speed: { min: number; max: number; default: number; step: number };
+      damping: { min: number; max: number; default: number; step: number };
+      acceleration: { min: number; max: number; default: number; step: number };
+    };
+    rotation: {
+      speed: { min: number; max: number; default: number; step: number };
+      damping: { min: number; max: number; default: number; step: number };
+    };
+    physics: {
+      velocityThreshold: number;
+      angularVelocityThreshold: number;
+    };
+  };
+  orbit: {
+    autoRotate: {
+      speed: { min: number; max: number; default: number };
+    };
+    zoom: {
+      minDistance: number;
+      maxDistance: number;
+    };
+  };
 }
 ```
 
 **Usage Pattern**:
 
 ```typescript
-import { config } from '../config'
+import { config } from '../config';
 
-const speed = config.controls.fly.movement.speed.default  // 5.0
-const minSpeed = config.controls.fly.movement.speed.min   // 0.5
-const maxSpeed = config.controls.fly.movement.speed.max   // 50.0
+const speed = config.controls.fly.movement.speed.default; // 5.0
+const minSpeed = config.controls.fly.movement.speed.min; // 0.5
+const maxSpeed = config.controls.fly.movement.speed.max; // 50.0
 ```
 
 ### 2.3 Rendering Defaults
 
 ```typescript
 interface RenderingControlsConfig {
-    defaults: {
-        bloomThreshold: number
-        bloomStrength: number
-        bloomRadius: number
-        bloomLevels: number
-        hdrMultiplier: number
-        fxaaEnabled: boolean
-        smaaEnabled: boolean
-        msaaEnabled: boolean   // false (incompatible with additive)
-        toneMapping: 'None' | 'ACES' | 'AgX' | 'Reinhard' | 'Linear' | 'Neutral'
-        controlType: 'orbit' | 'arcball' | 'fly'
-        autoRotate: boolean
-        // ... other rendering settings
-    }
+  defaults: {
+    bloomThreshold: number;
+    bloomStrength: number;
+    bloomRadius: number;
+    bloomLevels: number;
+    hdrMultiplier: number;
+    fxaaEnabled: boolean;
+    smaaEnabled: boolean;
+    msaaEnabled: boolean; // false (incompatible with additive)
+    toneMapping: 'None' | 'ACES' | 'AgX' | 'Reinhard' | 'Linear' | 'Neutral';
+    controlType: 'orbit' | 'arcball' | 'fly';
+    autoRotate: boolean;
+    // ... other rendering settings
+  };
 }
 ```
 
@@ -136,6 +136,7 @@ interface RenderingControlsConfig {
 ### 3.1 Strict Typing
 
 All configuration sections have corresponding TypeScript interfaces ensuring:
+
 - Compile-time validation
 - IDE autocomplete
 - Refactoring safety
@@ -147,22 +148,20 @@ All configuration sections have corresponding TypeScript interfaces ensuring:
 
 ```typescript
 function validateConfig(config: AppConfig): boolean {
-    // Check camera FOV bounds
-    if (config.camera.fov < config.camera.fovMin ||
-        config.camera.fov > config.camera.fovMax) {
-        throw new Error('Invalid camera FOV')
-    }
+  // Check camera FOV bounds
+  if (config.camera.fov < config.camera.fovMin || config.camera.fov > config.camera.fovMax) {
+    throw new Error('Invalid camera FOV');
+  }
 
-    // Check control damping ranges
-    const flyDamping = config.controls.fly.movement.damping
-    if (flyDamping.default < flyDamping.min ||
-        flyDamping.default > flyDamping.max) {
-        throw new Error('Invalid fly damping default')
-    }
+  // Check control damping ranges
+  const flyDamping = config.controls.fly.movement.damping;
+  if (flyDamping.default < flyDamping.min || flyDamping.default > flyDamping.max) {
+    throw new Error('Invalid fly damping default');
+  }
 
-    // ... other validations
+  // ... other validations
 
-    return true
+  return true;
 }
 ```
 

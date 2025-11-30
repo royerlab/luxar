@@ -10,6 +10,7 @@ The `luxar-viewer.input` package provides context-aware keyboard and mouse input
 **Core Responsibility**: Route input events to appropriate handlers based on application state, preventing keyboard shortcuts from interfering with text input and ensuring mode-specific keys (WASD) only work in appropriate contexts.
 
 **Related Specifications**:
+
 - `luxar-viewer.controls` - Camera control integration (see `../controls/SPECIFICATIONS.md`)
 
 ---
@@ -29,18 +30,19 @@ The `luxar-viewer.input` package provides context-aware keyboard and mouse input
 
 ```typescript
 enum InputContext {
-    NAVIGATION = 0,      // Default 3D navigation (orbit/arcball)
-    FLY_CONTROLS = 1,    // Fly mode active (WASD enabled)
-    TYPING = 2,          // Text input focused (all shortcuts disabled)
-    DIMENSION_NAV = 3,   // nD dimension navigation (1-9, [, ])
-    UI_OVERLAY = 4,      // UI panel open (Tab, Enter, Esc)
-    MODAL = 5            // Modal dialog (highest priority)
+  NAVIGATION = 0, // Default 3D navigation (orbit/arcball)
+  FLY_CONTROLS = 1, // Fly mode active (WASD enabled)
+  TYPING = 2, // Text input focused (all shortcuts disabled)
+  DIMENSION_NAV = 3, // nD dimension navigation (1-9, [, ])
+  UI_OVERLAY = 4, // UI panel open (Tab, Enter, Esc)
+  MODAL = 5, // Modal dialog (highest priority)
 }
 ```
 
 **Priority Order**: Higher enum value = higher priority
 
 **Example**:
+
 ```
 MODAL (5) > UI_OVERLAY (4) > TYPING (2) > FLY_CONTROLS (1) > NAVIGATION (0)
 ```
@@ -53,22 +55,22 @@ MODAL (5) > UI_OVERLAY (4) > TYPING (2) > FLY_CONTROLS (1) > NAVIGATION (0)
 
 ```typescript
 class InputContextManager {
-    private contextStack: InputContext[] = [InputContext.NAVIGATION]
+  private contextStack: InputContext[] = [InputContext.NAVIGATION];
 
-    getCurrentContext(): InputContext {
-        return this.contextStack[this.contextStack.length - 1]
-    }
+  getCurrentContext(): InputContext {
+    return this.contextStack[this.contextStack.length - 1];
+  }
 
-    pushContext(context: InputContext): void {
-        this.contextStack.push(context)
-    }
+  pushContext(context: InputContext): void {
+    this.contextStack.push(context);
+  }
 
-    popContext(): InputContext | undefined {
-        if (this.contextStack.length <= 1) {
-            return undefined  // Can't pop last context
-        }
-        return this.contextStack.pop()
+  popContext(): InputContext | undefined {
+    if (this.contextStack.length <= 1) {
+      return undefined; // Can't pop last context
     }
+    return this.contextStack.pop();
+  }
 }
 ```
 
@@ -92,24 +94,24 @@ class InputContextManager {
 
 ```typescript
 function handleKeyDown(event: KeyboardEvent): void {
-    // 1. Check if typing in text field
-    if (isTypingInInput()) {
-        return  // Let browser handle it
-    }
+  // 1. Check if typing in text field
+  if (isTypingInInput()) {
+    return; // Let browser handle it
+  }
 
-    // 2. Get current context
-    const context = contextManager.getCurrentContext()
+  // 2. Get current context
+  const context = contextManager.getCurrentContext();
 
-    // 3. Check if current context should handle this key
-    if (!shouldHandleKey(event.key, context)) {
-        return  // Key not relevant to current context
-    }
+  // 3. Check if current context should handle this key
+  if (!shouldHandleKey(event.key, context)) {
+    return; // Key not relevant to current context
+  }
 
-    // 4. Prevent default browser behavior
-    event.preventDefault()
+  // 4. Prevent default browser behavior
+  event.preventDefault();
 
-    // 5. Route to appropriate handler
-    routeKeyEvent(event, context)
+  // 5. Route to appropriate handler
+  routeKeyEvent(event, context);
 }
 ```
 
@@ -142,37 +144,50 @@ Route to handler:
 
 ```typescript
 const CONTEXT_KEYS = {
-    [InputContext.NAVIGATION]: [
-        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-        'h', 'p', 'r', 'v', 'f', 'c', 'm', 'o', 'n'
-    ],
-    [InputContext.FLY_CONTROLS]: [
-        'w', 'a', 's', 'd', 'q', 'e', 'i',
-        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'
-    ],
-    [InputContext.DIMENSION_NAV]: [
-        '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        '[', ']'
-    ],
-    [InputContext.UI_OVERLAY]: [
-        'Tab', 'Enter', 'Escape'
-    ],
-    [InputContext.MODAL]: [
-        'Escape', 'Enter'
-    ]
-}
+  [InputContext.NAVIGATION]: [
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'h',
+    'p',
+    'r',
+    'v',
+    'f',
+    'c',
+    'm',
+    'o',
+    'n',
+  ],
+  [InputContext.FLY_CONTROLS]: [
+    'w',
+    'a',
+    's',
+    'd',
+    'q',
+    'e',
+    'i',
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+  ],
+  [InputContext.DIMENSION_NAV]: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '[', ']'],
+  [InputContext.UI_OVERLAY]: ['Tab', 'Enter', 'Escape'],
+  [InputContext.MODAL]: ['Escape', 'Enter'],
+};
 ```
 
 **Lookup Algorithm**:
 
 ```typescript
 function shouldHandleKey(key: string, context: InputContext): boolean {
-    const contextKeys = CONTEXT_KEYS[context] || []
+  const contextKeys = CONTEXT_KEYS[context] || [];
 
-    // Global keys always handled
-    const globalKeys = ['h', 'Space', 'Escape', 'm', 'Control+l']
+  // Global keys always handled
+  const globalKeys = ['h', 'Space', 'Escape', 'm', 'Control+l'];
 
-    return contextKeys.includes(key) || globalKeys.includes(key)
+  return contextKeys.includes(key) || globalKeys.includes(key);
 }
 ```
 
@@ -188,27 +203,27 @@ function shouldHandleKey(key: string, context: InputContext): boolean {
 
 ```typescript
 function isTypingInInput(): boolean {
-    const active = document.activeElement
+  const active = document.activeElement;
 
-    if (!active) return false
+  if (!active) return false;
 
-    // Check element types that accept text
-    if (active.tagName === 'INPUT') {
-        const type = (active as HTMLInputElement).type
-        const textTypes = ['text', 'search', 'url', 'email', 'password', 'tel', 'number']
-        return textTypes.includes(type)
-    }
+  // Check element types that accept text
+  if (active.tagName === 'INPUT') {
+    const type = (active as HTMLInputElement).type;
+    const textTypes = ['text', 'search', 'url', 'email', 'password', 'tel', 'number'];
+    return textTypes.includes(type);
+  }
 
-    if (active.tagName === 'TEXTAREA') {
-        return true
-    }
+  if (active.tagName === 'TEXTAREA') {
+    return true;
+  }
 
-    // Check contentEditable
-    if (active.getAttribute('contenteditable') === 'true') {
-        return true
-    }
+  // Check contentEditable
+  if (active.getAttribute('contenteditable') === 'true') {
+    return true;
+  }
 
-    return false
+  return false;
 }
 ```
 
@@ -219,15 +234,15 @@ function isTypingInInput(): boolean {
 ```typescript
 // When text input gains focus
 inputElement.addEventListener('focus', () => {
-    contextManager.pushContext(InputContext.TYPING)
-})
+  contextManager.pushContext(InputContext.TYPING);
+});
 
 // When text input loses focus
 inputElement.addEventListener('blur', () => {
-    if (contextManager.getCurrentContext() === InputContext.TYPING) {
-        contextManager.popContext()
-    }
-})
+  if (contextManager.getCurrentContext() === InputContext.TYPING) {
+    contextManager.popContext();
+  }
+});
 ```
 
 ---
@@ -242,23 +257,24 @@ inputElement.addEventListener('blur', () => {
 
 ```typescript
 function getEffectiveKey(event: KeyboardEvent): string {
-    let key = event.key
+  let key = event.key;
 
-    // Build key string with modifiers
-    const modifiers = []
-    if (event.ctrlKey || event.metaKey) modifiers.push('Control')
-    if (event.altKey) modifiers.push('Alt')
-    if (event.shiftKey) modifiers.push('Shift')
+  // Build key string with modifiers
+  const modifiers = [];
+  if (event.ctrlKey || event.metaKey) modifiers.push('Control');
+  if (event.altKey) modifiers.push('Alt');
+  if (event.shiftKey) modifiers.push('Shift');
 
-    if (modifiers.length > 0) {
-        key = modifiers.join('+') + '+' + key
-    }
+  if (modifiers.length > 0) {
+    key = modifiers.join('+') + '+' + key;
+  }
 
-    return key
+  return key;
 }
 ```
 
 **Examples**:
+
 - `Ctrl+L` → `"Control+l"`
 - `Shift+W` → `"Shift+w"` (speed boost in fly mode)
 - `Alt+W` → `"Alt+w"` (move up in fly mode)
@@ -271,32 +287,32 @@ function getEffectiveKey(event: KeyboardEvent): string {
 
 ```typescript
 function handleKeyDown(event: KeyboardEvent): void {
-    // Priority 1: Typing context overrides everything
-    if (isTypingInInput()) {
-        return  // Browser handles typing
+  // Priority 1: Typing context overrides everything
+  if (isTypingInInput()) {
+    return; // Browser handles typing
+  }
+
+  const key = event.key.toLowerCase();
+  const context = contextManager.getCurrentContext();
+
+  // Priority 2: Check if key valid for current context
+  if (context === InputContext.FLY_CONTROLS) {
+    if (['w', 'a', 's', 'd'].includes(key)) {
+      event.preventDefault();
+      flyControls.handleKeyDown(event);
+      return;
     }
+  }
 
-    const key = event.key.toLowerCase()
-    const context = contextManager.getCurrentContext()
+  // Priority 3: Global shortcuts
+  if (key === 'h') {
+    event.preventDefault();
+    toggleHelp();
+    return;
+  }
 
-    // Priority 2: Check if key valid for current context
-    if (context === InputContext.FLY_CONTROLS) {
-        if (['w', 'a', 's', 'd'].includes(key)) {
-            event.preventDefault()
-            flyControls.handleKeyDown(event)
-            return
-        }
-    }
-
-    // Priority 3: Global shortcuts
-    if (key === 'h') {
-        event.preventDefault()
-        toggleHelp()
-        return
-    }
-
-    // Priority 4: Context-specific handlers
-    routeToContextHandler(event, context)
+  // Priority 4: Context-specific handlers
+  routeToContextHandler(event, context);
 }
 ```
 
@@ -308,15 +324,15 @@ function handleKeyDown(event: KeyboardEvent): void {
 
 ```typescript
 interface InputContextManager {
-    contextStack: InputContext[]
-    debugMode: boolean
+  contextStack: InputContext[];
+  debugMode: boolean;
 
-    setContext(context: InputContext): void
-    pushContext(context: InputContext): void
-    popContext(): InputContext | undefined
-    getCurrentContext(): InputContext
-    shouldHandleKey(key: string): boolean
-    clearContextStack(): void
+  setContext(context: InputContext): void;
+  pushContext(context: InputContext): void;
+  popContext(): InputContext | undefined;
+  getCurrentContext(): InputContext;
+  shouldHandleKey(key: string): boolean;
+  clearContextStack(): void;
 }
 ```
 
@@ -324,15 +340,15 @@ interface InputContextManager {
 
 ```typescript
 interface InputHandler {
-    container: HTMLElement
-    controlsManager: ControlsManager
-    contextManager: InputContextManager
+  container: HTMLElement;
+  controlsManager: ControlsManager;
+  contextManager: InputContextManager;
 
-    handleKeyDown(event: KeyboardEvent): void
-    handleKeyUp(event: KeyboardEvent): void
-    handleMouseDown(event: MouseEvent): void
-    isTypingInInput(): boolean
-    dispose(): void
+  handleKeyDown(event: KeyboardEvent): void;
+  handleKeyUp(event: KeyboardEvent): void;
+  handleMouseDown(event: MouseEvent): void;
+  isTypingInInput(): boolean;
+  dispose(): void;
 }
 ```
 

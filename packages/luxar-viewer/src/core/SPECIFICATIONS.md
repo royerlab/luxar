@@ -10,6 +10,7 @@ The `luxar-viewer.core` package provides application initialization, component o
 **Core Responsibility**: Initialize all components in correct dependency order, coordinate inter-component communication, handle URL parameters, manage dataset loading, and ensure proper resource cleanup.
 
 **Related Specifications**:
+
 - All other packages - Core orchestrates all systems
 
 ---
@@ -34,49 +35,46 @@ The `luxar-viewer.core` package provides application initialization, component o
 
 ```typescript
 async function init(src?: string): Promise<void> {
-    // 1. Foundation: Scene management
-    this.sceneManager = new SceneManager(canvasId)
-    await this.sceneManager.init()
+  // 1. Foundation: Scene management
+  this.sceneManager = new SceneManager(canvasId);
+  await this.sceneManager.init();
 
-    // 2. Animation system (depends on scene)
-    this.animationController = new AnimationController(
-        this.sceneManager.renderer,
-        this.sceneManager.scene,
-        this.sceneManager.camera,
-        this.sceneManager.controls,
-        this.sceneManager.postProcessing
-    )
+  // 2. Animation system (depends on scene)
+  this.animationController = new AnimationController(
+    this.sceneManager.renderer,
+    this.sceneManager.scene,
+    this.sceneManager.camera,
+    this.sceneManager.controls,
+    this.sceneManager.postProcessing
+  );
 
-    // 3. Input handling (depends on scene and animation)
-    this.inputHandler = new InputHandler(
-        this.sceneManager,
-        this.animationController
-    )
-    this.inputHandler.init()
+  // 3. Input handling (depends on scene and animation)
+  this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+  this.inputHandler.init();
 
-    // 4. UI controls (depends on scene and animation)
-    this.renderingControls = new RenderingControls(
-        this.sceneManager.postProcessing,
-        this.sceneManager.controls
-    )
+  // 4. UI controls (depends on scene and animation)
+  this.renderingControls = new RenderingControls(
+    this.sceneManager.postProcessing,
+    this.sceneManager.controls
+  );
 
-    // 5. Cross-linking (bidirectional dependencies)
-    this.renderingControls.setAnimationController(this.animationController)
-    this.inputHandler.setRenderingControls(this.renderingControls)
+  // 5. Cross-linking (bidirectional dependencies)
+  this.renderingControls.setAnimationController(this.animationController);
+  this.inputHandler.setRenderingControls(this.renderingControls);
 
-    // 6. Start rendering
-    this.animationController.startAnimation()
+  // 6. Start rendering
+  this.animationController.startAnimation();
 
-    // 7. Load data or show browser
-    if (await this.shouldShowBrowser(src)) {
-        this.showDatasetBrowser()
-    } else {
-        await this.loadDataset(src)
-    }
+  // 7. Load data or show browser
+  if (await this.shouldShowBrowser(src)) {
+    this.showDatasetBrowser();
+  } else {
+    await this.loadDataset(src);
+  }
 
-    // 8. Setup lifecycle handlers
-    this.setupCleanup()
-    this.setupFocusHandling()
+  // 8. Setup lifecycle handlers
+  this.setupCleanup();
+  this.setupFocusHandling();
 }
 ```
 
@@ -98,6 +96,7 @@ SceneManager (foundation)
 ```
 
 **Initialization Rules**:
+
 1. Initialize foundation first (SceneManager)
 2. Initialize dependent components in topological order
 3. Perform cross-linking after all components exist
@@ -109,10 +108,10 @@ SceneManager (foundation)
 
 ```typescript
 // RenderingControls needs AnimationController
-renderingControls.setAnimationController(animationController)
+renderingControls.setAnimationController(animationController);
 
 // InputHandler needs RenderingControls
-inputHandler.setRenderingControls(renderingControls)
+inputHandler.setRenderingControls(renderingControls);
 ```
 
 **Rationale**: Avoids circular dependencies while enabling necessary communication.
@@ -127,26 +126,26 @@ inputHandler.setRenderingControls(renderingControls)
 
 ```typescript
 async function shouldShowBrowser(src: string): Promise<boolean> {
-    // 1. Empty or trailing slash → directory
-    if (!src || src.endsWith('/')) {
-        return true
+  // 1. Empty or trailing slash → directory
+  if (!src || src.endsWith('/')) {
+    return true;
+  }
+
+  // 2. Check for .zgroup marker (Zarr dataset)
+  try {
+    const response = await fetch(src + '/.zgroup', { method: 'HEAD' });
+    if (response.ok) {
+      return false; // Valid Zarr, load directly
     }
+  } catch {
+    // Network error, can't determine
+  }
 
-    // 2. Check for .zgroup marker (Zarr dataset)
-    try {
-        const response = await fetch(src + '/.zgroup', { method: 'HEAD' })
-        if (response.ok) {
-            return false  // Valid Zarr, load directly
-        }
-    } catch {
-        // Network error, can't determine
-    }
+  // 3. Files without extensions likely directories
+  const lastSegment = src.split('/').pop() || '';
+  const hasExtension = lastSegment.includes('.');
 
-    // 3. Files without extensions likely directories
-    const lastSegment = src.split('/').pop() || ''
-    const hasExtension = lastSegment.includes('.')
-
-    return !hasExtension
+  return !hasExtension;
 }
 ```
 
@@ -154,28 +153,28 @@ async function shouldShowBrowser(src: string): Promise<boolean> {
 
 ```typescript
 async function loadDataset(src: string): Promise<void> {
-    // 1. Clear previous dataset UI
-    this.inputHandler.clearDimensionUI()
+  // 1. Clear previous dataset UI
+  this.inputHandler.clearDimensionUI();
 
-    // 2. Load scene data (async)
-    try {
-        await this.sceneManager.loadSceneData(src)
-    } catch (error) {
-        showError(`Failed to load dataset: ${error.message}`)
-        throw error
-    }
+  // 2. Load scene data (async)
+  try {
+    await this.sceneManager.loadSceneData(src);
+  } catch (error) {
+    showError(`Failed to load dataset: ${error.message}`);
+    throw error;
+  }
 
-    // 3. Initialize dimension UI (if nD data)
-    this.inputHandler.initDimensionSliders()
+  // 3. Initialize dimension UI (if nD data)
+  this.inputHandler.initDimensionSliders();
 
-    // 4. Configure persistent settings
-    this.renderingControls.setSceneId(src)
+  // 4. Configure persistent settings
+  this.renderingControls.setSceneId(src);
 
-    // 5. Trigger render
-    this.animationController.startAnimation()
+  // 5. Trigger render
+  this.animationController.startAnimation();
 
-    // 6. Update URL
-    this.updateURLParameter('src', src)
+  // 6. Update URL
+  this.updateURLParameter('src', src);
 }
 ```
 
@@ -191,35 +190,35 @@ async function loadDataset(src: string): Promise<void> {
 
 ```typescript
 async function init(src?: string): Promise<void> {
-    // Critical: Scene initialization
-    try {
-        await this.sceneManager.init()
-    } catch (sceneError) {
-        // Scene failure is fatal
-        console.error('Scene initialization failed:', sceneError)
-        throw sceneError
-    }
+  // Critical: Scene initialization
+  try {
+    await this.sceneManager.init();
+  } catch (sceneError) {
+    // Scene failure is fatal
+    console.error('Scene initialization failed:', sceneError);
+    throw sceneError;
+  }
 
-    // Non-critical: Animation (continues on failure)
-    try {
-        this.animationController.startAnimation()
-    } catch (animError) {
-        console.warn('Animation start failed:', animError)
-        // Continue without animation
-    }
+  // Non-critical: Animation (continues on failure)
+  try {
+    this.animationController.startAnimation();
+  } catch (animError) {
+    console.warn('Animation start failed:', animError);
+    // Continue without animation
+  }
 
-    // Non-critical: Data loading (show browser on failure)
-    try {
-        if (await this.shouldShowBrowser(src)) {
-            this.showDatasetBrowser()
-        } else {
-            await this.loadDataset(src)
-        }
-    } catch (dataError) {
-        console.error('Data loading failed:', dataError)
-        showError('Failed to load dataset')
-        // App continues without data
+  // Non-critical: Data loading (show browser on failure)
+  try {
+    if (await this.shouldShowBrowser(src)) {
+      this.showDatasetBrowser();
+    } else {
+      await this.loadDataset(src);
     }
+  } catch (dataError) {
+    console.error('Data loading failed:', dataError);
+    showError('Failed to load dataset');
+    // App continues without data
+  }
 }
 ```
 
@@ -227,21 +226,21 @@ async function init(src?: string): Promise<void> {
 
 ```typescript
 function showError(message: string): void {
-    // Create error overlay
-    const errorDiv = document.createElement('div')
-    errorDiv.className = 'luxar-error-overlay'
-    errorDiv.innerHTML = `
+  // Create error overlay
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'luxar-error-overlay';
+  errorDiv.innerHTML = `
         <div class="error-content">
             <h3>❌ Error</h3>
             <p>${message}</p>
             <button data-action="dismiss">Dismiss</button>
         </div>
-    `
+    `;
 
-    document.body.appendChild(errorDiv)
+  document.body.appendChild(errorDiv);
 
-    // Auto-dismiss after 10 seconds
-    setTimeout(() => errorDiv.remove(), 10000)
+  // Auto-dismiss after 10 seconds
+  setTimeout(() => errorDiv.remove(), 10000);
 }
 ```
 
@@ -257,25 +256,25 @@ function showError(message: string): void {
 
 ```typescript
 function cleanup(): void {
-    // 1. Stop animation (prevents new work)
-    this.animationController?.dispose()
+  // 1. Stop animation (prevents new work)
+  this.animationController?.dispose();
 
-    // 2. Remove input listeners
-    this.inputHandler?.dispose()
+  // 2. Remove input listeners
+  this.inputHandler?.dispose();
 
-    // 3. Dispose UI components
-    this.renderingControls?.dispose()
-    this.datasetBrowser?.dispose()
+  // 3. Dispose UI components
+  this.renderingControls?.dispose();
+  this.datasetBrowser?.dispose();
 
-    // 4. Dispose data loaders
-    dispose()  // From data/zarr-loader
+  // 4. Dispose data loaders
+  dispose(); // From data/zarr-loader
 
-    // 5. Dispose scene (WebGL resources)
-    this.sceneManager?.dispose()
+  // 5. Dispose scene (WebGL resources)
+  this.sceneManager?.dispose();
 
-    // 6. Remove global listeners
-    window.removeEventListener('beforeunload', this.cleanup)
-    window.removeEventListener('resize', this.handleResize)
+  // 6. Remove global listeners
+  window.removeEventListener('beforeunload', this.cleanup);
+  window.removeEventListener('resize', this.handleResize);
 }
 ```
 
@@ -285,30 +284,30 @@ function cleanup(): void {
 
 ```typescript
 function disposeScene(): void {
-    scene.traverse(object => {
-        // Dispose geometries
-        if (object.geometry) {
-            object.geometry.dispose()
-        }
+  scene.traverse((object) => {
+    // Dispose geometries
+    if (object.geometry) {
+      object.geometry.dispose();
+    }
 
-        // Dispose materials
-        if (object.material) {
-            if (Array.isArray(object.material)) {
-                object.material.forEach(m => m.dispose())
-            } else {
-                object.material.dispose()
-            }
-        }
+    // Dispose materials
+    if (object.material) {
+      if (Array.isArray(object.material)) {
+        object.material.forEach((m) => m.dispose());
+      } else {
+        object.material.dispose();
+      }
+    }
 
-        // Dispose textures
-        if (object.material?.map) {
-            object.material.map.dispose()
-        }
-    })
+    // Dispose textures
+    if (object.material?.map) {
+      object.material.map.dispose();
+    }
+  });
 
-    // Dispose renderer
-    renderer.dispose()
-    renderer.forceContextLoss()
+  // Dispose renderer
+  renderer.dispose();
+  renderer.forceContextLoss();
 }
 ```
 
@@ -320,21 +319,21 @@ function disposeScene(): void {
 
 ```typescript
 interface LuxarApp {
-    // Components
-    sceneManager: SceneManager
-    animationController: AnimationController
-    inputHandler: InputHandler
-    renderingControls: RenderingControls
-    datasetBrowser?: DatasetBrowser
+  // Components
+  sceneManager: SceneManager;
+  animationController: AnimationController;
+  inputHandler: InputHandler;
+  renderingControls: RenderingControls;
+  datasetBrowser?: DatasetBrowser;
 
-    // State
-    initialized: boolean
-    currentDataset: string | null
+  // State
+  initialized: boolean;
+  currentDataset: string | null;
 
-    // Methods
-    init(src?: string): Promise<void>
-    loadDataset(src: string): Promise<void>
-    cleanup(): void
+  // Methods
+  init(src?: string): Promise<void>;
+  loadDataset(src: string): Promise<void>;
+  cleanup(): void;
 }
 ```
 
@@ -342,10 +341,10 @@ interface LuxarApp {
 
 ```typescript
 interface InitializationConfig {
-    canvasId: string
-    defaultDataset?: string
-    enableDebug?: boolean
-    autoStart?: boolean
+  canvasId: string;
+  defaultDataset?: string;
+  enableDebug?: boolean;
+  autoStart?: boolean;
 }
 ```
 

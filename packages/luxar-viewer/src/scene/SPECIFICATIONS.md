@@ -10,6 +10,7 @@ The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loo
 **Core Responsibility**: Maintain the 3D scene state, coordinate camera and controls, manage the render loop with intelligent idle detection, and synchronize nD dimension navigation across all scene objects.
 
 **Related Specifications**:
+
 - `luxar-viewer.data` - Data loading managed by scene (see `../data/SPECIFICATIONS.md`)
 - `luxar-viewer.rendering` - Post-processing pipeline (see `../rendering/SPECIFICATIONS.md`)
 - `luxar-viewer.controls` - Camera control systems (see `../controls/SPECIFICATIONS.md`)
@@ -85,10 +86,10 @@ Scene (THREE.Scene)
 
 ```typescript
 interface PointsUserData {
-    loader: PointSpatialIndexLoader  // Data loader instance
-    attrs: ZarrGroupAttrs             // Node attributes from zarr
-    spatialIndex: PointSpatialIndex   // Spatial index for queries
-    sceneDimensions: DimensionMetadata[]  // Scene coordinate system
+  loader: PointSpatialIndexLoader; // Data loader instance
+  attrs: ZarrGroupAttrs; // Node attributes from zarr
+  spatialIndex: PointSpatialIndex; // Spatial index for queries
+  sceneDimensions: DimensionMetadata[]; // Scene coordinate system
 }
 ```
 
@@ -98,14 +99,14 @@ interface PointsUserData {
 
 ```typescript
 function addToScene(object: THREE.Object3D): void {
-    // 1. Add to scene graph
-    scene.add(object)
+  // 1. Add to scene graph
+  scene.add(object);
 
-    // 2. Update bounding box to include new object
-    updateBoundingBox()
+  // 2. Update bounding box to include new object
+  updateBoundingBox();
 
-    // 3. Trigger render
-    animationController.startAnimation()
+  // 3. Trigger render
+  animationController.startAnimation();
 }
 ```
 
@@ -113,25 +114,25 @@ function addToScene(object: THREE.Object3D): void {
 
 ```typescript
 function removeFromScene(object: THREE.Object3D): void {
-    // 1. Dispose geometries and materials
-    object.traverse(child => {
-        if (child.geometry) {
-            child.geometry.dispose()
-        }
-        if (child.material) {
-            if (Array.isArray(child.material)) {
-                child.material.forEach(m => m.dispose())
-            } else {
-                child.material.dispose()
-            }
-        }
-    })
+  // 1. Dispose geometries and materials
+  object.traverse((child) => {
+    if (child.geometry) {
+      child.geometry.dispose();
+    }
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+  });
 
-    // 2. Remove from scene
-    scene.remove(object)
+  // 2. Remove from scene
+  scene.remove(object);
 
-    // 3. Recalculate bounding box
-    updateBoundingBox()
+  // 3. Recalculate bounding box
+  updateBoundingBox();
 }
 ```
 
@@ -139,12 +140,10 @@ function removeFromScene(object: THREE.Object3D): void {
 
 ```typescript
 function clearScene(): void {
-    // Remove all children except lights
-    const objectsToRemove = scene.children.filter(
-        child => !(child instanceof THREE.Light)
-    )
+  // Remove all children except lights
+  const objectsToRemove = scene.children.filter((child) => !(child instanceof THREE.Light));
 
-    objectsToRemove.forEach(obj => removeFromScene(obj))
+  objectsToRemove.forEach((obj) => removeFromScene(obj));
 }
 ```
 
@@ -160,52 +159,53 @@ function clearScene(): void {
 
 ```typescript
 class AnimationController {
-    private isAnimating: boolean = false
-    private lastActivityTime: number = 0
-    private idleTimeoutMs: number = 2000  // 2 seconds
+  private isAnimating: boolean = false;
+  private lastActivityTime: number = 0;
+  private idleTimeoutMs: number = 2000; // 2 seconds
 
-    private animate = (): void => {
-        if (!this.isAnimating) return
+  private animate = (): void => {
+    if (!this.isAnimating) return;
 
-        requestAnimationFrame(this.animate)
+    requestAnimationFrame(this.animate);
 
-        // Update controls (returns true if changed)
-        const controlsChanged = this.controls.update()
+    // Update controls (returns true if changed)
+    const controlsChanged = this.controls.update();
 
-        if (controlsChanged) {
-            this.lastActivityTime = Date.now()
-        }
-
-        // Render frame
-        this.render()
-
-        // Check for idle timeout
-        this.checkIdleTimeout()
+    if (controlsChanged) {
+      this.lastActivityTime = Date.now();
     }
 
-    private checkIdleTimeout(): void {
-        const idleTime = Date.now() - this.lastActivityTime
+    // Render frame
+    this.render();
 
-        if (idleTime > this.idleTimeoutMs) {
-            this.pause()
-        }
+    // Check for idle timeout
+    this.checkIdleTimeout();
+  };
+
+  private checkIdleTimeout(): void {
+    const idleTime = Date.now() - this.lastActivityTime;
+
+    if (idleTime > this.idleTimeoutMs) {
+      this.pause();
     }
+  }
 
-    public startAnimation(): void {
-        if (this.isAnimating) return
+  public startAnimation(): void {
+    if (this.isAnimating) return;
 
-        this.lastActivityTime = Date.now()
-        this.isAnimating = true
-        this.animate()
-    }
+    this.lastActivityTime = Date.now();
+    this.isAnimating = true;
+    this.animate();
+  }
 
-    public pause(): void {
-        this.isAnimating = false
-    }
+  public pause(): void {
+    this.isAnimating = false;
+  }
 }
 ```
 
 **Activity Sources** (reset idle timer):
+
 - Mouse movement during drag
 - Keyboard input
 - Control changes (rotation, zoom, pan)
@@ -256,13 +256,14 @@ private render(): void {
 
 ```typescript
 // Force single frame render (useful after data changes)
-animationController.startAnimation()
+animationController.startAnimation();
 
 // Ensure rendering continues (e.g., during continuous control input)
-animationController.resetIdleTimer()
+animationController.resetIdleTimer();
 ```
 
 **Automatic Triggers**:
+
 - Control system reports changes
 - Window gains focus
 - Document becomes visible
@@ -287,41 +288,38 @@ Calculate the axis-aligned bounding box (AABB) encompassing all scene objects fo
 
 ```typescript
 function updateBoundingBox(): THREE.Box3 {
-    const box = new THREE.Box3()
+  const box = new THREE.Box3();
 
-    // Traverse all objects in scene
-    scene.traverse(object => {
-        // Only process point clouds
-        if (!(object instanceof THREE.Points)) {
-            return
-        }
-
-        // Get geometry
-        const geometry = object.geometry
-        if (!geometry) return
-
-        // Compute bounding box if not present
-        if (!geometry.boundingBox) {
-            geometry.computeBoundingBox()
-        }
-
-        // Transform to world space and expand scene box
-        if (geometry.boundingBox) {
-            const worldBox = geometry.boundingBox.clone()
-            worldBox.applyMatrix4(object.matrixWorld)
-            box.union(worldBox)
-        }
-    })
-
-    // Handle empty scene
-    if (box.isEmpty()) {
-        box.set(
-            new THREE.Vector3(-1, -1, -1),
-            new THREE.Vector3(1, 1, 1)
-        )
+  // Traverse all objects in scene
+  scene.traverse((object) => {
+    // Only process point clouds
+    if (!(object instanceof THREE.Points)) {
+      return;
     }
 
-    return box
+    // Get geometry
+    const geometry = object.geometry;
+    if (!geometry) return;
+
+    // Compute bounding box if not present
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+
+    // Transform to world space and expand scene box
+    if (geometry.boundingBox) {
+      const worldBox = geometry.boundingBox.clone();
+      worldBox.applyMatrix4(object.matrixWorld);
+      box.union(worldBox);
+    }
+  });
+
+  // Handle empty scene
+  if (box.isEmpty()) {
+    box.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+  }
+
+  return box;
 }
 ```
 
@@ -333,14 +331,15 @@ function updateBoundingBox(): THREE.Box3 {
 
 ```typescript
 function getBoundingSphere(): THREE.Sphere {
-    const box = getBoundingBox()
-    const sphere = new THREE.Sphere()
-    box.getBoundingSphere(sphere)
-    return sphere
+  const box = getBoundingBox();
+  const sphere = new THREE.Sphere();
+  box.getBoundingSphere(sphere);
+  return sphere;
 }
 ```
 
 **Usage**:
+
 - Camera distance calculations
 - Auto-zoom to fit scene
 - Clipping plane adjustments
@@ -360,20 +359,18 @@ function getBoundingSphere(): THREE.Sphere {
 
 ```typescript
 enum CenterMode {
-    NATIVE = 'native',
-    BOUNDING_BOX = 'bbox'
+  NATIVE = 'native',
+  BOUNDING_BOX = 'bbox',
 }
 
-let currentCenterMode: CenterMode = CenterMode.BOUNDING_BOX
+let currentCenterMode: CenterMode = CenterMode.BOUNDING_BOX;
 
 function toggleCentering(): void {
-    currentCenterMode =
-        currentCenterMode === CenterMode.NATIVE
-        ? CenterMode.BOUNDING_BOX
-        : CenterMode.NATIVE
+  currentCenterMode =
+    currentCenterMode === CenterMode.NATIVE ? CenterMode.BOUNDING_BOX : CenterMode.NATIVE;
 
-    const center = getCurrentCenter()
-    controls.target.copy(center)
+  const center = getCurrentCenter();
+  controls.target.copy(center);
 }
 ```
 
@@ -383,8 +380,8 @@ function toggleCentering(): void {
 
 ```typescript
 function getNativeCenter(): THREE.Vector3 {
-    // Use scene's origin or custom center point
-    return sceneCenter ?? new THREE.Vector3(0, 0, 0)
+  // Use scene's origin or custom center point
+  return sceneCenter ?? new THREE.Vector3(0, 0, 0);
 }
 ```
 
@@ -392,10 +389,10 @@ function getNativeCenter(): THREE.Vector3 {
 
 ```typescript
 function getBoundingBoxCenter(): THREE.Vector3 {
-    const box = getBoundingBox()
-    const center = new THREE.Vector3()
-    box.getCenter(center)
-    return center
+  const box = getBoundingBox();
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  return center;
 }
 ```
 
@@ -403,9 +400,7 @@ function getBoundingBoxCenter(): THREE.Vector3 {
 
 ```typescript
 function getCurrentCenter(): THREE.Vector3 {
-    return currentCenterMode === CenterMode.NATIVE
-        ? getNativeCenter()
-        : getBoundingBoxCenter()
+  return currentCenterMode === CenterMode.NATIVE ? getNativeCenter() : getBoundingBoxCenter();
 }
 ```
 
@@ -417,30 +412,30 @@ function getCurrentCenter(): THREE.Vector3 {
 
 ```typescript
 function focusCamera(): void {
-    // Get bounding sphere
-    const sphere = getBoundingSphere()
+  // Get bounding sphere
+  const sphere = getBoundingSphere();
 
-    // Calculate required distance based on FOV
-    const fov = camera.fov * (Math.PI / 180)  // Convert to radians
-    const distance = sphere.radius / Math.tan(fov / 2)
+  // Calculate required distance based on FOV
+  const fov = camera.fov * (Math.PI / 180); // Convert to radians
+  const distance = sphere.radius / Math.tan(fov / 2);
 
-    // Add padding (20%)
-    const targetDistance = distance * 1.2
+  // Add padding (20%)
+  const targetDistance = distance * 1.2;
 
-    // Position camera along current view direction
-    const direction = new THREE.Vector3()
-    camera.getWorldDirection(direction)
-    direction.negate()  // Look at center, not away
+  // Position camera along current view direction
+  const direction = new THREE.Vector3();
+  camera.getWorldDirection(direction);
+  direction.negate(); // Look at center, not away
 
-    const newPosition = sphere.center.clone()
-    newPosition.addScaledVector(direction, targetDistance)
+  const newPosition = sphere.center.clone();
+  newPosition.addScaledVector(direction, targetDistance);
 
-    // Smooth transition to new position
-    camera.position.copy(newPosition)
-    controls.target.copy(sphere.center)
-    controls.update()
+  // Smooth transition to new position
+  camera.position.copy(newPosition);
+  controls.target.copy(sphere.center);
+  controls.update();
 
-    animationController.startAnimation()
+  animationController.startAnimation();
 }
 ```
 
@@ -456,22 +451,22 @@ function focusCamera(): void {
 
 ```typescript
 function handleResize(): void {
-    // 1. Get new canvas dimensions
-    const width = canvas.clientWidth
-    const height = canvas.clientHeight
+  // 1. Get new canvas dimensions
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
 
-    // 2. Update camera aspect ratio
-    camera.aspect = width / height
-    camera.updateProjectionMatrix()
+  // 2. Update camera aspect ratio
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
 
-    // 3. Update renderer size
-    renderer.setSize(width, height, false)  // false = don't update canvas CSS
+  // 3. Update renderer size
+  renderer.setSize(width, height, false); // false = don't update canvas CSS
 
-    // 4. Update post-processing composer
-    postProcessing.setSize(width, height)
+  // 4. Update post-processing composer
+  postProcessing.setSize(width, height);
 
-    // 5. Trigger render
-    animationController.startAnimation()
+  // 5. Trigger render
+  animationController.startAnimation();
 }
 ```
 
@@ -483,12 +478,13 @@ function handleResize(): void {
 
 ```typescript
 function updatePixelRatio(): void {
-    const pixelRatio = window.devicePixelRatio || 1
-    renderer.setPixelRatio(Math.min(pixelRatio, 2))  // Cap at 2x for performance
+  const pixelRatio = window.devicePixelRatio || 1;
+  renderer.setPixelRatio(Math.min(pixelRatio, 2)); // Cap at 2x for performance
 }
 ```
 
 **Called**:
+
 - During initialization
 - On window DPI change (rare)
 
@@ -498,13 +494,13 @@ function updatePixelRatio(): void {
 
 ```typescript
 function enterFullscreen(): void {
-    const element = canvas.parentElement || canvas
+  const element = canvas.parentElement || canvas;
 
-    if (element.requestFullscreen) {
-        element.requestFullscreen()
-    }
+  if (element.requestFullscreen) {
+    element.requestFullscreen();
+  }
 
-    // Resize will trigger automatically via fullscreenchange event
+  // Resize will trigger automatically via fullscreenchange event
 }
 ```
 
@@ -512,9 +508,9 @@ function enterFullscreen(): void {
 
 ```typescript
 function exitFullscreen(): void {
-    if (document.fullscreenElement) {
-        document.exitFullscreen()
-    }
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  }
 }
 ```
 
@@ -522,9 +518,9 @@ function exitFullscreen(): void {
 
 ```typescript
 document.addEventListener('fullscreenchange', () => {
-    handleResize()
-    updateSize()  // Ensure everything updates
-})
+  handleResize();
+  updateSize(); // Ensure everything updates
+});
 ```
 
 ---
@@ -539,52 +535,43 @@ document.addEventListener('fullscreenchange', () => {
 
 ```typescript
 class SceneDimsManager {
-    private dims: SimpleDims | null = null
-    private listeners: Set<() => void> = new Set()
+  private dims: SimpleDims | null = null;
+  private listeners: Set<() => void> = new Set();
 
-    initFromScene(scene: THREE.Scene): void {
-        // Extract dimensions from first points object with metadata
-        scene.traverse(object => {
-            if (object.userData.sceneDimensions) {
-                this.dims = initializeDims(
-                    numPoints,
-                    totalElements,
-                    object.userData.sceneDimensions
-                )
-                this.notifyListeners()
-                return  // Found dimensions, stop traversal
-            }
-        })
+  initFromScene(scene: THREE.Scene): void {
+    // Extract dimensions from first points object with metadata
+    scene.traverse((object) => {
+      if (object.userData.sceneDimensions) {
+        this.dims = initializeDims(numPoints, totalElements, object.userData.sceneDimensions);
+        this.notifyListeners();
+        return; // Found dimensions, stop traversal
+      }
+    });
+  }
+
+  getDims(): SimpleDims | null {
+    return this.dims;
+  }
+
+  setDimensionValue(dimIndex: number, value: number): boolean {
+    if (!this.dims) return false;
+
+    const changed = jumpToDimension(this.dims, dimIndex, value, this.getRanges());
+
+    if (changed) {
+      this.notifyListeners();
     }
 
-    getDims(): SimpleDims | null {
-        return this.dims
-    }
+    return changed;
+  }
 
-    setDimensionValue(dimIndex: number, value: number): boolean {
-        if (!this.dims) return false
+  addListener(callback: () => void): void {
+    this.listeners.add(callback);
+  }
 
-        const changed = jumpToDimension(
-            this.dims,
-            dimIndex,
-            value,
-            this.getRanges()
-        )
-
-        if (changed) {
-            this.notifyListeners()
-        }
-
-        return changed
-    }
-
-    addListener(callback: () => void): void {
-        this.listeners.add(callback)
-    }
-
-    private notifyListeners(): void {
-        this.listeners.forEach(cb => cb())
-    }
+  private notifyListeners(): void {
+    this.listeners.forEach((cb) => cb());
+  }
 }
 ```
 
@@ -614,18 +601,18 @@ class SceneDimsManager {
 
 ```typescript
 sceneDimsManager.addListener(() => {
-    const dims = sceneDimsManager.getDims()
+  const dims = sceneDimsManager.getDims();
 
-    // Update all points objects for new slice
-    scene.traverse(object => {
-        if (object instanceof THREE.Points && object.userData.loader) {
-            updatePointsForDimensions(object, dims)
-        }
-    })
+  // Update all points objects for new slice
+  scene.traverse((object) => {
+    if (object instanceof THREE.Points && object.userData.loader) {
+      updatePointsForDimensions(object, dims);
+    }
+  });
 
-    // Trigger render
-    animationController.startAnimation()
-})
+  // Trigger render
+  animationController.startAnimation();
+});
 ```
 
 ### 6.3 Multi-Object Synchronization
@@ -636,24 +623,22 @@ sceneDimsManager.addListener(() => {
 
 ```typescript
 function validateSceneDimensions(scene: THREE.Scene): boolean {
-    let referenceDims: DimensionMetadata[] | null = null
+  let referenceDims: DimensionMetadata[] | null = null;
 
-    scene.traverse(object => {
-        if (object.userData.sceneDimensions) {
-            if (!referenceDims) {
-                referenceDims = object.userData.sceneDimensions
-            } else {
-                // Verify dimensions match
-                if (!dimensionsEqual(referenceDims, object.userData.sceneDimensions)) {
-                    throw new Error(
-                        "Scene contains objects with incompatible dimension systems"
-                    )
-                }
-            }
+  scene.traverse((object) => {
+    if (object.userData.sceneDimensions) {
+      if (!referenceDims) {
+        referenceDims = object.userData.sceneDimensions;
+      } else {
+        // Verify dimensions match
+        if (!dimensionsEqual(referenceDims, object.userData.sceneDimensions)) {
+          throw new Error('Scene contains objects with incompatible dimension systems');
         }
-    })
+      }
+    }
+  });
 
-    return true
+  return true;
 }
 ```
 
@@ -665,29 +650,29 @@ function validateSceneDimensions(scene: THREE.Scene): boolean {
 
 ```typescript
 interface SceneManager {
-    // Core THREE.js objects
-    scene: THREE.Scene
-    camera: THREE.PerspectiveCamera
-    renderer: THREE.WebGLRenderer
-    controls: OrbitControls | ArcballControls | FlyControls
+  // Core THREE.js objects
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  controls: OrbitControls | ArcballControls | FlyControls;
 
-    // Post-processing
-    postProcessing: PostProcessingManager
+  // Post-processing
+  postProcessing: PostProcessingManager;
 
-    // State
-    boundingBox: THREE.Box3
-    centerMode: CenterMode
-    sceneCenter: THREE.Vector3 | null
+  // State
+  boundingBox: THREE.Box3;
+  centerMode: CenterMode;
+  sceneCenter: THREE.Vector3 | null;
 
-    // Methods
-    init(): Promise<void>
-    addToScene(object: THREE.Object3D): void
-    clearScene(): void
-    updateBoundingBox(): void
-    toggleCentering(): void
-    updateFOV(delta: number): void
-    updateSize(): void
-    dispose(): void
+  // Methods
+  init(): Promise<void>;
+  addToScene(object: THREE.Object3D): void;
+  clearScene(): void;
+  updateBoundingBox(): void;
+  toggleCentering(): void;
+  updateFOV(delta: number): void;
+  updateSize(): void;
+  dispose(): void;
 }
 ```
 
@@ -695,18 +680,18 @@ interface SceneManager {
 
 ```typescript
 interface AnimationController {
-    // State
-    isAnimating: boolean
-    lastActivityTime: number
-    idleTimeoutMs: number
+  // State
+  isAnimating: boolean;
+  lastActivityTime: number;
+  idleTimeoutMs: number;
 
-    // Methods
-    startAnimation(): void
-    pause(): void
-    resume(): void
-    resetIdleTimer(): void
-    setPerformanceStats(stats: PerformanceMonitor): void
-    dispose(): void
+  // Methods
+  startAnimation(): void;
+  pause(): void;
+  resume(): void;
+  resetIdleTimer(): void;
+  setPerformanceStats(stats: PerformanceMonitor): void;
+  dispose(): void;
 }
 ```
 
@@ -714,15 +699,15 @@ interface AnimationController {
 
 ```typescript
 interface SceneDimsManager {
-    dims: SimpleDims | null
-    listeners: Set<() => void>
+  dims: SimpleDims | null;
+  listeners: Set<() => void>;
 
-    initFromScene(scene: THREE.Scene): void
-    getDims(): SimpleDims | null
-    setDimensionValue(dimIndex: number, value: number): boolean
-    addListener(callback: () => void): void
-    removeListener(callback: () => void): void
-    reset(): void
+  initFromScene(scene: THREE.Scene): void;
+  getDims(): SimpleDims | null;
+  setDimensionValue(dimIndex: number, value: number): boolean;
+  addListener(callback: () => void): void;
+  removeListener(callback: () => void): void;
+  reset(): void;
 }
 ```
 
