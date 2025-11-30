@@ -272,6 +272,10 @@ def main() -> None:
         aprint("  - Blue = young stars, Yellow = intermediate, Red = old stars")
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"], check=True

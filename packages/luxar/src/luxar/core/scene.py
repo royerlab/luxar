@@ -18,11 +18,7 @@ from ..core.lines import Lines
 from ..core.node import Node
 from ..core.points import Points
 from ..io.writer import ZarrWriterProtocol
-from ..typing_utils.protocols import (
-    ColorArray,
-    PositionArray,
-)
-# Scalar broadcasting is now handled by ArrayEncoder - no utils needed
+from ..typing_utils.protocols import ColorArray, PositionArray
 
 
 class Scene(Node):

@@ -181,6 +181,10 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             # Use luxar CLI to serve - it handles server lifecycle
             subprocess.run(

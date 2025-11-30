@@ -122,7 +122,7 @@ Error Messages: Distinguish between wrong count vs wrong channels
 
 ### Enum Validation
 
-**NodeType**: Must be "scene", "group", "points", or "gsplats"
+**NodeType**: Must be "scene", "group", "points", "lines", or "gsplats"
 **PhysicalUnit**: Must be one of supported units (nm, um, mm, cm, m, metre, meter, km, inch, foot, px, au)
 - Handles variations (meter/metre, micrometer/micron/μm)
 - Case-insensitive matching with normalization map

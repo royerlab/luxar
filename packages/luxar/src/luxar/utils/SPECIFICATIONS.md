@@ -1,66 +1,24 @@
 # luxar.utils - Technical Specification
 
-**Version**: 1.0.1
-**Last Updated**: 2025-11-27
+**Version**: 1.1.1
+**Last Updated**: 2025-11-30
 
 ## Purpose
 
-The `utils` package provides utility functions for array manipulation, broadcasting, and demo scene generation. These are helper functions used throughout Luxar.
+The `utils` package provides utility functions for array manipulation and demo scene generation. These are helper functions used throughout Luxar.
 
 **Related Specifications**:
 - `luxar.core` - Data structures using these utilities (see `core/SPECIFICATIONS.md`)
 - `luxar.validation` - Uses array utilities for validation (see `validation/SPECIFICATIONS.md`)
+- `luxar.encoding` - Handles scalar broadcasting since v1.4.0 (see `encoding/SPECIFICATIONS.md`)
 
 ---
 
 ## Array Utilities (array.py)
 
-### Broadcasting Specification
+**Note**: As of Luxar v1.4.0, scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
 
-**Purpose**: Expand single values or small arrays to match point cloud size
-
-#### broadcast_color_to_points(colors, n_points)
-
-**Inputs**:
-- `colors`: None | tuple(3) | list(3) | array(3,) | array(n_points, 3)
-- `n_points`: Target number of points
-
-**Behavior**:
-- None → None (no colors)
-- Single RGB (3 values) → tile to (n_points, 3)
-- Full array (n_points, 3) → return as-is (validate shape)
-
-**Output**: None or (n_points, 3) float32 array
-
-**Errors**: ValueError if shape doesn't match (n_points, 3) or (3,)
-
-#### broadcast_scalar_to_points(values, n_points, name, require_positive)
-
-**Generic scalar broadcasting for radii, sharpness, or any per-point attribute**
-
-**Inputs**:
-- `values`: None | scalar | array(n_points,)
-- `n_points`: Target number of points
-- `name`: Attribute name for error messages
-- `require_positive`: Whether to enforce > 0
-
-**Behavior**:
-- None → None
-- Scalar → full array of that value
-- Array → validate shape and requirements
-
-**Output**: None or (n_points,) float32 array
-
-**Validation**:
-- If require_positive: all values must be > 0
-- Shape must be (n_points,) exactly
-
-#### Specialized Broadcasters
-
-- `broadcast_radii_to_points()`: Calls broadcast_scalar with require_positive=True
-- `broadcast_sharpness_to_points()`: Calls broadcast_scalar with require_positive=False
-
-### Array Utilities
+### Current Functions
 
 #### ensure_float32(array)
 **Purpose**: Convert any array to float32 dtype
@@ -163,17 +121,16 @@ For each timepoint t:
 
 ---
 
-## Utility Constants
-
-**From array.py**:
-- Broadcasting uses np.tile() for efficiency
-- All outputs are float32 for GPU compatibility
-- Warnings use Python's warnings module
+## Constants
 
 **Demo Defaults**:
 - Lorenz: σ=10, ρ=28, β=8/3, dt=0.01
 - Sphere volume: u^(1/3) for uniform distribution
 - HDR colors: values > 1.0 for vibrant visualization
+
+**Array Utilities**:
+- `ensure_float32()`: Returns float32 for GPU compatibility
+- `validate_array_shape()`: Raises ValueError with clear messages
 
 ---
 
@@ -232,6 +189,17 @@ RGB = (r+m, g+m, b+m)
 ---
 
 ## Changelog
+
+- **v1.1.1** (2025-11-30): Documentation cleanup
+  - Removed obsolete "Utility Constants" section that referenced removed np.tile() broadcasting
+  - Renamed section to "Constants" with current accurate content
+
+- **v1.1.0** (2025-11-29): Removed obsolete broadcast functions
+  - **BREAKING**: Removed `broadcast_color_to_points()`, `broadcast_radii_to_points()`,
+    `broadcast_sharpness_to_points()`, `broadcast_scalar_to_points()`
+  - These functions are now handled by `ArrayEncoder` in `luxar.encoding`
+  - Added reference to encoding package in Related Specifications
+  - Updated documentation to reflect current API
 
 - **v1.0.1** (2025-11-27): Removed sharpness warning
   - Removed arbitrary sharpness "typical range" warning (was unhelpful)

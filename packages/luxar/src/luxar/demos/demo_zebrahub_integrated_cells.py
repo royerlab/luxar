@@ -10,6 +10,7 @@ Navigate between Cell Type and Timepoint views!
 """
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -136,6 +137,10 @@ def main() -> None:
         aprint("   0: Cell Type (32 types)")
         aprint("   1: Timepoint (6 stages)")
         aprint("")
+
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
 
         try:
             subprocess.run(

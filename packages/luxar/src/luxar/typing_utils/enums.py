@@ -159,7 +159,7 @@ class Defaults:
 
     OPACITY = 1.0
     GAMMA = 1.0
-    SHARPNESS = 1.0
+    SHARPNESS = 2.0  # Quadratic polynomial falloff (default)
     BLENDING_MODE = BlendingMode.ADDITIVE
     CHUNK_SIZE = 32768  # Default chunk size in elements
     RADIUS = 0.1
