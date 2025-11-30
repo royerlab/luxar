@@ -6,23 +6,20 @@ The `utils` package provides utility functions for common operations in Luxar, i
 
 This package contains helper functions that simplify common tasks and provide convenient demo data generators for testing and examples.
 
+**Note**: As of Luxar v1.4.0, scalar broadcasting (e.g., `colors=(1,0,0)`, `radii=0.5`) is handled by `ArrayEncoder` in `luxar.encoding`. The previous `broadcast_*_to_points()` functions have been removed.
+
 ## Modules
 
 ### `array.py`
-Array manipulation and broadcasting utilities.
+Array manipulation utilities.
 
 **Key Functions:**
-- `broadcast_color_to_points()`: Broadcast color specification to all points
-- `broadcast_radii_to_points()`: Broadcast radius values to points
-- `broadcast_sharpness_to_points()`: Broadcast sharpness values
-- `broadcast_scalar_to_points()`: Generic scalar broadcasting
 - `ensure_float32()`: Convert arrays to float32
 - `validate_array_shape()`: Check array dimensions
 
 **Features:**
-- Smart broadcasting for scalar, per-point, and per-component values
 - Automatic type conversion with validation
-- Support for various input formats (lists, tuples, arrays)
+- Shape validation with helpful error messages
 
 ### `demos.py`
 Demo scene generators for examples and testing.
@@ -38,26 +35,6 @@ Demo scene generators for examples and testing.
 - Educational examples of Luxar features
 
 ## Usage Examples
-
-### Array Broadcasting
-
-```python
-from luxar.utils import broadcast_color_to_points
-
-# Single color for all points
-color1 = broadcast_color_to_points([1, 0, 0], n_points=1000)
-# Result: (1000, 3) array of red
-
-# Per-point grayscale
-grays = np.random.rand(1000)
-color2 = broadcast_color_to_points(grays, n_points=1000)
-# Result: (1000, 3) with R=G=B=gray value
-
-# Already correct shape
-colors = np.random.rand(1000, 3)
-color3 = broadcast_color_to_points(colors, n_points=1000)
-# Result: Same array, validated
-```
 
 ### Creating Demo Scenes
 
@@ -75,44 +52,25 @@ create_lorenz_attractor(
 # with time-based coloring
 ```
 
-### Smart Broadcasting Patterns
+### Array Utilities
 
 ```python
-from luxar.utils import broadcast_scalar_to_points
+from luxar.utils import ensure_float32, validate_array_shape
+import numpy as np
 
-# Broadcast single value
-radii = broadcast_scalar_to_points(0.5, n_points=100)
-# Result: [0.5, 0.5, ..., 0.5]
+# Ensure float32 dtype
+arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+arr_f32 = ensure_float32(arr)  # Now float32
 
-# Pass through array
-radii = np.random.rand(100)
-result = broadcast_scalar_to_points(radii, n_points=100)
-# Result: Same array if shape matches
+# Validate array shape
+positions = np.random.rand(100, 3).astype(np.float32)
+validate_array_shape(positions, (100, 3), name="positions")  # OK
 
-# Error on mismatch
-radii = np.random.rand(50)
-result = broadcast_scalar_to_points(radii, n_points=100)
-# Raises: ValueError with helpful message
+# Multiple acceptable shapes
+validate_array_shape(colors, [(100, 3), (100, 4)], name="colors")
 ```
 
-## Broadcasting Rules
-
-### Color Broadcasting
-
-Input Shape | Output Shape | Description
-------------|--------------|-------------
-`(3,)` | `(N, 3)` | Single RGB color to all points
-`(N,)` | `(N, 3)` | Grayscale values to RGB
-`(N, 3)` | `(N, 3)` | Already correct, validated
-`float` | `(N, 3)` | Single gray value to all
-
-### Scalar Broadcasting
-
-Input | Output | Description
-------|--------|-------------
-`float` | `(N,)` | Broadcast to all points
-`(N,)` | `(N,)` | Validate and pass through
-`(M,)` where M≠N | Error | Shape mismatch
+**Note**: For scalar broadcasting (e.g., `radii=0.5` for all points), use the encoding system via `LuxarZarrCompiler.write_points()` which handles this automatically.
 
 ## Demo Generators
 

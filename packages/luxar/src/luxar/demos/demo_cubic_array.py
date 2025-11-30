@@ -218,6 +218,10 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop servers and cleanup")
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             # Use luxar CLI to serve the data with viewer
             # This handles all server lifecycle automatically

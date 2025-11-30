@@ -447,6 +447,10 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],

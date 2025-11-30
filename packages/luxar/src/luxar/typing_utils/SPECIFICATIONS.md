@@ -1,7 +1,7 @@
 # luxar.typing_utils - Technical Specification
 
-**Version**: 1.0.7
-**Last Updated**: 2025-11-28
+**Version**: 1.2.0
+**Last Updated**: 2025-11-29
 
 ## Purpose
 
@@ -65,6 +65,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `SCENE = "scene"` - Root node
 - `GROUP = "group"` - Container node
 - `POINTS = "points"` - Point cloud node
+- `LINES = "lines"` - Line primitives node
 - `GSPLATS = "gsplats"` - Gaussian splat node
 
 **PhysicalUnit**:
@@ -120,96 +121,72 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 - `CATEGORICAL_STEP = 1.0` - Step size for categorical dimensions (always 1)
 
 ### Timestamp Format
-- `TIMESTAMP_FORMAT = "ISO 8601"` - Standard timestamp format for all Luxar metadata
-- **Format specification**: `"YYYY-MM-DDTHH:MM:SSZ"` (UTC timezone)
-- **Example**: `"2025-11-28T14:30:00Z"`
+- **Format**: ISO 8601 with UTC timezone
+- **Pattern**: `datetime.datetime.now(datetime.timezone.utc).isoformat()`
+- **Example output**: `"2025-11-28T14:30:00+00:00"`
 - **Usage**: Fitting timestamps, provenance, creation dates
 
-**Utility function specification**:
+**Implementation pattern** (used in gsplats.io.save_gsplats):
 ```python
-def format_timestamp(dt: datetime) -> str:
-    """
-    Format datetime to ISO 8601 string with UTC.
-
-    Returns: String in format "YYYY-MM-DDTHH:MM:SSZ"
-    Example: "2025-11-28T14:30:00Z"
-    """
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+import datetime
+timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+# Result: "2025-11-28T14:30:00+00:00"
 ```
 
 **Where used**:
-- GSplats fitting metadata (`fitting/.zattrs["timestamp"]`)
-- Provenance metadata (`provenance/.zattrs["creation_timestamp"]`)
-- Root format metadata (`.gsplats.zarr`, Luxar scenes)
+- GSplats root metadata (`/.zattrs["timestamp"]`)
+- Fitting metadata (`fitting/.zattrs["timestamp"]`)
 
 ---
 
 ## Configuration (config.py)
 
-### DataTypeConfig
+**Note**: Data type configuration (dtype selection, AUTO/PRECISION/MEMORY modes) has been moved to `luxar.encoding`. See `encoding/SPECIFICATIONS.md` for the `EncodingMode` enum and `ArrayEncoder` class.
 
-**Purpose**: Configure which dtypes to use for storage
+### Configuration Constants
 
-**Modes**:
-- `AUTO`: Automatically select based on data range (default)
-- `PRECISION`: Always use float32 (maximum precision)
-- `MEMORY`: Use smallest viable dtype (float16/uint8)
-- `CUSTOM`: Use explicitly specified dtypes
-
-**Methods**:
-- `get_position_dtype(data)` - Usually float32 (accuracy critical)
-- `get_color_dtype(data)` - Auto: float32 if HDR, uint8 if SDR
-- `get_radius_dtype(data)` - Auto: based on value range
-- `get_sharpness_dtype(data)` - Auto: uint8 if ≤31, else float32
-
-**Optimization Strategy**:
-- HDR detection: Check if any color > 1.0
-- Range detection: Check min/max for appropriate dtype
-- Normalization: uint8 can represent [0,1] range or [0,31] for sharpness
-
-### Other Config
-
-- `DEFAULT_LOG_LEVEL = "INFO"` - For arbol
+- `DEFAULT_CHUNK_SIZE` - From typing_utils.constants
+- `DEFAULT_VERSION = "0.1"` - Current Luxar format version
 - `SUPPORTED_VERSIONS = ("0.1", "0.2", "0.3")` - For format compatibility
+- `DEFAULT_LOG_LEVEL = "INFO"` - For arbol
 - `SUPPORTED_COMPRESSION = ("blosc", "zstd", "lz4", "gzip", "bz2", "lzma")`
 
----
+### Performance Constants
 
-## Data Type Conversion (datatypes.py)
+- `MAX_RECOMMENDED_POINTS = 10_000_000` - Maximum recommended points
+- `LARGE_DATASET_WARNING = 1_000_000` - Threshold for performance warning
+- `MEMORY_PER_POINT_POSITIONS = 12` bytes (3 × float32)
+- `MEMORY_PER_POINT_COLORS = 3` bytes (3 × uint8)
 
-### convert_array_dtype(array, target_dtype, normalize, input_range)
+### Validation Constants
 
-**Purpose**: Convert between dtypes with optional normalization
+- `POSITION_SHAPE_DIMS = 2` - Array must be 2D
+- `POSITION_SHAPE_CHANNELS = 3` - Default 3D positions
+- `COLOR_SHAPE_CHANNELS = 3` - RGB colors
+- `TRANSFORM_MATRIX_SIZE = (4, 4)` - 4×4 transform matrix
 
-**Key Conversions**:
+### Data Type Defaults
 
-**Float → uint8** (with normalization):
-```
-normalized = (array - input_min) / (input_max - input_min)
-result = clip(normalized * 255, 0, 255).astype(uint8)
-```
+- `POSITION_DTYPE = "float32"` - Default for positions
+- `COLOR_DTYPE = "float32"` - Default for colors (supports HDR)
+- `TRANSFORM_DTYPE = "float32"` - Always float32 for accuracy
+- `SUPPORTED_POSITION_DTYPES = ("float32", "float16")`
+- `SUPPORTED_COLOR_DTYPES = ("float32", "uint8", "uint16")`
+- `SUPPORTED_SCALAR_DTYPES = ("float32", "float16", "uint8")`
 
-**uint8 → Float** (with denormalization):
-```
-normalized = array / 255.0
-result = normalized * (output_max - output_min) + output_min
-```
+### Configuration Functions
 
-**Float16 ↔ Float32**: Direct conversion
+#### validate_chunk_size(chunk_size) → int
+Validate chunk size within MIN/MAX bounds. Raises ValueError if invalid.
 
-**Normalization Ranges**:
-- Colors: [0, 1] typical input range
-- Sharpness: [0, 31] for uint8 mapping
-- Radii: [0, max_radius] for uint8 mapping
+#### validate_compression_level(level) → int
+Validate compression level is 1-9. Raises ValueError if invalid.
 
-### infer_optimal_dtype(array, attribute_type)
+#### estimate_memory_usage(n_points, has_colors) → int
+Estimate memory in bytes for a points dataset.
 
-**Heuristics**:
-- Position: Always float32 (accuracy matters)
-- Color: float32 if any > 1.0 (HDR), else uint8
-- Radius/Sharpness: Based on value range (uint8 if small, float16 if medium, float32 if large)
-
-**Returns**: Optimal numpy dtype for the array
+#### check_dataset_size_warning(n_points) → Optional[str]
+Returns warning message if dataset is large, None otherwise.
 
 ---
 
@@ -260,6 +237,18 @@ total = n_points * memory_per_point
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-11-29): Fix spec to match implementation
+  - Added `LINES = "lines"` to NodeType enum (was implemented but missing from spec)
+  - Fixed timestamp documentation to match actual implementation (datetime.isoformat())
+  - Removed non-existent `format_timestamp()` function specification
+
+- **v1.1.0** (2025-11-30): Remove obsolete DataTypeConfig and datatypes.py documentation
+  - **BREAKING**: Removed `DataTypeConfig` class documentation (never implemented)
+  - **BREAKING**: Removed `datatypes.py` module documentation (never implemented)
+  - These features are now handled by `EncodingMode` in `luxar.encoding`
+  - Updated config.py section to reflect actual implementation
+  - Added reference to encoding/SPECIFICATIONS.md for dtype selection
 
 - **v1.0.7** (2025-11-28): Chunk size documentation enhancement
   - Added "SINGLE SOURCE OF TRUTH" emphasis for chunk size constants

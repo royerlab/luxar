@@ -202,14 +202,15 @@ def create_random_spheres(
 
             positions = np.column_stack([x, y, z]).astype(np.float32)
 
-            # Random HDR color for each sphere
-            color = rng.uniform(0.5, 2.0, 3).astype(np.float32)  # HDR colors
+            # Random HDR color for each sphere - use tuple for scalar passthrough
+            color_arr = rng.uniform(0.5, 2.0, 3)
+            color_tuple = tuple(float(c) for c in color_arr)  # Convert to tuple
 
             compiler.write_points(
                 f"sphere_{i:03d}",
                 positions,
-                colors=color,  # Single color for whole sphere
-                radii=np.float32(0.05),
+                colors=color_tuple,  # Single color for whole sphere (tuple for broadcasting)
+                radii=0.05,  # Scalar passthrough
                 opacity=0.8,
             )
 
@@ -233,6 +234,11 @@ def create_time_series_demo(
     rng = np.random.default_rng(seed)
 
     aprint(f"Creating 4D time series demo with {n_timepoints} time points")
+
+    # Ensure at least 2 timepoints for valid dimension range
+    if n_timepoints < 2:
+        n_timepoints = 2
+        aprint("  Note: Minimum 2 time points required, using 2")
 
     # Create 4D dimensions
     dims = Dimensions(
@@ -292,7 +298,7 @@ def create_time_series_demo(
 
         # Write as single 4D dataset
         compiler.write_points(
-            "time_series", positions_array, colors=colors_array, radii=np.float32(0.1)
+            "time_series", positions_array, colors=colors_array, radii=0.1  # Scalar passthrough
         )
 
     aprint(f"✓ Time series demo created at {store_path}")

@@ -109,11 +109,11 @@ This discriminator enables the viewer to determine how to render each node.
 ```json
 {
   "type": "scene",
-  "luxar_format_version": "1.0",
+  "luxar_version": "0.1",
   "scene_dimensions": { ... }
 }
 ```
-*Note: `luxar_format_version` is the data format version, not the spec document version. This version changes only when the zarr storage format has breaking changes.*
+*Note: `luxar_version` is the data format version, not the spec document version. This version changes only when the zarr storage format has breaking changes.*
 
 ---
 
@@ -1440,7 +1440,7 @@ This specification is sufficient to re-implement the core package in any languag
   - Removed: `occupied_cells`, `cell_ranges`, grid-based metadata
 
 - **v0.6.3**: Validation rules and color mode
-  - Renamed `luxar_version` to `luxar_format_version` with clarifying note (format version vs spec version)
+  - Clarified `luxar_version` is the data format version (not spec version), changes only on breaking format changes
   - Fixed path computation formula to handle empty root path correctly
   - Fixed "gaussian" terminology → "soft-edged spheres" for Points (polynomial falloff, not Gaussian)
   - **RESOLVED**: SDR vs HDR requires explicit `color_mode` flag - auto-detection rejected due to error-masking risk

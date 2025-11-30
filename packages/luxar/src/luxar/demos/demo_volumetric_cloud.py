@@ -422,6 +422,10 @@ def main() -> None:
         aprint("   - Try zooming in to see individual 'cloud particles'")
         aprint("")
 
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
         try:
             # Use luxar CLI to serve - it handles server lifecycle
             subprocess.run(
