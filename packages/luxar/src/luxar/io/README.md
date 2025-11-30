@@ -23,11 +23,20 @@ with LuxarZarrCompiler(
     enable_spatial_index=True,            # Apply spatial ordering
 ) as compiler:
     scene = compiler.create_scene(dimensions=dims)
+
+    # Full arrays
     scene.add_points('cloud', positions, colors, radii)
+
+    # Scalar convenience (v1.4.0) - no intermediate arrays!
+    scene.add_points('uniform', positions,
+                     radii=0.5,              # Scalar instead of np.full(N, 0.5)
+                     colors=(1.0, 0, 0),     # Tuple instead of np.full((N,3), [1,0,0])
+                     sharpness=2.0)          # Scalar instead of np.full(N, 2.0)
 ```
 
 **Key Features**:
 - Progressive writing (data written immediately, not cached)
+- **Scalar convenience (v1.4.0)**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
 - Compound ordering for nD data (discrete dims → spatial curve)
 - Semantic type-based encoding (via `luxar.encoding`)

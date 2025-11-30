@@ -86,12 +86,40 @@ encoder.encode(
 )
 ```
 
+**Scalar Input Support (v0.6.0):**
+
+For uniform attributes, you can pass scalars directly instead of creating full arrays:
+
+```python
+# Scalar float - no intermediate array created!
+encoder.encode(
+    data=0.5,  # Scalar instead of np.full(10000, 0.5)
+    n_elements=10000,  # Required: how many elements this represents
+    zarr_group=root,
+    name="radii",
+    semantic_type=SemanticType.POSITIVE_SCALAR,
+)
+
+# Color tuple - automatically converted to (1, 3) array
+encoder.encode(
+    data=(1.0, 0.0, 0.0),  # RGB tuple instead of np.full((5000, 3), [1,0,0])
+    n_elements=5000,
+    zarr_group=root,
+    name="colors",
+    semantic_type=SemanticType.COLOR,
+    color_mode="sdr",
+)
+
+# Result: Stored as (1,) or (1,3) array with metadata {"name": "broadcasted", "n_elements": N}
+# Performance: Zero intermediate array allocation!
+```
+
 **Methods:**
-- `encode(data, zarr_group, name, semantic_type, mode, ...)` - Encode and write array
+- `encode(data, zarr_group, name, semantic_type, mode, ...)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
 
 **Encoding Priority Order:**
-1. **Broadcasting** - If all values are identical (stores only 1 value)
+1. **Broadcasting** - If scalar input OR all values are identical (stores only 1 value)
 2. **Array Reference** - If exact duplicate exists in registry (stores pointer)
 3. **LUT Encoding** - If ≤256 unique values (stores indices + lookup table)
 4. **Dtype Encoding** - Standard encoding based on semantic type and mode

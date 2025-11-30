@@ -138,6 +138,14 @@ class ArrayEncoder:
                     f"Expected either ({n_elements}, ...) or (1, ...) for broadcasting"
                 )
 
+            # If full array provided with n_elements, it MUST be uniform
+            # (otherwise user should omit n_elements and let encoder decide)
+            if data.shape[0] == n_elements and not self._is_uniform(data):
+                raise ValueError(
+                    f"n_elements={n_elements} provided with full array, but array has "
+                    f"varying values. For non-uniform data, omit n_elements parameter."
+                )
+
         # Empty array handling: pass through without encoding
         if data.size == 0:
             self._write_passthrough(zarr_group, name, data, chunks, compressor)
