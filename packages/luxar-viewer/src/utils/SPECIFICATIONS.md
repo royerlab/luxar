@@ -32,58 +32,58 @@ Capture all browser console output in a ring buffer for in-app debugging.
 
 ```typescript
 class ConsoleInterceptor {
-    private messageBuffer: BufferedMessage[] = new Array(maxBufferSize)
-    private bufferIndex: number = 0
-    private hasWrapped: boolean = false
-    private readonly maxBufferSize = 10000
+  private messageBuffer: BufferedMessage[] = new Array(maxBufferSize);
+  private bufferIndex: number = 0;
+  private hasWrapped: boolean = false;
+  private readonly maxBufferSize = 10000;
 
-    intercept(): void {
-        // Save original console methods
-        const originalLog = console.log
-        const originalWarn = console.warn
-        const originalError = console.error
+  intercept(): void {
+    // Save original console methods
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
 
-        // Override console methods
-        console.log = (...args) => {
-            this.addMessage('log', args)
-            originalLog.apply(console, args)
-        }
+    // Override console methods
+    console.log = (...args) => {
+      this.addMessage('log', args);
+      originalLog.apply(console, args);
+    };
 
-        // ... same for warn, error, info, debug
+    // ... same for warn, error, info, debug
+  }
+
+  private addMessage(type: string, args: any[]): void {
+    const message: BufferedMessage = {
+      type,
+      timestamp: new Date(),
+      args: args,
+      stack: type === 'error' ? new Error().stack : undefined,
+    };
+
+    // Ring buffer insertion
+    this.messageBuffer[this.bufferIndex] = message;
+    this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize;
+
+    if (this.bufferIndex === 0) {
+      this.hasWrapped = true;
     }
 
-    private addMessage(type: string, args: any[]): void {
-        const message: BufferedMessage = {
-            type,
-            timestamp: new Date(),
-            args: args,
-            stack: type === 'error' ? new Error().stack : undefined
-        }
+    // Notify listeners
+    this.notifyListeners(message);
+  }
 
-        // Ring buffer insertion
-        this.messageBuffer[this.bufferIndex] = message
-        this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize
-
-        if (this.bufferIndex === 0) {
-            this.hasWrapped = true
-        }
-
-        // Notify listeners
-        this.notifyListeners(message)
+  getBufferedMessages(): BufferedMessage[] {
+    if (!this.hasWrapped) {
+      // Buffer not full yet, return filled portion
+      return this.messageBuffer.slice(0, this.bufferIndex);
+    } else {
+      // Buffer wrapped, return in correct order
+      return [
+        ...this.messageBuffer.slice(this.bufferIndex),
+        ...this.messageBuffer.slice(0, this.bufferIndex),
+      ];
     }
-
-    getBufferedMessages(): BufferedMessage[] {
-        if (!this.hasWrapped) {
-            // Buffer not full yet, return filled portion
-            return this.messageBuffer.slice(0, this.bufferIndex)
-        } else {
-            // Buffer wrapped, return in correct order
-            return [
-                ...this.messageBuffer.slice(this.bufferIndex),
-                ...this.messageBuffer.slice(0, this.bufferIndex)
-            ]
-        }
-    }
+  }
 }
 ```
 
@@ -101,51 +101,51 @@ class ConsoleInterceptor {
 
 ```typescript
 function detectHDRCapabilities(renderer: THREE.WebGLRenderer): HDRCapabilities {
-    const gl = renderer.getContext()
+  const gl = renderer.getContext();
 
-    // 1. Detect wide color gamut via CSS media queries
-    const p3Gamut = window.matchMedia('(color-gamut: p3)').matches
-    const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches
+  // 1. Detect wide color gamut via CSS media queries
+  const p3Gamut = window.matchMedia('(color-gamut: p3)').matches;
+  const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches;
 
-    // 2. Detect HDR display
-    const hdr = window.matchMedia('(dynamic-range: high)').matches
+  // 2. Detect HDR display
+  const hdr = window.matchMedia('(dynamic-range: high)').matches;
 
-    // 3. Detect deep color (10-bit+)
-    const deepColor = window.matchMedia('(color-depth: 10)').matches ||
-                      window.matchMedia('(color-depth: 12)').matches
+  // 3. Detect deep color (10-bit+)
+  const deepColor =
+    window.matchMedia('(color-depth: 10)').matches ||
+    window.matchMedia('(color-depth: 12)').matches;
 
-    // 4. Check WebGL float texture support
-    const floatTextures = !!(
-        gl.getExtension('EXT_color_buffer_float') ||
-        gl.getExtension('EXT_color_buffer_half_float')
-    )
+  // 4. Check WebGL float texture support
+  const floatTextures = !!(
+    gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float')
+  );
 
-    // 5. Get actual color depth
-    const colorDepth = {
-        red: gl.getParameter(gl.RED_BITS),
-        green: gl.getParameter(gl.GREEN_BITS),
-        blue: gl.getParameter(gl.BLUE_BITS)
-    }
+  // 5. Get actual color depth
+  const colorDepth = {
+    red: gl.getParameter(gl.RED_BITS),
+    green: gl.getParameter(gl.GREEN_BITS),
+    blue: gl.getParameter(gl.BLUE_BITS),
+  };
 
-    // 6. Determine recommended color space
-    let recommendedColorSpace: string
-    if (rec2020Gamut && hdr) {
-        recommendedColorSpace = 'rec2020'
-    } else if (p3Gamut) {
-        recommendedColorSpace = 'display-p3'
-    } else {
-        recommendedColorSpace = 'srgb'
-    }
+  // 6. Determine recommended color space
+  let recommendedColorSpace: string;
+  if (rec2020Gamut && hdr) {
+    recommendedColorSpace = 'rec2020';
+  } else if (p3Gamut) {
+    recommendedColorSpace = 'display-p3';
+  } else {
+    recommendedColorSpace = 'srgb';
+  }
 
-    return {
-        p3Gamut,
-        rec2020Gamut,
-        hdr,
-        deepColor,
-        floatTextures,
-        colorDepth,
-        recommendedColorSpace
-    }
+  return {
+    p3Gamut,
+    rec2020Gamut,
+    hdr,
+    deepColor,
+    floatTextures,
+    colorDepth,
+    recommendedColorSpace,
+  };
 }
 ```
 
@@ -154,20 +154,17 @@ function detectHDRCapabilities(renderer: THREE.WebGLRenderer): HDRCapabilities {
 **Purpose**: Configure THREE.js renderer based on detected capabilities.
 
 ```typescript
-function configureHDRRenderer(
-    renderer: THREE.WebGLRenderer,
-    capabilities: HDRCapabilities
-): void {
-    // Set output color space based on display
-    if (capabilities.rec2020Gamut && capabilities.hdr) {
-        renderer.outputColorSpace = THREE.LinearSRGBColorSpace
-    } else if (capabilities.p3Gamut) {
-        renderer.outputColorSpace = THREE.SRGBColorSpace
-    } else {
-        renderer.outputColorSpace = THREE.SRGBColorSpace
-    }
+function configureHDRRenderer(renderer: THREE.WebGLRenderer, capabilities: HDRCapabilities): void {
+  // Set output color space based on display
+  if (capabilities.rec2020Gamut && capabilities.hdr) {
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  } else if (capabilities.p3Gamut) {
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+  } else {
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+  }
 
-    // Note: Tone mapping handled by PostProcessingManager
+  // Note: Tone mapping handled by PostProcessingManager
 }
 ```
 
@@ -183,24 +180,24 @@ function configureHDRRenderer(
 
 ```typescript
 function detectAvailableMemory(): number {
-    // Try to get actual memory from performance API
-    if ('memory' in performance) {
-        const perfMemory = (performance as any).memory
-        if (perfMemory?.jsHeapSizeLimit) {
-            return perfMemory.jsHeapSizeLimit / (1024 * 1024)  // MB
-        }
+  // Try to get actual memory from performance API
+  if ('memory' in performance) {
+    const perfMemory = (performance as any).memory;
+    if (perfMemory?.jsHeapSizeLimit) {
+      return perfMemory.jsHeapSizeLimit / (1024 * 1024); // MB
     }
+  }
 
-    // Fallback: Estimate from device class
-    const userAgent = navigator.userAgent.toLowerCase()
+  // Fallback: Estimate from device class
+  const userAgent = navigator.userAgent.toLowerCase();
 
-    // Mobile devices
-    if (/mobile|android|iphone|ipad/.test(userAgent)) {
-        return 512  // Conservative 512 MB for mobile
-    }
+  // Mobile devices
+  if (/mobile|android|iphone|ipad/.test(userAgent)) {
+    return 512; // Conservative 512 MB for mobile
+  }
 
-    // Desktop/laptop
-    return 2048  // 2 GB default for desktop
+  // Desktop/laptop
+  return 2048; // 2 GB default for desktop
 }
 ```
 
@@ -218,12 +215,12 @@ function detectAvailableMemory(): number {
 
 ```typescript
 enum Modules {
-    Luxar = 'Luxar',
-    Data = 'Data',
-    Scene = 'Scene',
-    Rendering = 'Rendering',
-    Controls = 'Controls',
-    Input = 'Input'
+  Luxar = 'Luxar',
+  Data = 'Data',
+  Scene = 'Scene',
+  Rendering = 'Rendering',
+  Controls = 'Controls',
+  Input = 'Input',
 }
 ```
 
@@ -231,35 +228,31 @@ enum Modules {
 
 ```typescript
 enum LogEmoji {
-    Info = 'ℹ️',
-    Success = '✅',
-    Warning = '⚠️',
-    Error = '❌',
-    Loading = '⏳',
-    Debug = '🔧'
+  Info = 'ℹ️',
+  Success = '✅',
+  Warning = '⚠️',
+  Error = '❌',
+  Loading = '⏳',
+  Debug = '🔧',
 }
 ```
 
 ### 4.2 Logging Function
 
 ```typescript
-function log(
-    module: Modules,
-    message: string,
-    emoji: LogEmoji = LogEmoji.Info
-): void {
-    console.log(`[${emoji}] [${module}] ${message}`)
+function log(module: Modules, message: string, emoji: LogEmoji = LogEmoji.Info): void {
+  console.log(`[${emoji}] [${module}] ${message}`);
 }
 ```
 
 **Usage**:
 
 ```typescript
-import { log, Modules, LogEmoji } from '../utils/log'
+import { log, Modules, LogEmoji } from '../utils/log';
 
-log(Modules.Data, 'Loading spatial index...', LogEmoji.Loading)
-log(Modules.Data, 'Loaded 50 cells → 12K points', LogEmoji.Success)
-log(Modules.Rendering, 'MSAA incompatible with additive blending', LogEmoji.Warning)
+log(Modules.Data, 'Loading spatial index...', LogEmoji.Loading);
+log(Modules.Data, 'Loaded 50 cells → 12K points', LogEmoji.Success);
+log(Modules.Rendering, 'MSAA incompatible with additive blending', LogEmoji.Warning);
 ```
 
 ---
@@ -270,10 +263,10 @@ log(Modules.Rendering, 'MSAA incompatible with additive blending', LogEmoji.Warn
 
 ```typescript
 interface BufferedMessage {
-    type: 'log' | 'warn' | 'error' | 'info' | 'debug'
-    timestamp: Date
-    args: any[]
-    stack?: string  // For errors
+  type: 'log' | 'warn' | 'error' | 'info' | 'debug';
+  timestamp: Date;
+  args: any[];
+  stack?: string; // For errors
 }
 ```
 
@@ -281,17 +274,17 @@ interface BufferedMessage {
 
 ```typescript
 interface HDRCapabilities {
-    p3Gamut: boolean
-    rec2020Gamut: boolean
-    hdr: boolean
-    deepColor: boolean
-    floatTextures: boolean
-    colorDepth: {
-        red: number
-        green: number
-        blue: number
-    }
-    recommendedColorSpace: 'srgb' | 'display-p3' | 'rec2020'
+  p3Gamut: boolean;
+  rec2020Gamut: boolean;
+  hdr: boolean;
+  deepColor: boolean;
+  floatTextures: boolean;
+  colorDepth: {
+    red: number;
+    green: number;
+    blue: number;
+  };
+  recommendedColorSpace: 'srgb' | 'display-p3' | 'rec2020';
 }
 ```
 

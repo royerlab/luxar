@@ -10,6 +10,7 @@ The `luxar-viewer.types` package provides the foundational type system for nD da
 **Core Responsibility**: Provide precise, well-documented types that capture the mathematical and conceptual structure of high-dimensional point cloud visualization while ensuring compile-time safety and runtime reliability.
 
 **Related Specifications**:
+
 - `luxar.core` - Scene structure and Dimension definitions (see `../../luxar/src/luxar/core/SPECIFICATIONS.md`)
 - `luxar-viewer.data` - Data loading using these types (see `../data/SPECIFICATIONS.md`)
 
@@ -38,26 +39,26 @@ The `luxar-viewer.types` package provides the foundational type system for nD da
 
 ```typescript
 interface DimensionMetadata {
-    /** Human-readable dimension name (e.g., "Time", "X", "Channel") */
-    name: string
+  /** Human-readable dimension name (e.g., "Time", "X", "Channel") */
+  name: string;
 
-    /** Physical unit of measurement (e.g., "μm", "s", "nm", "") */
-    unit: string
+  /** Physical unit of measurement (e.g., "μm", "s", "nm", "") */
+  unit: string;
 
-    /** Min and max bounds in this dimension */
-    range: [number, number]
+  /** Min and max bounds in this dimension */
+  range: [number, number];
 
-    /** Navigation step size (optional, auto-calculated if not provided) */
-    step?: number
+  /** Navigation step size (optional, auto-calculated if not provided) */
+  step?: number;
 
-    /** Whether to display this dimension in 3D view (max 3 can be true) */
-    display: boolean
+  /** Whether to display this dimension in 3D view (max 3 can be true) */
+  display: boolean;
 
-    /** Whether values are discrete (integers) vs continuous (floats) */
-    discrete?: boolean
+  /** Whether values are discrete (integers) vs continuous (floats) */
+  discrete?: boolean;
 
-    /** Optional description for UI tooltips */
-    description?: string
+  /** Optional description for UI tooltips */
+  description?: string;
 }
 ```
 
@@ -70,6 +71,7 @@ interface DimensionMetadata {
 **Purpose**: Human-readable identifier for the dimension
 
 **Conventions**:
+
 - Spatial dimensions: `"x"`, `"y"`, `"z"`, `"X"`, `"Y"`, `"Z"`
 - Temporal: `"time"`, `"t"`, `"Time"`, `"T"`, `"frame"`
 - Categorical: `"channel"`, `"condition"`, `"wavelength"`
@@ -83,6 +85,7 @@ interface DimensionMetadata {
 **Purpose**: Physical unit of measurement
 
 **Standard Units**:
+
 - Length: `"nm"`, `"μm"`, `"mm"`, `"m"`
 - Time: `"s"`, `"ms"`, `"min"`, `"h"`
 - Angle: `"rad"`, `"deg"`
@@ -101,6 +104,7 @@ interface DimensionMetadata {
 **Calculation**: Determined from actual data or specified explicitly
 
 **Usage**:
+
 - Navigation bounds (cannot navigate outside range)
 - Initial view calculation
 - Step size auto-calculation
@@ -112,13 +116,15 @@ interface DimensionMetadata {
 **Purpose**: Step size for dimension navigation
 
 **Auto-calculation** (if not provided):
+
 ```typescript
-step = (range[1] - range[0]) / 100  // 1% of range
+step = (range[1] - range[0]) / 100; // 1% of range
 ```
 
 **For discrete dimensions**:
+
 ```typescript
-step = 1.0  // Integer steps
+step = 1.0; // Integer steps
 ```
 
 **Usage**: Keyboard navigation ([ and ] keys)
@@ -130,11 +136,13 @@ step = 1.0  // Integer steps
 **Purpose**: Whether this dimension should be displayed in 3D view
 
 **Constraints**:
+
 - Maximum 3 dimensions can have `display: true`
 - Typically the last 2-3 dimensions (X, Y, Z for spatial data)
 - Non-displayed dimensions use slice navigation
 
 **Default Selection** (Python convention):
+
 ```python
 # For D-dimensional data, display last min(D, 3) dimensions
 displayed = range(max(0, D - 3), D)
@@ -149,10 +157,12 @@ displayed = range(max(0, D - 3), D)
 **Default**: `false` (continuous)
 
 **Implications**:
+
 - **Discrete dimensions**: Exact matching in slicing (`position == slice_value`)
 - **Continuous dimensions**: Range-based matching (`|position - slice_value| <= tolerance`)
 
 **Examples**:
+
 - Discrete: Time frames, channels, categorical conditions
 - Continuous: Spatial coordinates (x, y, z)
 
@@ -183,6 +193,7 @@ class Dimension:
 **JSON Serialization** (Python → TypeScript):
 
 Python writes to zarr `.zattrs`:
+
 ```json
 {
   "scene_dimensions": {
@@ -218,17 +229,17 @@ TypeScript reads this **exactly** and parses to `DimensionMetadata[]`.
 
 ```typescript
 interface SimpleDims {
-    /** Total number of dimensions in the dataset */
-    ndim: number
+  /** Total number of dimensions in the dataset */
+  ndim: number;
 
-    /** Current position/slice in each dimension */
-    currentStep: number[]
+  /** Current position/slice in each dimension */
+  currentStep: number[];
 
-    /** Indices of dimensions currently displayed (length ≤ 3) */
-    displayed: number[]
+  /** Indices of dimensions currently displayed (length ≤ 3) */
+  displayed: number[];
 
-    /** Optional metadata for each dimension */
-    metadata?: DimensionMetadata[]
+  /** Optional metadata for each dimension */
+  metadata?: DimensionMetadata[];
 }
 ```
 
@@ -241,12 +252,14 @@ interface SimpleDims {
 **Purpose**: Total dimensionality of the dataset
 
 **Derivation** from data:
+
 ```typescript
 // From positions array
-ndim = positions.length / numPoints
+ndim = positions.length / numPoints;
 ```
 
 **Constraints**:
+
 - `ndim >= 1`
 - Typically `2 <= ndim <= 6` for practical datasets
 - `ndim <= 9` (current UI navigation limit)
@@ -260,12 +273,14 @@ ndim = positions.length / numPoints
 **Length**: `currentStep.length == ndim`
 
 **Semantics**:
+
 - **For displayed dimensions** (indices in `displayed`): Position is controlled by camera, not used for slicing
 - **For non-displayed dimensions**: Position determines which slice is visible
 
 **Initialization**: Center of each dimension's range
+
 ```typescript
-currentStep[i] = (metadata[i].range[0] + metadata[i].range[1]) / 2
+currentStep[i] = (metadata[i].range[0] + metadata[i].range[1]) / 2;
 ```
 
 **Navigation**: Modified by keyboard input, UI sliders, or programmatic control
@@ -279,23 +294,26 @@ currentStep[i] = (metadata[i].range[0] + metadata[i].range[1]) / 2
 **Length**: `0 <= displayed.length <= 3`
 
 **Conventions**:
+
 - 1D visualization: `[xDim]`
 - 2D visualization: `[xDim, yDim]`
 - 3D visualization: `[xDim, yDim, zDim]`
 
 **Typical Selection**:
+
 ```typescript
 // Last 3 dimensions for spatial data
-displayed = [ndim - 3, ndim - 2, ndim - 1]
+displayed = [ndim - 3, ndim - 2, ndim - 1];
 
 // Or based on metadata.display flags
 displayed = metadata
-    .map((d, i) => d.display ? i : -1)
-    .filter(i => i >= 0)
-    .slice(0, 3)
+  .map((d, i) => (d.display ? i : -1))
+  .filter((i) => i >= 0)
+  .slice(0, 3);
 ```
 
 **Constraints**:
+
 - All indices must be valid: `0 <= displayed[i] < ndim`
 - Indices should be unique (no duplicates)
 - Typically in ascending order (convention, not requirement)
@@ -344,64 +362,63 @@ for (let i = 0; i < ndim; i++):
 **Purpose**: Create a properly initialized `SimpleDims` object from raw data.
 
 **Signature**:
+
 ```typescript
 function initializeDims(
-    numPoints: number,
-    totalElements: number,
-    metadata?: DimensionMetadata[]
-): SimpleDims
+  numPoints: number,
+  totalElements: number,
+  metadata?: DimensionMetadata[]
+): SimpleDims;
 ```
 
 **Algorithm**:
 
 ```typescript
 function initializeDims(numPoints, totalElements, metadata) {
-    // 1. Calculate dimensionality
-    if (totalElements % numPoints !== 0) {
-        throw new Error(`Invalid array: ${totalElements} elements for ${numPoints} points`)
+  // 1. Calculate dimensionality
+  if (totalElements % numPoints !== 0) {
+    throw new Error(`Invalid array: ${totalElements} elements for ${numPoints} points`);
+  }
+
+  const ndim = totalElements / numPoints;
+
+  // 2. Initialize current position (center of each range)
+  const currentStep = new Array(ndim);
+  if (metadata) {
+    for (let i = 0; i < ndim; i++) {
+      const [min, max] = metadata[i].range;
+      currentStep[i] = (min + max) / 2;
     }
+  } else {
+    currentStep.fill(0); // Default to origin
+  }
 
-    const ndim = totalElements / numPoints
+  // 3. Determine displayed dimensions
+  let displayed: number[];
 
-    // 2. Initialize current position (center of each range)
-    const currentStep = new Array(ndim)
-    if (metadata) {
-        for (let i = 0; i < ndim; i++) {
-            const [min, max] = metadata[i].range
-            currentStep[i] = (min + max) / 2
-        }
-    } else {
-        currentStep.fill(0)  // Default to origin
-    }
+  if (metadata) {
+    // Use metadata display flags
+    displayed = metadata
+      .map((d, i) => (d.display ? i : -1))
+      .filter((i) => i >= 0)
+      .slice(0, 3); // Max 3 dimensions
+  } else {
+    // Default: display last min(ndim, 3) dimensions
+    const numDisplayed = Math.min(ndim, 3);
+    displayed = Array.from({ length: numDisplayed }, (_, i) => ndim - numDisplayed + i);
+  }
 
-    // 3. Determine displayed dimensions
-    let displayed: number[]
-
-    if (metadata) {
-        // Use metadata display flags
-        displayed = metadata
-            .map((d, i) => d.display ? i : -1)
-            .filter(i => i >= 0)
-            .slice(0, 3)  // Max 3 dimensions
-    } else {
-        // Default: display last min(ndim, 3) dimensions
-        const numDisplayed = Math.min(ndim, 3)
-        displayed = Array.from(
-            {length: numDisplayed},
-            (_, i) => ndim - numDisplayed + i
-        )
-    }
-
-    return {
-        ndim,
-        currentStep,
-        displayed,
-        metadata
-    }
+  return {
+    ndim,
+    currentStep,
+    displayed,
+    metadata,
+  };
 }
 ```
 
 **Error Handling**:
+
 - Throw if `totalElements` not divisible by `numPoints`
 - Throw if metadata length doesn't match calculated `ndim`
 
@@ -410,35 +427,36 @@ function initializeDims(numPoints, totalElements, metadata) {
 **Purpose**: Analyze actual data to determine dimension bounds.
 
 **Signature**:
+
 ```typescript
 function getDimensionRanges(
-    positions: Float32Array,
-    ndim: number,
-    numPoints: number
-): Array<[number, number]>
+  positions: Float32Array,
+  ndim: number,
+  numPoints: number
+): Array<[number, number]>;
 ```
 
 **Algorithm**:
 
 ```typescript
 function getDimensionRanges(positions, ndim, numPoints) {
-    const ranges: Array<[number, number]> = []
+  const ranges: Array<[number, number]> = [];
 
-    for (let dim = 0; dim < ndim; dim++) {
-        let min = Infinity
-        let max = -Infinity
+  for (let dim = 0; dim < ndim; dim++) {
+    let min = Infinity;
+    let max = -Infinity;
 
-        // Scan all points for this dimension
-        for (let i = 0; i < numPoints; i++) {
-            const value = positions[i * ndim + dim]
-            if (value < min) min = value
-            if (value > max) max = value
-        }
-
-        ranges.push([min, max])
+    // Scan all points for this dimension
+    for (let i = 0; i < numPoints; i++) {
+      const value = positions[i * ndim + dim];
+      if (value < min) min = value;
+      if (value > max) max = value;
     }
 
-    return ranges
+    ranges.push([min, max]);
+  }
+
+  return ranges;
 }
 ```
 
@@ -455,34 +473,36 @@ function getDimensionRanges(positions, ndim, numPoints) {
 **Purpose**: Identify which dimensions can be navigated via keyboard (non-displayed dimensions).
 
 **Signature**:
+
 ```typescript
-function getNavigableDimensions(dims: SimpleDims): number[]
+function getNavigableDimensions(dims: SimpleDims): number[];
 ```
 
 **Algorithm**:
 
 ```typescript
 function getNavigableDimensions(dims) {
-    const displayedSet = new Set(dims.displayed)
+  const displayedSet = new Set(dims.displayed);
 
-    const navigable = []
-    for (let i = 0; i < dims.ndim; i++) {
-        if (!displayedSet.has(i)) {
-            navigable.push(i)
-        }
+  const navigable = [];
+  for (let i = 0; i < dims.ndim; i++) {
+    if (!displayedSet.has(i)) {
+      navigable.push(i);
     }
+  }
 
-    return navigable
+  return navigable;
 }
 ```
 
 **Usage**: Determine primary and secondary navigation dimensions for keyboard shortcuts
 
 **Example**:
+
 ```typescript
-const navigable = getNavigableDimensions(dims)  // [0, 1, 4]
-const primaryDim = navigable[0]    // First non-displayed dimension
-const secondaryDim = navigable[1]  // Second non-displayed dimension
+const navigable = getNavigableDimensions(dims); // [0, 1, 4]
+const primaryDim = navigable[0]; // First non-displayed dimension
+const secondaryDim = navigable[1]; // Second non-displayed dimension
 ```
 
 ### 4.2 stepDimension
@@ -490,68 +510,70 @@ const secondaryDim = navigable[1]  // Second non-displayed dimension
 **Purpose**: Move to next/previous step in a dimension with proper bounds handling.
 
 **Signature**:
+
 ```typescript
 function stepDimension(
-    dims: SimpleDims,
-    dimIndex: number,
-    direction: 1 | -1,
-    ranges: Array<[number, number]>,
-    options?: {
-        stepSize?: number,      // Fraction of range (default 0.1)
-        wrap?: boolean,          // Wrap at boundaries (default false)
-        absoluteStep?: number    // Fixed step size in data units
-    }
-): boolean  // Returns true if position changed
+  dims: SimpleDims,
+  dimIndex: number,
+  direction: 1 | -1,
+  ranges: Array<[number, number]>,
+  options?: {
+    stepSize?: number; // Fraction of range (default 0.1)
+    wrap?: boolean; // Wrap at boundaries (default false)
+    absoluteStep?: number; // Fixed step size in data units
+  }
+): boolean; // Returns true if position changed
 ```
 
 **Algorithm**:
 
 ```typescript
 function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
-    // 1. Validate dimension index
-    if (dimIndex < 0 || dimIndex >= dims.ndim) {
-        return false
-    }
+  // 1. Validate dimension index
+  if (dimIndex < 0 || dimIndex >= dims.ndim) {
+    return false;
+  }
 
-    // 2. Check that dimension is not displayed (can't step displayed dims)
-    if (dims.displayed.includes(dimIndex)) {
-        return false
-    }
+  // 2. Check that dimension is not displayed (can't step displayed dims)
+  if (dims.displayed.includes(dimIndex)) {
+    return false;
+  }
 
-    // 3. Get current position and range
-    const current = dims.currentStep[dimIndex]
-    const [min, max] = ranges[dimIndex]
-    const rangeSize = max - min
+  // 3. Get current position and range
+  const current = dims.currentStep[dimIndex];
+  const [min, max] = ranges[dimIndex];
+  const rangeSize = max - min;
 
-    // 4. Calculate step size
-    let step: number
-    if (options.absoluteStep !== undefined) {
-        step = options.absoluteStep
-    } else {
-        const stepFraction = options.stepSize ?? 0.1  // Default 10% of range
-        step = rangeSize * stepFraction
-    }
+  // 4. Calculate step size
+  let step: number;
+  if (options.absoluteStep !== undefined) {
+    step = options.absoluteStep;
+  } else {
+    const stepFraction = options.stepSize ?? 0.1; // Default 10% of range
+    step = rangeSize * stepFraction;
+  }
 
-    // 5. Apply direction
-    let newValue = current + direction * step
+  // 5. Apply direction
+  let newValue = current + direction * step;
 
-    // 6. Handle boundaries
-    if (options.wrap) {
-        // Wrap around (periodic)
-        while (newValue < min) newValue += rangeSize
-        while (newValue > max) newValue -= rangeSize
-    } else {
-        // Clamp to bounds
-        newValue = Math.max(min, Math.min(max, newValue))
-    }
+  // 6. Handle boundaries
+  if (options.wrap) {
+    // Wrap around (periodic)
+    while (newValue < min) newValue += rangeSize;
+    while (newValue > max) newValue -= rangeSize;
+  } else {
+    // Clamp to bounds
+    newValue = Math.max(min, Math.min(max, newValue));
+  }
 
-    // 7. Update position
-    if (Math.abs(newValue - current) > 1e-10) {  // Epsilon for float comparison
-        dims.currentStep[dimIndex] = newValue
-        return true  // Position changed
-    }
+  // 7. Update position
+  if (Math.abs(newValue - current) > 1e-10) {
+    // Epsilon for float comparison
+    dims.currentStep[dimIndex] = newValue;
+    return true; // Position changed
+  }
 
-    return false  // No change (at boundary)
+  return false; // No change (at boundary)
 }
 ```
 
@@ -560,39 +582,40 @@ function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
 **Purpose**: Jump to a specific position in a dimension (e.g., from slider).
 
 **Signature**:
+
 ```typescript
 function jumpToDimension(
-    dims: SimpleDims,
-    dimIndex: number,
-    value: number,
-    ranges: Array<[number, number]>
-): boolean
+  dims: SimpleDims,
+  dimIndex: number,
+  value: number,
+  ranges: Array<[number, number]>
+): boolean;
 ```
 
 **Algorithm**:
 
 ```typescript
 function jumpToDimension(dims, dimIndex, value, ranges) {
-    // 1. Validate
-    if (dimIndex < 0 || dimIndex >= dims.ndim) {
-        return false
-    }
+  // 1. Validate
+  if (dimIndex < 0 || dimIndex >= dims.ndim) {
+    return false;
+  }
 
-    if (dims.displayed.includes(dimIndex)) {
-        return false  // Can't set displayed dimension
-    }
+  if (dims.displayed.includes(dimIndex)) {
+    return false; // Can't set displayed dimension
+  }
 
-    // 2. Clamp to valid range
-    const [min, max] = ranges[dimIndex]
-    const clamped = Math.max(min, Math.min(max, value))
+  // 2. Clamp to valid range
+  const [min, max] = ranges[dimIndex];
+  const clamped = Math.max(min, Math.min(max, value));
 
-    // 3. Update
-    if (Math.abs(clamped - dims.currentStep[dimIndex]) > 1e-10) {
-        dims.currentStep[dimIndex] = clamped
-        return true
-    }
+  // 3. Update
+  if (Math.abs(clamped - dims.currentStep[dimIndex]) > 1e-10) {
+    dims.currentStep[dimIndex] = clamped;
+    return true;
+  }
 
-    return false
+  return false;
 }
 ```
 
@@ -605,54 +628,47 @@ function jumpToDimension(dims, dimIndex, value, ranges) {
 **Purpose**: Runtime validation of `SimpleDims` structure.
 
 **Signature**:
+
 ```typescript
-function validateDims(dims: SimpleDims): boolean
+function validateDims(dims: SimpleDims): boolean;
 ```
 
 **Algorithm**:
 
 ```typescript
 function validateDims(dims) {
-    // 1. Check ndim is positive
-    if (dims.ndim < 1) {
-        throw new Error(`Invalid ndim: ${dims.ndim}`)
-    }
+  // 1. Check ndim is positive
+  if (dims.ndim < 1) {
+    throw new Error(`Invalid ndim: ${dims.ndim}`);
+  }
 
-    // 2. Check currentStep length
-    if (dims.currentStep.length !== dims.ndim) {
-        throw new Error(
-            `currentStep length ${dims.currentStep.length} != ndim ${dims.ndim}`
-        )
-    }
+  // 2. Check currentStep length
+  if (dims.currentStep.length !== dims.ndim) {
+    throw new Error(`currentStep length ${dims.currentStep.length} != ndim ${dims.ndim}`);
+  }
 
-    // 3. Check displayed dimensions
-    if (dims.displayed.length > 3) {
-        throw new Error(
-            `Too many displayed dimensions: ${dims.displayed.length} (max 3)`
-        )
-    }
+  // 3. Check displayed dimensions
+  if (dims.displayed.length > 3) {
+    throw new Error(`Too many displayed dimensions: ${dims.displayed.length} (max 3)`);
+  }
 
-    for (const dimIdx of dims.displayed) {
-        if (dimIdx < 0 || dimIdx >= dims.ndim) {
-            throw new Error(
-                `Invalid displayed dimension index: ${dimIdx} (ndim=${dims.ndim})`
-            )
-        }
+  for (const dimIdx of dims.displayed) {
+    if (dimIdx < 0 || dimIdx >= dims.ndim) {
+      throw new Error(`Invalid displayed dimension index: ${dimIdx} (ndim=${dims.ndim})`);
     }
+  }
 
-    // 4. Check for duplicate displayed dimensions
-    if (new Set(dims.displayed).size !== dims.displayed.length) {
-        throw new Error(`Duplicate displayed dimensions: ${dims.displayed}`)
-    }
+  // 4. Check for duplicate displayed dimensions
+  if (new Set(dims.displayed).size !== dims.displayed.length) {
+    throw new Error(`Duplicate displayed dimensions: ${dims.displayed}`);
+  }
 
-    // 5. Check metadata length (if present)
-    if (dims.metadata && dims.metadata.length !== dims.ndim) {
-        throw new Error(
-            `metadata length ${dims.metadata.length} != ndim ${dims.ndim}`
-        )
-    }
+  // 5. Check metadata length (if present)
+  if (dims.metadata && dims.metadata.length !== dims.ndim) {
+    throw new Error(`metadata length ${dims.metadata.length} != ndim ${dims.ndim}`);
+  }
 
-    return true
+  return true;
 }
 ```
 
@@ -662,44 +678,42 @@ function validateDims(dims) {
 
 ```typescript
 function validateDimensionMetadata(meta: DimensionMetadata, index: number): boolean {
-    // 1. Check required fields
-    if (!meta.name || typeof meta.name !== 'string') {
-        throw new Error(`Dimension ${index}: invalid name`)
-    }
+  // 1. Check required fields
+  if (!meta.name || typeof meta.name !== 'string') {
+    throw new Error(`Dimension ${index}: invalid name`);
+  }
 
-    if (typeof meta.unit !== 'string') {
-        throw new Error(`Dimension ${index}: invalid unit`)
-    }
+  if (typeof meta.unit !== 'string') {
+    throw new Error(`Dimension ${index}: invalid unit`);
+  }
 
-    // 2. Check range
-    if (!Array.isArray(meta.range) || meta.range.length !== 2) {
-        throw new Error(`Dimension ${index}: invalid range`)
-    }
+  // 2. Check range
+  if (!Array.isArray(meta.range) || meta.range.length !== 2) {
+    throw new Error(`Dimension ${index}: invalid range`);
+  }
 
-    const [min, max] = meta.range
-    if (typeof min !== 'number' || typeof max !== 'number') {
-        throw new Error(`Dimension ${index}: range values must be numbers`)
-    }
+  const [min, max] = meta.range;
+  if (typeof min !== 'number' || typeof max !== 'number') {
+    throw new Error(`Dimension ${index}: range values must be numbers`);
+  }
 
-    if (min > max) {
-        throw new Error(
-            `Dimension ${index}: min ${min} > max ${max}`
-        )
-    }
+  if (min > max) {
+    throw new Error(`Dimension ${index}: min ${min} > max ${max}`);
+  }
 
-    // 3. Check step (if present)
-    if (meta.step !== undefined) {
-        if (typeof meta.step !== 'number' || meta.step <= 0) {
-            throw new Error(`Dimension ${index}: invalid step ${meta.step}`)
-        }
+  // 3. Check step (if present)
+  if (meta.step !== undefined) {
+    if (typeof meta.step !== 'number' || meta.step <= 0) {
+      throw new Error(`Dimension ${index}: invalid step ${meta.step}`);
     }
+  }
 
-    // 4. Check display flag
-    if (typeof meta.display !== 'boolean') {
-        throw new Error(`Dimension ${index}: display must be boolean`)
-    }
+  // 4. Check display flag
+  if (typeof meta.display !== 'boolean') {
+    throw new Error(`Dimension ${index}: display must be boolean`);
+  }
 
-    return true
+  return true;
 }
 ```
 
@@ -714,23 +728,23 @@ function validateDimensionMetadata(meta: DimensionMetadata, index: number): bool
  * Dimension metadata matching Python luxar.core.Dimension
  */
 interface DimensionMetadata {
-    name: string
-    unit: string
-    range: [number, number]
-    step?: number
-    display: boolean
-    discrete?: boolean
-    description?: string
+  name: string;
+  unit: string;
+  range: [number, number];
+  step?: number;
+  display: boolean;
+  discrete?: boolean;
+  description?: string;
 }
 
 /**
  * Complete nD visualization state
  */
 interface SimpleDims {
-    ndim: number
-    currentStep: number[]
-    displayed: number[]
-    metadata?: DimensionMetadata[]
+  ndim: number;
+  currentStep: number[];
+  displayed: number[];
+  metadata?: DimensionMetadata[];
 }
 ```
 
@@ -741,28 +755,28 @@ interface SimpleDims {
  * Options for dimension stepping
  */
 interface NavigationOptions {
-    /** Step size as fraction of range (default 0.1) */
-    stepSize?: number
+  /** Step size as fraction of range (default 0.1) */
+  stepSize?: number;
 
-    /** Wrap at boundaries for periodic data */
-    wrap?: boolean
+  /** Wrap at boundaries for periodic data */
+  wrap?: boolean;
 
-    /** Absolute step size in data units */
-    absoluteStep?: number
+  /** Absolute step size in data units */
+  absoluteStep?: number;
 }
 
 /**
  * Navigation state for keyboard/UI control
  */
 interface NavigationState {
-    /** Currently selected dimension for navigation */
-    selectedDimension: number | null
+  /** Currently selected dimension for navigation */
+  selectedDimension: number | null;
 
-    /** History of previous positions (for undo) */
-    history: SimpleDims[]
+  /** History of previous positions (for undo) */
+  history: SimpleDims[];
 
-    /** Maximum history length */
-    maxHistoryLength: number
+  /** Maximum history length */
+  maxHistoryLength: number;
 }
 ```
 
@@ -772,17 +786,17 @@ interface NavigationState {
 /**
  * Dimension bounds
  */
-type DimensionRange = [number, number]  // [min, max]
+type DimensionRange = [number, number]; // [min, max]
 
 /**
  * Dimension index (0-based)
  */
-type DimensionIndex = number
+type DimensionIndex = number;
 
 /**
  * Set of displayed dimension indices
  */
-type DisplayedDimensions = number[]  // Length ≤ 3
+type DisplayedDimensions = number[]; // Length ≤ 3
 ```
 
 ---

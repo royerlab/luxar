@@ -122,9 +122,10 @@ export class ArrayDecoder {
     const rawData = await get(zarrArray);
     // Convert zarr data to Float32Array
     const rawArray = rawData.data;
-    const data = rawArray instanceof Float32Array
-      ? rawArray
-      : new Float32Array(rawArray as ArrayBuffer | number[]);
+    const data =
+      rawArray instanceof Float32Array
+        ? rawArray
+        : new Float32Array(rawArray as ArrayBuffer | number[]);
 
     // Check for broadcasting
     if (attrs.n_elements && attrs.n_elements > data.length) {
@@ -137,7 +138,13 @@ export class ArrayDecoder {
     }
 
     // Check for quantization
-    if (attrs.quantization_bounds && (attrs.dtype === 'uint8' || attrs.dtype === '<u1' || attrs.dtype === 'uint16' || attrs.dtype === '<u2')) {
+    if (
+      attrs.quantization_bounds &&
+      (attrs.dtype === 'uint8' ||
+        attrs.dtype === '<u1' ||
+        attrs.dtype === 'uint16' ||
+        attrs.dtype === '<u2')
+    ) {
       return this.dequantize(data, attrs.quantization_bounds, attrs.dtype);
     }
 
@@ -199,11 +206,7 @@ export class ArrayDecoder {
    *
    * Format: Indices (uint8/uint16) + lookup table
    */
-  private decodeLUT(
-    indices: Float32Array,
-    lut: number[],
-    expectedElements?: number
-  ): Float32Array {
+  private decodeLUT(indices: Float32Array, lut: number[], expectedElements?: number): Float32Array {
     const n = indices.length;
 
     // Determine feature dimension from LUT size
@@ -242,11 +245,7 @@ export class ArrayDecoder {
    *
    * Format: uint8 or uint16 → float with bounds [min, max]
    */
-  private dequantize(
-    data: Float32Array,
-    bounds: [number, number],
-    dtype: string
-  ): Float32Array {
+  private dequantize(data: Float32Array, bounds: [number, number], dtype: string): Float32Array {
     const [min_val, max_val] = bounds;
 
     // Determine max integer value from dtype
@@ -346,7 +345,7 @@ export async function loadAndDecodeOptionalArray(
     const array = await zarr.open(location.resolve(arrayName), { kind: 'array' });
 
     // Load attributes
-    const attrs = (array.attrs as unknown) as ArrayMetadata;
+    const attrs = array.attrs as unknown as ArrayMetadata;
 
     // Decode
     const decoded = await decoder.decode(array, attrs, expectedElements);
@@ -354,7 +353,7 @@ export async function loadAndDecodeOptionalArray(
     log.success(Modules.ZARR_LOADER, `Loaded ${arrayName}: ${decoded.length} elements`);
 
     return decoded;
-  } catch (error) {
+  } catch {
     // Array doesn't exist (this is OK for optional arrays)
     return null;
   }

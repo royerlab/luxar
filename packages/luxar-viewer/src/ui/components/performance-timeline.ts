@@ -443,7 +443,7 @@ export class PerformanceTimeline {
     avgQueryTime: number;
     avgLoadTime: number;
     avgCacheRate: number;
-  } {
+    } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0, avgCacheRate: 0 };
     }
