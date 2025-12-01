@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
-"""
-Basic example demonstrating the radius feature in Luxar.
+"""Radius Basic Example - Introduction to point size control.
 
-This simple example creates three rows of points with different radii to clearly
-show how the radius parameter affects point size visualization.
+This example demonstrates:
+- How the radius parameter controls point visual size
+- Three distinct radius values for clear comparison
+- World-space sizing (size independent of camera distance)
+- Default radius behavior when not specified
+
+Educational value:
+- Understand the radius parameter fundamentals
+- See immediate visual effect of different radii
+- Learn that radius is in world-space units
+- Perfect starting point before radius_showcase
+
+Key principle:
+- Radius defines point size in scene units (not pixels)
+- Larger radius = larger visual appearance
+- Independent of camera position or viewport
 """
 
 from pathlib import Path
