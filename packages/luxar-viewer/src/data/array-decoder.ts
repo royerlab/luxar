@@ -23,8 +23,14 @@ export interface EncodingMetadata {
   /** Number of elements (for broadcasting) */
   n_elements?: number;
 
-  /** Lookup table values */
-  lut?: number[];
+  /** Lookup table values (can be flat array or array of arrays) */
+  lut?: number[] | number[][];
+
+  /** LUT storage mode (row or flat) */
+  lut_mode?: string;
+
+  /** Original shape before encoding [n, k] */
+  original_shape?: number[];
 
   /** Quantization bounds [min, max] */
   bounds?: [number, number];
@@ -142,11 +148,14 @@ export class ArrayDecoder {
         ? rawArray
         : new Float32Array(rawArray as ArrayBuffer | number[]);
 
-    // Check for broadcasting (name: "broadcasted", n_elements > data.length)
-    if (enc?.name === 'broadcasted' && enc?.n_elements && enc.n_elements > data.length) {
-      const shape = attrs.shape || [];
+    // Check for broadcasting (name: "broadcasted", expectedElements provided)
+    // NOTE: enc.n_elements stores the actual array size (e.g., 1), NOT the target count
+    // The target count comes from expectedElements parameter (e.g., 1000)
+    if (enc?.name === 'broadcasted' && expectedElements && expectedElements > data.length) {
+      // Get shape from zarrArray metadata (not attrs - shape is in .zarray, not .zattrs)
+      const shape = zarrArray.shape;
       const k = shape.length > 1 ? shape[1] : 1;
-      const result = this.decodeBroadcasted(data, enc.n_elements, k, expectedElements);
+      const result = this.decodeBroadcasted(data, expectedElements, k, expectedElements);
 
       // Register for potential array ref usage
       if (enc?.hash) {
@@ -156,15 +165,25 @@ export class ArrayDecoder {
       return result;
     }
 
-    // Check for LUT encoding (name: "lut", lut array present)
-    if (enc?.name === 'lut' && enc?.lut) {
-      return this.decodeLUT(data, enc.lut, expectedElements);
+    // Check for LUT encoding (name starts with "lut", lut array present)
+    // Python generates names like: lut_uint8, lut_uint16
+    if (enc?.name?.startsWith('lut') && enc?.lut) {
+      // Get k (feature dimension) from original_shape in encoding metadata
+      // original_shape is [n, k] where n is number of points, k is feature dimension
+      const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
+      return this.decodeLUT(data, enc.lut, k);
     }
 
-    // Check for quantization (name contains "uint", bounds present)
-    if (enc?.bounds && enc?.name && (enc.name.includes('uint') || enc.name.includes('scalar'))) {
-      const dtype = attrs.dtype || enc.name; // Use encoding name as fallback dtype
-      return this.dequantize(data, enc.bounds, dtype);
+    // Check for quantization (name contains "uint", bounds present OR implicit)
+    // NOTE: Some encodings like rgb_uint8 have implicit bounds [0, 1]
+    if (enc?.name && (enc.name.includes('uint') || enc.name.includes('scalar'))) {
+      const bounds = enc.bounds || this.inferBounds(enc.name);
+      if (bounds) {
+        // Get actual dtype from zarr metadata (e.g., '<u1', 'uint8')
+        // Do NOT use enc.name (e.g., 'rgb_uint8') - that's the encoding name, not the dtype
+        const actualDtype = attrs.dtype || 'uint8';
+        return this.dequantize(data, bounds, actualDtype);
+      }
     }
 
     // Direct mode (no encoding or name: "none" / "float16" / "float32")
@@ -174,6 +193,27 @@ export class ArrayDecoder {
     }
 
     return data;
+  }
+
+  /**
+   * Infer quantization bounds from encoding name
+   *
+   * Some encodings have implicit bounds that don't need to be stored:
+   * - rgb_uint8/rgb_uint16: [0, 1] (standard RGB range)
+   * - hdr_uint8/hdr_uint16: [0, 10] (HDR range, though bounds may be explicit)
+   * - Others: return null (must have explicit bounds field)
+   *
+   * @param encName - Encoding name (e.g., "rgb_uint8", "bounded_scalar_uint16")
+   * @returns Bounds [min, max] or null if not inferrable
+   */
+  private inferBounds(encName: string): [number, number] | null {
+    if (encName === 'rgb_uint8' || encName === 'rgb_uint16') {
+      return [0, 1]; // Standard RGB range
+    }
+    if (encName === 'hdr_uint8' || encName === 'hdr_uint16') {
+      return [0, 10]; // HDR range (may be overridden by explicit bounds)
+    }
+    return null; // Must have explicit bounds field
   }
 
   /**
@@ -214,26 +254,26 @@ export class ArrayDecoder {
    * Decode LUT-encoded array
    *
    * Format: Indices (uint8/uint16) + lookup table
+   *
+   * @param indices - Array of indices into the lookup table
+   * @param lut - Lookup table containing unique values (can be array of arrays or flat)
+   * @param k - Feature dimension (e.g., 3 for RGB, 1 for scalar)
    */
-  private decodeLUT(indices: Float32Array, lut: number[], expectedElements?: number): Float32Array {
+  private decodeLUT(indices: Float32Array, lut: number[] | number[][], k: number): Float32Array {
     const n = indices.length;
 
-    // Determine feature dimension from LUT size
-    // LUT contains all unique values flattened
-    // For RGB: lut.length = num_unique * 3
-    let k = 1; // Default to scalar
-    if (expectedElements) {
-      k = Math.round(expectedElements / n);
-      if (expectedElements % n !== 0) {
-        log.warning(
-          Modules.ZARR_LOADER,
-          `LUT: expectedElements ${expectedElements} not divisible by n=${n}`
-        );
-      }
+    // Flatten LUT if it's an array of arrays (row mode)
+    let flatLUT: number[];
+    if (Array.isArray(lut[0])) {
+      // LUT is array of arrays - flatten it
+      flatLUT = (lut as number[][]).flat();
+    } else {
+      // LUT is already flat
+      flatLUT = lut as number[];
     }
 
     log.info(Modules.ZARR_LOADER, `LUT: ${n} indices → ${n * k} elements (k=${k})`);
-    log.info(Modules.ZARR_LOADER, `  LUT size: ${lut.length} values (${lut.length / k} unique)`);
+    log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique)`);
 
     const result = new Float32Array(n * k);
 
@@ -242,7 +282,7 @@ export class ArrayDecoder {
       const idx = Math.round(indices[i]); // Indices should be integers
 
       for (let j = 0; j < k; j++) {
-        result[i * k + j] = lut[idx * k + j];
+        result[i * k + j] = flatLUT[idx * k + j];
       }
     }
 
@@ -317,14 +357,15 @@ export class ArrayDecoder {
    */
   static isEncoded(attrs: ArrayMetadata): boolean {
     const enc = attrs.encoding;
-    if (!enc) return false;
+    if (!enc || !enc.name) return false;
 
     // Check for any encoding mode
     return !!(
       enc.target || // array reference
       enc.name === 'broadcasted' || // broadcasting
-      enc.name === 'lut' || // LUT encoding
-      enc.bounds // quantization
+      enc.name?.startsWith('lut') || // LUT encoding (lut_uint8, lut_uint16)
+      enc.name?.includes('uint') || // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
+      enc.bounds // explicit quantization bounds
     );
   }
 
@@ -340,8 +381,8 @@ export class ArrayDecoder {
     // Map encoding name to mode
     if (enc.target) return 'array_ref';
     if (enc.name === 'broadcasted') return 'broadcasted';
-    if (enc.name === 'lut') return 'lut';
-    if (enc.bounds) return 'quantized';
+    if (enc.name?.startsWith('lut')) return 'lut';
+    if (enc.name?.includes('uint') || enc.bounds) return 'quantized';
 
     return 'direct';
   }
