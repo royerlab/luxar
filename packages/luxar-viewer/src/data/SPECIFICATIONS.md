@@ -1,7 +1,7 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 2.0.0
+**Last Updated**: 2025-12-01
 
 ## Purpose
 
@@ -28,11 +28,9 @@ The `luxar-viewer.data` package provides the client-side data loading infrastruc
 
 ---
 
-## 1. Spatial Index System
+## 1. Spatial Index System (Chunk-Based)
 
 ### 1.1 Purpose and Requirements
-
-**Requirement**: ALL datasets MUST have spatial indices. The TypeScript viewer will not load datasets without spatial indices.
 
 The spatial index enables efficient queries for points within a spatial region without scanning the entire dataset. This is essential for:
 
@@ -40,159 +38,138 @@ The spatial index enables efficient queries for points within a spatial region w
 - Progressive loading of massive datasets
 - Real-time interaction with billion-point clouds
 
-### 1.2 Spatial Index Structure
+**Design**: Luxar uses **chunk-based spatial indexing** via Morton/Hilbert space-filling curves with per-chunk bounding boxes.
 
-The spatial index is stored in the Zarr group under `spatial_index/`:
+**Note**: Some 3D datasets without spatial ordering will fall back to loading all points (acceptable for small datasets).
+
+### 1.2 Chunk-Based Spatial Index Structure
+
+The spatial index uses Morton/Hilbert ordering with chunk bounding boxes stored alongside point data:
 
 ```
 <group>/
-├── .zattrs           # Node attributes
+├── .zattrs           # Node attributes (ordering metadata)
 ├── .zgroup
-├── positions/        # nD point positions
-├── colors/           # Optional colors
-├── radii/            # Optional radii
-├── sharpness/        # Optional sharpness
-└── spatial_index/    # REQUIRED spatial index
-    ├── .zattrs       # Index metadata
-    ├── .zgroup
-    ├── occupied_cells/  # Grid cell coordinates
-    └── cell_ranges/     # Point ranges per cell
+├── positions/        # nD point positions (Morton-ordered)
+├── colors/           # Optional colors (same order as positions)
+├── radii/            # Optional radii (same order as positions)
+├── sharpness/        # Optional sharpness (same order as positions)
+└── chunk_bounds/     # Chunk bounding boxes (num_chunks, ndim, 2)
 ```
 
-### 1.3 Index Metadata Format
+**No separate `spatial_index/` group needed** - ordering metadata is in node `.zattrs`.
 
-Stored in `spatial_index/.zattrs`:
+### 1.3 Chunk Metadata Format
+
+Stored in node `.zattrs` (alongside type, transform, etc.):
 
 ```json
 {
-  "grid_shape": [nx, ny, nz, ...],     // Grid dimensions per axis
-  "grid_origin": [x0, y0, z0, ...],    // Minimum coordinate per dimension
-  "cell_size": [dx, dy, dz, ...],      // Size of each grid cell
-  "num_occupied": N,                    // Number of non-empty cells
-  "dimensions": D                       // Number of dimensions
+  "type": "points",
+  "ordering": "morton",                    // or "hilbert"
+  "morton_dims": [0, 1, 2],                // Spatial dimensions (Morton-coded)
+  "slice_dims": [3],                       // Discrete dimensions (exact-match)
+  "morton_bits_per_dim": 21,               // Bits per Morton dimension
+  "morton_min": [0.0, 0.0, 0.0],          // Min bounds for Morton dims
+  "morton_max": [100.0, 100.0, 100.0],    // Max bounds for Morton dims
+  "chunk_size": 2048,                      // Points per chunk
+  "n_points": 1000000                      // Total points
 }
 ```
 
-**Invariants**:
+**Key Fields**:
+- `ordering`: "morton" or "hilbert" (space-filling curve used)
+- `morton_dims`: Dimensions ordered by Morton/Hilbert code
+- `slice_dims`: Dimensions ordered lexicographically (discrete slicing)
+- `chunk_size`: Number of points per chunk
+- `n_points`: Total points in dataset
 
-- `grid_shape.length == dimensions`
-- `grid_origin.length == dimensions`
-- `cell_size.length == dimensions`
-- `num_occupied <= product(grid_shape)`
+### 1.4 Chunk Bounds Array
 
-### 1.4 Occupied Cells Array
+**Type**: `Float32Array` of shape `(num_chunks, ndim, 2)`
 
-**Type**: `Uint32Array` of shape `(num_occupied, dimensions)`
+**Storage**: Zarr array at `<group>/chunk_bounds/`
 
-**Storage**: Flattened row-major in `occupied_cells/` zarr array
-
-**Format**: Each row contains the nD grid coordinates of an occupied cell:
-
-```
-[cell_x0, cell_y0, cell_z0, ...,
- cell_x1, cell_y1, cell_z1, ...,
- ...]
-```
-
-**Cell ID Calculation** (must match Python implementation):
+**Format**: For each chunk, stores min/max bounds in each dimension:
 
 ```
-cell_id = cell_coords[0]
-for i in 1..D-1:
-    cell_id = cell_id * grid_shape[i] + cell_coords[i]
+chunk_bounds[chunk_idx, dim, 0] = min coordinate (including radius)
+chunk_bounds[chunk_idx, dim, 1] = max coordinate (including radius)
 ```
 
-This is the **Morton-like** encoding used in Python (see `luxar.io` spec).
-
-### 1.5 Cell Ranges Array
-
-**Type**: `BigUint64Array` of shape `(num_occupied, 2)`
-
-**Storage**: Flattened row-major in `cell_ranges/` zarr array
-
-**Format**: Each row contains `[start_idx, end_idx]` (exclusive end):
-
+**Critical**: Bounds MUST include element extent:
 ```
-[start0, end0,
- start1, end1,
- ...]
+For points: bounds = [min(pos - radius), max(pos + radius)]
+For splats: bounds = [min(pos - ellipsoid_extent), max(pos + ellipsoid_extent)]
 ```
 
-**Point Range**: Points in cell `i` occupy indices `[cell_ranges[2*i], cell_ranges[2*i+1])` in the positions array.
+**Calculation** (Python side):
+```python
+for chunk_idx in range(num_chunks):
+    for dim in range(ndim):
+        positions_in_chunk = sorted_positions[chunk_start:chunk_end, dim]
+        radii_in_chunk = sorted_radii[chunk_start:chunk_end]
 
-**Invariant**: Ranges must be non-overlapping and sorted:
-
+        chunk_bounds[chunk_idx, dim, 0] = (positions_in_chunk - radii_in_chunk).min()
+        chunk_bounds[chunk_idx, dim, 1] = (positions_in_chunk + radii_in_chunk).max()
 ```
-cell_ranges[2*i+1] <= cell_ranges[2*(i+1)]  // for all i
-```
 
-### 1.6 Spatial Index Query Algorithm
+### 1.5 Chunk-Based Query Algorithm
 
 **Input**:
+- `chunkIndex`: Chunk spatial index with metadata and chunk_bounds
+- `slicePosition`: **Full** nD position `[p0, p1, ..., p_{ndim-1}]` (all dimensions)
+- `tolerance`: per-dimension search radius `[t0, t1, ..., t_{ndim-1}]` (all dimensions)
 
-- `slicePosition`: **Full** nD position `[p0, p1, ..., p_{fullD-1}]` (all dimensions)
-- `tolerance`: per-dimension search radius `[t0, t1, ..., t_{fullD-1}]` (all dimensions)
-
-**Output**: List of point ranges `[(start, end), ...]` covering all points within tolerance
-
-**Critical**: The spatial index only indexes **non-displayed** dimensions. Must extract the indexed subset from full position.
+**Output**: List of chunk indices whose bounding boxes intersect the query region
 
 **Algorithm**:
 
-```
-function queryPointSpatialIndex(index, slicePosition, tolerance):
-    D = metadata.dimensions  // Number of indexed dimensions
-    fullD = metadata.full_dimensions  // Total dimensions
+```typescript
+function queryChunksForView(chunkIndex, slicePosition, tolerance):
+    const { total_chunks, ndim, chunkBounds } = chunkIndex.metadata
+    const matchingChunks = []
 
-    // If no dimensions are indexed (all displayed), return all points
-    if (D == 0 || indexed_dimensions.length == 0):
-        return [{start: 0, end: total_points}]
+    // Test each chunk for intersection with query box
+    for chunkIdx in 0..total_chunks-1:
+        let intersects = true
 
-    // 1. Extract indexed dimensions from full position/tolerance
-    indexedSlicePos = []
-    indexedTolerance = []
-    for i in 0..D-1:
-        fullDimIdx = metadata.indexed_dimensions[i]
-        indexedSlicePos[i] = slicePosition[fullDimIdx]
-        indexedTolerance[i] = tolerance[fullDimIdx]
+        // Check intersection in each dimension
+        for dim in 0..ndim-1:
+            // Get chunk bounding box
+            offset = chunkIdx * ndim * 2 + dim * 2
+            chunkMin = chunkBounds[offset]
+            chunkMax = chunkBounds[offset + 1]
 
-    // 2. Calculate query bounds in grid space
-    queryMin = []
-    queryMax = []
-    for d in 0..D-1:
-        minCoord = indexedSlicePos[d] - indexedTolerance[d]
-        maxCoord = indexedSlicePos[d] + indexedTolerance[d]
+            // Get query box
+            queryMin = slicePosition[dim] - tolerance[dim]
+            queryMax = slicePosition[dim] + tolerance[dim]
 
-        // Convert to grid coordinates
-        cellMin = floor((minCoord - grid_origin[d]) / cell_size[d])
-        cellMax = floor((maxCoord - grid_origin[d]) / cell_size[d])
+            // Test for intersection (boxes DON'T overlap if):
+            // - chunk max < query min (chunk entirely before query)
+            // - chunk min > query max (chunk entirely after query)
+            if chunkMax < queryMin OR chunkMin > queryMax:
+                intersects = false
+                break
 
-        // Clamp to grid bounds
-        queryMin[d] = max(0, cellMin)
-        queryMax[d] = min(grid_shape[d] - 1, cellMax)
+        if intersects:
+            matchingChunks.push(chunkIdx)
 
-    // 2. Iterate over cells in query region
-    ranges = []
-    for each cell_coords in queryMin..queryMax:
-        // Calculate cell ID
-        cell_id = calculateCellID(cell_coords, grid_shape)
-
-        // Binary search in occupied_cells for this cell_id
-        cell_index = binarySearch(occupied_cells, cell_id)
-
-        if cell_index >= 0:
-            // Cell is occupied, extract range
-            start = cell_ranges[2 * cell_index]
-            end = cell_ranges[2 * cell_index + 1]
-            ranges.append((start, end))
-
-    // 3. Merge overlapping/adjacent ranges
-    return mergePointRanges(ranges)
+    return matchingChunks
 ```
 
-**Complexity**: O(m × D × log(num_occupied)) where m is the number of cells in query region.
+**Complexity**: O(num_chunks × ndim) where num_chunks is typically 100-1000
 
-### 1.7 Range Merging Algorithm
+**Convert to Point Ranges**:
+```typescript
+function chunkIndicesToRanges(chunkIndices, chunkSize, totalPoints):
+    return chunkIndices.map(idx => ({
+        start: idx * chunkSize,
+        end: min((idx + 1) * chunkSize, totalPoints)
+    }))
+```
+
+### 1.6 Range Merging Algorithm
 
 **Purpose**: Combine adjacent or overlapping ranges to minimize chunk loads.
 
@@ -393,31 +370,40 @@ For a non-displayed dimension `i`, the effective radius is the radius of the hyp
 R_effective(i) = sqrt(R² - D_displayed²)
 ```
 
-Where `D_displayed` is the distance from the slice plane in the **displayed dimensions**:
+Where `D_nonDisplayed` is the distance from the slice position in the **non-displayed spatial dimensions**:
 
 ```
-D_displayed² = Σ(j in displayed) (point[j] - slicePosition[j])²
+D_nonDisplayed² = Σ(j not in displayed, j is spatial) (point[j] - slicePosition[j])²
 ```
 
 **Algorithm**:
 
 ```
-function calculateEffectiveRadius(point, radius, displayed, slicePosition, dim):
-    // Calculate distance in displayed dimensions
-    displayedDistance² = 0
-    for d in displayed:
+function calculateEffectiveRadius(point, radius, displayed, slicePosition, spatialExtendDims):
+    // Calculate distance in NON-displayed spatial dimensions (perpendicular to view plane)
+    // These are dimensions where points extend spatially but aren't being displayed
+    nonDisplayedDistance² = 0
+    for d in 0..ndim-1:
+        if d in displayed:
+            continue  // Skip displayed dimensions
+        if not spatialExtendDims[d]:
+            continue  // Skip non-spatial dimensions (discrete)
+
         delta = point[d] - slicePosition[d]
-        displayedDistance² += delta²
+        nonDisplayedDistance² += delta²
 
     // Effective radius via Pythagorean theorem
-    if displayedDistance² >= radius²:
-        return 0  // Point too far in displayed dims
+    // The hypersphere is "sliced" by the non-displayed dimensions
+    effectiveRadius² = radius² - nonDisplayedDistance²
 
-    effectiveRadius = sqrt(radius² - displayedDistance²)
+    if effectiveRadius² <= 0:
+        return 0  // Point too far in non-displayed dims (outside hypersphere)
+
+    effectiveRadius = sqrt(effectiveRadius²)
     return effectiveRadius
 ```
 
-**Special Case**: If `displayedDistance² >= radius²`, the point is outside the displayed view frustum and should not be rendered regardless of non-displayed dimensions.
+**Critical**: Distance is calculated in **NON-displayed spatial dimensions**, not displayed dimensions. This represents how much of the hypersphere "budget" remains for the non-displayed dimensions after accounting for distance from the slice plane.
 
 ### 3.4 Point Visibility Algorithm
 
@@ -507,12 +493,12 @@ Luxar scenes are hierarchical Zarr groups following this structure:
 scene.zarr/
 ├── .zattrs                  # Scene metadata
 ├── .zgroup
-├── .zmetadata              # Consolidated metadata (optional but recommended)
+├── .zmetadata              # Consolidated metadata (recommended for fast loading)
 ├── <group_name>/           # Points or nested groups
-│   ├── .zattrs             # Node attributes
+│   ├── .zattrs             # Node attributes (includes ordering metadata)
 │   ├── .zgroup
-│   ├── spatial_index/      # REQUIRED for points
-│   ├── positions/
+│   ├── chunk_bounds/       # Chunk bounding boxes (if Morton/Hilbert ordered)
+│   ├── positions/          # nD point positions (Morton-ordered if indexed)
 │   ├── colors/             # Optional
 │   ├── radii/              # Optional
 │   └── sharpness/          # Optional
@@ -636,17 +622,17 @@ function loadGroupChildren(store, path, parentGroup, arrayRefRegistry):
 
 ```
 function loadPointsNode(store, path, attrs, arrayRefRegistry):
-    // 1. Load spatial index (REQUIRED)
-    spatialIndex = loadPointSpatialIndex(store, path + "/spatial_index")
+    // 1. Load chunk-based spatial index (if available)
+    chunkIndex = await loadChunkSpatialIndex(store.resolve(path), attrs)
 
-    if !spatialIndex:
-        throw Error("Missing spatial index for " + path)
+    // Note: If no chunk_bounds, loader will fall back to loading all points
+    // This is acceptable for small 3D datasets without Morton ordering
 
     // 2. Create loader with caching
     loader = new PointSpatialIndexLoader(
-        path,
-        spatialIndex,
-        store,
+        store.resolve(path),
+        node,
+        config,
         arrayRefRegistry
     )
 
@@ -875,37 +861,32 @@ function evictLFU():
 
 ## 6. Data Structures
 
-### 6.1 PointSpatialIndex
+### 6.1 ChunkSpatialIndex (v2.0.0)
 
-**Purpose**: In-memory representation of spatial index for efficient queries.
+**Purpose**: In-memory representation of chunk-based spatial index for efficient queries.
 
-```
-interface PointSpatialIndex {
+```typescript
+interface ChunkSpatialIndex {
     metadata: {
-        // Grid structure (only for indexed dimensions)
-        grid_shape: number[]           // [nx, ny, nz, ...] grid size per indexed dim
-        grid_origin: number[]          // [x0, y0, z0, ...] min coord per indexed dim
-        cell_size: number[]            // [dx, dy, dz, ...] cell size per indexed dim
+        // Ordering information
+        ordering: 'morton' | 'hilbert'   // Space-filling curve used
+        morton_dims: number[]             // Dimensions ordered by Morton/Hilbert
+        slice_dims: number[]              // Dimensions ordered lexicographically
+        morton_bits_per_dim: number       // Bits per Morton dimension
 
-        // Cell statistics
-        num_occupied: number           // N occupied cells (with points)
-        total_cells: number            // Total possible cells (product of grid_shape)
-        total_points: number           // Total points in dataset
-        max_points_per_cell?: number   // Maximum points in any single cell
-
-        // Dimension mapping
-        dimensions: number             // D indexed dimensions
-        full_dimensions: number        // Total dims in original data
-        indexed_dimensions: number[]   // Which dims are indexed [3, 4] for time+channel
-        displayed_dimensions: number[] // Which dims are displayed [0, 1, 2] for xyz
-
-        // Metadata
-        build_version: string          // Index builder version
+        // Chunk statistics
+        chunk_size: number                // Points per chunk
+        total_chunks: number              // Number of chunks
+        total_points: number              // Total points in dataset
+        ndim: number                      // Total dimensionality
     }
-    occupiedCells: Uint32Array     // Flattened (num_occupied, dimensions) cell coords
-    cellRanges: BigUint64Array     // (num_occupied, 2) [start, end] pairs
+
+    // Chunk bounding boxes: (total_chunks, ndim, 2) flattened row-major
+    chunkBounds: Float32Array
 }
 ```
+
+**Note**: The old grid-based `PointSpatialIndex` (v1.0.0) is deprecated and removed.
 
 ### 6.2 ViewState
 
@@ -965,11 +946,18 @@ interface DimensionMetadata {
 
 ## Changelog
 
-- **v1.0.0** (2025-01-30): Initial specification
-  - Spatial index system (required for all datasets)
-  - Array decoding (broadcasting, LUT, quantization, array refs)
-  - nD slicing algorithms with effective radius calculation
-  - Scene loading protocol with hierarchical structure
-  - Cache management with LRU/LFU eviction
-  - **BREAKING**: Removed support for datasets without spatial indices
-  - **BREAKING**: Removed lazy loading (replaced with spatial index queries)
+- **v2.0.0** (2025-12-01): Chunk-based spatial index system
+  - **BREAKING**: Replaced grid-based spatial index with chunk-based system
+  - Uses Morton/Hilbert-ordered chunks with bounding boxes
+  - No separate `spatial_index/` zarr group (metadata in node .zattrs)
+  - Chunk bounds array at `<group>/chunk_bounds/`
+  - Simpler query algorithm: O(num_chunks) instead of O(num_cells)
+  - **CRITICAL BUG FIX**: Sharpness scale 15.0 → 31.0 (matches Python SHARPNESS_MAX)
+  - Added 13 validation layers across data pipeline
+  - Enhanced console logging for debugging
+  - Backward compatible: falls back to loading all points if no chunk_bounds
+
+- **v1.0.0** (2025-01-30): Initial specification (DEPRECATED - never fully implemented)
+  - Described grid-based spatial index (occupied_cells, cell_ranges)
+  - **NOTE**: Grid-based system was specified but never built by Python
+  - This version is superseded by v2.0.0 chunk-based design

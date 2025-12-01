@@ -24,9 +24,15 @@ import {
 } from './data-loader-types';
 import { RangeCache } from './range-cache';
 import {
-  loadPointSpatialIndex,
-  queryPointSpatialIndex,
+  loadChunkSpatialIndex,
+  queryChunksForView,
+  chunkIndicesToRanges,
   mergePointRanges,
+  type ChunkSpatialIndex,
+} from './chunk-spatial-index';
+// Keep old imports for backward compatibility during transition
+import {
+  queryPointSpatialIndex,
   type PointSpatialIndex,
 } from './point-spatial-index';
 import {
@@ -57,6 +63,8 @@ import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-deco
  */
 export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private cache: RangeCache;
+  private chunkIndex: ChunkSpatialIndex | null = null;
+  // Deprecated: old grid-based index (will be removed)
   private spatialIndex: PointSpatialIndex | null = null;
   private _effectiveRadiusConfig: EffectiveRadiusConfig | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
@@ -114,16 +122,15 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Initialize the loader by loading spatial index and opening arrays
    */
   async initialize(): Promise<void> {
-    // Load spatial index
+    // Load chunk-based spatial index (NEW: replaces grid-based index)
     try {
-      this.spatialIndex = await loadPointSpatialIndex(this.zarrLocation);
+      this.chunkIndex = await loadChunkSpatialIndex(this.zarrLocation, this.node.attrs);
 
-      if (!this.spatialIndex) {
-        // For 3D datasets where all dimensions are displayed, create a dummy index
-        // that will return all points
+      if (!this.chunkIndex) {
+        // For 3D datasets without Morton ordering, fall back to loading all points
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
-          `No spatial index found for ${this.node.path}, assuming 3D dataset`
+          `No chunk-based index for ${this.node.path} - will load all points`
         );
 
         // For 3D datasets, we need to get the actual number of points from the positions array
@@ -162,23 +169,36 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
           occupiedCells: new Uint32Array(0),
           cellRanges: new BigUint64Array(0),
         };
-      } else if (this.spatialIndex.metadata.num_occupied > 0) {
+      } else {
+        // Chunk index loaded successfully
         log.query(
           Modules.SPATIAL_INDEX_LOADER,
-          `Initialized with ${this.spatialIndex.metadata.num_occupied} occupied cells`
+          `Chunk index loaded: ${this.chunkIndex.metadata.total_chunks} chunks, ${this.chunkIndex.metadata.total_points} points`
         );
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
-          `  Grid shape: [${this.spatialIndex.metadata.grid_shape.join(', ')}]`
+          `  Ordering: ${this.chunkIndex.metadata.ordering}, ${this.chunkIndex.metadata.ndim}D space`
         );
-        // Detailed metadata only in development
-        // @ts-ignore - process.env might not be available in all environments
-        if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
-          log.info(
-            Modules.SPATIAL_INDEX_LOADER,
-            `  Indexed dimensions: ${this.spatialIndex.metadata.dimensions} (indices: [${this.spatialIndex.metadata.indexed_dimensions?.join(', ')}])`
-          );
-        }
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `  Morton dims: [${this.chunkIndex.metadata.morton_dims.join(', ')}], Slice dims: [${this.chunkIndex.metadata.slice_dims.join(', ')}]`
+        );
+
+        console.log('[PointSpatialIndexLoader] Chunk index initialized:', {
+          totalChunks: this.chunkIndex.metadata.total_chunks,
+          chunkSize: this.chunkIndex.metadata.chunk_size,
+          totalPoints: this.chunkIndex.metadata.total_points,
+          ordering: this.chunkIndex.metadata.ordering,
+          mortonBits: this.chunkIndex.metadata.morton_bits_per_dim,
+        });
+      }
+
+      // DEPRECATED: Old grid-based index support (will be removed)
+      if (this.spatialIndex && !this.chunkIndex) {
+        log.warning(
+          Modules.SPATIAL_INDEX_LOADER,
+          'Using deprecated grid-based index. This will be removed in future versions.'
+        );
       }
 
       // Load spatial extension configuration from node attributes
@@ -281,8 +301,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         await this.initPromise;
       }
 
-      if (!this.spatialIndex || !this.arrays.positions) {
-        throw new Error('Loader not properly initialized');
+      // Check if loader is properly initialized (chunk index OR old grid index OR fallback)
+      if (!this.chunkIndex && !this.spatialIndex) {
+        throw new Error('Loader not properly initialized: no spatial index loaded');
+      }
+
+      if (!this.arrays.positions) {
+        throw new Error('Loader not properly initialized: positions array not loaded');
       }
 
       // Query spatial index for visible ranges
@@ -446,7 +471,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Return all points for broadcast dimensions
         const totalPoints =
           this.node.attrs.num_points ||
-          this.spatialIndex.metadata.total_points ||
+          this.chunkIndex?.metadata.total_points ||
+          this.spatialIndex?.metadata.total_points ||
           Number.MAX_SAFE_INTEGER;
         return [{ start: 0, end: totalPoints }];
       }
@@ -457,10 +483,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // Use max radius from node attributes if available
     const maxRadius = this.node.attrs.max_radius || config.dataLoading.spatial.defaultMaxRadius;
 
-    // The spatial index now only contains non-displayed dimensions
-    // We need to build the query arrays using the full dimension count
+    // Get full dimension count from index metadata
     const fullDim =
-      this.spatialIndex.metadata.full_dimensions || this.spatialIndex.metadata.dimensions;
+      this.chunkIndex?.metadata.ndim ||
+      this.spatialIndex?.metadata.full_dimensions ||
+      this.spatialIndex?.metadata.dimensions ||
+      3;
 
     // Build tolerance array based on spatial extension configuration
     let queryTolerance: number[];
@@ -482,7 +510,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // Fallback to old behavior - uniform tolerance for all non-displayed dims
       queryTolerance = new Array(fullDim).fill(0);
       const displayedDims =
-        this.spatialIndex.metadata.displayed_dimensions || viewState.displayDims;
+        this.spatialIndex?.metadata.displayed_dimensions || viewState.displayDims;
 
       for (let d = 0; d < fullDim; d++) {
         if (!displayedDims.includes(d)) {
@@ -514,17 +542,49 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // );
     // log.info(Modules.SPATIAL_INDEX_LOADER, `  Max radius: ${maxRadius}`);
 
-    // Query spatial index
-    const ranges = queryPointSpatialIndex(this.spatialIndex, querySlicePos, queryTolerance);
+    // Query chunk-based spatial index (NEW: replaces grid-based queries)
+    let ranges: PointRange[];
+
+    if (this.chunkIndex) {
+      // NEW: Use chunk-based queries
+      const chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
+      ranges = chunkIndicesToRanges(
+        chunkIndices,
+        this.chunkIndex.metadata.chunk_size,
+        this.chunkIndex.metadata.total_points
+      );
+
+      const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+      log.query(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Chunk query: ${chunkIndices.length} chunks → ${ranges.length} ranges → ${totalPoints} points`
+      );
+    } else if (this.spatialIndex) {
+      // DEPRECATED: Old grid-based query (fallback for backward compatibility)
+      ranges = queryPointSpatialIndex(this.spatialIndex, querySlicePos, queryTolerance);
+
+      const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+      log.query(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Grid query (deprecated): ${ranges.length} cells → ${totalPoints} points`
+      );
+    } else {
+      // No spatial index - load all points
+      const totalPoints: number = (this.node.attrs.n_points || this.node.attrs.num_points || 0) as number;
+      ranges = [{ start: 0, end: totalPoints }];
+      log.query(Modules.SPATIAL_INDEX_LOADER, `No index: loading all ${totalPoints} points`);
+    }
 
     // Merge adjacent ranges for more efficient loading
     const merged = mergePointRanges(ranges);
 
-    const totalPoints = merged.reduce((sum, r) => sum + (r.end - r.start), 0);
-    log.query(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Query result: ${ranges.length} cells → ${merged.length} ranges → ${totalPoints} points`
-    );
+    if (merged.length !== ranges.length) {
+      const totalPoints = merged.reduce((sum, r) => sum + (r.end - r.start), 0);
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Merged ${ranges.length} ranges → ${merged.length} continuous ranges (${totalPoints} points)`
+      );
+    }
 
     return merged;
   }
@@ -992,7 +1052,25 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   getMetrics(): LoaderMetrics {
     // Update spatial index metrics if available
-    if (this.spatialIndex) {
+    if (this.chunkIndex) {
+      // NEW: Chunk-based index metrics
+      const totalChunks = this.chunkIndex.metadata.total_chunks;
+      const avgChunksPerQuery = this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0;
+
+      this.metrics.spatialIndex = {
+        // Adapt to existing interface (for compatibility)
+        gridShape: [totalChunks], // Use total chunks as "grid" size
+        gridOrigin: [0],
+        cellSize: [this.chunkIndex.metadata.chunk_size],
+        occupiedCells: totalChunks, // All chunks are "occupied"
+        totalCells: totalChunks,
+        avgCellsPerQuery: avgChunksPerQuery,
+        avgPointsPerCell: totalChunks > 0 ? this.metrics.pointsLoaded / totalChunks : 0,
+        queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
+        rangesInCache: this.cache.getStats().numEntries,
+      };
+    } else if (this.spatialIndex) {
+      // OLD: Grid-based index metrics (deprecated)
       const totalCells = this.spatialIndex.metadata.total_cells || 1;
       const occupiedCells = this.spatialIndex.metadata.num_occupied || 0;
 
@@ -1004,7 +1082,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         totalCells,
         avgCellsPerQuery: this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0,
         avgPointsPerCell: occupiedCells > 0 ? this.metrics.pointsLoaded / occupiedCells : 0,
-        queryEfficiency: 0.8, // TODO: Calculate actual efficiency
+        queryEfficiency: 0.8,
         rangesInCache: this.cache.getStats().numEntries,
       };
     }

@@ -257,3 +257,85 @@ export async function waitForUIState(
     });
   }
 }
+
+/**
+ * Get browser console messages (CRITICAL for E2E validation)
+ *
+ * Retrieves all console messages from the browser's console interceptor.
+ * This is ESSENTIAL for detecting errors in data loading, decoding, and rendering.
+ *
+ * @param page - Playwright page
+ * @returns Object with errors, warnings, and info messages
+ */
+export async function getConsoleMessages(page: Page): Promise<{
+  errors: string[];
+  warnings: string[];
+  logs: string[];
+  all: string[];
+}> {
+  return await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    if (!debug || !debug.consoleInterceptor) {
+      return { errors: [], warnings: [], logs: [], all: [] };
+    }
+
+    const messages = debug.consoleInterceptor.getMessages();
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const logs: string[] = [];
+    const all: string[] = [];
+
+    messages.forEach((msg: any) => {
+      const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
+      all.push(text);
+
+      if (text.toLowerCase().includes('error') || msg.type === 'error') {
+        errors.push(text);
+      } else if (text.toLowerCase().includes('warn') || msg.type === 'warn') {
+        warnings.push(text);
+      } else {
+        logs.push(text);
+      }
+    });
+
+    return { errors, warnings, logs, all };
+  });
+}
+
+/**
+ * Assert no console errors (CRITICAL for all E2E tests)
+ *
+ * This should be called in EVERY E2E test after loading data.
+ * Catches errors in:
+ * - Data loading
+ * - Array decoding
+ * - Spatial index queries
+ * - Geometry creation
+ * - WebGL rendering
+ *
+ * @param page - Playwright page
+ * @param allowedPatterns - Optional patterns to ignore (e.g., expected warnings)
+ */
+export async function assertNoConsoleErrors(
+  page: Page,
+  allowedPatterns: RegExp[] = []
+): Promise<void> {
+  const console = await getConsoleMessages(page);
+
+  // Filter out allowed errors
+  const actualErrors = console.errors.filter((err) => {
+    return !allowedPatterns.some((pattern) => pattern.test(err));
+  });
+
+  if (actualErrors.length > 0) {
+    console.error('[E2E Test] Console Errors Detected:');
+    actualErrors.forEach((err, i) => {
+      console.error(`  ${i + 1}. ${err}`);
+    });
+    throw new Error(
+      `Console errors detected: ${actualErrors.length} errors.\n` +
+      `First error: ${actualErrors[0]}\n` +
+      `See console output above for full list.`
+    );
+  }
+}

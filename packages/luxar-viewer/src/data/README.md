@@ -8,7 +8,7 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 
 ### Key Features
 
-- **Spatial Index (Required)**: All datasets MUST have spatial indices for loading
+- **Chunk-Based Spatial Index**: Efficient spatial queries using Morton/Hilbert-ordered chunks (optional for 3D datasets)
 - **Zarr-Native Loading**: Direct integration with Zarr stores for chunked data access
 - **nD Data Support**: Handle arbitrary-dimensional points with automatic slicing
 - **Hierarchical Scenes**: Load nested scene structures with inheritance
@@ -22,18 +22,20 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 
 ```
 data/
-├── zarr-loader.ts              # Main API entry point for loading scenes
-├── scene-loader.ts             # Orchestrates hierarchical scene loading
-├── scene-loader-manager.ts     # Singleton manager for SceneLoader instances
-├── spatial-index-loader.ts     # Loads data using point spatial index queries (required)
-├── spatial-index.ts            # Core point spatial index query implementation
-├── range-cache.ts              # Intelligent caching for range-based queries
-├── data-monitor-manager.ts     # Singleton manager for monitoring UI instances
-├── directory-navigator.ts      # Multi-strategy server directory browsing
+├── zarr-loader.ts                 # Main API entry point for loading scenes
+├── scene-loader.ts                # Orchestrates hierarchical scene loading
+├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
+├── chunk-spatial-index.ts         # Chunk-based spatial index queries (NEW)
+├── point-spatial-index-loader.ts  # Loads data using chunk/spatial index queries
+├── point-spatial-index.ts         # Grid-based queries (deprecated, backward compat)
+├── range-cache.ts                 # Intelligent caching for range-based queries
+├── array-decoder.ts               # Decodes Python luxar.encoding arrays
+├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
+├── directory-navigator.ts         # Multi-strategy server directory browsing
 ├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
-├── data-loader-types.ts        # TypeScript interfaces and types
-├── index.ts                    # Package exports
-└── README.md                   # This documentation
+├── data-loader-types.ts           # TypeScript interfaces and types
+├── index.ts                       # Package exports
+└── README.md                      # This documentation
 ```
 
 ### State Management Architecture
@@ -73,7 +75,7 @@ The data package uses a **clean singleton pattern** for instance management, com
 - **Memory Safety**: Proper cleanup and disposal
 - **Centralized Management**: Single source of truth
 
-**Note**: All datasets must be generated with the Python Luxar compiler to include spatial indices. The TypeScript viewer requires spatial indices and will not load datasets without them.
+**Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
 
 ---
 

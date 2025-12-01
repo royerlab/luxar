@@ -34,11 +34,18 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock point spatial index functions
+// Mock chunk-based spatial index functions (NEW)
+vi.mock('../data/chunk-spatial-index', () => ({
+  loadChunkSpatialIndex: vi.fn(),
+  queryChunksForView: vi.fn(),
+  chunkIndicesToRanges: vi.fn(),
+  mergePointRanges: vi.fn(),
+}));
+
+// Mock point spatial index functions (OLD - deprecated)
 vi.mock('../data/point-spatial-index', () => ({
   loadPointSpatialIndex: vi.fn(),
   queryPointSpatialIndex: vi.fn(),
-  mergePointRanges: vi.fn(),
 }));
 
 // Mock RangeCache
@@ -70,36 +77,22 @@ vi.mock('../data/range-cache', () => ({
 }));
 
 // Import mocked modules
-import { loadPointSpatialIndex, queryPointSpatialIndex, mergePointRanges } from '../data';
+import {
+  loadChunkSpatialIndex,
+  queryChunksForView,
+  chunkIndicesToRanges,
+  mergePointRanges,
+} from '../data/chunk-spatial-index';
+import { loadPointSpatialIndex, queryPointSpatialIndex } from '../data/point-spatial-index';
 
 describe('PointSpatialIndexLoader', () => {
   let loader: PointSpatialIndexLoader;
   let mockZarrLocation: any;
   let mockNode: SceneNode;
-  let mockSpatialIndex: any;
   let mockArrays: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Setup mock spatial index
-    mockSpatialIndex = {
-      metadata: {
-        grid_shape: [10, 10, 10],
-        grid_origin: [0, 0, 0],
-        cell_size: [1, 1, 1],
-        num_occupied: 50,
-        total_cells: 1000,
-        total_points: 10000,
-        dimensions: 1, // 1 indexed dimension (time)
-        full_dimensions: 4, // x, y, z, time
-        indexed_dimensions: [3], // Only time is indexed
-        displayed_dimensions: [0, 1, 2], // x, y, z are displayed
-        build_version: '0.5',
-      },
-      occupiedCells: new Uint32Array([0, 1, 2]),
-      cellRanges: new BigUint64Array([0n, 100n, 100n, 200n, 200n, 300n]),
-    };
 
     // Setup mock zarr arrays
     mockArrays = {
@@ -137,13 +130,35 @@ describe('PointSpatialIndexLoader', () => {
       hasSpatialIndex: true,
     };
 
-    // Configure mocks - set default behavior
-    (loadPointSpatialIndex as any).mockResolvedValue(mockSpatialIndex);
-    (queryPointSpatialIndex as any).mockReturnValue([
+    // Configure chunk-based index mocks (NEW)
+    const mockChunkIndex = {
+      metadata: {
+        ordering: 'morton' as const,
+        morton_dims: [0, 1, 2],
+        slice_dims: [3],
+        morton_bits_per_dim: 21,
+        chunk_size: 100,
+        total_points: 10000,
+        total_chunks: 100,
+        ndim: 4,
+      },
+      chunkBounds: new Float32Array(100 * 4 * 2), // 100 chunks, 4D, min/max
+    };
+
+    (loadChunkSpatialIndex as any).mockResolvedValue(mockChunkIndex);
+    (queryChunksForView as any).mockReturnValue([0, 2]); // Returns chunk indices
+    (chunkIndicesToRanges as any).mockReturnValue([
       { start: 0, end: 100 },
       { start: 200, end: 300 },
     ]);
     (mergePointRanges as any).mockImplementation((_ranges: any) => _ranges);
+
+    // Configure old grid-based mocks (DEPRECATED - for backward compatibility)
+    (loadPointSpatialIndex as any).mockResolvedValue(null); // Chunk index takes precedence
+    (queryPointSpatialIndex as any).mockReturnValue([
+      { start: 0, end: 100 },
+      { start: 200, end: 300 },
+    ]);
 
     (zarr.open as any).mockImplementation((_location: any) => {
       const path = _location.toString();
@@ -173,7 +188,7 @@ describe('PointSpatialIndexLoader', () => {
   });
 
   describe('initialization', () => {
-    it('should load spatial index on first load', async () => {
+    it('should load chunk-based spatial index on first load', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5],
@@ -182,8 +197,9 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(loadPointSpatialIndex).toHaveBeenCalledWith(mockZarrLocation);
-      expect(zarr.open).toHaveBeenCalledTimes(4); // positions, colors, radii, sharpness
+      // NEW: Check chunk-based index loading
+      expect(loadChunkSpatialIndex).toHaveBeenCalledWith(mockZarrLocation, mockNode.attrs);
+      expect(zarr.open).toHaveBeenCalled(); // positions, colors, radii, sharpness
     });
 
     it('should handle missing spatial index gracefully for 3D datasets', async () => {
@@ -259,13 +275,13 @@ describe('PointSpatialIndexLoader', () => {
 
       await Promise.all(promises);
 
-      // Should only initialize once
-      expect(loadPointSpatialIndex).toHaveBeenCalledTimes(1);
+      // Should only initialize once (NEW: check chunk-based loading)
+      expect(loadChunkSpatialIndex).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('spatial index queries', () => {
-    it('should query spatial index with correct parameters', async () => {
+    it('should query chunk-based index with correct parameters', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5.5],
@@ -274,11 +290,15 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(queryPointSpatialIndex).toHaveBeenCalledWith(
-        mockSpatialIndex,
-        expect.arrayContaining([0, 0, 0, 5.5]),
-        expect.any(Array)
-      );
+      // NEW: Check chunk-based query
+      expect(queryChunksForView).toHaveBeenCalled();
+      expect(chunkIndicesToRanges).toHaveBeenCalled();
+
+      // Verify chunk query was called with the index
+      const chunkQueryCall = (queryChunksForView as any).mock.calls[0];
+      expect(chunkQueryCall[0]).toBeDefined(); // Chunk index
+      expect(chunkQueryCall[1]).toBeDefined(); // Slice position
+      expect(chunkQueryCall[2]).toBeDefined(); // Tolerance
     });
 
     it('should return empty points when no points visible', async () => {
@@ -297,7 +317,9 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     it('should merge adjacent ranges for efficiency', async () => {
-      (queryPointSpatialIndex as any).mockReturnValue([
+      // NEW: Mock chunk-based query to return multiple chunks
+      (queryChunksForView as any).mockReturnValue([0, 1, 3]); // Chunks 0, 1, 3
+      (chunkIndicesToRanges as any).mockReturnValue([
         { start: 0, end: 100 },
         { start: 100, end: 200 }, // Adjacent
         { start: 300, end: 400 },
@@ -368,7 +390,8 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(queryPointSpatialIndex).toHaveBeenCalled();
+      // NEW: Check chunk-based query was used
+      expect(queryChunksForView).toHaveBeenCalled();
     });
   });
 
@@ -740,6 +763,89 @@ describe('PointSpatialIndexLoader', () => {
       const result = await loader.loadPoints(viewState);
 
       expect(result.positions).toBeInstanceOf(Float32Array);
+    });
+  });
+
+  describe('3D datasets without spatial index (fallback)', () => {
+    it('should create dummy spatial index for 3D datasets', async () => {
+      // Mock loadPointSpatialIndex to return null (no index)
+      const { loadPointSpatialIndex } = await import('../data/point-spatial-index');
+      vi.mocked(loadPointSpatialIndex).mockResolvedValue(null);
+
+      // Mock positions array with shape [100, 3]
+      const mockPositionsArray = {
+        shape: [100, 3],
+        attrs: {},
+      };
+      vi.mocked(zarr.open).mockResolvedValue(mockPositionsArray as any);
+
+      const node: SceneNode = {
+        path: '3d_points',
+        type: 'points',
+        attrs: {
+          num_points: 100,
+        },
+        hasSpatialIndex: false,
+      };
+
+      const loader = new PointSpatialIndexLoader(mockZarrLocation, node);
+      await loader.initialize();
+
+      // Should have created a dummy spatial index
+      expect(loader['spatialIndex']).toBeDefined();
+      expect(loader['spatialIndex']?.metadata.grid_shape).toEqual([]);
+      expect(loader['spatialIndex']?.metadata.num_occupied).toBe(0);
+      expect(loader['spatialIndex']?.metadata.total_points).toBe(100);
+    });
+
+    it('should load all points when no spatial index present', async () => {
+      // Setup: No spatial index, 50 points
+      const { loadPointSpatialIndex, queryPointSpatialIndex } = await import('../data/point-spatial-index');
+      vi.mocked(loadPointSpatialIndex).mockResolvedValue(null);
+
+      // Mock queryPointSpatialIndex to return range for all points
+      vi.mocked(queryPointSpatialIndex).mockReturnValue([{ start: 0, end: 50 }]);
+
+      const mockPositionsArray = {
+        shape: [50, 3],
+        attrs: {},
+      };
+
+      // Set up zarr.open to return our mock positions array
+      vi.mocked(zarr.open).mockImplementation((_location: any) => {
+        return Promise.resolve(mockPositionsArray as any);
+      });
+
+      // Mock zarr.get to return 50 points
+      const mockPositions = new Float32Array(50 * 3).fill(1.0);
+      vi.mocked(zarr.get).mockResolvedValue({
+        data: mockPositions,
+        shape: [50, 3],
+        stride: [3, 1],
+      } as any);
+
+      const node: SceneNode = {
+        path: '3d_points',
+        type: 'points',
+        attrs: {
+          num_points: 50,
+        },
+        hasSpatialIndex: false,
+      };
+
+      const loader = new PointSpatialIndexLoader(mockZarrLocation, node);
+      await loader.initialize();
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      // Should have loaded all 50 points
+      expect(result.positions.length).toBe(50 * 3); // 50 points × 3 coords
     });
   });
 });

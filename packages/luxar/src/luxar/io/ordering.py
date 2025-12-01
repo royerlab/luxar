@@ -296,9 +296,14 @@ def compute_chunk_bounds_points(
             mins = (chunk_positions - chunk_radii[:, np.newaxis]).min(axis=0)
             maxs = (chunk_positions + chunk_radii[:, np.newaxis]).max(axis=0)
         else:
-            # No radii, just position bounds
-            mins = chunk_positions.min(axis=0)
-            maxs = chunk_positions.max(axis=0)
+            # No radii provided - add small safety margin to prevent missing points
+            # at chunk boundaries when default radius is applied during rendering
+            # Safety margin: 1% of coordinate range or 0.01, whichever is larger
+            coord_range = chunk_positions.max(axis=0) - chunk_positions.min(axis=0)
+            safety_margin = np.maximum(coord_range * 0.01, 0.01)
+
+            mins = chunk_positions.min(axis=0) - safety_margin
+            maxs = chunk_positions.max(axis=0) + safety_margin
 
         chunk_bounds[chunk_idx, :, 0] = mins
         chunk_bounds[chunk_idx, :, 1] = maxs
