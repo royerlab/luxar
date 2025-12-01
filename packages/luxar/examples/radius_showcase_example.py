@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""
-Comprehensive example showcasing the point radius feature in Luxar.
+"""Radius Showcase Example - Comprehensive demonstration of point radius features.
 
-This script generates several points examples with varying radii to demonstrate
-the new per-point radius functionality. The examples include:
-1. Size gradient - points that grow from small to large
-2. Distance-based sizing - points sized based on distance from center
-3. Random sizing - points with random radii
-4. Layered spheres - concentric spheres with different radii
+This example demonstrates:
+- Size gradients: points that grow progressively along a path
+- Distance-based sizing: radii calculated from distance to center
+- Random sizing: natural variation in point sizes
+- Layered spheres: concentric structures with different radii
+- How radius affects visual hierarchy and data emphasis
+
+Educational value:
+- Learn the full capabilities of the radius parameter
+- Understand size-based visual organization techniques
+- See both structured and natural size patterns
+- Master radius as a data dimension (not just aesthetic)
+- Learn when each sizing approach is appropriate
+
+When to use these techniques:
+- Size gradients: Show progression, importance, or ordering
+- Distance-based: Radial symmetry, centrality, or proximity
+- Random sizing: Natural, organic appearance
+- Layered: Hierarchical structures, nested organization
 """
 
 from pathlib import Path
