@@ -158,17 +158,6 @@ python sharpness_showcase_example.py
 luxar serve sharpness_showcase_example.zarr
 ```
 
-#### 12. **sharpness_compensation_example.py** - Size Compensation
-Shows how sharpness affects apparent size:
-- Points with identical radii but different sharpness
-- Demonstrates shader compensation for consistent sizing
-- Color gradient from soft (blue) to sharp (red)
-
-```bash
-python sharpness_compensation_example.py
-luxar serve sharpness_compensation_example.zarr
-```
-
 ### Advanced Examples
 
 #### 13. **nd_points_example.py** - Mixed Dimensionality Scene
