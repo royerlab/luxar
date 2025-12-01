@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
-"""Progressive Writing Example - Demonstrates memory-efficient scene building.
+"""Progressive Writing Example - Memory-efficient scene building for large datasets.
 
-This example shows how to use the new LuxarZarrCompiler for progressive writing,
-which enables handling datasets larger than available RAM.
+This example demonstrates:
+- Using write_points() for direct-to-disk writing (bypasses memory)
+- Creating resizable datasets for dynamic/streaming data
+- Writing data in batches without loading all into RAM
+- Difference between add_points() (in-memory) vs write_points() (streaming)
+- Handling datasets larger than available memory
+
+Educational value:
+- Learn WHEN to use progressive writing (datasets >1GB or dynamic size)
+- Understand memory vs disk trade-offs
+- Master batch processing patterns for large data
+- Avoid out-of-memory errors with huge datasets
+
+Key principle:
+- write_points() writes data directly to zarr (doesn't stay in memory)
+- add_points() keeps references until finalization (uses more memory)
+- Use progressive writing when dataset size is unknown or very large
 """
 
 from pathlib import Path
@@ -120,12 +135,26 @@ def main():
                 f"✅ Scene created with {n_points_1 + n_points_2 + total_points:,} total points"
             )
             aprint(f"📁 Data written progressively to: {output_path}")
+            aprint("")
+            aprint("MEMORY BENEFITS:")
+            aprint(f"- Only current batch in memory (not all {total_points:,} points)")
+            aprint("- Previous batches written to disk and freed")
+            aprint("- Essential technique for datasets larger than RAM")
 
             # Context manager automatically finalizes the store
+            aprint("")
             aprint("✅ Scene finalized and ready for viewing")
-            aprint("To view the scene, run:")
-            aprint("  cd packages/luxar-viewer && pnpm dev")
-            aprint(f"  # Then open http://localhost:5173/?source=../../{output_path}")
+            aprint("")
+            aprint("=" * 60)
+            aprint("To view the scene:")
+            aprint(f"  luxar serve {output_path}")
+            aprint("")
+            aprint("WHEN TO USE THIS TECHNIQUE:")
+            aprint("- Dataset size unknown (streaming from network/file)")
+            aprint("- Dataset larger than available RAM")
+            aprint("- Need to process data in chunks")
+            aprint("- Building scenes incrementally over time")
+            aprint("=" * 60)
 
 
 if __name__ == "__main__":

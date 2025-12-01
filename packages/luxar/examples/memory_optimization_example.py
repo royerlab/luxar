@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
-"""Memory optimization example using different encoding modes.
+"""Memory Optimization Example - Comparing encoding modes for storage efficiency.
 
-This example demonstrates how to use different encoding modes for Luxar scenes
-to optimize memory usage and bandwidth. It shows the trade-offs between precision
-and memory efficiency.
+This example demonstrates:
+- Three encoding modes: AUTO, PRECISION, MEMORY
+- How encoding affects file size and data quality
+- Trade-offs between precision and storage/bandwidth
+- Measuring and comparing zarr store sizes
+- When to use each encoding mode in production
 
-The new encoding system uses EncodingMode from luxar.encoding:
-- AUTO: Automatically analyze data and select appropriate encoding
-- PRECISION: Full float32 precision for all arrays
-- MEMORY: Aggressive quantization for minimum storage
+Educational value:
+- Understand encoding mode implications for real-world use
+- Learn to make informed precision vs size trade-offs
+- See actual file size differences with identical data
+- Master the EncodingMode API for production deployments
+
+Use cases by mode:
+- AUTO: Smart default for most cases (automatic compression)
+- PRECISION: Scientific data where accuracy is critical
+- MEMORY: Web delivery where bandwidth/storage is limited
+
+Key principle:
+- Encoding happens during write, decoding during read
+- Quality loss only in MEMORY mode (quantization)
+- AUTO mode intelligently chooses based on data characteristics
 """
 
 import os
