@@ -7,6 +7,13 @@ This benchmark example demonstrates:
 - Measuring scene creation performance
 - Generating systematic test data for performance analysis
 - Educational timing and profiling techniques
+
+Educational value:
+- Learn how to benchmark scene creation performance
+- Understand material combination caching and reuse patterns
+- See systematic test data generation for performance testing
+- Understand how to profile and measure creation speed
+- Provides reference performance numbers for large scenes
 """
 
 import time
