@@ -1,11 +1,24 @@
-#!/usr/bin/env python
-"""
-Example demonstrating scene-level dimensions with explicit stepping.
+#!/usr/bin/env python3
+"""Scene Dimensions Example - Comprehensive dimension configuration.
 
-This shows how to define dimensions at the scene level with:
-- Custom step sizes for navigation
-- Units and ranges
-- Display configuration
+This example demonstrates:
+- Defining scene-level dimensions with custom properties
+- Setting step sizes for keyboard navigation
+- Configuring units and physical ranges
+- Controlling which dimensions are displayed vs navigable
+- Dimension validation for all objects in the scene
+
+Educational value:
+- Learn proper dimension configuration for nD scenes
+- Understand displayed vs non-displayed dimensions
+- Master step size configuration for navigation
+- See how dimensions provide automatic validation
+
+Key principle:
+- Scene dimensions define the coordinate system for ALL objects
+- Step sizes control keyboard navigation granularity
+- Non-displayed dimensions must be discrete
+- Dimensions enable automatic range validation
 """
 
 from pathlib import Path
