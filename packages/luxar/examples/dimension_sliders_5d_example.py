@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
-"""Dimension Sliders 5D Example - Demonstrates 5D data visualization with sliders.
+"""Dimension Sliders 5D Example - Interactive 5D navigation with slider UI.
 
-This educational example demonstrates:
-- Creating 5D scenes with time and channel dimensions
-- Setting up dimension sliders for navigation
+This example demonstrates:
+- Creating 5D scenes (time + 3D space + channel)
+- Dimension slider UI for intuitive navigation
 - Discrete vs continuous dimension handling
-- Temporal animation data
+- Temporal animation with rotating spiral
 - Multi-channel data visualization
+
+Educational value:
+- Learn to configure dimension sliders in the viewer
+- Understand discrete dimension navigation
+- Master 5D data structure and organization
+- See how sliders enhance nD navigation UX
+- Good example for UI-based dimension control
+
+Key principle:
+- Sliders provide visual feedback for dimension navigation
+- Non-displayed dimensions become navigable via sliders
+- Discrete dimensions snap to integer values
+- Essential UI pattern for nD data exploration
 """
 
 from pathlib import Path

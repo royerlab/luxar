@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
-"""Rainbow Sphere Spiral Example - Creates a dense sphere with spiraling rainbow colors.
+"""Rainbow Sphere Spiral Example - Dense sphere with spiraling rainbow colors.
 
 This example demonstrates:
-- Creating a very dense points (200,000 points) on a sphere
-- Using spherical spiral for even distribution
-- Calculating appropriate point spacing
-- High sharpness for crisp point rendering
-- Smooth rainbow gradient along the spiral
+- Creating high-density points (200,000) on a sphere surface
+- Using spherical spiral (Fibonacci-like) for even distribution
+- Calculating proper point spacing to avoid gaps
+- High sharpness for crisp rendering
+- Smooth rainbow gradient flowing along the spiral
+
+Educational value:
+- Learn spherical point distribution techniques
+- Understand golden ratio for even sphere coverage
+- Master high-density visualization (stress testing)
+- See how point spacing prevents gaps in dense clouds
+- Excellent performance benchmark for rendering
+
+Key principle:
+- Golden ratio spiral provides most uniform sphere coverage
+- Point spacing = sphere_radius / sqrt(n_points) prevents gaps
+- High density (200k points) tests rendering performance
 """
 
 from pathlib import Path
