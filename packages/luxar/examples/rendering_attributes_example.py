@@ -7,6 +7,13 @@ This educational example demonstrates:
 - Method chaining for fluent API usage
 - Runtime modification of point properties
 - Visual comparison of different attribute settings
+
+Educational value:
+- Learn how to set and modify rendering properties on points
+- Understand validation rules for opacity, gamma, and blending modes
+- See method chaining for fluent API design patterns
+- Understand how to compare different attribute combinations visually
+- Learn best practices for property modification and error handling
 """
 
 from pathlib import Path

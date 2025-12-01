@@ -23,10 +23,10 @@ const REQUIRED_DATASETS = [
 export default async function globalSetup() {
   console.log('\n🔍 Running pre-flight checks...\n');
 
-  // Get project root (5 levels up from this file)
-  // src/tests/e2e -> tests -> src -> luxar-viewer -> packages -> luxar (root)
-  const projectRoot = path.resolve(__dirname, '../../../../..');
-  const examplesDir = path.join(projectRoot, 'examples');
+  // Get project root (4 levels up from this file to packages/)
+  // src/tests/e2e -> tests -> src -> luxar-viewer -> packages
+  const packagesRoot = path.resolve(__dirname, '../../../..');
+  const examplesDir = path.join(packagesRoot, 'luxar/examples');
 
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {

@@ -13,6 +13,13 @@ Run with:
 
 Then view with:
     luxar serve spatial_index_demo_example.zarr
+
+Educational value:
+- Learn how spatial indices improve performance for nD point clouds
+- Understand how clusters are efficiently queried in multi-dimensional space
+- See how to organize 5D data for efficient slice-based navigation
+- Compare indexed vs non-indexed performance using --no-spatial-index flag
+- Understand practical benefits of spatial indexing for large datasets
 """
 
 import argparse
