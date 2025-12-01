@@ -1,18 +1,25 @@
-#!/usr/bin/env python
-"""
-Example demonstrating nD points support in Luxar with scene-level dimensions.
+#!/usr/bin/env python3
+"""nD Points Example - Comprehensive demonstration of high-dimensional point data.
 
-This example shows how to:
-1. Create 5D points with time and channel dimensions
-2. Define scene-level dimensions for proper nD visualization
-3. Use non-displayed dimensions for temporal and channel data
-4. Navigate through high-dimensional data in the viewer
+This example demonstrates:
+- Creating 5D point data (time + 3D space + channel)
+- Defining scene-level dimensions for proper nD visualization
+- Using non-displayed dimensions for temporal and channel data
+- Navigating through high-dimensional data with keyboard controls
+- How scene dimensions enable automatic validation and navigation
 
-Key concepts:
-- Scene-level dimensions replace the old dimension_metadata approach
-- Non-displayed dimensions (time, channel) are discrete and navigable
-- Displayed dimensions (x, y, z) are shown in the 3D viewer
-- Spatial indexing enables efficient nD slicing and navigation
+Educational value:
+- Understand nD point clouds (beyond 3D)
+- Learn scene-level dimension configuration
+- See how displayed vs non-displayed dimensions work
+- Master nD navigation with dimension selection and stepping
+- Understand spatial indexing for efficient nD queries
+
+Key principles:
+- Scene dimensions define the coordinate system for all objects
+- Non-displayed dimensions (time, channel) must be discrete
+- Displayed dimensions (x, y, z) show the 3D slice
+- Spatial indexing enables efficient loading of relevant points only
 """
 
 from pathlib import Path
@@ -26,7 +33,19 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 def create_5d_time_series(
     n_timepoints: int = 10, n_channels: int = 3, n_points: int = 1000
 ) -> np.ndarray:
-    """Create a 5D points representing a time series with multiple channels."""
+    """Create 5D point data with temporal and channel dimensions.
+
+    Generates a spiral pattern that evolves over time with multiple channels,
+    demonstrating how to structure high-dimensional point data.
+
+    Args:
+        n_timepoints: Number of time steps
+        n_channels: Number of data channels
+        n_points: Points per channel per timepoint
+
+    Returns:
+        Array of 5D positions [time, x, y, z, channel]
+    """
     positions = np.zeros((n_timepoints * n_channels * n_points, 5), dtype=np.float32)
 
     idx = 0
