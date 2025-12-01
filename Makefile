@@ -109,14 +109,14 @@ clean:  ## Clean up temporary files and caches
 	rm -f packages/luxar-viewer/*.tsbuildinfo
 	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
 	@echo "🧹 Cleaning example outputs..."
-	find examples -name "*.zarr" -type d -exec rm -rf {} +
+	find packages/luxar/examples -name "*.zarr" -type d -exec rm -rf {} +
 	rm -rf *.zarr
 	rm -rf zarr_scenes/  # Remove deprecated directory
 	@echo "✅ Clean complete!"
 
 clean-examples:  ## Clean up only example zarr files
 	@echo "🧹 Cleaning example zarr files..."
-	@cd examples && for zarr in *.zarr; do \
+	@cd packages/luxar/examples && for zarr in *.zarr; do \
 		if [ -d "$$zarr" ]; then \
 			echo "   Removing $$zarr..."; \
 			rm -rf "$$zarr"; \
@@ -145,9 +145,9 @@ demo:  ## Generate a demo dataset (dist/demo.zarr with 100k points)
 run-examples:  ## Run all examples to generate zarr files
 	@echo "🚀 Running all examples to generate zarr files..."
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@total=$$(ls -1 examples/*_example.py 2>/dev/null | wc -l); \
+	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l); \
 	count=0; \
-	for script in examples/*_example.py; do \
+	for script in packages/luxar/examples/*_example.py; do \
 		count=$$((count + 1)); \
 		name=$$(basename $$script); \
 		echo ""; \
@@ -163,8 +163,8 @@ run-examples:  ## Run all examples to generate zarr files
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅ All examples completed!"
 	@echo ""
-	@echo "📁 Generated zarr files in examples/:"
-	@for zarr in examples/*.zarr; do \
+	@echo "📁 Generated zarr files in packages/luxar/examples/:"
+	@for zarr in packages/luxar/examples/*.zarr; do \
 		if [ -d "$$zarr" ]; then \
 			size=$$(du -sh "$$zarr" | cut -f1); \
 			name=$$(basename "$$zarr"); \
@@ -176,11 +176,11 @@ run-examples:  ## Run all examples to generate zarr files
 	@echo "   make serve-examples"
 
 serve-examples:  ## Serve the examples directory for browsing datasets
-	@echo "🌐 Serving examples directory at http://localhost:8000/"
+	@echo "🌐 Serving packages/luxar/examples directory at http://localhost:8000/"
 	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000/"
 	@echo "💡 Press 'O' in the viewer to browse available datasets"
 	@echo ""
-	hatch run luxar serve examples/
+	hatch run luxar serve packages/luxar/examples/
 
 serve-data:  ## Serve a dataset (default: dist/demo.zarr, port: 8000)
 	@if [ ! -d "dist/demo.zarr" ]; then \

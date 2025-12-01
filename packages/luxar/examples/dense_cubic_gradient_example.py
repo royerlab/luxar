@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""DOF Cubic Array Example - Test depth-of-field with a dense 3D grid.
+"""Dense Cubic Gradient Example - Million-point cube with depth-based colors.
 
 This example demonstrates:
-- Creating a 100x100x100 cubic array of small sharp disc-like points
-- Optimized for testing depth-of-field blur effects
-- Color gradient indicating depth for better visualization
-- Proper spacing to avoid overlapping while maintaining density
+- High-density visualization (1,000,000 points in 100×100×100 cubic lattice)
+- Beautiful depth-based color gradients for perspective visualization
+- Performance testing with dense regular grids
+- Crystalline/volumetric structures with sharp disc-like points
+- Background star field (500k points) providing depth context
+- Creating evenly-spaced 3D grids using np.meshgrid
 
-This scene is specifically designed for testing DOF post-processing effects,
-with high point density and sharp edges that clearly show blur effects.
+Educational value:
+- Shows how to generate large regular grids efficiently
+- Demonstrates depth perception through color gradients
+- Illustrates performance characteristics with million-point datasets
+- Perfect for testing rendering quality, camera controls, and navigation
 """
 
 from pathlib import Path
@@ -25,13 +30,17 @@ def create_cubic_array(
     radius: float = 0.05,
     sharpness: float = 10.0,
 ) -> tuple:
-    """Create a cubic array of sharp disc-like points.
+    """Create a dense cubic lattice with depth-based color gradient.
+
+    This function generates a perfect cubic grid of points with a beautiful
+    warm-to-cool color gradient based on depth (Z coordinate), creating
+    a stunning visualization of perspective and depth.
 
     Args:
-        grid_size: Number of points along each axis (100 for 100x100x100)
-        spacing: Distance between adjacent points
-        radius: Radius of each point (small for disc-like appearance)
-        sharpness: Sharpness value (high for sharp edges)
+        grid_size: Number of points along each axis (100 → 1 million points)
+        spacing: Distance between adjacent points in the grid
+        radius: Radius of each point (small creates disc-like appearance)
+        sharpness: Sharpness value (high creates sharp edges)
 
     Returns:
         Tuple of (positions, colors, radii, sharpness) arrays
@@ -88,16 +97,17 @@ def create_cubic_array(
 
 
 def main():
-    """Create a DOF test cubic array scene."""
-    output_path = Path(__file__).parent / "dof_cubic_array_example.zarr"
+    """Create a dense cubic gradient visualization scene."""
+    output_path = Path(__file__).parent / "dense_cubic_gradient_example.zarr"
 
-    aprint(f"Creating DOF cubic array at {output_path}")
-    aprint("This example creates a dense 100×100×100 grid for DOF testing")
+    aprint(f"Creating dense cubic gradient at {output_path}")
+    aprint("This example creates a stunning 100×100×100 grid visualization")
     aprint("")
     aprint("Scene features:")
-    aprint("- 1,000,000 sharp disc-like points")
-    aprint("- Color gradient from warm (near) to cool (far)")
-    aprint("- Optimized spacing to prevent overlap")
+    aprint("- 1,000,000 sharp disc-like points in perfect cubic lattice")
+    aprint("- Beautiful depth gradient: warm (near) → cool (far)")
+    aprint("- Plus 500,000 background stars for depth context")
+    aprint("- Optimized spacing preventing overlap while maintaining density")
 
     # Create scene
     with LuxarZarrCompiler(output_path) as compiler:
@@ -105,36 +115,37 @@ def main():
 
         # Add metadata
         scene.attrs["description"] = """
-DOF Cubic Array Test Scene
-===========================
+Dense Cubic Gradient Visualization
+===================================
 
-This scene provides a dense cubic array specifically designed for
-testing depth-of-field post-processing effects:
+A stunning high-density visualization featuring:
 
-- 100×100×100 grid = 1,000,000 points
-- Small radius (0.05) for disc-like appearance
-- High sharpness (10.0) for sharp edges
+- 1,000,000 points in a perfect 100×100×100 cubic lattice
+- Beautiful depth-based color gradient:
+  * Warm colors (red/yellow) for points near the camera
+  * Cool colors (blue/cyan) for points far from the camera
+- Sharp disc-like points creating a crystalline appearance
+- 500,000 background stars providing depth context
 - Additive blending for realistic light accumulation
-- Color gradient: warm colors (red/yellow) near, cool colors (blue/cyan) far
-- Reference markers at near/middle/far planes
 
-Use this scene to test:
-- DOF blur quality with dense points
-- Focus distance transitions
-- Bokeh quality and shape
-- Performance with high point counts
+Educational features:
+- Demonstrates high-density visualization techniques
+- Shows depth perception through color gradients
+- Illustrates efficient grid generation with np.meshgrid
+- Perfect for testing camera fly controls and navigation
+- Good performance benchmark (1M+ points)
 
-Recommended settings:
-- Enable DOF in rendering controls (press 'R')
-- Start with focus distance = 0 (middle of grid)
-- Try DOF strength = 0.5 to 1.0
-- Adjust focus distance to see blur transitions
-- Use fly controls (press 'C') to move through the grid
+Viewing tips:
+- Press 'C' to switch to fly controls
+- Use WASD to fly through the cubic structure
+- Use mouse to look around
+- Observe how color gradient enhances depth perception
+- Notice the crystalline lattice structure
 
 Performance notes:
-- This is a stress test with 1M points
-- Reduce grid size if performance is poor
-- Consider enabling FXAA for smoother edges
+- This is a stress test with 1.5M total points
+- GPU performance dependent
+- Excellent test for rendering optimization
         """
 
         # Create the main cubic array
@@ -202,21 +213,22 @@ Performance notes:
 
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")
-        aprint("1. Run: luxar serve dof_cubic_array_example.zarr --viewer")
-        aprint("2. Press 'R' to open rendering controls")
-        aprint("3. Navigate to 'Post-Processing Effects' → 'Depth of Field'")
-        aprint("4. Enable DOF and experiment with:")
-        aprint("   - Focus Distance: -25 to +25 (grid depth range)")
-        aprint("   - DOF Strength: 0.5 to 1.0 (blur amount)")
-        aprint("5. Press 'C' to switch to fly controls for navigation")
-        aprint("6. Use WASD to fly through the grid")
+        aprint("1. Run: luxar serve dense_cubic_gradient_example.zarr --viewer")
+        aprint("2. Observe the beautiful depth gradient (warm → cool)")
+        aprint("3. Press 'C' to switch to fly controls")
+        aprint("4. Use WASD to fly through the crystalline cube")
+        aprint("5. Use mouse to look around inside the structure")
         aprint("")
         aprint("COLOR GUIDE:")
-        aprint("- Red/Yellow points: Near to camera")
-        aprint("- Blue/Cyan points: Far from camera")
-        aprint("- Red markers: Near reference plane")
-        aprint("- Green markers: Middle reference plane")
-        aprint("- Blue markers: Far reference plane")
+        aprint("- Red/Yellow points: Near to camera (front of cube)")
+        aprint("- Green points: Middle distance")
+        aprint("- Blue/Cyan points: Far from camera (back of cube)")
+        aprint("- Background stars: Depth context and orientation")
+        aprint("")
+        aprint("EDUCATIONAL NOTES:")
+        aprint("- Notice how color gradient enhances depth perception")
+        aprint("- Observe the sharp crystalline disc structure")
+        aprint("- This demonstrates million-point rendering capabilities")
         aprint("=" * 60)
 
 
