@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Dense Grid 5D Example - Multi-dimensional points with time and channels."""
+"""Dense Grid 5D Example - Multi-dimensional grid with time and channels.
+
+This example demonstrates:
+- Creating dense 5D grid data (X, Y, Z, Time, Channel)
+- Regular grid structure (10×10×10) across 10 timepoints and 3 channels
+- Scene-level dimension configuration for nD navigation
+- How points change appearance across time and channels
+- Discrete dimensions for frame-based navigation
+
+Educational value:
+- Learn to structure regular 5D grid data
+- Understand time and channel as additional dimensions
+- See how dense data behaves with dimension navigation
+- Master configuration for multi-channel temporal data
+- Good test case for spatial index performance
+"""
 
 from pathlib import Path
 
