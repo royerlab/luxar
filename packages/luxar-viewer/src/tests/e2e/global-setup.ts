@@ -12,7 +12,7 @@ import * as path from 'path';
 
 // Required datasets for E2E tests
 const REQUIRED_DATASETS = [
-  'broadcast_api_example.zarr',
+  'simple_nd_example.zarr',
   'build_example_manual.zarr',
   'build_example_structured.zarr',
   'dimension_navigation_example.zarr',

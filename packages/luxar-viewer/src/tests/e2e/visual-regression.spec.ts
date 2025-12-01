@@ -13,9 +13,9 @@ import { waitForLuxarReady } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 8001)
 const DATASETS = {
-  nav: 'http://localhost:9000/examples/dimension_navigation_example.zarr',
-  grid5D: 'http://localhost:9000/examples/dense_grid_5d_example.zarr',
-  build: 'http://localhost:9000/examples/build_example_structured.zarr',
+  nav: 'http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr',
+  grid5D: 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr',
+  build: 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr',
 };
 
 test.describe('Visual Regression - Basic Rendering', () => {

@@ -13,12 +13,12 @@ import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers
 
 // Dataset paths (served from Python HTTP server on port 8001)
 const DATASETS = {
-  dimensionNav: 'http://localhost:9000/examples/dimension_navigation_example.zarr',
-  dimSliders5D: 'http://localhost:9000/examples/dimension_sliders_5d_example.zarr',
-  denseGrid5D: 'http://localhost:9000/examples/dense_grid_5d_example.zarr',
-  broadcast: 'http://localhost:9000/examples/broadcast_api_example.zarr',
-  buildManual: 'http://localhost:9000/examples/build_example_manual.zarr',
-  buildStructured: 'http://localhost:9000/examples/build_example_structured.zarr',
+  dimensionNav: 'http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr',
+  dimSliders5D: 'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr',
+  denseGrid5D: 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr',
+  broadcast: 'http://localhost:9000/packages/luxar/examples/simple_nd_example.zarr',
+  buildManual: 'http://localhost:9000/packages/luxar/examples/build_example_manual.zarr',
+  buildStructured: 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr',
 };
 
 test.describe('Real Dataset Loading', () => {

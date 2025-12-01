@@ -1,0 +1,487 @@
+# Luxar Example Template
+
+This document defines the standard structure and style for all Luxar example files.
+
+## Purpose
+
+Examples should be **educational**, **self-contained**, and **production-ready**. They demonstrate specific features or techniques to help users learn Luxar effectively.
+
+---
+
+## File Structure
+
+### 1. Filename Convention
+```
+feature_description_example.py
+```
+
+**Rules:**
+- Use snake_case
+- Must end with `_example.py`
+- Be descriptive but concise
+- Examples: `single_point_example.py`, `hierarchy_example.py`, `dense_cubic_gradient_example.py`
+
+### 2. Required Components (in order)
+
+#### A. Shebang
+```python
+#!/usr/bin/env python3
+```
+
+#### B. Module Docstring
+```python
+"""Example Title - One-line description.
+
+This example demonstrates:
+- Feature 1 being demonstrated
+- Feature 2 being demonstrated
+- Feature 3 being demonstrated
+- Why this example is useful/educational
+
+Educational value:
+- What users will learn from this example
+- Key concepts illustrated
+- Technical skills demonstrated
+- When to use these techniques in practice
+"""
+```
+
+**Docstring Requirements:**
+- Start with title and one-line summary
+- Blank line after title
+- "This example demonstrates:" section with bullet points
+- Optional "Educational value:" section for complex examples
+- Be specific about what's shown
+- Explain WHY, not just WHAT
+
+#### C. Imports (Standard Order)
+```python
+from pathlib import Path
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import LuxarZarrCompiler, Dimensions, Dimension, transforms
+```
+
+**Import Rules:**
+- Standard library first (`pathlib`, etc.)
+- Third-party packages (`numpy`, `arbol`)
+- Luxar imports last
+- Alphabetical within each group
+- Only import what you use
+
+#### D. Helper Functions (if needed)
+```python
+def create_some_data(param: int) -> np.ndarray:
+    """Create data for demonstration.
+
+    Args:
+        param: Description of parameter
+
+    Returns:
+        Description of return value
+    """
+    # Implementation with inline comments explaining key steps
+    return result
+```
+
+**Helper Function Requirements:**
+- Full docstrings with Args and Returns
+- Type hints for parameters and return values
+- Inline comments explaining non-obvious logic
+- Keep functions focused (single responsibility)
+
+#### E. Main Function
+```python
+def main():
+    """Create [description of what this example creates]."""
+    output_path = Path(__file__).parent / "example_name_example.zarr"
+
+    # Initial descriptive output using arbol
+    aprint(f"Creating [example name] at {output_path}")
+    aprint("This example demonstrates [key features]")
+    aprint("")
+    aprint("Scene features:")
+    aprint("- Feature 1")
+    aprint("- Feature 2")
+
+    # Create scene using context manager
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
+
+        # Add scene metadata
+        scene.attrs["description"] = """
+Example Name
+============
+
+[Detailed description of what this scene contains]
+
+Educational features:
+- Point 1
+- Point 2
+
+Viewing tips:
+- How to view this effectively
+- What to look for
+        """
+
+        # Generate data with educational comments
+        # Comment: Explain WHY you're doing this, not just WHAT
+        positions = create_some_data()
+
+        # Add to scene
+        scene.add_points(
+            "DescriptiveName",
+            positions,
+            colors=colors,
+            radii=radii,
+            # etc.
+        )
+
+        # Progress reporting
+        aprint(f"✓ Added {len(positions):,} points")
+
+    # Final instructions
+    aprint("\n" + "=" * 60)
+    aprint("VIEWING INSTRUCTIONS:")
+    aprint("1. Run: luxar serve example_name_example.zarr")
+    aprint("2. [Specific viewing instructions]")
+    aprint("3. [What to look for]")
+    aprint("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Main Function Requirements:**
+- Single docstring summarizing what gets created
+- Output path uses `Path(__file__).parent` for portability
+- Initial aprint statements describing the example
+- Use `LuxarZarrCompiler` context manager (automatic finalization)
+- Add scene.attrs["description"] with detailed metadata
+- Educational inline comments explaining WHY
+- Progress reporting with aprint
+- Final viewing instructions
+
+#### F. Entry Point
+```python
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Code Style Requirements
+
+### Comments
+
+**Do:**
+- Explain WHY you're doing something, not just WHAT
+- Add comments before complex calculations
+- Document non-obvious choices
+- Explain parameters and their effects
+- Note educational points
+
+**Don't:**
+- Comment obvious code (`x = 5  # Set x to 5`)
+- Write novels - be concise
+- Leave outdated comments
+- Comment everything - code should be self-explanatory where possible
+
+**Examples:**
+```python
+# GOOD: Explains WHY
+# Use golden ratio for even distribution on sphere
+phi = np.pi * (1 + 5**0.5) * indices
+
+# BAD: Just repeats the code
+# Calculate phi
+phi = np.pi * (1 + 5**0.5) * indices
+
+# GOOD: Explains educational point
+# KEY PRINCIPLE: spacing = 2 × radius makes spheres touch perfectly
+spacing = 2 * radius
+
+# GOOD: Explains non-obvious choice
+# Use high sharpness (10.0) for sharp edges that clearly show grid structure
+sharpness = 10.0
+```
+
+### arbol Usage
+
+**Always use arbol for console output:**
+```python
+from arbol import aprint, asection
+
+# Simple messages
+aprint("Creating scene...")
+aprint(f"Added {n_points:,} points")
+
+# Hierarchical sections for complex operations
+with asection("Data Generation"):
+    aprint("Generating positions...")
+    # ... work ...
+    aprint(f"✓ Created {n_points:,} positions")
+```
+
+**Rules:**
+- Use `aprint()` instead of `print()`
+- Use `asection()` for logical blocks
+- Format numbers with commas: `f"{n:,}"`
+- Use checkmarks for success: `✓`
+- Use section headers: `=====`
+
+### Data Types
+
+**Always specify dtypes explicitly:**
+```python
+# Positions - always float32
+positions = np.array(data, dtype=np.float32)
+
+# Colors - float32 for HDR support
+colors = np.array(color_data, dtype=np.float32)
+
+# Radii - float32
+radii = np.array(radii_data, dtype=np.float32)
+
+# Sharpness - float32
+sharpness = np.full(n_points, 2.0, dtype=np.float32)
+```
+
+### Variable Naming
+
+**Be descriptive:**
+```python
+# GOOD
+n_points = 1000
+sphere_radius = 0.5
+grid_spacing = 2.0
+
+# BAD
+n = 1000
+r = 0.5
+s = 2.0
+```
+
+---
+
+## Example Categories
+
+### Minimal Examples
+- **Purpose**: Teach one specific concept
+- **Size**: < 100 lines
+- **Complexity**: Beginner-friendly
+- **Examples**: `single_point_example.py`
+
+### Comprehensive Examples
+- **Purpose**: Show complete feature set
+- **Size**: 100-300 lines
+- **Complexity**: Intermediate
+- **Examples**: `hierarchy_example.py`, `transform_example.py`
+
+### Advanced Examples
+- **Purpose**: Production techniques
+- **Size**: 200-500 lines
+- **Complexity**: Advanced
+- **Examples**: `progressive_writing_example.py`, `memory_optimization_example.py`
+
+### Stress Test Examples
+- **Purpose**: Performance testing
+- **Size**: Variable
+- **Complexity**: High data volume
+- **Examples**: `dense_cubic_gradient_example.py` (1M points)
+
+---
+
+## Quality Checklist
+
+Before committing an example, verify:
+
+### Code Quality
+- [ ] Follows the template structure exactly
+- [ ] Has comprehensive module docstring
+- [ ] All functions have docstrings with Args/Returns
+- [ ] Type hints on all function parameters
+- [ ] Inline comments explain WHY, not WHAT
+- [ ] Variable names are descriptive
+- [ ] Uses arbol (aprint/asection) for all output
+- [ ] Proper dtype specification (float32)
+
+### Educational Value
+- [ ] Demonstrates one clear concept or feature
+- [ ] Includes educational comments explaining key principles
+- [ ] Has viewing instructions
+- [ ] Explains what to look for
+- [ ] Mentions common pitfalls or tips
+
+### Functionality
+- [ ] Actually runs without errors
+- [ ] Generates the described output
+- [ ] Output path follows convention (`example_name_example.zarr`)
+- [ ] Scene contains what the docstring claims
+- [ ] Viewing instructions are accurate
+
+### Documentation
+- [ ] README.md includes this example
+- [ ] Docstring matches README entry
+- [ ] Example fits into the learning progression
+- [ ] No misleading or outdated information
+
+---
+
+## Anti-Patterns (Avoid These)
+
+### ❌ Test Code Disguised as Examples
+```python
+"""Test script to verify the loader works."""  # NO!
+```
+Test code belongs in `/tests/`, not `/examples/`.
+
+### ❌ Overly Complex "Kitchen Sink" Examples
+Don't try to demonstrate 10 features in one example. Focus!
+
+### ❌ Undocumented Magic Numbers
+```python
+positions = np.random.randn(n_points, 3) * 47.3  # What's 47.3? Why?
+```
+Explain or use named constants.
+
+### ❌ Missing Educational Context
+```python
+# Just shows code without explaining WHY or WHEN to use it
+```
+Every example should teach something specific.
+
+### ❌ Obsolete or Deprecated APIs
+If an API changes, update ALL examples immediately.
+
+### ❌ Non-Standalone Examples
+Every example must run independently without dependencies on other examples.
+
+---
+
+## Example Template (Copy-Paste Starting Point)
+
+```python
+#!/usr/bin/env python3
+"""Example Title - Brief one-line description.
+
+This example demonstrates:
+- Key feature or concept 1
+- Key feature or concept 2
+- Key feature or concept 3
+
+Educational value:
+- What users will learn
+- When to use this technique
+- Important principles illustrated
+"""
+
+from pathlib import Path
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import LuxarZarrCompiler
+
+
+def create_example_data(n_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Create data for this example.
+
+    Args:
+        n_points: Number of points to generate
+
+    Returns:
+        Tuple of (positions, colors) arrays
+    """
+    # Generate positions with educational comment
+    positions = np.random.randn(n_points, 3).astype(np.float32) * 10
+
+    # Generate colors with educational comment
+    colors = np.random.rand(n_points, 3).astype(np.float32)
+
+    return positions, colors
+
+
+def main():
+    """Create an example demonstrating [specific feature]."""
+    output_path = Path(__file__).parent / "example_name_example.zarr"
+
+    aprint(f"Creating example at {output_path}")
+    aprint("This example demonstrates [key concept]")
+    aprint("")
+    aprint("Scene features:")
+    aprint("- Feature 1")
+    aprint("- Feature 2")
+
+    # Create scene
+    with LuxarZarrCompiler(output_path) as compiler:
+        scene = compiler.create_scene()
+
+        # Add educational metadata
+        scene.attrs["description"] = """
+Example Name
+============
+
+[Detailed description]
+
+Educational features:
+- Learning point 1
+- Learning point 2
+
+Viewing tips:
+- What to look for
+- How to interact with it
+        """
+
+        # Generate data
+        aprint("\nGenerating example data...")
+        n_points = 1000
+        positions, colors = create_example_data(n_points)
+
+        # Add to scene
+        scene.add_points(
+            "ExamplePoints",
+            positions,
+            colors=colors,
+            opacity=1.0,
+            blending_mode="additive",
+        )
+
+        aprint(f"✓ Added {n_points:,} points")
+
+    # Viewing instructions
+    aprint("\n" + "=" * 60)
+    aprint("VIEWING INSTRUCTIONS:")
+    aprint("1. Run: luxar serve example_name_example.zarr")
+    aprint("2. [Specific viewing instructions]")
+    aprint("3. [What to observe or test]")
+    aprint("")
+    aprint("EDUCATIONAL NOTES:")
+    aprint("- Key principle or concept")
+    aprint("- Important observation")
+    aprint("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Maintenance
+
+When APIs change:
+1. Update ALL affected examples immediately
+2. Test each example actually runs
+3. Verify generated output matches description
+4. Update README.md if example list changes
+
+When adding new examples:
+1. Follow this template exactly
+2. Choose appropriate category (minimal/comprehensive/advanced/stress)
+3. Add to README.md in the correct section
+4. Ensure it teaches something new (no redundancy)
+5. Run `make run-examples` to verify it works
