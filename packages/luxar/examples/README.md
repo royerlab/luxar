@@ -23,9 +23,36 @@ This directory contains example scripts demonstrating various features of Luxar,
 
 ## Examples Overview
 
-### Basic Examples
+### Getting Started
 
-#### 1. **radius_basic_example.py** - Introduction to Point Radii
+#### 1. **single_point_example.py** - The Simplest Possible Scene
+The absolute minimal Luxar scene to get started:
+- Single point at the origin
+- Demonstrates minimal required parameters
+- Shows default values for all optional parameters
+- Perfect starting point for beginners
+
+```bash
+python single_point_example.py
+luxar serve single_point_example.zarr
+```
+
+#### 2. **build_example.py** - Programmatic Scene Construction
+Demonstrates best practices for building scenes programmatically:
+- Step-by-step scene building with helper functions
+- Context manager usage for automatic finalization
+- Modular scene construction patterns
+- Proper resource management and error handling
+
+```bash
+python build_example.py
+luxar serve build_example_manual.zarr
+luxar serve build_example_structured.zarr
+```
+
+### Core Features
+
+#### 3. **radius_basic_example.py** - Introduction to Point Radii
 A minimal example showing how to control point sizes:
 - Three rows of points with different radii (small, medium, large)
 - Color-coded for easy identification
@@ -36,169 +63,32 @@ python radius_basic_example.py
 luxar serve radius_basic_example.zarr
 ```
 
-#### 2. **simple_nd_example.py** - Learning nD Navigation
-A 5D grid dataset designed for learning dimension navigation:
-- Clear visual patterns that change with time (full grid → checkerboard → diagonal → border → cross)
-- Color intensity changes with depth
-- Three color channels displayed spatially
-- Ideal for understanding how non-displayed dimensions work
+#### 4. **point_spacing_example.py** - World-Space Point Sizing
+Understanding the relationship between point size and spacing:
+- KEY PRINCIPLE: spacing = 2 × radius for touching points
+- Multiple test configurations (horizontal, vertical, depth, mixed sizes, grid)
+- World-space sizing verification (size independent of camera/viewport)
+- Essential for understanding point density and packing
 
 ```bash
-python simple_nd_example.py
-luxar serve simple_nd_example.zarr
+python point_spacing_example.py
+luxar serve point_spacing_example.zarr
 ```
 
-### Dimension Navigation Examples
-
-#### 3. **dimension_navigation_example.py** - Interactive Shape Sequences
-Demonstrates clear visual feedback for dimension navigation:
-- Different geometric shapes at each frame (circle, square, triangle, star, cross)
-- Distinct colors for each shape
-- Perfect for testing keyboard navigation controls
+#### 5. **multiple_objects_example.py** - Multiple Point Clouds
+Showcases complex scenes with multiple distinct objects:
+- Six different point objects (spiral galaxy, clusters, nebula, rings, stars, particles)
+- Varied rendering properties per object
+- Visual composition techniques
+- ~31,000 total points across objects
+- Color harmony and visual hierarchy
 
 ```bash
-python dimension_navigation_example.py
-luxar serve dimension_navigation_example.zarr
+python multiple_objects_example.py
+luxar serve multiple_objects_example.zarr
 ```
 
-#### 4. **dimension_sliders_5d_example.py** - Advanced 5D Navigation
-Animated spiral with dimension sliders UI:
-- 5D dataset with rotating spiral animation
-- Time and channel as non-displayed dimensions
-- Demonstrates dimension slider interface
-- Shows radius-based slicing in action
-
-```bash
-python dimension_sliders_5d_example.py
-luxar serve dimension_sliders_5d_example.zarr
-```
-
-#### 5. **dense_grid_5d_example.py** - Dense 5D Grid
-Tests performance and slicing with dense data:
-- 5D grid with 30,000+ points
-- Multiple time frames and channels
-- Good for testing performance with dimension navigation
-- Shows how dense data behaves with slicing
-
-```bash
-python dense_grid_5d_example.py
-luxar serve dense_grid_5d_example.zarr
-```
-
-#### 6. **rainbow_sphere_4d_example.py** - True 4D Spatial Geometry
-Beautiful demonstration of 4D hypersphere:
-- All 4 dimensions are spatial (X, Y, Z, W)
-- Slicing through W dimension shows spheres of varying radius
-- Rainbow colors based on 4D position
-- Perfect for understanding higher-dimensional geometry
-
-```bash
-python rainbow_sphere_4d_example.py
-luxar serve test_4d_rainbow_sphere_example.zarr
-```
-
-#### 7. **time_series_4d_example.py** - Animated 4D Data
-Shows how to create time-varying 3D visualizations:
-- Rotating spiral that evolves over time
-- Color gradient from blue to red across time steps
-- Demonstrates smooth animation through the time dimension
-
-```bash
-python time_series_4d_example.py
-luxar serve time_series_4d_example.zarr
-```
-
-#### 8. **scene_dimensions_example.py** - Advanced Dimension Configuration
-Comprehensive example of scene-level dimension definitions:
-- Custom units, ranges, and step sizes
-- Mixed discrete and continuous dimensions
-- Multichannel time series with proper metadata
-
-```bash
-python scene_dimensions_example.py
-luxar serve scene_dimensions_example.zarr
-```
-
-#### 9. **temporal_spiral_sphere_4d_example.py** - Animated 4D Temporal Spiral
-Advanced 4D animation with temporal dynamics:
-- Rotating spiral sphere across 100 discrete time frames
-- Undulating rainbow colors that flow over time
-- Pulsating point sizes with spatial wave patterns (±20% variation)
-- Dynamic sharpness creating moving bands (4x variation)
-- High-density visualization (10,000 points per frame for testing)
-
-```bash
-python temporal_spiral_sphere_4d_example.py
-luxar serve temporal_spiral_sphere_4d_example.zarr
-```
-
-### Point Attribute Examples
-
-#### 10. **radius_showcase_example.py** - Comprehensive Radius Features
-Full showcase of per-point radius functionality:
-- **Size Gradient Spiral**: Points that grow along a spiral path
-- **Distance-Based Sphere**: Points sized by distance from center
-- **Random Sized Cube**: Randomly distributed radii
-- **Layered Spheres**: Concentric spheres with different sizes
-
-```bash
-python radius_showcase_example.py
-luxar serve radius_showcase_example.zarr
-```
-
-#### 11. **sharpness_showcase_example.py** - Point Edge Control
-Demonstrates the sharpness parameter for edge falloff:
-- **Sharpness Gradient**: Smooth transition from soft to sharp
-- **Fixed Comparison**: Side-by-side sharpness values
-- **Mixed Cloud**: Varying sharpness in one cloud
-- **Sharpness Wave**: Sinusoidal patterns
-
-```bash
-python sharpness_showcase_example.py
-luxar serve sharpness_showcase_example.zarr
-```
-
-### Advanced Examples
-
-#### 13. **nd_points_example.py** - Mixed Dimensionality Scene
-Complex example with multiple points of different dimensions:
-- 5D time series data
-- 2D projection planes
-- 3D reference geometry
-- Shows how to mix different dimensional data in one scene
-
-```bash
-python nd_points_example.py
-luxar serve nd_points_example.zarr
-```
-
-#### 14. **radius_slicing_example.py** - nD Visibility Concepts
-Educational example about radius-based visibility:
-- Points as nD hyperspheres intersecting viewing hyperplanes
-- Larger radii visible across more dimension slices
-- Gradient demonstration of radius effects
-- Useful for understanding uncertainty visualization
-
-```bash
-python radius_slicing_example.py
-luxar serve radius_slicing_example.zarr
-```
-
-#### 15. **rainbow_sphere_spiral_example.py** - Beautiful Visualization
-Creates an aesthetically pleasing sphere with rainbow colors:
-- Points arranged in a spherical spiral (Fibonacci-like distribution)
-- Smooth rainbow gradient flowing along the spiral
-- Varying point sizes creating a wave pattern
-- Larger accent points as visual landmarks
-
-```bash
-python rainbow_sphere_spiral_example.py
-luxar serve rainbow_sphere_spiral_example.zarr
-```
-
-### Transform and Hierarchy Examples
-
-#### 16. **transform_example.py** - Transform System Demonstration  
+#### 6. **transform_example.py** - Transform System
 Comprehensive showcase of the transform system:
 - Translation, rotation, and scaling operations
 - Transform composition and matrix multiplication
@@ -211,35 +101,156 @@ python transform_example.py
 luxar serve transform_example.zarr
 ```
 
-#### 17. **hierarchy_example.py** - Scene Hierarchy and Inheritance
-Demonstrates parent-child relationships and property inheritance:
-- 4-level deep nested hierarchy
-- Property inheritance (opacity, gamma, blending modes)
-- Transform propagation through hierarchy
-- Space-themed visualization (solar system, space station, galaxy)
-- Clear demonstration of scene graph benefits
+#### 7. **hierarchy_example.py** - Scene Hierarchy
+Demonstrates parent-child relationships and property inheritance (note: file not found but referenced in original README)
+
+### nD & Dimensions
+
+#### 8. **simple_nd_example.py** - Learning nD Navigation
+A 5D grid dataset designed for learning dimension navigation:
+- Clear visual patterns that change with time (full grid → checkerboard → diagonal → border → cross)
+- Color intensity changes with depth
+- Three color channels displayed spatially
+- Ideal for understanding how non-displayed dimensions work
 
 ```bash
-python hierarchy_example.py
-luxar serve hierarchy_example.zarr
+python simple_nd_example.py
+luxar serve simple_nd_example.zarr
 ```
 
-#### 18. **multiple_objects_example.py** - Multiple Point Clouds
-Showcases complex scenes with multiple distinct objects:
-- Six different points objects (spiral galaxy, clusters, nebula, rings, stars, particles)
-- Varied rendering properties per object
-- Visual composition techniques
-- ~31,000 total points across objects
-- Color harmony and visual hierarchy
+#### 9. **dimension_navigation_example.py** - Interactive Shape Sequences
+Demonstrates clear visual feedback for dimension navigation:
+- Different geometric shapes at each frame (circle, square, triangle, star, cross)
+- Distinct colors for each shape
+- Perfect for testing keyboard navigation controls
 
 ```bash
-python multiple_objects_example.py
-luxar serve multiple_objects_example.zarr
+python dimension_navigation_example.py
+luxar serve dimension_navigation_example.zarr
 ```
 
-### Rendering and Performance Examples
+#### 10. **dimension_sliders_5d_example.py** - Advanced 5D Navigation
+Animated spiral with dimension sliders UI:
+- 5D dataset with rotating spiral animation
+- Time and channel as non-displayed dimensions
+- Demonstrates dimension slider interface
+- Shows radius-based slicing in action
 
-#### 19. **rendering_modes_example.py** - Blending Modes Comparison
+```bash
+python dimension_sliders_5d_example.py
+luxar serve dimension_sliders_5d_example.zarr
+```
+
+#### 11. **dense_grid_5d_example.py** - Dense 5D Grid
+Tests performance and slicing with dense data:
+- 5D grid with 30,000+ points
+- Multiple time frames and channels
+- Good for testing performance with dimension navigation
+- Shows how dense data behaves with slicing
+
+```bash
+python dense_grid_5d_example.py
+luxar serve dense_grid_5d_example.zarr
+```
+
+#### 12. **nd_points_example.py** - Mixed Dimensionality Scene
+Complex example with multiple points of different dimensions:
+- 5D time series data
+- Different dynamics per channel
+- Shows how to mix different dimensional data in one scene
+- Demonstrates scene-level dimension configuration
+
+```bash
+python nd_points_example.py
+luxar serve nd_points_example.zarr
+```
+
+#### 13. **scene_dimensions_example.py** - Advanced Dimension Configuration
+Comprehensive example of scene-level dimension definitions:
+- Custom units, ranges, and step sizes
+- Mixed discrete and continuous dimensions
+- Multichannel time series with proper metadata
+
+```bash
+python scene_dimensions_example.py
+luxar serve scene_dimensions_example.zarr
+```
+
+#### 14. **rainbow_sphere_4d_example.py** - True 4D Spatial Geometry
+Beautiful demonstration of 4D hypersphere:
+- All 4 dimensions are spatial (X, Y, Z, W)
+- Slicing through W dimension shows spheres of varying radius
+- Rainbow colors based on 4D position
+- Perfect for understanding higher-dimensional geometry
+
+```bash
+python rainbow_sphere_4d_example.py
+luxar serve rainbow_sphere_4d_example.zarr
+```
+
+#### 15. **time_series_4d_example.py** - Animated 4D Data
+Shows how to create time-varying 3D visualizations:
+- Rotating spiral that evolves over time
+- Color gradient from blue to red across time steps
+- Demonstrates smooth animation through the time dimension
+
+```bash
+python time_series_4d_example.py
+luxar serve time_series_4d_example.zarr
+```
+
+#### 16. **temporal_spiral_sphere_4d_example.py** - Animated 4D Temporal Spiral
+Advanced 4D animation with temporal dynamics:
+- Rotating spiral sphere across 512 discrete time frames
+- Undulating rainbow colors that flow over time
+- Pulsating point sizes with spatial wave patterns (±20% variation)
+- Dynamic sharpness creating moving bands (4x variation)
+- High-density visualization (200,000 points per frame for testing)
+
+```bash
+python temporal_spiral_sphere_4d_example.py
+luxar serve temporal_spiral_sphere_4d_example.zarr
+```
+
+#### 17. **radius_slicing_example.py** - nD Visibility Concepts
+Educational example about radius-based visibility:
+- Points as nD hyperspheres intersecting viewing hyperplanes
+- Larger radii visible across more dimension slices
+- Gradient demonstration of radius effects
+- Useful for understanding uncertainty visualization
+
+```bash
+python radius_slicing_example.py
+luxar serve radius_slicing_example.zarr
+```
+
+### Rendering & Attributes
+
+#### 18. **radius_showcase_example.py** - Comprehensive Radius Features
+Full showcase of per-point radius functionality:
+- **Size Gradient Spiral**: Points that grow along a spiral path
+- **Distance-Based Sphere**: Points sized by distance from center
+- **Random Sized Cube**: Randomly distributed radii
+- **Layered Spheres**: Concentric spheres with different sizes
+
+```bash
+python radius_showcase_example.py
+luxar serve radius_showcase_example.zarr
+```
+
+#### 19. **sharpness_showcase_example.py** - Point Edge Control
+Demonstrates the sharpness parameter for edge falloff:
+- **Sharpness Gradient**: Smooth transition from soft to sharp
+- **Fixed Comparison**: Side-by-side sharpness values
+- **Mixed Cloud**: Varying sharpness in one cloud
+- **Sharpness Wave**: Sinusoidal patterns
+
+```bash
+python sharpness_showcase_example.py
+luxar serve sharpness_showcase_example.zarr
+```
+
+#### 20. **rendering_modes_example.py** - Blending Modes Comparison
 Educational demonstration of different blending modes:
 - Normal and additive blending modes
 - Side-by-side comparison of effects
@@ -251,7 +262,7 @@ python rendering_modes_example.py
 luxar serve rendering_modes_example.zarr
 ```
 
-#### 20. **rendering_attributes_example.py** - Rendering Attributes API
+#### 21. **rendering_attributes_example.py** - Rendering Attributes API
 Comprehensive demonstration of rendering attributes:
 - Setting and modifying opacity, gamma, and blending modes
 - Method chaining API usage
@@ -263,13 +274,77 @@ python rendering_attributes_example.py
 luxar serve rendering_attributes_example.zarr
 ```
 
-#### 21. **performance_benchmark_example.py** - Performance Testing
+### Visual Showcases
+
+#### 22. **rainbow_sphere_spiral_example.py** - Beautiful Visualization
+Creates an aesthetically pleasing sphere with rainbow colors:
+- 200,000 points in a spherical spiral (Fibonacci-like distribution)
+- Smooth rainbow gradient flowing along the spiral
+- Calculated point spacing for optimal density
+- High sharpness for crisp rendering
+
+```bash
+python rainbow_sphere_spiral_example.py
+luxar serve rainbow_sphere_spiral_example.zarr
+```
+
+#### 23. **dense_cubic_gradient_example.py** - Million-Point Cube
+High-density visualization with depth-based colors:
+- 1,000,000 points in 100×100×100 cubic lattice
+- Beautiful depth-based color gradients for perspective visualization
+- Performance testing with dense regular grids
+- Crystalline/volumetric structures with sharp disc-like points
+- Background star field (500k points) providing depth context
+
+```bash
+python dense_cubic_gradient_example.py
+luxar serve dense_cubic_gradient_example.zarr
+```
+
+### Advanced Techniques
+
+#### 24. **progressive_writing_example.py** - Memory-Efficient Scene Building
+Demonstrates memory-efficient scene building for large datasets:
+- Progressive writing with LuxarZarrCompiler
+- Batch streaming large datasets
+- Resizable datasets for data larger than RAM
+- Context manager for automatic finalization
+
+```bash
+python progressive_writing_example.py
+luxar serve progressive_writing_example.zarr
+```
+
+#### 25. **memory_optimization_example.py** - Encoding Modes
+Using different encoding modes for memory optimization:
+- EncodingMode.AUTO: Automatically analyze and select encoding
+- EncodingMode.PRECISION: Full float32 precision for all arrays
+- EncodingMode.MEMORY: Aggressive quantization for minimum storage
+- Memory usage comparison and trade-offs
+
+```bash
+python memory_optimization_example.py
+luxar serve delme/memory_efficient_example.zarr
+```
+
+#### 26. **spatial_index_demo_example.py** - Spatial Indexing
+Demonstrates efficient nD points navigation and querying:
+- 5D dataset with point spatial indexing enabled
+- Multiple clusters distributed across 5D space
+- Efficient loading of relevant points for any slice position
+- Performance comparison with/without spatial index
+
+```bash
+python spatial_index_demo_example.py
+luxar serve spatial_index_demo_example.zarr
+```
+
+#### 27. **performance_benchmark_example.py** - Performance Testing
 Educational benchmark demonstrating performance analysis:
 - Scene creation with 100 nodes and varying materials
 - Systematic testing of material combinations
 - Detailed timing and performance metrics
 - Performance analysis and optimization insights
-- Progress tracking with educational output
 
 ```bash
 python performance_benchmark_example.py
@@ -309,9 +384,9 @@ When viewing nD data (>3D), use these controls:
 
 ### Point Attributes
 - **positions**: nD coordinates (required)
-- **colors**: RGB values 0-255 (optional, defaults to white)
+- **colors**: RGB values 0-255 or 0.0-1.0 (optional, defaults to white)
 - **radii**: Per-point size control (optional, defaults to 0.1)
-- **sharpness**: Edge falloff 0.5-10.0 (optional, defaults to 2.0)
+- **sharpness**: Edge falloff 0.5-15.0 (optional, defaults to 2.0)
 
 ### nD Visualization Features
 - **Dimension sliders**: Visual UI for navigating non-displayed dimensions
@@ -348,7 +423,7 @@ def main():
     """Create an example demonstrating [feature]."""
     output_path = Path("my_example.zarr")
     aprint(f"Creating example at {output_path}")
-    
+
     # Define dimensions if using nD data
     dimensions = Dimensions([
         Dimension("x", unit="μm", range=(-50, 50), display=True),
@@ -356,17 +431,17 @@ def main():
         Dimension("z", unit="μm", range=(-50, 50), display=True),
         Dimension("time", unit="s", range=(0, 10), display=False, discrete=True)
     ])
-    
+
     # Create scene
     scene = Scene(output_path, dimensions=dimensions)
-    
+
     # Generate your data
     n_points = 1000
     positions = np.random.randn(n_points, 4).astype(np.float32) * 10
     colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
     radii = np.random.uniform(0.05, 0.2, n_points).astype(np.float32)
     sharpness = np.full(n_points, 2.0, dtype=np.float32)
-    
+
     # Add to scene
     scene.add_points(
         "MyPoints",
@@ -375,9 +450,9 @@ def main():
         radii=radii,
         sharpness=sharpness
     )
-    
+
     scene.finalize()
-    
+
     # Print instructions
     aprint(f"✓ Example created with {n_points:,} points")
     aprint(f"\nTo view: luxar serve {output_path}")
@@ -393,7 +468,7 @@ if __name__ == "__main__":
 1. **Points not visible**
    - Check that positions are within camera view
    - Verify dimension ranges if using scene-level dimensions
-   - Ensure colors are in valid range [0, 255]
+   - Ensure colors are in valid range [0, 255] or [0.0, 1.0]
    - For nD data, check current slice position
 
 2. **Performance problems**
@@ -409,8 +484,8 @@ if __name__ == "__main__":
    - Ensure canvas has focus (click on it)
 
 4. **Colors look wrong**
-   - Ensure uint8 dtype for colors
-   - Check value range is 0-255, not 0-1
+   - Ensure uint8 dtype for colors (0-255) or float32 (0.0-1.0)
+   - Check value range is correct
    - Verify RGB order (not BGR)
 
 ## Advanced Topics
@@ -430,7 +505,7 @@ Points in nD are treated as hyperspheres. When viewing a 3D slice:
 
 ### Performance Optimization
 - Use `np.float32` for positions and radii
-- Use `np.uint8` for colors
+- Use `np.uint8` for colors (or `np.float32` for HDR)
 - Consider chunking large datasets
 - Pre-compute expensive operations
 - Use discrete dimensions for frame-based data
