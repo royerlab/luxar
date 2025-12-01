@@ -327,10 +327,86 @@ export class SceneLoader {
   }
 
   /**
+   * Validate points data for edge cases and malformed data
+   *
+   * Logs detailed diagnostics to browser console for debugging
+   */
+  private validatePointsData(data: PointsData): void {
+    const pointCount = data.positions.length / 3;
+
+    // Log data summary for debugging
+    console.log('[SceneLoader] Points Data Validation:', {
+      pointCount,
+      positionsLength: data.positions.length,
+      positionsType: data.positions.constructor.name,
+      hasColors: !!data.colors,
+      colorsType: data.colors?.constructor.name,
+      colorsLength: data.colors?.length,
+      hasRadii: !!data.radii,
+      radiiType: data.radii?.constructor.name,
+      radiiLength: data.radii?.length,
+      hasSharpness: !!data.sharpness,
+      sharpnessType: data.sharpness?.constructor.name,
+      sharpnessLength: data.sharpness?.length,
+    });
+
+    // EDGE CASE: Empty dataset
+    if (pointCount === 0) {
+      log.info(Modules.SCENE_LOADER, 'Empty point dataset (0 points) - creating empty geometry');
+      console.warn('[SceneLoader] Empty dataset detected - no points to render');
+      return;
+    }
+
+    // EDGE CASE: Malformed positions (not multiple of 3)
+    if (data.positions.length % 3 !== 0) {
+      const error = `Malformed positions array: length ${data.positions.length} is not divisible by 3`;
+      log.error(Modules.SCENE_LOADER, error);
+      console.error('[SceneLoader]', error);
+      throw new Error(error);
+    }
+
+    // VALIDATION: Colors length consistency
+    if (data.colors && data.colors.length !== data.positions.length) {
+      const expected = data.positions.length;
+      const actual = data.colors.length;
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Colors length mismatch: expected ${expected}, got ${actual}`
+      );
+      console.warn('[SceneLoader] Colors length mismatch:', { expected, actual });
+    }
+
+    // VALIDATION: Radii length consistency
+    if (data.radii && data.radii.length !== pointCount) {
+      const expected = pointCount;
+      const actual = data.radii.length;
+      log.warning(Modules.SCENE_LOADER, `Radii length mismatch: expected ${expected}, got ${actual}`);
+      console.warn('[SceneLoader] Radii length mismatch:', { expected, actual });
+    }
+
+    // VALIDATION: Sharpness length consistency
+    if (data.sharpness && data.sharpness.length !== pointCount) {
+      const expected = pointCount;
+      const actual = data.sharpness.length;
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Sharpness length mismatch: expected ${expected}, got ${actual}`
+      );
+      console.warn('[SceneLoader] Sharpness length mismatch:', { expected, actual });
+    }
+
+    // Log successful validation
+    console.log(`[SceneLoader] ✅ Points data validated: ${pointCount} points`);
+  }
+
+  /**
    * Create THREE.js geometry from points data
    */
   private createGeometry(data: PointsData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
+
+    // VALIDATION: Check for edge cases and log detailed diagnostics
+    this.validatePointsData(data);
 
     // Set positions (handle Float16Array conversion if needed)
     if (
@@ -349,6 +425,9 @@ export class SceneLoader {
 
     // Set colors if available
     if (data.colors) {
+      // Validate color mode consistency
+      this.validateColorMode(data.colors, data.metadata as any);
+
       // Check if colors need normalization (for uint8/uint16 arrays)
       const needsNormalization =
         data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
@@ -377,7 +456,11 @@ export class SceneLoader {
           'radius',
           new THREE.BufferAttribute(data.radii, 1, true) // true = normalize on GPU
         );
-        // Since Python stores values multiplied by 255, we need to scale back
+        // GPU normalizes uint8 [0, 255] to [0, 1]
+        // Python quantizes as: encoded = (value / max_radius) * 255
+        // So after GPU normalization we get: value / max_radius
+        // The material must then multiply by radiusScale to get world-space radius
+        // For now, we use 1/255 as a base scale (may need max_radius from metadata)
         radiusScale = 1.0 / 255.0;
 
         // Note: If we need to handle max_radius scaling in the future,
@@ -420,8 +503,9 @@ export class SceneLoader {
           new THREE.BufferAttribute(data.sharpness, 1, true) // true = normalize on GPU
         );
 
-        // GPU normalizes uint8 to [0,1], then scale to [0,15] range
-        sharpnessScale = 15.0;
+        // GPU normalizes uint8 to [0,1], then scale to [0,31] range
+        // Must match SHARPNESS_MAX constant in Python (typing_utils/constants.py)
+        sharpnessScale = 31.0;
       } else {
         // Float32 sharpness - no normalization or scaling needed
         geometry.setAttribute(
@@ -469,6 +553,39 @@ export class SceneLoader {
   }
 
   /**
+   * Validate transform matrix format (detect row-major vs column-major)
+   *
+   * THREE.js expects column-major (OpenGL-style) where translation is at indices [12, 13, 14]
+   * NumPy uses row-major (C-style) where translation is at indices [3, 7, 11]
+   *
+   * Python should transpose before writing: matrix.T.ravel().tolist()
+   */
+  private validateTransformFormat(transform: number[]): boolean {
+    // Check if translation components look suspicious
+    // In column-major (correct for THREE.js): [12]=tx, [13]=ty, [14]=tz
+    // In row-major (wrong for THREE.js): [3]=tx, [7]=ty, [11]=tz
+
+    const colMajorTranslation = [transform[12], transform[13], transform[14]];
+    const rowMajorTranslation = [transform[3], transform[7], transform[11]];
+
+    const colMajorNonZero = colMajorTranslation.some(v => Math.abs(v) > 0.001);
+    const rowMajorNonZero = rowMajorTranslation.some(v => Math.abs(v) > 0.001);
+
+    // If row-major positions are non-zero but column-major are zero, likely wrong format
+    if (rowMajorNonZero && !colMajorNonZero) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Transform matrix appears to be in row-major (NumPy) format instead of column-major (THREE.js). ` +
+        `Translation detected at wrong indices [3,7,11] instead of [12,13,14]. ` +
+        `Python should transpose before storing: matrix.T.ravel().tolist()`
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
    * Apply transformation matrix to object
    */
   private applyTransform(object: THREE.Object3D, transform: number[]): void {
@@ -476,6 +593,9 @@ export class SceneLoader {
       log.warning(Modules.SCENE_LOADER, `Invalid transform length: ${transform.length}`);
       return;
     }
+
+    // Validate transform format (detect common mistakes)
+    this.validateTransformFormat(transform);
 
     const matrix = new THREE.Matrix4().fromArray(transform);
     const position = new THREE.Vector3();
@@ -533,6 +653,122 @@ export class SceneLoader {
   }
 
   /**
+   * Validate color mode consistency
+   *
+   * Ensures color array type matches expected encoding:
+   * - Float32Array for HDR colors (values > 1.0)
+   * - Uint8Array for SDR colors (values [0, 1])
+   * - Warns about potential issues
+   */
+  private validateColorMode(
+    colors: Uint8Array | Uint16Array | Float32Array,
+    nodeMetadata: any
+  ): void {
+    const isHDR = colors instanceof Float32Array;
+    const isSDR = colors instanceof Uint8Array || colors instanceof Uint16Array;
+
+    // Check for suspicious patterns
+    if (isSDR && nodeMetadata?.color_mode === 'hdr') {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Node metadata indicates HDR colors but array is ${colors.constructor.name}. ` +
+          `HDR colors should use Float32Array. This may indicate incorrect encoding.`
+      );
+    }
+
+    if (isHDR) {
+      // For float32 colors, check if any values exceed 1.0 (HDR range)
+      const hasHDRValues = Array.from(colors).some((v) => v > 1.0);
+      if (!hasHDRValues && nodeMetadata?.color_mode === 'hdr') {
+        log.info(
+          Modules.SCENE_LOADER,
+          `HDR color mode specified but all values in [0, 1] range. Consider using SDR mode for better compression.`
+        );
+      }
+    }
+
+    // Log color mode for debugging
+    const colorType = colors.constructor.name;
+    const colorMode = isHDR ? 'HDR (float32)' : 'SDR (normalized integer)';
+    log.info(Modules.SCENE_LOADER, `Colors: ${colorType} - ${colorMode}`);
+  }
+
+  /**
+   * Validate scene dimensions for consistency and correctness
+   */
+  private validateSceneDimensions(dimensions: any[]): void {
+    // Check for duplicate dimension names
+    const names = dimensions.map((d) => d.name);
+    const uniqueNames = new Set(names);
+    if (names.length !== uniqueNames.size) {
+      const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Duplicate dimension names found: ${duplicates.join(', ')}. This may cause unexpected behavior.`
+      );
+    }
+
+    // Count displayed dimensions
+    const displayedCount = dimensions.filter((d) => d.display === true).length;
+    if (displayedCount > 3) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Scene has ${displayedCount} displayed dimensions, but viewer can only show 3. ` +
+          `Only the first 3 will be displayed.`
+      );
+    } else if (displayedCount === 0) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Scene has no displayed dimensions. At least one dimension should be displayed.`
+      );
+    }
+
+    // Validate each dimension
+    dimensions.forEach((dim, index) => {
+      // Check required fields
+      if (!dim.name) {
+        log.warning(Modules.SCENE_LOADER, `Dimension ${index} missing name field`);
+      }
+
+      // Validate range if present
+      if (dim.range) {
+        if (!Array.isArray(dim.range) || dim.range.length !== 2) {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Dimension '${dim.name}' has invalid range format: ${JSON.stringify(dim.range)}`
+          );
+        } else if (dim.range[0] >= dim.range[1]) {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Dimension '${dim.name}' has invalid range [${dim.range[0]}, ${dim.range[1]}]. Min should be < max.`
+          );
+        }
+      }
+
+      // Validate step if present
+      if (dim.step !== undefined && dim.step !== null && dim.step <= 0) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Dimension '${dim.name}' has invalid step: ${dim.step}. Step must be > 0.`
+        );
+      }
+
+      // Warn about discrete dimensions without range
+      if (dim.discrete === true && !dim.range) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Discrete dimension '${dim.name}' should have a defined range for proper navigation.`
+        );
+      }
+    });
+
+    log.info(
+      Modules.SCENE_LOADER,
+      `Scene dimensions validated: ${dimensions.length} dimensions, ${displayedCount} displayed`
+    );
+  }
+
+  /**
    * Initialize scene dimensions from metadata
    */
   private initializeSceneDimensions(sceneDims: any): void {
@@ -541,6 +777,9 @@ export class SceneLoader {
       log.warning(Modules.SCENE_LOADER, 'Invalid scene_dimensions format, skipping');
       return;
     }
+
+    // Validate scene dimensions consistency
+    this.validateSceneDimensions(sceneDims.dimensions);
 
     const metadata = sceneDims.dimensions.map((dim: any) => ({
       name: dim.name,

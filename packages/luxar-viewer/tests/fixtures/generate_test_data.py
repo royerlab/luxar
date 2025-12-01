@@ -277,6 +277,154 @@ def generate_4d_test():
         aprint(f"  Points per step: {num_points}")
 
 
+def generate_hierarchical_transforms_test():
+    """Test dataset with hierarchical scene graph and nested transforms.
+
+    CRITICAL: This test verifies transform composition and hierarchy:
+    - Parent transforms affect children
+    - Transforms are stored in correct format (column-major for THREE.js)
+    - Matrix multiplication order is correct
+    """
+    with asection("Generating Hierarchical Transforms Test"):
+        output = FIXTURES_DIR / "test_hierarchical_transforms.zarr"
+
+        # Create a simple hierarchy:
+        # Scene
+        #   └─ parent_group (translated by [10, 0, 0])
+        #       └─ child_points (translated by [0, 5, 0])
+        # Final position should be [10, 5, 0] due to transform composition
+
+        # Import transform functions
+        from luxar.transforms import translate
+
+        # Child points at origin initially
+        positions = np.array([
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+        ], dtype=np.float32)
+
+        dims = Dimensions([
+            Dimension("x", unit="units", display=True),
+            Dimension("y", unit="units", display=True),
+            Dimension("z", unit="units", display=True),
+        ])
+
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            # Create parent group with translation [10, 0, 0]
+            parent_transform = translate(10, 0, 0)
+            parent_group = scene.add_group("parent_group", transform=parent_transform)
+
+            # Create child points with translation [0, 5, 0] relative to parent
+            child_transform = translate(0, 5, 0)
+            scene.add_points(
+                "child_points",
+                positions,
+                parent=parent_group,
+                transform=child_transform
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Hierarchy: Scene → parent_group [10,0,0] → child_points [0,5,0]")
+        aprint(f"  Expected final position: [10, 5, 0]")
+        aprint(f"  CRITICAL: Verifies transform composition and matrix format")
+
+
+def generate_hdr_colors_test():
+    """Test dataset with HDR colors (values > 1.0) to verify float32 color handling.
+
+    CRITICAL: This test verifies that HDR colors are preserved through the pipeline:
+    - Python stores colors as float32 with values > 1.0
+    - TypeScript loads and preserves float32 colors
+    - Rendering pipeline handles HDR values correctly
+    """
+    with asection("Generating HDR Colors Test"):
+        output = FIXTURES_DIR / "test_hdr_colors.zarr"
+
+        # Create 20 points with HDR colors ranging from [0, 10]
+        num_points = 20
+        positions = np.zeros((num_points, 3), dtype=np.float32)
+
+        # Arrange points in a line along X axis
+        positions[:, 0] = np.arange(num_points, dtype=np.float32)
+
+        # HDR colors: Red channel from 0 to 10 (HDR range)
+        colors = np.zeros((num_points, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(0, 10, num_points)  # Red: 0 to 10 (HDR)
+        colors[:, 1] = 0.5  # Green: constant
+        colors[:, 2] = 0.5  # Blue: constant
+
+        dims = Dimensions([
+            Dimension("x", unit="units", display=True),
+            Dimension("y", unit="units", display=True),
+            Dimension("z", unit="units", display=True),
+        ])
+
+        # Use PRECISION mode to force float32 storage (no quantization)
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.PRECISION, compressor=None, float16_allowed=False) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "hdr_points",
+                positions,
+                colors=colors,  # HDR colors stored as float32
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape}")
+        aprint(f"  Colors: {colors.shape} (HDR, max={colors.max():.1f})")
+        aprint(f"  CRITICAL: Verifies float32 HDR color preservation")
+
+
+def generate_sharpness_range_test():
+    """Test dataset with full sharpness range [0, 31] to verify decoding.
+
+    CRITICAL: This test verifies the bug fix where TypeScript was using
+    scale factor 15.0 instead of 31.0 (matching Python's SHARPNESS_MAX).
+    """
+    with asection("Generating Sharpness Range Test"):
+        output = FIXTURES_DIR / "test_sharpness_range.zarr"
+
+        # Create 31 points, each with a different sharpness value from 1 to 31
+        # Note: Skipping 0.0 because validation requires strictly positive values
+        num_points = 31
+        positions = np.zeros((num_points, 3), dtype=np.float32)
+
+        # Arrange points in a line along X axis for easy visualization
+        positions[:, 0] = np.arange(num_points, dtype=np.float32)
+
+        # Sharpness values: [1.0, 2.0, 3.0, ..., 31.0]
+        sharpness = np.arange(1, num_points + 1, dtype=np.float32)
+
+        # Assign colors based on sharpness (gradient from blue to red)
+        colors = np.zeros((num_points, 3), dtype=np.float32)
+        colors[:, 0] = sharpness / 31.0  # Red increases with sharpness
+        colors[:, 2] = 1.0 - (sharpness / 31.0)  # Blue decreases with sharpness
+
+        dims = Dimensions([
+            Dimension("x", unit="units", display=True),
+            Dimension("y", unit="units", display=True),
+            Dimension("z", unit="units", display=True),
+        ])
+
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "sharpness_test",
+                positions,
+                colors=colors,
+                sharpness=sharpness,  # Full range [0, 31]
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape}")
+        aprint(f"  Sharpness range: [{sharpness.min()}, {sharpness.max()}]")
+        aprint(f"  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
+
+
 def main():
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -303,6 +451,15 @@ def main():
         generate_4d_test()
         aprint("")
 
+        generate_hierarchical_transforms_test()
+        aprint("")
+
+        generate_hdr_colors_test()
+        aprint("")
+
+        generate_sharpness_range_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -314,6 +471,9 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_array_refs.zarr")
         aprint(f"  {FIXTURES_DIR}/test_mixed.zarr")
         aprint(f"  {FIXTURES_DIR}/test_4d.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_hdr_colors.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_sharpness_range.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")
