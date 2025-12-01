@@ -1,0 +1,292 @@
+/**
+ * WebGL Error Detection Tests
+ *
+ * CRITICAL: These tests catch WebGL errors that indicate rendering bugs.
+ *
+ * WebGL errors like GL_INVALID_OPERATION are SILENT - they don't throw
+ * JavaScript exceptions, so they can go unnoticed unless explicitly checked.
+ *
+ * This test suite was added after discovering hundreds of
+ * "Vertex buffer is not big enough" errors in production demos.
+ */
+
+import { test, expect } from '@playwright/test';
+import { waitForLuxarReady } from './helpers';
+
+// Test all example datasets for WebGL errors
+const DATASETS = [
+  'http://localhost:9000/packages/luxar/examples/sharpness_showcase_example.zarr',
+  'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr',
+  'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr',
+  'http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr',
+  'http://localhost:9000/packages/luxar/examples/transform_example.zarr',
+];
+
+test.describe('WebGL Error Detection - Critical', () => {
+  test('should render without GL_INVALID_OPERATION errors', async ({ page }) => {
+    const webglErrors: string[] = [];
+
+    // Capture ALL console messages, specifically WebGL errors
+    page.on('console', (msg) => {
+      const text = msg.text();
+      if (
+        text.includes('GL_INVALID') ||
+        text.includes('WebGL') ||
+        text.includes('glDrawArrays') ||
+        text.includes('glDrawElements')
+      ) {
+        webglErrors.push(text);
+      }
+    });
+
+    // Load a dataset known to have issues (sharpness showcase)
+    await page.goto(`/?src=${DATASETS[0]}&debug`);
+    await waitForLuxarReady(page);
+
+    // Wait for initial render
+    await page.waitForFunction(() => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2, {
+      timeout: 10000,
+    });
+
+    // Wait a bit more to catch any delayed errors
+    await page.waitForTimeout(2000);
+
+    // Check for WebGL errors
+    if (webglErrors.length > 0) {
+      console.log('\n🚨 WebGL Errors Detected:');
+      webglErrors.slice(0, 10).forEach((err) => console.log(`  - ${err}`));
+      if (webglErrors.length > 10) {
+        console.log(`  ... and ${webglErrors.length - 10} more`);
+      }
+      console.log('');
+    }
+
+    // CRITICAL: Fail test if ANY WebGL errors detected
+    expect(webglErrors).toEqual([]);
+  });
+
+  test('should render all example datasets without WebGL errors', async ({ page }) => {
+    for (const dataset of DATASETS) {
+      const webglErrors: string[] = [];
+
+      page.on('console', (msg) => {
+        const text = msg.text();
+        if (text.includes('GL_INVALID') || text.includes('WebGL error')) {
+          webglErrors.push(text);
+        }
+      });
+
+      await page.goto(`/?src=${dataset}&debug`);
+      await waitForLuxarReady(page);
+
+      await page.waitForFunction(
+        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 1,
+        { timeout: 10000 }
+      );
+
+      await page.waitForTimeout(1000);
+
+      if (webglErrors.length > 0) {
+        console.log(`\n🚨 WebGL errors in ${dataset}:`);
+        console.log(`  Found ${webglErrors.length} errors`);
+        console.log(`  First error: ${webglErrors[0]}`);
+      }
+
+      expect(webglErrors).toEqual([]);
+    }
+  });
+
+  test('should check WebGL state for errors programmatically', async ({ page }) => {
+    await page.goto(`/?src=${DATASETS[0]}&debug`);
+    await waitForLuxarReady(page);
+
+    // Query WebGL error state directly
+    const glErrors = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas) return { error: 'No canvas' };
+
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      if (!gl) return { error: 'No WebGL context' };
+
+      const errors: string[] = [];
+      const errorCodes: { [key: number]: string } = {
+        [gl.NO_ERROR]: 'NO_ERROR',
+        [gl.INVALID_ENUM]: 'INVALID_ENUM',
+        [gl.INVALID_VALUE]: 'INVALID_VALUE',
+        [gl.INVALID_OPERATION]: 'INVALID_OPERATION',
+        [gl.INVALID_FRAMEBUFFER_OPERATION]: 'INVALID_FRAMEBUFFER_OPERATION',
+        [gl.OUT_OF_MEMORY]: 'OUT_OF_MEMORY',
+        [gl.CONTEXT_LOST_WEBGL]: 'CONTEXT_LOST_WEBGL',
+      };
+
+      // Check for errors (calling getError clears the error)
+      let errorCode = gl.getError();
+      let safety = 0;
+      while (errorCode !== gl.NO_ERROR && safety++ < 100) {
+        errors.push(errorCodes[errorCode] || `UNKNOWN_ERROR(${errorCode})`);
+        errorCode = gl.getError();
+      }
+
+      return {
+        hasErrors: errors.length > 0,
+        errors,
+        contextLost: gl.isContextLost(),
+      };
+    });
+
+    console.log('WebGL State:', glErrors);
+
+    expect(glErrors.hasErrors).toBe(false);
+    expect(glErrors.contextLost).toBe(false);
+  });
+
+  test('should detect vertex buffer size mismatches', async ({ page }) => {
+    const vertexBufferErrors: string[] = [];
+
+    page.on('console', (msg) => {
+      const text = msg.text();
+      if (text.toLowerCase().includes('vertex buffer') && text.includes('big enough')) {
+        vertexBufferErrors.push(text);
+      }
+    });
+
+    await page.goto(`/?src=${DATASETS[0]}&debug`);
+    await waitForLuxarReady(page);
+
+    // Trigger several renders to expose the issue
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      for (let i = 0; i < 10; i++) {
+        debug.renderOnce();
+      }
+    });
+
+    await page.waitForTimeout(2000);
+
+    if (vertexBufferErrors.length > 0) {
+      console.log(`\n🚨 CRITICAL: Vertex buffer errors detected!`);
+      console.log(`  Count: ${vertexBufferErrors.length}`);
+      console.log(`  This indicates incorrect buffer sizing in the renderer`);
+      console.log(`  First error: ${vertexBufferErrors[0]}\n`);
+    }
+
+    // This should be ZERO
+    expect(vertexBufferErrors).toEqual([]);
+  });
+
+  test('should verify all geometry buffers are correctly sized', async ({ page }) => {
+    await page.goto(`/?src=${DATASETS[0]}&debug`);
+    await waitForLuxarReady(page);
+
+    const bufferInfo = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const issues: Array<{ name: string; issue: string }> = [];
+
+      debug.scene.traverse((obj: any) => {
+        if (obj.type === 'Points') {
+          const geom = obj.geometry;
+          const posCount = geom.attributes.position?.count || 0;
+
+          // Check all attributes have same count
+          if (geom.attributes.color && geom.attributes.color.count !== posCount) {
+            issues.push({
+              name: obj.name,
+              issue: `Color count (${geom.attributes.color.count}) != position count (${posCount})`,
+            });
+          }
+
+          if (geom.attributes.radius && geom.attributes.radius.count !== posCount) {
+            issues.push({
+              name: obj.name,
+              issue: `Radius count (${geom.attributes.radius.count}) != position count (${posCount})`,
+            });
+          }
+
+          if (geom.attributes.sharpness && geom.attributes.sharpness.count !== posCount) {
+            issues.push({
+              name: obj.name,
+              issue: `Sharpness count (${geom.attributes.sharpness.count}) != position count (${posCount})`,
+            });
+          }
+
+          // Check itemSize is correct
+          if (geom.attributes.position?.itemSize !== 3) {
+            issues.push({
+              name: obj.name,
+              issue: `Position itemSize is ${geom.attributes.position.itemSize}, expected 3`,
+            });
+          }
+
+          if (geom.attributes.color && geom.attributes.color.itemSize !== 3) {
+            issues.push({
+              name: obj.name,
+              issue: `Color itemSize is ${geom.attributes.color.itemSize}, expected 3`,
+            });
+          }
+
+          if (geom.attributes.radius && geom.attributes.radius.itemSize !== 1) {
+            issues.push({
+              name: obj.name,
+              issue: `Radius itemSize is ${geom.attributes.radius.itemSize}, expected 1`,
+            });
+          }
+
+          if (geom.attributes.sharpness && geom.attributes.sharpness.itemSize !== 1) {
+            issues.push({
+              name: obj.name,
+              issue: `Sharpness itemSize is ${geom.attributes.sharpness.itemSize}, expected 1`,
+            });
+          }
+        }
+      });
+
+      return issues;
+    });
+
+    if (bufferInfo.length > 0) {
+      console.log('\n🚨 Buffer sizing issues found:');
+      bufferInfo.forEach((issue) => {
+        console.log(`  [${issue.name}] ${issue.issue}`);
+      });
+      console.log('');
+    }
+
+    expect(bufferInfo).toEqual([]);
+  });
+});
+
+test.describe('WebGL Error Detection - All Datasets', () => {
+  // Test that EVERY dataset renders without errors
+  for (const dataset of DATASETS) {
+    const datasetName = dataset.split('/').pop()?.replace('.zarr', '') || 'unknown';
+
+    test(`should render ${datasetName} without WebGL errors`, async ({ page }) => {
+      const webglErrors: string[] = [];
+
+      page.on('console', (msg) => {
+        if (msg.type() === 'error' || msg.text().includes('GL_')) {
+          webglErrors.push(msg.text());
+        }
+      });
+
+      await page.goto(`/?src=${dataset}&debug`);
+      await waitForLuxarReady(page);
+
+      await page.waitForFunction(
+        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+        { timeout: 10000 }
+      );
+
+      await page.waitForTimeout(1000);
+
+      const glErrors = webglErrors.filter((err) => err.includes('GL_INVALID'));
+
+      if (glErrors.length > 0) {
+        console.log(`\n❌ ${datasetName}: ${glErrors.length} WebGL errors`);
+        console.log(`   First: ${glErrors[0]}`);
+      }
+
+      expect(glErrors).toEqual([]);
+    });
+  }
+});
