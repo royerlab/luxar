@@ -149,6 +149,7 @@ class TestSaveGsplats:
                 **splats,
                 encoding_mode=EncodingMode.MEMORY,
                 ordering="none",
+                float16_allowed=True,  # Explicitly test float16
             )
 
             root = zarr.open_group(str(path_memory), mode="r")
