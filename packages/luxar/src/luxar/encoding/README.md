@@ -718,3 +718,33 @@ When AUTO mode selects a lower-precision dtype, it ensures:
 - [validation/README.md](../validation/README.md) - Validation utilities
 - [typing_utils/README.md](../typing_utils/README.md) - Type system
 - [Main README](../../../../README.md) - Project overview
+
+## Compatibility Control
+
+### float16_allowed Parameter
+
+The `float16_allowed` parameter controls whether float16 encoding is used:
+
+**Default: `False`** - Uses float32 for maximum compatibility (TypeScript/zarrita/web)
+**Set to `True`** - Uses float16 for 50% memory savings (Python-only workflows)
+
+**Affected Semantic Types**: COORDINATE, COLOR (HDR), POSITIVE_SCALAR, CHOLESKY, UNIT_VECTOR
+
+**Usage**:
+```python
+from luxar import LuxarZarrCompiler
+from luxar.encoding import EncodingMode
+
+# For web/TypeScript compatibility (default)
+compiler = LuxarZarrCompiler("data.zarr", encoding_mode=EncodingMode.MEMORY)
+
+# For maximum memory efficiency (Python-only)
+compiler = LuxarZarrCompiler(
+    "data.zarr",
+    encoding_mode=EncodingMode.MEMORY, 
+    float16_allowed=True
+)
+```
+
+**Why False by Default?**  
+JavaScript/TypeScript zarr libraries (zarrita) don't support float16 dtype. Setting `float16_allowed=False` ensures datasets can be loaded by web viewers while maintaining good precision with float32.
