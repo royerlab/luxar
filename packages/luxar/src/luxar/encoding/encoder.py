@@ -26,15 +26,19 @@ class ArrayEncoder:
     """
 
     def __init__(
-        self, broadcast_rtol: float = 0.0, broadcast_atol: float = 0.0
+        self,
+        broadcast_rtol: float = 0.0,
+        broadcast_atol: float = 0.0,
+        float16_allowed: bool = False,
     ) -> None:
-        """Initialize encoder with optional broadcasting tolerance.
+        """Initialize encoder with optional broadcasting tolerance and float16 control.
 
         Args:
             broadcast_rtol: Relative tolerance for broadcasting check
                 (default: 0.0 = exact equality)
             broadcast_atol: Absolute tolerance for broadcasting check
                 (default: 0.0 = exact equality)
+            float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
 
         Note: Using non-zero tolerance is experimental and should be used
         with caution. Exact equality (default) is safe for all semantic types
@@ -43,6 +47,7 @@ class ArrayEncoder:
         self._registry = ArrayRefRegistry()
         self._broadcast_rtol = broadcast_rtol
         self._broadcast_atol = broadcast_atol
+        self._float16_allowed = float16_allowed
 
     def encode(
         self,
@@ -692,7 +697,11 @@ class ArrayEncoder:
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
             target_dtype = np.float32
         elif mode == EncodingMode.MEMORY:
-            target_dtype = np.float16
+            # Check if float16 is allowed, fallback to float32 if not
+            if self._float16_allowed:
+                target_dtype = np.float16
+            else:
+                target_dtype = np.float32
         else:
             raise ValueError(f"Unexpected mode for COORDINATE: {mode}")
 
@@ -740,8 +749,13 @@ class ArrayEncoder:
                 encoded_data = data.astype(np.float32)
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY:
-                encoded_data = data.astype(np.float16)
-                encoder_name = "float16"
+                # Check if float16 is allowed, fallback to float32 if not
+                if self._float16_allowed:
+                    encoded_data = data.astype(np.float16)
+                    encoder_name = "float16"
+                else:
+                    encoded_data = data.astype(np.float32)
+                    encoder_name = "float32"
             else:
                 raise ValueError("HDR colors require float dtype")
         elif color_mode == "sdr":
@@ -904,9 +918,13 @@ class ArrayEncoder:
                         "original_dtype": original_dtype,
                     }
                 elif max_val < 1000:
-                    # Use float16
-                    encoded_data = data.astype(np.float16)
-                    encoder_name = "float16"
+                    # Use float16 if allowed, else float32
+                    if self._float16_allowed:
+                        encoded_data = data.astype(np.float16)
+                        encoder_name = "float16"
+                    else:
+                        encoded_data = data.astype(np.float32)
+                        encoder_name = "float32"
                     metadata = {"name": encoder_name, "original_dtype": original_dtype}
                 else:
                     # Use float32
@@ -949,7 +967,11 @@ class ArrayEncoder:
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
             target_dtype = np.float32
         elif mode == EncodingMode.MEMORY:
-            target_dtype = np.float16
+            # Check if float16 is allowed, fallback to float32 if not
+            if self._float16_allowed:
+                target_dtype = np.float16
+            else:
+                target_dtype = np.float32
         else:
             raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
 
@@ -1039,7 +1061,11 @@ class ArrayEncoder:
         if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
             target_dtype = np.float32
         elif mode == EncodingMode.MEMORY:
-            target_dtype = np.float16
+            # Check if float16 is allowed, fallback to float32 if not
+            if self._float16_allowed:
+                target_dtype = np.float16
+            else:
+                target_dtype = np.float32
         else:
             raise ValueError(f"Unexpected mode for UNIT_VECTOR: {mode}")
 

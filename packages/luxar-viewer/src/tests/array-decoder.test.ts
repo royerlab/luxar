@@ -115,10 +115,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(firstRadius).toBeCloseTo(0.5, 5);
     });
 
-    it.skip('should detect non-broadcasted positions as not encoded', async () => {
-      // TODO: Zarrita doesn't support float16 dtype
-      // Python encodes positions as float16 for memory efficiency
-      // Test fixture: {"encoding": {"name": "float16"}}
+    it('should detect non-broadcasted positions as not encoded', async () => {
+      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
+      // Test fixture: {"encoding": {"name": "float32"}}
       const { attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/positions');
 
       // Positions should NOT be encoded (each point has unique position)
@@ -215,15 +214,14 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(uniqueValues.size).toBeGreaterThan(10); // Should have many distinct values
     });
 
-    it.skip('should dequantize radii from uint8 with bounds [0.1, 2.0]', async () => {
-      // TODO: This test fixture uses float16 encoding, not quantization
-      // Zarrita doesn't support float16 dtype, so we skip this test
-      // Python generates: {"encoding": {"name": "float16", "original_dtype": "float32"}}
+    it('should load radii in float32 (not quantized)', async () => {
+      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
+      // Python generates: {"encoding": {"name": "float32"}} for radii
       const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/radii');
 
       // Verify metadata (nested under "encoding")
-      expect(attrs.encoding?.name).toBe('float16');
-      expect(ArrayDecoder.isEncoded(attrs)).toBe(false); // float16 is direct storage
+      expect(attrs.encoding?.name).toBe('float32');
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(false); // float32 is direct storage
 
       // Decode
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -375,9 +373,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('4D nD Data', () => {
-    it.skip('should load 4D positions with time dimension', async () => {
-      // TODO: Zarrita doesn't support float16 dtype
-      // Python encodes positions as float16 for memory efficiency
+    it('should load 4D positions with time dimension', async () => {
+      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
       const { array, attrs } = await loadArrayWithAttrs('test_4d.zarr', 'points/positions');
 
       // 4D data: 500 points × 10 time steps = 5000 total points
@@ -442,9 +439,8 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it.skip('should handle direct mode (no encoding)', async () => {
-      // TODO: Zarrita doesn't support float16 dtype
-      // Python encodes positions as float16 for memory efficiency
+    it('should handle direct mode (no encoding)', async () => {
+      // Now works with float32 (float16_allowed=False for TypeScript compatibility)
       const { array, attrs } = await loadArrayWithAttrs(
         'test_broadcasting.zarr',
         'points/positions'
