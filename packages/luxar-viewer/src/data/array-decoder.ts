@@ -172,8 +172,21 @@ export class ArrayDecoder {
     if (enc?.name?.startsWith('lut') && enc?.lut) {
       // Get k (feature dimension) from original_shape in encoding metadata
       // original_shape is [n, k] where n is number of points, k is feature dimension
+      // CRITICAL: Default to 1 for scalar mode, but MUST check original_shape for vector data
       const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
-      return this.decodeLUT(data, enc.lut, k);
+
+      // Decode LUT
+      const decoded = this.decodeLUT(data, enc.lut, k);
+
+      // CRITICAL BUG FIX: Validate decoded size matches expected
+      if (expectedElements && decoded.length !== expectedElements) {
+        log.warning(
+          Modules.ZARR_LOADER,
+          `LUT decode size mismatch: got ${decoded.length}, expected ${expectedElements}. Using decoded size.`
+        );
+      }
+
+      return decoded;
     }
 
     // Check for quantization (name contains "uint", bounds present OR implicit)
