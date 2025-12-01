@@ -68,6 +68,7 @@ def save_gsplats(
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
+    float16_allowed: bool = False,
 ) -> None:
     """Save Gaussian splats to .gsplats.zarr format.
 
@@ -86,6 +87,7 @@ def save_gsplats(
         fitting_config: Optional fitter-specific configuration
         provenance_info: Optional image provenance metadata
         description: Optional user description
+        float16_allowed: Enable float16 encoding (default: False for compatibility)
 
     Raises:
         ValueError: If arrays have incompatible shapes or invalid parameters
@@ -193,7 +195,9 @@ def save_gsplats(
     splats_group.attrs.update(splats_attrs)
 
     # Create ArrayEncoder
-    encoder = ArrayEncoder()
+    encoder = ArrayEncoder(
+        float16_allowed=float16_allowed,
+    )
 
     # Compute chunks for arrays
     centers_bytes_per_row = ndim * 4
