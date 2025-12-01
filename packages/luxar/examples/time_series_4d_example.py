@@ -2,10 +2,23 @@
 """Time Series 4D Example - Animated rotating spiral in 3D space over time.
 
 This example demonstrates:
-- 4D points data (time + 3D space)
-- Scene-level dimension definitions with proper units and ranges
-- Smooth animation through time dimension
-- Color coding by time for visual clarity
+- 4D point data structure (time + 3D space)
+- Temporal animation with discrete time steps
+- Scene-level dimension definitions with proper units
+- Smooth rotation animation through time dimension
+- Color coding by time for clear visual progression
+
+Educational value:
+- Learn to structure temporal 3D data (4D total)
+- Understand time as a discrete navigable dimension
+- Master temporal animation patterns
+- See how color can enhance temporal perception
+- Good introduction to 4D data before more complex examples
+
+Key principle:
+- Time dimension must be discrete for frame-based navigation
+- Color gradient helps visualize temporal progression
+- Spiral rotation shows continuous motion through discrete frames
 """
 
 from pathlib import Path
