@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
-"""
-Comprehensive example showcasing the point sharpness feature in Luxar.
+"""Sharpness Showcase Example - Comprehensive demonstration of edge sharpness control.
 
-This script generates several points examples with varying sharpness values
-to demonstrate how the sharpness parameter controls the edge falloff of points.
-Low sharpness values create soft, glowing points while high values create sharp edges.
+This example demonstrates:
+- Sharpness gradient: smooth transition from soft (0.5) to sharp (10.0)
+- Fixed comparison: side-by-side points with different sharpness values
+- Mixed cloud: varying sharpness within one point set
+- Sharpness wave: sinusoidal patterns creating visual rhythm
+- How sharpness affects apparent glow and edge definition
+
+Educational value:
+- Understand the sharpness parameter range (0.5-10.0)
+- Learn visual effects of different sharpness values
+- Master sharpness for artistic and technical effects
+- See sharpness as aesthetic control, not just technical parameter
+- Understand shader compensation that maintains consistent sizes
+
+Visual effects by sharpness:
+- 0.5-1.0: Soft, glowing, nebula-like appearance
+- 2.0: Balanced default with natural falloff
+- 5.0-10.0: Sharp, crisp, star-like points
+
+When to use:
+- Low sharpness (0.5-1.0): Atmospheric effects, soft focus, glows
+- Medium (2.0): General purpose, natural appearance
+- High (5.0-10.0): Technical precision, sharp features, stars
 """
 
 from pathlib import Path
