@@ -44,11 +44,19 @@ export type {
   LoaderStats,
 } from './data-loader-types';
 
-// Spatial index utilities
+// Chunk-based spatial index (NEW)
+export {
+  loadChunkSpatialIndex,
+  queryChunksForView,
+  chunkIndicesToRanges,
+  mergePointRanges,
+  type ChunkSpatialIndex,
+} from './chunk-spatial-index';
+
+// Grid-based spatial index utilities (DEPRECATED - will be removed)
 export {
   loadPointSpatialIndex,
   queryPointSpatialIndex,
-  mergePointRanges,
   calculateChunksToLoad,
   estimateMemoryUsage,
   debugPointSpatialIndex,

@@ -32,8 +32,14 @@ export interface EncodingMetadata {
   /** Original shape before encoding [n, k] */
   original_shape?: number[];
 
-  /** Quantization bounds [min, max] */
+  /** Quantization bounds [min, max] (legacy format) */
   bounds?: [number, number];
+
+  /** Quantization min (current format) */
+  min?: number;
+
+  /** Quantization max (current format) */
+  max?: number;
 
   /** Array reference target path */
   target?: string;
@@ -136,38 +142,80 @@ export class ArrayDecoder {
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
 
-    // Check for array reference first (highest priority)
+    // Log decoding start for debugging
+    console.log('[ArrayDecoder] Decoding array:', {
+      shape: zarrArray.shape,
+      dtype: zarrArray.dtype,
+      encodingName: enc?.name || 'none',
+      expectedElements,
+      hasRootLoc: !!zarrRootLoc,
+    });
+
+    // ENCODING PRIORITY ORDER (CRITICAL - must match spec):
+    // 1. Broadcasting → 2. Array Reference → 3. LUT → 4. Dtype
+
+    // PRIORITY 1: Check for broadcasting FIRST (highest priority per spec)
+    // Broadcasting detection: name="broadcasted" AND (shape[0]==1 OR scalar input)
+    if (enc?.name === 'broadcasted' && expectedElements) {
+      // Load the single value
+      const rawData = await get(zarrArray);
+      const rawArray = rawData.data;
+      const data =
+        rawArray instanceof Float32Array
+          ? rawArray
+          : new Float32Array(rawArray as ArrayBuffer | number[]);
+
+      // Broadcast if needed
+      if (expectedElements > data.length) {
+        const shape = zarrArray.shape;
+        const k = shape.length > 1 ? shape[1] : 1;
+        const result = this.decodeBroadcasted(data, expectedElements, k, expectedElements);
+
+        // Register for potential array ref usage
+        if (enc?.hash) {
+          this.refRegistry.register(enc.hash, result);
+        }
+
+        return result;
+      }
+    }
+
+    // PRIORITY 2: Check for array reference (second priority per spec)
     if (enc?.name === 'array_ref' && enc?.target) {
+      // Early warning if zarrRootLoc missing (will fail later if not cached)
+      if (!zarrRootLoc && !enc.hash) {
+        log.warning(
+          Modules.ZARR_LOADER,
+          `Array reference detected without zarrRootLoc or hash. ` +
+          `This will fail if the reference is not already cached.`
+        );
+      }
       return this.decodeArrayRef(enc.target, enc.hash, expectedElements, zarrRootLoc);
     }
 
-    // Load raw data from zarr
+    // Load raw data from zarr (needed for LUT, quantization, dtype)
     const rawData = await get(zarrArray);
-    // Convert zarr data to Float32Array
     const rawArray = rawData.data;
+
+    // VALIDATION: Log raw data type for debugging
+    console.log('[ArrayDecoder] Raw data loaded:', {
+      dataType: rawArray.constructor.name,
+      length: (rawArray as any).length,
+      zarrDtype: zarrArray.dtype,
+    });
+
+    // Type validation: Ensure we can convert to Float32Array
+    if (!(rawArray instanceof Float32Array) && !(rawArray instanceof ArrayBuffer) && !Array.isArray(rawArray)) {
+      const actualType = rawArray.constructor.name;
+      console.warn(`[ArrayDecoder] Unexpected data type: ${actualType}, attempting conversion`);
+    }
+
     const data =
       rawArray instanceof Float32Array
         ? rawArray
         : new Float32Array(rawArray as ArrayBuffer | number[]);
 
-    // Check for broadcasting (name: "broadcasted", expectedElements provided)
-    // NOTE: enc.n_elements stores the actual array size (e.g., 1), NOT the target count
-    // The target count comes from expectedElements parameter (e.g., 1000)
-    if (enc?.name === 'broadcasted' && expectedElements && expectedElements > data.length) {
-      // Get shape from zarrArray metadata (not attrs - shape is in .zarray, not .zattrs)
-      const shape = zarrArray.shape;
-      const k = shape.length > 1 ? shape[1] : 1;
-      const result = this.decodeBroadcasted(data, expectedElements, k, expectedElements);
-
-      // Register for potential array ref usage
-      if (enc?.hash) {
-        this.refRegistry.register(enc.hash, result);
-      }
-
-      return result;
-    }
-
-    // Check for LUT encoding (name starts with "lut", lut array present)
+    // PRIORITY 3: Check for LUT encoding (third priority per spec)
     // Python generates names like: lut_uint8, lut_uint16
     if (enc?.name?.startsWith('lut') && enc?.lut) {
       // Get k (feature dimension) from original_shape in encoding metadata
@@ -192,13 +240,43 @@ export class ArrayDecoder {
     // Check for quantization (name contains "uint", bounds present OR implicit)
     // NOTE: Some encodings like rgb_uint8 have implicit bounds [0, 1]
     if (enc?.name && (enc.name.includes('uint') || enc.name.includes('scalar'))) {
-      const bounds = enc.bounds || this.inferBounds(enc.name);
-      if (bounds) {
-        // Get actual dtype from zarr metadata (e.g., '<u1', 'uint8')
-        // Do NOT use enc.name (e.g., 'rgb_uint8') - that's the encoding name, not the dtype
-        const actualDtype = attrs.dtype || 'uint8';
-        return this.dequantize(data, bounds, actualDtype);
+      // Bounds can be stored as:
+      // 1. Array: bounds = [min, max] (legacy format)
+      // 2. Separate fields: min, max (current format)
+      // 3. Inferred from encoding name (implicit for known types)
+      let bounds: [number, number] | null = null;
+
+      if (enc.bounds) {
+        bounds = enc.bounds;
+      } else if (enc.min !== undefined && enc.max !== undefined) {
+        bounds = [enc.min, enc.max];
+      } else {
+        bounds = this.inferBounds(enc.name);
+        if (bounds) {
+          log.warning(
+            Modules.ZARR_LOADER,
+            `Using inferred bounds ${JSON.stringify(bounds)} for ${enc.name}. ` +
+            `Consider storing explicit bounds in metadata for clarity.`
+          );
+        }
       }
+
+      // VALIDATION: Bounds are required for quantized data
+      if (!bounds) {
+        throw new Error(
+          `[ArrayDecoder] Missing bounds for quantized encoding: ${enc.name}. ` +
+          `Quantized arrays require either:\n` +
+          `  1. Explicit bounds field: encoding.bounds = [min, max]\n` +
+          `  2. Separate min/max fields: encoding.min, encoding.max\n` +
+          `  3. Implicit bounds for known types (rgb_uint8, hdr_uint8)\n` +
+          `Got encoding: ${JSON.stringify(enc)}`
+        );
+      }
+
+      // Get actual dtype from zarr metadata (e.g., '<u1', 'uint8')
+      // Do NOT use enc.name (e.g., 'rgb_uint8') - that's the encoding name, not the dtype
+      const actualDtype = attrs.dtype || 'uint8';
+      return this.dequantize(data, bounds, actualDtype);
     }
 
     // Direct mode (no encoding or name: "none" / "float16" / "float32")
@@ -206,6 +284,15 @@ export class ArrayDecoder {
     if (enc?.hash) {
       this.refRegistry.register(enc.hash, data);
     }
+
+    // Log successful decoding
+    console.log('[ArrayDecoder] ✅ Decode complete:', {
+      encodingName: enc?.name || 'none',
+      outputLength: data.length,
+      outputType: data.constructor.name,
+      min: Math.min(...Array.from(data)),
+      max: Math.max(...Array.from(data)),
+    });
 
     return data;
   }

@@ -208,9 +208,12 @@ export function queryPointSpatialIndex(
         0,
         Math.floor((minVal - metadata.grid_origin[d]) / metadata.cell_size[d])
       );
+      // FIXED: Use floor (not ceil) for max grid coordinate
+      // A point at position p belongs to cell floor(p / cell_size)
+      // Using ceil can overshoot by 1 cell at exact grid boundaries
       maxGrid[d] = Math.min(
         metadata.grid_shape[d] - 1,
-        Math.ceil((maxVal - metadata.grid_origin[d]) / metadata.cell_size[d])
+        Math.floor((maxVal - metadata.grid_origin[d]) / metadata.cell_size[d])
       );
     }
   }
@@ -232,8 +235,26 @@ export function queryPointSpatialIndex(
     }
 
     if (inRange) {
-      const start = Number(cellRanges[i * 2]);
-      const end = Number(cellRanges[i * 2 + 1]);
+      const startBig = cellRanges[i * 2];
+      const endBig = cellRanges[i * 2 + 1];
+
+      // VALIDATION: Check for safe Number conversion (datasets > 2^53 points)
+      if (startBig > Number.MAX_SAFE_INTEGER || endBig > Number.MAX_SAFE_INTEGER) {
+        log.error(
+          Modules.SPATIAL_INDEX,
+          `Point range exceeds JavaScript safe integer limit: [${startBig}, ${endBig}]. ` +
+            `Dataset has > 9 quadrillion points - this is not supported.`
+        );
+        console.error('[SpatialIndex] CRITICAL: Range exceeds MAX_SAFE_INTEGER:', {
+          start: startBig.toString(),
+          end: endBig.toString(),
+          maxSafe: Number.MAX_SAFE_INTEGER,
+        });
+        throw new Error('Dataset too large: point indices exceed JavaScript safe integer range');
+      }
+
+      const start = Number(startBig);
+      const end = Number(endBig);
       ranges.push({ start, end });
     }
   }

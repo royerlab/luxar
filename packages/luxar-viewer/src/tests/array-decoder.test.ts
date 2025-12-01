@@ -531,4 +531,135 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(decoded.length).toBe(0);
     });
   });
+
+  describe('Sharpness Range Test (Bug Fix Verification)', () => {
+    it('should decode sharpness with correct scale factor 31.0 (not 15.0)', async () => {
+      // CRITICAL: This test verifies the fix for the sharpness scale bug
+      // - Python uses SHARPNESS_MAX = 31.0 for quantization bounds
+      // - TypeScript must use sharpnessScale = 31.0 (not 15.0) when decoding
+      //
+      // Bug history:
+      // - Before fix: TypeScript used scale factor 15.0
+      // - After fix: TypeScript uses scale factor 31.0 (matching Python)
+      // - Impact: All sharpness values > 15 were clamped/misrepresented
+
+      const { array, attrs } = await loadArrayWithAttrs(
+        'test_sharpness_range.zarr',
+        'sharpness_test/sharpness'
+      );
+
+      // Verify metadata indicates uint8 quantization with min/max [0, 31]
+      expect(attrs.encoding?.name).toBe('bounded_scalar_uint8');
+      expect((attrs.encoding as any)?.min).toBe(0.0);
+      expect((attrs.encoding as any)?.max).toBe(31.0);
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
+
+      // Decode
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 31);
+
+      // Verify shape: 31 sharpness values
+      expect(decoded.length).toBe(31);
+
+      // Verify sharpness values: [1.0, 2.0, 3.0, ..., 31.0]
+      // Allow tolerance for uint8 quantization error
+      // uint8 with range [0, 31] has step size 31/255 ≈ 0.1216
+      // So we expect errors up to ~±0.06 per value
+      for (let i = 0; i < 31; i++) {
+        const expected = i + 1; // [1, 2, 3, ..., 31]
+        expect(decoded[i]).toBeCloseTo(expected, 0); // Tolerance: ±0.5 (1 decimal place)
+      }
+
+      // CRITICAL: Verify high sharpness values are NOT clamped to 15
+      // If the bug still exists (scale = 15.0), values would be clamped to ~15
+      // With the fix (scale = 31.0), values should reach full range
+      const maxSharpness = Math.max(...Array.from(decoded));
+      expect(maxSharpness).toBeGreaterThan(29.0); // Must be close to 31.0
+      expect(maxSharpness).toBeCloseTo(31.0, 1);
+
+      // Verify minimum sharpness
+      const minSharpness = Math.min(...Array.from(decoded));
+      expect(minSharpness).toBeCloseTo(1.0, 1);
+    });
+  });
+
+  describe('HDR Color Pipeline (E2E)', () => {
+    it('should preserve HDR colors (float32 values > 1.0)', async () => {
+      // CRITICAL: This test verifies HDR color preservation through the pipeline
+      // - Python stores float32 colors with values > 1.0 (HDR range)
+      // - TypeScript must preserve these values (not clamp to [0,1])
+      // - No quantization should occur for HDR data
+
+      const { array, attrs } = await loadArrayWithAttrs(
+        'test_hdr_colors.zarr',
+        'hdr_points/colors'
+      );
+
+      // Verify metadata indicates float32 (no encoding/quantization)
+      expect(attrs.encoding?.name).toBe('float32');
+      expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+
+      // Decode
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 20);
+
+      // Verify shape: 20 points × 3 colors = 60 elements
+      expect(decoded.length).toBe(20 * 3);
+
+      // Verify HDR values are preserved (red channel should go up to 10.0)
+      // Points are arranged in a line with red channel = linspace(0, 10, 20)
+      const redChannels = [];
+      for (let i = 0; i < 20; i++) {
+        const r = decoded[i * 3];
+        redChannels.push(r);
+      }
+
+      // Check that we have values greater than 1.0 (HDR range)
+      const maxRed = Math.max(...redChannels);
+      expect(maxRed).toBeGreaterThan(5.0); // Should reach close to 10.0
+
+      // CRITICAL: Verify no clamping occurred
+      // If HDR pipeline is broken, values would be clamped to 1.0
+      expect(maxRed).toBeGreaterThan(1.0);
+
+      // Verify colors increase monotonically (linspace property)
+      for (let i = 1; i < redChannels.length; i++) {
+        expect(redChannels[i]).toBeGreaterThanOrEqual(redChannels[i - 1]);
+      }
+
+      // Verify min and max are roughly correct (allowing for float precision)
+      const minRed = Math.min(...redChannels);
+      expect(minRed).toBeCloseTo(0.0, 1);
+      expect(maxRed).toBeCloseTo(10.0, 0); // Within ±0.5
+
+      // Verify green and blue channels are constant at 0.5
+      for (let i = 0; i < 20; i++) {
+        const g = decoded[i * 3 + 1];
+        const b = decoded[i * 3 + 2];
+        expect(g).toBeCloseTo(0.5, 1);
+        expect(b).toBeCloseTo(0.5, 1);
+      }
+    });
+
+    it('should handle HDR colors without quantization', async () => {
+      // Verify that HDR colors are NOT quantized to uint8
+
+      const { array, attrs } = await loadArrayWithAttrs(
+        'test_hdr_colors.zarr',
+        'hdr_points/colors'
+      );
+
+      // Should be float32, not uint8
+      expect(array.dtype).not.toContain('u1');
+      expect(array.dtype).toContain('f');
+
+      // Should have no encoding (direct float32)
+      expect(attrs.encoding?.name).toBe('float32');
+
+      // Should have no bounds (not quantized)
+      expect(attrs.encoding?.bounds).toBeUndefined();
+      expect((attrs.encoding as any)?.min).toBeUndefined();
+      expect((attrs.encoding as any)?.max).toBeUndefined();
+    });
+  });
 });
