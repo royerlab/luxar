@@ -152,10 +152,9 @@ def generate_array_refs_test():
     with asection("Generating Array References Test"):
         output = FIXTURES_DIR / "test_array_refs.zarr"
 
-        # Create two point groups with IDENTICAL colors
-        # (should deduplicate via array references)
-        positions1 = np.random.randn(500, 3).astype(np.float32) * 10
-        positions2 = np.random.randn(500, 3).astype(np.float32) * 10
+        # CRITICAL: Use SAME positions for both groups!
+        # Morton ordering must produce SAME sort order for deduplication to work
+        shared_positions = np.random.randn(500, 3).astype(np.float32) * 10
 
         # Same colors for both groups
         shared_colors = np.random.rand(500, 3).astype(np.float32)
@@ -166,16 +165,24 @@ def generate_array_refs_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+        # Disable spatial index to prevent Morton ordering from creating new arrays
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+            enable_spatial_index=False  # CRITICAL: Disable to preserve array identity
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            # Add both point clouds with same colors (should deduplicate via array ref)
-            scene.add_points("points1", positions1, colors=shared_colors)
-            scene.add_points("points2", positions2, colors=shared_colors)
+            # Add both point clouds with SAME colors
+            # With spatial index disabled, colors passed directly to encoder
+            # Second encoding will detect duplicate and create array ref
+            scene.add_points("points1", shared_positions, colors=shared_colors)
+            scene.add_points("points2", shared_positions, colors=shared_colors)
 
         aprint(f"✓ Created {output}")
-        aprint(f"  Points1: {positions1.shape}")
-        aprint(f"  Points2: {positions2.shape}")
+        aprint(f"  Shared positions: {shared_positions.shape}")
         aprint(f"  Shared colors: {shared_colors.shape} (deduplicated)")
 
 
