@@ -4,6 +4,9 @@
 This script creates small zarr datasets with all encoding modes to verify
 that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 
+IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
+WASM binding issues in Node.js test environment.
+
 Run from project root:
     hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
@@ -42,7 +45,10 @@ def generate_broadcasting_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        # Disable compression for Node.js compatibility (blosc has WASM issues)
+        with LuxarZarrCompiler(
+            output, encoding_mode=EncodingMode.MEMORY, compressor=None
+        ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -90,7 +96,7 @@ def generate_lut_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -124,7 +130,7 @@ def generate_quantization_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             scene.add_points(
@@ -159,7 +165,7 @@ def generate_array_refs_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Add both point clouds with same colors (should deduplicate via array ref)
@@ -195,7 +201,7 @@ def generate_mixed_encoding_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Add points with different encoding modes
@@ -253,7 +259,7 @@ def generate_4d_test():
             Dimension("z", unit="units", display=True),
         ])
 
-        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY) as compiler:
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None) as compiler:
             scene = compiler.create_scene(dimensions=dims)
             scene.add_points("points", positions, colors=colors)
 
