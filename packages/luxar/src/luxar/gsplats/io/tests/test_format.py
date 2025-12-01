@@ -377,9 +377,9 @@ class TestFormatCompliance:
             splats_group = root["splats"]
 
             # Check semantic types via encoding names (spec Section "Semantic Types")
-            # Centers: COORDINATE → float16 in MEMORY mode
+            # Centers: COORDINATE → float32 in MEMORY mode (new default with float16_allowed=False)
             centers_enc = splats_group["centers"].attrs.get("encoding", {})
-            assert centers_enc["name"] == "float16"
+            assert centers_enc["name"] == "float32"
 
             # Sharpnesses: BOUNDED_SCALAR → bounded_scalar_uint8 in MEMORY mode
             sharpness_enc = splats_group["sharpnesses"].attrs.get("encoding", {})
