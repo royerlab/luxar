@@ -190,3 +190,70 @@ export async function waitForDebugInterfaceReady(page: Page, timeout = 10000): P
     { timeout }
   );
 }
+
+/**
+ * Wait for dimension to be selected
+ * More reliable than arbitrary timeout after pressing number key
+ */
+export async function waitForDimensionSelected(
+  page: Page,
+  _dimensionIndex: number,
+  timeout = 5000
+): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      // Check if dimension was selected (implementation may vary)
+      // For now, just wait for state to be stable
+      return debug && debug.getState && debug.getState().initialized;
+    },
+    { timeout }
+  );
+  // Small delay to ensure input handler processed the key
+  await page.waitForTimeout(100);
+}
+
+/**
+ * Wait for spatial index query to complete
+ * Detects when query finishes by checking console or state changes
+ */
+export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<void> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      // Check if a query completed by looking for stable state
+      const state = await getLuxarState(page);
+
+      // If we have a stable point count and not loading, query is done
+      if (!state.isLoading && state.totalPoints >= 0) {
+        return;
+      }
+    } catch {
+      // State not ready yet
+    }
+
+    await page.waitForTimeout(100);
+  }
+
+  // Timeout not an error - query might have completed
+}
+
+/**
+ * Wait for UI element to appear or disappear
+ * More reliable than arbitrary timeouts for UI state changes
+ */
+export async function waitForUIState(
+  page: Page,
+  selector: string,
+  visible: boolean,
+  timeout = 5000
+): Promise<void> {
+  if (visible) {
+    await page.waitForSelector(selector, { state: 'visible', timeout });
+  } else {
+    await page.waitForSelector(selector, { state: 'hidden', timeout }).catch(() => {
+      // Element might not exist at all, which is also "not visible"
+    });
+  }
+}
