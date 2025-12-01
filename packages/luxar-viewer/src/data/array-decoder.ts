@@ -125,18 +125,20 @@ export class ArrayDecoder {
    * @param zarrArray - Zarr array handle
    * @param attrs - Array metadata from .zattrs
    * @param expectedElements - Expected total elements (for validation)
+   * @param zarrRootLoc - Zarr root location for resolving array_ref paths (required for array_ref)
    * @returns Decoded Float32Array
    */
   async decode(
     zarrArray: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
-    expectedElements?: number
+    expectedElements?: number,
+    zarrRootLoc?: zarr.Location<zarr.Readable>
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
 
     // Check for array reference first (highest priority)
-    if (enc?.target && enc?.hash) {
-      return this.decodeArrayRef(enc.hash, expectedElements);
+    if (enc?.name === 'array_ref' && enc?.target) {
+      return this.decodeArrayRef(enc.target, enc.hash, expectedElements, zarrRootLoc);
     }
 
     // Load raw data from zarr
@@ -328,26 +330,67 @@ export class ArrayDecoder {
   /**
    * Resolve array reference (deduplicated array)
    *
-   * Format: array_ref hash points to previously loaded array
+   * Per spec section 7.6, this method:
+   * 1. Checks hash-based cache first (fast path for already-loaded arrays)
+   * 2. If not cached, loads the target array from zarr using target path
+   * 3. Recursively decodes the target (it may also be encoded)
+   * 4. Caches the result by hash for future references
+   *
+   * @param targetPath - Path to the target array (from encoding.target)
+   * @param hash - Content hash for caching/verification (from encoding.hash)
+   * @param expectedElements - Expected total elements (for validation)
+   * @param zarrRootLoc - Zarr root location for path resolution
    */
-  private decodeArrayRef(hash: string, expectedElements?: number): Float32Array {
-    const cached = this.refRegistry.get(hash);
-
-    if (!cached) {
-      throw new Error(`Array reference not found: ${hash}`);
+  private async decodeArrayRef(
+    targetPath: string,
+    hash: string | undefined,
+    expectedElements?: number,
+    zarrRootLoc?: zarr.Location<zarr.Readable>
+  ): Promise<Float32Array> {
+    // Fast path: check cache by hash
+    if (hash) {
+      const cached = this.refRegistry.get(hash);
+      if (cached) {
+        log.info(Modules.ZARR_LOADER, `Array ref cache hit: ${hash} (${cached.length} elements)`);
+        return cached;
+      }
     }
 
-    log.info(Modules.ZARR_LOADER, `Array ref resolved: ${hash} (${cached.length} elements)`);
-
-    // Validate size if expected
-    if (expectedElements && cached.length !== expectedElements) {
-      log.warning(
-        Modules.ZARR_LOADER,
-        `Array ref size mismatch: expected ${expectedElements}, got ${cached.length}`
+    // Slow path: load from target path
+    if (!zarrRootLoc) {
+      throw new Error(
+        `Array reference to "${targetPath}" requires zarrRootLoc parameter for path resolution`
       );
     }
 
-    return cached;
+    log.info(Modules.ZARR_LOADER, `Loading array ref target: ${targetPath}`);
+
+    // Resolve and load target array
+    const targetLoc = zarrRootLoc.resolve(targetPath);
+    const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+    const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+    // Recursively decode target (it may also be encoded, e.g., LUT or quantized)
+    const decoded = await this.decode(targetArray, targetAttrs, expectedElements, zarrRootLoc);
+
+    // Cache by hash for future references
+    if (hash) {
+      this.refRegistry.register(hash, decoded);
+      log.info(
+        Modules.ZARR_LOADER,
+        `Array ref resolved and cached: ${targetPath} -> ${hash} (${decoded.length} elements)`
+      );
+    }
+
+    // Validate size if expected
+    if (expectedElements && decoded.length !== expectedElements) {
+      log.warning(
+        Modules.ZARR_LOADER,
+        `Array ref size mismatch: expected ${expectedElements}, got ${decoded.length}`
+      );
+    }
+
+    return decoded;
   }
 
   /**
@@ -356,6 +399,7 @@ export class ArrayDecoder {
    * Checks for any encoding metadata in attrs.encoding structure
    */
   static isEncoded(attrs: ArrayMetadata): boolean {
+    if (!attrs) return false;
     const enc = attrs.encoding;
     if (!enc || !enc.name) return false;
 
@@ -375,6 +419,7 @@ export class ArrayDecoder {
    * Returns a string describing the encoding mode
    */
   static getEncodingMode(attrs: ArrayMetadata): string {
+    if (!attrs) return 'direct';
     const enc = attrs.encoding;
     if (!enc || !enc.name) return 'direct';
 

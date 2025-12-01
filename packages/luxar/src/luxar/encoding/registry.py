@@ -110,19 +110,37 @@ class ArrayRefRegistry:
             # Dtype/shape match exists, verify with full hash
             stored_full_hash, stored_path = self._quick_map[simple_key]
             if full_hash == stored_full_hash:
-                # True duplicate
+                # True duplicate (same simple_key, same hash)
                 return ArrayRefMatch(
                     is_duplicate=True, target_path=stored_path, hash=full_hash
                 )
             else:
-                # Different data with same dtype/shape: register as new
+                # Different data with same dtype/shape
+                # BUT: check if this hash was registered under a DIFFERENT simple_key
+                # (e.g., colors and positions may have same dtype/shape but different content)
+                if full_hash in self._full_map:
+                    # This content was already registered elsewhere!
+                    return ArrayRefMatch(
+                        is_duplicate=True,
+                        target_path=self._full_map[full_hash],
+                        hash=full_hash,
+                    )
+                # Truly new data - update quick_map (most recent wins for simple_key)
                 self._quick_map[simple_key] = (full_hash, path)
                 self._full_map[full_hash] = path
                 return ArrayRefMatch(
                     is_duplicate=False, target_path=None, hash=full_hash
                 )
         else:
-            # New dtype/shape: register
+            # New dtype/shape combination
+            # Still check full_map in case same content was registered with different dtype/shape
+            if full_hash in self._full_map:
+                return ArrayRefMatch(
+                    is_duplicate=True,
+                    target_path=self._full_map[full_hash],
+                    hash=full_hash,
+                )
+            # Truly new: register both
             self._quick_map[simple_key] = (full_hash, path)
             self._full_map[full_hash] = path
             return ArrayRefMatch(is_duplicate=False, target_path=None, hash=full_hash)

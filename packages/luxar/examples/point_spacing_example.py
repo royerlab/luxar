@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Touching Spheres Example - Visualize world-space point relationships.
+"""Point Spacing Example - Understanding the relationship between point size and spacing.
 
 This example demonstrates:
-- Creating pairs of spheres that should exactly touch
-- Testing world-space sizing with different configurations
-- Verifying point size calculations with various radii
-- Visual validation of the touching relationship
+- The fundamental principle: spacing = 2 × radius for touching points
+- How to calculate proper spacing for points of different sizes
+- Visual verification of world-space sizing correctness
+- Multiple test configurations (horizontal, vertical, depth, mixed sizes, grid)
+- Why this matters: ensures points don't overlap or have gaps
 
-The fundamental principle: Two spheres of radius r separated by
-distance 2r should just touch at a single point.
+Educational value:
+- Shows the mathematical relationship between radius and spacing
+- Demonstrates world-space sizing (size independent of camera/viewport)
+- Provides visual test cases for size calculation verification
+- Essential for understanding point density and packing
 """
 
 from pathlib import Path
@@ -30,12 +34,13 @@ def create_touching_pairs():
     radii = []
 
     # Test case 1: Horizontal pair (along X axis)
+    # Demonstrates: For points of radius r, spacing = 2r makes them touch
     radius = 0.1
-    spacing = 2 * radius
+    spacing = 2 * radius  # KEY: spacing = 2 × radius for touching
     positions.extend(
         [
             [-spacing / 2, 0, 0],  # Left sphere
-            [spacing / 2, 0, 0],  # Right sphere
+            [spacing / 2, 0, 0],  # Right sphere (should just touch left)
         ]
     )
     colors.extend(
@@ -118,11 +123,12 @@ def create_touching_pairs():
 
 
 def main():
-    """Create a scene with various touching sphere configurations."""
-    output_path = Path(__file__).parent / "touching_spheres_example.zarr"
+    """Create a scene demonstrating point size and spacing relationships."""
+    output_path = Path(__file__).parent / "point_spacing_example.zarr"
 
-    aprint(f"Creating touching spheres example at {output_path}")
-    aprint("This example demonstrates various touching sphere configurations")
+    aprint(f"Creating point spacing example at {output_path}")
+    aprint("This example demonstrates the relationship between point size and spacing")
+    aprint("KEY PRINCIPLE: For points of radius r, use spacing = 2r for touching")
     aprint("")
     aprint("Configurations included:")
     aprint("- Red pair: Horizontal touching along X axis")
@@ -138,21 +144,26 @@ def main():
 
         # Add metadata
         scene.attrs["description"] = """
-Touching Spheres Visualization
-        ===============================
+Point Size and Spacing Relationships
+====================================
 
-        This scene demonstrates the fundamental principle of world-space
-        point sizing: spheres should maintain their touching relationships
-        regardless of viewing conditions.
+This scene demonstrates the fundamental mathematical relationship between
+point radius and spacing for proper point packing.
 
-        Test cases:
-        1. Red pair - horizontal alignment
-        2. Green pair - vertical alignment
-        3. Blue pair - depth alignment
-        4. Yellow/Magenta - different sizes
-        5. Cyan/Orange grid - multiple touching pairs
+KEY PRINCIPLE: spacing = 2 × radius for touching points
 
-        All pairs should just touch at a single point.
+Test cases demonstrating this principle:
+1. Red pair - horizontal touching (r=0.1, spacing=0.2)
+2. Green pair - vertical touching (same radius)
+3. Blue pair - depth touching (same radius)
+4. Yellow/Magenta - different sizes touching (spacing = r1 + r2)
+5. Cyan/Orange grid - systematic 3×3 grid with proper spacing
+
+Educational value:
+- Understand how to calculate proper point spacing
+- Verify world-space sizing works correctly
+- See how different radii require different spacing
+- Learn point packing principles for dense visualizations
         """
 
         # Create the touching spheres
@@ -175,11 +186,17 @@ Touching Spheres Visualization
         aprint(f"\n✓ Scene created with {len(positions)} spheres")
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")
-        aprint("1. Run: luxar serve touching_spheres_example.zarr")
-        aprint("2. Rotate the view to see different perspectives")
-        aprint("3. Verify all pairs are just touching")
-        aprint("4. Press SPACE for fullscreen - touching maintained")
-        aprint("5. Use Shift+Wheel to change FOV - touching maintained")
+        aprint("1. Run: luxar serve point_spacing_example.zarr")
+        aprint("2. Observe the touching relationships in all test cases")
+        aprint("3. Rotate view to verify touching from all angles")
+        aprint("4. Notice: spacing = 2 × radius makes spheres touch perfectly")
+        aprint("5. Test: Press SPACE for fullscreen - relationship maintained")
+        aprint("6. Test: Use Shift+Wheel to change FOV - relationship maintained")
+        aprint("")
+        aprint("EDUCATIONAL NOTES:")
+        aprint("- This principle is crucial for dense point clouds")
+        aprint("- Proper spacing prevents overlapping and gaps")
+        aprint("- Works regardless of camera, viewport, or FOV")
         aprint("=" * 60)
 
 

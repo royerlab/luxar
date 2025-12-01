@@ -33,11 +33,16 @@ const FIXTURES_DIR = path.resolve(__dirname, '../../tests/fixtures');
  * Helper to load array with attributes from a zarr dataset
  *
  * Uses FileSystemStore for Node.js filesystem access
+ * Returns rootLoc for array_ref resolution
  */
 async function loadArrayWithAttrs(
   datasetName: string,
   arrayPath: string
-): Promise<{ array: zarr.Array<zarr.DataType, zarr.Readable>; attrs: ArrayMetadata }> {
+): Promise<{
+  array: zarr.Array<zarr.DataType, zarr.Readable>;
+  attrs: ArrayMetadata;
+  rootLoc: zarr.Location<zarr.Readable>;
+}> {
   const storePath = path.join(FIXTURES_DIR, datasetName);
 
   // Create filesystem store for Node.js (not FetchStore - that's for HTTP)
@@ -50,7 +55,7 @@ async function loadArrayWithAttrs(
   const array = await zarr.open(arrayLoc, { kind: 'array' });
 
   const attrs = array.attrs as unknown as ArrayMetadata;
-  return { array, attrs };
+  return { array, attrs, rootLoc };
 }
 
 describe('ArrayDecoder - Python Compatibility Tests', () => {
@@ -243,11 +248,10 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('Array Reference Deduplication', () => {
-    it.skip('should deduplicate colors across multiple point clouds', async () => {
-      // TODO: Test fixtures don't actually generate array references
-      // Python encoder needs to be updated to create deduplicated arrays
-      // Both points1 and points2 should share the same color array via array_ref
-      const { array: array1, attrs: attrs1 } = await loadArrayWithAttrs(
+    it('should resolve array_ref to target array', async () => {
+      // points1/colors is the ORIGINAL (rgb_uint8 encoding)
+      // points2/colors is the REFERENCE (array_ref encoding pointing to points1/colors)
+      const { array: array1, attrs: attrs1, rootLoc } = await loadArrayWithAttrs(
         'test_array_refs.zarr',
         'points1/colors'
       );
@@ -256,64 +260,66 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         'points2/colors'
       );
 
-      // Verify both use array references (nested under "encoding")
-      expect(attrs1.encoding?.target).toBeDefined();
-      expect(attrs1.encoding?.hash).toBeDefined();
-      expect(attrs2.encoding?.target).toBeDefined();
-      expect(attrs2.encoding?.hash).toBeDefined();
+      // Verify points1/colors is the original (rgb_uint8, no target)
+      expect(attrs1.encoding?.name).toBe('rgb_uint8');
+      expect(attrs1.encoding?.target).toBeUndefined();
       expect(ArrayDecoder.isEncoded(attrs1)).toBe(true);
-      expect(ArrayDecoder.isEncoded(attrs2)).toBe(true);
 
-      // Verify both reference the same hash
-      expect(attrs1.encoding?.hash).toBe(attrs2.encoding?.hash);
+      // Verify points2/colors is an array_ref to points1/colors
+      expect(attrs2.encoding?.name).toBe('array_ref');
+      expect(attrs2.encoding?.target).toBe('points1/colors');
+      expect(attrs2.encoding?.hash).toBeDefined();
+      expect(ArrayDecoder.isEncoded(attrs2)).toBe(true);
 
       // Create shared registry
       const registry = new ArrayRefRegistry();
       const decoder = new ArrayDecoder(registry);
 
-      // Decode both arrays
-      const decoded1 = await decoder.decode(array1, attrs1, 500);
-      const decoded2 = await decoder.decode(array2, attrs2, 500);
+      // Decode both arrays - pass rootLoc for array_ref resolution
+      const decoded1 = await decoder.decode(array1, attrs1, 500, rootLoc);
+      const decoded2 = await decoder.decode(array2, attrs2, 500, rootLoc);
 
       // Verify shapes
       expect(decoded1.length).toBe(500 * 3);
       expect(decoded2.length).toBe(500 * 3);
 
-      // Verify both decoded arrays are identical (shared data)
+      // Verify both decoded arrays are identical (array_ref resolves to same data)
       for (let i = 0; i < decoded1.length; i++) {
         expect(decoded1[i]).toBeCloseTo(decoded2[i], 5);
       }
     });
 
-    it.skip('should reuse cached array from registry', async () => {
-      // TODO: Test fixtures don't actually generate array references
-      // Python encoder needs to be updated to create deduplicated arrays
-      const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points1/colors');
+    it('should use cached array when decoding array_ref twice', async () => {
+      // Load points2/colors which is an array_ref to points1/colors
+      const { array: array2, attrs: attrs2, rootLoc } = await loadArrayWithAttrs(
+        'test_array_refs.zarr',
+        'points2/colors'
+      );
 
-      // Create registry and decoder
+      // Verify this is an array_ref
+      expect(attrs2.encoding?.name).toBe('array_ref');
+      expect(attrs2.encoding?.hash).toBeDefined();
+
+      // Create shared registry
       const registry = new ArrayRefRegistry();
       const decoder = new ArrayDecoder(registry);
 
-      // First decode - should register in cache
-      const decoded1 = await decoder.decode(array, attrs, 500);
+      // First decode - should load from target path and cache
+      const decoded1 = await decoder.decode(array2, attrs2, 500, rootLoc);
+      expect(decoded1.length).toBe(500 * 3);
 
-      // Manually verify registry has the array (using hash from encoding)
-      const hash = attrs.encoding?.hash;
-      expect(hash).toBeDefined();
-      const cachedArray = registry.get(hash!);
+      // Verify registry now has the cached array
+      const hash = attrs2.encoding?.hash!;
+      expect(registry.has(hash)).toBe(true);
+      const cachedArray = registry.get(hash);
       expect(cachedArray).toBeDefined();
-      expect(cachedArray!.length).toBe(decoded1.length);
 
-      // Second decode - should reuse cached array
-      const decoded2 = await decoder.decode(array, attrs, 500);
+      // Second decode - should hit cache (returns same array instance)
+      const decoded2 = await decoder.decode(array2, attrs2, 500, rootLoc);
 
-      // Verify both return the same array instance (deduplication works)
+      // Verify cache hit (same array instance from registry)
       expect(decoded2).toBe(cachedArray);
-
-      // Verify content is identical
-      for (let i = 0; i < decoded1.length; i++) {
-        expect(decoded1[i]).toBeCloseTo(decoded2[i], 5);
-      }
+      expect(decoded2.length).toBe(decoded1.length);
     });
   });
 

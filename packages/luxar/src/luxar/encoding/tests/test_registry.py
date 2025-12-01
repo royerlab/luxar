@@ -57,18 +57,29 @@ class TestDuplicateDetection:
         assert not match1.is_duplicate
         assert not match2.is_duplicate
 
-    def test_different_shape_not_duplicate(self):
-        """Test same data but different shape not detected as duplicate."""
+    def test_same_bytes_different_shape_is_duplicate(self):
+        """Test that arrays with same bytes but different shape ARE detected as duplicates.
+
+        This is correct behavior because:
+        1. Content-based deduplication should detect identical byte content
+        2. The encoder stores original_shape in array_ref metadata
+        3. The decoder uses original_shape to reconstruct properly
+        """
         registry = ArrayRefRegistry()
 
-        data1 = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
-        data2 = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        data1 = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)  # shape (4,)
+        data2 = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)  # shape (2, 2)
+
+        # Same bytes, different shape → should still be detected as duplicate
+        assert data1.tobytes() == data2.tobytes()  # Verify they have same bytes
 
         match1 = registry.check(data1, "path1")
         match2 = registry.check(data2, "path2")
 
-        assert not match1.is_duplicate
-        assert not match2.is_duplicate
+        assert not match1.is_duplicate  # First is new
+        assert match2.is_duplicate  # Second has same bytes → duplicate
+        assert match2.target_path == "path1"
+        assert match1.hash == match2.hash  # Same hash since same bytes
 
 
 class TestRegistryLifecycle:

@@ -4,14 +4,14 @@ This directory contains example scripts demonstrating various features of Luxar,
 
 ## Quick Start
 
-1. **Install Luxar** (if not already installed):
+1. **Install Luxar** (if not already installed, from project root):
    ```bash
-   pip install -e packages/luxar
+   pip install -e .
    ```
 
-2. **Run an example**:
+2. **Run an example** (from project root):
    ```bash
-   cd examples
+   cd packages/luxar/examples
    python <example_name>.py
    ```
 
