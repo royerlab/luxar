@@ -208,12 +208,26 @@ class TestCoordinateEncoding:
             assert arr.dtype == np.float32
 
     def test_coordinate_memory_mode(self):
-        """Test coordinates use float16 in MEMORY mode."""
+        """Test coordinates use float32 in MEMORY mode by default (TypeScript compatibility)."""
         data = np.random.randn(1000, 3).astype(np.float32)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
-            encoder = ArrayEncoder()
+            encoder = ArrayEncoder()  # float16_allowed=False by default
+            encoder.encode(
+                data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.MEMORY
+            )
+
+            arr = group["test"]
+            assert arr.dtype == np.float32  # Default is float32 (not float16)
+
+    def test_coordinate_memory_mode_float16_enabled(self):
+        """Test coordinates use float16 in MEMORY mode when explicitly enabled."""
+        data = np.random.randn(1000, 3).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder(float16_allowed=True)  # Explicitly enable float16
             encoder.encode(
                 data, group, "test", SemanticType.COORDINATE, mode=EncodingMode.MEMORY
             )

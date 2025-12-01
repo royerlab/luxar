@@ -123,6 +123,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         enable_spatial_index: bool = True,
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "morton",
+        float16_allowed: bool = False,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -133,6 +134,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)
             encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
             ordering_method: Spatial ordering method ("morton" or "hilbert", default: "morton")
+            float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -153,9 +155,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.enable_spatial_index = enable_spatial_index
         self.ordering_method = ordering_method
 
-        # Create array encoder with specified encoding mode
-        self._encoder = ArrayEncoder()
+        # Create array encoder with specified encoding mode and float16 control
+        self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
         self._encoding_mode = encoding_mode
+        self._float16_allowed = float16_allowed
 
         # Create root Zarr group
         self.store = zarr.open_group(self._store_path, mode="w")
