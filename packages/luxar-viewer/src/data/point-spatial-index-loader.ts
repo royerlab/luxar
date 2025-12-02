@@ -445,7 +445,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Query spatial index for visible point ranges
    */
   private queryVisibleRanges(viewState: ViewState): PointRange[] {
-    if (!this.spatialIndex) {
+    // CRITICAL: Check for EITHER chunk index OR old grid index
+    if (!this.chunkIndex && !this.spatialIndex) {
       return [];
     }
 
