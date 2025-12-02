@@ -316,6 +316,141 @@ export async function getConsoleMessages(page: Page): Promise<{
  * @param page - Playwright page
  * @param allowedPatterns - Optional patterns to ignore (e.g., expected warnings)
  */
+/**
+ * Get WebGL errors from the rendering context
+ *
+ * CRITICAL: WebGL errors accumulate and can indicate serious rendering issues:
+ * - Buffer size mismatches
+ * - Invalid shader state
+ * - Texture allocation failures
+ *
+ * @param page - Playwright page
+ * @returns Array of WebGL error messages
+ */
+export async function getWebGLErrors(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return ['No canvas element found'];
+
+    const gl =
+      (canvas as HTMLCanvasElement).getContext('webgl2') ||
+      (canvas as HTMLCanvasElement).getContext('webgl');
+
+    if (!gl) return ['No WebGL context available'];
+
+    const errors: string[] = [];
+    let error;
+    let safetyCount = 0;
+
+    // Read all errors from queue (limit to 100 to prevent infinite loop)
+    while ((error = gl.getError()) !== gl.NO_ERROR && safetyCount < 100) {
+      const errorName =
+        error === gl.INVALID_ENUM
+          ? 'INVALID_ENUM'
+          : error === gl.INVALID_VALUE
+          ? 'INVALID_VALUE'
+          : error === gl.INVALID_OPERATION
+          ? 'INVALID_OPERATION'
+          : error === gl.OUT_OF_MEMORY
+          ? 'OUT_OF_MEMORY'
+          : error === gl.INVALID_FRAMEBUFFER_OPERATION
+          ? 'INVALID_FRAMEBUFFER_OPERATION'
+          : `UNKNOWN(0x${error.toString(16)})`;
+
+      errors.push(`GL_${errorName}`);
+      safetyCount++;
+    }
+
+    return errors;
+  });
+}
+
+/**
+ * Extract attribute values from a point cloud for validation
+ *
+ * Allows E2E tests to verify actual rendered data matches expected values.
+ * CRITICAL for data integrity validation.
+ *
+ * @param page - Playwright page
+ * @param cloudName - Name of the point cloud object
+ * @param attribute - Which attribute to extract
+ * @returns Array of attribute values
+ */
+export async function extractAttributeValues(
+  page: Page,
+  cloudName: string,
+  attribute: 'position' | 'color' | 'radius' | 'sharpness'
+): Promise<number[]> {
+  return await page.evaluate(
+    ({ cloudName, attribute }) => {
+      const debug = (window as any).__luxarDebug;
+      if (!debug || !debug.scene) return [];
+
+      const cloud = debug.scene.getObjectByName(cloudName);
+      if (!cloud || !cloud.geometry || !cloud.geometry.attributes) return [];
+
+      const attr = cloud.geometry.attributes[attribute];
+      if (!attr || !attr.array) return [];
+
+      return Array.from(attr.array);
+    },
+    { cloudName, attribute }
+  );
+}
+
+/**
+ * Assert console contains expected log pattern
+ *
+ * @param page - Playwright page
+ * @param pattern - RegExp pattern to search for
+ * @param errorMessage - Optional custom error message
+ */
+export async function assertConsoleContains(
+  page: Page,
+  pattern: RegExp,
+  errorMessage?: string
+): Promise<void> {
+  const messages = await getConsoleMessages(page);
+  const found = messages.all.some((msg) => pattern.test(msg));
+
+  if (!found) {
+    throw new Error(
+      errorMessage ||
+        `Console does not contain expected pattern: ${pattern}\n` +
+          `Console has ${messages.all.length} messages total`
+    );
+  }
+}
+
+/**
+ * Assert console does NOT contain error pattern
+ *
+ * @param page - Playwright page
+ * @param pattern - RegExp pattern that should NOT appear
+ * @param errorMessage - Optional custom error message
+ */
+export async function assertConsoleDoesNotContain(
+  page: Page,
+  pattern: RegExp,
+  errorMessage?: string
+): Promise<void> {
+  const messages = await getConsoleMessages(page);
+  const found = messages.all.filter((msg) => pattern.test(msg));
+
+  if (found.length > 0) {
+    console.error('Found forbidden console messages:');
+    found.forEach((msg, i) => {
+      console.error(`  ${i + 1}. ${msg}`);
+    });
+
+    throw new Error(
+      errorMessage ||
+        `Console contains forbidden pattern: ${pattern}\n` +
+          `Found ${found.length} matches`
+    );
+  }
+}
+
 export async function assertNoConsoleErrors(
   page: Page,
   allowedPatterns: RegExp[] = []
