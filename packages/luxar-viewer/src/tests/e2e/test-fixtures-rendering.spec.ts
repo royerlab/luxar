@@ -14,6 +14,7 @@ import {
   getLuxarState,
   assertNoConsoleErrors,
   getConsoleMessages,
+  getWebGLErrors,
 } from './helpers';
 
 // HTTP server (configured in playwright.config.ts) serves from project root
@@ -70,10 +71,15 @@ test.describe('Test Fixture Rendering', () => {
     // With fix: max should be close to 31
     expect(sharpnessData?.max).toBeGreaterThan(200); // uint8: 31 * 255 / 31 ≈ 255
 
+    // Check for WebGL errors (CRITICAL)
+    const webglErrors = await getWebGLErrors(page);
+    expect(webglErrors.length).toBe(0);
+
     // Log console messages for debugging
     const consoleMessages = await getConsoleMessages(page);
     console.log(`[Sharpness Test] Console logs: ${consoleMessages.logs.length}`);
     console.log(`[Sharpness Test] Console warnings: ${consoleMessages.warnings.length}`);
+    console.log(`[Sharpness Test] WebGL errors: ${webglErrors.length}`);
 
     // Take screenshot for visual verification
     await page.screenshot({ path: 'test-results/sharpness-range-rendering.png' });
