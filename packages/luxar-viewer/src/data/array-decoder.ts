@@ -26,8 +26,8 @@ export interface EncodingMetadata {
   /** Lookup table values (can be flat array or array of arrays) */
   lut?: number[] | number[][];
 
-  /** LUT storage mode (row or flat) */
-  lut_mode?: string;
+  /** LUT storage mode: "row" (one index per row) or "scalar" (one index per element) */
+  lut_mode?: 'row' | 'scalar' | string;
 
   /** Original shape before encoding [n, k] */
   original_shape?: number[];
@@ -223,14 +223,18 @@ export class ArrayDecoder {
       // CRITICAL: Default to 1 for scalar mode, but MUST check original_shape for vector data
       const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
 
-      // Decode LUT
-      const decoded = this.decodeLUT(data, enc.lut, k);
+      // Get LUT mode from metadata (scalar vs row)
+      const lutMode = (enc as any).lut_mode || 'row'; // Default to row mode
 
-      // CRITICAL BUG FIX: Validate decoded size matches expected
+      // Decode LUT with correct mode
+      const decoded = this.decodeLUT(data, enc.lut, k, lutMode);
+
+      // Validate decoded size matches expected (only warn, don't fail)
       if (expectedElements && decoded.length !== expectedElements) {
         log.warning(
           Modules.ZARR_LOADER,
-          `LUT decode size mismatch: got ${decoded.length}, expected ${expectedElements}. Using decoded size.`
+          `LUT decode size mismatch: got ${decoded.length}, expected ${expectedElements}. ` +
+          `This is normal for ${lutMode} mode. Using decoded size.`
         );
       }
 
@@ -356,12 +360,21 @@ export class ArrayDecoder {
    * Decode LUT-encoded array
    *
    * Format: Indices (uint8/uint16) + lookup table
+   * Modes:
+   * - "row": One index per row → k values (e.g., positions: one index per point → (x,y,z))
+   * - "scalar": One index per element → 1 value (e.g., positions: one index per coordinate)
    *
    * @param indices - Array of indices into the lookup table
-   * @param lut - Lookup table containing unique values (can be array of arrays or flat)
-   * @param k - Feature dimension (e.g., 3 for RGB, 1 for scalar)
+   * @param lut - Lookup table containing unique values
+   * @param k - Feature dimension (ignored for scalar mode)
+   * @param lutMode - "row" or "scalar" mode
    */
-  private decodeLUT(indices: Float32Array, lut: number[] | number[][], k: number): Float32Array {
+  private decodeLUT(
+    indices: Float32Array,
+    lut: number[] | number[][],
+    k: number,
+    lutMode: string = 'row'
+  ): Float32Array {
     const n = indices.length;
 
     // Flatten LUT if it's an array of arrays (row mode)
@@ -374,21 +387,39 @@ export class ArrayDecoder {
       flatLUT = lut as number[];
     }
 
-    log.info(Modules.ZARR_LOADER, `LUT: ${n} indices → ${n * k} elements (k=${k})`);
-    log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique)`);
+    // CRITICAL: Handle scalar vs row mode
+    if (lutMode === 'scalar') {
+      // Scalar mode: one index per element, LUT contains scalar values
+      // Output size = n (NOT n * k)
+      log.info(Modules.ZARR_LOADER, `LUT (scalar): ${n} indices → ${n} elements`);
+      log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} unique scalar values`);
 
-    const result = new Float32Array(n * k);
+      const result = new Float32Array(n);
 
-    // Map each index to its LUT value
-    for (let i = 0; i < n; i++) {
-      const idx = Math.round(indices[i]); // Indices should be integers
-
-      for (let j = 0; j < k; j++) {
-        result[i * k + j] = flatLUT[idx * k + j];
+      for (let i = 0; i < n; i++) {
+        const idx = Math.round(indices[i]);
+        result[i] = flatLUT[idx];
       }
-    }
 
-    return result;
+      return result;
+    } else {
+      // Row mode: one index per row, LUT contains k-dimensional vectors
+      // Output size = n * k
+      log.info(Modules.ZARR_LOADER, `LUT (row): ${n} indices → ${n * k} elements (k=${k})`);
+      log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique vectors)`);
+
+      const result = new Float32Array(n * k);
+
+      for (let i = 0; i < n; i++) {
+        const idx = Math.round(indices[i]);
+
+        for (let j = 0; j < k; j++) {
+          result[i * k + j] = flatLUT[idx * k + j];
+        }
+      }
+
+      return result;
+    }
   }
 
   /**
