@@ -320,16 +320,19 @@ export async function assertNoConsoleErrors(
   page: Page,
   allowedPatterns: RegExp[] = []
 ): Promise<void> {
-  const console = await getConsoleMessages(page);
+  const messages = await getConsoleMessages(page);
 
   // Filter out allowed errors
-  const actualErrors = console.errors.filter((err) => {
+  const actualErrors = messages.errors.filter((err) => {
     return !allowedPatterns.some((pattern) => pattern.test(err));
   });
 
   if (actualErrors.length > 0) {
+    // Use global console, not the messages variable
+    // eslint-disable-next-line no-console
     console.error('[E2E Test] Console Errors Detected:');
     actualErrors.forEach((err, i) => {
+      // eslint-disable-next-line no-console
       console.error(`  ${i + 1}. ${err}`);
     });
     throw new Error(
