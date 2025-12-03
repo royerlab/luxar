@@ -279,7 +279,7 @@ export async function getConsoleMessages(page: Page): Promise<{
       return { errors: [], warnings: [], logs: [], all: [] };
     }
 
-    const messages = debug.consoleInterceptor.getMessages();
+    const messages = debug.consoleInterceptor.getBufferedMessages();
     const errors: string[] = [];
     const warnings: string[] = [];
     const logs: string[] = [];
@@ -289,12 +289,23 @@ export async function getConsoleMessages(page: Page): Promise<{
       const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
       all.push(text);
 
-      if (text.toLowerCase().includes('error') || msg.type === 'error') {
+      // Prioritize msg.type over text content to avoid false positives
+      // (e.g., info messages mentioning "error" should not be flagged as errors)
+      if (msg.type === 'error') {
         errors.push(text);
-      } else if (text.toLowerCase().includes('warn') || msg.type === 'warn') {
+      } else if (msg.type === 'warn') {
         warnings.push(text);
-      } else {
+      } else if (msg.type === 'log' || msg.type === 'info' || msg.type === 'debug') {
         logs.push(text);
+      } else {
+        // Fallback for messages without type: check text content
+        if (text.toLowerCase().includes('[❌]') || /\berror:/i.test(text)) {
+          errors.push(text);
+        } else if (text.toLowerCase().includes('[⚠️]') || /\bwarning:/i.test(text)) {
+          warnings.push(text);
+        } else {
+          logs.push(text);
+        }
       }
     });
 
