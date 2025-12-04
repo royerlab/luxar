@@ -405,6 +405,8 @@ export class DataLoadingMonitor {
       errors: 0,
       pointsLoaded: 0,
       bytesLoaded: 0,
+      datasetSize: 0,
+      visiblePoints: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
       cacheHitRate: 0,
@@ -591,8 +593,8 @@ export class DataLoadingMonitor {
             ${hasSpatialIndex ? '🔍' : '📦'}
           </span>
           
-          <span class="points" title="Total points loaded">
-            ${this.formatNumber(stats.totalPoints)}
+          <span class="points" title="Visible points">
+            ${this.formatNumber(stats.visiblePoints)}
           </span>
           
           <span class="cache" title="Cache hit rate">
@@ -855,6 +857,8 @@ export class DataLoadingMonitor {
     let totalCacheAccess = 0;
     let totalQueryTime = 0;
     let activeSpatial = 0;
+    let datasetSize = 0; // Total points in all datasets (from zarr metadata)
+    let visiblePoints = 0; // Currently visible/rendered points
 
     for (const metrics of this.metrics.values()) {
       totalPoints += metrics.pointsLoaded;
@@ -864,6 +868,8 @@ export class DataLoadingMonitor {
       totalCacheHits += metrics.cacheHits;
       totalCacheAccess += metrics.cacheHits + metrics.cacheMisses;
       totalQueryTime += metrics.avgQueryTime * metrics.queries;
+      datasetSize += metrics.datasetSize || 0;
+      visiblePoints += metrics.visiblePoints || 0;
 
       if (metrics.type === 'point-spatial-index') activeSpatial++;
     }
@@ -878,6 +884,8 @@ export class DataLoadingMonitor {
       activeFallbackLoaders: 0, // No more fallback loaders
       totalPoints,
       totalMemory,
+      datasetSize, // Total points in all datasets (from zarr metadata)
+      visiblePoints, // Currently visible/rendered points
       totalQueries,
       totalLoads,
       totalCacheHits,
