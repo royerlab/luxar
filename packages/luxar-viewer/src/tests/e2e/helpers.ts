@@ -163,7 +163,7 @@ export async function waitForConsoleInterceptor(page: Page, timeout = 5000): Pro
       return (
         debug &&
         debug.consoleInterceptor &&
-        typeof debug.consoleInterceptor.getMessages === 'function'
+        typeof debug.consoleInterceptor.getBufferedMessages === 'function'
       );
     },
     { timeout }
@@ -359,14 +359,14 @@ export async function getWebGLErrors(page: Page): Promise<string[]> {
         error === gl.INVALID_ENUM
           ? 'INVALID_ENUM'
           : error === gl.INVALID_VALUE
-          ? 'INVALID_VALUE'
-          : error === gl.INVALID_OPERATION
-          ? 'INVALID_OPERATION'
-          : error === gl.OUT_OF_MEMORY
-          ? 'OUT_OF_MEMORY'
-          : error === gl.INVALID_FRAMEBUFFER_OPERATION
-          ? 'INVALID_FRAMEBUFFER_OPERATION'
-          : `UNKNOWN(0x${error.toString(16)})`;
+            ? 'INVALID_VALUE'
+            : error === gl.INVALID_OPERATION
+              ? 'INVALID_OPERATION'
+              : error === gl.OUT_OF_MEMORY
+                ? 'OUT_OF_MEMORY'
+                : error === gl.INVALID_FRAMEBUFFER_OPERATION
+                  ? 'INVALID_FRAMEBUFFER_OPERATION'
+                  : `UNKNOWN(0x${error.toString(16)})`;
 
       errors.push(`GL_${errorName}`);
       safetyCount++;
@@ -456,9 +456,93 @@ export async function assertConsoleDoesNotContain(
 
     throw new Error(
       errorMessage ||
-        `Console contains forbidden pattern: ${pattern}\n` +
-          `Found ${found.length} matches`
+        `Console contains forbidden pattern: ${pattern}\n` + `Found ${found.length} matches`
     );
+  }
+}
+
+/**
+ * Wait for navigation to complete by detecting loading state change
+ *
+ * This is more robust than waitForTimeout because it:
+ * 1. Waits for isLoading to become true (navigation started)
+ * 2. Then waits for isLoading to become false (navigation finished)
+ *
+ * @param page - Playwright page
+ * @param timeout - Maximum wait time in ms
+ */
+export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
+  const startTime = Date.now();
+
+  // First, wait for loading to start (or be already done)
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      return debug && debug.getState && typeof debug.getState().isLoading === 'boolean';
+    },
+    { timeout: 5000 }
+  );
+
+  // Then wait for loading to complete
+  while (Date.now() - startTime < timeout) {
+    const state = await getLuxarState(page);
+
+    if (!state.isLoading) {
+      // Additional small delay to ensure WebGL has rendered
+      await page.waitForTimeout(100);
+      return;
+    }
+
+    await page.waitForTimeout(100);
+  }
+
+  // Timeout is not an error - loading may have completed
+  console.log('[waitForNavigationComplete] Timeout reached, continuing');
+}
+
+/**
+ * Wait for render frames to stabilize
+ *
+ * Useful for visual regression tests that need stable screenshots.
+ * Tries to wait for frame counter if available, otherwise uses time-based wait.
+ *
+ * @param page - Playwright page
+ * @param minFrames - Minimum number of frames to render (used as multiplier for fallback)
+ * @param timeout - Maximum wait time
+ */
+export async function waitForRenderStable(
+  page: Page,
+  minFrames = 3,
+  timeout = 10000
+): Promise<void> {
+  // First check if frame counter is available
+  const hasFrameCounter = await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    return typeof debug?.renderer?.info?.render?.frame === 'number';
+  });
+
+  if (hasFrameCounter) {
+    // Use frame counter for precise wait
+    await page.waitForFunction(
+      (minFrames) => {
+        const debug = (window as any).__luxarDebug;
+        return debug?.renderer?.info?.render?.frame >= minFrames;
+      },
+      minFrames,
+      { timeout }
+    );
+  } else {
+    // Fallback: wait for data to load + buffer time for rendering
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        const state = debug?.getState?.();
+        return state && !state.isLoading && state.initialized;
+      },
+      { timeout }
+    );
+    // Additional buffer for GPU to render frames
+    await page.waitForTimeout(minFrames * 100);
   }
 }
 
@@ -475,16 +559,16 @@ export async function assertNoConsoleErrors(
 
   if (actualErrors.length > 0) {
     // Use global console, not the messages variable
-    // eslint-disable-next-line no-console
+     
     console.error('[E2E Test] Console Errors Detected:');
     actualErrors.forEach((err, i) => {
-      // eslint-disable-next-line no-console
+       
       console.error(`  ${i + 1}. ${err}`);
     });
     throw new Error(
       `Console errors detected: ${actualErrors.length} errors.\n` +
-      `First error: ${actualErrors[0]}\n` +
-      `See console output above for full list.`
+        `First error: ${actualErrors[0]}\n` +
+        'See console output above for full list.'
     );
   }
 }

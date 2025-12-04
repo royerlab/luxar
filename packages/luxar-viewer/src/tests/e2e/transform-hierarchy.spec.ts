@@ -54,9 +54,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
 
     // Find objects in hierarchy
     const parent = positions.find((p) => p.name.includes('Galaxy') || p.name === 'Parent');
-    const child = positions.find(
-      (p) => p.name.includes('SolarSystem') || p.name.includes('Child')
-    );
+    const child = positions.find((p) => p.name.includes('SolarSystem') || p.name.includes('Child'));
 
     // If we have a parent→child relationship, verify composition
     if (parent && child) {
@@ -165,12 +163,12 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
     // Find object with complex transform
     const complexObject = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const THREE = (window as any).THREE;
 
       let complex: any = null;
       debug.scene.traverse((obj: any) => {
         if (obj.name && obj.name.includes('Complex')) {
-          const worldPos = new THREE.Vector3();
+          // Use obj.position.clone() to create a new Vector3 and getWorldPosition
+          const worldPos = obj.position.clone();
           obj.getWorldPosition(worldPos);
 
           complex = {
@@ -178,7 +176,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
             position: obj.position.toArray(),
             rotation: obj.rotation.toArray().slice(0, 3),
             scale: obj.scale.toArray(),
-            worldPosition: worldPos.toArray(),
+            worldPosition: [worldPos.x, worldPos.y, worldPos.z],
           };
         }
       });

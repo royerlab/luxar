@@ -53,7 +53,7 @@ with LuxarZarrCompiler('output.zarr') as compiler:
 
 **Key Methods:**
 - `add_group(name, **attrs)` - Create child group node
-- `add_points(name, positions, ...)` - Add points with attributes
+- `add_points(name, positions, ...)` - Add points with attributes (radii defaults to 0.5 if not provided)
 - `add_lines(name, vertices, widths, ...)` - Add lines/curves
 - `add_gsplats(name, centers, amplitudes, ...)` - Add Gaussian splats
 - `dimensions` (property) - Get/set scene-level dimensions
@@ -549,7 +549,7 @@ See `luxar.validation.validate_categories()` and `luxar.validation.validate_cate
 ### 1. Always Use Context Manager
 ```python
 with LuxarZarrCompiler('output.zarr') as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     # ... build scene
 # Automatically finalized
 ```

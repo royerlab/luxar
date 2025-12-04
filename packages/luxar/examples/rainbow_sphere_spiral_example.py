@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0) -> np.ndarray:
@@ -128,7 +128,7 @@ def main():
     # Create scene
 
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Generate the spherical spiral
         aprint(f"\nGenerating spherical spiral with {n_points:,} points...")

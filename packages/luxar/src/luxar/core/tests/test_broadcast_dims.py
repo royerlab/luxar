@@ -118,7 +118,7 @@ class TestBroadcastDims:
     def test_invalid_broadcast_dims_value(self, tmp_path) -> None:
         """Test that invalid broadcast_dims value raises error."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.array([[0, 0, 0]], dtype=np.float32)
 

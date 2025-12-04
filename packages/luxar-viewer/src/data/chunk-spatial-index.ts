@@ -34,12 +34,12 @@ export interface ChunkSpatialIndex {
   metadata: {
     /** Ordering algorithm: 'morton' or 'hilbert' */
     ordering: 'morton' | 'hilbert';
-    /** Dimensions using Morton/Hilbert ordering (spatial dims) */
-    morton_dims: number[];
+    /** Dimensions using space-filling curve ordering (spatial dims) */
+    ordering_dims: number[];
     /** Dimensions using lexicographic ordering (discrete/slice dims) */
     slice_dims: number[];
-    /** Bits per dimension for Morton encoding */
-    morton_bits_per_dim: number;
+    /** Bits per dimension for space-filling curve encoding */
+    ordering_bits_per_dim: number;
     /** Points per chunk */
     chunk_size: number;
     /** Total points in dataset */
@@ -73,6 +73,7 @@ export async function loadChunkSpatialIndex(
     // Extract shape information
     const [numChunks, ndim, _two] = boundsArray.shape;
 
+    // Validate shape: third dimension must be 2 (min, max)
     if (_two !== 2) {
       log.error(
         Modules.SPATIAL_INDEX,
@@ -81,13 +82,46 @@ export async function loadChunkSpatialIndex(
       return null;
     }
 
+    // Validate: array length should match expected size
+    const expectedLength = numChunks * ndim * 2;
+    const actualLength = (boundsData.data as ArrayLike<number>).length;
+    if (actualLength !== expectedLength) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Chunk bounds array length mismatch: expected ${expectedLength} (${numChunks}×${ndim}×2), got ${actualLength}`
+      );
+    }
+
+    // Validate: check if ndim matches position array dimensions (if available)
+    const positionDims = nodeAttrs.n_dims || nodeAttrs.ndim;
+    if (positionDims !== undefined && positionDims !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimensionality mismatch: chunk_bounds has ${ndim}D but node attributes indicate ${positionDims}D`
+      );
+    }
+
+    // Validate: ordering_dims + slice_dims should cover all dimensions
+    // Support both new (ordering_dims) and legacy (morton_dims) field names
+    const orderingDims = nodeAttrs.ordering_dims || nodeAttrs.morton_dims || [];
+    const sliceDims = nodeAttrs.slice_dims || [];
+    const allDims = new Set([...orderingDims, ...sliceDims]);
+    if (allDims.size > 0 && allDims.size !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimension coverage mismatch: ordering_dims[${orderingDims.length}] + slice_dims[${sliceDims.length}] = ${allDims.size}, but ndim=${ndim}`
+      );
+    }
+
     // Create chunk index
+    // Support both new (ordering_*) and legacy (morton_*) field names for backward compatibility
     const chunkIndex: ChunkSpatialIndex = {
       metadata: {
-        ordering: nodeAttrs.ordering || 'morton',
-        morton_dims: nodeAttrs.morton_dims || [],
-        slice_dims: nodeAttrs.slice_dims || [],
-        morton_bits_per_dim: nodeAttrs.morton_bits_per_dim || 21,
+        ordering: nodeAttrs.ordering || 'hilbert',
+        ordering_dims: orderingDims,
+        slice_dims: sliceDims,
+        ordering_bits_per_dim:
+          nodeAttrs.ordering_bits_per_dim || nodeAttrs.morton_bits_per_dim || 21,
         chunk_size: nodeAttrs.chunk_size || 0,
         total_points: nodeAttrs.n_points || nodeAttrs.num_points || 0,
         total_chunks: numChunks,
@@ -100,18 +134,15 @@ export async function loadChunkSpatialIndex(
       Modules.SPATIAL_INDEX,
       `Loaded chunk spatial index: ${numChunks} chunks, ${ndim}D, ${chunkIndex.metadata.total_points} points`
     );
-    console.log('[ChunkSpatialIndex] Index loaded:', {
-      numChunks,
-      ndim,
-      totalPoints: chunkIndex.metadata.total_points,
-      ordering: chunkIndex.metadata.ordering,
-      chunkSize: chunkIndex.metadata.chunk_size,
-    });
 
     return chunkIndex;
   } catch (error: any) {
     // No chunk_bounds - this is expected for 3D datasets without spatial ordering
-    if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+    if (
+      error.message?.includes('404') ||
+      error.message?.includes('Not Found') ||
+      error.message?.includes('Node not found')
+    ) {
       log.info(Modules.SPATIAL_INDEX, 'No chunk_bounds found - dataset has no spatial indexing');
     } else {
       log.warning(Modules.SPATIAL_INDEX, `Could not load chunk_bounds: ${error.message}`);
@@ -137,13 +168,6 @@ export function queryChunksForView(
 ): number[] {
   const { total_chunks, ndim } = index.metadata;
   const { chunkBounds } = index;
-
-  console.log('[ChunkSpatialIndex] Query:', {
-    totalChunks: total_chunks,
-    ndim,
-    slicePosition,
-    tolerance,
-  });
 
   const matchingChunks: number[] = [];
 
@@ -176,11 +200,6 @@ export function queryChunksForView(
       matchingChunks.push(chunkIdx);
     }
   }
-
-  console.log('[ChunkSpatialIndex] Query result:', {
-    matchingChunks: matchingChunks.length,
-    chunkIndices: matchingChunks,
-  });
 
   log.query(
     Modules.SPATIAL_INDEX,

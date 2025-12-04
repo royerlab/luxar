@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 class TestHDRColorSupport:
@@ -12,8 +12,10 @@ class TestHDRColorSupport:
 
     def test_standard_sdr_colors(self, tmp_path) -> None:
         """Test standard SDR colors (0-1 range)."""
-        with LuxarZarrCompiler(tmp_path / "sdr.zarr") as compiler:
-            scene = compiler.create_scene()
+        with LuxarZarrCompiler(
+            tmp_path / "sdr.zarr", enable_spatial_index=False
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32)  # 0-1 range
@@ -32,8 +34,10 @@ class TestHDRColorSupport:
 
     def test_hdr_colors_moderate(self, tmp_path) -> None:
         """Test moderate HDR colors (1-5 range)."""
-        with LuxarZarrCompiler(tmp_path / "hdr_moderate.zarr") as compiler:
-            scene = compiler.create_scene()
+        with LuxarZarrCompiler(
+            tmp_path / "hdr_moderate.zarr", enable_spatial_index=False
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32) * 5.0  # 0-5 range
@@ -50,8 +54,10 @@ class TestHDRColorSupport:
 
     def test_hdr_colors_extreme(self, tmp_path) -> None:
         """Test extreme HDR colors with warnings."""
-        with LuxarZarrCompiler(tmp_path / "hdr_extreme.zarr") as compiler:
-            compiler.create_scene()
+        with LuxarZarrCompiler(
+            tmp_path / "hdr_extreme.zarr", enable_spatial_index=False
+        ) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32) * 100.0  # Very bright
@@ -68,8 +74,10 @@ class TestHDRColorSupport:
 
     def test_mixed_hdr_sdr_colors(self, tmp_path) -> None:
         """Test mixed HDR and SDR values in same array."""
-        with LuxarZarrCompiler(tmp_path / "mixed.zarr") as compiler:
-            scene = compiler.create_scene()
+        with LuxarZarrCompiler(
+            tmp_path / "mixed.zarr", enable_spatial_index=False
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32)
@@ -95,7 +103,7 @@ class TestHDRColorSupport:
     def test_zero_colors(self, tmp_path) -> None:
         """Test all-zero colors (black points)."""
         with LuxarZarrCompiler(tmp_path / "black.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.zeros((100, 3), dtype=np.float32)  # All black
@@ -110,7 +118,7 @@ class TestHDRColorSupport:
     def test_single_hdr_color_broadcast(self, tmp_path) -> None:
         """Test broadcasting a single HDR color to all points."""
         with LuxarZarrCompiler(tmp_path / "broadcast_hdr.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             single_hdr_color = [2.0, 3.0, 1.5]  # Single HDR color
@@ -139,8 +147,10 @@ class TestHDRColorSupport:
 
     def test_color_precision(self, tmp_path) -> None:
         """Test that float32 precision is maintained."""
-        with LuxarZarrCompiler(tmp_path / "precision.zarr") as compiler:
-            scene = compiler.create_scene()
+        with LuxarZarrCompiler(
+            tmp_path / "precision.zarr", enable_spatial_index=False
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(10, 3).astype(np.float32)
             # Create colors with specific precision requirements
@@ -172,7 +182,7 @@ class TestHDRColorSupport:
     def test_negative_color_rejection(self, tmp_path) -> None:
         """Test that negative colors are properly rejected."""
         with LuxarZarrCompiler(tmp_path / "negative.zarr") as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.randn(100, 3).astype(np.float32)  # Can be negative
@@ -186,7 +196,7 @@ class TestHDRColorSupport:
     def test_color_channel_count(self, tmp_path) -> None:
         """Test that only RGB (3 channels) is accepted."""
         with LuxarZarrCompiler(tmp_path / "channels.zarr") as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
 
@@ -205,7 +215,7 @@ class TestHDRColorSupport:
     def test_no_colors_allowed(self, tmp_path) -> None:
         """Test that points without colors are allowed."""
         with LuxarZarrCompiler(tmp_path / "no_colors.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
             # No colors specified

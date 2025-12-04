@@ -35,7 +35,7 @@ class TestBasicRoundTrip:
 
         # Write
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("test_points", positions)
 
         # Read back
@@ -65,7 +65,7 @@ class TestBasicRoundTrip:
         colors = np.random.rand(n_points, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("test_points", positions, colors=colors)
 
         scene = LuxarScene.load(output_path)
@@ -89,7 +89,7 @@ class TestBasicRoundTrip:
         sharpness = np.random.rand(n_points).astype(np.float32) * 10.0
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points(
                 "test_points",
                 positions,
@@ -119,8 +119,8 @@ class TestHDRColors:
         # HDR colors with values > 1.0
         colors = np.random.rand(n_points, 3).astype(np.float32) * 10.0
 
-        with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+        with LuxarZarrCompiler(output_path, enable_spatial_index=False) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("hdr_points", positions, colors=colors)
 
         scene = LuxarScene.load(output_path)
@@ -241,7 +241,7 @@ class TestTransforms:
         transform = transforms.translate(10, 20, 30)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", positions, transform=transform)
 
         scene = LuxarScene.load(output_path)
@@ -263,7 +263,7 @@ class TestTransforms:
         points_transform = transforms.rotate_z(45)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene_node = compiler.create_scene()
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create group with transform
             _group = scene_node.add_group("my_group", transform=group_transform)
@@ -296,7 +296,7 @@ class TestRenderingAttributes:
         positions = np.random.randn(50, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points(
                 "points",
                 positions,
@@ -319,7 +319,7 @@ class TestRenderingAttributes:
         positions = np.random.randn(50, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points(
                 "points",
                 positions,
@@ -345,7 +345,7 @@ class TestEncodingDecoding:
         colors = np.full((n_points, 3), [1.0, 0.0, 0.0], dtype=np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", positions, colors=colors)
 
         scene = LuxarScene.load(output_path)
@@ -368,7 +368,7 @@ class TestEncodingDecoding:
         radii = np.full(n_points, 0.5, dtype=np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", positions, radii=radii)
 
         scene = LuxarScene.load(output_path)
@@ -387,8 +387,8 @@ class TestEncodingDecoding:
         # SDR colors (0-1 range)
         colors = np.random.rand(n_points, 3).astype(np.float32)
 
-        with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+        with LuxarZarrCompiler(output_path, enable_spatial_index=False) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", positions, colors=colors)
 
         scene = LuxarScene.load(output_path)
@@ -408,7 +408,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene_node = compiler.create_scene()
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene_node.add_group("group1")
             compiler.write_points("points1", np.random.randn(10, 3).astype(np.float32))
             compiler.write_points("points2", np.random.randn(10, 3).astype(np.float32))
@@ -434,7 +434,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("exists", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -447,7 +447,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene_node = compiler.create_scene()
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene_node.add_group("my_group")
             compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
 
@@ -461,7 +461,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points(
                 "my_points",
                 np.random.randn(100, 3).astype(np.float32),
@@ -480,7 +480,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -493,7 +493,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -506,7 +506,7 @@ class TestSceneAPI:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -518,19 +518,21 @@ class TestSceneAPI:
         assert attrs["type"] == "scene"
         assert "luxar_version" in attrs
 
-    def test_scene_no_dimensions(self, tmp_path) -> None:
-        """Test that scene.dimensions returns None when no dimensions defined."""
+    def test_scene_with_minimal_dimensions(self, tmp_path) -> None:
+        """Test that scene with minimal dimensions works correctly."""
         output_path = tmp_path / "test.zarr"
 
-        # Create scene without dimensions
+        # Create scene with minimal 3D dimensions
+        dims = Dimensions.default_3d()
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()  # No dimensions argument
+            compiler.create_scene(dimensions=dims)
             compiler.write_points("points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
 
-        # dimensions should be None
-        assert scene.dimensions is None
+        # dimensions should be present
+        assert scene.dimensions is not None
+        assert len(scene.dimensions) == 3
 
 
 class TestErrorHandling:
@@ -558,7 +560,7 @@ class TestErrorHandling:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene_node = compiler.create_scene()
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene_node.add_group("my_group")
 
         scene = LuxarScene.load(output_path)
@@ -571,7 +573,7 @@ class TestErrorHandling:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
         scene = LuxarScene.load(output_path)
 
@@ -583,7 +585,7 @@ class TestErrorHandling:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
         scene = LuxarScene.load(output_path)
 
@@ -595,7 +597,7 @@ class TestErrorHandling:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
         scene = LuxarScene.load(output_path)
 
@@ -633,12 +635,12 @@ class TestSpatialOrdering:
 
         # Should have ordering metadata when dimensions are provided
         assert "ordering" in metadata
-        # Morton is the default
+        # Hilbert is the default
         assert metadata["ordering"] in ["morton", "hilbert", "none"]
 
         # If ordered, should have bounds metadata
         if metadata["ordering"] != "none":
-            assert "morton_bits_per_dim" in metadata or "chunk_size" in metadata
+            assert "ordering_bits_per_dim" in metadata or "chunk_size" in metadata
 
     def test_chunk_bounds_present(self, tmp_path) -> None:
         """Test that chunk bounds are stored for ordered data."""
@@ -680,7 +682,7 @@ class TestMultiplePointGroups:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create multiple point groups
             for i in range(5):
@@ -705,7 +707,7 @@ class TestMultiplePointGroups:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Positions only
             compiler.write_points("pos_only", np.random.randn(50, 3).astype(np.float32))
@@ -759,7 +761,7 @@ class TestGSplatsRoundTrip:
         colors = np.random.rand(n_splats, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_gsplats(
                 "test_splats",
                 centers=centers,
@@ -793,7 +795,7 @@ class TestGSplatsRoundTrip:
         transform = transforms.translate(5, 10, 15)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_gsplats(
                 "splats",
                 centers=centers,
@@ -817,7 +819,7 @@ class TestGSplatsRoundTrip:
         cholesky = np.random.rand(20, 6).astype(np.float32) * 0.5 + 0.1
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_gsplats("splats1", centers, amplitudes, cholesky)
             compiler.write_gsplats("splats2", centers, amplitudes, cholesky)
 
@@ -833,7 +835,7 @@ class TestGSplatsRoundTrip:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -846,7 +848,7 @@ class TestGSplatsRoundTrip:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
         scene = LuxarScene.load(output_path)
 
@@ -868,7 +870,7 @@ class TestLinesRoundTrip:
         colors = np.random.rand(n_vertices, 3).astype(np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_lines(
                 "test_lines",
                 vertices=vertices,
@@ -900,7 +902,7 @@ class TestLinesRoundTrip:
         transform = transforms.rotate_x(45)
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_lines(
                 "lines",
                 vertices=vertices,
@@ -922,7 +924,7 @@ class TestLinesRoundTrip:
         widths = np.ones(20, dtype=np.float32) * 0.1
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_lines("lines1", vertices, widths)
             compiler.write_lines("lines2", vertices, widths)
 
@@ -938,7 +940,7 @@ class TestLinesRoundTrip:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
@@ -951,7 +953,7 @@ class TestLinesRoundTrip:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
         scene = LuxarScene.load(output_path)
 

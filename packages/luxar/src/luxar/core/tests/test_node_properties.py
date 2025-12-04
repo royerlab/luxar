@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luxar import Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
 
 
@@ -16,7 +17,7 @@ class TestNodeProperties:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Root has no children initially
             assert scene.num_children == 0
 
@@ -46,7 +47,7 @@ class TestNodeProperties:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Root with no children is a leaf
             assert scene.is_leaf is True
 
@@ -69,7 +70,7 @@ class TestNodeProperties:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Scene is root
             assert scene.is_root is True
 
@@ -91,7 +92,7 @@ class TestNodeProperties:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Build hierarchy: scene -> group1 -> subgroup1
             #                        -> group2
             #                        -> points1
@@ -147,7 +148,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # set_opacity should return the node itself
@@ -162,7 +163,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # set_gamma should return the node itself
@@ -177,7 +178,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # set_blending_mode should return the node itself
@@ -192,7 +193,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # Chain opacity and gamma
@@ -210,7 +211,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # Chain all three setters
@@ -229,7 +230,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group1 = scene.add_group("group1")
             group2 = scene.add_group("group2")
 
@@ -254,7 +255,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Chain setters right after creating group
             group = scene.add_group("group1").set_opacity(0.6).set_gamma(1.8)
 
@@ -267,7 +268,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
 
             # Chain setters on points node
@@ -286,7 +287,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # Invalid opacity should raise ValueError
@@ -306,7 +307,7 @@ class TestNodeMethodChaining:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("group1")
 
             # First chain
@@ -329,7 +330,7 @@ class TestNodeWalkDirect:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Walk scene with no children
             hierarchy = list(
                 scene.walk()
@@ -347,7 +348,7 @@ class TestNodeWalkDirect:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_group("group1")
             scene.add_group("group2")
 
@@ -374,7 +375,7 @@ class TestNodeWalkDirect:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group1 = scene.add_group("group1")
             _subgroup = group1.add_group("subgroup")  # Create hierarchy depth
             positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
@@ -398,7 +399,7 @@ class TestNodeWalkDirect:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group1 = scene.add_group("group1")
             group1.add_group("subgroup1")
             group1.add_group("subgroup2")
@@ -425,7 +426,7 @@ class TestNodeWalkDirect:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group1 = scene.add_group("group1")
             positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
             points1 = scene.add_points("points1", positions)

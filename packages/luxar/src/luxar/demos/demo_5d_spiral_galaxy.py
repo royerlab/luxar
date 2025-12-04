@@ -22,7 +22,7 @@ Usage:
     python demo_5d_spiral_galaxy.py [--points=N]
 
 Controls:
-    - Press '4' to select W dimension (time), then use [ ] to navigate
+    - Press '4' to select T dimension (time), then use [ ] to navigate
     - Press '5' to select Channel dimension, then use [ ] to navigate
     - Ctrl+C to stop and cleanup
     - Browser opens automatically
@@ -177,7 +177,7 @@ def generate_5d_spiral_galaxy(
                 Dimension(name="Y", unit="kpc", range=(-100, 100), display=True),
                 Dimension(name="Z", unit="kpc", range=(-30, 30), display=True),
                 Dimension(
-                    name="W",
+                    name="T",
                     unit="Myr",
                     range=(0, n_time_steps - 1),
                     display=False,
@@ -241,7 +241,7 @@ def main() -> None:
     aprint("")
     aprint("Dimensions:")
     aprint("  X, Y, Z: Spatial coordinates (kpc)")
-    aprint("  W: Time evolution (Myr)")
+    aprint("  T: Time evolution (Myr)")
     aprint("  Channel: Stellar population (0=young, 1=intermediate, 2=old)")
     aprint("")
 
@@ -266,7 +266,7 @@ def main() -> None:
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
         aprint("Navigation controls:")
-        aprint("  - Press '4' to select W (time), then [ ] to animate")
+        aprint("  - Press '4' to select T (time), then [ ] to animate")
         aprint("  - Press '5' to select Channel, then [ ] to switch populations")
         aprint("  - Use mouse to orbit/zoom")
         aprint("  - Blue = young stars, Yellow = intermediate, Red = old stars")

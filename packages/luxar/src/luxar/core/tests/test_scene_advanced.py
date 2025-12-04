@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.scene import Scene
 
@@ -28,7 +28,7 @@ class TestSceneInitialization:
     def test_scene_requires_writer(self) -> None:
         """Test that Scene requires a writer."""
         with pytest.raises(ValueError, match="Writer is required"):
-            Scene(writer=None)  # type: ignore[arg-type]
+            Scene(writer=None, dimensions=Dimensions.default_3d())  # type: ignore[arg-type]
 
 
 class TestAddPointsBroadcastDims:
@@ -128,7 +128,7 @@ class TestAddPointsBroadcastDims:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 positions = np.random.rand(100, 3).astype(np.float32)
 
@@ -145,7 +145,7 @@ class TestAddPointsBroadcastDims:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 positions = np.random.rand(100).astype(np.float32)  # 1D, not 2D
 
@@ -158,7 +158,7 @@ class TestAddPointsBroadcastDims:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Pass list instead of numpy array
                 positions = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
@@ -176,7 +176,7 @@ class TestAddLinesValidation:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 vertices = np.random.rand(100).astype(np.float32)  # 1D, not 2D
 
@@ -189,7 +189,7 @@ class TestAddLinesValidation:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Pass list instead of numpy array
                 vertices = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]
@@ -207,7 +207,7 @@ class TestAddGSplatsValidation:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 centers = np.random.rand(100).astype(np.float32)  # 1D, not 2D
                 cholesky = np.random.rand(100, 6).astype(np.float32)
@@ -226,7 +226,7 @@ class TestAddGSplatsValidation:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Pass list instead of numpy array
                 centers = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
@@ -251,7 +251,7 @@ class TestAutoDetectBroadcastDims:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()  # No dimensions
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())  # No dimensions
 
                 positions = np.random.rand(100, 3).astype(np.float32)
 
@@ -330,7 +330,7 @@ class TestDimensionsProperty:
     """Tests for dimensions property getter and setter."""
 
     def test_dimensions_setter_none(self) -> None:
-        """Test setting dimensions to None."""
+        """Test that setting dimensions to None raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -346,9 +346,9 @@ class TestDimensionsProperty:
                 scene = compiler.create_scene(dimensions=dims)
                 assert scene.dimensions is not None
 
-                # Set to None
-                scene.dimensions = None
-                assert scene._dimensions is None
+                # Setting to None should raise ValueError
+                with pytest.raises(ValueError, match="dimensions cannot be None"):
+                    scene.dimensions = None
 
     def test_dimensions_setter_new_dims(self) -> None:
         """Test setting new dimensions."""
@@ -356,7 +356,7 @@ class TestDimensionsProperty:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()  # No initial dims
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())  # No initial dims
 
                 new_dims = Dimensions(
                     [
@@ -379,7 +379,7 @@ class TestToZarr:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 with pytest.raises(NotImplementedError, match="not yet implemented"):
                     scene.to_zarr(Path(tmpdir) / "export.zarr")
@@ -394,7 +394,7 @@ class TestGetStorePath:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 result = scene.get_store_path()
                 assert str(store_path) in result

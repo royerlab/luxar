@@ -99,9 +99,9 @@ class TestSaveGsplats:
             splats_group = root["splats"]
 
             assert splats_group.attrs["ordering"] == "morton"
-            assert "morton_min" in splats_group.attrs
-            assert "morton_max" in splats_group.attrs
-            assert "morton_bits_per_dim" in splats_group.attrs
+            assert "ordering_min" in splats_group.attrs
+            assert "ordering_max" in splats_group.attrs
+            assert "ordering_bits_per_dim" in splats_group.attrs
 
     def test_save_with_hilbert_ordering(self) -> None:
         """Test save with Hilbert ordering."""

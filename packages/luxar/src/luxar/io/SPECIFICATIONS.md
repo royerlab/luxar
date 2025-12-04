@@ -131,26 +131,26 @@ Secondary: Morton code of spatial/continuous dimensions only
 
 **Terminology**:
 - `slice_dims`: Dimensions for exact-match slicing (discrete, non-displayed) - sorted first
-- `morton_dims`: Dimensions for spatial locality (displayed OR non-discrete) - Morton-sorted within each slice
+- `ordering_dims`: Dimensions for spatial locality (displayed OR non-discrete) - curve-sorted within each slice
 
-Note: A non-displayed spatial dimension (`display=False, spatial=True, discrete=False`) goes in `morton_dims` because it benefits from spatial locality, even though it's not displayed.
+Note: A non-displayed spatial dimension (`display=False, spatial=True, discrete=False`) goes in `ordering_dims` because it benefits from spatial locality, even though it's not displayed.
 
 **Algorithm**:
 ```python
 # 1. Identify dimension types from scene_dimensions
 slice_dims = [d for d in dims if d.discrete and not d.display]
-morton_dims = [d for d in dims if not d.discrete or d.display]
+ordering_dims = [d for d in dims if not d.discrete or d.display]
 
 # 2. Create compound sort key
 def compound_sort_key(point):
     # Primary: tuple of slice dimension values (lexicographic)
     slice_key = tuple(point[d] for d in slice_dims)
 
-    # Secondary: Morton code of morton dimensions only
-    morton_coords = [point[d] for d in morton_dims]
-    morton_key = compute_morton_code(morton_coords)
+    # Secondary: Space-filling curve code of ordering dimensions only
+    ordering_coords = [point[d] for d in ordering_dims]
+    curve_key = compute_hilbert_code(ordering_coords)  # or Morton
 
-    return (slice_key, morton_key)
+    return (slice_key, curve_key)
 
 # 3. Sort all arrays by compound key
 sort_indices = argsort(points, key=compound_sort_key)
@@ -160,11 +160,11 @@ sorted_colors = colors[sort_indices]  # etc.
 
 **Metadata stored**:
 - `slice_dims`: List of slice dimension indices (for exact-match queries)
-- `morton_dims`: List of Morton dimension indices (for spatial locality)
-- `morton_min`, `morton_max`: Bounds for Morton dimensions only
-- `morton_bits_per_dim`: Bits per Morton dimension
+- `ordering_dims`: List of ordering dimension indices (for spatial locality)
+- `ordering_min`, `ordering_max`: Bounds for ordering dimensions only
+- `ordering_bits_per_dim`: Bits per ordering dimension
 
-**Fallback**: If no discrete dimensions exist, pure Morton ordering is used (equivalent to empty discrete key).
+**Fallback**: If no discrete dimensions exist, pure Hilbert ordering is used (equivalent to empty discrete key).
 
 ---
 
@@ -209,11 +209,11 @@ Where `min[d]` and `max[d]` are the coordinate bounds for dimension d.
 **Edge Case**: When all coordinates in a dimension are identical (`max[d] == min[d]`), set normalized value to 0 to avoid division by zero. This is valid because the dimension provides no spatial discrimination.
 
 **Precision**: 64-bit Morton codes
-- **Important**: With compound ordering, Morton codes only cover `morton_dims` (not all dimensions)
-- Bits per dimension: `B = floor(64 / len(morton_dims))` (integer division)
-- Unused bits: `64 - (B * len(morton_dims))` remain zero (left-padded)
+- **Important**: With compound ordering, Morton codes only cover `ordering_dims` (not all dimensions)
+- Bits per dimension: `B = floor(64 / len(ordering_dims))` (integer division)
+- Unused bits: `64 - (B * len(ordering_dims))` remain zero (left-padded)
 
-Examples (for `len(morton_dims)`):
+Examples (for `len(ordering_dims)`):
 - 3 dims: 21 bits each (~2M levels), 1 unused bit
 - 4 dims: 16 bits each (~65K levels), 0 unused bits
 - 5 dims: 12 bits each (~4K levels), 4 unused bits
@@ -237,7 +237,7 @@ Examples (for `len(morton_dims)`):
 **Libraries**:
 - [`hilbertcurve`](https://pypi.org/project/hilbertcurve/) - Python package for nD Hilbert curves
 
-**Note**: Hilbert and Morton use the same metadata format (morton_min, morton_max, morton_bits_per_dim) for consistency. The ordering method is distinguished by the `ordering` attribute ("morton" or "hilbert").
+**Note**: Hilbert and Morton use the same metadata format (ordering_min, ordering_max, ordering_bits_per_dim) for consistency. The ordering method is distinguished by the `ordering` attribute ("morton" or "hilbert").
 
 #### Ordering Method Selection
 
@@ -278,12 +278,12 @@ Dimensions:
 ```python
 # Dimension categorization
 slice_dims = [3, 4]      # Time, Channel (discrete, non-displayed)
-morton_dims = [0, 1, 2]  # X, Y, Z (displayed/spatial)
+ordering_dims = [0, 1, 2]  # X, Y, Z (displayed/spatial)
 
 # Morton code calculation
-morton_bits_per_dim = floor(64 / 3) = 21 bits per dimension
-morton_min = [x_min, y_min, z_min]  # Only for X, Y, Z
-morton_max = [x_max, y_max, z_max]  # Only for X, Y, Z
+ordering_bits_per_dim = floor(64 / 3) = 21 bits per dimension
+ordering_min = [x_min, y_min, z_min]  # Only for X, Y, Z
+ordering_max = [x_max, y_max, z_max]  # Only for X, Y, Z
 
 # Positions array shape
 positions.shape = (N, 5)  # Stores ALL dimensions
@@ -306,9 +306,9 @@ sort_key = (
 **Key Insight**: Morton codes only use **spatial/continuous dimensions**. Discrete dimensions are sorted separately (lexicographically) for slice-aligned chunking.
 
 **Metadata stored**:
-- `morton_min`: (len(morton_dims),) float32 - minimum coordinate per morton dimension
-- `morton_max`: (len(morton_dims),) float32 - maximum coordinate per morton dimension
-- `morton_bits_per_dim`: int - bits allocated per morton dimension
+- `ordering_min`: (len(ordering_dims),) float32 - minimum coordinate per morton dimension
+- `ordering_max`: (len(ordering_dims),) float32 - maximum coordinate per morton dimension
+- `ordering_bits_per_dim`: int - bits allocated per morton dimension
 
 ---
 
@@ -372,7 +372,7 @@ extent[d] = sqrt(covariance[d, d]) * k  # k = 3.0 for 99.7% coverage
 ```python
 bytes_per_point = n_dims * 4 + 16
 # positions (n_dims * 4) + colors (12) + radii (4) + sharpness (4) ≈ n_dims*4 + 16
-# Note: Positions store ALL dimensions; morton_dims only affects spatial locality
+# Note: Positions store ALL dimensions; ordering_dims only affects spatial locality
 ```
 
 **Target elements per chunk**:
@@ -430,20 +430,20 @@ chunk_elements = ceil(points_per_slice / chunks_per_slice)
 **Steps**:
 1. **Identify dimension types** from scene_dimensions:
    - `slice_dims`: non-displayed discrete dimensions (time, channel)
-   - `morton_dims`: displayed dimensions + non-displayed spatial dimensions
+   - `ordering_dims`: displayed dimensions + non-displayed spatial dimensions
 
 2. **Compute coordinate bounds** for continuous dimensions only:
    ```
-   For each d in morton_dims:
-       morton_min[d] = positions[:, d].min()
-       morton_max[d] = positions[:, d].max()
+   For each d in ordering_dims:
+       ordering_min[d] = positions[:, d].min()
+       ordering_max[d] = positions[:, d].max()
    ```
 
 3. **Compute compound sort keys**:
    ```
    For each point p:
        discrete_key[p] = tuple(positions[p, d] for d in slice_dims)
-       continuous_coords = [positions[p, d] for d in morton_dims]
+       continuous_coords = [positions[p, d] for d in ordering_dims]
        morton_key[p] = compute_morton_code(normalize(continuous_coords))
        sort_key[p] = (discrete_key[p], morton_key[p])
    ```
@@ -458,7 +458,7 @@ chunk_elements = ceil(points_per_slice / chunks_per_slice)
 
 8. **Write chunk_bounds**: As separate lightweight array
 
-9. **Write metadata**: slice_dims, morton_dims, morton_min, morton_max, morton_bits_per_dim, chunk_size
+9. **Write metadata**: slice_dims, ordering_dims, ordering_min, ordering_max, ordering_bits_per_dim, chunk_size
 
 **Key invariant**: All point attribute arrays (positions, colors, radii, sharpness) are stored in the same compound-sorted order. Chunk boundaries align with discrete slice boundaries.
 
@@ -519,17 +519,17 @@ chunk_bounds        # (num_chunks, D, 2) float32, single chunk
   "type": "points",
   "n_points": 1000000,
   "slice_dims": [3, 4],
-  "morton_dims": [0, 1, 2],
-  "morton_min": [0.0, 0.0, 0.0],
-  "morton_max": [100.0, 100.0, 100.0],
-  "morton_bits_per_dim": 21,
+  "ordering_dims": [0, 1, 2],
+  "ordering_min": [0.0, 0.0, 0.0],
+  "ordering_max": [100.0, 100.0, 100.0],
+  "ordering_bits_per_dim": 21,
   "chunk_size": 2000,
   "broadcast_dims": ["Time"]
 }
 ```
 
 **Notes**:
-- `morton_min/max` only covers morton dimensions (used for Morton normalization)
+- `ordering_min/max` only covers morton dimensions (used for Morton normalization)
 - `broadcast_dims` is optional - only present if points should appear at all values of specified dimensions (see core/SPECIFICATIONS.md)
 
 **GSplats Group** (`/splats_name/`):
@@ -548,10 +548,10 @@ chunk_bounds        # (num_chunks, D, 2) float32, single chunk
   "type": "gsplats",
   "n_splats": 1000000,
   "slice_dims": [3],
-  "morton_dims": [0, 1, 2],
-  "morton_min": [0.0, 0.0, 0.0],
-  "morton_max": [100.0, 100.0, 100.0],
-  "morton_bits_per_dim": 21,
+  "ordering_dims": [0, 1, 2],
+  "ordering_min": [0.0, 0.0, 0.0],
+  "ordering_max": [100.0, 100.0, 100.0],
+  "ordering_bits_per_dim": 21,
   "chunk_size": 2000
 }
 ```
@@ -727,10 +727,10 @@ scene.get_lines(name: str) -> Dict[str, Any]
         # Spatial ordering metadata (if ordered)
         'ordering': str,          # 'morton', 'hilbert', or 'none'
         'slice_dims': List[int],  # Discrete dimension indices (if ordered)
-        'morton_dims': List[int], # Spatial dimension indices (if ordered)
-        'morton_min': List[float],  # Min bounds for Morton dims (if ordered)
-        'morton_max': List[float],  # Max bounds for Morton dims (if ordered)
-        'morton_bits_per_dim': int,  # Bits per dimension (if ordered)
+        'ordering_dims': List[int], # Spatial dimension indices (if ordered)
+        'ordering_min': List[float],  # Min bounds for Morton dims (if ordered)
+        'ordering_max': List[float],  # Max bounds for Morton dims (if ordered)
+        'ordering_bits_per_dim': int,  # Bits per dimension (if ordered)
         'chunk_size': int,        # Elements per chunk (if ordered)
 
         # ... any custom attrs
@@ -759,9 +759,9 @@ scene.get_lines(name: str) -> Dict[str, Any]
         'n_splats': int,
         'ndim': int,
         'ordering': str,          # 'morton', 'hilbert', or 'none'
-        'morton_min': List[float],  # (if ordered)
-        'morton_max': List[float],  # (if ordered)
-        'morton_bits_per_dim': int,  # (if ordered)
+        'ordering_min': List[float],  # (if ordered)
+        'ordering_max': List[float],  # (if ordered)
+        'ordering_bits_per_dim': int,  # (if ordered)
         'chunk_size': int,          # (if ordered)
         'has_colors': bool,
         'has_sharpness': bool,
@@ -830,7 +830,7 @@ if points['chunk_bounds'] is not None:
     print(f"Ordered with {metadata['ordering']}")
     print(f"Chunks: {len(points['chunk_bounds'])}")
     print(f"Discrete dims: {metadata['slice_dims']}")
-    print(f"Spatial dims: {metadata['morton_dims']}")
+    print(f"Spatial dims: {metadata['ordering_dims']}")
 ```
 
 **Round-trip test**:
@@ -882,9 +882,9 @@ assert len(data['chunk_bounds']) > 0
 **Points Attributes**:
 - `type`: "points"
 - `n_points`: Number of points
-- `slice_dims`, `morton_dims`: Dimension indices for compound ordering
-- `morton_min`, `morton_max`: Bounds for morton dimensions only
-- `morton_bits_per_dim`: int - bits per morton dimension
+- `slice_dims`, `ordering_dims`: Dimension indices for compound ordering
+- `ordering_min`, `ordering_max`: Bounds for morton dimensions only
+- `ordering_bits_per_dim`: int - bits per morton dimension
 - `chunk_size`: int - elements per chunk
 - `max_radius`: Maximum radius
 - `broadcast_dims`: Optional list of dimension names for broadcasting
@@ -994,7 +994,7 @@ assert len(data['chunk_bounds']) > 0
   - `sort_splats_spatial()` supports both Morton and Hilbert (default: Hilbert)
   - Hilbert provides ~10% better compression than Morton
   - Requires `hilbertcurve>=2.0.5` package for Hilbert support
-  - Metadata format unchanged (same morton_min/max/bits_per_dim for both methods)
+  - Metadata format unchanged (same ordering_min/max/bits_per_dim for both methods)
   - `ordering` attribute distinguishes: "morton" or "hilbert"
   - **StreamingPoints removed**: Incompatible with spatial ordering (see v1.3.1)
 
@@ -1012,8 +1012,8 @@ assert len(data['chunk_bounds']) > 0
 - **v1.2.0** (2025-11-28): Consolidation and clarifications
   - Consolidated write_points() specification (removed duplicate algorithm section)
   - Consolidated chunking sections (removed outdated "Chunking Strategy" section)
-  - Morton bits calculation clarified: uses `len(morton_dims)`, not total dimensions
-  - Fixed bytes_per_point formula: uses `n_dims` (all dimensions), not `n_morton_dims`
+  - Morton bits calculation clarified: uses `len(ordering_dims)`, not total dimensions
+  - Fixed bytes_per_point formula: uses `n_dims` (all dimensions), not `n_ordering_dims`
   - Added `broadcast_dims` to Points Attributes schema
   - Added `spatial_extend_dims` to Root Attributes schema
   - Fixed examples to use `chunk_size: 2000` consistently
@@ -1023,8 +1023,8 @@ assert len(data['chunk_bounds']) > 0
   - **Compound ordering**: Discrete dimensions sorted first, then Morton within each slice
   - Dramatically improves discrete dimension slicing (time, channel queries load contiguous chunks)
   - **Chunk sizing strategy**: Target 64KB chunks, aligned with discrete slice boundaries
-  - New metadata: `slice_dims`, `morton_dims` arrays
-  - `morton_min/max` now only covers morton dimensions (not slice dimensions)
+  - New metadata: `slice_dims`, `ordering_dims` arrays
+  - `ordering_min/max` now only covers morton dimensions (not slice dimensions)
   - Write algorithm updated for compound key sorting
 
 - **v1.0.0** (2025-11-27): Morton ordering spatial index

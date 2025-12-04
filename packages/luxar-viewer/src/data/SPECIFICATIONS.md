@@ -66,20 +66,21 @@ Stored in node `.zattrs` (alongside type, transform, etc.):
 ```json
 {
   "type": "points",
-  "ordering": "morton",                    // or "hilbert"
-  "morton_dims": [0, 1, 2],                // Spatial dimensions (Morton-coded)
-  "slice_dims": [3],                       // Discrete dimensions (exact-match)
-  "morton_bits_per_dim": 21,               // Bits per Morton dimension
-  "morton_min": [0.0, 0.0, 0.0],          // Min bounds for Morton dims
-  "morton_max": [100.0, 100.0, 100.0],    // Max bounds for Morton dims
-  "chunk_size": 2048,                      // Points per chunk
-  "n_points": 1000000                      // Total points
+  "ordering": "hilbert", // or "morton" (default: hilbert)
+  "ordering_dims": [0, 1, 2], // Spatial dimensions (curve-ordered)
+  "slice_dims": [3], // Discrete dimensions (exact-match)
+  "ordering_bits_per_dim": 21, // Bits per ordering dimension
+  "ordering_min": [0.0, 0.0, 0.0], // Min bounds for ordering dims
+  "ordering_max": [100.0, 100.0, 100.0], // Max bounds for ordering dims
+  "chunk_size": 2048, // Points per chunk
+  "n_points": 1000000 // Total points
 }
 ```
 
 **Key Fields**:
-- `ordering`: "morton" or "hilbert" (space-filling curve used)
-- `morton_dims`: Dimensions ordered by Morton/Hilbert code
+
+- `ordering`: "hilbert" or "morton" (space-filling curve used, default: hilbert)
+- `ordering_dims`: Dimensions ordered by space-filling curve
 - `slice_dims`: Dimensions ordered lexicographically (discrete slicing)
 - `chunk_size`: Number of points per chunk
 - `n_points`: Total points in dataset
@@ -98,12 +99,14 @@ chunk_bounds[chunk_idx, dim, 1] = max coordinate (including radius)
 ```
 
 **Critical**: Bounds MUST include element extent:
+
 ```
 For points: bounds = [min(pos - radius), max(pos + radius)]
 For splats: bounds = [min(pos - ellipsoid_extent), max(pos + ellipsoid_extent)]
 ```
 
 **Calculation** (Python side):
+
 ```python
 for chunk_idx in range(num_chunks):
     for dim in range(ndim):
@@ -117,6 +120,7 @@ for chunk_idx in range(num_chunks):
 ### 1.5 Chunk-Based Query Algorithm
 
 **Input**:
+
 - `chunkIndex`: Chunk spatial index with metadata and chunk_bounds
 - `slicePosition`: **Full** nD position `[p0, p1, ..., p_{ndim-1}]` (all dimensions)
 - `tolerance`: per-dimension search radius `[t0, t1, ..., t_{ndim-1}]` (all dimensions)
@@ -161,6 +165,7 @@ function queryChunksForView(chunkIndex, slicePosition, tolerance):
 **Complexity**: O(num_chunks × ndim) where num_chunks is typically 100-1000
 
 **Convert to Point Ranges**:
+
 ```typescript
 function chunkIndicesToRanges(chunkIndices, chunkSize, totalPoints):
     return chunkIndices.map(idx => ({
@@ -867,22 +872,22 @@ function evictLFU():
 
 ```typescript
 interface ChunkSpatialIndex {
-    metadata: {
-        // Ordering information
-        ordering: 'morton' | 'hilbert'   // Space-filling curve used
-        morton_dims: number[]             // Dimensions ordered by Morton/Hilbert
-        slice_dims: number[]              // Dimensions ordered lexicographically
-        morton_bits_per_dim: number       // Bits per Morton dimension
+  metadata: {
+    // Ordering information
+    ordering: 'morton' | 'hilbert'; // Space-filling curve used (default: hilbert)
+    ordering_dims: number[]; // Dimensions ordered by curve
+    slice_dims: number[]; // Dimensions ordered lexicographically
+    ordering_bits_per_dim: number; // Bits per ordering dimension
 
-        // Chunk statistics
-        chunk_size: number                // Points per chunk
-        total_chunks: number              // Number of chunks
-        total_points: number              // Total points in dataset
-        ndim: number                      // Total dimensionality
-    }
+    // Chunk statistics
+    chunk_size: number; // Points per chunk
+    total_chunks: number; // Number of chunks
+    total_points: number; // Total points in dataset
+    ndim: number; // Total dimensionality
+  };
 
-    // Chunk bounding boxes: (total_chunks, ndim, 2) flattened row-major
-    chunkBounds: Float32Array
+  // Chunk bounding boxes: (total_chunks, ndim, 2) flattened row-major
+  chunkBounds: Float32Array;
 }
 ```
 

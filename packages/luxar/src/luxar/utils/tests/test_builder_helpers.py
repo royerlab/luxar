@@ -1,7 +1,7 @@
 import numpy as np
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def test_incremental_build(tmp_path) -> None:
@@ -9,7 +9,7 @@ def test_incremental_build(tmp_path) -> None:
     store = tmp_path / "inc.zarr"
 
     with LuxarZarrCompiler(store) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # parent group with transform
         T = np.identity(4, np.float32).ravel().tolist()

@@ -58,13 +58,14 @@ class TestSceneDimensionMetadata:
 
         from luxar import Dimension, Dimensions
 
-        # Test scene without dimensions
+        # Test scene with default 3D dimensions
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
-            # Initially None
-            assert scene.dimensions is None
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            # Should have 3D dimensions
+            assert scene.dimensions is not None
+            assert len(scene.dimensions.dimensions) == 3
 
-        # Test scene with dimensions
+        # Test scene with custom dimensions
         dims = Dimensions(
             [
                 Dimension("x", unit="um", scale=0.5, display=True),

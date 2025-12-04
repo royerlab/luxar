@@ -97,6 +97,9 @@ def generate_lut_test():
             Dimension("z", unit="units", display=True),
         ])
 
+        # Add uniform radii so points are visible
+        radii = np.ones(1000, dtype=np.float32) * 0.5
+
         with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
@@ -104,11 +107,13 @@ def generate_lut_test():
                 "points",
                 positions,
                 colors=colors,  # Will use LUT (only 10 unique values)
+                radii=radii,
             )
 
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape}")
         aprint(f"  Colors: {colors.shape} ({len(unique_colors)} unique - LUT)")
+        aprint(f"  Radii: {radii.shape}")
 
 
 def generate_quantization_test():
@@ -259,6 +264,9 @@ def generate_4d_test():
         positions = np.vstack(positions_4d)
         colors = np.vstack(colors_4d)
 
+        # Add radii so points are visible
+        radii = np.ones(num_points * num_time_steps, dtype=np.float32) * 0.5
+
         dims = Dimensions([
             Dimension("time", unit="frame", range=(0, num_time_steps-1),
                      step=1, display=False, discrete=True),
@@ -269,7 +277,7 @@ def generate_4d_test():
 
         with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
             scene = compiler.create_scene(dimensions=dims)
-            scene.add_points("points", positions, colors=colors)
+            scene.add_points("points", positions, colors=colors, radii=radii)
 
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape} (4D)")
@@ -304,6 +312,9 @@ def generate_hierarchical_transforms_test():
             [0, 1, 0],
         ], dtype=np.float32)
 
+        # Add radii so points are visible
+        radii = np.ones(3, dtype=np.float32) * 0.5
+
         dims = Dimensions([
             Dimension("x", unit="units", display=True),
             Dimension("y", unit="units", display=True),
@@ -323,7 +334,8 @@ def generate_hierarchical_transforms_test():
                 "child_points",
                 positions,
                 parent=parent_group,
-                transform=child_transform
+                transform=child_transform,
+                radii=radii,
             )
 
         aprint(f"✓ Created {output}")
@@ -356,6 +368,9 @@ def generate_hdr_colors_test():
         colors[:, 1] = 0.5  # Green: constant
         colors[:, 2] = 0.5  # Blue: constant
 
+        # Add radii so points are visible
+        radii = np.ones(num_points, dtype=np.float32) * 0.5
+
         dims = Dimensions([
             Dimension("x", unit="units", display=True),
             Dimension("y", unit="units", display=True),
@@ -370,6 +385,7 @@ def generate_hdr_colors_test():
                 "hdr_points",
                 positions,
                 colors=colors,  # HDR colors stored as float32
+                radii=radii,
             )
 
         aprint(f"✓ Created {output}")
@@ -403,6 +419,9 @@ def generate_sharpness_range_test():
         colors[:, 0] = sharpness / 31.0  # Red increases with sharpness
         colors[:, 2] = 1.0 - (sharpness / 31.0)  # Blue decreases with sharpness
 
+        # Add radii so points are visible
+        radii = np.ones(num_points, dtype=np.float32) * 0.5
+
         dims = Dimensions([
             Dimension("x", unit="units", display=True),
             Dimension("y", unit="units", display=True),
@@ -417,6 +436,7 @@ def generate_sharpness_range_test():
                 positions,
                 colors=colors,
                 sharpness=sharpness,  # Full range [0, 31]
+                radii=radii,
             )
 
         aprint(f"✓ Created {output}")

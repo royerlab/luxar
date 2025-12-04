@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 
@@ -31,7 +31,7 @@ class TestCompilerWithDtypes:
             with LuxarZarrCompiler(
                 zarr_path, encoding_mode=EncodingMode.MEMORY
             ) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points("test", positions, colors=colors, radii=radii)
 
             # Check encoding metadata (check encoding, not dtype attributes)
@@ -69,7 +69,7 @@ class TestCompilerWithDtypes:
             with LuxarZarrCompiler(
                 zarr_path, encoding_mode=EncodingMode.PRECISION
             ) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points(
                     "test", positions, colors=colors, radii=radii, sharpness=sharpness
                 )
@@ -103,7 +103,7 @@ class TestCompilerWithDtypes:
 
             # Write with AUTO encoding mode (default)
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points("test", positions, colors=hdr_colors)
 
             # Check that HDR was detected (check encoding metadata)
@@ -129,7 +129,7 @@ class TestCompilerWithDtypes:
 
             # Write without encoding_mode (should use AUTO as default)
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points("test", positions)
 
             # Check that it worked
