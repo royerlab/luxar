@@ -109,6 +109,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       errors: 0,
       pointsLoaded: 0,
       bytesLoaded: 0,
+      datasetSize: 0, // Will be set after index is loaded
+      visiblePoints: 0, // Updated on each query
       avgQueryTime: 0,
       avgLoadTime: 0,
       cacheHitRate: 0,
@@ -307,6 +309,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
       this.lastQueryCells = ranges.length;
       this.metrics.queries++;
+      this.metrics.visiblePoints = totalPoints; // Track current visible points (non-cumulative)
 
       this.emitEvent({
         type: 'query',
@@ -1068,6 +1071,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
         rangesInCache: this.cache.getStats().numEntries,
       };
+
+      // Set dataset size from chunk index metadata
+      this.metrics.datasetSize = this.chunkIndex.metadata.total_points;
+    } else if (this.totalPointsNoIndex > 0) {
+      // No chunk index but we have point count from the positions array
+      this.metrics.datasetSize = this.totalPointsNoIndex;
     }
 
     // Update memory usage

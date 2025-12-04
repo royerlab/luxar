@@ -78,8 +78,11 @@ export interface LoaderMetrics {
   evictions: number;
   errors: number;
   // Performance metrics
-  pointsLoaded: number;
+  pointsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
+  // Dataset info (NEW)
+  datasetSize: number; // Total points in dataset (from zarr metadata)
+  visiblePoints: number; // Currently visible/rendered points (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
   cacheHitRate: number;
@@ -169,8 +172,11 @@ export interface GlobalStats {
   totalLoaders: number;
   activeSpatialLoaders: number;
   activeFallbackLoaders: number; // Kept for compatibility but always 0
-  totalPoints: number;
+  totalPoints: number; // Cumulative points loaded (for throughput)
   totalMemory: number;
+  // Dataset metrics (NEW)
+  datasetSize: number; // Total points in all datasets
+  visiblePoints: number; // Currently visible/rendered points
   // Additional properties expected by tests
   totalQueries: number;
   totalLoads: number;
