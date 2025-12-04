@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli import app
 from luxar.cli.utils import (
     check_port_available,
@@ -45,7 +45,7 @@ def complex_scene(tmp_path):
     store_path = tmp_path / "complex_scene.zarr"
 
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Create hierarchy
         group1 = scene.add_group("Group1")

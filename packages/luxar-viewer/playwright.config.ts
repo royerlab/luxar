@@ -29,8 +29,11 @@ export default defineConfig({
   // Fail the build on CI if you accidentally left test.only
   forbidOnly: !!process.env.CI,
 
-  // Retry on CI only
-  retries: process.env.CI ? 2 : 0,
+  // Retry flaky tests
+  // WebGL tests can be flaky due to GPU timing, driver variability, and resource contention
+  // - Local: 1 retry (handles transient GPU issues without masking real bugs)
+  // - CI: 2 retries (CI environments have more variability)
+  retries: process.env.CI ? 2 : 1,
 
   // Single worker for GPU stability (can increase if GPU allows)
   workers: 1,

@@ -5,7 +5,7 @@ Test transform utilities and functionality.
 import numpy as np
 import pytest
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.transforms import (
     compose,
     from_list,
@@ -297,7 +297,7 @@ class TestNodeTransformIntegration:
     def test_node_transform_validation(self, tmp_path) -> None:
         """Test that transforms are validated when creating nodes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Valid transform
             t = translate(5, 0, 0)
@@ -315,7 +315,7 @@ class TestNodeTransformIntegration:
     def test_node_transform_property(self, tmp_path) -> None:
         """Test the transform property on nodes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("TestGroup")
 
             # No transform initially
@@ -342,7 +342,7 @@ class TestNodeTransformIntegration:
     def test_nested_transforms(self, tmp_path) -> None:
         """Test nested transform hierarchy."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create hierarchy with transforms
             g1 = scene.add_group("Level1", transform=to_list(translate(5, 0, 0)))
@@ -357,7 +357,7 @@ class TestNodeTransformIntegration:
     def test_transform_with_points(self, tmp_path) -> None:
         """Test transforms work with points."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create transformed group
             t = compose(translate(10, 0, 0), scale(uniform=0.5))

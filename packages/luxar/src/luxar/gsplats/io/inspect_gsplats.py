@@ -56,17 +56,15 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     info["ordering"] = splats_attrs.get("ordering", "none")
     info["chunk_size"] = splats_attrs.get("chunk_size")
 
-    # Ordering info
-    if info["ordering"] == "morton":
-        info["morton_min"] = splats_attrs.get("morton_min")
-        info["morton_max"] = splats_attrs.get("morton_max")
-        info["morton_bits_per_dim"] = splats_attrs.get("morton_bits_per_dim")
-        info["morton_resolution"] = splats_attrs.get("morton_resolution")
-    elif info["ordering"] == "hilbert":
-        info["morton_min"] = splats_attrs.get("morton_min")  # Name kept for compat
-        info["morton_max"] = splats_attrs.get("morton_max")
-        info["morton_bits_per_dim"] = splats_attrs.get("morton_bits_per_dim")
-        info["hilbert_resolution"] = splats_attrs.get("hilbert_resolution")
+    # Ordering info (try new names first, fall back to old for backward compat)
+    if info["ordering"] in ["morton", "hilbert"]:
+        info["ordering_min"] = splats_attrs.get("ordering_min") or splats_attrs.get("morton_min")
+        info["ordering_max"] = splats_attrs.get("ordering_max") or splats_attrs.get("morton_max")
+        info["ordering_bits_per_dim"] = splats_attrs.get("ordering_bits_per_dim") or splats_attrs.get("morton_bits_per_dim")
+        if info["ordering"] == "morton":
+            info["ordering_resolution"] = splats_attrs.get("ordering_resolution") or splats_attrs.get("morton_resolution")
+        else:
+            info["ordering_resolution"] = splats_attrs.get("ordering_resolution") or splats_attrs.get("hilbert_resolution")
 
     # Ranges
     info["amplitude_range"] = splats_attrs.get("amplitude_range")

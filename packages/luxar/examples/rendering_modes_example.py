@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.ndarray:
@@ -56,7 +56,7 @@ def main():
     # Create scene
 
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Parameters
         n_points = 5000

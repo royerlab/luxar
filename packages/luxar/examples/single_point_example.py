@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def main():
@@ -25,7 +25,7 @@ def main():
 
     # Create scene with progressive writer
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Create a single point at the origin
         position = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)

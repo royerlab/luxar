@@ -1,7 +1,7 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.10.2
-**Last Updated**: 2025-11-28
+**Version**: 0.11.1
+**Last Updated**: 2025-12-03
 
 ## Purpose
 
@@ -94,9 +94,15 @@ This discriminator enables the viewer to determine how to render each node.
 - Special node that serves as scene root (extends Node)
 - Created through `LuxarZarrCompiler.create_scene()`
 - Requires a writer interface (cannot exist without one)
-- Holds scene-level dimension definitions
+- **Requires scene-level dimensions** (MANDATORY - single source of truth for coordinate system)
 - Provides factory methods for creating data nodes
 - **Can have a transform** like any other Node (applies to all children)
+
+**Scene Dimensions as Single Source of Truth**:
+- Scene dimensions define the coordinate system for the entire dataset
+- All data nodes (Points, Lines, GSplats) must conform to scene dimensions
+- Object-level metadata (morton_dims, slice_dims) is derived from scene dimensions
+- This ensures consistency across all objects and enables proper nD navigation
 
 **Key Operations**:
 - `add_group(name, **attrs)` - Create top-level group
@@ -110,10 +116,12 @@ This discriminator enables the viewer to determine how to render each node.
 {
   "type": "scene",
   "luxar_version": "0.1",
-  "scene_dimensions": { ... }
+  "scene_dimensions": { ... }  // REQUIRED - must always be present
 }
 ```
 *Note: `luxar_version` is the data format version, not the spec document version. This version changes only when the zarr storage format has breaking changes.*
+
+**REQUIRED Attribute**: `scene_dimensions` MUST be present on all scenes. Creating a scene without dimensions will raise a `ValueError`.
 
 ---
 
@@ -274,7 +282,8 @@ Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
 **Computed Metadata**:
 - `max_radius`: `max(radii)` - the maximum value in the radii array. For broadcast radii `(1,)`, this is that single value.
 
-**Default Values** (when optional arrays not provided):
+**Default Values** (when arrays not provided):
+- radii: `0.5` (applied by `Scene.add_points()` when not specified)
 - colors: white `[1.0, 1.0, 1.0]`
 - sharpness: `2.0` (quadratic polynomial falloff)
 
@@ -1118,7 +1127,7 @@ GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_colors, has_sharpness, o
 ```
 Scene (root container)
   └─ requires: Writer (for progressive writing)
-  └─ optional: Dimensions (for nD specification)
+  └─ requires: Dimensions (REQUIRED - single source of truth for coordinate system)
   └─ creates: Group instances (containers)
   └─ creates: DataNode instances (Points, Lines, GSplats)
 
@@ -1374,6 +1383,19 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.11.1** (2025-12-03): Default radius for Points
+  - Added default radius of `0.5` for Points when radii not provided
+  - `Scene.add_points()` now applies default radius automatically
+  - Ensures points are always visible in viewer without explicit radii
+
+- **v0.11.0** (2025-12-02): Scene dimensions REQUIRED
+  - **BREAKING**: `dimensions` parameter is now REQUIRED for `create_scene()` and `Scene()`
+  - Scene-level dimensions are the single source of truth for coordinate system
+  - Removed Optional[Dimensions] - dimensions must always be specified
+  - Object-level metadata (morton_dims, slice_dims) is now derived from scene dimensions
+  - This ensures consistency across all objects and enables proper nD navigation
+  - Updated Scene zarr attributes to mark `scene_dimensions` as REQUIRED
 
 - **v0.10.2** (2025-11-28): Cyclic flag + categorical clarification
   - Clarified that `cyclic` flag controls navigation wrapping for categorical dimensions

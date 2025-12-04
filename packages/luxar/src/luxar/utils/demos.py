@@ -180,7 +180,9 @@ def create_random_spheres(
     aprint(f"Creating random spheres demo with {n_spheres} spheres")
 
     with LuxarZarrCompiler(store_path) as compiler:
-        compiler.create_scene()
+        from luxar import Dimensions
+
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         for i in range(n_spheres):
             # Random center position

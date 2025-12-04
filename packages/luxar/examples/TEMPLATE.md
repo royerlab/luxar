@@ -61,7 +61,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint, asection
 
-from luxar import LuxarZarrCompiler, Dimensions, Dimension, transforms
+from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
 ```
 
 **Import Rules:**
@@ -108,7 +108,7 @@ def main():
 
     # Create scene using context manager
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Add scene metadata
         scene.attrs["description"] = """
@@ -384,7 +384,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint, asection
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def create_example_data(n_points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -418,7 +418,7 @@ def main():
 
     # Create scene
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Add educational metadata
         scene.attrs["description"] = """

@@ -20,6 +20,9 @@ from ..core.points import Points
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.protocols import ColorArray, PositionArray
 
+# Default radius used when radii are not provided
+DEFAULT_POINT_RADIUS = 0.5
+
 
 class Scene(Node):
     """Scene root node representing the top level of a scene hierarchy.
@@ -28,35 +31,50 @@ class Scene(Node):
     LuxarZarrCompiler for progressive writing and memory-efficient handling
     of large datasets.
 
+    Scene dimensions are REQUIRED and serve as the single source of truth for
+    the coordinate system. All data nodes must conform to these dimensions.
+
     Example:
-        >>> from luxar import LuxarZarrCompiler, Dimensions
+        >>> from luxar import LuxarZarrCompiler, Dimensions, Dimension
+        >>> dims = Dimensions([
+        ...     Dimension("X", display=True),
+        ...     Dimension("Y", display=True),
+        ...     Dimension("Z", display=True),
+        ... ])
         >>> with LuxarZarrCompiler('output.zarr') as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     scene.add_points('points', huge_array)  # Written immediately
 
     Args:
         writer: Writer interface for progressive writing (required)
-        dimensions: Scene-level dimension definitions
+        dimensions: Scene-level dimension definitions (REQUIRED)
     """
 
     def __init__(
         self,
         writer: ZarrWriterProtocol,
-        dimensions: Optional[Dimensions] = None,
+        dimensions: Dimensions,
     ) -> None:
         """Initialize a new Luxar scene.
 
         Args:
             writer: Writer interface for progressive writing (required)
-            dimensions: Scene-level dimension definitions
+            dimensions: Scene-level dimension definitions (REQUIRED).
+                Defines the coordinate system for all data in the scene.
 
         Raises:
-            ValueError: If scene initialization fails or writer is None
+            ValueError: If writer is None, dimensions is None, or initialization fails
         """
         try:
             if writer is None:
                 raise ValueError(
                     "Writer is required. Use LuxarZarrCompiler to create scenes."
+                )
+
+            if dimensions is None:
+                raise ValueError(
+                    "dimensions is required. Scene dimensions define the coordinate "
+                    "system and are the single source of truth for all data in the scene."
                 )
 
             # Store writer interface
@@ -65,12 +83,11 @@ class Scene(Node):
             # Create lightweight root node
             super().__init__("Scene", writer=writer)
 
-            # Store dimensions
-            self._dimensions: Optional[Dimensions] = dimensions
+            # Store dimensions (REQUIRED)
+            self._dimensions: Dimensions = dimensions
 
-            # Store dimensions in attributes if provided
-            if dimensions is not None:
-                writer.write_group("/", scene_dimensions=dimensions.to_dict())
+            # Store dimensions in attributes
+            writer.write_group("/", scene_dimensions=dimensions.to_dict())
 
             aprint("✓ Scene initialized successfully with progressive writer")
 
@@ -141,7 +158,7 @@ class Scene(Node):
             colors: Optional array of shape (N, 3) for point colors, or single RGB color
                 as (R, G, B) tuple/list to apply to all points
             radii: Optional array of shape (N,) for point radii, or single radius value
-                to apply to all points
+                to apply to all points. Defaults to 0.5 if not provided.
             sharpness: Optional array of shape (N,) for point edge sharpness, or single
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root
@@ -214,6 +231,11 @@ class Scene(Node):
 
             # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
+
+            # Apply default radius if not provided
+            if radii is None:
+                radii = DEFAULT_POINT_RADIUS  # Scalar will be broadcast to all points
+                aprint(f"  📐 Using default radius: {DEFAULT_POINT_RADIUS}")
 
             # Use writer to write points immediately
             path = f"{parent_node.path}/{name}" if parent_node.path else name
@@ -468,32 +490,40 @@ class Scene(Node):
         raise ValueError("No store path available without writer")
 
     @property
-    def dimensions(self) -> Optional[Dimensions]:
+    def dimensions(self) -> Dimensions:
         """Get scene-level dimensions.
 
         Returns:
-            Dimensions object if set, None otherwise
+            Dimensions object (always present - required for scenes)
         """
         # Try to load from zarr attrs if not cached
         if self._dimensions is None and "scene_dimensions" in self.attrs:
             dims_dict = self.attrs["scene_dimensions"]
             self._dimensions = Dimensions.from_dict(dims_dict)
+        if self._dimensions is None:
+            raise ValueError(
+                "Scene dimensions are not set. This should never happen - "
+                "dimensions are required when creating a scene."
+            )
         return self._dimensions
 
     @dimensions.setter
-    def dimensions(self, dims: Optional[Dimensions]) -> None:
+    def dimensions(self, dims: Dimensions) -> None:
         """Set scene-level dimensions.
 
         Args:
-            dims: Dimensions object or None to clear
+            dims: Dimensions object (REQUIRED - cannot be None)
+
+        Raises:
+            ValueError: If dims is None
         """
         if dims is None:
-            self._dimensions = None
-            if "scene_dimensions" in self.attrs:
-                del self.attrs["scene_dimensions"]
-        else:
-            self.attrs["scene_dimensions"] = dims.to_dict()
-            self._dimensions = dims
+            raise ValueError(
+                "dimensions cannot be None. Scene dimensions are required and "
+                "define the coordinate system for all data in the scene."
+            )
+        self.attrs["scene_dimensions"] = dims.to_dict()
+        self._dimensions = dims
 
     def to_zarr(self, path: PathLike) -> None:
         """Export scene to a new Zarr store location.

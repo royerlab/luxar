@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 class TestSceneMethods:
@@ -13,7 +13,7 @@ class TestSceneMethods:
     def test_scene_str_representation(self, tmp_path) -> None:
         """Test Scene __str__ method."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             str_repr = str(scene)
             assert "Scene" in str_repr
             assert "0 children" in str_repr
@@ -27,7 +27,7 @@ class TestSceneMethods:
     def test_scene_finalize_methods(self, tmp_path) -> None:
         """Test Scene finalize and related methods."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add some points
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -47,19 +47,21 @@ class TestSceneMethods:
     # Dimension validation is now handled internally during point addition
 
     def test_scene_infer_dimensions_from_points(self, tmp_path) -> None:
-        """Test Scene._infer_dimensions_from_points method."""
+        """Test that Scene always has dimensions (no longer inferred)."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-            # Initially no dimensions
-            assert scene.dimensions is None
+            # Scene must have dimensions from creation
+            assert scene.dimensions is not None
+            assert len(scene.dimensions.dimensions) == 3
 
-            # Add points - dimensions should be inferred (but we disabled this)
+            # Add points - dimensions remain as set during creation
             positions = np.random.randn(100, 5).astype(np.float32)
             scene.add_points("points", positions)
 
-            # Since we disabled inference, dimensions should still be None
-            assert scene.dimensions is None
+            # Dimensions unchanged - still 3D
+            assert scene.dimensions is not None
+            assert len(scene.dimensions.dimensions) == 3
 
     # Test removed: _apply_dimension_metadata is internal implementation
     # Metadata application is now handled automatically during scene creation
@@ -67,7 +69,7 @@ class TestSceneMethods:
     def test_scene_writer_access(self, tmp_path) -> None:
         """Test Scene has access to writer."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Scene should have writer
             assert scene._writer is not None
@@ -76,7 +78,7 @@ class TestSceneMethods:
     def test_scene_add_points_error_handling(self, tmp_path) -> None:
         """Test Scene.add_points error handling."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Test with invalid positions (1D array)
             with pytest.raises(ValueError, match="Could not add points"):
@@ -91,7 +93,7 @@ class TestSceneMethods:
         from luxar import transforms
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create transform
             transform = transforms.translate(1, 2, 3)
@@ -106,7 +108,7 @@ class TestSceneMethods:
     def test_scene_add_group_with_rendering_attrs(self, tmp_path) -> None:
         """Test Scene.add_group with rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add group with rendering attributes
             group = scene.add_group(
@@ -122,7 +124,7 @@ class TestSceneMethods:
         """Test Scene handles exceptions in context manager."""
         try:
             with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points("points", np.random.randn(10, 3).astype(np.float32))
                 raise RuntimeError("Test exception")
         except RuntimeError:
@@ -144,7 +146,7 @@ class TestSceneMethods:
         - n_points, dims (shape info)
         """
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create points with all attributes
             n_points = 100
@@ -180,9 +182,12 @@ class TestSceneMethods:
             assert 0.14 < points.metadata["max_radius"] < 0.16, "max_radius incorrect"
 
     def test_points_metadata_without_optional_attributes(self, tmp_path) -> None:
-        """Test Points metadata when only positions are provided."""
+        """Test Points metadata when only positions are provided.
+
+        Note: Radii now have a default value of 0.5, so has_radii is always True.
+        """
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(50, 3).astype(np.float32)
             points = scene.add_points("minimal", positions)
@@ -191,10 +196,13 @@ class TestSceneMethods:
             assert points.n_points == 50
             assert points.metadata["dims"] == 3
 
-            # Should NOT have optional attributes
+            # Colors and sharpness are not provided
             assert not points.has_colors
-            assert not points.has_radii
             assert not points.has_sharpness
+
+            # Radii are auto-assigned with default value 0.5
+            assert points.has_radii
+            assert points.metadata["max_radius"] == 0.5
 
             # Metadata dict should still exist and have required keys
             assert "n_points" in points.metadata

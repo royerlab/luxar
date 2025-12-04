@@ -19,7 +19,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add points - written immediately
             positions = np.random.randn(1000, 3).astype(np.float32)
@@ -39,7 +39,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create groups with transforms
             transform1 = transforms.translate(10, 0, 0)
@@ -96,7 +96,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create points with HDR colors
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -129,7 +129,7 @@ class TestCompilerIntegration:
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Write multiple large arrays
             for i in range(10):
@@ -158,7 +158,7 @@ class TestCompilerIntegration:
 
         with pytest.raises(ValueError):
             with LuxarZarrCompiler(output_path) as compiler:
-                compiler.create_scene()
+                compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Try to write invalid data
                 invalid_positions = np.random.randn(100)  # 1D instead of 2D

@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady } from './helpers';
+import { waitForLuxarReady, waitForRenderStable } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 8001)
 const DATASETS = {
@@ -23,14 +23,11 @@ test.describe('Visual Regression - Basic Rendering', () => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);
 
-    // Wait for initial render to stabilize
-    await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 3,
-      { timeout: 10000 }
-    );
+    // Wait for render to stabilize using condition-based wait
+    await waitForRenderStable(page, 5);
 
-    // Additional wait for GPU to finish
-    await page.waitForTimeout(2000);
+    // Small buffer for GPU to fully flush
+    await page.waitForTimeout(500);
 
     // Take screenshot
     await expect(page).toHaveScreenshot('nav-dataset-default-view.png', {
@@ -43,12 +40,11 @@ test.describe('Visual Regression - Basic Rendering', () => {
     await page.goto(`/?src=${DATASETS.grid5D}&debug`);
     await waitForLuxarReady(page);
 
-    await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 3,
-      { timeout: 10000 }
-    );
+    // Wait for render to stabilize using condition-based wait
+    await waitForRenderStable(page, 5);
 
-    await page.waitForTimeout(2000);
+    // Small buffer for GPU to fully flush
+    await page.waitForTimeout(500);
 
     await expect(page).toHaveScreenshot('grid-5d-initial-slice.png', {
       maxDiffPixelRatio: 0.08,
@@ -120,7 +116,8 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
     await page.goto(`/?src=${DATASETS.grid5D}&debug`);
     await waitForLuxarReady(page);
 
-    await page.waitForTimeout(2000);
+    // Wait for initial render to stabilize
+    await waitForRenderStable(page, 5);
 
     // Slice 0
     await expect(page).toHaveScreenshot('grid-5d-slice-0.png', {
@@ -131,7 +128,11 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
     // Navigate to different slice
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await page.waitForTimeout(3000);
+
+    // Wait for slice navigation (keyboard navigation may not trigger loading state)
+    // Use time-based wait here since cached data may not trigger isLoading
+    await page.waitForTimeout(2000);
+    await waitForRenderStable(page, 3);
 
     // Slice 1 (should look different)
     await expect(page).toHaveScreenshot('grid-5d-slice-1.png', {

@@ -186,8 +186,8 @@ export class ArrayDecoder {
       if (!zarrRootLoc && !enc.hash) {
         log.warning(
           Modules.ZARR_LOADER,
-          `Array reference detected without zarrRootLoc or hash. ` +
-          `This will fail if the reference is not already cached.`
+          'Array reference detected without zarrRootLoc or hash. ' +
+            'This will fail if the reference is not already cached.'
         );
       }
       return this.decodeArrayRef(enc.target, enc.hash, expectedElements, zarrRootLoc);
@@ -205,7 +205,11 @@ export class ArrayDecoder {
     });
 
     // Type validation: Ensure we can convert to Float32Array
-    if (!(rawArray instanceof Float32Array) && !(rawArray instanceof ArrayBuffer) && !Array.isArray(rawArray)) {
+    if (
+      !(rawArray instanceof Float32Array) &&
+      !(rawArray instanceof ArrayBuffer) &&
+      !Array.isArray(rawArray)
+    ) {
       const actualType = rawArray.constructor.name;
       console.warn(`[ArrayDecoder] Unexpected data type: ${actualType}, attempting conversion`);
     }
@@ -234,7 +238,7 @@ export class ArrayDecoder {
         log.warning(
           Modules.ZARR_LOADER,
           `LUT decode size mismatch: got ${decoded.length}, expected ${expectedElements}. ` +
-          `This is normal for ${lutMode} mode. Using decoded size.`
+            `This is normal for ${lutMode} mode. Using decoded size.`
         );
       }
 
@@ -260,7 +264,7 @@ export class ArrayDecoder {
           log.warning(
             Modules.ZARR_LOADER,
             `Using inferred bounds ${JSON.stringify(bounds)} for ${enc.name}. ` +
-            `Consider storing explicit bounds in metadata for clarity.`
+              'Consider storing explicit bounds in metadata for clarity.'
           );
         }
       }
@@ -269,11 +273,11 @@ export class ArrayDecoder {
       if (!bounds) {
         throw new Error(
           `[ArrayDecoder] Missing bounds for quantized encoding: ${enc.name}. ` +
-          `Quantized arrays require either:\n` +
-          `  1. Explicit bounds field: encoding.bounds = [min, max]\n` +
-          `  2. Separate min/max fields: encoding.min, encoding.max\n` +
-          `  3. Implicit bounds for known types (rgb_uint8, hdr_uint8)\n` +
-          `Got encoding: ${JSON.stringify(enc)}`
+            'Quantized arrays require either:\n' +
+            '  1. Explicit bounds field: encoding.bounds = [min, max]\n' +
+            '  2. Separate min/max fields: encoding.min, encoding.max\n' +
+            '  3. Implicit bounds for known types (rgb_uint8, hdr_uint8)\n' +
+            `Got encoding: ${JSON.stringify(enc)}`
         );
       }
 
@@ -406,7 +410,10 @@ export class ArrayDecoder {
       // Row mode: one index per row, LUT contains k-dimensional vectors
       // Output size = n * k
       log.info(Modules.ZARR_LOADER, `LUT (row): ${n} indices → ${n * k} elements (k=${k})`);
-      log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique vectors)`);
+      log.info(
+        Modules.ZARR_LOADER,
+        `  LUT size: ${flatLUT.length} values (${flatLUT.length / k} unique vectors)`
+      );
 
       const result = new Float32Array(n * k);
 

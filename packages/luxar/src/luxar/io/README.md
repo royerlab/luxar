@@ -181,12 +181,12 @@ Morton/Hilbert ordering adds metadata to point/splat groups:
 
 ```json
 {
-  "ordering": "morton",
-  "slice_dims": [3, 4],         // Discrete dimensions (time, channel)
-  "morton_dims": [0, 1, 2],     // Spatial dimensions (X, Y, Z)
-  "morton_min": [0.0, 0.0, 0.0],
-  "morton_max": [100.0, 100.0, 100.0],
-  "morton_bits_per_dim": 21,
+  "ordering": "hilbert",
+  "slice_dims": [3, 4],           // Discrete dimensions (time, channel)
+  "ordering_dims": [0, 1, 2],     // Spatial dimensions (X, Y, Z)
+  "ordering_min": [0.0, 0.0, 0.0],
+  "ordering_max": [100.0, 100.0, 100.0],
+  "ordering_bits_per_dim": 21,
   "chunk_size": 2048
 }
 ```
@@ -267,7 +267,7 @@ with LuxarZarrCompiler(
     encoding_mode=EncodingMode.MEMORY,  # Aggressive quantization
     ordering_method="hilbert",
 ) as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     scene.add_points('cloud', positions, colors, radii)
     # Positions: float16
     # Colors: uint8 (if SDR)
@@ -286,7 +286,7 @@ positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
 
 with LuxarZarrCompiler('scene.zarr') as compiler:
-    scene = compiler.create_scene()
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     scene.add_points('cloud', positions, colors, radii=0.1)
 
 # Read it back

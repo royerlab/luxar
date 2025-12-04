@@ -32,16 +32,16 @@ export interface EffectiveRadiusConfig {
  * - Non-displayed spatial dimensions: Apply the Pythagorean theorem
  * - Non-spatial dimensions (time, categories): No extension, no contribution to distance
  *
- * @param positions - Original nD positions array (flattened)
- * @param radii - Original radii for each point
+ * @param positions - Original nD positions (any typed array, flattened)
+ * @param radii - Original radii for each point (any typed array)
  * @param viewState - Current slice position and display configuration
  * @param config - Spatial extension configuration
  * @param ndim - Number of dimensions
- * @returns Array of effective radii for rendering
+ * @returns Array of effective radii for rendering (always Float32Array)
  */
 export function calculateEffectiveRadii(
-  positions: Float32Array,
-  radii: Float32Array,
+  positions: ArrayLike<number>,
+  radii: ArrayLike<number>,
   viewState: ViewState,
   config: EffectiveRadiusConfig,
   ndim: number
@@ -113,8 +113,10 @@ export function calculateSpatialQueryTolerance(
 
   for (let d = 0; d < ndim; d++) {
     if (displayDims.includes(d)) {
-      // Displayed dimensions don't need tolerance (they're in the view)
-      queryTolerance[d] = 0;
+      // Displayed dimensions need INFINITE tolerance - we want to see ALL points
+      // regardless of their position in these dimensions (they're all in the view)
+      // Use a very large number instead of Infinity for numerical stability
+      queryTolerance[d] = 1e10;
     } else if (spatialExtendDims[d]) {
       // Non-displayed spatial dimensions need maxRadius tolerance
       // to catch all points that might intersect the slice

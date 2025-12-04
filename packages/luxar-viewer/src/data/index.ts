@@ -53,17 +53,6 @@ export {
   type ChunkSpatialIndex,
 } from './chunk-spatial-index';
 
-// Grid-based spatial index utilities (DEPRECATED - will be removed)
-export {
-  loadPointSpatialIndex,
-  queryPointSpatialIndex,
-  calculateChunksToLoad,
-  estimateMemoryUsage,
-  debugPointSpatialIndex,
-  type PointSpatialIndex,
-  type PointSpatialIndexMetadata,
-} from './point-spatial-index';
-
 // Directory navigation
 export { DirectoryNavigator } from './directory-navigator';
 export type { DirectoryEntry, NavigationResult } from './directory-navigator';

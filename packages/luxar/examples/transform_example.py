@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler, transforms
+from luxar import Dimensions, LuxarZarrCompiler, transforms
 
 
 def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]:
@@ -104,7 +104,7 @@ def main():
     # Create scene
 
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # 1. Origin coordinate system (reference)
         aprint("\nCreating reference coordinate system at origin...")

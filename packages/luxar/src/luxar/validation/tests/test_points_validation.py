@@ -2,22 +2,22 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 
 def test_bad_positions_shape(tmp_path) -> None:
     store = tmp_path / "bad.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         with pytest.raises(ValueError, match="Positions must"):
             scene.add_points("Broken", np.ones((3,)), parent=scene)
 
 
 def test_mismatched_colors(tmp_path) -> None:
     store = tmp_path / "bad2.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        scene = compiler.create_scene()
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         pos = np.ones((10, 3), np.float32)
         col = np.ones((5, 3), np.uint8)
         with pytest.raises(ValueError, match="colors.*doesn't match"):
@@ -30,8 +30,11 @@ def test_valid_radii(tmp_path) -> None:
 
     store = tmp_path / "radii_test.zarr"
     # Use PRECISION mode to preserve float32 and avoid quantization
-    with LuxarZarrCompiler(store, encoding_mode=EncodingMode.PRECISION) as compiler:
-        compiler.create_scene()
+    # Disable spatial indexing to preserve array order for comparison
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         radii = np.random.uniform(0.1, 2.0, 100).astype(np.float32)
@@ -51,7 +54,7 @@ def test_negative_radii(tmp_path) -> None:
     """Radii with negative values should fail."""
     store = tmp_path / "negative_radii.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         radii = np.random.uniform(-1.0, 1.0, 100).astype(np.float32)  # Some negative
@@ -66,8 +69,8 @@ def test_negative_radii(tmp_path) -> None:
 def test_mismatched_radii(tmp_path) -> None:
     """Radii with wrong number of points should fail."""
     store = tmp_path / "mismatched_radii.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         radii = np.random.uniform(0.1, 2.0, 50).astype(np.float32)  # Wrong N
@@ -82,8 +85,8 @@ def test_mismatched_radii(tmp_path) -> None:
 def test_wrong_shape_radii(tmp_path) -> None:
     """Radii with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_radii.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         radii = np.random.uniform(0.1, 2.0, (100, 2)).astype(np.float32)  # Wrong shape
@@ -101,8 +104,11 @@ def test_valid_sharpness(tmp_path) -> None:
 
     store = tmp_path / "sharpness_test.zarr"
     # Use PRECISION mode to preserve float32 and avoid quantization
-    with LuxarZarrCompiler(store, encoding_mode=EncodingMode.PRECISION) as compiler:
-        compiler.create_scene()
+    # Disable spatial indexing to preserve array order for comparison
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
@@ -122,7 +128,7 @@ def test_negative_sharpness(tmp_path) -> None:
     """Sharpness with negative values should fail."""
     store = tmp_path / "negative_sharpness.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         sharpness = np.random.uniform(-1.0, 1.0, 100).astype(
@@ -139,8 +145,8 @@ def test_negative_sharpness(tmp_path) -> None:
 def test_mismatched_sharpness(tmp_path) -> None:
     """Sharpness with wrong number of points should fail."""
     store = tmp_path / "mismatched_sharpness.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         sharpness = np.random.uniform(0.5, 10.0, 50).astype(np.float32)  # Wrong N
@@ -156,7 +162,7 @@ def test_wrong_shape_sharpness(tmp_path) -> None:
     """Sharpness with wrong dimensions should fail."""
     store = tmp_path / "wrong_shape_sharpness.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         sharpness = np.random.uniform(0.5, 10.0, (100, 2)).astype(
@@ -174,7 +180,7 @@ def test_sharpness_warning(tmp_path) -> None:
     """Test that out-of-range sharpness values trigger a warning."""
     store = tmp_path / "sharpness_warning.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene()
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
         positions = np.random.randn(100, 3).astype(np.float32)
         # Mix of values including out-of-range
