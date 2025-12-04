@@ -104,7 +104,7 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
         <span style="font-size: 9px; color: ${MonitorColors.muted};">${metrics.type}</span>
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 9px; color: ${MonitorColors.dimmed};">
-        <span>${metrics.pointsLoaded.toLocaleString()} pts</span>
+        <span>${metrics.visiblePoints.toLocaleString()} pts</span>
         <span>${hitRate.toFixed(0)}% cache</span>
         <span>${formatBytes(metrics.memoryUsed)}</span>
       </div>
@@ -159,14 +159,18 @@ export function renderSecondaryMetrics(
  * Template for overview tab content
  */
 export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {
+  // Calculate visible percentage of dataset
+  const visiblePercent =
+    stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
+
   return `
     <div class="overview-content">
       <!-- Primary metrics -->
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
         ${renderMetricCard(
-    'POINTS LOADED',
-    formatNumber(stats.totalPoints),
-    `${stats.totalLoaders} loaders (${stats.activeSpatialLoaders} spatial)`,
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
     MonitorColors.success,
     'large'
   )}
