@@ -16,10 +16,15 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
+    // Get initial fullscreen state
+    const isFullscreenBefore = await page.evaluate(() => {
+      return !!document.fullscreenElement;
+    });
+
     // Press Space to toggle fullscreen
     await page.keyboard.press('Space');
 
-    // Wait for fullscreen change
+    // Wait for fullscreen API response (browsers may delay or block)
     await page.waitForTimeout(500);
 
     // Get new state
@@ -27,9 +32,19 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
       return !!document.fullscreenElement;
     });
 
-    // State should have changed (might be true or false depending on browser)
-    // Just verify the key was processed without errors
+    // Verify we got valid responses (both should be booleans)
+    expect(typeof isFullscreenBefore).toBe('boolean');
     expect(typeof isFullscreenAfter).toBe('boolean');
+
+    // Note: In headless Chromium, fullscreen may be blocked by security policy.
+    // The key verification is that pressing Space doesn't throw an error.
+    // If fullscreen works, state should have toggled. If blocked, states are both false.
+    // Either outcome is acceptable for E2E testing - we verify the key handler runs.
+    if (isFullscreenBefore !== isFullscreenAfter) {
+      // Fullscreen actually toggled - this is the ideal case
+      expect(isFullscreenAfter).toBe(!isFullscreenBefore);
+    }
+    // Test passes if no errors thrown during key handling
   });
 
   test('should show help overlay with H key', async ({ page }) => {
@@ -42,16 +57,23 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     // Wait for overlay to appear
     await page.waitForTimeout(500);
 
-    // Check if help content is visible
-    // Note: We need to check the actual DOM for help overlay
-    const helpVisible = await page.evaluate(() => {
-      // Check for any element that looks like help
+    // Check if help content is visible after pressing H
+    const helpVisibleAfter = await page.evaluate(() => {
+      const helpOverlay = document.querySelector(
+        '.help-overlay, #help-overlay, [data-help-overlay]'
+      );
+      if (helpOverlay) return true;
+      // Also check for text content that indicates help is showing
       const body = document.body.innerHTML;
-      return body.includes('Help') || body.includes('Keyboard') || body.includes('Shortcuts');
+      return (
+        body.includes('Keyboard Shortcuts') || body.includes('Controls') || body.includes('Help')
+      );
     });
 
-    // Help overlay should appear (or at least be processed)
-    expect(typeof helpVisible).toBe('boolean');
+    // Help overlay should appear after pressing H
+    // If help system exists, it should show after keypress
+    // At minimum, verify the help content exists somewhere in the DOM
+    expect(helpVisibleAfter).toBe(true);
   });
 
   test('should track camera position changes', async ({ page }) => {

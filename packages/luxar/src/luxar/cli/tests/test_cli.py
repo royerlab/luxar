@@ -7,7 +7,7 @@ import pytest
 import zarr
 from typer.testing import CliRunner
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli import app
 from luxar.cli.main import _dfs
 
@@ -131,7 +131,7 @@ def test_info_command_complex_hierarchy(runner, tmp_path) -> None:
     store_path = tmp_path / "complex_scene.zarr"
 
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Create a complex hierarchy
         group1 = scene.add_group("Group1")
@@ -198,7 +198,7 @@ def test_dfs_single_group(tmp_path) -> None:
     """Test _dfs with single group."""
     store_path = tmp_path / "single.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
-        compiler.create_scene()
+        compiler.create_scene(dimensions=Dimensions.default_3d())
 
     root = zarr.open_group(store_path, mode="r")
     groups = list(_dfs(root))
@@ -212,7 +212,7 @@ def test_dfs_nested_groups(tmp_path) -> None:
     """Test _dfs with nested group structure."""
     store_path = tmp_path / "nested.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         group1 = scene.add_group("Group1")
         scene.add_group("Group2")

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 class TestLinesNode:
@@ -17,7 +17,7 @@ class TestLinesNode:
         widths = np.array([0.1, 0.1, 0.1, 0.1], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines("polyline", vertices, widths, line_type="polyline")
 
             # Test properties
@@ -38,7 +38,7 @@ class TestLinesNode:
         widths = np.array([0.1, 0.1, 0.2, 0.2], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines("segments", vertices, widths, line_type="segments")
 
             assert lines.n_vertices == 4
@@ -52,7 +52,7 @@ class TestLinesNode:
         widths = np.full(4, 0.05, dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines("loop", vertices, widths, line_type="loop")
 
             assert lines.n_vertices == 4
@@ -68,7 +68,7 @@ class TestLinesNode:
         indices = np.array([0, 1, 1, 2, 2, 0], dtype=np.uint32)  # 3 segments
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines(
                 "triangle", vertices, widths, indices=indices, line_type="indexed"
             )
@@ -84,7 +84,7 @@ class TestLinesNode:
         colors = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)  # Red to green
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines(
                 "gradient", vertices, widths, colors=colors, line_type="polyline"
             )
@@ -99,7 +99,7 @@ class TestLinesNode:
         sharpness = np.array([1.0, 5.0], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines(
                 "tapered", vertices, widths, sharpness=sharpness, line_type="polyline"
             )
@@ -112,7 +112,7 @@ class TestLinesNode:
         width = 0.5  # Single value
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lines = scene.add_lines("uniform", vertices, width, line_type="polyline")
 
             assert lines.n_vertices == 3
@@ -124,7 +124,7 @@ class TestLinesNode:
         widths = np.full(3, 0.1, dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="even number of vertices"):
                 scene.add_lines("bad", vertices, widths, line_type="segments")
 
@@ -134,7 +134,7 @@ class TestLinesNode:
         widths = np.array([0.1, 0.1], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="requires indices"):
                 scene.add_lines("bad", vertices, widths, line_type="indexed")
 
@@ -144,7 +144,7 @@ class TestLinesNode:
         widths = np.array([0.1, 0.1], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="Invalid line_type"):
                 scene.add_lines("bad", vertices, widths, line_type="invalid")
 
@@ -160,7 +160,7 @@ class TestGSplatsNode:
         cholesky = np.array([[1, 0, 1], [1, 0.5, 1], [1, 0, 1]], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats("splats2d", centers, amplitudes, cholesky)
 
             assert gsplats.n_splats == 3
@@ -179,7 +179,7 @@ class TestGSplatsNode:
         cholesky = np.array([[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats("splats3d", centers, amplitudes, cholesky)
 
             assert gsplats.n_splats == 2
@@ -193,7 +193,7 @@ class TestGSplatsNode:
         colors = np.array([[1.0, 0.5, 0.0]], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats(
                 "colored", centers, amplitudes, cholesky, colors=colors
             )
@@ -208,7 +208,7 @@ class TestGSplatsNode:
         sharpness = np.array([2.5], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats(
                 "sharp", centers, amplitudes, cholesky, sharpness=sharpness
             )
@@ -224,7 +224,7 @@ class TestGSplatsNode:
         )  # Broadcast cholesky: 1D array will be broadcast
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats("uniform", centers, amplitude, cholesky)
 
             assert gsplats.n_splats == 3
@@ -238,7 +238,7 @@ class TestGSplatsNode:
         cholesky = np.array([[1, 0, 1]], dtype=np.float32)  # 2D: k=3
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="must be non-negative"):
                 scene.add_gsplats("bad", centers, amplitudes, cholesky)
 
@@ -249,7 +249,7 @@ class TestGSplatsNode:
         cholesky = np.array([[1, 0]], dtype=np.float32)  # Wrong! 2D needs k=3
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="Cholesky factors shape"):
                 scene.add_gsplats("bad", centers, amplitudes, cholesky)
 
@@ -263,7 +263,7 @@ class TestGSplatsNode:
         )  # 1D array: shape (3,) → 2D: k=3
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             gsplats = scene.add_gsplats("isotropic", centers, amplitudes, cholesky)
 
             assert gsplats.n_splats == 3
@@ -283,7 +283,7 @@ class TestDataNodeAbstraction:
         cholesky = np.tile([1, 0, 1, 0, 0, 1], (30, 1)).astype(np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             points = scene.add_points("pts", positions, radii=radii)
             lines = scene.add_lines("lns", vertices, widths)
@@ -305,7 +305,7 @@ class TestDataNodeAbstraction:
         radii = np.array([0.1], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             points = scene.add_points("pts", positions, radii=radii)
 
             # metadata property should be accessible

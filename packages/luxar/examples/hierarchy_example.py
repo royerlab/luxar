@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint, asection
 
-from luxar import LuxarZarrCompiler, transforms
+from luxar import Dimensions, LuxarZarrCompiler, transforms
 
 
 def create_constellation_points(n_points: int, radius: float) -> np.ndarray:
@@ -75,7 +75,7 @@ def main():
 
     # Create scene
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         with asection("Root Level Objects"):
             # 1. Root level objects (no parent)

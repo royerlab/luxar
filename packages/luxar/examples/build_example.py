@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler, transforms
+from luxar import Dimensions, LuxarZarrCompiler, transforms
 
 
 def add_coordinate_axes(scene, length: float = 5.0, n_points: int = 50):
@@ -105,7 +105,7 @@ def build_scene_manually(output_path: Path):
 
     # Manual scene creation and finalization
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         try:
             # Add coordinate axes
@@ -130,7 +130,7 @@ def build_scene_with_structure(output_path: Path):
 
     # Create scene with structured approach
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         try:
             # Add coordinate axes

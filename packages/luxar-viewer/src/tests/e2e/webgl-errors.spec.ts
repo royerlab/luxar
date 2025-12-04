@@ -44,9 +44,12 @@ test.describe('WebGL Error Detection - Critical', () => {
     await waitForLuxarReady(page);
 
     // Wait for initial render
-    await page.waitForFunction(() => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2, {
-      timeout: 10000,
-    });
+    await page.waitForFunction(
+      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+      {
+        timeout: 10000,
+      }
+    );
 
     // Wait a bit more to catch any delayed errors
     await page.waitForTimeout(2000);
@@ -164,9 +167,9 @@ test.describe('WebGL Error Detection - Critical', () => {
     await page.waitForTimeout(2000);
 
     if (vertexBufferErrors.length > 0) {
-      console.log(`\n🚨 CRITICAL: Vertex buffer errors detected!`);
+      console.log('\n🚨 CRITICAL: Vertex buffer errors detected!');
       console.log(`  Count: ${vertexBufferErrors.length}`);
-      console.log(`  This indicates incorrect buffer sizing in the renderer`);
+      console.log('  This indicates incorrect buffer sizing in the renderer');
       console.log(`  First error: ${vertexBufferErrors[0]}\n`);
     }
 

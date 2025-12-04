@@ -188,21 +188,33 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
 
-    def create_scene(self, dimensions: Optional[Dimensions] = None) -> "Scene":
+    def create_scene(self, dimensions: Dimensions) -> "Scene":
         """Create a scene with this compiler as writer.
 
         Args:
-            dimensions: Optional dimension specification for the scene
+            dimensions: Dimension specification for the scene (REQUIRED).
+                Scene dimensions are the single source of truth for the
+                coordinate system and must always be specified.
 
         Returns:
             Scene object configured with this compiler as writer
+
+        Raises:
+            ValueError: If dimensions is None or invalid
         """
         # Import here to avoid circular dependency
         from ..core.scene import Scene
 
-        # Store dimensions in root attributes if provided
-        if dimensions is not None:
-            self.store.attrs["scene_dimensions"] = dimensions.to_dict()
+        # Validate dimensions (REQUIRED)
+        if dimensions is None:
+            raise ValueError(
+                "dimensions is required. Scene dimensions define the coordinate system "
+                "and are the single source of truth for all data in the scene. "
+                "Use Dimensions([...]) to specify the coordinate axes."
+            )
+
+        # Store dimensions in root attributes
+        self.store.attrs["scene_dimensions"] = dimensions.to_dict()
 
         # Create scene with writer injection
         scene = Scene(writer=self, dimensions=dimensions)
@@ -835,9 +847,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             metadata.update(
                 {
                     "ordering": ordering_data["ordering"],
-                    "morton_min": ordering_data["morton_min"],
-                    "morton_max": ordering_data["morton_max"],
-                    "morton_bits_per_dim": ordering_data["morton_bits_per_dim"],
+                    "ordering_min": ordering_data["ordering_min"],
+                    "ordering_max": ordering_data["ordering_max"],
+                    "ordering_bits_per_dim": ordering_data["ordering_bits_per_dim"],
                     "chunk_size": ordering_data["chunk_size"],
                 }
             )
@@ -932,9 +944,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if ordering_data is not None:
             for key in [
                 "ordering",
-                "morton_min",
-                "morton_max",
-                "morton_bits_per_dim",
+                "ordering_min",
+                "ordering_max",
+                "ordering_bits_per_dim",
                 "chunk_size",
             ]:
                 if key in metadata:
@@ -1069,7 +1081,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(
             f"  ✓ Ordering complete: {len(ordering_metadata['slice_dims'])} discrete dims, "
-            f"{len(ordering_metadata['morton_dims'])} spatial dims"
+            f"{len(ordering_metadata['ordering_dims'])} spatial dims"
         )
 
         return {
@@ -1077,7 +1089,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "sort_order": sort_indices,
             "chunk_bounds": chunk_bounds,
             "chunk_size": chunk_size,
-            **ordering_metadata,  # ordering, slice_dims, morton_dims, etc.
+            **ordering_metadata,  # ordering, slice_dims, ordering_dims, etc.
         }
 
     def _write_positions_dataset(
@@ -1301,10 +1313,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ordering_metadata = {
             "ordering": ordering_data["ordering"],
             "slice_dims": ordering_data["slice_dims"],
-            "morton_dims": ordering_data["morton_dims"],
-            "morton_min": ordering_data["morton_min"],
-            "morton_max": ordering_data["morton_max"],
-            "morton_bits_per_dim": ordering_data["morton_bits_per_dim"],
+            "ordering_dims": ordering_data["ordering_dims"],
+            "ordering_min": ordering_data["ordering_min"],
+            "ordering_max": ordering_data["ordering_max"],
+            "ordering_bits_per_dim": ordering_data["ordering_bits_per_dim"],
             "chunk_size": ordering_data["chunk_size"],
         }
         group.attrs.update(ordering_metadata)

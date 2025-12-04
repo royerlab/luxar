@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint, asection
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 
@@ -79,7 +79,7 @@ def create_dataset_with_encoding_mode(
 
     # Create the dataset
     with LuxarZarrCompiler(output_path, encoding_mode=encoding_mode) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_points(
             "optimized_points",
             positions,

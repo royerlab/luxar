@@ -484,13 +484,13 @@ class TestScalarInputIntegration:
 
     def test_points_with_all_scalars(self) -> None:
         """Test writing points with all optional attributes as scalars."""
-        from luxar import LuxarZarrCompiler
+        from luxar import Dimensions, LuxarZarrCompiler
 
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(500, 3).astype(np.float32)
 
                 scene.add_points(
@@ -514,13 +514,13 @@ class TestScalarInputIntegration:
 
     def test_mixed_scalar_and_array(self) -> None:
         """Test mixing scalar and array attributes."""
-        from luxar import LuxarZarrCompiler
+        from luxar import Dimensions, LuxarZarrCompiler
 
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(100, 3).astype(np.float32)
                 varied_radii = np.random.rand(100).astype(np.float32)
 

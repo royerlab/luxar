@@ -25,9 +25,8 @@ data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
-├── chunk-spatial-index.ts         # Chunk-based spatial index queries (NEW)
-├── point-spatial-index-loader.ts  # Loads data using chunk/spatial index queries
-├── point-spatial-index.ts         # Grid-based queries (deprecated, backward compat)
+├── chunk-spatial-index.ts         # Chunk-based spatial index queries
+├── point-spatial-index-loader.ts  # Loads data using chunk-based spatial queries
 ├── range-cache.ts                 # Intelligent caching for range-based queries
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
@@ -142,39 +141,37 @@ export async function updateSceneForDimensions(
 }
 ```
 
-### 2. Spatial Index (Required as of v0.3+)
+### 2. Chunk-Based Spatial Index
 
-The `spatial-index.ts` provides efficient nD point queries using grid-based spatial partitioning.
-
-⚠️ **IMPORTANT**: Spatial indices are now MANDATORY for all datasets. The system will throw an error if a dataset lacks a point spatial index.
+The `chunk-spatial-index.ts` provides efficient nD point queries using Morton/Hilbert-ordered chunks with bounding boxes.
 
 **Core Features:**
 
-- **Grid-Based Partitioning**: Divides nD space into regular grid cells
-- **Sparse Storage**: Only stores occupied cells for memory efficiency
-- **Fast Range Queries**: O(occupied_cells) query complexity instead of O(total_points)
+- **Chunk-Based Indexing**: Uses Morton/Hilbert space-filling curves for spatial locality
+- **Bounding Box Queries**: Each chunk has a bounding box for fast intersection tests
+- **Memory Efficient**: Only stores chunk bounds, not individual point indices
 - **nD Support**: Works with arbitrary dimensional data
-- **Cache-Friendly**: Points sorted by spatial locality for better cache utilization
-- **Progressive Loading**: Load only points near current slice position
+- **Cache-Friendly**: Points sorted by space-filling curve for better cache utilization
+- **Progressive Loading**: Load only chunks that intersect the current slice
 
 **How It Works:**
 
 ```typescript
-// 1. Load point spatial index from zarr
-const index = await loadPointSpatialIndex(group);
+// 1. Load chunk spatial index from zarr (chunk_bounds array)
+const chunkIndex = await loadChunkSpatialIndex(location, attrs);
 
-// 2. Query for points near slice position
-const ranges = queryPointSpatialIndex(
-  index,
+// 2. Query for chunks near slice position
+const chunkIndices = queryChunksForView(
+  chunkIndex,
   slicePosition, // Current position in nD space
   tolerance // Search radius per dimension
 );
 
-// 3. Merge adjacent ranges for efficient loading
-const merged = mergePointRanges(ranges);
+// 3. Convert chunk indices to point ranges
+const ranges = chunkIndicesToRanges(chunkIndex, chunkIndices);
 
-// 4. Calculate which zarr chunks to load
-const chunks = calculateChunksToLoad(merged, chunkSize);
+// 4. Merge adjacent ranges for efficient loading
+const merged = mergePointRanges(ranges);
 
 // 5. Load only required data
 for (const range of merged) {
@@ -182,46 +179,51 @@ for (const range of merged) {
 }
 ```
 
-**Spatial Index Structure:**
+**Chunk Index Structure:**
 
 ```typescript
-interface PointSpatialIndex {
+interface ChunkSpatialIndex {
   metadata: {
-    grid_shape: number[]; // Grid dimensions [nx, ny, nz, ...]
-    grid_origin: number[]; // Minimum coordinate per dimension
-    cell_size: number[]; // Size of each cell
-    num_occupied: number; // Number of non-empty cells
-    dimensions: number; // Number of dimensions
+    ordering: 'morton' | 'hilbert'; // Space-filling curve (default: hilbert)
+    ordering_dims: number[]; // Dimensions used for curve ordering
+    slice_dims: number[]; // Dimensions used for slicing
+    ordering_bits_per_dim: number; // Bits per dimension for encoding
+    chunk_size: number;
+    total_points: number;
+    total_chunks: number;
+    ndim: number;
   };
-  occupiedCells: Uint32Array; // Flattened nD grid coordinates
-  cellRanges: BigUint64Array; // [start, end] ranges per cell
+  chunkBounds: Float32Array; // Shape: (num_chunks, ndim, 2) - min/max per dimension
 }
 ```
 
 **Key Functions:**
 
 ```typescript
-export async function loadPointSpatialIndex(
-  group: any,
-  signal?: AbortSignal
-): Promise<PointSpatialIndex | null> {
-  // Load point spatial index from zarr group
+export async function loadChunkSpatialIndex(
+  location: any,
+  attrs: any
+): Promise<ChunkSpatialIndex | null> {
+  // Load chunk spatial index from zarr chunk_bounds array
 }
 
-export function queryPointSpatialIndex(
-  index: PointSpatialIndex,
+export function queryChunksForView(
+  index: ChunkSpatialIndex,
   slicePos: number[],
   tolerance: number[]
+): number[] {
+  // Query for chunks that intersect the query box
+}
+
+export function chunkIndicesToRanges(
+  index: ChunkSpatialIndex,
+  chunkIndices: number[]
 ): PointRange[] {
-  // Query for points within tolerance of position
+  // Convert chunk indices to point ranges
 }
 
 export function mergePointRanges(ranges: PointRange[]): PointRange[] {
   // Merge overlapping/adjacent ranges
-}
-
-export function calculateChunksToLoad(ranges: PointRange[], chunkSize: number): Set<number> {
-  // Determine which zarr chunks are needed
 }
 ```
 
@@ -229,8 +231,8 @@ export function calculateChunksToLoad(ranges: PointRange[], chunkSize: number): 
 
 - **10-100x faster queries** for large datasets with spatial locality
 - **Reduced memory usage** by loading only visible points
-- **Better cache utilization** through spatial sorting
-- **Scalable to billions of points** with appropriate grid sizing
+- **Better cache utilization** through space-filling curve ordering
+- **Simple architecture**: No complex grid structures, just bounding box checks
 
 ### 3. Directory Navigator
 
@@ -393,17 +395,13 @@ dataset.zarr/
 ├── .zgroup                # Zarr group marker
 ├── .zmetadata            # Consolidated metadata (recommended)
 └── points/
-    ├── .zattrs           # Node attributes
+    ├── .zattrs           # Node attributes (ordering, chunk_size, etc.)
     ├── .zgroup
-    ├── spatial_index/    # Spatial index group - REQUIRED
-    │   ├── .zattrs       # Index metadata
-    │   ├── .zgroup
-    │   ├── occupied_cells/  # Grid cell coordinates
-    │   └── cell_ranges/     # Point ranges per cell
-    ├── positions/        # Float32[N, D] - required
+    ├── positions/        # Float32[N, D] - required, Morton-ordered
     ├── colors/           # Float32[N, 3] - optional
     ├── radii/            # Float32[N] - optional
-    └── sharpness/        # Float32[N] - optional
+    ├── sharpness/        # Float32[N] - optional
+    └── chunk_bounds/     # Float32[num_chunks, D, 2] - chunk bounding boxes
 ```
 
 ### Attribute Schema
@@ -451,57 +449,55 @@ interface DimensionMetadata {
 
 ## Performance Optimization
 
-### Spatial Index for Efficient Queries (Required)
+### Chunk-Based Spatial Index for Efficient Queries
 
-The point spatial index dramatically improves performance for large nD datasets:
+The chunk-based spatial index dramatically improves performance for large nD datasets:
 
 ```typescript
-// Spatial index is loaded automatically by SceneLoader
-// If missing, will throw: "[❌] No point spatial index found for /path.
-// Please rebuild the dataset with point spatial index support."
+// Chunk index is loaded automatically by SceneLoader
+// For nD datasets with Morton ordering, uses chunk_bounds for fast queries
+// For 3D datasets without Morton ordering, falls back to loading all points
 
-// The PointPointSpatialIndexLoader uses the index internally:
-const ranges = queryPointSpatialIndex(index, slicePos, tolerance);
+// The PointSpatialIndexLoader uses the index internally:
+const chunkIndices = queryChunksForView(index, slicePos, tolerance);
+const ranges = chunkIndicesToRanges(index, chunkIndices);
 const visiblePoints = await loadRanges(ranges);
 
 // Query performance:
-// With index: O(m) - scan only occupied cells (m << n)
-// Without index: Not supported - datasets must have spatial indices
+// With chunk index: O(num_chunks) - scan chunk bounds only (~100-1000 chunks)
+// Without chunk index: Loads all points (acceptable for <100K 3D datasets)
 ```
 
-**When to Use Spatial Index:**
+**When Chunk Index is Used:**
 
-- Datasets with >100K points
+- Datasets with Morton/Hilbert ordering
 - High-dimensional data (4D+)
-- Sparse point distributions
-- Time-series or multi-channel data
+- Datasets with chunk_bounds array
 
-**Grid Size Selection:**
+**How It Works:**
 
 ```python
 # In Python during compilation
+# Morton ordering and chunk_bounds are created automatically
 scene.add_points(
   "points",
-  positions=data,
-  grid_shape=(10, 10, 10, 5)  # Grid per dimension
+  positions=data,  # Will be Morton-ordered automatically
 )
 
-# Automatic grid sizing
-# If not specified, uses heuristic based on:
-# - Number of points
-# - Dimensional extents
-# - Target cells per dimension (10-20)
+# The compiler:
+# 1. Sorts points by Morton code
+# 2. Divides into chunks
+# 3. Computes bounding box for each chunk
+# 4. Stores in chunk_bounds array
 ```
 
-### Spatial Index Requirement
+### Chunk Index Performance
 
-⚠️ **IMPORTANT**: All datasets MUST have spatial indices. Datasets without spatial indices will fail to load with an error.
-
-The point spatial index enables:
+The chunk-based approach provides excellent performance for large datasets:
 
 ```typescript
-// The SceneLoader automatically uses spatial indices for efficient loading
-// You don't need to interact with the point spatial index directly - it's handled internally
+// The SceneLoader automatically uses chunk indices for efficient loading
+// You don't need to interact with the chunk index directly - it's handled internally
 
 // When you update the view:
 await updateView({
@@ -509,7 +505,7 @@ await updateView({
   slicePosition: [x, y, z, t],
   tolerance: [0, 0, 0, radius],
 });
-// The loader automatically queries the point spatial index and loads only visible points
+// The loader automatically queries chunk bounds and loads only visible chunks
 ```
 
 **Benefits:**
@@ -521,8 +517,8 @@ await updateView({
 
 **How It Works:**
 
-1. **Initial Load**: Queries point spatial index for visible points
-2. **Navigation**: As user navigates, queries update to find new visible points
+1. **Initial Load**: Queries chunk index for visible chunks
+2. **Navigation**: As user navigates, queries update to find new visible chunks
 3. **Caching**: Recently accessed ranges are cached for fast re-access
 4. **Memory Management**: Automatic eviction of least-recently-used cached ranges
 
@@ -735,17 +731,15 @@ location /data/ {
 }
 ```
 
-**Problem: Dataset without point spatial index**
+**Problem: Large 3D dataset loading slowly**
 
 ```typescript
-// Error: "[❌] No point spatial index found for /points. Please rebuild the dataset with point spatial index support."
-// Solution: Regenerate dataset with Python compiler
+// For 3D datasets without Morton ordering, all points are loaded at once.
+// This is acceptable for <100K points but may be slow for larger datasets.
 
-// Python code:
-from luxar import Scene
-scene = Scene()
-scene.add_points("points", positions=data)
-scene.compile("output.zarr")  # Spatial index created automatically
+// Solution: For nD (4D+) datasets, Morton ordering is automatic and enables
+// chunk-based spatial queries. 3D datasets without additional dimensions
+// fall back to loading all points - this is fine for small datasets.
 ```
 
 **Problem: Memory usage too high**
@@ -837,14 +831,14 @@ location /data/ {
 
 ### Main API (zarr-loader.ts)
 
-| Function                                           | Description                                         |
-| -------------------------------------------------- | --------------------------------------------------- |
-| `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with point spatial index |
-| `updateView(viewState, loaderId?)`                 | Update all points for new view state                |
-| `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions             |
-| `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring                 |
-| `clearCaches(loaderId?)`                           | Clear caches to free memory                         |
-| `dispose(loaderId?)`                               | Clean up resources (specific or all)                |
+| Function                                           | Description                                          |
+| -------------------------------------------------- | ---------------------------------------------------- |
+| `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with chunk-based indexing |
+| `updateView(viewState, loaderId?)`                 | Update all points for new view state                 |
+| `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions              |
+| `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring                  |
+| `clearCaches(loaderId?)`                           | Clear caches to free memory                          |
+| `dispose(loaderId?)`                               | Clean up resources (specific or all)                 |
 
 ### Instance Management (scene-loader-manager.ts)
 
@@ -875,27 +869,25 @@ location /data/ {
 | `toggleMonitor()`           | Toggle data loading monitor UI            |
 | `dispose()`                 | Clean up all resources                    |
 
-### Spatial Index Loading (spatial-index-loader.ts)
+### Point Spatial Index Loader (point-spatial-index-loader.ts)
 
-| Class/Method                          | Description                                    |
-| ------------------------------------- | ---------------------------------------------- |
-| `PointPointSpatialIndexLoader`        | Loader using spatial indices                   |
-| `constructor(location, node, config)` | Create loader with point spatial index support |
-| `updateView(viewState)`               | Update for new view (reloads currently)        |
-| `getCacheStats()`                     | Get cache statistics                           |
-| `clearCache()`                        | Clear cached data                              |
-| `dispose()`                           | Clean up resources                             |
+| Class/Method                          | Description                               |
+| ------------------------------------- | ----------------------------------------- |
+| `PointSpatialIndexLoader`             | Loader using chunk-based spatial indexing |
+| `constructor(location, node, config)` | Create loader with chunk index support    |
+| `updateView(viewState)`               | Update for new view (reloads currently)   |
+| `getCacheStats()`                     | Get cache statistics                      |
+| `clearCache()`                        | Clear cached data                         |
+| `dispose()`                           | Clean up resources                        |
 
-### Spatial Index Functions (spatial-index.ts)
+### Chunk Spatial Index Functions (chunk-spatial-index.ts)
 
-| Function                                  | Description                                 |
-| ----------------------------------------- | ------------------------------------------- |
-| `loadPointSpatialIndex(group)`            | Load point spatial index from zarr group    |
-| `queryPointSpatialIndex(index, pos, tol)` | Query points within tolerance of position   |
-| `mergePointRanges(ranges)`                | Merge overlapping or adjacent ranges        |
-| `calculateChunksToLoad(ranges, size)`     | Calculate which zarr chunks to load         |
-| `estimateMemoryUsage(ranges, bytes)`      | Estimate memory for loading point ranges    |
-| `debugPointSpatialIndex(index)`           | Create debug summary of point spatial index |
+| Function                                    | Description                                     |
+| ------------------------------------------- | ----------------------------------------------- |
+| `loadChunkSpatialIndex(location, attrs)`    | Load chunk spatial index from zarr chunk_bounds |
+| `queryChunksForView(index, pos, tol)`       | Query chunks that intersect the given box       |
+| `chunkIndicesToRanges(index, chunkIndices)` | Convert chunk indices to point ranges           |
+| `mergePointRanges(ranges)`                  | Merge overlapping or adjacent ranges            |
 
 ### Range Cache (range-cache.ts)
 

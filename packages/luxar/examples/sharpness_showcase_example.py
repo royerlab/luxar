@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 from arbol import aprint
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
@@ -225,7 +225,7 @@ def main():
     # Create scene
 
     with LuxarZarrCompiler(output_path) as compiler:
-        scene = compiler.create_scene()
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Add all examples
         create_sharpness_gradient_example(scene)

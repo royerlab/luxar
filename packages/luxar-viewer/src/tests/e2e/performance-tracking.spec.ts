@@ -80,9 +80,7 @@ test.describe('Performance Regression Tracking', () => {
     const baselines = loadBaselines();
     if (baselines && baselines.loadTime > 0) {
       const ratio = loadTime / baselines.loadTime;
-      console.log(
-        `  Baseline: ${baselines.loadTime}ms (ratio: ${ratio.toFixed(2)}x)`
-      );
+      console.log(`  Baseline: ${baselines.loadTime}ms (ratio: ${ratio.toFixed(2)}x)`);
 
       // Fail if >30% slower
       expect(loadTime).toBeLessThan(baselines.loadTime * REGRESSION_THRESHOLD);
@@ -123,8 +121,7 @@ test.describe('Performance Regression Tracking', () => {
   });
 
   test('should track navigation responsiveness', async ({ page }) => {
-    const NAV_DATASET =
-      'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr';
+    const NAV_DATASET = 'http://localhost:9000/packages/luxar/examples/dense_grid_5d_example.zarr';
 
     await page.goto(`/?src=${NAV_DATASET}&debug`);
     await waitForLuxarReady(page);
@@ -144,9 +141,7 @@ test.describe('Performance Regression Tracking', () => {
     const baselines = loadBaselines();
     if (baselines && baselines.navigationTime > 0) {
       const ratio = navigationTime / baselines.navigationTime;
-      console.log(
-        `  Baseline: ${baselines.navigationTime}ms (ratio: ${ratio.toFixed(2)}x)`
-      );
+      console.log(`  Baseline: ${baselines.navigationTime}ms (ratio: ${ratio.toFixed(2)}x)`);
 
       expect(navigationTime).toBeLessThan(baselines.navigationTime * REGRESSION_THRESHOLD);
     } else {

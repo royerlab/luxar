@@ -125,7 +125,7 @@ def compute_auto_resolution(coords: np.ndarray, max_resolution: int = 2**16) -> 
 def sort_points_compound(
     positions: np.ndarray,
     dimensions: list[Dimension],
-    method: Literal["morton", "hilbert"] = "morton",
+    method: Literal["morton", "hilbert"] = "hilbert",
 ) -> tuple[np.ndarray, dict]:
     """Sort Points using compound ordering (discrete dims → spatial curve).
 
@@ -136,7 +136,7 @@ def sort_points_compound(
     Args:
         positions: Point positions, shape (N, d), all dimensions
         dimensions: Dimension objects defining discrete/spatial properties
-        method: Spatial curve method ("morton" or "hilbert")
+        method: Spatial curve method ("morton" or "hilbert"), default "hilbert"
 
     Returns:
         sort_indices: Indices to reorder points
@@ -146,23 +146,23 @@ def sort_points_compound(
 
     # Identify dimension categories (per spec Section "Compound Ordering")
     slice_dims = [i for i, d in enumerate(dimensions) if d.discrete and not d.display]
-    morton_dims = [i for i, d in enumerate(dimensions) if not d.discrete or d.display]
+    ordering_dims = [i for i, d in enumerate(dimensions) if not d.discrete or d.display]
 
-    # Compute bits per Morton dimension
-    if morton_dims:
-        bits_per_dim = min(21, 64 // len(morton_dims))
+    # Compute bits per ordering dimension
+    if ordering_dims:
+        bits_per_dim = min(21, 64 // len(ordering_dims))
     else:
         bits_per_dim = 21  # Fallback
 
-    # Extract Morton dimension coordinates
-    if morton_dims:
-        morton_coords = positions[:, morton_dims]
-        morton_min = morton_coords.min(axis=0)
-        morton_max = morton_coords.max(axis=0)
+    # Extract ordering dimension coordinates
+    if ordering_dims:
+        ordering_coords = positions[:, ordering_dims]
+        ordering_min = ordering_coords.min(axis=0)
+        ordering_max = ordering_coords.max(axis=0)
 
         # Normalize to grid (using 2^bits_per_dim resolution)
         grid_coords = normalize_coords_to_grid(
-            morton_coords, morton_min, morton_max, 2**bits_per_dim
+            ordering_coords, ordering_min, ordering_max, 2**bits_per_dim
         )
 
         # Compute spatial curve codes
@@ -173,10 +173,10 @@ def sort_points_compound(
         else:
             raise ValueError(f"Unknown method: {method}")
     else:
-        # No Morton dimensions - all discrete
+        # No ordering dimensions - all discrete
         spatial_codes = np.zeros(n_points, dtype=np.uint64)
-        morton_min = np.array([])
-        morton_max = np.array([])
+        ordering_min = np.array([])
+        ordering_max = np.array([])
 
     # Create compound sort key
     if slice_dims:
@@ -197,10 +197,10 @@ def sort_points_compound(
     metadata = {
         "ordering": method,
         "slice_dims": slice_dims,
-        "morton_dims": morton_dims,
-        "morton_min": morton_min.tolist() if len(morton_min) > 0 else [],
-        "morton_max": morton_max.tolist() if len(morton_max) > 0 else [],
-        "morton_bits_per_dim": bits_per_dim,
+        "ordering_dims": ordering_dims,
+        "ordering_min": ordering_min.tolist() if len(ordering_min) > 0 else [],
+        "ordering_max": ordering_max.tolist() if len(ordering_max) > 0 else [],
+        "ordering_bits_per_dim": bits_per_dim,
     }
 
     return sort_indices, metadata
@@ -256,9 +256,9 @@ def sort_splats_spatial(
     # Metadata
     metadata = {
         "ordering": method,
-        "morton_min": min_coords.tolist(),
-        "morton_max": max_coords.tolist(),
-        "morton_bits_per_dim": bits_per_dim,
+        "ordering_min": min_coords.tolist(),
+        "ordering_max": max_coords.tolist(),
+        "ordering_bits_per_dim": bits_per_dim,
     }
 
     return sort_indices, metadata

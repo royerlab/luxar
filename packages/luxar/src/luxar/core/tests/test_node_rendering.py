@@ -2,7 +2,7 @@
 
 import pytest
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 class TestNodeRenderingAttributes:
@@ -11,7 +11,7 @@ class TestNodeRenderingAttributes:
     def test_default_rendering_attributes(self, tmp_path) -> None:
         """Test that nodes have correct default rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         assert node.opacity == 1.0
@@ -21,7 +21,7 @@ class TestNodeRenderingAttributes:
     def test_opacity_getter_setter(self, tmp_path) -> None:
         """Test opacity property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test setting valid opacity
@@ -46,7 +46,7 @@ class TestNodeRenderingAttributes:
     def test_opacity_validation(self, tmp_path) -> None:
         """Test opacity validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test invalid values
@@ -62,7 +62,7 @@ class TestNodeRenderingAttributes:
     def test_gamma_getter_setter(self, tmp_path) -> None:
         """Test gamma property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test setting valid gamma
@@ -87,7 +87,7 @@ class TestNodeRenderingAttributes:
     def test_gamma_validation(self, tmp_path) -> None:
         """Test gamma validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test invalid values (range is now 0.1 to 10.0 per spec)
@@ -103,7 +103,7 @@ class TestNodeRenderingAttributes:
     def test_blending_mode_getter_setter(self, tmp_path) -> None:
         """Test blending_mode property getter and setter."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test setting valid blending modes
@@ -115,7 +115,7 @@ class TestNodeRenderingAttributes:
     def test_blending_mode_validation(self, tmp_path) -> None:
         """Test blending mode validation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
         # Test invalid values
@@ -136,7 +136,7 @@ class TestNodeRenderingAttributes:
 
         # Create scene and set attributes within context
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_group(
                 "test_node", opacity=0.7, gamma=1.5, blending_mode="additive"
             )
@@ -155,7 +155,7 @@ class TestNodeRenderingAttributes:
 
         store_path = tmp_path / "test.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.random.randn(100, 3).astype(np.float32)
 
             # Add points with custom rendering attributes
@@ -173,7 +173,7 @@ class TestNodeRenderingAttributes:
     def test_rendering_attributes_inheritance(self, tmp_path) -> None:
         """Test that child nodes can access parent rendering attributes."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
-            scene = compiler.create_scene()
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         # Create parent with custom attributes
         parent = scene.add_group("parent", opacity=0.3, blending_mode="additive")

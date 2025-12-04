@@ -24,7 +24,7 @@ class TestProgressiveWriting:
                 assert compiler.store is not None
 
                 # Create scene
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 assert scene is not None
                 assert scene._writer == compiler
 
@@ -47,8 +47,8 @@ class TestProgressiveWriting:
             positions = np.random.randn(n_points, 3).astype(np.float32)
             colors = np.random.rand(n_points, 3).astype(np.float32)
 
-            with LuxarZarrCompiler(output_path) as compiler:
-                compiler.create_scene()
+            with LuxarZarrCompiler(output_path, enable_spatial_index=False) as compiler:
+                compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Write points - should go directly to disk
                 metadata = compiler.write_points(
@@ -103,7 +103,7 @@ class TestProgressiveWriting:
             output_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Add a group
                 group1 = scene.add_group("group1", opacity=0.8)
@@ -125,7 +125,7 @@ class TestProgressiveWriting:
             output_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Create data
                 positions = np.random.randn(1000, 3).astype(np.float32)
@@ -146,7 +146,7 @@ class TestProgressiveWriting:
             output_path = Path(tmpdir) / "test.zarr"
 
             compiler = LuxarZarrCompiler(output_path)
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add some data
             positions = np.random.randn(100, 3).astype(np.float32)

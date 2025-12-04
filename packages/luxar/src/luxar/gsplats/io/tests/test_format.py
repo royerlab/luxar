@@ -99,9 +99,9 @@ class TestFormatCompliance:
             assert "chunk_size" in attrs
 
             # Ordering metadata (spec Section "Ordering Metadata")
-            assert "morton_min" in attrs
-            assert "morton_max" in attrs
-            assert "morton_bits_per_dim" in attrs
+            assert "ordering_min" in attrs
+            assert "ordering_max" in attrs
+            assert "ordering_bits_per_dim" in attrs
 
             # Value ranges (spec Section "Splats Group Attributes")
             assert "amplitude_range" in attrs
@@ -426,15 +426,15 @@ class TestFormatCompliance:
             root = zarr.open_group(str(path), mode="r")
             splats_attrs = root["splats"].attrs
 
-            # Morton metadata (spec Section "Ordering Metadata")
+            # Ordering metadata (spec Section "Ordering Metadata")
             assert splats_attrs["ordering"] == "morton"
-            assert len(splats_attrs["morton_min"]) == 3
-            assert len(splats_attrs["morton_max"]) == 3
-            assert isinstance(splats_attrs["morton_bits_per_dim"], int)
-            assert splats_attrs["morton_bits_per_dim"] <= 21  # Max for 3D
+            assert len(splats_attrs["ordering_min"]) == 3
+            assert len(splats_attrs["ordering_max"]) == 3
+            assert isinstance(splats_attrs["ordering_bits_per_dim"], int)
+            assert splats_attrs["ordering_bits_per_dim"] <= 21  # Max for 3D
 
     def test_no_ordering_metadata(self) -> None:
-        """Test ordering="none" doesn't add Morton metadata."""
+        """Test ordering="none" doesn't add ordering metadata."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(100)
@@ -444,7 +444,7 @@ class TestFormatCompliance:
             root = zarr.open_group(str(path), mode="r")
             splats_attrs = root["splats"].attrs
 
-            # Should have ordering="none" but no Morton metadata
+            # Should have ordering="none" but no ordering metadata
             assert splats_attrs["ordering"] == "none"
-            assert "morton_min" not in splats_attrs
-            assert "morton_max" not in splats_attrs
+            assert "ordering_min" not in splats_attrs
+            assert "ordering_max" not in splats_attrs

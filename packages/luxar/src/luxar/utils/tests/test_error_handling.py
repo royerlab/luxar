@@ -127,7 +127,7 @@ class TestSceneErrorHandling:
         """Test adding points with invalid position arrays."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Not array-like
                 with pytest.raises(ValueError, match="Positions must have shape"):
@@ -252,7 +252,7 @@ class TestEdgeCases:
 
             # Create and finalize first scene
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene1 = compiler.create_scene()
+                scene1 = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene1.add_points("points1", np.random.randn(100, 3).astype(np.float32))
 
             # Verify first scene data exists
@@ -265,7 +265,7 @@ class TestEdgeCases:
 
             # Create second scene at same path - overwrites
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene2 = compiler.create_scene()
+                scene2 = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene2.add_points("points2", np.random.randn(50, 3).astype(np.float32))
 
             # Verify second scene overwrote first
@@ -283,7 +283,7 @@ class TestRecoveryStrategies:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Add valid data
                 scene.add_points("valid", np.random.randn(100, 3).astype(np.float32))
@@ -315,7 +315,7 @@ class TestRecoveryStrategies:
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 # Create scene without explicit dimensions
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Add 5D points
                 positions_5d = np.random.randn(100, 5).astype(np.float32)

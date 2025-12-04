@@ -173,9 +173,10 @@ describe('effective-radius-calculator', () => {
 
       const result = calculateSpatialQueryTolerance(viewState, config, 5);
 
-      expect(result[0]).toBe(0); // Displayed
-      expect(result[1]).toBe(0); // Displayed
-      expect(result[2]).toBe(0); // Displayed
+      // Displayed dimensions use infinite tolerance (1e10) to show all points
+      expect(result[0]).toBe(1e10); // Displayed → infinite tolerance
+      expect(result[1]).toBe(1e10); // Displayed → infinite tolerance
+      expect(result[2]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[3]).toBe(0.5); // Non-displayed spatial → maxRadius
       expect(result[4]).toBe(0); // Non-spatial → exact match (0 tolerance)
     });
@@ -193,8 +194,9 @@ describe('effective-radius-calculator', () => {
 
       const result = calculateSpatialQueryTolerance(viewState, config, 4);
 
-      expect(result[0]).toBe(0); // Displayed
-      expect(result[1]).toBe(0); // Displayed
+      // Displayed dimensions use infinite tolerance (1e10) to show all points
+      expect(result[0]).toBe(1e10); // Displayed → infinite tolerance
+      expect(result[1]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[2]).toBe(0); // Non-spatial (e.g., time) → exact match
       expect(result[3]).toBe(0); // Non-spatial (e.g., category) → exact match
     });
@@ -212,9 +214,10 @@ describe('effective-radius-calculator', () => {
 
       const result = calculateSpatialQueryTolerance(viewState, config, 4);
 
-      expect(result[0]).toBe(0); // Displayed
-      expect(result[1]).toBe(0); // Displayed
-      expect(result[2]).toBe(0); // Displayed
+      // Displayed dimensions use infinite tolerance (1e10) to show all points
+      expect(result[0]).toBe(1e10); // Displayed → infinite tolerance
+      expect(result[1]).toBe(1e10); // Displayed → infinite tolerance
+      expect(result[2]).toBe(1e10); // Displayed → infinite tolerance
       expect(result[3]).toBe(1.0); // Always use maxRadius for spatial dims, not tolerance
     });
   });

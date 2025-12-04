@@ -127,9 +127,9 @@ class TestMortonSorting:
 
         # Check metadata
         assert metadata["ordering"] == "morton"
-        assert "morton_min" in metadata
-        assert "morton_max" in metadata
-        assert "morton_bits_per_dim" in metadata
+        assert "ordering_min" in metadata
+        assert "ordering_max" in metadata
+        assert "ordering_bits_per_dim" in metadata
 
     def test_sort_morton_3d(self) -> None:
         """Test Morton sorting in 3D."""
@@ -171,8 +171,8 @@ class TestHilbertSorting:
 
             # Check metadata
             assert metadata["ordering"] == "hilbert"
-            assert "morton_min" in metadata  # Name kept for compatibility
-            assert "morton_max" in metadata
+            assert "ordering_min" in metadata
+            assert "ordering_max" in metadata
 
         except ImportError:
             pytest.skip("hilbertcurve package not installed")

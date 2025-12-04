@@ -299,7 +299,18 @@ export class SceneLoader {
 
       return points;
     } catch (error) {
-      log.error(Modules.SCENE_LOADER, `Failed to load ${node.path}:`, error);
+      // Improved error logging - extract message from error object
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error);
+      log.error(Modules.SCENE_LOADER, `Failed to load ${node.path}: ${errorMessage}`);
+      // Also log stack trace for debugging
+      if (error instanceof Error && error.stack) {
+        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+      }
       return null;
     }
   }
@@ -313,7 +324,14 @@ export class SceneLoader {
 
     // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
     log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
-    const loader = new PointSpatialIndexLoader(nodeLoc, node, this.config, this.arrayRefRegistry);
+    // Pass the store reference for array_ref resolution (needed by ArrayDecoder)
+    const loader = new PointSpatialIndexLoader(
+      nodeLoc,
+      node,
+      this.config,
+      this.arrayRefRegistry,
+      this.store!
+    );
 
     // Connect to monitor if available
     if (this.monitorId) {
@@ -380,7 +398,10 @@ export class SceneLoader {
     if (data.radii && data.radii.length !== pointCount) {
       const expected = pointCount;
       const actual = data.radii.length;
-      log.warning(Modules.SCENE_LOADER, `Radii length mismatch: expected ${expected}, got ${actual}`);
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Radii length mismatch: expected ${expected}, got ${actual}`
+      );
       console.warn('[SceneLoader] Radii length mismatch:', { expected, actual });
     }
 
@@ -568,16 +589,16 @@ export class SceneLoader {
     const colMajorTranslation = [transform[12], transform[13], transform[14]];
     const rowMajorTranslation = [transform[3], transform[7], transform[11]];
 
-    const colMajorNonZero = colMajorTranslation.some(v => Math.abs(v) > 0.001);
-    const rowMajorNonZero = rowMajorTranslation.some(v => Math.abs(v) > 0.001);
+    const colMajorNonZero = colMajorTranslation.some((v) => Math.abs(v) > 0.001);
+    const rowMajorNonZero = rowMajorTranslation.some((v) => Math.abs(v) > 0.001);
 
     // If row-major positions are non-zero but column-major are zero, likely wrong format
     if (rowMajorNonZero && !colMajorNonZero) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Transform matrix appears to be in row-major (NumPy) format instead of column-major (THREE.js). ` +
-        `Translation detected at wrong indices [3,7,11] instead of [12,13,14]. ` +
-        `Python should transpose before storing: matrix.T.ravel().tolist()`
+        'Transform matrix appears to be in row-major (NumPy) format instead of column-major (THREE.js). ' +
+          'Translation detected at wrong indices [3,7,11] instead of [12,13,14]. ' +
+          'Python should transpose before storing: matrix.T.ravel().tolist()'
       );
       return false;
     }
@@ -672,7 +693,7 @@ export class SceneLoader {
       log.warning(
         Modules.SCENE_LOADER,
         `Node metadata indicates HDR colors but array is ${colors.constructor.name}. ` +
-          `HDR colors should use Float32Array. This may indicate incorrect encoding.`
+          'HDR colors should use Float32Array. This may indicate incorrect encoding.'
       );
     }
 
@@ -682,7 +703,7 @@ export class SceneLoader {
       if (!hasHDRValues && nodeMetadata?.color_mode === 'hdr') {
         log.info(
           Modules.SCENE_LOADER,
-          `HDR color mode specified but all values in [0, 1] range. Consider using SDR mode for better compression.`
+          'HDR color mode specified but all values in [0, 1] range. Consider using SDR mode for better compression.'
         );
       }
     }
@@ -714,12 +735,12 @@ export class SceneLoader {
       log.warning(
         Modules.SCENE_LOADER,
         `Scene has ${displayedCount} displayed dimensions, but viewer can only show 3. ` +
-          `Only the first 3 will be displayed.`
+          'Only the first 3 will be displayed.'
       );
     } else if (displayedCount === 0) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Scene has no displayed dimensions. At least one dimension should be displayed.`
+        'Scene has no displayed dimensions. At least one dimension should be displayed.'
       );
     }
 
@@ -800,11 +821,23 @@ export class SceneLoader {
       }
     }
 
-    // Initialize view state
+    // Initialize view state - use center of range to maximize visibility
+    // The range minimum may be outside the actual data bounds, so center is safer
     const currentStep = new Array(ndim).fill(0);
     for (let i = 0; i < ndim; i++) {
       if (!displayed.includes(i) && metadata[i].range) {
-        currentStep[i] = metadata[i].range[0];
+        // Use center of range to maximize chance of visible data
+        const [rangeMin, rangeMax] = metadata[i].range;
+        let centerValue = (rangeMin + rangeMax) / 2;
+
+        // For discrete dimensions, floor to nearest integer
+        // Use floor instead of round to avoid edge cases where round(0.5) = 1
+        // would put us at range maximum (which may be outside actual data bounds)
+        if (metadata[i].discrete) {
+          centerValue = Math.floor(centerValue);
+        }
+
+        currentStep[i] = centerValue;
       }
     }
 

@@ -8,6 +8,7 @@ import { cleanupUI, clearError } from '../ui/helpers';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -338,9 +339,19 @@ export class LuxarApp {
           }
         });
 
+        // Get dimensions from sceneDimsManager
+        const dims = sceneDimsManager.getDims();
+
         return {
           totalPoints,
           pointClouds,
+          dimensions: dims
+            ? {
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
+            : null,
           cameraPosition: {
             x: this.sceneManager.camera.position.x,
             y: this.sceneManager.camera.position.y,

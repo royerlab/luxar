@@ -3,7 +3,7 @@
 import numpy as np
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 
 
 class TestZarrNDChunking:
@@ -36,7 +36,7 @@ class TestZarrNDChunking:
         # Create scene at the specified store location and add points
         # Disable spatial index to preserve order for this test
         with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points4D", positions)
 
         # Verify chunking by opening the zarr store
@@ -64,7 +64,7 @@ class TestZarrNDChunking:
         # Create scene and add 5D points
         # Disable spatial index to preserve order for this test
         with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points5D", positions_5d)
 
         # Verify it saved correctly
@@ -83,7 +83,7 @@ class TestZarrNDChunking:
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
         with LuxarZarrCompiler(store) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
@@ -118,8 +118,8 @@ class TestZarrNDChunking:
             positions[start:end, 2] = np.random.randn(points_per_slice)
             positions[start:end, 3] = s  # Slice index as 4th dimension
 
-        with LuxarZarrCompiler(store) as compiler:
-            compiler.create_scene()
+        with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
         # Test that we can efficiently load a single slice
@@ -147,7 +147,7 @@ class TestZarrNDChunking:
             dim_store = store / f"dims_{n_dims}.zarr"
             # Disable spatial index to preserve order for this test
             with LuxarZarrCompiler(dim_store, enable_spatial_index=False) as compiler:
-                compiler.create_scene()
+                compiler.create_scene(dimensions=Dimensions.default_3d())
                 compiler.write_points("Points", positions)
 
             # Verify it loads correctly
@@ -165,8 +165,9 @@ class TestZarrNDChunking:
         n_points = 1_000_000
         positions = np.random.randn(n_points, 3).astype(np.float32)
 
-        with LuxarZarrCompiler(store) as compiler:
-            compiler.create_scene()
+        # Disable spatial indexing to test basic chunking strategy
+        with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")
@@ -203,7 +204,7 @@ class TestZarrNDChunking:
         positions = np.vstack(positions_list)
 
         with LuxarZarrCompiler(store) as compiler:
-            compiler.create_scene()
+            compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("Points", positions)
 
         root = zarr.open_group(store, "r")

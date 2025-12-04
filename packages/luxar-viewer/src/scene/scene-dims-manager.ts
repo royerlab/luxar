@@ -116,13 +116,24 @@ export class SceneDimsManager {
     });
 
     // Step 6: Initialize dimension positions
-    // Critical decision: non-displayed dimensions start at minimum for predictability
+    // Non-displayed dimensions start at CENTER of range to maximize chance of visible data
+    // (starting at min could put us outside the actual data bounds)
     const currentStep = new Array(ndim).fill(0);
 
     for (let i = 0; i < ndim; i++) {
       if (metadata[i].display !== true) {
-        // Non-displayed dimensions start at minimum bound
-        currentStep[i] = this.dimensionRanges[i][0];
+        // Non-displayed dimensions start at center of range
+        const [min, max] = this.dimensionRanges[i];
+        let centerValue = (min + max) / 2;
+
+        // For discrete dimensions, floor to nearest integer
+        // Use floor instead of round to avoid edge cases where round(0.5) = 1
+        // would put us at range maximum (which may be outside actual data bounds)
+        if (metadata[i].discrete) {
+          centerValue = Math.floor(centerValue);
+        }
+
+        currentStep[i] = centerValue;
       }
       // Displayed dimensions start at 0 (camera will determine actual position)
     }

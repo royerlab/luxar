@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import LuxarZarrCompiler
+from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.transforms import prepare_transform_for_zarr, translate
 from luxar.validation.base import ValidationError, validate_zarr_attributes
 
@@ -21,7 +21,7 @@ class TestVersionUpdate:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(100, 3).astype(np.float32)
                 scene.add_points("test", positions)
 
@@ -70,7 +70,7 @@ class TestChunkAlignment:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(10000, 3).astype(np.float32)
                 scene.add_points("test", positions)
 
@@ -137,7 +137,7 @@ class TestTransformCentralization:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(100, 3).astype(np.float32)
                 transform = translate(10, 20, 30)
                 scene.add_points("test", positions, transform=transform)
@@ -189,7 +189,7 @@ class TestSpatialOrdering:
             test_attrs = dict(store["test"].attrs)
             assert test_attrs["ordering"] == "morton"
             assert "slice_dims" in test_attrs
-            assert "morton_dims" in test_attrs
+            assert "ordering_dims" in test_attrs
             assert "chunk_size" in test_attrs
 
 
@@ -255,7 +255,7 @@ class TestHDRColorRanges:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
-                scene = compiler.create_scene()
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(100, 3).astype(np.float32)
                 colors = np.random.rand(100, 3).astype(np.float32)  # 0-1 range
                 scene.add_points("test", positions, colors=colors)
@@ -271,7 +271,7 @@ class TestHDRColorRanges:
 
             with pytest.warns(UserWarning, match="HDR colors"):
                 with LuxarZarrCompiler(zarr_path) as compiler:
-                    scene = compiler.create_scene()
+                    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                     positions = np.random.randn(100, 3).astype(np.float32)
                     colors = (
                         np.random.rand(100, 3).astype(np.float32) * 20
@@ -286,7 +286,7 @@ class TestHDRColorRanges:
             # Scene wraps ValidationError in ValueError
             with pytest.raises(ValueError, match="cannot be negative"):
                 with LuxarZarrCompiler(zarr_path) as compiler:
-                    scene = compiler.create_scene()
+                    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                     positions = np.random.randn(100, 3).astype(np.float32)
                     colors = np.random.randn(100, 3).astype(
                         np.float32
@@ -305,6 +305,6 @@ class TestEmptyDatasets:
             # Scene wraps ValidationError in ValueError
             with pytest.raises(ValueError, match="Cannot write empty"):
                 with LuxarZarrCompiler(zarr_path) as compiler:
-                    scene = compiler.create_scene()
+                    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                     positions = np.array([], dtype=np.float32).reshape(0, 3)
                     scene.add_points("test", positions)
