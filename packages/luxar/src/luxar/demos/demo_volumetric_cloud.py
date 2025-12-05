@@ -314,13 +314,13 @@ def generate_volumetric_cloud(
         # === STEP 6: Create soft, cloud-like colors ===
         aprint("Generating cloud colors...")
 
-        # Base color: white/light gray
+        # Base color: white/light gray (high brightness for visibility)
         # Add subtle variation based on position and density
-        base_brightness = 0.01 + density_norm * 0.05  # Brighter in dense areas
+        base_brightness = 0.6 + density_norm * 0.4  # Range: 0.6 to 1.0 (visible!)
 
         # Add very subtle color tint (slight blue/gray variation)
         # This gives depth and makes it less flat
-        color_variation = rng.uniform(-0.15, 0.15, len(positions))
+        color_variation = rng.uniform(-0.1, 0.1, len(positions))
 
         colors = np.zeros((len(positions), 3), dtype=np.float32)
         colors[:, 0] = np.clip(base_brightness + color_variation, 0, 1)  # R

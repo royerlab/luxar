@@ -266,7 +266,9 @@ export class SceneLoader {
       const data = await loader.loadPoints(this.viewState);
 
       // Create THREE.js geometry even if empty (for future updates)
-      const geometry = this.createGeometry(data);
+      // Pass max_radius from node attributes for proper radii scaling
+      const maxRadius = node.attrs.max_radius ?? 1.0;
+      const geometry = this.createGeometry(data, maxRadius);
 
       // Log if no initial points are visible (this is normal for nD slicing)
       if (data.metadata.loadedPoints === 0) {
@@ -422,8 +424,10 @@ export class SceneLoader {
 
   /**
    * Create THREE.js geometry from points data
+   * @param data - Points data with positions, colors, radii, sharpness
+   * @param maxRadius - Maximum radius from node attributes for scaling uint8 radii
    */
-  private createGeometry(data: PointsData): THREE.BufferGeometry {
+  private createGeometry(data: PointsData, maxRadius: number = 1.0): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     // VALIDATION: Check for edge cases and log detailed diagnostics
@@ -478,14 +482,10 @@ export class SceneLoader {
           new THREE.BufferAttribute(data.radii, 1, true) // true = normalize on GPU
         );
         // GPU normalizes uint8 [0, 255] to [0, 1]
-        // Python quantizes as: encoded = (value / max_radius) * 255
-        // So after GPU normalization we get: value / max_radius
-        // The material must then multiply by radiusScale to get world-space radius
-        // For now, we use 1/255 as a base scale (may need max_radius from metadata)
-        radiusScale = 1.0 / 255.0;
-
-        // Note: If we need to handle max_radius scaling in the future,
-        // we can check for it in the node attributes
+        // Python encodes radii with bounded_scalar_uint8: value in [0, max_radius]
+        // After GPU normalization we get normalized values in [0, 1]
+        // Multiply by maxRadius to get world-space radius
+        radiusScale = maxRadius;
       } else {
         // Float32 radii - no normalization or scaling needed
         geometry.setAttribute(

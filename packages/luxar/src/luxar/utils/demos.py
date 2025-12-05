@@ -149,11 +149,12 @@ def create_lorenz_attractor(
         compiler.create_scene(dimensions=dims)
 
         # Write the attractor data
+        # NOTE: radii must be scaled by same factor as positions!
         compiler.write_points(
             "LorenzAttractor",
             positions * 100.0 - 50.0,  # Scale up for better visibility
             colors=colors,
-            radii=radii,
+            radii=2.0,  # Uniform radius for visibility
             opacity=0.9,
             blending_mode="additive",
         )

@@ -49,6 +49,9 @@ export interface EncodingMetadata {
 
   /** Quantization bits */
   bits?: number;
+
+  /** Log-space encoding max (for log_scalar_uint8/uint16) */
+  max_log?: number;
 }
 
 /**
@@ -142,15 +145,6 @@ export class ArrayDecoder {
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
 
-    // Log decoding start for debugging
-    console.log('[ArrayDecoder] Decoding array:', {
-      shape: zarrArray.shape,
-      dtype: zarrArray.dtype,
-      encodingName: enc?.name || 'none',
-      expectedElements,
-      hasRootLoc: !!zarrRootLoc,
-    });
-
     // ENCODING PRIORITY ORDER (CRITICAL - must match spec):
     // 1. Broadcasting → 2. Array Reference → 3. LUT → 4. Dtype
 
@@ -197,23 +191,6 @@ export class ArrayDecoder {
     const rawData = await get(zarrArray);
     const rawArray = rawData.data;
 
-    // VALIDATION: Log raw data type for debugging
-    console.log('[ArrayDecoder] Raw data loaded:', {
-      dataType: rawArray.constructor.name,
-      length: (rawArray as any).length,
-      zarrDtype: zarrArray.dtype,
-    });
-
-    // Type validation: Ensure we can convert to Float32Array
-    if (
-      !(rawArray instanceof Float32Array) &&
-      !(rawArray instanceof ArrayBuffer) &&
-      !Array.isArray(rawArray)
-    ) {
-      const actualType = rawArray.constructor.name;
-      console.warn(`[ArrayDecoder] Unexpected data type: ${actualType}, attempting conversion`);
-    }
-
     const data =
       rawArray instanceof Float32Array
         ? rawArray
@@ -243,6 +220,13 @@ export class ArrayDecoder {
       }
 
       return decoded;
+    }
+
+    // Check for LOG-SPACE scalar encoding (log_scalar_uint8, log_scalar_uint16)
+    // MUST be checked BEFORE generic quantization since both contain 'uint'/'scalar'
+    if (enc?.name?.startsWith('log_scalar') && enc?.max_log !== undefined) {
+      const actualDtype = attrs.dtype || 'uint8';
+      return this.decodeLogScalar(data, enc.max_log, actualDtype);
     }
 
     // Check for quantization (name contains "uint", bounds present OR implicit)
@@ -281,9 +265,14 @@ export class ArrayDecoder {
         );
       }
 
-      // Get actual dtype from zarr metadata (e.g., '<u1', 'uint8')
+      // Get actual dtype from zarr array, NOT from attrs (Python encoder doesn't write attrs.dtype)
+      // zarrArray.dtype has the real storage dtype (e.g., '|u1', '<u1', 'uint8')
       // Do NOT use enc.name (e.g., 'rgb_uint8') - that's the encoding name, not the dtype
-      const actualDtype = attrs.dtype || 'uint8';
+      const actualDtype = (zarrArray.dtype as string) || 'uint8';
+      log.info(
+        Modules.ZARR_LOADER,
+        `Quantized array: encoding=${enc.name}, zarr_dtype=${zarrArray.dtype}, actualDtype=${actualDtype}`
+      );
       return this.dequantize(data, bounds, actualDtype);
     }
 
@@ -292,15 +281,6 @@ export class ArrayDecoder {
     if (enc?.hash) {
       this.refRegistry.register(enc.hash, data);
     }
-
-    // Log successful decoding
-    console.log('[ArrayDecoder] ✅ Decode complete:', {
-      encodingName: enc?.name || 'none',
-      outputLength: data.length,
-      outputType: data.constructor.name,
-      min: Math.min(...Array.from(data)),
-      max: Math.max(...Array.from(data)),
-    });
 
     return data;
   }
@@ -438,10 +418,11 @@ export class ArrayDecoder {
     const [min_val, max_val] = bounds;
 
     // Determine max integer value from dtype
+    // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
-    if (dtype === 'uint8' || dtype === '<u1') {
+    if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
       max_int = 255;
-    } else if (dtype === 'uint16' || dtype === '<u2') {
+    } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
       max_int = 65535;
     } else {
       throw new Error(`Unsupported quantization dtype: ${dtype}`);
@@ -461,6 +442,50 @@ export class ArrayDecoder {
       // Map to [min, max]
       result[i] = min_val + normalized * (max_val - min_val);
     }
+
+    return result;
+  }
+
+  /**
+   * Decode log-space encoded scalar array
+   *
+   * Format: log1p(value)/max_log → uint8/uint16
+   * Decoding: expm1(normalized * max_log)
+   *
+   * Used for positive scalars with wide dynamic range (e.g., radii)
+   */
+  private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
+    // Determine max integer value from dtype
+    // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
+    let max_int: number;
+    if (dtype === 'uint8' || dtype === '<u1' || dtype === '|u1') {
+      max_int = 255;
+    } else if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2' || dtype === '|u2') {
+      max_int = 65535;
+    } else {
+      throw new Error(`Unsupported log_scalar dtype: ${dtype}`);
+    }
+
+    log.info(
+      Modules.ZARR_LOADER,
+      `Decoding log_scalar: ${dtype} [0, ${max_int}] → float (max_log=${maxLog.toFixed(4)})`
+    );
+
+    const result = new Float32Array(data.length);
+
+    for (let i = 0; i < data.length; i++) {
+      // Normalize to [0, 1]
+      const normalized = data[i] / max_int;
+
+      // Apply inverse log1p transform: expm1(normalized * max_log)
+      // This reverses: log1p(value) / max_log → normalized
+      result[i] = Math.expm1(normalized * maxLog);
+    }
+
+    log.info(
+      Modules.ZARR_LOADER,
+      `  Decoded range: [${Math.min(...result).toFixed(4)}, ${Math.max(...result).toFixed(4)}]`
+    );
 
     return result;
   }
@@ -546,6 +571,7 @@ export class ArrayDecoder {
       enc.target || // array reference
       enc.name === 'broadcasted' || // broadcasting
       enc.name?.startsWith('lut') || // LUT encoding (lut_uint8, lut_uint16)
+      enc.name?.startsWith('log_scalar') || // log-space scalar (log_scalar_uint8, log_scalar_uint16)
       enc.name?.includes('uint') || // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
       enc.bounds // explicit quantization bounds
     );
@@ -565,6 +591,7 @@ export class ArrayDecoder {
     if (enc.target) return 'array_ref';
     if (enc.name === 'broadcasted') return 'broadcasted';
     if (enc.name?.startsWith('lut')) return 'lut';
+    if (enc.name?.startsWith('log_scalar')) return 'log_scalar';
     if (enc.name?.includes('uint') || enc.bounds) return 'quantized';
 
     return 'direct';

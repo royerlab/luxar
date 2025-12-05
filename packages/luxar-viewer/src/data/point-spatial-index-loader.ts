@@ -649,9 +649,18 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       );
     }
 
-    if (dtype === 'uint8' || (dtype as string) === '|u1') {
+    // CRITICAL: For encoded arrays, ALWAYS use Float32Array because the decoder
+    // always returns Float32Array (it dequantizes uint8/uint16 to float32).
+    // Using the raw dtype (e.g., uint8) would cause truncation when copying
+    // decoded float values [0-1] into an integer array (0.5 → 0).
+    if (isEncoded) {
+      // Encoded arrays always decode to Float32Array
+      output = new Float32Array(totalElements);
+    } else if (dtype === 'uint8' || (dtype as string) === '|u1') {
+      // Direct (non-encoded) uint8 arrays - preserve native type
       output = new Uint8Array(totalElements);
     } else if (dtype === 'uint16' || (dtype as string) === '<u2' || (dtype as string) === '>u2') {
+      // Direct (non-encoded) uint16 arrays - preserve native type
       output = new Uint16Array(totalElements);
     } else if (
       (dtype as string) === 'float16' ||
