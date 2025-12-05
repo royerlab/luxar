@@ -488,7 +488,9 @@ def generate_4d_fractal_dataset(
 def main() -> None:
     """Main demo entry point."""
     # Parse arguments
-    grid_size = 100  # 100^4 = 100M per fractal, 1M per 3D slice
+    # NOTE: grid_size=100 creates 57M+ points and 31K+ chunks, which overwhelms
+    # browser HTTP connection limits. grid_size=50 gives ~6M points (~3K chunks).
+    grid_size = 50  # 50^4 = 6.25M per fractal max, ~1M after filtering
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
@@ -501,7 +503,7 @@ def main() -> None:
     aprint("")
     aprint("Explore 6 different 4D fractals in quaternion space!")
     aprint(f"Grid: {grid_size}^4 = {grid_size**4:,} samples per fractal")
-    aprint(f"Visible per slice: ~{grid_size**3:,} points (1-2M target)")
+    aprint(f"Visible per slice: ~{grid_size**3:,} points (up to ~1M per fractal)")
     aprint("")
     aprint("Fractal types:")
     aprint("  0: XOR Fractal - Bitwise XOR creates self-similar patterns")

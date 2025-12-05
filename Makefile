@@ -2,9 +2,9 @@
 # Uses Hatch for on-demand environment management
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
         test-cov test-all clean clean-examples pre-commit-install pre-commit-run check dev-setup \
-        demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-test \
-        viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check demo-and-serve \
-        docs-build docs-serve stats env-show env-prune shell build publish-test publish
+        demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
+        viewer-test viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
+        demo-and-serve docs-build docs-serve stats env-show env-prune shell build publish-test publish
 
 # Default target
 help:  ## Show this help message
@@ -202,6 +202,18 @@ viewer:  ## Start the web viewer development server
 
 viewer-build:  ## Build the viewer for production
 	cd packages/luxar-viewer && pnpm build
+
+viewer-rebuild:  ## Complete clean rebuild of viewer (removes dist, .vite, reinstalls deps)
+	@echo "🧹 Cleaning viewer build artifacts..."
+	rm -rf packages/luxar-viewer/dist/
+	rm -rf packages/luxar-viewer/.vite/
+	rm -f packages/luxar-viewer/*.tsbuildinfo
+	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
+	@echo "📦 Reinstalling dependencies..."
+	cd packages/luxar-viewer && pnpm install
+	@echo "🔨 Building viewer..."
+	cd packages/luxar-viewer && pnpm build
+	@echo "✅ Viewer rebuild complete!"
 
 viewer-test:  ## Run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
