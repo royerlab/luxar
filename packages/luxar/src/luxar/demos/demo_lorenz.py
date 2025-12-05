@@ -139,11 +139,12 @@ def generate_lorenz_attractor(
             scene = compiler.create_scene(dimensions=dims)
 
             # Scale up for better visibility and center in view
+            # NOTE: radii must be scaled by same factor as positions!
             scene.add_points(
                 "LorenzAttractor",
                 positions * 100.0 - 50.0,  # Scale and offset for good framing
-                colors=colors,
-                radii=radii,
+                colors=colors*0.5,  # Dim colors for better visibility
+                radii=1.0,  # Uniform radius for visibility
                 opacity=0.9,
                 blending_mode="additive",
             )
