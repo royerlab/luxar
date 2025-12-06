@@ -27,10 +27,10 @@ export interface EffectiveRadiusConfig {
  * from its center, the resulting (n-1)D cross-section has radius:
  * R_effective = √(R² - D²)
  *
- * This calculation only considers dimensions marked as spatial, meaning:
+ * This calculation considers:
  * - Displayed dimensions: Points always extend fully (they're in the viewing plane)
  * - Non-displayed spatial dimensions: Apply the Pythagorean theorem
- * - Non-spatial dimensions (time, categories): No extension, no contribution to distance
+ * - Non-displayed discrete dimensions: Exact match required (zero radius if mismatch)
  *
  * @param positions - Original nD positions (any typed array, flattened)
  * @param radii - Original radii for each point (any typed array)
@@ -52,8 +52,60 @@ export function calculateEffectiveRadii(
 
   const effectiveRadii = new Float32Array(numPoints);
 
+  // Small tolerance for floating point comparison in discrete dimensions
+  const discreteTolerance = 0.5;
+
+  // DEBUG: Uncomment to track statistics for troubleshooting
+  // let discreteFilteredCount = 0;
+  // const sampleOrbitalValues: number[] = [];
+
+  // Helper function to safely check if a dimension is spatial
+  // If spatialExtendDims doesn't cover this dimension, default to true (spatial)
+  // This is the safer default as it won't unexpectedly filter out points
+  const isSpatialDim = (d: number): boolean => {
+    if (d >= spatialExtendDims.length) {
+      // Dimension not covered by config - default to spatial (more permissive)
+      return true;
+    }
+    return spatialExtendDims[d];
+  };
+
   for (let i = 0; i < numPoints; i++) {
     const originalRadius = radii[i];
+
+    // DEBUG: Uncomment to collect sample values for troubleshooting
+    // if (i < 10 && ndim > 0) {
+    //   sampleOrbitalValues.push(positions[i * ndim + 0]);
+    // }
+
+    // First check discrete dimensions for exact match
+    let discreteMatch = true;
+
+    for (let d = 0; d < ndim; d++) {
+      // Skip displayed dimensions (they're in the viewing plane)
+      if (displayDims.includes(d)) {
+        continue;
+      }
+
+      // For non-spatial (discrete) dimensions, require exact match
+      if (!isSpatialDim(d)) {
+        const value = positions[i * ndim + d];
+        // Use nullish coalescing (??) to only default to 0 for undefined/null, not for the value 0
+        const target = slicePosition[d] ?? 0;
+        // Use tolerance for floating point comparison
+        if (Math.abs(value - target) > discreteTolerance) {
+          discreteMatch = false;
+          break;
+        }
+      }
+    }
+
+    // If discrete dimensions don't match, point is invisible
+    if (!discreteMatch) {
+      effectiveRadii[i] = 0;
+      // discreteFilteredCount++;  // DEBUG: Uncomment for troubleshooting
+      continue;
+    }
 
     // Calculate distance ONLY in non-displayed spatial dimensions
     let sumSquaredDistances = 0;
@@ -64,14 +116,15 @@ export function calculateEffectiveRadii(
         continue;
       }
 
-      // Skip if dimension is not spatial (no extension through it)
-      if (!spatialExtendDims[d]) {
+      // Skip if dimension is not spatial (already handled above)
+      if (!isSpatialDim(d)) {
         continue;
       }
 
       // This is a non-displayed spatial dimension - calculate distance
       const value = positions[i * ndim + d];
-      const target = slicePosition[d] || 0;
+      // Use nullish coalescing (??) to only default to 0 for undefined/null, not for the value 0
+      const target = slicePosition[d] ?? 0;
       const distance = value - target;
       sumSquaredDistances += distance * distance;
     }
@@ -83,6 +136,25 @@ export function calculateEffectiveRadii(
     // Clamp to zero for numerical stability (points at hypersphere boundary)
     effectiveRadii[i] = effectiveRadiusSquared > 0 ? Math.sqrt(effectiveRadiusSquared) : 0;
   }
+
+  // DEBUG: Uncomment for troubleshooting discrete dimension filtering issues
+  // const zeroCount = effectiveRadii.filter((r) => r < 0.0001).length;
+  // if (discreteFilteredCount > 0 || zeroCount > 0) {
+  //   console.log(
+  //     `[DEBUG EffectiveRadius] ${numPoints} points: ${discreteFilteredCount} filtered by discrete match, ` +
+  //       `${zeroCount} with zero radius (${numPoints - zeroCount} visible)`
+  //   );
+  //   console.log(
+  //     `[DEBUG EffectiveRadius] Config: spatialExtendDims=[${spatialExtendDims.join(', ')}], ` +
+  //       `displayDims=[${displayDims.join(', ')}], ndim=${ndim}`
+  //   );
+  //   console.log(
+  //     `[DEBUG EffectiveRadius] Sample orbital values (first 10 points): [${sampleOrbitalValues.join(', ')}]`
+  //   );
+  //   console.log(
+  //     `[DEBUG EffectiveRadius] Query target: orbital=${slicePosition[0]?.toFixed(2) ?? 'null'}, tolerance=${0.5}`
+  //   );
+  // }
 
   return effectiveRadii;
 }
@@ -111,21 +183,35 @@ export function calculateSpatialQueryTolerance(
 
   const queryTolerance = new Array(ndim).fill(0);
 
+  // Helper function to safely check if a dimension is spatial
+  // If spatialExtendDims doesn't cover this dimension, default to true (spatial)
+  // This is the safer default as it uses maxRadius tolerance rather than 0
+  const isSpatialDim = (d: number): boolean => {
+    if (d >= spatialExtendDims.length) {
+      // Dimension not covered by config - default to spatial (more permissive)
+      return true;
+    }
+    return spatialExtendDims[d];
+  };
+
   for (let d = 0; d < ndim; d++) {
     if (displayDims.includes(d)) {
       // Displayed dimensions need INFINITE tolerance - we want to see ALL points
       // regardless of their position in these dimensions (they're all in the view)
       // Use a very large number instead of Infinity for numerical stability
       queryTolerance[d] = 1e10;
-    } else if (spatialExtendDims[d]) {
+    } else if (isSpatialDim(d)) {
       // Non-displayed spatial dimensions need maxRadius tolerance
       // to catch all points that might intersect the slice
       // ALWAYS use maxRadius for spatial dimensions, ignore tolerance array
       queryTolerance[d] = maxRadius;
     } else {
-      // Non-spatial dimensions are always discrete (by design)
-      // Use 0 tolerance for exact matching
-      queryTolerance[d] = 0;
+      // Non-spatial dimensions are discrete (by design)
+      // CRITICAL: Use 0.5 tolerance for chunk queries to handle float precision issues
+      // and ensure we don't miss chunks at boundaries. The effective radius calculation
+      // (calculateEffectiveRadii) does the precise filtering with discreteTolerance = 0.5.
+      // Using 0 here would cause chunks to be missed due to float precision errors.
+      queryTolerance[d] = 0.5;
     }
   }
 
@@ -136,7 +222,8 @@ export function calculateSpatialQueryTolerance(
  * Check if effective radius calculation should be applied.
  *
  * Returns true if:
- * - There are non-displayed spatial dimensions
+ * - There are non-displayed spatial dimensions (need distance-based filtering)
+ * - There are non-displayed discrete dimensions (need exact-match filtering)
  * - Radii data is available
  * - Configuration is valid
  *
@@ -154,16 +241,20 @@ export function shouldApplyEffectiveRadius(
     return false;
   }
 
-  // Check if there are any non-displayed spatial dimensions
   const { spatialExtendDims } = config;
 
   for (let d = 0; d < spatialExtendDims.length; d++) {
-    // Found a non-displayed spatial dimension
-    if (spatialExtendDims[d] && !displayDims.includes(d)) {
-      return true;
+    // Skip displayed dimensions (they're in the viewing plane)
+    if (displayDims.includes(d)) {
+      continue;
     }
+
+    // Found a non-displayed dimension (either spatial or discrete)
+    // Spatial dims need distance-based filtering (Pythagorean)
+    // Discrete dims need exact-match filtering (zero radius if mismatch)
+    return true;
   }
 
-  // All spatial dimensions are displayed, no need for effective radius
+  // All dimensions are displayed, no filtering needed
   return false;
 }
