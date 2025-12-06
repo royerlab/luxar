@@ -355,29 +355,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -685,8 +685,102 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     let destOffset = 0; // Declare here for both branches
 
-    if (isEncoded) {
-      // Encoded arrays: Load full array once and decode
+    // Check encoding type for special handling
+    const isLUTEncoded = ArrayDecoder.isLUTEncoded(attrs);
+    const isBroadcasted = ArrayDecoder.isBroadcasted(attrs);
+    const isQuantized = ArrayDecoder.isQuantizedEncoding(attrs);
+
+    if (isBroadcasted) {
+      // Broadcasted encoding: Load single value and replicate to all points
+      // The value is uniform for ALL points, so we just need it once
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Broadcasted array ${arrayName}: replicating single value to ${totalPoints} points`
+      );
+
+      // Load and decode the single broadcast value
+      // The zarr array has shape (1, k), we need to decode it to get the k values
+      const fullData = await get(array);
+      const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
+
+      // The broadcast value has k elements (e.g., k=1 for radii, k=3 for colors)
+      // Replicate it to all points in the output
+      for (let i = 0; i < totalPoints; i++) {
+        for (let j = 0; j < actualElementsPerPoint; j++) {
+          (output as Float32Array)[i * actualElementsPerPoint + j] =
+            broadcastValue[j] || broadcastValue[0];
+        }
+      }
+    } else if (isQuantized) {
+      // Quantized encoding: Load only needed ranges of quantized data, then dequantize
+      // This is much more efficient than loading the full array!
+      const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs);
+      if (!quantMetadata) {
+        throw new Error(
+          `Quantization metadata missing for ${arrayName}. This should not happen if isQuantizedEncoding returned true.`
+        );
+      }
+
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Quantized range loading: ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode, loading ${totalPoints} values)`
+      );
+
+      // Load only the needed ranges of quantized data (NOT the full array!)
+      for (const range of ranges) {
+        // Build slice specification for this range
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)] // [points, dims]
+            : [slice(range.start, range.end)]; // [points]
+
+        // Load quantized data from zarr (just this range!)
+        const chunkData = await get(array, sliceSpec);
+        const quantizedData = chunkData.data as Float32Array | Uint8Array | Uint16Array;
+
+        // Dequantize this range using the metadata
+        const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
+
+        // Copy dequantized values to output buffer
+        (output as Float32Array).set(dequantized, destOffset);
+        destOffset += dequantized.length;
+      }
+    } else if (isLUTEncoded) {
+      // LUT encoding: Load only the range of indices, then decode with LUT from metadata
+      // This is more efficient than loading the full array!
+      const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
+      if (!lutMetadata) {
+        throw new Error(
+          `LUT metadata missing for ${arrayName}. This should not happen if isLUTEncoded returned true.`
+        );
+      }
+
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `LUT range loading: ${arrayName} (loading ${totalPoints} indices, decoding to ${totalElements} elements)`
+      );
+
+      // Load only the needed ranges of indices (NOT the full array!)
+      for (const range of ranges) {
+        // Build slice specification for this range of indices
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)] // [points, dims]
+            : [slice(range.start, range.end)]; // [points]
+
+        // Load indices from zarr (just this range!)
+        const chunkData = await get(array, sliceSpec);
+        const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
+
+        // Decode this range of indices using the LUT from metadata
+        const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
+
+        // Copy decoded values to output buffer
+        (output as Float32Array).set(decoded, destOffset);
+        destOffset += decoded.length;
+      }
+    } else if (isEncoded) {
+      // Other encoded arrays (array_ref, quantized, etc.): Load full array once and decode
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
         `Decoding ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode)`
@@ -701,9 +795,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       const decoded = await this.decoder.decode(array, attrs, totalElements, zarrRootLoc);
 
       // Extract ranges from decoded full array
+      // CRITICAL: Use actualElementsPerPoint, not elementsPerPoint!
+      // For LUT-encoded arrays, elementsPerPoint is 1 (indices shape [n,1])
+      // but actualElementsPerPoint is 3 (decoded RGB from original_shape[n,3])
       for (const range of ranges) {
-        const rangeSize = (range.end - range.start) * elementsPerPoint;
-        const srcOffset = range.start * elementsPerPoint;
+        const rangeSize = (range.end - range.start) * actualElementsPerPoint;
+        const srcOffset = range.start * actualElementsPerPoint;
 
         // Copy from decoded array
         (output as Float32Array).set(
@@ -781,16 +878,25 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       throw new Error('Positions data is required for points');
     }
 
-    // Get dimensionality from positions array - use full dimensions, not just indexed ones
-    const ndim = this.chunkIndex?.metadata.ndim || 3;
-    let numPoints = positions.length / ndim;
+    // CRITICAL: Calculate ndim from actual positions array, not chunk index metadata.
+    // For encoded arrays (e.g., scalar LUT), the chunk index might not exist or have wrong ndim.
+    // The positions array was loaded with actualElementsPerPoint from encoding.original_shape,
+    // so positions.length / totalPoints gives us the true dimensionality.
+    const ndim =
+      totalPoints > 0
+        ? Math.round(positions.length / totalPoints)
+        : this.chunkIndex?.metadata.ndim || 3;
 
-    if (numPoints !== totalPoints) {
+    // Validate the calculation
+    if (totalPoints > 0 && positions.length !== totalPoints * ndim) {
       log.error(
         Modules.SPATIAL_INDEX_LOADER,
-        `Point count mismatch: expected ${totalPoints}, got ${numPoints}`
+        `Position data size mismatch: ${positions.length} elements for ${totalPoints} points ` +
+          `doesn't divide evenly (calculated ndim=${ndim}). This may indicate encoding metadata issues.`
       );
     }
+
+    let numPoints = totalPoints;
 
     // Extract 3D positions from nD data
     const { displayDims } = viewState;
@@ -842,6 +948,19 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (finalRadii && effectiveRadiusConfig) {
       // Check if we should apply effective radius
       if (shouldApplyEffectiveRadius(effectiveRadiusConfig, viewState.displayDims, true)) {
+        // DEBUG: Uncomment for troubleshooting effective radius issues
+        // const sampleRadii = [finalRadii[0], finalRadii[Math.floor(numPoints / 2)], finalRadii[numPoints - 1]];
+        // log.info(
+        //   Modules.SPATIAL_INDEX_LOADER,
+        //   `Applying effective radius with config: spatialExtendDims=[${effectiveRadiusConfig.spatialExtendDims.join(', ')}], ` +
+        //     `displayDims=[${viewState.displayDims.join(', ')}], ` +
+        //     `slicePosition=[${viewState.slicePosition.map((v) => v?.toFixed(2) ?? 'null').join(', ')}]`
+        // );
+        // console.log(
+        //   `[DEBUG] Original radii (first, middle, last): [${sampleRadii.join(', ')}], ` +
+        //     `maxRadius=${effectiveRadiusConfig.maxRadius}`
+        // );
+
         finalRadii = calculateEffectiveRadii(
           positions, // Original nD positions (any typed array)
           finalRadii, // Now in world units

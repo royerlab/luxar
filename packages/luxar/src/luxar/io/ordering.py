@@ -268,19 +268,30 @@ def compute_chunk_bounds_points(
     positions: np.ndarray,
     radii: Optional[np.ndarray],
     chunk_size: int,
+    slice_dims: Optional[list[int]] = None,
 ) -> np.ndarray:  # type: ignore[return]
     """Compute chunk bounding boxes for Points (includes radius extent).
+
+    CRITICAL: Radius expansion is only applied to SPATIAL dimensions, not discrete
+    dimensions. Discrete dimensions (slice_dims) represent categorical values like
+    time steps, channels, or orbital indices. A point at orbital=0 should NOT
+    extend into orbital=3 space - they are separate categories.
 
     Args:
         positions: Point positions (already sorted), shape (N, d)
         radii: Point radii (already sorted), shape (N,), or None
         chunk_size: Number of points per chunk
+        slice_dims: Indices of discrete (non-spatial) dimensions where radius
+                   expansion should NOT be applied. Default: None (apply to all dims)
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
     """
     n_points, ndim = positions.shape
     num_chunks = (n_points + chunk_size - 1) // chunk_size
+
+    # Convert slice_dims to a set for fast lookup
+    discrete_dims = set(slice_dims) if slice_dims else set()
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
@@ -292,9 +303,22 @@ def compute_chunk_bounds_points(
 
         if radii is not None:
             chunk_radii = radii[start_idx:end_idx]
-            # Bounds include radius extent
-            mins = (chunk_positions - chunk_radii[:, np.newaxis]).min(axis=0)
-            maxs = (chunk_positions + chunk_radii[:, np.newaxis]).max(axis=0)
+
+            # Compute bounds for each dimension separately
+            for d in range(ndim):
+                if d in discrete_dims:
+                    # DISCRETE dimension: No radius expansion!
+                    # Just use exact min/max of coordinate values
+                    # Add small tolerance (0.5) to handle float precision at boundaries
+                    mins_d = chunk_positions[:, d].min() - 0.5
+                    maxs_d = chunk_positions[:, d].max() + 0.5
+                else:
+                    # SPATIAL dimension: Include radius extent
+                    mins_d = (chunk_positions[:, d] - chunk_radii).min()
+                    maxs_d = (chunk_positions[:, d] + chunk_radii).max()
+
+                chunk_bounds[chunk_idx, d, 0] = mins_d
+                chunk_bounds[chunk_idx, d, 1] = maxs_d
         else:
             # No radii provided - add small safety margin to prevent missing points
             # at chunk boundaries when default radius is applied during rendering
@@ -302,11 +326,16 @@ def compute_chunk_bounds_points(
             coord_range = chunk_positions.max(axis=0) - chunk_positions.min(axis=0)
             safety_margin = np.maximum(coord_range * 0.01, 0.01)
 
-            mins = chunk_positions.min(axis=0) - safety_margin
-            maxs = chunk_positions.max(axis=0) + safety_margin
-
-        chunk_bounds[chunk_idx, :, 0] = mins
-        chunk_bounds[chunk_idx, :, 1] = maxs
+            # For discrete dims, use tighter bounds
+            for d in range(ndim):
+                if d in discrete_dims:
+                    # Discrete: tight bounds with small tolerance
+                    chunk_bounds[chunk_idx, d, 0] = chunk_positions[:, d].min() - 0.5
+                    chunk_bounds[chunk_idx, d, 1] = chunk_positions[:, d].max() + 0.5
+                else:
+                    # Spatial: include safety margin
+                    chunk_bounds[chunk_idx, d, 0] = chunk_positions[:, d].min() - safety_margin[d]
+                    chunk_bounds[chunk_idx, d, 1] = chunk_positions[:, d].max() + safety_margin[d]
 
     return chunk_bounds
 
