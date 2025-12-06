@@ -263,7 +263,7 @@ def generate_sharpness_showcase(
         mixed_points: Number of points in mixed cloud
         wave_points: Number of points in wave pattern
     """
-    with asection(f"Generating Sharpness Showcase"):
+    with asection("Generating Sharpness Showcase"):
         aprint("Four demonstrations:")
         aprint("  1. Gradient: Smooth transition soft → sharp")
         aprint("  2. Comparison: Six labeled sharpness values")
