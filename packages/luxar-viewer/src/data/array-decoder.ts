@@ -625,6 +625,19 @@ export class ArrayDecoder {
   }
 
   /**
+   * Helper: Check if encoding is array reference
+   *
+   * Array references point to another array for deduplication.
+   * For range loading, we can apply optimized loading to the target array.
+   */
+  static isArrayRef(attrs: ArrayMetadata): boolean {
+    if (!attrs) return false;
+    const enc = attrs.encoding;
+    if (!enc) return false;
+    return !!(enc.target && enc.hash);
+  }
+
+  /**
    * Helper: Check if encoding is quantized (uint8/uint16 with bounds)
    *
    * Quantized encodings store data in reduced precision (uint8/uint16) with

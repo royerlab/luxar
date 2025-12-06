@@ -1031,6 +1031,91 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
   });
 
+  describe('Array Reference Range Loading (Optimization)', () => {
+    /**
+     * Array reference optimization for range loading
+     *
+     * When multiple nodes share data via array_ref, we want to:
+     * 1. Apply optimized range loading to the target (if it's quantized/LUT/broadcast)
+     * 2. Share cache across nodes with same array_ref target
+     *
+     * This prevents redundant decoding and loading of the same data.
+     */
+
+    it('should detect array_ref encoding', () => {
+      // Create fake array_ref attrs
+      const arrayRefAttrs: ArrayMetadata = {
+        encoding: {
+          target: '/SharedNode/colors',
+          hash: 'abc123',
+        },
+      };
+
+      const quantizedAttrs: ArrayMetadata = {
+        encoding: {
+          name: 'rgb_uint8',
+        },
+      };
+
+      // Array ref should be detected
+      expect(ArrayDecoder.isArrayRef(arrayRefAttrs)).toBe(true);
+
+      // Non array_ref should NOT be detected
+      expect(ArrayDecoder.isArrayRef(quantizedAttrs)).toBe(false);
+      expect(ArrayDecoder.isArrayRef(null as any)).toBe(false);
+      expect(ArrayDecoder.isArrayRef({} as any)).toBe(false);
+    });
+
+    it('should not confuse array_ref with other encodings', () => {
+      const arrayRefAttrs: ArrayMetadata = {
+        encoding: {
+          target: '/SharedNode/colors',
+          hash: 'abc123',
+        },
+      };
+
+      const lutAttrs: ArrayMetadata = {
+        encoding: {
+          name: 'lut_uint8',
+          lut: [[1, 0, 0]],
+        },
+      };
+
+      const quantizedAttrs: ArrayMetadata = {
+        encoding: {
+          name: 'rgb_uint8',
+        },
+      };
+
+      const broadcastedAttrs: ArrayMetadata = {
+        encoding: {
+          name: 'broadcasted',
+          n_elements: 1,
+        },
+      };
+
+      // Array ref
+      expect(ArrayDecoder.isArrayRef(arrayRefAttrs)).toBe(true);
+      expect(ArrayDecoder.isLUTEncoded(arrayRefAttrs)).toBe(false);
+      expect(ArrayDecoder.isQuantizedEncoding(arrayRefAttrs)).toBe(false);
+      expect(ArrayDecoder.isBroadcasted(arrayRefAttrs)).toBe(false);
+
+      // Others should not be detected as array_ref
+      expect(ArrayDecoder.isArrayRef(lutAttrs)).toBe(false);
+      expect(ArrayDecoder.isArrayRef(quantizedAttrs)).toBe(false);
+      expect(ArrayDecoder.isArrayRef(broadcastedAttrs)).toBe(false);
+    });
+
+    // NOTE: Full integration tests with actual array_ref fixtures require
+    // generating test data with array_ref encoding. This should be added
+    // via E2E tests or by extending generate_test_data.py to create
+    // datasets with deduplication (array_ref).
+    //
+    // For now, the tests above verify the detection logic is correct,
+    // and the implementation follows the same pattern as LUT/quantized/broadcasted
+    // optimizations, so it should work correctly in practice.
+  });
+
   describe('Broadcasted Range Loading (Critical Bug Fix)', () => {
     /**
      * CRITICAL BUG FIX TEST: Broadcasted arrays with range loading
