@@ -355,29 +355,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -857,7 +857,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Target is broadcasted → load once, replicate!
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
-          `Array ref target is broadcasted (loading single value)`
+          'Array ref target is broadcasted (loading single value)'
         );
 
         const fullData = await get(targetArray);

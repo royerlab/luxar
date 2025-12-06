@@ -559,10 +559,9 @@ export async function assertNoConsoleErrors(
 
   if (actualErrors.length > 0) {
     // Use global console, not the messages variable
-     
+
     console.error('[E2E Test] Console Errors Detected:');
     actualErrors.forEach((err, i) => {
-       
       console.error(`  ${i + 1}. ${err}`);
     });
     throw new Error(

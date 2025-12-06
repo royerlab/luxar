@@ -542,6 +542,14 @@ export const config: AppConfig = {
     },
   },
 
+  // OPFS-based zarr cache configuration
+  cache: {
+    enabled: true,
+    l1MaxSizeMB: 100,
+    l2MaxSizeMB: 2048,
+    debug: false,
+  },
+
   // Default path to demo Zarr data when no source is specified
   // Empty string = show dataset browser instead of attempting to load non-existent dataset
   defaultZarrPath: '',
