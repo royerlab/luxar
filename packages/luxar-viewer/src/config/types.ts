@@ -608,6 +608,20 @@ export interface WebGLConfig {
 }
 
 /**
+ * OPFS-based zarr cache configuration
+ */
+export interface CacheConfig {
+  /** Enable OPFS caching (default: true) */
+  enabled: boolean;
+  /** L1 memory cache size in MB (default: 100) */
+  l1MaxSizeMB: number;
+  /** L2 OPFS cache size in MB (default: 2048) */
+  l2MaxSizeMB: number;
+  /** Enable cache debug logging (default: false) */
+  debug: boolean;
+}
+
+/**
  * Complete application configuration structure
  */
 export interface AppConfig {
@@ -622,6 +636,7 @@ export interface AppConfig {
   input: InputConfig;
   dataLoading: DataLoadingConfig;
   webgl: WebGLConfig;
+  cache: CacheConfig;
   defaultZarrPath: string;
   canvasId: string;
 }

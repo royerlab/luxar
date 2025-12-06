@@ -6,6 +6,7 @@
  */
 
 import * as zarr from 'zarrita';
+import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './data-loader-types';
@@ -15,6 +16,7 @@ import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
+import { TwoLevelCachingStore } from '../cache';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -28,6 +30,7 @@ import { config } from '../config';
  */
 export class SceneLoader {
   private store: any | null = null;
+  private cachingStore: TwoLevelCachingStore | null = null;
   private loaders = new Map<string, DataLoader>();
   private viewState: ViewState;
   private config: LoaderConfig;
@@ -76,8 +79,20 @@ export class SceneLoader {
       this.dispose();
     }
 
-    // Open zarr store
-    const rawStore = new zarr.FetchStore(this.normalizeURL(url));
+    // Open zarr store with caching
+    let rawStore: Readable;
+    if (config.cache.enabled) {
+      const cachingStore = new TwoLevelCachingStore(this.normalizeURL(url), {
+        l1MaxSize: config.cache.l1MaxSizeMB * 1024 * 1024,
+        l2MaxSize: config.cache.l2MaxSizeMB * 1024 * 1024,
+        debug: config.cache.debug,
+      });
+      await cachingStore.init();
+      rawStore = cachingStore;
+      this.cachingStore = cachingStore;
+    } else {
+      rawStore = new zarr.FetchStore(this.normalizeURL(url));
+    }
     this.store = await zarr.tryWithConsolidated(rawStore);
 
     // Create root THREE.js group
@@ -954,6 +969,13 @@ export class SceneLoader {
       loader.dispose();
     }
     this.loaders.clear();
+
+    // Dispose caching store (flushes L2 metadata, clears L1)
+    if (this.cachingStore) {
+      this.cachingStore.dispose().catch(() => {});
+      this.cachingStore = null;
+    }
+
     this.store = null;
     this.rootGroup = null;
 
