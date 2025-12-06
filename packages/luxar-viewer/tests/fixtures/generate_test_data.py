@@ -228,9 +228,9 @@ def generate_mixed_encoding_test():
             compiler._encoding_mode = saved_mode
 
         aprint(f"✓ Created {output}")
-        aprint(f"  Points 'uniform': Broadcasting")
-        aprint(f"  Points 'lut': LUT encoding")
-        aprint(f"  Points 'direct': No encoding")
+        aprint("  Points 'uniform': Broadcasting")
+        aprint("  Points 'lut': LUT encoding")
+        aprint("  Points 'direct': No encoding")
 
 
 def generate_4d_test():
@@ -339,9 +339,9 @@ def generate_hierarchical_transforms_test():
             )
 
         aprint(f"✓ Created {output}")
-        aprint(f"  Hierarchy: Scene → parent_group [10,0,0] → child_points [0,5,0]")
-        aprint(f"  Expected final position: [10, 5, 0]")
-        aprint(f"  CRITICAL: Verifies transform composition and matrix format")
+        aprint("  Hierarchy: Scene → parent_group [10,0,0] → child_points [0,5,0]")
+        aprint("  Expected final position: [10, 5, 0]")
+        aprint("  CRITICAL: Verifies transform composition and matrix format")
 
 
 def generate_hdr_colors_test():
@@ -391,7 +391,126 @@ def generate_hdr_colors_test():
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape}")
         aprint(f"  Colors: {colors.shape} (HDR, max={colors.max():.1f})")
-        aprint(f"  CRITICAL: Verifies float32 HDR color preservation")
+        aprint("  CRITICAL: Verifies float32 HDR color preservation")
+
+
+def generate_log_scalar_test():
+    """Test dataset with log-space encoded radii (wide dynamic range).
+
+    CRITICAL: This test verifies log_scalar_uint8 encoding which is used for
+    positive scalars with wide dynamic range (e.g., radii from 0.001 to 100.0).
+
+    Encoding: log1p(value)/max_log → uint8
+    Decoding: expm1(normalized * max_log)
+    """
+    with asection("Generating Log-Scalar Encoding Test"):
+        output = FIXTURES_DIR / "test_log_scalar.zarr"
+
+        # Create 100 points with radii spanning wide dynamic range
+        num_points = 100
+        positions = np.zeros((num_points, 3), dtype=np.float32)
+
+        # Arrange points in a line along X axis
+        positions[:, 0] = np.arange(num_points, dtype=np.float32)
+
+        # Radii with wide dynamic range: 0.01 to 100.0 (log scale)
+        # This range benefits from log-space encoding
+        radii = np.logspace(-2, 2, num_points, dtype=np.float32)  # 0.01 to 100
+
+        # Simple colors
+        colors = np.zeros((num_points, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(0, 1, num_points)  # Red gradient
+
+        dims = Dimensions([
+            Dimension("x", unit="units", display=True),
+            Dimension("y", unit="units", display=True),
+            Dimension("z", unit="units", display=True),
+        ])
+
+        # Use MEMORY mode which uses log_scalar for wide-range scalars
+        with LuxarZarrCompiler(output, encoding_mode=EncodingMode.MEMORY, compressor=None, float16_allowed=False) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_points(
+                "log_radii_test",
+                positions,
+                colors=colors,
+                radii=radii,  # Wide range - will use log_scalar encoding
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape}")
+        aprint(f"  Radii range: [{radii.min():.4f}, {radii.max():.4f}] (log-space)")
+        aprint("  CRITICAL: Verifies log_scalar_uint8 encoding/decoding")
+
+
+def generate_4d_scalar_lut_test():
+    """Test dataset with 4D positions using scalar LUT encoding.
+
+    CRITICAL: This test verifies scalar LUT mode on multi-dimensional positions,
+    which is the exact scenario that caused bugs in quantum orbitals (4D data).
+
+    Key aspects tested:
+    - 4D positions stored as scalar LUT (flattened indices)
+    - original_shape metadata preserves [n_points, 4]
+    - Partial range extraction works correctly
+    - actualElementsPerPoint is correctly calculated from original_shape
+
+    The quantum orbitals bug: When scalar LUT is used on 4D positions,
+    the decoder returns the full array but range extraction needs to use
+    actualElementsPerPoint = 4 (not 1 from indices shape).
+    """
+    with asection("Generating 4D Scalar LUT Encoding Test"):
+        output = FIXTURES_DIR / "test_4d_scalar_lut.zarr"
+
+        # Create 200 points in 4D with LIMITED unique coordinate values
+        # This triggers scalar LUT encoding (≤256 unique values per coordinate)
+        num_points = 200
+
+        # Use only 10 unique values per dimension to guarantee LUT encoding
+        unique_values = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], dtype=np.float32)
+
+        # Generate positions by randomly selecting from unique values
+        np.random.seed(42)  # Reproducible for testing
+        positions = np.zeros((num_points, 4), dtype=np.float32)
+        for i in range(4):
+            positions[:, i] = np.random.choice(unique_values, size=num_points)
+
+        # Make positions identifiable: point i at position i has predictable values
+        # First 10 points have sequential patterns for easy verification
+        for i in range(min(10, num_points)):
+            positions[i, 0] = float(i)  # First dim = point index
+            positions[i, 1] = float(i * 2)  # Second dim = 2x index
+            positions[i, 2] = float(i * 0.5)  # Third dim = 0.5x index
+            positions[i, 3] = float(i % 5)  # Fourth dim = modulo pattern
+
+        # Add radii and colors
+        radii = np.ones(num_points, dtype=np.float32) * 0.5
+        colors = np.random.rand(num_points, 3).astype(np.float32)
+
+        dims = Dimensions([
+            Dimension("time", unit="frame", range=(0, 9), step=1, display=False),
+            Dimension("x", unit="units", display=True),
+            Dimension("y", unit="units", display=True),
+            Dimension("z", unit="units", display=True),
+        ])
+
+        # Use MEMORY mode which enables LUT encoding for arrays with ≤256 unique values
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+            enable_spatial_index=False  # Disable to preserve exact positions for testing
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points("points", positions, colors=colors, radii=radii)
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  Positions: {positions.shape} (4D)")
+        aprint(f"  Unique values per dim: {len(unique_values)}")
+        aprint("  First 10 points have predictable patterns for verification")
+        aprint("  CRITICAL: Tests scalar LUT + 4D + partial range extraction")
 
 
 def generate_sharpness_range_test():
@@ -442,7 +561,7 @@ def generate_sharpness_range_test():
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape}")
         aprint(f"  Sharpness range: [{sharpness.min()}, {sharpness.max()}]")
-        aprint(f"  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
+        aprint("  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
 
 
 def main():
@@ -480,6 +599,12 @@ def main():
         generate_sharpness_range_test()
         aprint("")
 
+        generate_log_scalar_test()
+        aprint("")
+
+        generate_4d_scalar_lut_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -494,6 +619,8 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.zarr")
         aprint(f"  {FIXTURES_DIR}/test_hdr_colors.zarr")
         aprint(f"  {FIXTURES_DIR}/test_sharpness_range.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_log_scalar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")

@@ -374,6 +374,70 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
+      // Cache-specific helpers
+      cache: {
+        // Get current cache statistics
+        getStats: async () => {
+          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          if (!loader || !(loader as any).cachingStore) {
+            return { error: 'No active cache found' };
+          }
+          return (loader as any).cachingStore.getStats();
+        },
+
+        // List all cached datasets
+        listDatasets: async () => {
+          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          if (!loader || !(loader as any).cachingStore) {
+            return { error: 'No active cache found' };
+          }
+          return (loader as any).cachingStore.listDatasets();
+        },
+
+        // Clear L1 cache only
+        clearL1: async () => {
+          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          if (!loader || !(loader as any).cachingStore) {
+            console.warn('[Cache] No active cache found');
+            return;
+          }
+          (loader as any).cachingStore.clearL1();
+          console.log('[Cache] L1 cache cleared');
+        },
+
+        // Clear L2 cache only
+        clearL2: async () => {
+          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          if (!loader || !(loader as any).cachingStore) {
+            console.warn('[Cache] No active cache found');
+            return;
+          }
+          await (loader as any).cachingStore.clearL2();
+          console.log('[Cache] L2 cache cleared');
+        },
+
+        // Clear all caches
+        clearAll: async () => {
+          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          if (!loader || !(loader as any).cachingStore) {
+            console.warn('[Cache] No active cache found');
+            return;
+          }
+          await (loader as any).cachingStore.clearAll();
+          console.log('[Cache] All caches cleared');
+        },
+      },
+
       // Mark that runtime components are now available
       runtimeReady: true,
     };
@@ -385,6 +449,10 @@ export class LuxarApp {
     log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
     log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
     log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 cache');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 cache');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearAll() - Clear all caches');
   }
 
   /**
