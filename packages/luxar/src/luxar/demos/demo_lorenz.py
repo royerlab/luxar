@@ -123,7 +123,7 @@ def generate_lorenz_attractor(
         aprint("✓ Generated rainbow color gradient")
 
         # Create growing radii (trajectory appears to grow over time)
-        radii = np.linspace(0.01, 0.5, n_points).astype(np.float32)
+        np.linspace(0.01, 0.5, n_points).astype(np.float32)
 
     # Write to zarr
     with asection("Writing to Zarr"):

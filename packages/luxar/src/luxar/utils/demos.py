@@ -133,7 +133,7 @@ def create_lorenz_attractor(
 
     # Generate radii based on position in the trajectory (growing over time)
     # This creates a visual effect of the attractor "growing" as it evolves
-    radii = np.linspace(0.01, 0.02, n_points).astype(np.float32)
+    np.linspace(0.01, 0.02, n_points).astype(np.float32)
 
     # Create scene with new API
     with LuxarZarrCompiler(store_path) as compiler:

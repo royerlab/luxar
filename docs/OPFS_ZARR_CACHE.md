@@ -2,6 +2,8 @@
 
 This document describes a proposed caching system using the Origin Private File System (OPFS) to persist zarr datasets locally in the browser.
 
+**Development Philosophy**: This is an early-stage project. We do not maintain backwards compatibility, deprecation paths, or keep dead code around. When changes are needed, we refactor directly and update all documentation and examples. This keeps the codebase clean and maintainable.
+
 ## Overview
 
 The idea is to cache zarr chunks from remote HTTP sources to the browser's local file system (OPFS), enabling:
@@ -68,19 +70,19 @@ Request → L1 (Memory) → L2 (OPFS) → Remote HTTP
 
 | Level | Storage | Speed | Default Size | Persistence | Eviction |
 |-------|---------|-------|--------------|-------------|----------|
-| **L1** | Memory | ~1μs | 50% of heap | Session only | Segmented LRU |
+| **L1** | Memory | ~1μs | 100MB | Session only | Segmented LRU |
 | **L2** | OPFS | ~1ms | ~2GB | Persistent | LRU |
 | **L3** | Remote | ~100ms | Unlimited | N/A | N/A |
 
 **L1 Size Configuration:**
-- Default: 50% of available heap memory (auto-detected)
-- Leaves room for: Three.js scene, WebGL buffers, decoded arrays, app logic
-- Detection methods (in order of preference):
-  1. Chrome's `performance.memory.jsHeapSizeLimit` API
-  2. `navigator.deviceMemory` API (estimates based on device RAM)
-  3. Fallback: 256MB on mobile, 1GB on desktop
+- Default: 100MB fixed size
+- Rationale: Small fixed size avoids competition with RangeCache for RAM
+- RangeCache handles decoded arrays; L1 handles compressed chunks (no overlap)
+- Compression ratio (typically 3-10x with blosc+zstd, varies by data type) means 100MB compressed ≈ 300MB-1GB decoded coverage
 - Configurable via `l1MaxSize` option
-- **Metadata segment floor**: Minimum 50MB to ensure metadata stays cached
+- **Metadata segment**: 20MB (20% of 100MB) - sufficient for all metadata files
+
+**Note on RangeCache**: The Luxar viewer uses RangeCache (a separate cache system) to store decoded array ranges ready for rendering (e.g., decompressed Float32Array position data). L1 caches compressed chunks before decompression; RangeCache caches decompressed data after decoding. This separation avoids memory competition - they serve different stages of the data pipeline and don't duplicate effort.
 
 ### Why Two Levels?
 
@@ -103,34 +105,119 @@ Chunk Request: "/points/positions/0.0.0"
 
 ## Cache Invalidation
 
-### Last-Modified Validation
+### Content-Hash Validation (Recommended)
 
-On initialization, the cache validates freshness by checking the remote `.zmetadata` modification time:
+The cache uses **hierarchical content hashing** for reliable, offline-friendly validation. Each zarr node has a SHA256 hash computed from its content and child hashes.
+
+#### Python Side: Hash Computation
+
+During compilation, compute recursive content hash for each node:
+
+```python
+import xxhash  # Faster than SHA256, already in codebase
+import json
+
+def _compute_content_hashes(compiler) -> None:
+    """
+    Compute content hashes for all zarr nodes using post-order traversal.
+
+    Called during finalize() after all nodes have been written.
+    Uses xxhash64 for speed (already in codebase).
+    """
+
+    def compute_hash_recursive(group_path: str) -> str:
+        """Recursively compute hash for a group and its children."""
+        group = compiler._root[group_path] if group_path else compiler._root
+
+        hasher = xxhash.xxh64()
+
+        # 1. Hash this node's own datasets (positions, colors, radii, etc.)
+        for dataset_name in sorted(group.array_keys()):
+            dataset = group[dataset_name]
+            hasher.update(dataset[:].tobytes())
+
+        # 2. Hash metadata (excluding content_hash to avoid recursion)
+        attrs = {k: v for k, v in dict(group.attrs).items() if k != 'content_hash'}
+        hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
+
+        # 3. Hash child groups (recursively, sorted for determinism)
+        for child_name in sorted(group.group_keys()):
+            child_path = f"{group_path}/{child_name}" if group_path else child_name
+            child_hash = compute_hash_recursive(child_path)
+            hasher.update(child_hash.encode())
+
+        # Store hash in this node's attrs
+        content_hash = hasher.hexdigest()
+        group.attrs['content_hash'] = content_hash
+
+        return content_hash
+
+    # Start from root (empty path)
+    root_hash = compute_hash_recursive('')
+    return root_hash
+
+# In LuxarZarrCompiler.finalize():
+def finalize(self) -> None:
+    # ... existing consolidation ...
+
+    # Compute content hashes (post-order: children before parents)
+    root_hash = self._compute_content_hashes()
+    aprint(f"Scene content hash: {root_hash[:16]}...")
+
+    # Re-consolidate to include hashes in .zmetadata
+    if self._use_consolidated_metadata:
+        zarr.consolidate_metadata(self._store, self._root_path)
+```
+
+**Stored in**: Each node's `.zattrs` file as `content_hash` field.
+
+#### TypeScript Side: Cache Validation
 
 ```typescript
-async validateCache(): Promise<boolean> {
-  const response = await fetch(`${this.baseUrl}/.zmetadata`, { method: 'HEAD' });
-  const remoteLastModified = response.headers.get('Last-Modified');
+async validateCache(): Promise<void> {
+  try {
+    // Read root .zattrs (from cache or network)
+    const rootAttrs = await this.getRootAttrs();
+    const remoteHash = rootAttrs?.content_hash;  // Optional chaining
 
-  if (remoteLastModified && this.cachedLastModified && remoteLastModified !== this.cachedLastModified) {
-    await this.clearL2();  // Stale cache, clear it
+    // No hash in dataset → skip validation (backward compatibility)
+    if (!remoteHash) {
+      if (this.debug) {  // Respect debug flag
+        console.log('[Cache] No content_hash found, skipping validation');
+      }
+      return;
+    }
+
+    // Compare with cached hash
+    if (this.cachedContentHash && remoteHash !== this.cachedContentHash) {
+      console.log('[Cache] Dataset content changed, clearing cache');  // Always log invalidation
+      if (this.debug) {  // Details only in debug mode
+        console.log(`  Old: ${this.cachedContentHash.slice(0, 16)}...`);
+        console.log(`  New: ${remoteHash.slice(0, 16)}...`);
+      }
+      await this.clearL2();
+    }
+
+    this.cachedContentHash = remoteHash;
+    await this.saveL2Metadata();
+  } catch {
+    // Offline or error - use cached data as-is
+    if (this.debug) {  // Respect debug flag
+      console.log('[Cache] Cannot validate (offline?), using cached data');
+    }
   }
-
-  this.cachedLastModified = remoteLastModified;
-  await this.saveL2Metadata();
-  return true;
 }
 ```
 
-**Why Last-Modified over ETag:**
-- Simpler to understand and debug (human-readable timestamp)
-- More widely supported by HTTP servers
-- No server-side computation needed (just file timestamp)
-- Sufficient precision for zarr datasets (changes are infrequent)
+**Why Content Hash over Last-Modified:**
+- ✅ **Content-based**: Hash changes only if data actually changes (no false invalidations)
+- ✅ **Zarr-native**: Stored in `.zattrs`, no HTTP server dependency
+- ✅ **Offline-friendly**: Can validate from cached `.zattrs` without network
+- ✅ **Cryptographically strong**: SHA256 has negligible collision risk
+- ✅ **Hierarchical**: Future enhancement can invalidate only changed subtrees
+- ✅ **Deterministic**: Same data always produces same hash
 
-**Note:** Last-Modified requires proper HTTP server configuration. Simple servers (like Python's `http.server`) may not set this header consistently. Production deployments should use servers that correctly set Last-Modified (nginx, Apache, S3, etc.).
-
-This ensures users always see up-to-date data when online, while still benefiting from cached data offline.
+**External Dataset Handling**: If `content_hash` not present (external or non-Luxar datasets), validation is skipped. Cache remains usable but won't auto-invalidate. All Luxar-generated datasets will include content hashes.
 
 ## Eviction Strategy: LRU vs FIFO
 
@@ -162,7 +249,7 @@ For the memory cache where space is precious, we use **Segmented LRU** with **na
 │                  L1 Cache                        │
 ├─────────────────────┬───────────────────────────┤
 │  Metadata (20%)     │   Chunks (80%)            │
-│  min 50MB           │                           │
+│  (min 10MB)         │                           │
 ├─────────────────────┼───────────────────────────┤
 │  .zmetadata         │   chunk [5,3,2]           │
 │  .zarray files      │   chunk [5,3,3]           │
@@ -285,7 +372,7 @@ class LRUCache<V> {
  * data chunks go to the chunks segment. No frequency tracking needed.
  */
 class SegmentedLRUCache {
-  private static readonly MIN_METADATA_SIZE = 50 * 1024 * 1024; // 50MB floor
+  private static readonly MIN_METADATA_SIZE = 10 * 1024 * 1024; // 10MB floor
 
   // Metadata file patterns - these go to metadata segment
   private static readonly METADATA_PATTERNS = [
@@ -295,7 +382,7 @@ class SegmentedLRUCache {
     'zarr.json',     // zarr v3 metadata
   ];
 
-  // Metadata segment: zarr metadata files (20% of cache, min 50MB)
+  // Metadata segment: zarr metadata files (20% of cache, min 10MB)
   private metadata: LRUCache<Uint8Array>;
 
   // Chunks segment: data chunks (80% of cache)
@@ -389,46 +476,25 @@ export class TwoLevelCachingStore implements Readable {
   private metadataSaveTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly METADATA_SAVE_DELAY = 1000; // 1 second debounce
 
-  // Cached Last-Modified for invalidation
-  private cachedLastModified: string | null = null;
+  // Cached content hash for invalidation
+  private cachedContentHash: string | null = null;
+
+  private debug: boolean = false;  // NEW: Add debug field
 
   constructor(
     baseUrl: string,
     options: {
-      l1MaxSize?: number;  // Default: 50% of detected heap
+      l1MaxSize?: number;  // Default: 100MB
       l2MaxSize?: number;  // Default: 2GB
+      debug?: boolean;     // Default: false
     } = {}
   ) {
     this.baseUrl = baseUrl;
-    const l1Size = options.l1MaxSize ?? this.detectOptimalL1Size();
+    const DEFAULT_L1_SIZE = 100 * 1024 * 1024;  // 100MB
+    const l1Size = options.l1MaxSize ?? DEFAULT_L1_SIZE;
     this.l1Cache = new SegmentedLRUCache(l1Size);
     this.l2MaxSize = options.l2MaxSize ?? 2 * 1024 * 1024 * 1024;
-  }
-
-  /**
-   * Detect optimal L1 cache size based on available memory.
-   * Uses 50% of available heap to leave room for Three.js, WebGL, decoded arrays.
-   */
-  private detectOptimalL1Size(): number {
-    const TARGET_USAGE = 0.5;  // Use 50% of available memory
-
-    // Method 1: Chrome's performance.memory API (most accurate)
-    const perfMemory = (performance as any).memory;
-    if (perfMemory?.jsHeapSizeLimit) {
-      return Math.floor(perfMemory.jsHeapSizeLimit * TARGET_USAGE);
-    }
-
-    // Method 2: navigator.deviceMemory (rough estimate)
-    const deviceMemory = (navigator as any).deviceMemory;
-    if (deviceMemory) {
-      // deviceMemory is in GB, estimate heap as ~25% of device RAM
-      const estimatedHeap = deviceMemory * 1024 * 1024 * 1024 * 0.25;
-      return Math.floor(estimatedHeap * TARGET_USAGE);
-    }
-
-    // Method 3: Fallback based on device type
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    return isMobile ? 256 * 1024 * 1024 : 1024 * 1024 * 1024;  // 256MB mobile, 1GB desktop
+    this.debug = options.debug ?? false;  // Store debug option
   }
 
   async init(): Promise<void> {
@@ -449,26 +515,51 @@ export class TwoLevelCachingStore implements Readable {
   }
 
   /**
-   * Validate cache against remote Last-Modified. Clears cache if stale.
-   * If offline, silently uses cached data.
+   * Validate cache using content hash. Clears cache if content changed.
+   * Works offline by reading hash from cached .zattrs.
    */
   private async validateCache(): Promise<void> {
     try {
-      const response = await fetch(`${this.baseUrl}/.zmetadata`, { method: 'HEAD' });
-      const remoteLastModified = response.headers.get('Last-Modified');
+      // Read root .zattrs to get content_hash
+      const rootAttrs = await this.getRootAttrs();
+      const remoteHash = rootAttrs?.content_hash;
 
-      if (remoteLastModified && this.cachedLastModified && remoteLastModified !== this.cachedLastModified) {
-        console.log('[Cache] Dataset changed, clearing stale cache');
+      // No hash in dataset → skip validation (backward compatibility)
+      if (!remoteHash) {
+        if (this.debug) {
+          console.log('[Cache] No content_hash found, skipping validation');
+        }
+        return;
+      }
+
+      // Compare with cached hash
+      if (this.cachedContentHash && remoteHash !== this.cachedContentHash) {
+        console.log('[Cache] Dataset content changed, clearing cache');
+        if (this.debug) {
+          console.log(`  Old: ${this.cachedContentHash.slice(0, 16)}...`);
+          console.log(`  New: ${remoteHash.slice(0, 16)}...`);
+        }
         await this.clearL2();
       }
 
-      this.cachedLastModified = remoteLastModified;
+      this.cachedContentHash = remoteHash;
       await this.saveL2Metadata();
-    } catch {
-      // Offline or error - silently use cached data as-is
-      // When network returns, next init() will validate
-      console.log('[Cache] Network unavailable - using cached data');
+    } catch (error) {
+      // Offline or error - use cached data as-is
+      if (this.debug) {
+        console.log('[Cache] Cannot validate (offline?), using cached data');
+      }
     }
+  }
+
+  /**
+   * Read root .zattrs from L1 cache, L2 cache, or network (in that order).
+   */
+  private async getRootAttrs(): Promise<any> {
+    const attrsKey = '.zattrs';
+    const data = await this.get(attrsKey);
+    if (!data) return null;
+    return JSON.parse(new TextDecoder().decode(data));
   }
 
   /**
@@ -639,12 +730,12 @@ export class TwoLevelCachingStore implements Readable {
       this.l2Index = new Map(meta.entries || []);
       this.l2TotalSize = meta.totalSize || 0;
       this.l2OrderCounter = meta.orderCounter || 0;
-      this.cachedLastModified = meta.lastModified || null;
+      this.cachedContentHash = meta.contentHash || null;
     } catch {
       this.l2Index = new Map();
       this.l2TotalSize = 0;
       this.l2OrderCounter = 0;
-      this.cachedLastModified = null;
+      this.cachedContentHash = null;
     }
   }
 
@@ -658,7 +749,7 @@ export class TwoLevelCachingStore implements Readable {
         entries: Array.from(this.l2Index.entries()),
         totalSize: this.l2TotalSize,
         orderCounter: this.l2OrderCounter,
-        lastModified: this.cachedLastModified,
+        contentHash: this.cachedContentHash,  // Store content hash, not Last-Modified
       }));
       await writable.close();
     } catch {
@@ -693,7 +784,7 @@ export class TwoLevelCachingStore implements Readable {
   // ========== Stats & Management ==========
 
   getStats(): {
-    l1: { protectedSize: number; probationarySize: number; protectedCount: number; probationaryCount: number };
+    l1: { metadataSize: number; chunksSize: number; metadataCount: number; chunksCount: number };
     l2: { size: number; count: number };
   } {
     return {
@@ -715,7 +806,7 @@ export class TwoLevelCachingStore implements Readable {
     this.l2Index = new Map();
     this.l2TotalSize = 0;
     this.l2OrderCounter = 0;
-    this.cachedLastModified = null;  // Reset to force re-validation on next init
+    this.cachedContentHash = null;  // Reset to force re-validation on next init
   }
 
   async clearAll(): Promise<void> {
@@ -746,12 +837,16 @@ export class TwoLevelCachingStore implements Readable {
 import { open } from '@zarrita/core';
 import { TwoLevelCachingStore } from './two-level-caching-store';
 
-// Create two-level caching store
-const store = new TwoLevelCachingStore('https://example.com/dataset.zarr', {
-  l1MaxSize: 500 * 1024 * 1024,  // 500MB memory (optional override)
-  l2MaxSize: 2 * 1024 * 1024 * 1024,  // 2GB disk
-});
+// Create two-level caching store with defaults (100MB L1, 2GB L2)
+const store = new TwoLevelCachingStore('https://example.com/dataset.zarr');
 await store.init();
+
+// Or with custom sizes
+const customStore = new TwoLevelCachingStore('https://example.com/dataset.zarr', {
+  l1MaxSize: 200 * 1024 * 1024,  // 200MB memory (optional override)
+  l2MaxSize: 5 * 1024 * 1024 * 1024,  // 5GB disk
+});
+await customStore.init();
 
 // Use with zarrita - completely transparent!
 const root = await open(store);
@@ -805,7 +900,7 @@ await store.dispose();
 │  │              (name-based segment routing)                │    │
 │  │  ┌─────────────────┐  ┌───────────────────────────────┐ │    │
 │  │  │    Metadata     │  │          Chunks               │ │    │
-│  │  │ (20%, min 50MB) │  │          (80%)                │ │    │
+│  │  │ (20%, min 10MB) │  │          (80%)                │ │    │
 │  │  │                 │  │                               │ │    │
 │  │  │  .zmetadata  ←──┼──┼─ metadata routed here         │ │    │
 │  │  │  .zarray files  │  │                               │ │    │
@@ -818,7 +913,7 @@ await store.dispose();
 │  │                    L2: OPFS Cache                        │    │
 │  │                    (LRU via Map, O(1))                   │    │
 │  │         Persistent across browser sessions               │    │
-│  │     Last-Modified validation on init, quota-aware writes │    │
+│  │     Content-hash validation on init, quota-aware writes  │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                              ↓ miss                              │
 │  ┌─────────────────────────────────────────────────────────┐    │
@@ -838,7 +933,7 @@ await store.dispose();
 | Large datasets | Streaming only | Full local copy |
 | CPU overhead | N/A | Zero (raw bytes) |
 | Metadata access | Network every time | Metadata segment in L1 |
-| Stale data risk | N/A | Last-Modified validation |
+| Stale data detection | N/A | Content-hash validation (offline-friendly) |
 
 ## Browser Storage Options Comparison
 
@@ -867,8 +962,10 @@ OPFS is recommended for zarr caching due to:
 1. **Cache management UI**: Show cached datasets, sizes, allow deletion
 2. **Prefetching**: Background download of visible region chunks
 3. **Compression stats**: Track compression ratios and bandwidth savings
-4. **Service Worker**: Enable true offline-first experience
+4. **Service Worker**: Enable true offline-first PWA experience
 5. **Cross-tab communication**: Use BroadcastChannel for cache coordination
+6. **Hierarchical invalidation**: Use per-node content hashes to invalidate only changed subtrees
+7. **Incremental updates**: Download only changed nodes instead of clearing entire cache
 
 ## References
 
