@@ -1076,7 +1076,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             sorted_radii = None
         chunk_bounds = compute_chunk_bounds_points(
-            sorted_positions, sorted_radii, chunk_size
+            sorted_positions,
+            sorted_radii,
+            chunk_size,
+            slice_dims=ordering_metadata["slice_dims"],
         )
 
         aprint(

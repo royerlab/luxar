@@ -596,6 +596,192 @@ export class ArrayDecoder {
 
     return 'direct';
   }
+
+  /**
+   * Helper: Check if encoding is LUT (lookup table)
+   *
+   * LUT encoding is special because the lookup table is stored in metadata,
+   * so we can load only a range of indices from zarr and still decode correctly.
+   * This enables efficient range-based loading instead of loading the full array.
+   */
+  static isLUTEncoded(attrs: ArrayMetadata): boolean {
+    if (!attrs) return false;
+    const enc = attrs.encoding;
+    if (!enc || !enc.name) return false;
+    return !!(enc.name?.startsWith('lut') && enc.lut);
+  }
+
+  /**
+   * Helper: Check if encoding is broadcasted (uniform value)
+   *
+   * Broadcasted encoding stores a single value that's replicated to all points.
+   * For range loading, we just need the single value - no need to extract ranges.
+   */
+  static isBroadcasted(attrs: ArrayMetadata): boolean {
+    if (!attrs) return false;
+    const enc = attrs.encoding;
+    if (!enc || !enc.name) return false;
+    return enc.name === 'broadcasted';
+  }
+
+  /**
+   * Helper: Check if encoding is quantized (uint8/uint16 with bounds)
+   *
+   * Quantized encodings store data in reduced precision (uint8/uint16) with
+   * bounds metadata for dequantization. These can be efficiently range-loaded:
+   * load only the needed ranges of quantized data, then dequantize.
+   *
+   * Includes:
+   * - rgb_uint8, rgb_uint16 (colors)
+   * - bounded_scalar_uint8, bounded_scalar_uint16 (radii, sharpness)
+   * - log_scalar_uint8, log_scalar_uint16 (log-space radii)
+   */
+  static isQuantizedEncoding(attrs: ArrayMetadata): boolean {
+    if (!attrs) return false;
+    const enc = attrs.encoding;
+    if (!enc || !enc.name) return false;
+
+    // Check for quantization-related encodings
+    // NOTE: Check log_scalar BEFORE generic uint check (both contain 'uint')
+    return !!(
+      enc.name?.startsWith('log_scalar') || // log_scalar_uint8, log_scalar_uint16
+      enc.name?.startsWith('bounded_scalar') || // bounded_scalar_uint8, bounded_scalar_uint16
+      enc.name?.startsWith('rgb_uint') || // rgb_uint8, rgb_uint16
+      enc.name?.startsWith('hdr_uint') // hdr_uint8, hdr_uint16 (if ever used)
+    );
+  }
+
+  /**
+   * Get quantization metadata for range-based decoding
+   *
+   * Extracts the bounds needed to dequantize a subset of quantized data.
+   * Returns null if not quantized.
+   */
+  static getQuantizationMetadata(
+    attrs: ArrayMetadata
+  ): { bounds: [number, number]; dtype: string; isLogSpace: boolean } | null {
+    if (!attrs) return null;
+    const enc = attrs.encoding;
+    if (!enc || !enc.name) return null;
+
+    // Check for log-space encoding first (special case)
+    if (enc.name?.startsWith('log_scalar') && enc.max_log !== undefined) {
+      const dtype = attrs.dtype || 'uint8';
+      return {
+        bounds: [0, enc.max_log], // Log space uses [0, max_log]
+        dtype,
+        isLogSpace: true,
+      };
+    }
+
+    // Check for regular quantization (rgb, bounded_scalar, hdr)
+    if (
+      enc.name?.includes('uint') ||
+      enc.name?.startsWith('bounded_scalar') ||
+      enc.name?.startsWith('rgb') ||
+      enc.name?.startsWith('hdr')
+    ) {
+      // Extract bounds from encoding metadata
+      let bounds: [number, number] | null = null;
+
+      if (enc.bounds) {
+        bounds = enc.bounds;
+      } else if (enc.min !== undefined && enc.max !== undefined) {
+        bounds = [enc.min, enc.max];
+      } else {
+        // Try to infer bounds for known types
+        if (enc.name === 'rgb_uint8' || enc.name === 'rgb_uint16') {
+          bounds = [0, 1];
+        } else if (enc.name === 'hdr_uint8' || enc.name === 'hdr_uint16') {
+          bounds = [0, 10];
+        }
+      }
+
+      if (bounds) {
+        const dtype = attrs.dtype || 'uint8';
+        return { bounds, dtype, isLogSpace: false };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get LUT encoding metadata for range-based decoding
+   *
+   * Returns the LUT metadata needed to decode a subset of indices.
+   * Returns null if not LUT-encoded.
+   */
+  static getLUTMetadata(
+    attrs: ArrayMetadata
+  ): { lut: number[] | number[][]; lutMode: string; k: number } | null {
+    if (!attrs) return null;
+    const enc = attrs.encoding;
+    if (!enc || !enc.name?.startsWith('lut') || !enc.lut) return null;
+
+    const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
+    const lutMode = enc.lut_mode || 'row';
+
+    return { lut: enc.lut, lutMode, k };
+  }
+
+  /**
+   * Decode LUT indices directly (for range-based loading)
+   *
+   * This allows decoding a subset of indices without loading the full array.
+   * The indices can be loaded from zarr using range slicing, then decoded
+   * using the LUT from metadata.
+   *
+   * @param indices - Indices loaded from a range of the zarr array
+   * @param lutMetadata - LUT metadata from getLUTMetadata()
+   * @returns Decoded values (Float32Array)
+   */
+  decodeLUTIndices(
+    indices: Float32Array | Uint8Array | Uint16Array,
+    lutMetadata: { lut: number[] | number[][]; lutMode: string; k: number }
+  ): Float32Array {
+    const { lut, lutMode, k } = lutMetadata;
+    return this.decodeLUT(
+      indices instanceof Float32Array ? indices : new Float32Array(indices),
+      lut,
+      k,
+      lutMode
+    );
+  }
+
+  /**
+   * Dequantize quantized data directly (for range-based loading)
+   *
+   * This allows dequantizing a subset of quantized data without loading the full array.
+   * The quantized ranges can be loaded from zarr using range slicing, then dequantized
+   * using the bounds from metadata.
+   *
+   * @param quantizedData - Quantized data loaded from ranges (uint8/uint16)
+   * @param quantMetadata - Quantization metadata from getQuantizationMetadata()
+   * @returns Dequantized values (Float32Array)
+   */
+  dequantizeRange(
+    quantizedData: Float32Array | Uint8Array | Uint16Array,
+    quantMetadata: { bounds: [number, number]; dtype: string; isLogSpace: boolean }
+  ): Float32Array {
+    const { bounds, dtype, isLogSpace } = quantMetadata;
+
+    if (isLogSpace) {
+      // Log-space quantization: dequantize then exponentiate
+      return this.decodeLogScalar(
+        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
+        bounds[1], // max_log
+        dtype
+      );
+    } else {
+      // Linear quantization: standard dequantization
+      return this.dequantize(
+        quantizedData instanceof Float32Array ? quantizedData : new Float32Array(quantizedData),
+        bounds,
+        dtype
+      );
+    }
+  }
 }
 
 /**
