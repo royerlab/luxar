@@ -689,6 +689,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const isLUTEncoded = ArrayDecoder.isLUTEncoded(attrs);
     const isBroadcasted = ArrayDecoder.isBroadcasted(attrs);
     const isQuantized = ArrayDecoder.isQuantizedEncoding(attrs);
+    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
     if (isBroadcasted) {
       // Broadcasted encoding: Load single value and replicate to all points
@@ -779,11 +780,126 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         (output as Float32Array).set(decoded, destOffset);
         destOffset += decoded.length;
       }
-    } else if (isEncoded) {
-      // Other encoded arrays (array_ref, quantized, etc.): Load full array once and decode
+    } else if (isArrayRef) {
+      // Array reference: Resolve target and apply optimized range loading based on target encoding
+      const targetPath = attrs.encoding!.target!;
+
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Decoding ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode)`
+        `Array ref: ${arrayName} → ${targetPath} (resolving with optimized range loading)`
+      );
+
+      // Get root location for target resolution
+      const storeToUse = this.zarrStore || this.zarrLocation.store;
+      const zarrRootLoc = zarr.root(storeToUse);
+
+      // Resolve target array
+      const targetLoc = zarrRootLoc.resolve(targetPath);
+      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+      // Apply optimized range loading based on target encoding type
+      if (ArrayDecoder.isQuantizedEncoding(targetAttrs)) {
+        // Target is quantized → use quantized range loading!
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Array ref target is quantized (${ArrayDecoder.getEncodingMode(targetAttrs)})`
+        );
+
+        const quantMeta = ArrayDecoder.getQuantizationMetadata(targetAttrs);
+        if (!quantMeta) {
+          throw new Error(`Quantization metadata missing for array_ref target: ${targetPath}`);
+        }
+
+        for (const range of ranges) {
+          const sliceSpec: zarr.Slice[] =
+            targetArray.shape.length === 2
+              ? [slice(range.start, range.end), slice(null)]
+              : [slice(range.start, range.end)];
+
+          const quantizedData = await get(targetArray, sliceSpec);
+          const dequantized = this.decoder.dequantizeRange(
+            quantizedData.data as Uint8Array | Uint16Array,
+            quantMeta
+          );
+
+          (output as Float32Array).set(dequantized, destOffset);
+          destOffset += dequantized.length;
+        }
+      } else if (ArrayDecoder.isLUTEncoded(targetAttrs)) {
+        // Target is LUT → use LUT range loading!
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Array ref target is LUT (${ArrayDecoder.getEncodingMode(targetAttrs)})`
+        );
+
+        const lutMetadata = ArrayDecoder.getLUTMetadata(targetAttrs);
+        if (!lutMetadata) {
+          throw new Error(`LUT metadata missing for array_ref target: ${targetPath}`);
+        }
+
+        for (const range of ranges) {
+          const sliceSpec: zarr.Slice[] =
+            targetArray.shape.length === 2
+              ? [slice(range.start, range.end), slice(null)]
+              : [slice(range.start, range.end)];
+
+          const chunkData = await get(targetArray, sliceSpec);
+          const decoded = this.decoder.decodeLUTIndices(
+            chunkData.data as Float32Array | Uint8Array | Uint16Array,
+            lutMetadata
+          );
+
+          (output as Float32Array).set(decoded, destOffset);
+          destOffset += decoded.length;
+        }
+      } else if (ArrayDecoder.isBroadcasted(targetAttrs)) {
+        // Target is broadcasted → load once, replicate!
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Array ref target is broadcasted (loading single value)`
+        );
+
+        const fullData = await get(targetArray);
+        const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
+
+        // Replicate to all requested points
+        for (let i = 0; i < totalPoints; i++) {
+          for (let j = 0; j < actualElementsPerPoint; j++) {
+            (output as Float32Array)[i * actualElementsPerPoint + j] =
+              broadcastValue[j] || broadcastValue[0];
+          }
+        }
+      } else {
+        // Target is direct or unknown encoding → decode full target, extract ranges
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Array ref target is direct/unknown (${ArrayDecoder.getEncodingMode(targetAttrs)}) - using full decode`
+        );
+
+        const decoded = await this.decoder.decode(
+          targetArray,
+          targetAttrs,
+          totalElements,
+          zarrRootLoc
+        );
+
+        for (const range of ranges) {
+          const rangeSize = (range.end - range.start) * actualElementsPerPoint;
+          const srcOffset = range.start * actualElementsPerPoint;
+
+          (output as Float32Array).set(
+            decoded.subarray(srcOffset, srcOffset + rangeSize),
+            destOffset
+          );
+          destOffset += rangeSize;
+        }
+      }
+    } else if (isEncoded) {
+      // Other encoded arrays (should be rare now): Load full array once and decode
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Decoding ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode - generic path)`
       );
 
       // Get root location for array_ref resolution
