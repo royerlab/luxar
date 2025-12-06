@@ -334,5 +334,5 @@ class TestChunkBoundsDiscreteFiltering:
         # Possibly chunk 1 or 3 if they're very close (tolerance touches)
         assert 2 in matching_chunks, f"Chunk 2 should match, got {matching_chunks}"
         # Chunks 0 and 4 should definitely NOT match
-        assert 0 not in matching_chunks, f"Chunk 0 (orbital=0) should NOT match query for orbital=2"
-        assert 4 not in matching_chunks, f"Chunk 4 (orbital=4) should NOT match query for orbital=2"
+        assert 0 not in matching_chunks, "Chunk 0 (orbital=0) should NOT match query for orbital=2"
+        assert 4 not in matching_chunks, "Chunk 4 (orbital=4) should NOT match query for orbital=2"

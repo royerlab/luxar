@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.core.dimensions import Dimension, Dimensions
+from luxar.core.dimensions import Dimension
 from luxar.core.scene import Scene
 
 
