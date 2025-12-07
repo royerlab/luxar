@@ -1,8 +1,9 @@
 # Network Simulation for Luxar CLI - Technical Specification
 
-**Version**: 1.0.0
-**Status**: Specification
+**Version**: 1.1.0
+**Status**: Revised Specification (Ready for Implementation)
 **Created**: 2025-01-06
+**Last Updated**: 2025-01-06
 **Author**: Claude Code
 
 ---
@@ -43,6 +44,32 @@ This specification defines a network simulation system for the Luxar CLI that al
 - Per-route or per-file type different throttling rules
 - Real-time adjustment of parameters during serving
 
+### ⚠️ Security Warning
+
+**CRITICAL**: Network simulation is for **DEVELOPMENT AND TESTING ONLY**.
+
+**DO NOT use in production environments.**
+
+When network simulation is enabled:
+- Server responses are intentionally delayed and throttled
+- Requests may be randomly dropped (packet loss simulation)
+- The server may appear unresponsive or unreliable to clients
+- This can degrade user experience and appear as server failures
+
+**Use cases**:
+- ✅ Local development testing
+- ✅ Performance benchmarking
+- ✅ Integration testing in CI/CD (with known controlled conditions)
+- ✅ User experience research
+
+**NOT for**:
+- ❌ Production deployments
+- ❌ Public-facing servers
+- ❌ User-facing staging environments
+- ❌ Load testing (use real network conditions instead)
+
+**This tool simulates poor network conditions to help you test your application's resilience and user experience under various network scenarios.**
+
 ---
 
 ## Motivation
@@ -77,7 +104,7 @@ The Luxar viewer is designed to work with datasets served over HTTP, potentially
 **FR-4**: Simulate packet loss (probability of dropping responses)
 **FR-5**: Provide preset connection profiles (3G, 4G, 5G, broadband, satellite, etc.)
 **FR-6**: Support combining individual parameters with profiles
-**FR-7**: Apply simulation to `serve`, `viewer`, and `demo` commands
+**FR-7**: Apply simulation to `serve`, `viewer`, and `demo` commands (see note below about viewer semantics)
 **FR-8**: Display clear indication when simulation is active
 **FR-9**: Validate all input parameters with helpful error messages
 **FR-10**: Support standard units (kbps/mbps/gbps for bandwidth, ms/s for latency)
@@ -90,6 +117,35 @@ The Luxar viewer is designed to work with datasets served over HTTP, potentially
 **NFR-4**: Accurate simulation (within 5% of specified values)
 **NFR-5**: Clear documentation with examples
 **NFR-6**: Comprehensive test coverage (>80%)
+
+### Important: Viewer Command Semantics
+
+**FR-7 Clarification**: When network simulation is applied to the `viewer` command, it **only affects the data server**, not the viewer HTML/JS/CSS files.
+
+**Background**: The `luxar viewer` command can serve:
+1. **Viewer files** (HTML/JS/CSS) - the web application itself
+2. **Data files** (zarr datasets) - if `--data` option is provided
+
+**Simulation Behavior**:
+- ✅ **Data server** (serves .zarr files) → Simulation APPLIED
+- ❌ **Viewer server** (serves HTML/JS/CSS) → Simulation NOT APPLIED
+
+**Rationale**:
+- Users want to test how the viewer performs loading slow data, not how slowly the viewer itself loads
+- Throttling viewer HTML/JS would make the app unusable and provide no useful insights
+- Consistent with `serve --viewer` behavior (data is throttled, viewer is not)
+
+**Example**:
+```bash
+# This throttles the ZARR DATA, not the viewer HTML
+luxar viewer --data foo.zarr --bandwidth 1mbps --latency 200ms
+
+# User expects:
+# - Viewer HTML loads quickly (normal speed)
+# - Zarr data loads slowly (throttled to 1mbps with 200ms latency)
+```
+
+**Implementation Note**: The `viewer` command runs two servers (viewer server + data server in background thread). Only the data server should have the NetworkSimulationMiddleware applied.
 
 ---
 
@@ -550,85 +606,128 @@ if self.latency_ms:
 - Jitter is specified as percentage of base latency (typically 10%)
 - Applied as uniform distribution: `base ± (jitter% * base)`
 - Example: 100ms latency with 10% jitter → random latency in [90ms, 110ms]
-- Latency is clamped to non-negative values
+- Latency is clamped to non-negative values (jitter cannot make latency negative)
 
-**Timing**:
+**Timing and Semantics**:
 - Applied AFTER packet loss check (dropped packets have no delay)
-- Applied BEFORE calling wrapped application (simulates request propagation)
-- Represents one-way latency (not round-trip)
+- Applied BEFORE calling wrapped application (simulates request propagation time)
+- **Represents request propagation latency** - the time it takes for the HTTP request to travel from client to server
+- Does NOT add latency to response transmission (response sent immediately after processing)
+- This matches real-world behavior: in HTTP, you notice latency when clicking/requesting, not when receiving the response stream
+
+**Total Perceived Delay**:
+```
+User Experience Timeline:
+1. User clicks/requests data      (t=0)
+2. Request travels to server      (t=latency)     ← Simulated here
+3. Server processes request       (t=latency+processing)
+4. Response travels to client     (t=latency+processing+rtt/2)  ← NOT simulated
+5. User sees data                 (t=end)
+
+Our simulation:
+- Adds delay at step 2 (request propagation)
+- Does not add delay at step 4 (response propagation)
+- In practice, this is sufficient for testing because:
+  * The main UX impact is initial response delay (steps 2-3)
+  * Bandwidth throttling already simulates slow data transfer
+  * Adding response latency would be redundant with throttling
+```
+
+**Future Enhancement**:
+- Could add separate `--response-latency` option for asymmetric networks
+- Could split latency 50/50 between request and response
+- For v1.0, request-only latency is sufficient for testing purposes
 
 ---
 
 #### Bandwidth Throttling
 
-**Algorithm**:
+**Algorithm** (Updated to handle streaming responses):
 ```python
-async def send_wrapper(message):
-    """Wrap send() to throttle response body."""
-    if message["type"] == "http.response.body":
-        body = message.get("body", b"")
+async def __call__(self, scope, receive, send):
+    """ASGI middleware entry point."""
+    if scope["type"] != "http":
+        await self.app(scope, receive, send)
+        return
 
-        # Throttle bandwidth if enabled and body is not empty
-        if self.bytes_per_second and body:
-            # Strategy: Send body in time-based chunks
-            # Chunk duration: 100ms (10 chunks per second)
-            chunk_duration = 0.1  # seconds
-            chunk_size = int(self.bytes_per_second * chunk_duration)
+    # Packet loss and latency checks here (see sections above)
+    # ...
 
-            # Send body in throttled chunks
-            offset = 0
-            while offset < len(body):
-                # Calculate chunk (last chunk may be smaller)
-                chunk_end = min(offset + chunk_size, len(body))
-                chunk = body[offset:chunk_end]
+    # Per-request state for bandwidth throttling
+    bytes_sent = 0
+    start_time = time.time()
 
-                # Determine if more data follows
-                more_body = (chunk_end < len(body)) or message.get("more_body", False)
+    async def send_wrapper(message):
+        """Wrap send() to throttle response body."""
+        nonlocal bytes_sent, start_time
 
-                # Send chunk
-                chunk_message = {
-                    "type": "http.response.body",
-                    "body": chunk,
-                    "more_body": more_body
-                }
-                await send(chunk_message)
+        if message["type"] == "http.response.body":
+            body = message.get("body", b"")
 
-                offset = chunk_end
+            # Throttle bandwidth if enabled and body is not empty
+            if self.bytes_per_second and body:
+                # Track total bytes sent for this request
+                bytes_sent += len(body)
 
-                # Sleep between chunks (except after last chunk)
-                if offset < len(body):
-                    await asyncio.sleep(chunk_duration)
+                # Calculate expected elapsed time based on bytes sent
+                elapsed = time.time() - start_time
+                expected_time = bytes_sent / self.bytes_per_second
 
-            return  # Body fully sent
+                # If we're sending too fast, sleep to match target bandwidth
+                if expected_time > elapsed:
+                    sleep_time = expected_time - elapsed
+                    await asyncio.sleep(sleep_time)
 
-    # Pass through non-body messages unchanged
-    await send(message)
+        # Send the message (possibly after throttling delay)
+        await send(message)
+
+    # Call wrapped application with our send wrapper
+    await self.app(scope, receive, send_wrapper)
 ```
 
 **Throttling Strategy**:
-1. Split response body into time-based chunks (100ms per chunk)
-2. Calculate chunk size: `bytes_per_second * 0.1` (10% of per-second limit)
-3. Send chunk, sleep 100ms, send next chunk, repeat
-4. Last chunk may be smaller than chunk_size
-5. No sleep after final chunk
+1. Track total bytes sent per request (across all response chunks)
+2. Track elapsed time since request started
+3. Calculate expected time: `total_bytes / bytes_per_second`
+4. If ahead of schedule, sleep to maintain target bandwidth
+5. Works correctly for both single-chunk and streaming responses
+
+**How It Works**:
+- **Single-chunk responses**: Body arrives at once, throttled as expected
+- **Streaming responses**: Each chunk adds to `bytes_sent`, maintains consistent rate across all chunks
+- **Large files**: Chunks sent by ASGI server are throttled continuously
+
+**Example**:
+```
+1MB file at 1 Mbps (125 KB/s)
+ASGI sends 10 chunks of 100KB each
+
+Chunk 1 (100KB): bytes_sent=100KB, expected=0.8s, elapsed=0.01s → sleep 0.79s
+Chunk 2 (100KB): bytes_sent=200KB, expected=1.6s, elapsed=0.81s → sleep 0.79s
+...
+Chunk 10 (100KB): bytes_sent=1000KB, expected=8.0s, elapsed=7.21s → sleep 0.79s
+
+Total time: ~8 seconds (matches 1MB / 125KB/s)
+```
 
 **Edge Cases**:
-- Empty body (`body = b""`): No throttling, pass through
-- Small body (< chunk_size): Send immediately, no sleep
-- Large body: Split into many chunks with delays
-- Streaming responses (`more_body=True`): Handled correctly by preserving flag
+- Empty body (`body = b""`): No throttling, pass through immediately
+- Small responses: Still throttled proportionally (no special fast path)
+- Very small responses (<1KB): May have slight overhead, but acceptable
+- Streaming responses: Correctly throttled across all chunks
+- Multiple `http.response.body` messages: Handled correctly via per-request state
 
 **Accuracy**:
 - Target: Average bandwidth matches specified limit (±5%)
-- Short responses (<1s) may exceed limit slightly (chunking granularity)
+- Short responses may have slightly higher variance due to sleep granularity
 - Long responses (>10s) should closely match limit
+- More accurate than chunk-based approach for all response sizes
 
-**Chunk Duration Rationale**:
-- 100ms provides good balance:
-  - Fine enough granularity for accurate throttling
-  - Coarse enough to avoid excessive overhead
-  - Matches typical HTTP/2 frame timing
-- Could be made configurable in future (not in v1.0)
+**Advantages Over Chunk-Based Approach**:
+- ✅ Works correctly with streaming responses (ASGI may pre-chunk large files)
+- ✅ Maintains consistent bandwidth across entire request
+- ✅ Simpler algorithm (no manual chunking)
+- ✅ No assumptions about response body structure
 
 ---
 
@@ -875,19 +974,44 @@ from .network_simulation import (
     load_network_profile,
 )
 
-# In serve() function, after creating FastAPI app:
+# In serve() function, CORRECT integration:
+# (Based on existing code in main.py lines 215-259)
+
+# 1. Create FastAPI app
+api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
+
+# 2. Add CORS middleware
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 3. Mount static files handler
+api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
+
+# 4. Wrap the complete ASGI app with network simulation (if enabled)
+asgi_app = api
 if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
-    # Wrap app with network simulation middleware
-    # Note: Must wrap the ASGI app directly, before mounting routes
-    original_app = fastapi_app
-    fastapi_app = NetworkSimulationMiddleware(
-        original_app,
+    asgi_app = NetworkSimulationMiddleware(
+        api,  # Wrap the complete FastAPI app
         bandwidth_limit_mbps=bandwidth_mbps,
         latency_ms=latency_ms,
         jitter_percent=jitter_percent,
         packet_loss_rate=packet_loss_rate,
     )
+
+# 5. Run the (possibly wrapped) ASGI app
+uvicorn.run(asgi_app, host=host, port=actual_port, reload=False, log_level="warning")
 ```
+
+**Critical**: The middleware must wrap the complete FastAPI application AFTER all routes and middleware are added, but BEFORE calling `uvicorn.run()`. This is because:
+- Routes and middleware are already mounted on the `api` object
+- We cannot "reassign" the FastAPI app - we must wrap it
+- `uvicorn.run()` receives the wrapped ASGI application
+- The NetworkSimulationMiddleware is a pure ASGI middleware (not Starlette middleware)
 
 ### Dependencies
 
@@ -981,6 +1105,13 @@ except ValueError as e:
    - Latency addition (timing test)
    - Jitter range verification (statistical test)
    - Bandwidth throttling (timing test with known payload size)
+
+**Important: Testing Tolerances**:
+- Timing-based tests (bandwidth, latency) should use **generous tolerances** (±15-20%)
+- OS scheduling, Python interpreter overhead, and network stack all add variability
+- Statistical tests (packet loss, jitter) need large sample sizes (1000+ requests)
+- Use `pytest.approx()` with appropriate `rel` tolerance for floating-point comparisons
+- Timing tests may be flaky in CI environments - consider using `@pytest.mark.flaky` decorator
 
 **Example Test**:
 ```python
@@ -1218,6 +1349,16 @@ When implementing this specification:
 ---
 
 ## Revision History
+
+**v1.1.0** (2025-01-06):
+- **CRITICAL FIX**: Corrected middleware integration method (wrap ASGI app before uvicorn.run)
+- **CRITICAL FIX**: Updated bandwidth throttling to handle streaming responses correctly
+- **MAJOR**: Clarified viewer command semantics (simulation only applies to data server)
+- **MAJOR**: Clarified latency semantics (represents request propagation latency)
+- Added prominent security warning (development/testing only)
+- Added testing tolerance guidance (±15-20% for timing tests)
+- Improved documentation with detailed rationale and examples
+- Status changed to "Ready for Implementation"
 
 **v1.0.0** (2025-01-06):
 - Initial specification
