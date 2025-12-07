@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SceneDimsManager } from '../scene/scene-dims-manager';
+import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import * as THREE from 'three';
 
 describe('SceneDimsManager', () => {

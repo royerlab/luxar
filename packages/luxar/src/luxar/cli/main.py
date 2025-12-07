@@ -24,6 +24,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .network_simulation import (
+    NETWORK_PROFILES,
+    NetworkSimulationMiddleware,
+    load_network_profile,
+    parse_bandwidth,
+    parse_jitter,
+    parse_latency,
+    parse_packet_loss,
+)
 from .utils import (
     build_viewer,
     check_viewer_built,
@@ -141,8 +150,59 @@ def serve(
     viewer_only: bool = typer.Option(
         False, "--viewer-only", help="Serve only the viewer"
     ),
+    # Network simulation parameters
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+    ),
+    bandwidth: Optional[str] = typer.Option(
+        None,
+        "--bandwidth",
+        "-b",
+        help="Bandwidth limit (e.g., '1mbps', '500kbps', '10mbps')",
+    ),
+    latency: Optional[str] = typer.Option(
+        None,
+        "--latency",
+        "-l",
+        help="Network latency (e.g., '100ms', '500ms', '1s')",
+    ),
+    jitter: Optional[str] = typer.Option(
+        None,
+        "--jitter",
+        "-j",
+        help="Latency jitter as percentage (e.g., '10%', '0.1')",
+    ),
+    packet_loss: Optional[str] = typer.Option(
+        None,
+        "--packet-loss",
+        help="Packet loss rate (e.g., '1%', '0.01', '5%')",
+    ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
+
+    Network Simulation:
+        Use network simulation options to test viewer performance under
+        realistic network conditions. You can use a preset profile or
+        specify individual parameters.
+
+        Profiles: 3g, 4g, 5g, broadband, satellite, rural, congested
+
+        Individual parameters override profile defaults.
+
+    Examples:
+        # Simulate 3G mobile connection
+        luxar serve data.zarr --profile 3g --viewer
+
+        # Simulate custom slow connection
+        luxar serve data.zarr --bandwidth 500kbps --latency 200ms
+
+        # Use 4G profile with custom latency
+        luxar serve data.zarr --profile 4g --latency 300ms
+
+        # Test packet loss
+        luxar serve data.zarr --bandwidth 10mbps --packet-loss 5%
 
     Args:
         path (Path, optional): Path to directory or Zarr dataset to serve.
@@ -152,6 +212,11 @@ def serve(
         viewer_port (int, optional): Port for viewer. Defaults to 5173.
         open_browser (bool, optional): Open browser. Defaults to False.
         viewer_only (bool, optional): Serve only the viewer. Defaults to False.
+        profile (str, optional): Network profile name.
+        bandwidth (str, optional): Bandwidth limit.
+        latency (str, optional): Network latency.
+        jitter (str, optional): Latency jitter percentage.
+        packet_loss (str, optional): Packet loss rate.
     """
     try:
         # Handle viewer-only mode
@@ -212,6 +277,69 @@ def serve(
         else:
             actual_viewer_port = viewer_port
 
+        # Parse network simulation parameters
+        bandwidth_mbps = None
+        latency_ms = None
+        jitter_percent = 0.0
+        packet_loss_rate = 0.0
+
+        # 1. Load profile (if specified)
+        if profile:
+            try:
+                profile_data = load_network_profile(profile)
+                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
+                latency_ms = parse_latency(profile_data["latency"])
+                jitter_percent = profile_data["jitter"]
+                packet_loss_rate = profile_data["packet_loss"]
+                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        # 2. Override with individual parameters
+        if bandwidth:
+            try:
+                bandwidth_mbps = parse_bandwidth(bandwidth)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if latency:
+            try:
+                latency_ms = parse_latency(latency)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if jitter:
+            try:
+                jitter_percent = parse_jitter(jitter)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if packet_loss:
+            try:
+                packet_loss_rate = parse_packet_loss(packet_loss)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        # 3. Display simulation parameters (if any enabled)
+        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+            aprint("🌐 [Luxar] Network simulation enabled:")
+            if bandwidth_mbps:
+                aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
+            if latency_ms:
+                aprint(f"   • Latency: {latency_ms:.0f} ms")
+            if jitter_percent > 0:
+                aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+            if packet_loss_rate > 0:
+                aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
+            aprint(
+                "⚠️  [Luxar] Responses will be throttled - this is intentional for testing"
+            )
+
         api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
 
         # Add CORS middleware to allow requests from the viewer
@@ -256,7 +384,18 @@ def serve(
             time.sleep(1)  # Give servers time to start
             open_browser_func(viewer_url)
 
-        uvicorn.run(api, host=host, port=actual_port, reload=False, log_level="warning")
+        # Wrap the complete ASGI app with network simulation (if enabled)
+        asgi_app = api
+        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+            asgi_app = NetworkSimulationMiddleware(
+                api,
+                bandwidth_limit_mbps=bandwidth_mbps,
+                latency_ms=latency_ms,
+                jitter_percent=jitter_percent,
+                packet_loss_rate=packet_loss_rate,
+            )
+
+        uvicorn.run(asgi_app, host=host, port=actual_port, reload=False, log_level="warning")
     except Exception as e:
         aprint(f"❌ Error serving path: {e}")
         raise typer.Exit(1)
@@ -305,8 +444,49 @@ def viewer(
     port: int = typer.Option(5173, "--port", "-p", help="Port number"),
     data_port: int = typer.Option(8000, "--data-port", help="Port for data server"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
+    # Network simulation parameters (apply to data server only)
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+    ),
+    bandwidth: Optional[str] = typer.Option(
+        None,
+        "--bandwidth",
+        "-b",
+        help="Bandwidth limit (e.g., '1mbps', '500kbps')",
+    ),
+    latency: Optional[str] = typer.Option(
+        None,
+        "--latency",
+        "-l",
+        help="Network latency (e.g., '100ms', '500ms')",
+    ),
+    jitter: Optional[str] = typer.Option(
+        None,
+        "--jitter",
+        "-j",
+        help="Latency jitter percentage (e.g., '10%', '0.1')",
+    ),
+    packet_loss: Optional[str] = typer.Option(
+        None,
+        "--packet-loss",
+        help="Packet loss rate (e.g., '1%', '0.01')",
+    ),
 ) -> None:
     """Serve the Luxar viewer, optionally with data.
+
+    Network Simulation:
+        Network simulation options apply ONLY to the data server (zarr files),
+        not the viewer HTML/JS/CSS. Use these to test viewer performance
+        under various network conditions.
+
+    Examples:
+        # Serve viewer with data using 3G simulation
+        luxar viewer --data foo.zarr --profile 3g
+
+        # Serve viewer only (no simulation applies)
+        luxar viewer
 
     Args:
         data (Path, optional): Zarr data to load.
@@ -314,6 +494,11 @@ def viewer(
         port (int, optional): Port number. Defaults to 5173.
         data_port (int, optional): Port for data server. Defaults to 8000.
         open_browser (bool, optional): Open browser. Defaults to True.
+        profile (str, optional): Network profile (applies to data server only).
+        bandwidth (str, optional): Bandwidth limit (applies to data server only).
+        latency (str, optional): Network latency (applies to data server only).
+        jitter (str, optional): Latency jitter percentage (applies to data server only).
+        packet_loss (str, optional): Packet loss rate (applies to data server only).
     """
     try:
         # Check if viewer is built
@@ -322,6 +507,69 @@ def viewer(
             if not build_viewer():
                 aprint("❌ Failed to build viewer")
                 raise typer.Exit(1)
+
+        # Parse network simulation parameters (applies only if data is provided)
+        bandwidth_mbps = None
+        latency_ms = None
+        jitter_percent = 0.0
+        packet_loss_rate = 0.0
+
+        if profile:
+            try:
+                profile_data = load_network_profile(profile)
+                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
+                latency_ms = parse_latency(profile_data["latency"])
+                jitter_percent = profile_data["jitter"]
+                packet_loss_rate = profile_data["packet_loss"]
+                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if bandwidth:
+            try:
+                bandwidth_mbps = parse_bandwidth(bandwidth)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if latency:
+            try:
+                latency_ms = parse_latency(latency)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if jitter:
+            try:
+                jitter_percent = parse_jitter(jitter)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if packet_loss:
+            try:
+                packet_loss_rate = parse_packet_loss(packet_loss)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+            if data is None:
+                aprint(
+                    "⚠️  [Luxar] Network simulation requires --data to be specified. "
+                    "Simulation will be ignored."
+                )
+            else:
+                aprint("🌐 [Luxar] Network simulation enabled (data server only):")
+                if bandwidth_mbps:
+                    aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
+                if latency_ms:
+                    aprint(f"   • Latency: {latency_ms:.0f} ms")
+                if jitter_percent > 0:
+                    aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+                if packet_loss_rate > 0:
+                    aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
 
         # If data provided, serve it in background
         data_url = None
@@ -339,7 +587,15 @@ def viewer(
             # Start data server in background thread
             data_thread = threading.Thread(
                 target=_serve_data,
-                args=(data, host, actual_data_port),
+                args=(
+                    data,
+                    host,
+                    actual_data_port,
+                    bandwidth_mbps,
+                    latency_ms,
+                    jitter_percent,
+                    packet_loss_rate,
+                ),
                 daemon=True,
             )
             data_thread.start()
@@ -367,8 +623,26 @@ def viewer(
         raise typer.Exit(1)
 
 
-def _serve_data(path: Path, host: str, port: int) -> None:
-    """Internal function to serve data in background."""
+def _serve_data(
+    path: Path,
+    host: str,
+    port: int,
+    bandwidth_mbps: Optional[float] = None,
+    latency_ms: Optional[float] = None,
+    jitter_percent: float = 0.0,
+    packet_loss_rate: float = 0.0,
+) -> None:
+    """Internal function to serve data in background.
+
+    Args:
+        path: Path to data directory or zarr file
+        host: Host address
+        port: Port number
+        bandwidth_mbps: Bandwidth limit in Mbps (optional)
+        latency_ms: Latency in milliseconds (optional)
+        jitter_percent: Jitter as percentage (0.0-1.0)
+        packet_loss_rate: Packet loss rate (0.0-1.0)
+    """
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
     api.add_middleware(
         CORSMiddleware,
@@ -387,7 +661,19 @@ def _serve_data(path: Path, host: str, port: int) -> None:
     api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
     aprint(f"💾 Data server running at http://{host}:{port}/")
-    uvicorn.run(api, host=host, port=port, reload=False, log_level="warning")
+
+    # Wrap with network simulation if enabled
+    asgi_app = api
+    if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+        asgi_app = NetworkSimulationMiddleware(
+            api,
+            bandwidth_limit_mbps=bandwidth_mbps,
+            latency_ms=latency_ms,
+            jitter_percent=jitter_percent,
+            packet_loss_rate=packet_loss_rate,
+        )
+
+    uvicorn.run(asgi_app, host=host, port=port, reload=False, log_level="warning")
 
 
 # ────────────────────────────── demo ─────────────────────────────────────────
@@ -401,18 +687,54 @@ def demo(
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
     port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
+    # Network simulation parameters
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Network profile (3g, 4g, 5g, broadband, satellite, etc.)",
+    ),
+    bandwidth: Optional[str] = typer.Option(
+        None,
+        "--bandwidth",
+        "-b",
+        help="Bandwidth limit (e.g., '1mbps', '500kbps')",
+    ),
+    latency: Optional[str] = typer.Option(
+        None,
+        "--latency",
+        "-l",
+        help="Network latency (e.g., '100ms', '500ms')",
+    ),
+    jitter: Optional[str] = typer.Option(
+        None,
+        "--jitter",
+        "-j",
+        help="Latency jitter percentage (e.g., '10%', '0.1')",
+    ),
+    packet_loss: Optional[str] = typer.Option(
+        None,
+        "--packet-loss",
+        help="Packet loss rate (e.g., '1%', '0.01')",
+    ),
 ) -> None:
     """Generate a demo dataset and optionally serve with viewer.
+
+    Network Simulation:
+        Test viewer performance under various network conditions using
+        --profile or individual simulation parameters.
 
     Examples:
         # Generate and serve (default behavior)
         luxar demo
 
+        # Test with 3G network conditions
+        luxar demo --profile 3g
+
         # Just generate without serving (replaces old 'random' command)
         luxar demo --no-serve --output my_demo.zarr
 
-        # Generate with specific parameters
-        luxar demo --points 100000 --seed 42 --no-serve -o data.zarr
+        # Generate with specific parameters and simulate slow network
+        luxar demo --points 100000 --bandwidth 500kbps --latency 200ms
 
     Args:
         output (Path, optional): Output path. Required when --no-serve.
@@ -423,6 +745,11 @@ def demo(
         open_browser (bool, optional): Open browser. Defaults to True.
         port (int, optional): Data server port. Defaults to 8000.
         viewer_port (int, optional): Viewer port. Defaults to 5173.
+        profile (str, optional): Network profile name.
+        bandwidth (str, optional): Bandwidth limit.
+        latency (str, optional): Network latency.
+        jitter (str, optional): Latency jitter percentage.
+        packet_loss (str, optional): Packet loss rate.
     """
     try:
         with asection("Demo Configuration and Generation"):
@@ -456,6 +783,63 @@ def demo(
         if not serve:
             return
 
+        # Parse network simulation parameters (if serving)
+        bandwidth_mbps = None
+        latency_ms = None
+        jitter_percent = 0.0
+        packet_loss_rate = 0.0
+
+        if profile:
+            try:
+                profile_data = load_network_profile(profile)
+                bandwidth_mbps = parse_bandwidth(profile_data["bandwidth"])
+                latency_ms = parse_latency(profile_data["latency"])
+                jitter_percent = profile_data["jitter"]
+                packet_loss_rate = profile_data["packet_loss"]
+                aprint(f"📊 [Luxar] Using network profile: {profile_data['name']}")
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if bandwidth:
+            try:
+                bandwidth_mbps = parse_bandwidth(bandwidth)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if latency:
+            try:
+                latency_ms = parse_latency(latency)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if jitter:
+            try:
+                jitter_percent = parse_jitter(jitter)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if packet_loss:
+            try:
+                packet_loss_rate = parse_packet_loss(packet_loss)
+            except ValueError as e:
+                aprint(f"❌ [Luxar] {e}")
+                raise typer.Exit(code=1)
+
+        if any([bandwidth_mbps, latency_ms, jitter_percent > 0, packet_loss_rate > 0]):
+            aprint("🌐 [Luxar] Network simulation enabled:")
+            if bandwidth_mbps:
+                aprint(f"   • Bandwidth: {bandwidth_mbps:.2f} Mbps")
+            if latency_ms:
+                aprint(f"   • Latency: {latency_ms:.0f} ms")
+            if jitter_percent > 0:
+                aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+            if packet_loss_rate > 0:
+                aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
+
         with asection("Viewer Setup and Port Management"):
             # Check viewer is built
             if not check_viewer_built():
@@ -476,7 +860,15 @@ def demo(
             # Start data server in background
             data_thread = threading.Thread(
                 target=_serve_data,
-                args=(output, "127.0.0.1", actual_port),
+                args=(
+                    output,
+                    "127.0.0.1",
+                    actual_port,
+                    bandwidth_mbps,
+                    latency_ms,
+                    jitter_percent,
+                    packet_loss_rate,
+                ),
                 daemon=True,
             )
             data_thread.start()
@@ -652,6 +1044,32 @@ def _dfs(
     except Exception as e:
         aprint(f"Error traversing Zarr group hierarchy: {e}")
         raise
+
+
+# ─────────────────────────────── profiles ────────────────────────────────────
+@app.command()
+def profiles() -> None:
+    """List available network simulation profiles.
+
+    Display all preset network profiles with their parameters. Use these
+    profiles with the --profile option in serve, viewer, and demo commands.
+    """
+    aprint("📊 [Luxar] Available Network Profiles\n")
+
+    for profile_name in sorted(NETWORK_PROFILES.keys()):
+        profile = NETWORK_PROFILES[profile_name]
+        aprint(f"  {profile_name}")
+        aprint(f"    Name: {profile['name']}")
+        aprint(f"    Bandwidth: {profile['bandwidth']}")
+        aprint(f"    Latency: {profile['latency']}")
+        aprint(f"    Jitter: {profile['jitter']*100:.0f}%")
+        aprint(f"    Packet Loss: {profile['packet_loss']*100:.1f}%")
+        aprint(f"    Description: {profile['description']}")
+        aprint("")
+
+    aprint("Usage: luxar serve data.zarr --profile <profile-name>")
+    aprint("       luxar demo --profile 3g")
+    aprint("       luxar viewer --data data.zarr --profile satellite")
 
 
 # ────────────────────────────────────────────────────────────────────────────

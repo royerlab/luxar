@@ -1,15 +1,32 @@
 /**
- * Integration tests for Data Loading Monitor with actual system components
+ * Unit Integration Tests for Data Loading Monitor
  *
- * Tests the complete flow from keyboard input to monitor state changes,
- * including integration with DataMonitorManager and SceneLoader.
+ * **TEST SCOPE**: Unit-level integration with mocked dependencies
+ * - Uses mocked zarr and THREE.js
+ * - Tests monitor ↔ loader communication
+ * - Tests event propagation and state updates
+ * - Fast execution (no browser)
+ *
+ * **WHAT WE TEST**:
+ * - DataMonitorManager integration with SceneLoader
+ * - Monitor receives correct events from loader
+ * - Keyboard shortcuts (Ctrl+L) trigger monitor display
+ * - Monitor state updates correctly
+ *
+ * **WHAT WE DON'T TEST** (see E2E tests instead):
+ * - Actual UI rendering in browser
+ * - Real-time updates during actual data loading
+ *
+ * **Related Tests**:
+ * - `unit/data/data-loading-integration.test.ts` - Loader pipeline (unit)
+ * - `e2e/data-monitor-metrics.spec.ts` - Monitor UI + real data (E2E)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DataMonitorManager, cycleDataMonitor } from '../data/data-monitor-manager';
-import { SceneLoader } from '../data/scene-loader';
-import { SceneLoaderManager } from '../data/scene-loader-manager';
-import type { LoaderMonitor, MonitorEvent } from '../ui/data-monitor-types';
+import { DataMonitorManager, cycleDataMonitor } from '../../../data/data-monitor-manager';
+import { SceneLoader } from '../../../data/scene-loader';
+import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import type { LoaderMonitor, MonitorEvent } from '../../../ui/data-monitor-types';
 
 // Mock zarr module
 vi.mock('zarr', () => ({

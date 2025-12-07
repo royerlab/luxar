@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PointSpatialIndexLoader, type ViewState, type SceneNode } from '../data';
+import { PointSpatialIndexLoader, type ViewState, type SceneNode } from '../../../data';
 import * as zarr from 'zarrita';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -76,7 +76,7 @@ import {
   queryChunksForView,
   chunkIndicesToRanges,
   mergePointRanges,
-} from '../data/chunk-spatial-index';
+} from '../../../data/chunk-spatial-index';
 
 describe('PointSpatialIndexLoader', () => {
   let loader: PointSpatialIndexLoader;

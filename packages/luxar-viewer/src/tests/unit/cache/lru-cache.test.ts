@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { LRUCache } from '../../cache/lru-cache';
+import { LRUCache } from '../../../cache/lru-cache';
 
 describe('LRUCache', () => {
   let cache: LRUCache<Uint8Array>;

@@ -1,8 +1,26 @@
 /**
- * Integration tests for the complete data loading pipeline
+ * Unit Integration Tests for Data Loading Pipeline
  *
- * Tests the interaction between zarr-loader, SceneLoader, and SpatialIndexLoader
- * to ensure the full pipeline works correctly end-to-end.
+ * **TEST SCOPE**: Unit-level integration tests with mocked dependencies
+ * - Uses mocked zarr data (not real files)
+ * - Uses mocked THREE.js (no real WebGL)
+ * - Tests internal logic and API contracts
+ * - Fast execution (no browser, no network)
+ *
+ * **WHAT WE TEST**:
+ * - Interaction between zarr-loader, SceneLoader, and SpatialIndexLoader
+ * - Correct data flow through the pipeline
+ * - Error handling with invalid data
+ * - Cache behavior
+ *
+ * **WHAT WE DON'T TEST** (see E2E tests instead):
+ * - Real zarr file loading
+ * - Actual WebGL rendering
+ * - Browser-specific behaviors (OPFS, canvas, etc.)
+ *
+ * **Related Tests**:
+ * - `unit/data/data-monitor-integration.test.ts` - Monitor + loader interaction (unit)
+ * - `e2e/data-loading.spec.ts` - Full pipeline with real browser + files (E2E)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -13,8 +31,8 @@ import {
   getCacheStats,
   clearCaches,
   dispose,
-} from '../data';
-import { SimpleDims } from '../types/dims';
+} from '../../../data';
+import { SimpleDims } from '../../../types/dims';
 import * as THREE from 'three';
 
 // Mock THREE.js with more complete implementation
@@ -138,7 +156,7 @@ vi.mock('../data/scene-loader', () => ({
 }));
 
 // Mock SceneLoaderManager
-vi.mock('../data/scene-loader-manager', () => {
+vi.mock('../../../data/scene-loader-manager', () => {
   const mockLoader = {
     loadScene: vi.fn().mockImplementation(async (_url) => {
       // Import the mocked THREE to use the proper Group mock
@@ -243,7 +261,7 @@ vi.mock('../ui/data-loading-monitor', () => ({
 // Helper to access mocked functions
 const getMockLoader = () => {
   // Need to import actual class for type reference
-  void vi.importActual('../data/scene-loader-manager');
+  void vi.importActual('../../../data/scene-loader-manager');
   // Return a mock object with all needed methods
   return {
     loadScene: vi.fn().mockImplementation(async () => {
@@ -273,7 +291,7 @@ describe('Data Loading Integration', () => {
     void getMockLoader(); // Create mock loader but don't store reference
 
     // Reset the SceneLoaderManager state
-    const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+    const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
     const mockManager = SceneLoaderManager.getInstance() as any;
     if (mockManager.reset) {
       mockManager.reset();
@@ -310,13 +328,13 @@ describe('Data Loading Integration', () => {
       await loadScene('http://localhost:8000/test.zarr');
 
       // Check that manager was used
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       expect(SceneLoaderManager.getInstance).toHaveBeenCalled();
     });
 
     it('should handle loading errors gracefully', async () => {
       // Force an error by modifying the SceneLoaderManager mock
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       mockLoader.loadScene.mockRejectedValueOnce(new Error('Network error'));
@@ -349,7 +367,7 @@ describe('Data Loading Integration', () => {
       await updateView(viewState);
 
       // Check that the actual SceneLoaderManager mock was called
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       expect(mockLoader.updateView).toHaveBeenCalledWith(viewState);
@@ -389,7 +407,7 @@ describe('Data Loading Integration', () => {
       await updateSceneForDimensions(dims, scene);
 
       // Check that the actual SceneLoaderManager mock was called
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       expect(mockLoader.updateView).toHaveBeenCalledWith(
@@ -414,7 +432,7 @@ describe('Data Loading Integration', () => {
       await updateSceneForDimensions(dims, scene);
 
       // Check that the actual SceneLoaderManager mock was called
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       const callArgs = mockLoader.updateView.mock.calls[0][0];
@@ -439,7 +457,7 @@ describe('Data Loading Integration', () => {
       clearCaches();
 
       // Verify clearCaches was called on the actual loader
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       expect(mockLoader.clearCaches).toHaveBeenCalled();
@@ -460,7 +478,7 @@ describe('Data Loading Integration', () => {
       dispose();
 
       // Verify manager cleanup was called
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const manager = SceneLoaderManager.getInstance();
       expect(manager.destroyAll).toHaveBeenCalled();
     });
@@ -511,7 +529,7 @@ describe('Data Loading Integration', () => {
       await loadScene('http://localhost:8000/test.zarr');
 
       // Get the actual loader and make update fail
-      const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as any;
       const mockLoader = mockManager.getDefaultLoader() as any;
       mockLoader.updateView.mockRejectedValueOnce(new Error('Update failed'));

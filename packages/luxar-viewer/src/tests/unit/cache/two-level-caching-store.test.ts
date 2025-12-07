@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { TwoLevelCachingStore } from '../../cache/two-level-caching-store';
+import { TwoLevelCachingStore } from '../../../cache/two-level-caching-store';
 
 // Create comprehensive mocks
 const createMocks = () => {

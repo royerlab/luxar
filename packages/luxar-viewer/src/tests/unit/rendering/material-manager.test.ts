@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MaterialManager, type PointMaterialProperties } from '../rendering/material-manager';
-import { PointMaterial } from '../rendering/point-material';
+import { MaterialManager, type PointMaterialProperties } from '../../../rendering/material-manager';
+import { PointMaterial } from '../../../rendering/point-material';
 import * as THREE from 'three';
 
 // Mock only THREE.js (dependency), NOT PointMaterial (system under test)

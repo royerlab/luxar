@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { PointMaterial } from '../rendering/point-material';
-import { config } from '../config';
+import { PointMaterial } from '../../../rendering/point-material';
+import { config } from '../../../config';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {

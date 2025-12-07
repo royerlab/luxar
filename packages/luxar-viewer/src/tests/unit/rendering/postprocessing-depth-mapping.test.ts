@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PerspectiveDepthMapper } from '../rendering/postprocessing-types';
+import { PerspectiveDepthMapper } from '../../../rendering/postprocessing-types';
 
 describe('PerspectiveDepthMapper', () => {
   const near = 0.1;

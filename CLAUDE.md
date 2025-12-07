@@ -414,6 +414,13 @@ luxar serve <data.zarr> --viewer # Serve data with viewer
 luxar viewer --data <data.zarr>  # Serve viewer with data
 luxar info <data.zarr>           # Display dataset information
 luxar info <data.zarr> --stats   # Display with detailed statistics
+luxar profiles                   # List network simulation profiles
+
+# Network simulation (for testing viewer performance)
+luxar serve <data.zarr> --profile 3g --viewer      # Simulate 3G mobile
+luxar serve <data.zarr> --bandwidth 1mbps --latency 200ms  # Custom simulation
+luxar demo --profile satellite --open              # Demo with high latency
+luxar viewer --data <data.zarr> --profile rural    # Test poor connection
 ```
 
 ### Development Commands
@@ -530,6 +537,67 @@ See [packages/luxar-viewer/PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/docs/PLAYW
 10. Example/test datasets should always be named: 'something_something_example(.py|.zarr)' (e.g., 'test_4d_rainbow_sphere_example.zarr')
 11. Resulting zarr datasets from examples can be left in the packages/luxar/examples folder - no need to copy them elsewhere
 12. **You CAN now run and debug the viewer autonomously** using `pnpm agent:debug` (Playwright). Use this to verify fixes, inspect state, and debug issues without asking the user to open a browser. See the "AI-Assisted Debugging" section above.
+13. **Network Simulation for Performance Testing**: Use `--profile` or individual simulation flags (`--bandwidth`, `--latency`, `--jitter`, `--packet-loss`) to test viewer performance under realistic network conditions. See "Network Simulation Testing" section below.
+
+### Network Simulation Testing
+
+**Purpose**: Test viewer performance and UX under various network conditions (3G, 4G, satellite, etc.)
+
+**Quick Examples**:
+```bash
+# List available profiles
+luxar profiles
+
+# Test with slow mobile connection
+luxar serve data.zarr --profile 3g --viewer --open
+
+# Custom simulation
+luxar serve data.zarr --bandwidth 500kbps --latency 200ms --jitter 10% --packet-loss 2%
+
+# Demo with high latency
+luxar demo --profile satellite --open
+```
+
+**Common Testing Scenarios**:
+
+1. **Cache Effectiveness**: Test if caching reduces redundant requests under bandwidth constraints
+   ```bash
+   luxar serve data.zarr --bandwidth 100kbps --viewer
+   # Watch browser DevTools Network tab
+   ```
+
+2. **Progressive Loading**: Verify UI remains responsive during slow chunk loading
+   ```bash
+   luxar serve large_dataset.zarr --profile 3g --viewer
+   ```
+
+3. **Error Handling**: Test viewer resilience to packet loss
+   ```bash
+   luxar serve data.zarr --packet-loss 5% --viewer
+   ```
+
+4. **Latency Tolerance**: Check if high-latency networks affect UX
+   ```bash
+   luxar serve data.zarr --profile satellite --viewer
+   ```
+
+**Profiles Available**: `3g`, `4g`, `5g`, `broadband`, `fast-broadband`, `slow-broadband`, `satellite`, `rural`, `congested`
+
+**Parameters**:
+- `--profile <name>` - Use preset connection profile
+- `--bandwidth <value>` - Limit bandwidth (e.g., '1mbps', '500kbps')
+- `--latency <value>` - Add request latency (e.g., '100ms', '1s')
+- `--jitter <value>` - Add latency variation (e.g., '10%', '0.1')
+- `--packet-loss <value>` - Simulate dropped requests (e.g., '1%', '0.01')
+
+**Important Notes**:
+- Simulation applies to **data server only** (not viewer HTML/JS/CSS)
+- Individual parameters override profile defaults
+- For `viewer` command, simulation requires `--data` to be specified
+- Network simulation is for **development/testing only** - never use in production
+- View actual network performance in browser DevTools Network tab
+
+**Technical Details**: See `docs/NETWORK_SIMULATION_SPEC.md` for complete specification
 
 ## Technical Documentation
 
