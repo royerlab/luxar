@@ -407,8 +407,8 @@ describe('SceneManager', () => {
 
     it('should handle loading errors gracefully', async () => {
       const error = new Error('Failed to load');
-      // Use the direct mock reference
-      mockLoadScene.mockRejectedValueOnce(error);
+      // Use the direct mock reference - cast to any to use mock methods
+      (mockLoadScene as any).mockRejectedValue(error);
 
       // Should throw the error after showing error UI
       await expect(sceneManager.loadSceneData('http://example.com/data.zarr')).rejects.toThrow(
