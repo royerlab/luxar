@@ -27,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to test fixtures
-const FIXTURES_DIR = path.resolve(__dirname, '../../tests/fixtures');
+const FIXTURES_DIR = path.resolve(__dirname, '../../../../tests/fixtures');
 
 /**
  * Helper to load array with attributes from a zarr dataset
