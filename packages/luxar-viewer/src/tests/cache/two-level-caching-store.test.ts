@@ -541,4 +541,76 @@ describe('TwoLevelCachingStore', () => {
       expect(fetchCount2).toBe(1); // No additional fetches
     });
   });
+
+  describe('Prefetcher Integration', () => {
+    it('should call prefetcher.onAccess() on L3 fetch', async () => {
+      const mockPrefetcher = {
+        onAccess: vi.fn(),
+      };
+
+      store.setPrefetcher(mockPrefetcher as any);
+
+      // First access - will be L3 fetch (HTTP)
+      await store.get('test.chunk');
+
+      // Prefetcher should have been called
+      expect(mockPrefetcher.onAccess).toHaveBeenCalledWith('test.chunk');
+    });
+
+    it('should call prefetcher.onAccess() on L2 hit', async () => {
+      // First: populate L2 cache
+      await store.get('test.chunk');
+
+      // Attach prefetcher AFTER first load
+      const mockPrefetcher = {
+        onAccess: vi.fn(),
+      };
+      store.setPrefetcher(mockPrefetcher as any);
+
+      // Clear L1 so next access is L2 hit
+      store.clearL1();
+
+      // Second access - should be L2 hit
+      await store.get('test.chunk');
+
+      // Prefetcher should have been called for L2 hit
+      expect(mockPrefetcher.onAccess).toHaveBeenCalledWith('test.chunk');
+    });
+
+    it('should NOT call prefetcher.onAccess() on L1 hit', async () => {
+      const mockPrefetcher = {
+        onAccess: vi.fn(),
+      };
+
+      store.setPrefetcher(mockPrefetcher as any);
+
+      // First access - L3 fetch
+      await store.get('test.chunk');
+      mockPrefetcher.onAccess.mockClear(); // Reset
+
+      // Second access - should be L1 hit
+      await store.get('test.chunk');
+
+      // Prefetcher should NOT have been called for L1 hit
+      expect(mockPrefetcher.onAccess).not.toHaveBeenCalled();
+    });
+
+    it('should clear prefetcher reference on dispose', async () => {
+      const mockPrefetcher = {
+        onAccess: vi.fn(),
+      };
+
+      store.setPrefetcher(mockPrefetcher as any);
+      expect((store as any).prefetcher).toBe(mockPrefetcher);
+
+      await store.dispose();
+      expect((store as any).prefetcher).toBeNull();
+    });
+
+    it('should work without prefetcher attached', async () => {
+      // No prefetcher attached - should work fine
+      const result = await store.get('test.chunk');
+      expect(result).toBeDefined();
+    });
+  });
 });
