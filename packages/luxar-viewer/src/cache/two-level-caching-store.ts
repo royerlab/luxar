@@ -1,6 +1,7 @@
 import type { AsyncReadable } from '@zarrita/storage';
 import { SegmentedLRUCache } from './segmented-lru-cache';
 import { OPFSStore } from './opfs-store';
+import type { ChunkPrefetcher } from './chunk-prefetcher';
 
 export interface TwoLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
@@ -20,6 +21,7 @@ export interface TwoLevelCachingStoreOptions {
 export class TwoLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
   private l2Store: OPFSStore | null = null;
+  private prefetcher: ChunkPrefetcher | null = null;
   private baseUrl: string;
   private l2MaxSize: number;
   private enabled: boolean;
@@ -51,6 +53,13 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
     // Save L2 max size for later initialization
     this.l2MaxSize = options?.l2MaxSize ?? TwoLevelCachingStore.DEFAULT_L2_SIZE;
+  }
+
+  /**
+   * Attach a prefetcher to receive access notifications.
+   */
+  setPrefetcher(prefetcher: ChunkPrefetcher | null): void {
+    this.prefetcher = prefetcher;
   }
 
   /**
@@ -97,6 +106,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
         this.log(`L2 hit: ${key}`, 'info');
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
+        // Trigger prefetch on L2 hit
+        this.prefetcher?.onAccess(key);
         return l2Hit;
       }
     }
@@ -114,6 +125,9 @@ export class TwoLevelCachingStore implements AsyncReadable {
       if (this.enabled && this.l2Store) {
         this.l2Store.set(key, data).catch(() => {});
       }
+
+      // Trigger prefetch on L3 fetch
+      this.prefetcher?.onAccess(key);
 
       return data;
     } catch (error) {
@@ -253,6 +267,9 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * Dispose the cache store. Flushes pending writes and clears L1.
    */
   async dispose(): Promise<void> {
+    // Clear prefetcher reference (in-flight requests will complete harmlessly)
+    this.prefetcher = null;
+
     if (this.l2Store) {
       await this.l2Store.dispose();
     }

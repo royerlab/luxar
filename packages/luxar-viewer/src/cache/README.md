@@ -1,13 +1,14 @@
 # Luxar Viewer Cache Package
 
-Two-level caching system for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
+Two-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
 ## Overview
 
-This package implements a transparent caching layer for zarr datasets:
+This package implements a transparent caching and prefetching layer for zarr datasets:
 
 - **L1 (Memory)**: 100MB segmented LRU cache with metadata protection
 - **L2 (OPFS)**: 2GB persistent storage surviving browser restarts
+- **Intelligent Prefetching**: Proactive loading of adjacent chunks to hide network latency
 - **Content-hash validation**: Automatic cache invalidation when data changes
 - **Zero overhead**: Stores raw compressed chunks (no re-compression)
 
@@ -47,12 +48,66 @@ Override cache behavior via URL parameters:
 - `?no-cache` - Disable all caching for this session
 - `?cache-debug` - Enable verbose cache logging
 - `?clear-cache` - Clear OPFS cache before loading dataset
+- `?no-prefetch` - Disable prefetching (cache still active)
+- `?prefetch-debug` - Enable verbose prefetch logging
 
 Example:
 
 ```
-http://localhost:5173/?src=http://example.com/data.zarr&cache-debug&clear-cache
+http://localhost:5173/?src=http://example.com/data.zarr&cache-debug&prefetch-debug
 ```
+
+## Intelligent Prefetching
+
+The cache includes an **intelligent prefetching system** that proactively loads adjacent chunks to hide network latency.
+
+### How It Works
+
+When a chunk is accessed from L2 (OPFS) or L3 (HTTP):
+
+1. Parse chunk indices from the key (e.g., `positions/1.2.3` → `[1, 2, 3]`)
+2. Calculate adjacent chunks (±1 in each dimension)
+3. Queue them for background prefetching
+4. Limit to 4 concurrent prefetches (leaves bandwidth for normal requests)
+
+### Example
+
+```
+User requests: positions/1.2.3
+             ↓
+Cache prefetches (in background):
+  positions/0.2.3  (dim 0: -1)
+  positions/2.2.3  (dim 0: +1)
+  positions/1.1.3  (dim 1: -1)
+  positions/1.3.3  (dim 1: +1)
+  positions/1.2.2  (dim 2: -1)
+  positions/1.2.4  (dim 2: +1)
+```
+
+### Benefits
+
+- **Reduced Latency**: Adjacent chunks pre-loaded before explicit request
+- **Transparent**: No API changes required, works automatically
+- **Bandwidth-Friendly**: Limited concurrency prevents congestion
+- **Non-Blocking**: Fire-and-forget pattern, never blocks normal requests
+
+### Configuration
+
+Prefetching is **enabled by default** and configurable via ChunkPrefetcher options:
+
+```typescript
+import { ChunkPrefetcher } from '../cache';
+
+const prefetcher = new ChunkPrefetcher(store, {
+  maxConcurrent: 4, // Max concurrent prefetch requests
+  enabled: true, // Enable/disable prefetching
+  debug: false, // Enable debug logging
+});
+
+store.setPrefetcher(prefetcher);
+```
+
+For full details, see [`docs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/CACHE_PREFETCHING_SPEC.md).
 
 ## API Reference
 
@@ -133,6 +188,10 @@ List all cached datasets in OPFS:
 ```
 
 ### Modules
+
+**TwoLevelCachingStore** - Main orchestrator implementing AsyncReadable interface
+
+**ChunkPrefetcher** - Intelligent adjacent chunk prefetcher (enabled by default)
 
 **LRUCache** - Generic LRU cache with O(1) operations
 
