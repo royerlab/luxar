@@ -395,7 +395,7 @@ export const Matrix4 = vi.fn().mockImplementation(() => {
 
       return this;
     }),
-    compose: vi.fn(function (this: any, position: any, quaternion: any, scale: any) {
+    compose: vi.fn(function (this: any, position: any, _quaternion: any, _scale: any) {
       // Simplified compose - just sets position
       const te = this.elements;
       te[12] = position.x;
@@ -403,7 +403,7 @@ export const Matrix4 = vi.fn().mockImplementation(() => {
       te[14] = position.z;
       return this;
     }),
-    decompose: vi.fn(function (this: any, position: any, quaternion: any, scale: any) {
+    decompose: vi.fn(function (this: any, position: any, _quaternion: any, _scale: any) {
       // Simplified decompose - just extracts position
       const te = this.elements;
       position.set(te[12], te[13], te[14]);
@@ -606,7 +606,7 @@ export class Object3D {
   add = vi.fn(function (this: any, ...objects: any[]) {
     for (const object of objects) {
       if (object === this) {
-        console.error("Object3D.add: object can't be added as a child of itself.", object);
+        console.error('Object3D.add: object can\'t be added as a child of itself.', object);
         continue;
       }
 
@@ -697,7 +697,7 @@ export class Object3D {
     }
   });
 
-  lookAt = vi.fn(function (this: any, x: any, y?: number, z?: number) {
+  lookAt = vi.fn(function (this: any, _x: any, _y?: number, _z?: number) {
     // Simplified lookAt implementation
     return this;
   });
@@ -747,12 +747,12 @@ export const Group = vi.fn().mockImplementation(() => {
 
 export const Scene = vi.fn().mockImplementation(() => {
   const obj = new Object3D();
-  obj.type = 'Scene';
-  obj.background = null;
-  obj.environment = null;
-  obj.fog = null;
-  obj.overrideMaterial = null;
-  obj.autoUpdate = true;
+  (obj as any).type = 'Scene';
+  (obj as any).background = null;
+  (obj as any).environment = null;
+  (obj as any).fog = null;
+  (obj as any).overrideMaterial = null;
+  (obj as any).autoUpdate = true;
   return obj;
 });
 
@@ -762,10 +762,10 @@ export const Scene = vi.fn().mockImplementation(() => {
 
 export const Camera = vi.fn().mockImplementation(() => {
   const obj = new Object3D();
-  obj.type = 'Camera';
-  obj.matrixWorldInverse = new (Matrix4 as any)();
-  obj.projectionMatrix = new (Matrix4 as any)();
-  obj.projectionMatrixInverse = new (Matrix4 as any)();
+  (obj as any).type = 'Camera';
+  (obj as any).matrixWorldInverse = new (Matrix4 as any)();
+  (obj as any).projectionMatrix = new (Matrix4 as any)();
+  (obj as any).projectionMatrixInverse = new (Matrix4 as any)();
   return obj;
 });
 
@@ -1073,17 +1073,17 @@ export const PointsMaterial = vi.fn().mockImplementation((parameters: any = {}) 
 
 export const Mesh = vi.fn().mockImplementation((geometry?: any, material?: any) => {
   const obj = new Object3D();
-  obj.type = 'Mesh';
-  obj.geometry = geometry || null;
-  obj.material = material || null;
+  (obj as any).type = 'Mesh';
+  (obj as any).geometry = geometry || null;
+  (obj as any).material = material || null;
   return obj;
 });
 
 export const Points = vi.fn().mockImplementation((geometry?: any, material?: any) => {
   const obj = new Object3D();
-  obj.type = 'Points';
-  obj.geometry = geometry || null;
-  obj.material = material || null;
+  (obj as any).type = 'Points';
+  (obj as any).geometry = geometry || null;
+  (obj as any).material = material || null;
   return obj;
 });
 
