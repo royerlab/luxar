@@ -140,14 +140,6 @@ function validateControls(_config: AppConfig, _errors: string[], _warnings: stri
 function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { dataLoading } = config;
 
-  // Cache validation
-  if (dataLoading.cache.maxSizeMB <= 0) {
-    errors.push(`Invalid cache max size: ${dataLoading.cache.maxSizeMB} MB (must be > 0)`);
-  }
-  if (dataLoading.cache.ttlMs < 0) {
-    errors.push(`Invalid cache TTL: ${dataLoading.cache.ttlMs} ms (must be >= 0)`);
-  }
-
   // Network validation
   if (dataLoading.network.timeoutMs <= 0) {
     errors.push(`Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be > 0)`);

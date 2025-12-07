@@ -56,17 +56,7 @@ export class LoadingAdvisor {
    * Analyze metrics for issues
    */
   analyzeMetrics(metrics: LoaderMetrics): void {
-    // Calculate cache hit rate as percentage
-    const cacheAccesses = metrics.cacheHits + metrics.cacheMisses;
-    const cacheHitRate = cacheAccesses > 0 ? (metrics.cacheHits / cacheAccesses) * 100 : 100;
-
-    // Check cache hit rate (now properly calculated as percentage)
-    if (cacheHitRate < this.thresholds.lowCacheHitRate && cacheAccesses > 10) {
-      this.addLowCacheRateRecommendation(metrics, cacheHitRate);
-    } else {
-      // Remove low cache rate recommendation if it's now good
-      this.recommendations.delete('low-cache-rate');
-    }
+    // Note: Cache hit rate analysis removed (L0 cache removed)
 
     // Check query performance
     if (metrics.avgQueryTime > this.thresholds.highQueryTime) {
@@ -125,24 +115,6 @@ export class LoadingAdvisor {
     this.recommendations.set(rec.id, rec);
   }
 
-  /**
-   * Add low cache rate recommendation
-   */
-  private addLowCacheRateRecommendation(_metrics: LoaderMetrics, actualHitRate: number): void {
-    const rec: Recommendation = {
-      id: 'low-cache-rate',
-      severity: 'warning',
-      category: 'performance',
-      title: 'Low Cache Hit Rate',
-      message: `Only ${actualHitRate.toFixed(1)}% of requests served from cache`,
-      suggestion: 'Increase cache size or adjust preload radius for better performance',
-      metric: 'cacheHitRate',
-      value: actualHitRate,
-      threshold: this.thresholds.lowCacheHitRate,
-    };
-
-    this.recommendations.set(rec.id, rec);
-  }
 
   /**
    * Add high query time recommendation
@@ -258,7 +230,7 @@ export class LoadingAdvisor {
   /**
    * Update recommendations based on global stats
    */
-  updateRecommendations(stats: any): void {
+  updateRecommendations(_stats: any): void {
     // Clear old global recommendations
     const toRemove: string[] = [];
     for (const [id, rec] of this.recommendations) {
@@ -268,23 +240,7 @@ export class LoadingAdvisor {
     }
     toRemove.forEach((id) => this.recommendations.delete(id));
 
-    // Check global cache hit rate
-    if (stats.globalCacheHitRate !== undefined && stats.totalQueries > 10) {
-      if (stats.globalCacheHitRate < this.thresholds.lowCacheHitRate) {
-        const rec: Recommendation = {
-          id: 'global-low-cache',
-          severity: 'warning',
-          category: 'performance',
-          title: 'Low Global Cache Hit Rate',
-          message: `Overall cache hit rate is ${stats.globalCacheHitRate.toFixed(1)}%`,
-          suggestion: 'Consider increasing cache memory limit or preloading more data',
-          metric: 'globalCacheHitRate',
-          value: stats.globalCacheHitRate,
-          threshold: this.thresholds.lowCacheHitRate,
-        };
-        this.recommendations.set(rec.id, rec);
-      }
-    }
+    // Note: Cache hit rate analysis removed (L0 cache removed)
   }
 
   /**

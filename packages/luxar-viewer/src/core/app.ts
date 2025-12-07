@@ -7,7 +7,7 @@ import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI, clearError } from '../ui/helpers';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 export class LuxarApp {
@@ -199,22 +199,6 @@ export class LuxarApp {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
 
-    // Clear cache when loading new scene (new architecture)
-    import('../data/scene-loader-manager')
-      .then(({ SceneLoaderManager }) => {
-        const sceneLoader = SceneLoaderManager.getInstance().getDefaultLoader();
-        if (sceneLoader) {
-          sceneLoader.clearCaches();
-          log.custom(LogEmoji.DELETE, Modules.LUXAR, 'Cleared data cache for new scene');
-        } else {
-          log.warning(Modules.LUXAR, 'No default scene loader available for cache clearing');
-        }
-      })
-      .catch((error) => {
-        log.error(Modules.LUXAR, 'Failed to clear scene caches:', error);
-        // Continue anyway - cache clearing is not critical for functionality
-      });
-
     // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
     // monitor.disconnectAllLoaders() when loading a new scene
 
@@ -347,10 +331,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-                ndim: dims.ndim,
-                displayed: dims.displayed,
-                currentStep: dims.currentStep,
-              }
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
             : null,
           cameraPosition: {
             x: this.sceneManager.camera.position.x,

@@ -6,19 +6,11 @@
  */
 
 // Main exports
-export {
-  loadScene,
-  updateView,
-  updateSceneForDimensions,
-  getCacheStats,
-  clearCaches,
-  dispose,
-} from './zarr-loader';
+export { loadScene, updateView, updateSceneForDimensions, dispose } from './zarr-loader';
 
 // Core components
 export { SceneLoader } from './scene-loader';
 export { PointSpatialIndexLoader } from './point-spatial-index-loader';
-export { RangeCache, RangeCacheKey } from './range-cache';
 
 // State management
 export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
@@ -37,7 +29,6 @@ export type {
   ViewState,
   PointsData,
   LoaderConfig,
-  CacheStats,
   PointRange,
   SceneNode,
   SpatialQueryResult,

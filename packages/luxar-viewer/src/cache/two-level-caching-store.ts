@@ -234,7 +234,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
   getStats(): {
     l1: { metadataSize: number; chunksSize: number; metadataCount: number; chunksCount: number };
     l2: { size: number; count: number };
-  } {
+    } {
     return {
       l1: this.l1Cache.getStats(),
       l2: this.l2Store?.getStats() ?? { size: 0, count: 0 },

@@ -169,12 +169,6 @@ vi.mock('../data/point-spatial-index-loader', () => ({
         usedSpatialIndex: true,
       },
     }),
-    getCacheStats: vi.fn().mockReturnValue({
-      hits: 10,
-      misses: 5,
-      hitRate: 0.67,
-    }),
-    clearCache: vi.fn(),
     dispose: vi.fn(),
   })),
 }));
@@ -376,8 +370,6 @@ describe('SceneLoader', () => {
       const mockLoader = {
         updateView: vi.fn().mockRejectedValue(new Error('Update failed')),
         dispose: vi.fn(),
-        getCacheStats: vi.fn().mockReturnValue({}),
-        clearCache: vi.fn(),
       };
       (sceneLoader as any).loaders.set('/failing', mockLoader);
 
@@ -413,23 +405,6 @@ describe('SceneLoader', () => {
   });
 
   describe('resource management', () => {
-    it('should get cache statistics from all loaders', async () => {
-      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-
-      const stats = sceneLoader.getCacheStats();
-
-      expect(stats).toBeInstanceOf(Map);
-    });
-
-    it('should clear all loader caches', async () => {
-      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-
-      sceneLoader.clearCaches();
-
-      // Verify through mocks that clearCache was called
-      expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('error'));
-    });
-
     it('should dispose all resources properly', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
@@ -525,10 +500,7 @@ describe('SceneLoader', () => {
 
   describe('config handling', () => {
     it('should accept and use loader configuration', () => {
-      const config: LoaderConfig = {
-        maxMemoryMB: 1000,
-        evictionStrategy: 'lfu',
-      };
+      const config: LoaderConfig = {};
 
       const loader = new SceneLoader(config);
       expect((loader as any).config).toEqual(config);

@@ -924,26 +924,6 @@ export class SceneLoader {
   }
 
   /**
-   * Get cache statistics from all loaders
-   */
-  getCacheStats(): Map<string, any> {
-    const stats = new Map();
-    for (const [path, loader] of this.loaders) {
-      stats.set(path, loader.getCacheStats());
-    }
-    return stats;
-  }
-
-  /**
-   * Clear all caches
-   */
-  clearCaches(): void {
-    for (const loader of this.loaders.values()) {
-      loader.clearCache();
-    }
-  }
-
-  /**
    * Show the monitor UI
    */
   showMonitor(): void {

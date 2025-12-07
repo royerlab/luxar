@@ -23,9 +23,6 @@ export class PerformanceTimeline {
   // Metrics tracking
   private lastQueryTime = 0;
   private lastLoadTime = 0;
-  private recentCacheHits = 0;
-  private recentCacheMisses = 0;
-  private lastCacheCounterReset = Date.now();
 
   // Rendering optimization
   private renderPending = false;
@@ -63,14 +60,6 @@ export class PerformanceTimeline {
           this.lastLoadTime = event.data.latency;
         }
         break;
-
-      case 'cache-hit':
-        this.recentCacheHits++;
-        break;
-
-      case 'cache-miss':
-        this.recentCacheMisses++;
-        break;
     }
 
     // Add timeline point only at reasonable intervals (aggregate events)
@@ -83,7 +72,6 @@ export class PerformanceTimeline {
         timestamp: now,
         queryTime: this.lastQueryTime,
         loadTime: this.lastLoadTime,
-        cacheHitRate: this.calculateRecentCacheRate(),
         event: event.type,
         loaderType: event.loader,
       };
@@ -113,13 +101,6 @@ export class PerformanceTimeline {
         // Keep only the most recent maxPoints
         this.points = this.points.slice(this.points.length - this.maxPoints);
       }
-    }
-
-    // Reset cache counters every 5 seconds (reliable timing)
-    if (now - this.lastCacheCounterReset >= 5000) {
-      this.recentCacheHits = 0;
-      this.recentCacheMisses = 0;
-      this.lastCacheCounterReset = now;
     }
 
     // Schedule render with requestAnimationFrame
@@ -248,16 +229,6 @@ export class PerformanceTimeline {
     // Draw metrics
     this.drawMetric(ctx, width, height, visiblePoints, 'queryTime', this.colors.queryTime, 100);
     this.drawMetric(ctx, width, height, visiblePoints, 'loadTime', this.colors.loadTime, 100);
-    this.drawMetric(
-      ctx,
-      width,
-      height,
-      visiblePoints,
-      'cacheHitRate',
-      this.colors.cacheRate,
-      100,
-      true
-    );
 
     // Draw events
     this.drawEvents(ctx, width, height, visiblePoints);
@@ -376,7 +347,6 @@ export class PerformanceTimeline {
     const legends = [
       { label: 'Query', color: this.colors.queryTime },
       { label: 'Load', color: this.colors.loadTime },
-      { label: 'Cache', color: this.colors.cacheRate },
     ];
 
     ctx.font = '10px sans-serif';
@@ -407,20 +377,9 @@ export class PerformanceTimeline {
         return 0;
       case 'loadTime':
         return 15;
-      case 'cacheHitRate':
-        return 30;
       default:
         return 0;
     }
-  }
-
-  /**
-   * Calculate recent cache hit rate
-   */
-  private calculateRecentCacheRate(): number {
-    const total = this.recentCacheHits + this.recentCacheMisses;
-    if (total === 0) return 0;
-    return (this.recentCacheHits / total) * 100;
   }
 
   /**
@@ -430,9 +389,6 @@ export class PerformanceTimeline {
     this.points = [];
     this.lastQueryTime = 0;
     this.lastLoadTime = 0;
-    this.recentCacheHits = 0;
-    this.recentCacheMisses = 0;
-    this.lastCacheCounterReset = Date.now();
     this.scheduleRender();
   }
 
@@ -442,18 +398,15 @@ export class PerformanceTimeline {
   getStats(): {
     avgQueryTime: number;
     avgLoadTime: number;
-    avgCacheRate: number;
-  } {
+    } {
     if (this.points.length === 0) {
-      return { avgQueryTime: 0, avgLoadTime: 0, avgCacheRate: 0 };
+      return { avgQueryTime: 0, avgLoadTime: 0 };
     }
 
     let totalQuery = 0;
     let queryCount = 0;
     let totalLoad = 0;
     let loadCount = 0;
-    let totalCache = 0;
-    let cacheCount = 0;
 
     for (const point of this.points) {
       if (point.queryTime !== undefined) {
@@ -464,16 +417,11 @@ export class PerformanceTimeline {
         totalLoad += point.loadTime;
         loadCount++;
       }
-      if (point.cacheHitRate !== undefined) {
-        totalCache += point.cacheHitRate;
-        cacheCount++;
-      }
     }
 
     return {
       avgQueryTime: queryCount > 0 ? totalQuery / queryCount : 0,
       avgLoadTime: loadCount > 0 ? totalLoad / loadCount : 0,
-      avgCacheRate: cacheCount > 0 ? totalCache / cacheCount : 0,
     };
   }
 
