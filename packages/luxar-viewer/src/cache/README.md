@@ -167,9 +167,18 @@ Clear L2 OPFS cache only (L1 untouched).
 
 Clear both L1 and L2 caches.
 
+**`setPrefetcher(prefetcher: ChunkPrefetcher | null): void`**
+
+Attach a prefetcher to enable intelligent adjacent chunk prefetching. Pass `null` to disable.
+
+```typescript
+const prefetcher = new ChunkPrefetcher(store, { maxConcurrent: 4 });
+store.setPrefetcher(prefetcher); // Enable prefetching
+```
+
 **`async dispose(): Promise<void>`**
 
-Flush pending metadata writes and clear L1. Call when navigating away.
+Flush pending metadata writes, clear prefetcher reference, and clear L1. Call when navigating away.
 
 **`async listDatasets(): Promise<Array<{...}>>`**
 
@@ -185,6 +194,40 @@ List all cached datasets in OPFS:
   },
   ...
 ]
+```
+
+### ChunkPrefetcher
+
+Intelligent prefetcher for proactive adjacent chunk loading.
+
+#### Constructor
+
+```typescript
+new ChunkPrefetcher(store: TwoLevelCachingStore, options?: {
+  maxConcurrent?: number;       // Max concurrent prefetches (default: 4)
+  enabled?: boolean;            // Enable/disable (default: true)
+  useFetchPriority?: boolean;   // Use Fetch Priority API (default: true, not yet implemented)
+  debug?: boolean;              // Enable debug logging (default: false)
+  urlParams?: URLSearchParams;  // For testing (optional)
+})
+```
+
+#### Methods
+
+**`onAccess(key: string): void`**
+
+Called by store when a chunk is accessed from L2 or L3. Enqueues adjacent chunks for prefetching. Called automatically - not for direct use.
+
+**`getStats(): { queued, inFlight, enabled }`**
+
+Get prefetch queue statistics:
+
+```typescript
+{
+  queued: number,    // Chunks waiting to be prefetched
+  inFlight: number,  // Chunks currently being prefetched
+  enabled: boolean   // Whether prefetching is enabled
+}
 ```
 
 ### Modules
