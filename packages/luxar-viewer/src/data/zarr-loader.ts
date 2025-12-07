@@ -118,36 +118,6 @@ export async function updateSceneForDimensions(
 }
 
 /**
- * Get cache statistics for monitoring.
- *
- * @param loaderId - Optional loader ID, defaults to default loader
- */
-export function getCacheStats(loaderId?: string): Map<string, any> | null {
-  const manager = SceneLoaderManager.getInstance();
-  const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
-
-  if (!sceneLoader) {
-    return null;
-  }
-  return sceneLoader.getCacheStats();
-}
-
-/**
- * Clear all caches to free memory.
- *
- * @param loaderId - Optional loader ID, defaults to default loader
- */
-export function clearCaches(loaderId?: string): void {
-  const manager = SceneLoaderManager.getInstance();
-  const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
-
-  if (sceneLoader) {
-    sceneLoader.clearCaches();
-    log.custom(LogEmoji.CLEAN, Modules.LUXAR, 'Caches cleared');
-  }
-}
-
-/**
  * Dispose of all resources and clean up.
  *
  * @param loaderId - Optional loader ID to dispose, or dispose all if not specified

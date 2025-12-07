@@ -24,14 +24,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  loadScene,
-  updateView,
-  updateSceneForDimensions,
-  getCacheStats,
-  clearCaches,
-  dispose,
-} from '../../../data';
+import { loadScene, updateView, updateSceneForDimensions, dispose } from '../../../data';
 import { SimpleDims } from '../../../types/dims';
 import * as THREE from 'three';
 
@@ -314,12 +307,7 @@ describe('Data Loading Integration', () => {
     });
 
     it('should configure scene loader with provided config', async () => {
-      const config = {
-        maxMemoryMB: 1000,
-        evictionStrategy: 'lfu' as const,
-      };
-
-      const scene = await loadScene('http://localhost:8000/test.zarr', config);
+      const scene = await loadScene('http://localhost:8000/test.zarr');
 
       expect(scene).toBeDefined();
     });
@@ -441,36 +429,6 @@ describe('Data Loading Integration', () => {
     });
   });
 
-  describe('cache management', () => {
-    beforeEach(async () => {
-      await loadScene('http://localhost:8000/test.zarr');
-    });
-
-    it('should get cache statistics', () => {
-      const stats = getCacheStats();
-
-      expect(stats).toBeInstanceOf(Map);
-      expect(stats?.get('/points')).toHaveProperty('hitRate', 0.67);
-    });
-
-    it('should clear all caches', async () => {
-      clearCaches();
-
-      // Verify clearCaches was called on the actual loader
-      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
-      const mockManager = SceneLoaderManager.getInstance() as any;
-      const mockLoader = mockManager.getDefaultLoader() as any;
-      expect(mockLoader.clearCaches).toHaveBeenCalled();
-    });
-
-    it('should return null stats when no scene loaded', () => {
-      dispose();
-
-      const stats = getCacheStats();
-      expect(stats).toBeNull();
-    });
-  });
-
   describe('resource cleanup', () => {
     it('should dispose all resources', async () => {
       await loadScene('http://localhost:8000/test.zarr');
@@ -486,8 +444,6 @@ describe('Data Loading Integration', () => {
     it('should handle multiple dispose calls safely', () => {
       dispose();
       dispose(); // Should not throw
-
-      expect(getCacheStats()).toBeNull();
     });
   });
 

@@ -73,8 +73,6 @@ export interface LoaderMetrics {
   // Basic counters
   queries: number;
   loads: number;
-  cacheHits: number;
-  cacheMisses: number;
   evictions: number;
   errors: number;
   // Performance metrics
@@ -85,7 +83,6 @@ export interface LoaderMetrics {
   visiblePoints: number; // Currently visible/rendered points (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
-  cacheHitRate: number;
   // Memory usage
   memoryUsed: number;
   memoryLimit: number;

@@ -435,11 +435,6 @@ export const config: AppConfig = {
       defaultTolerance: 0.1, // Default tolerance for nD slicing
       defaultMaxRadius: 0.1, // Default max radius for spatial queries
     },
-    cache: {
-      maxSizeMB: 512,
-      evictionStrategy: 'lru' as const,
-      ttlMs: 300000,
-    },
     network: {
       timeoutMs: 30000,
       maxConcurrent: 6,
