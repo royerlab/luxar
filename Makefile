@@ -1,9 +1,9 @@
 # Makefile for Luxar development tasks
 # Uses Hatch for on-demand environment management
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
-        test-cov test-all clean clean-examples pre-commit-install pre-commit-run check dev-setup \
+        test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
         demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
-        viewer-test viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
+        viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
         demo-and-serve docs-build docs-serve stats env-show env-prune shell build publish-test publish
 
 # Default target
@@ -60,9 +60,11 @@ test-python:  ## Run Python tests (alias for test)
 test-cov:  ## Run Python tests with coverage report
 	hatch run test-cov
 
-test-all:  ## Run all tests (Python and TypeScript)
+test-all:  ## Run all tests (Python and TypeScript with fresh fixtures)
 	@echo "🐍 Running Python tests..."
 	hatch run test
+	@echo "🔬 Generating TypeScript test fixtures..."
+	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 	@echo "📘 Running TypeScript tests..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -215,7 +217,18 @@ viewer-rebuild:  ## Complete clean rebuild of viewer (removes dist, .vite, reins
 	cd packages/luxar-viewer && pnpm build
 	@echo "✅ Viewer rebuild complete!"
 
-viewer-test:  ## Run TypeScript tests
+test-fixtures:  ## Generate test fixtures for TypeScript tests
+	@echo "🔬 Generating test fixtures..."
+	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+
+viewer-test-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test
+
+viewer-test:  ## Run TypeScript tests (without regenerating fixtures)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
