@@ -103,22 +103,6 @@ function isValidTab(tab: string): tab is ValidTab {
   return VALID_TABS.includes(tab as ValidTab);
 }
 
-interface LoaderWithCacheStats {
-  getCacheStats(): {
-    hits: number;
-    misses: number;
-    avgAccessTime: number;
-  };
-}
-
-function hasCacheStats(loader: unknown): loader is LoaderWithCacheStats {
-  return (
-    typeof loader === 'object' &&
-    loader !== null &&
-    'getCacheStats' in loader &&
-    typeof (loader as Record<string, unknown>).getCacheStats === 'function'
-  );
-}
 import {
   renderLoaderItem,
   renderOverviewContent,
@@ -336,14 +320,6 @@ export class DataLoadingMonitor {
         }
         break;
 
-      case 'cache-hit':
-        metrics.cacheHits++;
-        break;
-
-      case 'cache-miss':
-        metrics.cacheMisses++;
-        break;
-
       case 'evict':
         metrics.evictions++;
         break;
@@ -352,10 +328,6 @@ export class DataLoadingMonitor {
         metrics.errors++;
         break;
     }
-
-    // Update cache hit rate
-    const totalCacheAccess = metrics.cacheHits + metrics.cacheMisses;
-    metrics.cacheHitRate = totalCacheAccess > 0 ? (metrics.cacheHits / totalCacheAccess) * 100 : 0;
 
     this.metrics.set(path, metrics);
   }
@@ -399,8 +371,6 @@ export class DataLoadingMonitor {
       path,
       queries: 0,
       loads: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
       evictions: 0,
       errors: 0,
       pointsLoaded: 0,
@@ -409,7 +379,6 @@ export class DataLoadingMonitor {
       visiblePoints: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
-      cacheHitRate: 0,
       memoryUsed: 0,
       memoryLimit: MonitorLimits.defaultMemoryLimit, // Will be overridden by actual loader limits
     };
@@ -592,26 +561,22 @@ export class DataLoadingMonitor {
           <span class="loader-type" title="Loading mode">
             ${hasSpatialIndex ? '🔍' : '📦'}
           </span>
-          
+
           <span class="points" title="Visible points">
             ${this.formatNumber(stats.visiblePoints)}
           </span>
-          
-          <span class="cache" title="Cache hit rate">
-            ${stats.globalCacheHitRate.toFixed(0)}%
-          </span>
-          
+
           <span class="memory" title="Memory usage">
             ${this.formatBytes(stats.totalMemory)}
           </span>
-          
+
           <span class="qps" title="Queries per second">
             ${stats.queriesPerSecond.toFixed(1)}/s
           </span>
-          
+
           ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
           ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
-          
+
           <button class="expand-btn" data-action="expand" title="Show details" style="
             background: none;
             border: none;
@@ -624,13 +589,13 @@ export class DataLoadingMonitor {
             ⊞
           </button>
         </div>
-        
+
         ${
-          hasSpatialIndex && this.config.showSpatialGrid
-            ? `
+  hasSpatialIndex && this.config.showSpatialGrid
+    ? `
         `
-            : ''
-        }
+    : ''
+}
       </div>
     `;
   }
@@ -853,8 +818,6 @@ export class DataLoadingMonitor {
     let totalMemory = 0;
     let totalQueries = 0;
     let totalLoads = 0;
-    let totalCacheHits = 0;
-    let totalCacheAccess = 0;
     let totalQueryTime = 0;
     let activeSpatial = 0;
     let datasetSize = 0; // Total points in all datasets (from zarr metadata)
@@ -865,8 +828,6 @@ export class DataLoadingMonitor {
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;
-      totalCacheHits += metrics.cacheHits;
-      totalCacheAccess += metrics.cacheHits + metrics.cacheMisses;
       totalQueryTime += metrics.avgQueryTime * metrics.queries;
       datasetSize += metrics.datasetSize || 0;
       visiblePoints += metrics.visiblePoints || 0;
@@ -888,10 +849,10 @@ export class DataLoadingMonitor {
       visiblePoints, // Currently visible/rendered points
       totalQueries,
       totalLoads,
-      totalCacheHits,
+      totalCacheHits: 0, // L0 cache removed
       totalPointsLoaded: totalPoints, // Alias for compatibility
       totalMemoryUsed: totalMemory, // Alias for compatibility
-      globalCacheHitRate: totalCacheAccess > 0 ? (totalCacheHits / totalCacheAccess) * 100 : 0,
+      globalCacheHitRate: 0, // L0 cache removed
       avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
       queriesPerSecond: qps,
       recommendations: this.advisor.getRecommendations(),
@@ -905,11 +866,7 @@ export class DataLoadingMonitor {
     let totalCacheMemory = 0;
     let memoryLimit = 0;
     let totalEntries = 0;
-    let totalAccesses = 0;
-    let totalHits = 0;
     let evictions = 0;
-    let totalAccessTimeWeighted = 0; // Sum of (avgAccessTime * accessCount) for weighted average
-    let totalAccessCount = 0; // Total number of cache accesses across all loaders
 
     // Aggregate from all loaders
     for (const [path, loader] of this.loaders) {
@@ -919,34 +876,15 @@ export class DataLoadingMonitor {
 
       totalCacheMemory += metrics.memoryUsed;
       memoryLimit += metrics.memoryLimit;
-      totalHits += metrics.cacheHits;
-      totalAccesses += metrics.cacheHits + metrics.cacheMisses;
       evictions += metrics.evictions;
 
       // Get actual cached ranges from the loader's cache stats
       if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
         totalEntries += metrics.spatialIndex.rangesInCache;
       }
-
-      // Get cache stats from the loader to calculate weighted average access time
-      // Use type guard for proper type checking
-      if (hasCacheStats(loader)) {
-        const cacheStats = loader.getCacheStats();
-        if (cacheStats && typeof cacheStats.avgAccessTime === 'number') {
-          const accessCount = cacheStats.hits + cacheStats.misses;
-          if (accessCount > 0) {
-            totalAccessTimeWeighted += cacheStats.avgAccessTime * accessCount;
-            totalAccessCount += accessCount;
-          }
-        }
-      }
     }
 
-    const hitRate = totalAccesses > 0 ? (totalHits / totalAccesses) * 100 : 0;
     const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
-
-    // Calculate weighted average access time
-    const avgAccessTime = totalAccessCount > 0 ? totalAccessTimeWeighted / totalAccessCount : 0;
 
     // Calculate rates once and reuse
     this.calculateRates();
@@ -956,14 +894,14 @@ export class DataLoadingMonitor {
       memoryLimit,
       memoryPercent,
       totalEntries,
-      totalAccesses,
-      recentHitRate: hitRate, // Simplified for now
+      totalAccesses: 0, // L0 cache removed
+      recentHitRate: 0, // L0 cache removed
       evictionsPerMin: evictions, // Simplified
       avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
-      reuseRatio: totalHits > 0 ? totalHits / Math.max(1, totalAccesses - totalHits) : 0,
-      hitsPerSecond: this.cachedRates.hitsPerSec,
-      missesPerSecond: this.cachedRates.missesPerSec,
-      avgAccessTime: avgAccessTime,
+      reuseRatio: 0, // L0 cache removed
+      hitsPerSecond: 0, // L0 cache removed
+      missesPerSecond: 0, // L0 cache removed
+      avgAccessTime: 0, // L0 cache removed
       queriesPerSec: this.cachedRates.queriesPerSec,
       loadsPerSec: this.cachedRates.loadsPerSec,
       bandwidth: this.cachedRates.bandwidth,

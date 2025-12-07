@@ -97,12 +97,6 @@ export interface DataLoader {
   /** Update existing data for a new view state */
   updateView(viewState: ViewState): Promise<PointsData>;
 
-  /** Get cache statistics */
-  getCacheStats(): CacheStats;
-
-  /** Clear all cached data */
-  clearCache(): void;
-
   /** Clean up resources */
   dispose(): void;
 }
@@ -111,40 +105,11 @@ export interface DataLoader {
  * Configuration for data loader behavior
  */
 export interface LoaderConfig {
-  /** Maximum memory to use for caching (MB) */
-  maxMemoryMB?: number;
-
   /** Enable debug logging */
   debug?: boolean;
 
   /** Enable data loading monitor UI */
   enableMonitor?: boolean;
-
-  /** Cache eviction strategy */
-  evictionStrategy?: 'lru' | 'lfu';
-}
-
-/**
- * Statistics about cache usage
- */
-export interface CacheStats {
-  /** Number of cached entries */
-  numEntries: number;
-
-  /** Total memory used (bytes) */
-  totalMemory: number;
-
-  /** Cache hit rate (0-1) */
-  hitRate: number;
-
-  /** Number of cache hits */
-  hits: number;
-
-  /** Number of cache misses */
-  misses: number;
-
-  /** Average cache access time in milliseconds */
-  avgAccessTime: number;
 }
 
 /**
@@ -156,23 +121,6 @@ export interface PointRange {
 
   /** Ending index (exclusive) */
   end: number;
-}
-
-/**
- * Entry in the cache
- */
-export interface CacheEntry<T = Float32Array> {
-  /** The cached data */
-  data: T;
-
-  /** Size in bytes */
-  size: number;
-
-  /** Last access timestamp */
-  lastAccess: number;
-
-  /** Access count (for LFU) */
-  accessCount: number;
 }
 
 /**

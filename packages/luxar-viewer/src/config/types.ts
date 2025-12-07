@@ -375,15 +375,6 @@ export interface UIConfig {
 }
 
 /**
- * Data loading cache configuration
- */
-export interface DataLoadingCacheConfig {
-  maxSizeMB: number;
-  evictionStrategy: 'lru' | 'lfu' | 'fifo';
-  ttlMs: number;
-}
-
-/**
  * Data loading network configuration
  */
 export interface DataLoadingNetworkConfig {
@@ -466,7 +457,6 @@ export interface DataLoadingSpatialConfig {
  */
 export interface DataLoadingConfig {
   spatial: DataLoadingSpatialConfig;
-  cache: DataLoadingCacheConfig;
   network: DataLoadingNetworkConfig;
   memory: DataLoadingMemoryConfig;
   monitor: DataLoadingMonitorConfig;

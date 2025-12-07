@@ -61,12 +61,6 @@ vi.mock('../data/range-cache', () => ({
       max: 100 * 1024 * 1024,
       percentage: 1,
     }),
-    getCacheStats: vi.fn().mockReturnValue({
-      hits: 5,
-      misses: 3,
-      evictions: 0,
-      avgAccessTime: 0.5,
-    }),
   })),
 }));
 
@@ -384,51 +378,6 @@ describe('PointSpatialIndexLoader', () => {
     });
   });
 
-  describe('caching', () => {
-    it('should use cache for repeated queries', async () => {
-      const viewState: ViewState = {
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
-        tolerance: [0, 0, 0, 0.1],
-      };
-
-      // First load - cache miss
-      const cache = (loader as any).cache;
-      cache.get.mockReturnValue(null);
-
-      await loader.loadPoints(viewState);
-
-      expect(cache.get).toHaveBeenCalled();
-      expect(cache.set).toHaveBeenCalled();
-
-      // Reset mock call count for second load
-      vi.clearAllMocks();
-
-      // Second load - cache hit
-      cache.get.mockReturnValue(new Float32Array([1, 2, 3]));
-
-      await loader.loadPoints(viewState);
-
-      // Should not call zarr.get again if cache hit
-      expect(cache.get).toHaveBeenCalled();
-    });
-
-    it('should report cache statistics correctly', () => {
-      const stats = loader.getCacheStats();
-
-      expect(stats).toHaveProperty('hits', 5);
-      expect(stats).toHaveProperty('misses', 3);
-      expect(stats).toHaveProperty('hitRate', 0.625);
-    });
-
-    it('should clear cache on demand', () => {
-      const cache = (loader as any).cache;
-
-      loader.clearCache();
-
-      expect(cache.clear).toHaveBeenCalled();
-    });
-  });
 
   describe('data projection', () => {
     it('should project nD points to 3D correctly', async () => {
@@ -521,25 +470,6 @@ describe('PointSpatialIndexLoader', () => {
       );
     });
 
-    it('should emit cache hit/miss events', async () => {
-      const listener = vi.fn();
-      loader.addEventListener(listener);
-
-      const viewState: ViewState = {
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
-        tolerance: [0, 0, 0, 0.1],
-      };
-
-      await loader.loadPoints(viewState);
-
-      // Should emit cache miss (first load)
-      expect(listener).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'cache-miss',
-        })
-      );
-    });
 
     it('should track active queries', async () => {
       // Make zarr.get slower to allow checking active queries

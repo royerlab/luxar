@@ -15,14 +15,12 @@ import {
   ViewState,
   PointsData,
   LoaderConfig,
-  CacheStats,
   PointRange,
   SceneNode,
   PositionArray,
   ColorArray,
   ScalarArray,
 } from './data-loader-types';
-import { RangeCache } from './range-cache';
 import {
   loadChunkSpatialIndex,
   queryChunksForView,
@@ -53,12 +51,10 @@ import type { ZarrSceneAttrs } from '../types/zarr';
  * Key features:
  * - Queries spatial index to find visible point ranges
  * - Loads all attributes with identical ranges (fixes alignment bug)
- * - Caches data at the range level for efficiency
  * - Projects nD points to 3D display space
  * - Real-time monitoring and performance tracking
  */
 export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
-  private cache: RangeCache;
   private chunkIndex: ChunkSpatialIndex | null = null;
   // Total points count for datasets without chunk-based index (simple fallback)
   private totalPointsNoIndex: number = 0;
@@ -87,13 +83,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   constructor(
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
-    config: LoaderConfig = {},
+    _config: LoaderConfig = {},
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
-    this.cache = new RangeCache(config);
     this.decoder = new ArrayDecoder(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
 
@@ -103,8 +98,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       path: node.path,
       queries: 0,
       loads: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
       evictions: 0,
       errors: 0,
       pointsLoaded: 0,
@@ -113,9 +106,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       visiblePoints: 0, // Updated on each query
       avgQueryTime: 0,
       avgLoadTime: 0,
-      cacheHitRate: 0,
       memoryUsed: 0,
-      memoryLimit: this.cache.getMemoryInfo().max,
+      memoryLimit: 0
     };
   }
 
@@ -355,29 +347,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -572,43 +564,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) return null;
 
-    const arrayPath = `${this.node.path}/${arrayName}`;
-
-    // Check cache first
-    const cached = this.cache.get(arrayPath, ranges);
-    if (cached) {
-      log.custom(LogEmoji.CACHE, Modules.SPATIAL_INDEX_LOADER, `Cache hit for ${arrayName}`);
-      this.metrics.cacheHits++;
-      this.updateCacheHitRate();
-
-      this.emitEvent({
-        type: 'cache-hit',
-        loader: 'point-spatial-index',
-        timestamp: Date.now(),
-        data: {
-          path: this.node.path,
-          arrayName,
-          cacheKey: arrayPath,
-        },
-      });
-
-      return cached;
-    }
-
     log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
-    this.metrics.cacheMisses++;
-    this.updateCacheHitRate();
-
-    this.emitEvent({
-      type: 'cache-miss',
-      loader: 'point-spatial-index',
-      timestamp: Date.now(),
-      data: {
-        path: this.node.path,
-        arrayName,
-        ranges,
-      },
-    });
 
     // Check if array is encoded (requires full array load + decode)
     // IMPORTANT: Check this FIRST before trying to calculate sizes from local array shape
@@ -944,11 +900,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
     }
 
-    // Cache the result (only Float32Array for now to save memory)
-    if (output instanceof Float32Array) {
-      this.cache.set(arrayPath, ranges, output);
-    }
-
     // Update metrics and emit load event
     const loadTime =
       Date.now() - (this.activeQueries.values().next().value?.startTime || Date.now());
@@ -1262,20 +1213,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     };
   }
 
-  /**
-   * Get cache statistics
-   */
-  getCacheStats(): CacheStats {
-    return this.cache.getStats();
-  }
-
-  /**
-   * Clear cache
-   */
-  clearCache(): void {
-    this.cache.clear();
-  }
-
   // LoaderMonitor implementation
 
   /**
@@ -1313,7 +1250,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         avgCellsPerQuery: avgChunksPerQuery,
         avgPointsPerCell: totalChunks > 0 ? this.metrics.pointsLoaded / totalChunks : 0,
         queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
-        rangesInCache: this.cache.getStats().numEntries,
+        rangesInCache: 0, // L0 RangeCache removed
       };
 
       // Set dataset size from chunk index metadata
@@ -1322,9 +1259,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // No chunk index but we have point count from the positions array
       this.metrics.datasetSize = this.totalPointsNoIndex;
     }
-
-    // Update memory usage
-    this.metrics.memoryUsed = this.cache.getStats().totalMemory;
 
     return { ...this.metrics };
   }
@@ -1346,16 +1280,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       } catch (error) {
         log.error(Modules.SPATIAL_INDEX_LOADER, 'Error in event listener:', error);
       }
-    }
-  }
-
-  /**
-   * Update cache hit rate metric
-   */
-  private updateCacheHitRate(): void {
-    const total = this.metrics.cacheHits + this.metrics.cacheMisses;
-    if (total > 0) {
-      this.metrics.cacheHitRate = (this.metrics.cacheHits / total) * 100;
     }
   }
 
@@ -1429,7 +1353,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Clean up resources
    */
   dispose(): void {
-    this.clearCache();
     this.chunkIndex = null;
     this.arrays = {};
     this.initPromise = null;

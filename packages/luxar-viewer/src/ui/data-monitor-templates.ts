@@ -72,8 +72,8 @@ export function renderStatGrid(
   return `
     <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
       ${stats
-        .map(
-          (stat) => `
+    .map(
+      (stat) => `
         <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
           <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
             ${stat.value}
@@ -81,8 +81,8 @@ export function renderStatGrid(
           <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
         </div>
       `
-        )
-        .join('')}
+    )
+    .join('')}
     </div>
   `;
 }
@@ -91,10 +91,6 @@ export function renderStatGrid(
  * Template for loader list item
  */
 export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
-  const hitRate =
-    metrics.cacheHits + metrics.cacheMisses > 0
-      ? (metrics.cacheHits / (metrics.cacheHits + metrics.cacheMisses)) * 100
-      : 0;
   const statusColor = metrics.queries > 0 ? MonitorColors.success : MonitorColors.muted;
 
   return `
@@ -105,7 +101,6 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 9px; color: ${MonitorColors.dimmed};">
         <span>${metrics.visiblePoints.toLocaleString()} pts</span>
-        <span>${hitRate.toFixed(0)}% cache</span>
         <span>${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
@@ -166,30 +161,23 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   return `
     <div class="overview-content">
       <!-- Primary metrics -->
-      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
         ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
-          MonitorColors.success,
-          'large'
-        )}
-        ${renderMetricCard(
-          'CACHE HIT RATE',
-          `${stats.globalCacheHitRate.toFixed(0)}%`,
-          `${stats.totalCacheHits}/${stats.totalCacheHits + (stats.totalQueries - stats.totalCacheHits)} hits`,
-          getCacheRateColor(stats.globalCacheHitRate),
-          'large'
-        )}
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
+    MonitorColors.success,
+    'large'
+  )}
       </div>
-      
+
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-        { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
-        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-        { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
-      )}
-      
+    { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
+    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+    { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
+  )}
+
       <!-- Loader list -->
       <div class="loader-list">
         <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">ACTIVE LOADERS</h4>
@@ -204,61 +192,37 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 /**
  * Template for cache tab content
  */
-export function renderCacheContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {
+export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
   return `
     <div class="cache-content">
       <!-- Cache overview cards -->
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
         ${renderMetricCard(
-          'CACHE MEMORY',
-          formatBytes(cacheMetrics.totalCacheMemory),
-          `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-          MonitorColors.success,
-          'medium'
-        )}
+    'CACHE MEMORY',
+    formatBytes(cacheMetrics.totalCacheMemory),
+    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+    MonitorColors.success,
+    'medium'
+  )}
         ${renderMetricCard(
-          'HIT RATE',
-          `${stats.globalCacheHitRate.toFixed(1)}%`,
-          `${cacheMetrics.recentHitRate.toFixed(0)}% recent (1m) | ${stats.totalCacheHits} hits / ${cacheMetrics.totalAccesses} total`,
-          getCacheRateColor(stats.globalCacheHitRate),
-          'medium'
-        )}
+    'CACHED RANGES',
+    cacheMetrics.totalEntries.toString(),
+    `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
+    MonitorColors.primaryText,
+    'medium'
+  )}
         ${renderMetricCard(
-          'CACHED RANGES',
-          cacheMetrics.totalEntries.toString(),
-          `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
-          MonitorColors.primaryText,
-          'medium'
-        )}
-        ${renderMetricCard(
-          'AVG RANGE SIZE',
-          formatBytes(cacheMetrics.avgEntrySize),
-          `Reuse: ${cacheMetrics.reuseRatio.toFixed(1)}x`,
-          MonitorColors.primaryText,
-          'medium'
-        )}
+    'AVG RANGE SIZE',
+    formatBytes(cacheMetrics.avgEntrySize),
+    '',
+    MonitorColors.primaryText,
+    'medium'
+  )}
       </div>
-      
-      <!-- Cache performance metrics -->
-      <div style="margin-bottom: 15px;">
-        <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">CACHE PERFORMANCE</h4>
-        ${renderStatGrid([
-          {
-            label: 'Hits/sec',
-            value: `${cacheMetrics.hitsPerSecond.toFixed(1)}/s`,
-            color: MonitorColors.info,
-          },
-          {
-            label: 'Misses/sec',
-            value: `${cacheMetrics.missesPerSecond.toFixed(1)}/s`,
-            color: MonitorColors.warning,
-          },
-          {
-            label: 'Avg Access',
-            value: formatAccessTime(cacheMetrics.avgAccessTime),
-            color: getAccessTimeColor(cacheMetrics.avgAccessTime),
-          },
-        ])}
+
+      <!-- Cache message -->
+      <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
+        L0 in-memory cache metrics removed. Monitoring L1/L2 OPFS zarr cache instead.
       </div>
     </div>
   `;
@@ -290,14 +254,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-        rec.suggestion
-          ? `
+  rec.suggestion
+    ? `
         <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-          : ''
-      }
+    : ''
+}
     </div>
   `;
 }
@@ -337,29 +301,9 @@ function formatBytes(bytes: number): string {
   return bytes.toFixed(0) + 'B';
 }
 
-function formatAccessTime(timeMs: number): string {
-  if (timeMs < 1) {
-    return (timeMs * 1000).toFixed(0) + 'μs';
-  }
-  return timeMs.toFixed(2) + 'ms';
-}
-
-function getCacheRateColor(rate: number): string {
-  if (rate >= 80) return MonitorColors.success;
-  if (rate >= 60) return MonitorColors.warning;
-  return MonitorColors.error;
-}
-
 function getCacheMemoryColor(percent: number): string {
   if (percent <= 60) return MonitorColors.success;
   if (percent <= 80) return MonitorColors.warning;
-  return MonitorColors.error;
-}
-
-function getAccessTimeColor(timeMs: number): string {
-  if (timeMs < 0.1) return MonitorColors.success;
-  if (timeMs < 1.0) return MonitorColors.info;
-  if (timeMs < 5.0) return MonitorColors.warning;
   return MonitorColors.error;
 }
 
