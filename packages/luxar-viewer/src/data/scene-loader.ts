@@ -16,7 +16,7 @@ import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
-import { TwoLevelCachingStore } from '../cache';
+import { TwoLevelCachingStore, ChunkPrefetcher } from '../cache';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -88,6 +88,15 @@ export class SceneLoader {
         debug: config.cache.debug,
       });
       await cachingStore.init();
+
+      // Attach prefetcher to enable transparent adjacent chunk prefetching
+      // (Respects ?no-prefetch URL parameter for debugging)
+      const prefetcher = new ChunkPrefetcher(cachingStore, {
+        maxConcurrent: 4,
+        enabled: true,
+      });
+      cachingStore.setPrefetcher(prefetcher);
+
       rawStore = cachingStore;
       this.cachingStore = cachingStore;
     } else {
