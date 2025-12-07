@@ -131,7 +131,9 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
       return data;
     } catch (error) {
-      console.warn(`[Cache] Network error fetching ${key}:`, error);
+      // Log error with message (error objects don't serialize well in console)
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn(`[Cache] Network error fetching ${key}: ${errorMsg}`);
       return undefined;
     }
   }
