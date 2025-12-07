@@ -137,7 +137,7 @@ export class ChunkPrefetcher {
    * parseChunkIndices('.zattrs') → null (not a chunk)
    */
   private parseChunkIndices(key: string): number[] | null {
-    // IMPORTANT: Check v3 FIRST before v2!
+    // CRITICAL: Check v3 FIRST before v2!
     // v2 regex can match the trailing digits of v3 paths (e.g., /2 in /c/0/1/2)
 
     // Check for v3 path notation: /c/ followed by path segments
