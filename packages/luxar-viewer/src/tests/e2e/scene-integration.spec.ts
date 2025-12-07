@@ -11,6 +11,8 @@
 import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import * as zarr from 'zarrita';
+import { FileSystemStore } from '@zarrita/storage';
 
 // Get the directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -19,9 +21,9 @@ const __dirname = path.dirname(__filename);
 // Path to test fixtures
 const FIXTURES_DIR = path.resolve(__dirname, '../../tests/fixtures');
 
-describe('Scene E2E Tests', () => {
-  describe('Hierarchical Transforms', () => {
-    it('should correctly store and read hierarchical transforms', async () => {
+test.describe('Scene E2E Tests', () => {
+  test.describe('Hierarchical Transforms', () => {
+    test('should correctly store and read hierarchical transforms', async () => {
       // CRITICAL: This test verifies the full transform pipeline:
       // 1. Python creates hierarchy with transforms
       // 2. Transforms are stored in correct format (column-major for THREE.js)
@@ -88,7 +90,7 @@ describe('Scene E2E Tests', () => {
       expect(expectedFinalZ).toBeCloseTo(0.0, 1);
     });
 
-    it('should detect transforms in correct format (column-major)', async () => {
+    test('should detect transforms in correct format (column-major)', async () => {
       // Verify that transforms are NOT in row-major (NumPy) format
 
       const storePath = path.join(FIXTURES_DIR, 'test_hierarchical_transforms.zarr');
@@ -123,7 +125,7 @@ describe('Scene E2E Tests', () => {
       }
     });
 
-    it('should have identity scale and rotation for pure translation', async () => {
+    test('should have identity scale and rotation for pure translation', async () => {
       // For transforms that are pure translations, verify no unexpected scaling or rotation
 
       const storePath = path.join(FIXTURES_DIR, 'test_hierarchical_transforms.zarr');
@@ -159,8 +161,8 @@ describe('Scene E2E Tests', () => {
     });
   });
 
-  describe('nD Data and Slicing (E2E)', () => {
-    it('should load 4D dataset with time dimension', async () => {
+  test.describe('nD Data and Slicing (E2E)', () => {
+    test('should load 4D dataset with time dimension', async () => {
       // Test 4D data loading: positions should have 4 coordinates (t, x, y, z)
 
       const storePath = path.join(FIXTURES_DIR, 'test_4d.zarr');
@@ -191,7 +193,7 @@ describe('Scene E2E Tests', () => {
       expect(timeDim.discrete).toBe(true); // Time is discrete
     });
 
-    it('should have correct 4D positions array shape', async () => {
+    test('should have correct 4D positions array shape', async () => {
       const storePath = path.join(FIXTURES_DIR, 'test_4d.zarr');
       const rawStore = new FileSystemStore(storePath);
       const store = await zarr.tryWithConsolidated(rawStore);
@@ -209,7 +211,7 @@ describe('Scene E2E Tests', () => {
       expect(positionsArray.shape[0]).toBe(5000);
     });
 
-    it('should have time-varying colors in 4D dataset', async () => {
+    test('should have time-varying colors in 4D dataset', async () => {
       // Test fixture has colors that change with time dimension
       // Colors use LUT encoding (10 unique values for 10 time steps)
 
@@ -236,7 +238,7 @@ describe('Scene E2E Tests', () => {
       expect(colorsAttrs.encoding?.original_shape).toEqual([5000, 3]);
     });
 
-    it('should define dimension ranges for nD navigation', async () => {
+    test('should define dimension ranges for nD navigation', async () => {
       const storePath = path.join(FIXTURES_DIR, 'test_4d.zarr');
       const rawStore = new FileSystemStore(storePath);
       const store = await zarr.tryWithConsolidated(rawStore);
@@ -255,7 +257,7 @@ describe('Scene E2E Tests', () => {
       expect(timeDim.range[1]).toBe(9); // max time (10 steps: 0-9)
     });
 
-    it('should have correct dimension metadata for slicing', async () => {
+    test('should have correct dimension metadata for slicing', async () => {
       const storePath = path.join(FIXTURES_DIR, 'test_4d.zarr');
       const rawStore = new FileSystemStore(storePath);
       const store = await zarr.tryWithConsolidated(rawStore);
