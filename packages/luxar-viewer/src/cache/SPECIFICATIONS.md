@@ -250,6 +250,7 @@ For chunk at indices [i, j, k, ...]:
 ```
 
 **Example** (3D chunk at [1, 2, 3]):
+
 - Generates 6 neighbors: [0,2,3], [2,2,3], [1,1,3], [1,3,3], [1,2,2], [1,2,4]
 - 4D chunk generates 8 neighbors, nD generates 2n neighbors
 

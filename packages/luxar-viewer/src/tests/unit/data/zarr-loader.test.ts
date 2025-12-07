@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loadScene } from '../data';
+import { loadScene } from '../../../data';
 import * as zarrita from 'zarrita';
 import * as THREE from 'three';
 

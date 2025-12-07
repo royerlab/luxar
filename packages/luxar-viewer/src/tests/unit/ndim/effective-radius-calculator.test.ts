@@ -8,8 +8,8 @@ import {
   calculateSpatialQueryTolerance,
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
-} from '../data/effective-radius-calculator';
-import { ViewState } from '../data/data-loader-types';
+} from '../../../data/effective-radius-calculator';
+import { ViewState } from '../../../data/data-loader-types';
 
 describe('effective-radius-calculator', () => {
   describe('calculateEffectiveRadii', () => {

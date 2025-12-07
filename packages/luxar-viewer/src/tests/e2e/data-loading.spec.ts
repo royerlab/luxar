@@ -1,12 +1,28 @@
 /**
- * Data Loading Tests for Luxar Viewer
+ * End-to-End Data Loading Tests
  *
- * These tests verify that the Luxar viewer can:
- * - Load real Zarr datasets
- * - Query spatial indices correctly
- * - Load point data with all attributes
- * - Handle cache hits/misses
- * - Update data on nD navigation
+ * **TEST SCOPE**: Full browser integration with real files
+ * - Uses real browser (Playwright + Chromium)
+ * - Loads actual zarr datasets from filesystem/network
+ * - Real WebGL rendering
+ * - Real OPFS cache
+ * - Slow execution (browser startup, network, rendering)
+ *
+ * **WHAT WE TEST**:
+ * - Complete Python → TypeScript → WebGL pipeline
+ * - Real zarr file loading from disk/HTTP
+ * - Spatial index queries with real data
+ * - Point rendering in WebGL
+ * - Cache behavior with real OPFS
+ * - nD navigation with real dimensional data
+ *
+ * **WHAT WE DON'T TEST** (see unit tests instead):
+ * - Internal loader logic (tested with mocks in unit tests)
+ * - Fast iteration on algorithm changes
+ *
+ * **Related Tests**:
+ * - `unit/data/data-loading-integration.test.ts` - Loader pipeline logic (unit)
+ * - `unit/data/data-monitor-integration.test.ts` - Monitor events (unit)
  */
 
 import { test, expect } from '@playwright/test';

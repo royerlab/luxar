@@ -7,9 +7,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { LuxarFlyControls } from '../controls/luxar-fly-controls';
-import { config } from '../config';
-import { createTestCamera } from './test-config';
+import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
+import { config } from '../../../config';
+import { createTestCamera } from '../../test-config';
 
 describe('LuxarFlyControls', () => {
   let camera: THREE.PerspectiveCamera;
