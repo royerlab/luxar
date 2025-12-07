@@ -1,11 +1,11 @@
 # luxar-viewer.cache - Technical Specification
 
-**Version**: 1.0.0
+**Version**: 1.1.0
 **Last Updated**: 2025-01-06
 
 ## Purpose
 
-The cache package provides a two-level caching system for zarr chunks, enabling offline viewing, instant reloads, and reduced bandwidth by caching compressed zarr data in browser memory (L1) and OPFS persistent storage (L2).
+The cache package provides a two-level caching system with intelligent prefetching for zarr chunks, enabling offline viewing, instant reloads, reduced bandwidth, and proactive latency hiding through adjacent chunk prefetching.
 
 ---
 
@@ -221,6 +221,121 @@ async checkQuota(requiredBytes):
 
 **Fallback**: If quota exceeded, skip L2 write but continue with L1 and HTTP
 
+### 6. Intelligent Chunk Prefetching
+
+**Algorithm**: Proactive loading of adjacent chunks to hide network latency
+
+**Trigger Points**:
+
+- L1 hit: NO prefetch (too fast, ~1μs overhead not worth it)
+- L2 hit: Prefetch adjacent chunks from L3 → L2 + L1
+- L3 fetch: Prefetch adjacent chunks from L3 → L2 + L1
+
+**Adjacent Chunk Calculation**:
+
+```
+For chunk at indices [i, j, k, ...]:
+  adjacent = []
+  for each dimension d:
+    for delta in [-1, +1]:
+      new_indices = copy(indices)
+      new_indices[d] += delta
+
+      if new_indices[d] < 0:
+        skip  // No negative indices
+
+      adjacent.append(format_chunk_key(new_indices))
+
+  return adjacent
+```
+
+**Example** (3D chunk at [1, 2, 3]):
+- Generates 6 neighbors: [0,2,3], [2,2,3], [1,1,3], [1,3,3], [1,2,2], [1,2,4]
+- 4D chunk generates 8 neighbors, nD generates 2n neighbors
+
+**Chunk Key Formats**:
+
+```
+Zarr v2 (dot notation):  points/positions/0.1.2
+Zarr v3 (path notation): points/positions/c/0/1/2
+```
+
+**Parsing Algorithm**:
+
+```
+function parseChunkIndices(key):
+  // CRITICAL: Check v3 FIRST (v2 regex can match v3 paths!)
+
+  // v3: /c/ followed by slash-separated digits
+  v3Match = key.match(/\/c\/(\d+(?:\/\d+)*)$/)
+  if v3Match:
+    return v3Match[1].split('/').map(Number)
+
+  // v2: slash followed by dot-separated digits
+  v2Match = key.match(/\/(\d+(?:\.\d+)*)$/)
+  if v2Match:
+    return v2Match[1].split('.').map(Number)
+
+  return null  // Metadata file, skip prefetching
+```
+
+**Concurrency Control**:
+
+```
+class ChunkPrefetcher:
+  queue = Set()           // Pending prefetch requests
+  inFlight = Set()        // Currently fetching
+  maxConcurrent = 4       // Limit concurrent prefetches
+  processing = false      // Prevent concurrent queue processing
+
+  onAccess(key):
+    adjacent = getAdjacentChunks(key)
+    for adjKey in adjacent:
+      // Full deduplication
+      if adjKey not in queue and adjKey not in inFlight:
+        queue.add(adjKey)
+
+    processQueue()  // Fire-and-forget (not awaited)
+
+  async processQueue():
+    if processing: return  // Already running
+    processing = true
+
+    try:
+      while queue.size > 0 and inFlight.size < maxConcurrent:
+        key = queue.pop()
+        if not key: break
+
+        inFlight.add(key)
+
+        // Fire-and-forget with cleanup
+        store.get(key)
+          .catch(() => {})  // Ignore errors
+          .finally(() => {
+            inFlight.delete(key)
+            if queue.size > 0:
+              queueMicrotask(processQueue)  // Re-trigger when slot frees
+          })
+    finally:
+      processing = false
+```
+
+**Properties**:
+
+- **Non-blocking**: Fire-and-forget pattern, never blocks normal requests
+- **Concurrency-limited**: Max 4 concurrent prefetch requests
+- **Deduplication**: Checks both queue and inFlight sets
+- **Race-safe**: queueMicrotask ensures no stranded queue items
+- **Error-tolerant**: Silently ignores 404s and network failures
+
+**Performance Impact**:
+
+- Memory: Prefetched data competes for L1 space (LRU handles naturally)
+- Network: With max 4 concurrent, leaves bandwidth for normal requests (HTTP/1.1: 2/6 slots, HTTP/2: 4/100+ streams)
+- CPU: Minimal (Set operations are O(1))
+
+For complete details, see: [`docs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/CACHE_PREFETCHING_SPEC.md)
+
 ---
 
 ## Data Flow
@@ -387,14 +502,26 @@ if data.byteLength != expectedSize:
 - `?no-cache` - Disable all caching
 - `?cache-debug` - Enable verbose logging
 - `?clear-cache` - Clear cache before loading
+- `?no-prefetch` - Disable prefetching (cache still active)
+- `?prefetch-debug` - Enable verbose prefetch logging
 
-**Config Options**:
+**Cache Config Options**:
 
 ```typescript
 {
   enabled: boolean,       // Default: true
   l1MaxSizeMB: number,    // Default: 100
   l2MaxSizeMB: number,    // Default: 2048
+  debug: boolean          // Default: false
+}
+```
+
+**Prefetch Config Options**:
+
+```typescript
+{
+  maxConcurrent: number,  // Default: 4
+  enabled: boolean,       // Default: true
   debug: boolean          // Default: false
 }
 ```
@@ -462,13 +589,27 @@ Prevents metadata thrashing:
 1. **Hierarchical invalidation**: Use per-node content hashes to invalidate only changed subtrees
 2. **Compression stats tracking**: Monitor bandwidth savings and compression ratios
 3. **Adaptive sizing**: Automatically adjust L1/L2 based on dataset size and usage patterns
-4. **Prefetching**: Background download of adjacent chunks based on navigation patterns
-5. **Service Worker integration**: True offline-first PWA with background sync
-6. **Cross-tab coordination**: BroadcastChannel for multi-tab cache sharing
+4. **Directional prefetching**: Track access patterns to predict navigation direction
+5. **Fetch Priority API**: Use browser's fetch priority hints for prefetch requests
+6. **Service Worker integration**: True offline-first PWA with background sync
+7. **Cross-tab coordination**: BroadcastChannel for multi-tab cache sharing
 
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-01-06): Intelligent chunk prefetching
+  - Added ChunkPrefetcher class for transparent adjacent chunk prefetching
+  - Symmetric ±1 adjacency calculation in all dimensions
+  - Zarr v2 and v3 chunk key parsing support
+  - Concurrency-limited (max 4) fire-and-forget pattern
+  - Full deduplication (queue + in-flight sets)
+  - Race-condition safe queue processing with queueMicrotask
+  - L2/L3 trigger points (not L1 - too fast for overhead)
+  - URL parameters: ?no-prefetch, ?prefetch-debug
+  - Auto-enabled in scene loader by default
+  - Comprehensive test suite (21 tests)
+  - See: `docs/CACHE_PREFETCHING_SPEC.md` for complete specification
 
 - **v1.0.0** (2025-01-06): Initial specification
   - Two-level caching architecture (L1: memory, L2: OPFS)
