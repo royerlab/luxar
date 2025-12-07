@@ -267,43 +267,43 @@ vi.mock('../controls/controls-manager', () => ({
   })),
 }));
 
-// Create a mock function that can be properly typed
-// loadScene returns a THREE.Group directly (the root node)
-const mockLoadScene = vi.fn().mockImplementation(async () => {
-  const group = new THREE.Group();
-  group.name = 'LuxarScene';
-  group.userData = {
-    sceneDimensions: {
-      dimensions: [
-        { name: 'x', unit: 'um', range: [0, 100], display: true },
-        { name: 'y', unit: 'um', range: [0, 100], display: true },
-        { name: 'z', unit: 'um', range: [0, 100], display: true },
-      ],
-    },
-    maxRadius: 0.5,
-  };
-  return group;
-});
-
-vi.mock('../data/zarr-loader', () => ({
-  loadScene: mockLoadScene,
+// Mock the data module (scene-manager imports from '../data', not '../data/zarr-loader')
+vi.mock('../../../data', () => ({
+  loadScene: vi.fn().mockImplementation(async () => {
+    const THREE = await import('three');
+    const group = new THREE.Group();
+    group.name = 'LuxarScene';
+    group.userData = {
+      sceneDimensions: {
+        dimensions: [
+          { name: 'x', unit: 'um', range: [0, 100], display: true },
+          { name: 'y', unit: 'um', range: [0, 100], display: true },
+          { name: 'z', unit: 'um', range: [0, 100], display: true },
+        ],
+      },
+      maxRadius: 0.5,
+    };
+    return group;
+  }),
+  // Need to provide other exports from the module
+  SceneLoader: vi.fn(),
+  PointSpatialIndexLoader: vi.fn(),
+  updateView: vi.fn(),
+  updateSceneForDimensions: vi.fn(),
+  dispose: vi.fn(),
 }));
 
-// Create mock functions for UI helpers
-const mockShowLoadingIndicator = vi.fn().mockReturnValue({
-  id: 'loading-indicator',
-  remove: vi.fn(),
-});
-const mockHideLoadingIndicator = vi.fn();
-const mockShowError = vi.fn();
-
-vi.mock('../ui/helpers', () => ({
-  showLoadingIndicator: mockShowLoadingIndicator,
-  hideLoadingIndicator: mockHideLoadingIndicator,
-  showError: mockShowError,
+// Mock UI helpers module
+vi.mock('../../../ui/helpers', () => ({
+  showLoadingIndicator: vi.fn().mockReturnValue({
+    id: 'loading-indicator',
+    remove: vi.fn(),
+  }),
+  hideLoadingIndicator: vi.fn(),
+  showError: vi.fn(),
 }));
 
-vi.mock('../utils/hdr-detection', () => ({
+vi.mock('../../../utils/hdr-detection', () => ({
   detectHDRCapabilities: vi.fn(() => ({
     hasHDRCanvas: false,
     hasFloatTextures: true,
@@ -315,6 +315,12 @@ vi.mock('../utils/hdr-detection', () => ({
 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
+import { loadScene as mockLoadScene } from '../../../data';
+import {
+  showLoadingIndicator as mockShowLoadingIndicator,
+  hideLoadingIndicator as mockHideLoadingIndicator,
+  showError as mockShowError,
+} from '../../../ui/helpers';
 
 describe('SceneManager', () => {
   let sceneManager: SceneManager;
