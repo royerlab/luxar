@@ -474,8 +474,9 @@ describe('Data Monitor Integration', () => {
       const stats = monitor.getGlobalStats();
       // Note: queries are counted both in getMetrics (2) and events (2) = 4 total
       expect(stats.totalQueries).toBe(4); // 2 from getMetrics + 2 from events
-      expect(stats.totalCacheHits).toBe(6); // 3 from getMetrics + 3 from events
-      expect(stats.globalCacheHitRate).toBe(60); // 6 hits / 10 total * 100
+      // L0 cache removed - cache hits should now be 0
+      expect(stats.totalCacheHits).toBe(0);
+      expect(stats.globalCacheHitRate).toBe(0);
     });
   });
 

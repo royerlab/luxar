@@ -257,8 +257,8 @@ describe('DataLoadingMonitor', () => {
           path,
           queries: 10,
           loads: 5,
-          cacheHits: 20,
-          cacheMisses: 10,
+          cacheHits: 0, // L0 cache removed
+          cacheMisses: 0, // L0 cache removed
           evictions: 2,
           errors: 1,
           pointsLoaded: 10000,
@@ -267,7 +267,7 @@ describe('DataLoadingMonitor', () => {
           visiblePoints: 0,
           avgQueryTime: 25,
           avgLoadTime: 100,
-          cacheHitRate: 66.7,
+          cacheHitRate: 0, // L0 cache removed
           memoryUsed: 1024 * 1024,
           memoryLimit: 500 * 1024 * 1024,
         })),
@@ -280,7 +280,8 @@ describe('DataLoadingMonitor', () => {
       const globalStats = monitor.getGlobalStats();
       expect(globalStats.totalQueries).toBe(20);
       expect(globalStats.totalLoads).toBe(10);
-      expect(globalStats.totalCacheHits).toBe(40);
+      // L0 cache removed - cache hits should now be 0
+      expect(globalStats.totalCacheHits).toBe(0);
       expect(globalStats.totalPointsLoaded).toBe(20000);
       expect(globalStats.totalMemoryUsed).toBe(2 * 1024 * 1024);
     });
@@ -344,8 +345,8 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 100,
           loads: 90,
-          cacheHits: 10,
-          cacheMisses: 90,
+          cacheHits: 0, // L0 cache removed
+          cacheMisses: 0, // L0 cache removed
           evictions: 50,
           errors: 0,
           pointsLoaded: 90000,
@@ -354,7 +355,7 @@ describe('DataLoadingMonitor', () => {
           visiblePoints: 0,
           avgQueryTime: 200,
           avgLoadTime: 150,
-          cacheHitRate: 10,
+          cacheHitRate: 0, // L0 cache removed
           memoryUsed: 450 * 1024 * 1024,
           memoryLimit: 500 * 1024 * 1024,
         })),
@@ -371,9 +372,9 @@ describe('DataLoadingMonitor', () => {
       );
       expect(spatialRec).toBeDefined();
 
-      // Should warn about low cache hit rate
-      const cacheRec = recommendations.find((r) => r.message.toLowerCase().includes('cache'));
-      expect(cacheRec).toBeDefined();
+      // L0 cache removed - no longer expect cache recommendations
+      // const cacheRec = recommendations.find((r) => r.message.toLowerCase().includes('cache'));
+      // expect(cacheRec).toBeDefined();
 
       // Should warn about high memory usage
       const memoryRec = recommendations.find((r) => r.message.toLowerCase().includes('memory'));
