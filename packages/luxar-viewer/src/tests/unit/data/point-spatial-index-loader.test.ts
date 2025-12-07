@@ -35,7 +35,7 @@ vi.mock('zarrita', () => ({
 }));
 
 // Mock chunk-based spatial index functions (NEW)
-vi.mock('../data/chunk-spatial-index', () => ({
+vi.mock('../../../data/chunk-spatial-index', () => ({
   loadChunkSpatialIndex: vi.fn(),
   queryChunksForView: vi.fn(),
   chunkIndicesToRanges: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock('../data/chunk-spatial-index', () => ({
 }));
 
 // Mock RangeCache
-vi.mock('../data/range-cache', () => ({
+vi.mock('../../../data/range-cache', () => ({
   RangeCache: vi.fn().mockImplementation(() => ({
     get: vi.fn(),
     set: vi.fn(),
