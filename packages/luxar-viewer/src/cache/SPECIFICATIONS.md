@@ -1,7 +1,7 @@
 # luxar-viewer.cache - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-01-06
+**Version**: 1.2.0
+**Last Updated**: 2025-12-06
 
 ## Purpose
 
@@ -108,26 +108,87 @@ metadataSize = max(totalSize * 0.2, 10MB)
 chunksSize = totalSize - metadataSize
 ```
 
-### 3. OPFS Persistence Layer (L2)
+### 3. OPFS Persistence Layer (L2) with Shallow Bucketing
 
 **Storage**: Browser's Origin Private File System (OPFS)
+
+**Problem**: With a 2GB cache and 32KB chunks, up to 65,000 files could be stored. A single directory with 65,000 files causes performance issues in some browsers/filesystems.
+
+**Solution**: Shallow bucketing distributes files across 256 subdirectories.
+
+**Bucket Hash Algorithm**:
+
+```
+function getBucket(key: string): string {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  }
+  return (hash & 0xff).toString(16).padStart(2, '0');  // "00" to "ff"
+}
+```
+
+**Properties**:
+
+- Simple djb2-style hash
+- 256 buckets (00-ff)
+- Distributes ~65,000 files into ~250 per bucket
+- Deterministic (same key always maps to same bucket)
+
+**File Name Encoding**:
+
+```
+function keyToFileName(key: string): string {
+  const base64 = btoa(key);
+  return base64.replace(/\//g, '_').replace(/=/g, '-').replace(/\+/g, '.');
+}
+```
 
 **Data Structure**:
 
 ```
 OPFS root/
 └── zarr-cache-{url-hash}/
-    ├── _cache_meta.json        // Index + metadata
-    ├── .zmetadata              // Cached files
-    ├── .zattrs
-    ├── points/
-    │   ├── positions/
-    │   │   ├── 0.0.0          // Cached chunks
-    │   │   └── 0.0.1
-    │   └── colors/
-    │       └── 0.0.0
-    └── ...
+    ├── 00/                           # Bucket directories (256 total)
+    │   ├── cG9pbnRz...               # Base64-encoded file
+    │   └── ...
+    ├── 01/
+    │   └── ...
+    ├── ...
+    ├── ff/
+    └── _cache_meta.json              # Index + metadata (at root)
 ```
+
+**Example**:
+
+```
+Key: "points/positions/0.0.0"
+  → Bucket: "23" (from hash)
+  → Filename: "cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA"
+  → Path: 23/cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA
+```
+
+**Bucket Handle Caching**:
+
+```
+bucketHandles = Map<string, FileSystemDirectoryHandle>()
+
+async getBucketHandle(bucket, create):
+  if bucketHandles.has(bucket):
+    return bucketHandles.get(bucket)  // O(1) cache hit
+
+  handle = await opfsRoot.getDirectoryHandle(bucket, { create })
+  bucketHandles.set(bucket, handle)
+  return handle
+```
+
+**Benefits**:
+
+- Max ~250 files per directory instead of 65,000
+- Only 256 bucket handles to cache (trivial memory)
+- 2 async calls per file access (bucket + file) vs 1 - negligible overhead
+- Efficient clear(): iterates 256 directories, not 65,000 files
+- Bucket handles cached → subsequent accesses to same bucket are O(1)
 
 **Metadata Structure** (\_cache_meta.json):
 
@@ -143,6 +204,8 @@ OPFS root/
   "contentHash": "8649296f56b76790..."
 }
 ```
+
+Note: The index stores original keys (e.g., `points/positions/0.0.0`), not bucketed paths. Bucket/filename are computed on access.
 
 **LRU Tracking**:
 
@@ -598,6 +661,16 @@ Prevents metadata thrashing:
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-06): Shallow bucketing for OPFS storage
+  - Added 256-bucket directory structure to distribute files
+  - Prevents filesystem performance issues with 65,000+ files
+  - Simple djb2-style hash for bucket assignment
+  - Bucket handle caching for efficient repeated access
+  - Max ~250 files per directory instead of 65,000
+  - Minimal overhead: 2 async calls vs 1 per file access
+  - Efficient clear(): iterates 256 directories, not all files
+  - Index still stores original keys (bucket computed on access)
 
 - **v1.1.0** (2025-01-06): Intelligent chunk prefetching
   - Added ChunkPrefetcher class for transparent adjacent chunk prefetching
