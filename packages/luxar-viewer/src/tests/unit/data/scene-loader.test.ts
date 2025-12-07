@@ -38,6 +38,12 @@ vi.mock('three', () => ({
     expandByPoint: vi.fn(),
     clone: vi.fn().mockReturnThis(),
   })),
+  Vector2: vi.fn().mockImplementation((x = 0, y = 0) => ({
+    x,
+    y,
+    set: vi.fn().mockReturnThis(),
+    copy: vi.fn().mockReturnThis(),
+  })),
   Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
     x,
     y,
