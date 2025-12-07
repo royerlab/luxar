@@ -55,37 +55,38 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def generate_performance_test_dataset(
-    output_path: Path, n_points: int = 1000000, n_timesteps: int = 10, seed: int = 42
+    output_path: Path, n_points: int = 1000000, seed: int = 42
 ) -> None:
-    """Generate a large, complex 4D dataset for performance testing.
+    """Generate a large, complex 4D spatial dataset for performance testing.
 
     Creates a visually interesting "particle cloud" with:
     - Multiple clustered regions (tests spatial queries)
     - Varying densities (tests LOD and culling)
     - Color gradients (tests color encoding/decoding)
     - Mixed radii (tests radius-based slicing)
-    - Time dimension (tests nD navigation and progressive loading)
+    - Continuous 4D spatial distribution (tests nD navigation and slicing)
 
     This dataset is designed to stress-test:
     - Progressive loading under bandwidth constraints
     - Cache effectiveness with limited bandwidth
-    - Spatial index query performance
+    - Spatial index query performance in 4D
     - UI responsiveness during slow loading
-    - nD navigation bandwidth usage (navigating time loads new data)
+    - nD navigation bandwidth usage (slider movement loads new data progressively)
+    - Smooth continuous slicing through 4D space
 
     Args:
         output_path: Where to write the zarr store
-        n_points: Total number of points per timestep
-        n_timesteps: Number of timesteps (default: 10)
+        n_points: Total number of 4D points
         seed: Random seed for reproducibility
     """
-    with asection(f"Generating Performance Test Dataset ({n_points:,} points × {n_timesteps} timesteps)"):
+    with asection(f"Generating 4D Performance Test Dataset ({n_points:,} points)"):
         rng = np.random.default_rng(seed)
 
         aprint(f"Seed: {seed}")
-        aprint(f"Timesteps: {n_timesteps}")
+        aprint(f"Points continuously distributed across 4D space (W, X, Y, Z)")
+        aprint(f"W dimension: [-50, 50] (use slider for smooth navigation)")
         aprint(
-            "Creating multi-cluster particle system with varying densities and time evolution..."
+            "Creating multi-cluster particle system..."
         )
 
         # Generate multiple clusters with different characteristics
@@ -103,26 +104,17 @@ def generate_performance_test_dataset(
                 # Varying cluster sizes (some tight, some spread out)
                 spread = rng.uniform(5, 30)
 
-                # Generate 3D spatial points in this cluster (Gaussian distribution)
-                cluster_points_3d = rng.normal(
+                # Generate 4D spatial points in this cluster
+                # W dimension: uniformly distributed across full range for continuous slicing
+                w_coords = rng.uniform(-50, 50, size=(points_per_cluster, 1)).astype(np.float32)
+
+                # X, Y, Z dimensions: Gaussian distribution around cluster center
+                xyz_coords = rng.normal(
                     loc=center, scale=spread, size=(points_per_cluster, 3)
                 ).astype(np.float32)
 
-                # Add time dimension: replicate points across time with slight variation
-                # Shape will be (points_per_cluster * n_timesteps, 4)
-                cluster_points_4d = []
-                for t in range(n_timesteps):
-                    # Add small time-based variation (animate the cluster slightly)
-                    time_offset = rng.normal(0, 0.5, size=(points_per_cluster, 3)).astype(np.float32)
-                    spatial_coords = cluster_points_3d + time_offset * (t / n_timesteps)
-
-                    # Add time coordinate as 4th dimension
-                    time_coords = np.full((points_per_cluster, 1), t, dtype=np.float32)
-                    points_with_time = np.hstack([time_coords, spatial_coords])
-
-                    cluster_points_4d.append(points_with_time)
-
-                cluster_points = np.vstack(cluster_points_4d)  # Now (points_per_cluster * n_timesteps, 4)
+                # Combine into 4D positions (W, X, Y, Z)
+                cluster_points = np.hstack([w_coords, xyz_coords])  # Shape: (points_per_cluster, 4)
 
                 # Color based on cluster position and distance from center (3D spatial only)
                 spatial_positions = cluster_points[:, 1:4]  # Extract x, y, z (skip time dimension)
@@ -188,7 +180,10 @@ def generate_performance_test_dataset(
     with asection("Writing to Zarr (optimized for large datasets)"):
         dims = Dimensions(
             [
-                Dimension("time", unit="frame", range=(0, n_timesteps - 1), step=1, discrete=True, display=False),
+                # W is the slicing dimension (slider appears because display=False)
+                # IMPORTANT: spatial=True for radius-based slicing to work!
+                Dimension("w", unit="units", range=(-50, 50), step=0.01, discrete=False, spatial=True, display=False),
+                # X, Y, Z are the displayed dimensions (shown in 3D space)
                 Dimension("x", unit="units", range=(-150, 150), display=True),
                 Dimension("y", unit="units", range=(-150, 150), display=True),
                 Dimension("z", unit="units", range=(-150, 150), display=True),
@@ -208,9 +203,11 @@ def generate_performance_test_dataset(
             )
 
         total_points = len(positions)
-        aprint(f"✓ Written {total_points:,} points ({n_points:,} × {n_timesteps} timesteps) to {output_path}")
-        aprint(f"✓ Dataset size: ~{total_points * 48 / 1_000_000:.1f} MB (4D positions)")
-        aprint(f"✓ Time dimension: Navigate with keys [4] then [ / ] to load different timesteps")
+        aprint(f"✓ Written {total_points:,} points (4D: W, X, Y, Z) to {output_path}")
+        aprint(f"✓ Dataset size: ~{total_points * 48 / 1_000_000:.1f} MB (4D positions + colors + radii)")
+        aprint(f"✓ W range: [-50, 50] continuously distributed")
+        aprint(f"✓ 4D Navigation: Use slider or press [1] then [ / ] to navigate through W dimension")
+        aprint(f"✓ Moving slider will show smooth continuous slicing through 4D space")
 
 
 def main() -> None:

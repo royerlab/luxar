@@ -1,8 +1,28 @@
 import type { OPFSMetadata } from './types';
 
 /**
- * OPFS persistence layer (L2 cache) with LRU eviction.
- * Handles all File System Access API interactions for zarr chunk storage.
+ * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
+ *
+ * Uses 256 bucket directories to distribute files and avoid filesystem limits.
+ * Files are stored as: `{bucket}/{base64-encoded-key}`
+ *
+ * Structure:
+ * ```
+ * zarr-cache-{hash}/
+ * ├── 00/           (~250 files per bucket)
+ * │   ├── UG9pbnRz...
+ * │   └── ...
+ * ├── 01/
+ * ├── ...
+ * ├── ff/
+ * └── _cache_meta.json
+ * ```
+ *
+ * Benefits:
+ * - Max ~250-500 files per directory instead of 65,000+
+ * - Only 256 bucket handles to cache (trivial memory)
+ * - clear() iterates 256 directories, not 65,000 files
+ * - Preserves fast flat access (2 async calls vs 1)
  */
 export class OPFSStore {
   private opfsRoot: FileSystemDirectoryHandle | null = null;
@@ -13,6 +33,9 @@ export class OPFSStore {
   private datasetId: string;
   private baseUrl: string;
   private contentHash: string | null = null;
+
+  // Bucket handle cache (256 possible buckets: 00-ff)
+  private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
 
   // Debounced metadata save
   private metadataSaveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -93,9 +116,8 @@ export class OPFSStore {
       }
 
       if (lruKey) {
-        const entry = this.index.get(lruKey)!;
+        // Note: delete() already decrements totalSize, don't double-decrement
         await this.delete(lruKey);
-        this.totalSize -= entry.size;
       }
     }
 
@@ -118,7 +140,9 @@ export class OPFSStore {
       // Debounced metadata save
       this.scheduleMetadataSave();
     } catch (error) {
-      console.warn(`[OPFSStore] Failed to write ${key}:`, error);
+      // Log error with message (error objects don't serialize well in console)
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn(`[OPFSStore] Failed to write ${key}: ${errorMsg}`);
     }
   }
 
@@ -135,12 +159,13 @@ export class OPFSStore {
         this.totalSize -= entry.size;
       }
 
-      const parts = key.split('/');
-      let dir = this.opfsRoot;
-      for (let i = 0; i < parts.length - 1; i++) {
-        dir = await dir.getDirectoryHandle(parts[i]);
+      // Get bucket and delete file from it
+      const bucket = this.getBucket(key);
+      const bucketHandle = await this.getBucketHandle(bucket, false);
+      if (bucketHandle) {
+        const fileName = this.keyToFileName(key);
+        await bucketHandle.removeEntry(fileName);
       }
-      await dir.removeEntry(parts[parts.length - 1]);
       this.index.delete(key);
     } catch {
       // File doesn't exist, ignore
@@ -153,6 +178,7 @@ export class OPFSStore {
   async clear(): Promise<void> {
     if (this.opfsRoot) {
       try {
+        // Remove all entries (bucket directories + metadata file)
         for await (const name of (this.opfsRoot as any).keys()) {
           await this.opfsRoot.removeEntry(name, { recursive: true });
         }
@@ -160,7 +186,9 @@ export class OPFSStore {
         console.warn('[OPFSStore] Failed to clear:', error);
       }
     }
+    // Clear all in-memory state
     this.index = new Map();
+    this.bucketHandles = new Map();
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
@@ -227,13 +255,65 @@ export class OPFSStore {
 
   // ========== Private Methods ==========
 
-  private async navigateToFile(key: string, create: boolean): Promise<FileSystemFileHandle> {
-    const parts = key.split('/');
-    let dir = this.opfsRoot!;
-    for (let i = 0; i < parts.length - 1; i++) {
-      dir = await dir.getDirectoryHandle(parts[i], { create });
+  /**
+   * Compute bucket index (0-255) from cache key using simple hash.
+   * Distributes ~65,000 files into ~256 buckets = ~250 files each.
+   *
+   * @returns Two-character hex string (00-ff)
+   */
+  private getBucket(key: string): string {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
     }
-    return dir.getFileHandle(parts[parts.length - 1], { create });
+    return (hash & 0xff).toString(16).padStart(2, '0');
+  }
+
+  /**
+   * Get bucket directory handle, with caching.
+   * Only 256 possible buckets, so caching is memory-efficient.
+   */
+  private async getBucketHandle(
+    bucket: string,
+    create: boolean
+  ): Promise<FileSystemDirectoryHandle | null> {
+    if (!this.opfsRoot) return null;
+
+    // Check cache first
+    const cached = this.bucketHandles.get(bucket);
+    if (cached) return cached;
+
+    try {
+      const handle = await this.opfsRoot.getDirectoryHandle(bucket, { create });
+      this.bucketHandles.set(bucket, handle);
+      return handle;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Convert cache key to OPFS-safe filename using base64 encoding.
+   * Example: "points/positions/0.0.0" → "cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA"
+   */
+  private keyToFileName(key: string): string {
+    const base64 = btoa(key);
+    // Replace base64 special chars with filesystem-safe alternatives
+    return base64.replace(/\//g, '_').replace(/=/g, '-').replace(/\+/g, '.');
+  }
+
+  /**
+   * Navigate to file within its bucket directory.
+   * Structure: {root}/{bucket}/{base64-filename}
+   */
+  private async navigateToFile(key: string, create: boolean): Promise<FileSystemFileHandle> {
+    const bucket = this.getBucket(key);
+    const bucketHandle = await this.getBucketHandle(bucket, create);
+    if (!bucketHandle) {
+      throw new Error(`Cannot access bucket ${bucket}`);
+    }
+    const fileName = this.keyToFileName(key);
+    return bucketHandle.getFileHandle(fileName, { create });
   }
 
   private scheduleMetadataSave(): void {

@@ -240,7 +240,48 @@ Get prefetch queue statistics:
 
 **SegmentedLRUCache** - 20/80 metadata/chunks split with name-based routing
 
-**OPFSStore** - OPFS persistence layer with LRU eviction
+**OPFSStore** - OPFS persistence layer with LRU eviction and shallow bucketing
+
+## L2 Storage Structure
+
+The L2 cache uses **shallow bucketing** to distribute files across 256 directories, avoiding filesystem limits with large datasets.
+
+### Why Bucketing?
+
+With a 2GB cache limit and typical chunk sizes:
+
+| Avg Chunk Size | Max Files |
+| -------------- | --------- |
+| 32 KB          | ~65,000   |
+| 64 KB          | ~32,000   |
+
+Storing 65,000 files in a single directory can cause performance issues. Bucketing distributes them into ~250 files per bucket.
+
+### Structure
+
+```
+zarr-cache-{url-hash}/
+├── 00/                      # Bucket directories (256 total)
+│   ├── cG9pbnRz...          # Base64-encoded zarr keys
+│   └── ...
+├── 01/
+├── ...
+├── ff/
+└── _cache_meta.json         # Index + LRU metadata
+```
+
+### How It Works
+
+1. **Hash the key**: `"points/positions/0.0.0"` → bucket `23`
+2. **Base64 encode**: `"points/positions/0.0.0"` → `cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+3. **Store**: `23/cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+
+### Benefits
+
+- **Max ~250 files per directory** instead of 65,000
+- **Only 256 bucket handles** to cache (trivial memory overhead)
+- **2 async calls** per file access (bucket + file) vs 1 - negligible overhead
+- **Efficient clear()**: Iterates 256 directories, not 65,000 files
 
 ## Cache Behavior
 
