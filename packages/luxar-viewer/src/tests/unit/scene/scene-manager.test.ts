@@ -244,9 +244,9 @@ vi.mock('../utils/hdr-detection', () => ({
 }));
 
 // Import after mocks are set up
-import { SceneManager } from '../scene/scene-manager';
-import { loadScene } from '../data';
-import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
+import { SceneManager } from '../../../scene/scene-manager';
+import { loadScene } from '../../../data';
+import { showLoadingIndicator, hideLoadingIndicator, showError } from '../../../ui/helpers';
 
 describe('SceneManager', () => {
   let sceneManager: SceneManager;

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SceneLoader, type LoaderConfig, type ViewState } from '../data';
+import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
 import * as THREE from 'three';
 import * as zarr from 'zarrita';
 

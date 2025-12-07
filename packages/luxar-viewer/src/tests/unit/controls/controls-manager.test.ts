@@ -7,10 +7,10 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { ControlsManager } from '../controls/controls-manager';
+import { ControlsManager } from '../../../controls/controls-manager';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { LuxarFlyControls } from '../controls/luxar-fly-controls';
-import { createTestCamera } from './test-config';
+import { LuxarFlyControls } from '../../../controls/luxar-fly-controls';
+import { createTestCamera } from '../../test-config';
 
 describe('ControlsManager', () => {
   let camera: THREE.PerspectiveCamera;

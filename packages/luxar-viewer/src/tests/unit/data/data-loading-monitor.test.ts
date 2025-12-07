@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { DataLoadingMonitor } from '../ui/data-loading-monitor';
-import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../ui/data-monitor-types';
+import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
+import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../ui/data-monitor-types';
 
 // Mock DOM environment
 beforeEach(() => {
@@ -825,7 +825,7 @@ describe('DataLoadingMonitor', () => {
         expect.stringContaining('[DataLoadingMonitor] Disposal completed with errors:')
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to disconnect loader \'/failing\'')
+        expect.stringContaining("Failed to disconnect loader '/failing'")
       );
 
       // Verify that the normal loader was still cleaned up

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../../../rendering/post-processing-manager';
 
 // Mock postprocessing library
 vi.mock('postprocessing', () => ({

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { OPFSStore } from '../../cache/opfs-store';
+import { OPFSStore } from '../../../cache/opfs-store';
 
 // Mock File System Access API
 const createMockFileSystem = () => {

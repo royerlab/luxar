@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PointsData } from '../data/data-loader-types';
+import { PointsData } from '../../../data/data-loader-types';
 
 describe('Data Type Support', () => {
   describe('TypedArray type detection', () => {

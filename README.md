@@ -376,6 +376,82 @@ make clean         # Remove all temporary files and caches
 4. **Culling**: Consider frustum culling for complex scenes
 5. **Streaming**: Implement progressive loading for massive datasets
 
+## 🌐 Network Simulation Testing
+
+Test your viewer's performance under realistic network conditions using built-in network simulation:
+
+### Quick Start
+
+```bash
+# List available network profiles
+luxar profiles
+
+# Test with 3G mobile connection
+luxar serve data.zarr --profile 3g --viewer --open
+
+# Test with custom parameters
+luxar serve data.zarr --bandwidth 500kbps --latency 200ms --jitter 10%
+
+# Demo with network simulation
+luxar demo --profile satellite --open
+```
+
+### Available Profiles
+
+| Profile | Bandwidth | Latency | Jitter | Packet Loss | Use Case |
+|---------|-----------|---------|--------|-------------|----------|
+| `3g` | 384 kbps | 300 ms | 10% | 1% | Slow mobile |
+| `4g` | 10 mbps | 100 ms | 10% | 0.5% | Typical mobile |
+| `5g` | 100 mbps | 30 ms | 5% | 0.1% | Modern mobile |
+| `broadband` | 50 mbps | 20 ms | 5% | 0.1% | Home internet |
+| `satellite` | 25 mbps | 600 ms | 15% | 1% | High latency |
+| `rural` | 1 mbps | 100 ms | 20% | 2% | Poor connection |
+| `congested` | 2 mbps | 200 ms | 25% | 3% | Network overload |
+
+### Simulation Parameters
+
+- **`--profile <name>`** - Use a preset connection profile
+- **`--bandwidth <value>`** - Limit bandwidth (e.g., '1mbps', '500kbps', '10mbps')
+- **`--latency <value>`** - Add network latency (e.g., '100ms', '500ms', '1s')
+- **`--jitter <value>`** - Add latency variation (e.g., '10%', '0.1')
+- **`--packet-loss <value>`** - Simulate dropped requests (e.g., '1%', '0.01')
+
+Individual parameters override profile defaults:
+
+```bash
+# Use 4G profile but with higher latency
+luxar serve data.zarr --profile 4g --latency 300ms --viewer
+```
+
+### Use Cases
+
+**Performance Testing**: How does the viewer handle slow connections?
+```bash
+luxar serve large_dataset.zarr --profile 3g --viewer
+```
+
+**Cache Validation**: Does caching reduce redundant requests?
+```bash
+luxar serve data.zarr --bandwidth 100kbps --viewer
+# Monitor browser DevTools Network tab
+```
+
+**UX Research**: What's the minimum viable bandwidth?
+```bash
+# Test progressively slower connections
+luxar serve data.zarr --bandwidth 2mbps --viewer
+luxar serve data.zarr --bandwidth 1mbps --viewer
+luxar serve data.zarr --bandwidth 500kbps --viewer
+```
+
+**Regression Testing**: Did changes affect loading performance?
+```bash
+# Before and after comparisons
+luxar serve data.zarr --profile broadband --viewer
+```
+
+⚠️ **Note**: Network simulation is for **development and testing only**. Never use in production.
+
 ## 🤝 Contributing
 
 We welcome contributions! The project uses automated development tooling to maintain high code quality.

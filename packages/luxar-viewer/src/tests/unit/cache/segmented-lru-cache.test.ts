@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SegmentedLRUCache } from '../../cache/segmented-lru-cache';
+import { SegmentedLRUCache } from '../../../cache/segmented-lru-cache';
 
 describe('SegmentedLRUCache', () => {
   let cache: SegmentedLRUCache;

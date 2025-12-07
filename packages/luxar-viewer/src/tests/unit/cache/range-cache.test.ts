@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { RangeCache, RangeCacheKey, type PointRange } from '../data';
+import { RangeCache, RangeCacheKey, type PointRange } from '../../../data';
 
 describe('RangeCache', () => {
   let cache: RangeCache;
@@ -197,7 +197,7 @@ describe('RangeCache', () => {
   });
 });
 
-import { mergePointRanges } from '../data';
+import { mergePointRanges } from '../../../data';
 
 describe('Point Range Operations', () => {
   it('should merge adjacent ranges', () => {

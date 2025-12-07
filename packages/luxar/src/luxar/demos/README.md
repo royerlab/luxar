@@ -12,6 +12,45 @@ These demos are:
 
 ## Available Demos
 
+### demo_network_performance.py - Network Performance Testing ⭐ NEW
+Large multi-cluster dataset (1M points) for testing viewer performance under network constraints.
+
+**Run**:
+```bash
+# Default: 1M points with slow broadband simulation
+python packages/luxar/src/luxar/demos/demo_network_performance.py
+
+# Test with 3G mobile connection
+python packages/luxar/src/luxar/demos/demo_network_performance.py --profile 3g
+
+# Large dataset with satellite latency
+python packages/luxar/src/luxar/demos/demo_network_performance.py --points=2000000 --profile satellite
+
+# Compare full speed vs throttled
+python packages/luxar/src/luxar/demos/demo_network_performance.py --no-simulation
+python packages/luxar/src/luxar/demos/demo_network_performance.py --profile slow-broadband
+```
+
+**Demonstrates**:
+- Network simulation feature (bandwidth throttling, latency, jitter, packet loss)
+- Testing viewer performance under realistic network conditions
+- Progressive loading behavior with limited bandwidth
+- Cache effectiveness under bandwidth constraints
+- Multi-cluster particle systems with varying densities
+- Vectorized HSV→RGB color conversion
+- Large dataset handling (1M+ points)
+
+**Use Cases**:
+- Test viewer performance on slow connections
+- Validate caching and progressive loading
+- Compare loading behavior across network profiles
+- Performance regression testing
+- UX research for minimum viable network requirements
+
+**Watch browser DevTools Network tab to see throttling in action!**
+
+---
+
 ### demo_lorenz.py - Lorenz Attractor
 Beautiful chaotic attractor with rainbow color gradient.
 
