@@ -8,11 +8,9 @@
  * - Full integration tests
  */
 
-import { describe, it, expect } from 'vitest';
-import * as zarr from 'zarrita';
-import { FileSystemStore } from '@zarrita/storage';
-import * as path from 'path';
+import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'url';
+import path from 'path';
 
 // Get the directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
