@@ -14,8 +14,13 @@ vi.mock('three', async () => {
 
   class MockWebGLRenderer {
     domElement = (() => {
-      const canvas = document.createElement('canvas');
-      // canvas.style is already a CSSStyleDeclaration
+      const canvas = document.createElement('canvas') as any;
+      // Ensure canvas has required methods for OrbitControls
+      canvas.addEventListener = canvas.addEventListener || vi.fn();
+      canvas.removeEventListener = canvas.removeEventListener || vi.fn();
+      canvas.getBoundingClientRect =
+        canvas.getBoundingClientRect ||
+        vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }));
       return canvas;
     })();
     shadowMap = { enabled: false, type: actual.PCFSoftShadowMap };
@@ -37,6 +42,22 @@ vi.mock('three', async () => {
           preserveDrawingBuffer: false,
           stencil: true,
         }),
+        getExtension: (name: string) => {
+          // Support HDR extensions
+          if (
+            name === 'EXT_color_buffer_float' ||
+            name === 'EXT_color_buffer_half_float' ||
+            name === 'WEBGL_color_buffer_float'
+          ) {
+            return {}; // Return truthy to indicate support
+          }
+          return null;
+        },
+        getParameter: (param: number) => {
+          if (param === 0x1f02) return 'WebGL 2.0';
+          if (param === 0x1f00) return 'Mock Vendor';
+          return 1024;
+        },
       };
     }
     getSize() {
@@ -180,7 +201,21 @@ vi.stubGlobal('document', {
   createElement: vi.fn(() => ({
     style: {},
     getContext: mockCanvas.getContext,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getBoundingClientRect: vi.fn(() => ({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+    })),
+    getRootNode: vi.fn(() => ({ addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    ownerDocument: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
   })),
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
 });
 
 // Mock the modules that depend on WebGL

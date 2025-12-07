@@ -16,8 +16,12 @@ vi.mock('postprocessing', () => ({
     dispose: vi.fn(),
     passes: [],
   })),
-  RenderPass: vi.fn().mockImplementation(() => ({})),
-  EffectPass: vi.fn().mockImplementation(() => ({})),
+  RenderPass: vi.fn().mockImplementation(() => ({
+    dispose: vi.fn(),
+  })),
+  EffectPass: vi.fn().mockImplementation(() => ({
+    dispose: vi.fn(),
+  })),
   BloomEffect: vi.fn().mockImplementation(() => ({
     intensity: 1.0,
     mipmapBlurPass: {
