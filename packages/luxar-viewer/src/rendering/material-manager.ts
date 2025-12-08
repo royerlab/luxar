@@ -130,6 +130,25 @@ export class MaterialManager {
   }
 
   /**
+   * Unregister a material from global updates
+   * This should be called when a material is disposed to prevent memory leaks
+   */
+  unregister(material: THREE.Material): void {
+    this.registeredMaterials.delete(material);
+
+    // Also remove from cache if it's a point material
+    if (material instanceof PointMaterial) {
+      // Find and remove from cache
+      for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.pointMaterialCache.delete(key);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
    * Dispose all cached materials
    */
   dispose(): void {

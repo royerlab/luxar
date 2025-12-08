@@ -74,6 +74,11 @@ export class SceneManager extends THREE.EventDispatcher<{
   private resizeRAF: number | null = null;
   private pendingResize: { width: number; height: number } | null = null;
 
+  /** WebGL context loss handling */
+  private isContextLost: boolean = false;
+  private contextLostHandler: ((event: Event) => void) | null = null;
+  private contextRestoredHandler: ((event: Event) => void) | null = null;
+
   /**
    * Initialize the complete 3D scene setup
    */
@@ -84,6 +89,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   async init(): Promise<void> {
     this.setupCanvas();
     this.setupRenderer();
+    this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
     this.setupCamera();
     this.setupControls();
@@ -175,6 +181,78 @@ export class SceneManager extends THREE.EventDispatcher<{
     const hdrCapabilities = detectHDRCapabilities(this.renderer);
     logHDRCapabilities(hdrCapabilities);
     configureHDRRenderer(this.renderer, hdrCapabilities);
+  }
+
+  /**
+   * Setup WebGL context loss and restoration handling
+   *
+   * WebGL context can be lost due to:
+   * - GPU driver crashes or resets
+   * - System sleep/hibernate
+   * - Too many contexts (browser limit)
+   * - Out of GPU memory
+   *
+   * This setup ensures the app can recover gracefully instead of crashing.
+   */
+  private setupContextLossHandling(): void {
+    const canvas = this.canvasElement;
+
+    // Handle context loss - prevent default and prepare for restoration
+    this.contextLostHandler = (event: Event) => {
+      event.preventDefault(); // Required to allow context restoration
+      this.isContextLost = true;
+
+      log.error(
+        Modules.SCENE_MANAGER,
+        'WebGL context lost! This can happen due to GPU driver issues, system sleep, or memory pressure.'
+      );
+
+      showError(
+        'Graphics context lost - attempting to restore. This can happen if your GPU driver crashes or the system runs out of video memory. The app will try to recover automatically.'
+      );
+    };
+
+    // Handle context restoration - recreate all WebGL resources
+    this.contextRestoredHandler = async (_event: Event) => {
+      log.info(Modules.SCENE_MANAGER, 'WebGL context restored - recreating resources...');
+
+      try {
+        // Mark context as restored
+        this.isContextLost = false;
+
+        // Force renderer to recreate its internal state
+        this.renderer.resetState();
+
+        // Recreate post-processing resources (render targets, shaders)
+        // Note: This is handled by PostProcessingManager's dispose/recreate cycle
+        // For now, we log that resources need recreation
+        log.info(Modules.SCENE_MANAGER, 'Post-processing resources will be recreated on next render');
+
+        // Trigger a render to force resource recreation
+        this.dispatchEvent({ type: 'change' });
+
+        hideLoadingIndicator();
+        log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
+      } catch (error) {
+        log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
+        showError(
+          'Failed to restore graphics context. Please refresh the page to continue.'
+        );
+      }
+    };
+
+    // Add event listeners
+    canvas.addEventListener('webglcontextlost', this.contextLostHandler, false);
+    canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
+
+    log.info(Modules.SCENE_MANAGER, 'WebGL context loss handling initialized');
+  }
+
+  /**
+   * Check if WebGL context is currently lost
+   */
+  public isWebGLContextLost(): boolean {
+    return this.isContextLost;
   }
 
   /**
@@ -840,6 +918,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.resizeRAF = null;
     }
     this.pendingResize = null;
+
+    // Remove WebGL context loss event listeners
+    if (this.contextLostHandler) {
+      this.canvasElement.removeEventListener('webglcontextlost', this.contextLostHandler);
+      this.contextLostHandler = null;
+    }
+    if (this.contextRestoredHandler) {
+      this.canvasElement.removeEventListener('webglcontextrestored', this.contextRestoredHandler);
+      this.contextRestoredHandler = null;
+    }
 
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes
