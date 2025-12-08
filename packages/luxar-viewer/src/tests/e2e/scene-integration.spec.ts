@@ -20,10 +20,14 @@ test.describe('Scene E2E Tests', () => {
       // 4. Transform composition is correct
 
       // Load hierarchy_example.zarr which has hierarchical transforms
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+      );
 
       // Wait for scene to initialize
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       // Get scene state
       const state = await page.evaluate(() => {
@@ -67,9 +71,13 @@ test.describe('Scene E2E Tests', () => {
 
     test('should compose parent-child transforms correctly', async ({ page }) => {
       // Load hierarchy dataset
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       // Check transform composition
       await page.evaluate(() => {
@@ -88,9 +96,11 @@ test.describe('Scene E2E Tests', () => {
 
             // If parent has a transform and child has a transform,
             // world position should be different from local position
-            if (Math.abs(localPos.x - worldPos.x) > 0.01 ||
-                Math.abs(localPos.y - worldPos.y) > 0.01 ||
-                Math.abs(localPos.z - worldPos.z) > 0.01) {
+            if (
+              Math.abs(localPos.x - worldPos.x) > 0.01 ||
+              Math.abs(localPos.y - worldPos.y) > 0.01 ||
+              Math.abs(localPos.z - worldPos.z) > 0.01
+            ) {
               hasCorrectHierarchy = true;
             }
           }
@@ -105,9 +115,13 @@ test.describe('Scene E2E Tests', () => {
 
     test('should handle transform_example dataset', async ({ page }) => {
       // Load transform_example.zarr
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/transform_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/transform_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       // Verify transforms were loaded
       const hasTransforms = await page.evaluate(() => {
@@ -131,9 +145,13 @@ test.describe('Scene E2E Tests', () => {
 
   test.describe('Scene Graph Composition', () => {
     test('should handle multiple objects in scene', async ({ page }) => {
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       const objectCount = await page.evaluate(() => {
         const debug = window.__luxarDebug;
@@ -153,9 +171,13 @@ test.describe('Scene E2E Tests', () => {
     });
 
     test('should preserve scene hierarchy structure', async ({ page }) => {
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       const hierarchy = await page.evaluate(() => {
         const debug = window.__luxarDebug;
@@ -183,9 +205,13 @@ test.describe('Scene E2E Tests', () => {
 
   test.describe('Metadata Propagation', () => {
     test('should load scene dimensions from dataset', async ({ page }) => {
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/dimension_navigation_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       const dimensions = await page.evaluate(() => {
         const debug = (window as any).__luxarDebug;
@@ -205,9 +231,13 @@ test.describe('Scene E2E Tests', () => {
     });
 
     test('should load rendering properties from dataset', async ({ page }) => {
-      await page.goto('http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/rendering_attributes_example.zarr');
+      await page.goto(
+        'http://localhost:5173/?debug&data=http://localhost:9000/packages/luxar/examples/rendering_attributes_example.zarr'
+      );
 
-      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, { timeout: 30000 });
+      await page.waitForFunction(() => window.__luxarDebug?.scene !== undefined, {
+        timeout: 30000,
+      });
 
       const renderingProps = await page.evaluate(() => {
         const debug = window.__luxarDebug;

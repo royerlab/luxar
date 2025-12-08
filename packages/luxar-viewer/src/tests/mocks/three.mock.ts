@@ -499,9 +499,7 @@ export const Box3 = vi.fn().mockImplementation((min?: any, max?: any) => ({
     return this;
   }),
   isEmpty: vi.fn(function (this: any) {
-    return (
-      this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z
-    );
+    return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
   }),
 }));
 
@@ -606,7 +604,7 @@ export class Object3D {
   add = vi.fn(function (this: any, ...objects: any[]) {
     for (const object of objects) {
       if (object === this) {
-        console.error('Object3D.add: object can\'t be added as a child of itself.', object);
+        console.error("Object3D.add: object can't be added as a child of itself.", object);
         continue;
       }
 
@@ -769,8 +767,9 @@ export const Camera = vi.fn().mockImplementation(() => {
   return obj;
 });
 
-export const PerspectiveCamera = vi.fn().mockImplementation(
-  (fov = 50, aspect = 1, near = 0.1, far = 2000) => {
+export const PerspectiveCamera = vi
+  .fn()
+  .mockImplementation((fov = 50, aspect = 1, near = 0.1, far = 2000) => {
     const cam = Camera();
     cam.type = 'PerspectiveCamera';
     cam.fov = fov;
@@ -791,11 +790,11 @@ export const PerspectiveCamera = vi.fn().mockImplementation(
     cam.getFilmHeight = vi.fn(() => 24);
 
     return cam;
-  }
-);
+  });
 
-export const OrthographicCamera = vi.fn().mockImplementation(
-  (left = -1, right = 1, top = 1, bottom = -1, near = 0.1, far = 2000) => {
+export const OrthographicCamera = vi
+  .fn()
+  .mockImplementation((left = -1, right = 1, top = 1, bottom = -1, near = 0.1, far = 2000) => {
     const cam = Camera();
     cam.type = 'OrthographicCamera';
     cam.left = left;
@@ -812,15 +811,15 @@ export const OrthographicCamera = vi.fn().mockImplementation(
     cam.clearViewOffset = vi.fn();
 
     return cam;
-  }
-);
+  });
 
 // ============================================================================
 // Geometry Classes
 // ============================================================================
 
-export const BufferAttribute = vi.fn().mockImplementation(
-  (array: ArrayLike<number>, itemSize: number, normalized = false) => ({
+export const BufferAttribute = vi
+  .fn()
+  .mockImplementation((array: ArrayLike<number>, itemSize: number, normalized = false) => ({
     array,
     itemSize,
     count: array.length / itemSize,
@@ -881,8 +880,7 @@ export const BufferAttribute = vi.fn().mockImplementation(
       return this;
     }),
     needsUpdate: false,
-  })
-);
+  }));
 
 export const BufferGeometry = vi.fn().mockImplementation(() => ({
   attributes: {} as Record<string, any>,
@@ -962,14 +960,12 @@ export const BufferGeometry = vi.fn().mockImplementation(() => ({
   dispose: vi.fn(),
 }));
 
-export const BoxGeometry = vi.fn().mockImplementation(
-  (width = 1, height = 1, depth = 1) => {
-    const geom = BufferGeometry();
-    geom.type = 'BoxGeometry';
-    geom.parameters = { width, height, depth };
-    return geom;
-  }
-);
+export const BoxGeometry = vi.fn().mockImplementation((width = 1, height = 1, depth = 1) => {
+  const geom = BufferGeometry();
+  geom.type = 'BoxGeometry';
+  geom.parameters = { width, height, depth };
+  return geom;
+});
 
 // ============================================================================
 // Material Classes
@@ -1215,8 +1211,9 @@ export const Texture = vi.fn().mockImplementation((image?: any) => ({
   dispose: vi.fn(),
 }));
 
-export const WebGLRenderTarget = vi.fn().mockImplementation(
-  (width = 1, height = 1, options: any = {}) => ({
+export const WebGLRenderTarget = vi
+  .fn()
+  .mockImplementation((width = 1, height = 1, options: any = {}) => ({
     width,
     height,
     depth: 1,
@@ -1242,8 +1239,7 @@ export const WebGLRenderTarget = vi.fn().mockImplementation(
     clone: vi.fn(),
     copy: vi.fn(),
     dispose: vi.fn(),
-  })
-);
+  }));
 
 // ============================================================================
 // Utility Classes

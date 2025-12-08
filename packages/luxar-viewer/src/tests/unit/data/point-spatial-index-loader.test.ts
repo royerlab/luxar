@@ -378,7 +378,6 @@ describe('PointSpatialIndexLoader', () => {
     });
   });
 
-
   describe('data projection', () => {
     it('should project nD points to 3D correctly', async () => {
       // NEW: Use chunk-based query that returns ranges for 2 points
@@ -469,7 +468,6 @@ describe('PointSpatialIndexLoader', () => {
         })
       );
     });
-
 
     it('should track active queries', async () => {
       // Make zarr.get slower to allow checking active queries

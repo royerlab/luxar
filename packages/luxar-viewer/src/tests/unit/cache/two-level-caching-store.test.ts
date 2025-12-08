@@ -248,6 +248,107 @@ describe('TwoLevelCachingStore', () => {
       // L2 should be cleared (stats might show 0)
       expect(stats.l2.size).toBeLessThanOrEqual(0);
     });
+
+    it('should bypass cache when validating content_hash (critical fix)', async () => {
+      // This test verifies the fix for the cache validation bug where
+      // validation was reading .zattrs from cache, comparing cached hash
+      // against itself, causing false positives when switching datasets
+      // on the same port.
+
+      const fetchCalls: string[] = [];
+      let currentHash = 'hash-dataset-1';
+
+      global.fetch = vi.fn(async (url: string) => {
+        fetchCalls.push(url);
+
+        if (url.includes('.zattrs')) {
+          // Return CURRENT hash (simulates server state)
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: currentHash })).buffer;
+            },
+          } as Response;
+        }
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      // Initial load - dataset 1
+      await store.init();
+      expect(fetchCalls.some((url) => url.includes('.zattrs'))).toBe(true);
+      fetchCalls.length = 0;
+
+      // Cache .zattrs by accessing it normally (goes through cache cascade)
+      await store.get('.zattrs');
+      const cachedAttrs = await store.get('.zattrs');
+      expect(cachedAttrs).toBeDefined();
+      fetchCalls.length = 0; // Clear tracking
+
+      // Now simulate switching to dataset 2 with different hash
+      // WITHOUT clearing cache (simulates same port, different demo)
+      currentHash = 'hash-dataset-2';
+
+      // Validation should detect the difference
+      // Even though .zattrs is in cache with old hash!
+      const testStore = new TwoLevelCachingStore('https://example.com/data.zarr');
+      await testStore.init();
+
+      // CRITICAL: Validation MUST have fetched .zattrs directly from HTTP
+      // If it used cache, it would get old hash and validation would fail
+      const attrsWasFetched = fetchCalls.some((url) => url.includes('.zattrs'));
+      expect(attrsWasFetched).toBe(true);
+
+      // And it should have cleared L2 due to hash mismatch
+      const stats = testStore.getStats();
+      expect(stats.l2.size).toBe(0);
+    });
+
+    it('should always fetch content_hash from HTTP, never from cache', async () => {
+      // Verify that getRemoteContentHash() truly bypasses cache
+
+      let fetchCount = 0;
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          fetchCount++;
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(
+                JSON.stringify({ content_hash: `hash-${fetchCount}` })
+              ).buffer;
+            },
+          } as Response;
+        }
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      // Init - triggers first validation fetch
+      await store.init();
+      expect(fetchCount).toBe(1);
+
+      // Populate cache with .zattrs (this would add it to L1/L2)
+      await store.get('.zattrs');
+      const initialFetchCount = fetchCount;
+
+      // Create new store instance and init - should fetch AGAIN
+      // even though .zattrs might be in cache
+      const newStore = new TwoLevelCachingStore('https://example.com/data.zarr');
+      await newStore.init();
+
+      // CRITICAL: fetchCount should have increased
+      // If validation used cache, fetchCount would be unchanged
+      expect(fetchCount).toBeGreaterThan(initialFetchCount);
+    });
   });
 
   describe('Cache Management', () => {

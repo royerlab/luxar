@@ -6,6 +6,7 @@
 ## Purpose
 
 The test suite ensures correctness, reliability, and maintainability of the Luxar Viewer across:
+
 - Python-TypeScript data compatibility (encoding/decoding)
 - WebGL rendering and visual correctness
 - nD visualization and slicing algorithms
@@ -63,18 +64,21 @@ tests/
 ### Unit Tests: The Foundation
 
 **What We Test**:
+
 - Pure logic: algorithms, calculations, data transformations
 - Component behavior: how individual classes/functions work
 - Error handling: edge cases, invalid inputs, boundary conditions
 - Integration contracts: how components interact through interfaces
 
 **What We Don't Test**:
+
 - Visual appearance (E2E responsibility)
 - Actual WebGL rendering (mocked)
 - Real network requests (mocked)
 - Browser-specific behavior (E2E responsibility)
 
 **Mock Strategy**:
+
 - Mock external dependencies (WebGL, DOM, network)
 - Mock I/O (file system, OPFS)
 - Real business logic (no mocking of our own code)
@@ -83,6 +87,7 @@ tests/
 ### E2E Tests: The Reality Check
 
 **What We Test**:
+
 - Complete user workflows end-to-end
 - Visual correctness (screenshot comparisons)
 - Performance on real datasets
@@ -92,6 +97,7 @@ tests/
 
 **Why E2E Matters**:
 Many bugs only manifest in real browsers:
+
 - WebGL shader compilation issues
 - Canvas rendering artifacts
 - Browser-specific APIs (OPFS, WebGPU, HDR)
@@ -107,10 +113,12 @@ Many bugs only manifest in real browsers:
 **Why Critical**: Python encodes data, TypeScript decodes it. Mismatches cause silent bugs.
 
 **Test Files**:
+
 - `unit/data/array-decoder.test.ts` (39 tests) - All encoding modes
 - `unit/data/encoded-range-extraction.test.ts` (23 tests) - Range loading bugs
 
 **Encoding Modes Tested**:
+
 - Broadcasting (uniform values)
 - LUT (≤256 unique values)
 - Quantization (uint8/uint16 compression)
@@ -120,6 +128,7 @@ Many bugs only manifest in real browsers:
 - Direct/no encoding
 
 **How Fixtures Are Generated**:
+
 ```bash
 # Automatically before tests:
 pnpm test:with-fixtures
@@ -133,11 +142,13 @@ pnpm test:generate-fixtures
 **Why Critical**: 4D+ datasets require special math. Bugs cause points to disappear or appear incorrectly.
 
 **Test Files**:
+
 - `unit/ndim/ndim-calculation-projectTo3D.test.ts` - Critical ndim calculation bug fix
 - `unit/ndim/effective-radius-calculator.test.ts` - Hypersphere slicing
 - `unit/ndim/nd-navigation-utils.test.ts` - Dimension utilities
 
 **Key Algorithms**:
+
 - nD → 3D projection (displayDims selection)
 - Hypersphere radius-based slicing
 - nD tolerance calculations
@@ -148,11 +159,13 @@ pnpm test:generate-fixtures
 **Why Critical**: Without spatial indexing, million-point datasets are unusably slow.
 
 **Test Files**:
+
 - `unit/data/point-spatial-index-loader.test.ts` - Chunk-based spatial queries
 - `e2e/spatial-index-accuracy.spec.ts` - Correctness verification
 - `e2e/performance-benchmarks.spec.ts` - Performance measurement
 
 **What We Verify**:
+
 - Correct points returned for view frustum
 - Range merging optimization
 - Memory efficiency
@@ -163,11 +176,13 @@ pnpm test:generate-fixtures
 **Why Critical**: Viewer must handle GB-scale datasets in limited browser memory.
 
 **Test Files**:
+
 - `unit/cache/lru-cache.test.ts` - LRU eviction strategy
 - `unit/cache/segmented-lru-cache.test.ts` - Segmented cache (large values)
 - `unit/cache/two-level-caching-store.test.ts` - OPFS persistent cache
 
 **Cache Layers** (after L0 removal):
+
 - L1: In-memory compressed chunks (100MB)
 - L2: OPFS persistent storage (2GB)
 - L3: Network (HTTP/fetch)
@@ -177,12 +192,14 @@ pnpm test:generate-fixtures
 **Why Critical**: GPU bugs cause visual artifacts, crashes, or black screens.
 
 **Test Files**:
+
 - `unit/rendering/point-material.test.ts` - Shader material setup
 - `unit/rendering/material-manager.test.ts` - Material caching
 - `unit/rendering/postprocessing-manager.test.ts` - HDR pipeline
 - `e2e/basic-rendering.spec.ts` - Visual verification
 
 **What We Test**:
+
 - Shader compilation (mocked in unit, real in E2E)
 - Material property updates
 - HDR color pipeline (float32 colors)
@@ -197,6 +214,7 @@ pnpm test:generate-fixtures
 All mocks are in `src/tests/mocks/` for easy maintenance and reuse.
 
 **File Structure**:
+
 ```
 mocks/
 ├── index.ts              # Central export, installAllMocks()
@@ -208,6 +226,7 @@ mocks/
 ```
 
 **Usage**:
+
 ```typescript
 // In setup.ts (automatic for all tests):
 import { installAllMocks } from './mocks';
@@ -221,6 +240,7 @@ installWebGLMock();
 ### Mock Design Philosophy
 
 **1. Functional Where Possible**:
+
 ```typescript
 // Vector math actually works:
 const v = new Vector3(1, 2, 3);
@@ -229,6 +249,7 @@ v.length(); // → sqrt(4 + 9 + 16) = 5.39
 ```
 
 **2. Mocked Side Effects**:
+
 ```typescript
 // I/O and rendering are vi.fn() mocks:
 renderer.render(scene, camera); // vi.fn() - no actual rendering
@@ -236,6 +257,7 @@ gl.createTexture(); // vi.fn() - no GPU allocation
 ```
 
 **3. Realistic Defaults**:
+
 ```typescript
 // Mocks return sensible values:
 gl.getParameter(gl.VERSION); // → "WebGL 2.0 (OpenGL ES 3.0)"
@@ -254,6 +276,7 @@ All mocks use proper TypeScript types where possible, with `any` escape hatches 
 **Script**: `tests/fixtures/generate_test_data.py` (635 lines)
 
 **Datasets Generated** (11 total):
+
 1. `test_broadcasting.zarr` - Uniform values (1 color → 1000 points)
 2. `test_lut.zarr` - 10 unique colors (LUT encoding)
 3. `test_quantization.zarr` - uint8 quantized colors/radii
@@ -268,6 +291,7 @@ All mocks use proper TypeScript types where possible, with `any` escape hatches 
 
 **Auto-Generation**:
 Fixtures are automatically regenerated before tests to match current Python encoding:
+
 ```bash
 pnpm test:with-fixtures  # Auto-gen + test
 make test-all            # Python tests + gen fixtures + TypeScript tests
@@ -278,6 +302,7 @@ make test-all            # Python tests + gen fixtures + TypeScript tests
 **File**: `tests/builders/test-data-builders.ts`
 
 Helper functions for creating mock zarr data in tests without Python:
+
 - `createMockZarrLocation()` - In-memory zarr store
 - `createMockSceneNode()` - Scene graph nodes
 - `createMockPointsData()` - Point cloud data
@@ -338,16 +363,19 @@ pnpm test:with-fixtures && pnpm test:e2e
 **Target Coverage**: ≥80% for all metrics
 
 **Current Coverage**:
+
 - Python: ~95% (via hatch run test-cov)
 - TypeScript: ~85% (via pnpm test:coverage)
 
 **Priority Areas for Coverage**:
+
 1. Data loading & encoding (critical path)
 2. nD slicing algorithms (complex math)
 3. Spatial index queries (performance critical)
 4. Error handling (user-facing)
 
 **Acceptable Lower Coverage**:
+
 - UI components (hard to test, covered by E2E)
 - Debugging utilities (dev-only code)
 - WebGL initialization (browser-specific)
@@ -412,9 +440,7 @@ test('should render points correctly', async ({ page }) => {
   await expect(page).toHaveScreenshot('points-rendered.png');
 
   // Query scene state via debug interface
-  const pointCount = await page.evaluate(() =>
-    window.__luxarDebug.getState().totalPoints
-  );
+  const pointCount = await page.evaluate(() => window.__luxarDebug.getState().totalPoints);
   expect(pointCount).toBeGreaterThan(0);
 });
 ```
@@ -454,6 +480,7 @@ test('should render points correctly', async ({ page }) => {
 ### Current Status
 
 **Unit Tests**:
+
 - Total: 701 tests
 - Passing: 696 (99.3%)
 - Skipped: 5 (intentional - require specific setup)
@@ -461,12 +488,14 @@ test('should render points correctly', async ({ page }) => {
 - Runtime: ~3 seconds
 
 **E2E Tests**:
+
 - Total: ~50 tests
 - Passing: ~48 (96%)
 - Flaky: 2 (network-dependent)
 - Runtime: ~60 seconds
 
 **Python Tests**:
+
 - Total: 1372 tests
 - Passing: 1369 (99.8%)
 - Skipped: 3
@@ -475,12 +504,14 @@ test('should render points correctly', async ({ page }) => {
 ### Test Suite Health Indicators
 
 **Healthy**:
+
 - ✅ >95% pass rate
 - ✅ <5s unit test runtime
 - ✅ <2min E2E suite runtime
 - ✅ Zero flaky tests
 
 **Needs Attention**:
+
 - ⚠️ <90% pass rate
 - ⚠️ >10s unit test runtime
 - ⚠️ >5 flaky E2E tests
@@ -623,6 +654,7 @@ pnpm test --run
 ## Changelog
 
 ### v1.0.0 (2025-12-07)
+
 - Initial specification
 - Documented test architecture after L0 cache removal
 - Added mock infrastructure documentation
