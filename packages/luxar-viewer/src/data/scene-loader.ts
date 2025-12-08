@@ -14,6 +14,7 @@ import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr'
 import { materialManager, BlendingMode } from '../rendering/material-manager';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
+import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher } from '../cache';
@@ -37,6 +38,9 @@ export class SceneLoader {
   private rootGroup: THREE.Group | null = null;
   private monitorId: string | null = null;
   private arrayRefRegistry: ArrayRefRegistry;
+
+  // Error recovery tracking
+  private failedLoaders = new Map<string, { error: Error; timestamp: number; retryCount: number }>();
 
   constructor(config: LoaderConfig = {}, id?: string) {
     this.config = config;
@@ -119,6 +123,17 @@ export class SceneLoader {
       this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
     }
 
+    // Store scene-level position bounds (from Python compiler)
+    // These bounds represent the full dataset extent, available immediately without loading points
+    if (sceneAttrs?.position_bounds) {
+      this.rootGroup.userData.positionBounds = sceneAttrs.position_bounds;
+      log.info(
+        Modules.SCENE_LOADER,
+        `Scene bounds loaded: min=[${sceneAttrs.position_bounds.min.join(', ')}], ` +
+          `max=[${sceneAttrs.position_bounds.max.join(', ')}]`
+      );
+    }
+
     // Build scene graph
     const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
 
@@ -154,13 +169,44 @@ export class SceneLoader {
         if (points) {
           this.updatePointsGeometry(path, points);
         }
+
+        // SUCCESS: Clear any previous failures for this loader
+        this.failedLoaders.delete(path);
       } catch (error) {
+        // FAILURE: Track the error for this loader
+        const errorInfo = this.failedLoaders.get(path);
+        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+
+        this.failedLoaders.set(path, {
+          error: error as Error,
+          timestamp: Date.now(),
+          retryCount
+        });
+
+        // Log error with retry count
+        log.error(
+          Modules.SCENE_LOADER,
+          `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+        );
+
         // Don't update geometry if load failed - prevents memory leak
-        log.error(Modules.SCENE_LOADER, `Failed to update ${path}:`, error);
       }
     });
 
     await Promise.all(updates);
+
+    // Warn user if any loaders failed
+    if (this.failedLoaders.size > 0) {
+      const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
+      log.warning(
+        Modules.SCENE_LOADER,
+        `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
+      );
+      console.warn(
+        `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
+          'Check browser console for details. Data may be incomplete.'
+      );
+    }
   }
 
   /**
@@ -743,82 +789,7 @@ export class SceneLoader {
   }
 
   /**
-   * Validate scene dimensions for consistency and correctness
-   */
-  private validateSceneDimensions(dimensions: any[]): void {
-    // Check for duplicate dimension names
-    const names = dimensions.map((d) => d.name);
-    const uniqueNames = new Set(names);
-    if (names.length !== uniqueNames.size) {
-      const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Duplicate dimension names found: ${duplicates.join(', ')}. This may cause unexpected behavior.`
-      );
-    }
-
-    // Count displayed dimensions
-    const displayedCount = dimensions.filter((d) => d.display === true).length;
-    if (displayedCount > 3) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Scene has ${displayedCount} displayed dimensions, but viewer can only show 3. ` +
-          'Only the first 3 will be displayed.'
-      );
-    } else if (displayedCount === 0) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Scene has no displayed dimensions. At least one dimension should be displayed.'
-      );
-    }
-
-    // Validate each dimension
-    dimensions.forEach((dim, index) => {
-      // Check required fields
-      if (!dim.name) {
-        log.warning(Modules.SCENE_LOADER, `Dimension ${index} missing name field`);
-      }
-
-      // Validate range if present
-      if (dim.range) {
-        if (!Array.isArray(dim.range) || dim.range.length !== 2) {
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Dimension '${dim.name}' has invalid range format: ${JSON.stringify(dim.range)}`
-          );
-        } else if (dim.range[0] >= dim.range[1]) {
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Dimension '${dim.name}' has invalid range [${dim.range[0]}, ${dim.range[1]}]. Min should be < max.`
-          );
-        }
-      }
-
-      // Validate step if present
-      if (dim.step !== undefined && dim.step !== null && dim.step <= 0) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Dimension '${dim.name}' has invalid step: ${dim.step}. Step must be > 0.`
-        );
-      }
-
-      // Warn about discrete dimensions without range
-      if (dim.discrete === true && !dim.range) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Discrete dimension '${dim.name}' should have a defined range for proper navigation.`
-        );
-      }
-    });
-
-    log.info(
-      Modules.SCENE_LOADER,
-      `Scene dimensions validated: ${dimensions.length} dimensions, ${displayedCount} displayed`
-    );
-  }
-
-  /**
-   * Initialize scene dimensions from metadata
+   * Initialize scene dimensions from metadata using ViewStateManager
    */
   private initializeSceneDimensions(sceneDims: any): void {
     // Validate sceneDims structure
@@ -827,74 +798,21 @@ export class SceneLoader {
       return;
     }
 
-    // Validate scene dimensions consistency
-    this.validateSceneDimensions(sceneDims.dimensions);
+    // Validate dimensions using ViewStateManager
+    const validation = ViewStateManager.validateDimensions(sceneDims.dimensions);
 
-    const metadata = sceneDims.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
-      scale: dim.scale || 1.0,
-      range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
-      display: dim.display,
-      discrete: dim.discrete || false,
-      step: dim.step || 1.0,
-    }));
+    // Log validation results
+    const displayedCount = sceneDims.dimensions.filter((d: any) => d.display === true).length;
+    ViewStateManager.logValidationResults(validation, sceneDims.dimensions.length, displayedCount);
 
-    const ndim = metadata.length;
-    const displayed: number[] = [];
-
-    for (let i = 0; i < ndim; i++) {
-      if (metadata[i].display === true && displayed.length < 3) {
-        displayed.push(i);
-      }
+    // Stop if validation failed with errors
+    if (!validation.isValid) {
+      log.error(Modules.SCENE_LOADER, 'Scene dimensions validation failed, cannot initialize');
+      return;
     }
 
-    // Initialize view state - use center of range to maximize visibility
-    // The range minimum may be outside the actual data bounds, so center is safer
-    const currentStep = new Array(ndim).fill(0);
-    for (let i = 0; i < ndim; i++) {
-      if (!displayed.includes(i) && metadata[i].range) {
-        // Use center of range to maximize chance of visible data
-        const [rangeMin, rangeMax] = metadata[i].range;
-        let centerValue = (rangeMin + rangeMax) / 2;
-
-        // For discrete dimensions, floor to nearest integer
-        // Use floor instead of round to avoid edge cases where round(0.5) = 1
-        // would put us at range maximum (which may be outside actual data bounds)
-        if (metadata[i].discrete) {
-          centerValue = Math.floor(centerValue);
-        }
-
-        currentStep[i] = centerValue;
-      }
-    }
-
-    // Build tolerance array based on dimension types
-    const tolerance = new Array(ndim);
-    for (let i = 0; i < ndim; i++) {
-      if (displayed.includes(i)) {
-        // Displayed dimensions don't need tolerance
-        tolerance[i] = 0;
-      } else if (metadata[i].discrete) {
-        // Discrete dimensions need exact matching
-        tolerance[i] = 0;
-      } else {
-        // Continuous non-displayed dimensions get default tolerance
-        tolerance[i] = config.dataLoading.spatial.defaultTolerance;
-      }
-    }
-
-    this.viewState = {
-      displayDims: displayed,
-      slicePosition: currentStep,
-      tolerance,
-      dimensions: {
-        ndim,
-        currentStep,
-        displayed,
-        metadata,
-      },
-    };
+    // Initialize ViewState using ViewStateManager
+    this.viewState = ViewStateManager.initializeFromDimensions(sceneDims as SceneDimensions);
   }
 
   /**
@@ -951,6 +869,33 @@ export class SceneLoader {
   toggleMonitor(): void {
     if (this.monitorId) {
       DataMonitorManager.getInstance().toggleMonitor(this.monitorId);
+    }
+  }
+
+  /**
+   * Get information about failed loaders
+   * @returns Map of loader paths to error information
+   */
+  getFailedLoaders(): ReadonlyMap<string, { error: Error; timestamp: number; retryCount: number }> {
+    return this.failedLoaders;
+  }
+
+  /**
+   * Check if there are any failed loaders
+   */
+  hasFailures(): boolean {
+    return this.failedLoaders.size > 0;
+  }
+
+  /**
+   * Clear failed loader tracking
+   * Useful for retry operations or after user acknowledges errors
+   */
+  clearFailures(): void {
+    const count = this.failedLoaders.size;
+    this.failedLoaders.clear();
+    if (count > 0) {
+      log.info(Modules.SCENE_LOADER, `Cleared ${count} failed loader(s) from tracking`);
     }
   }
 

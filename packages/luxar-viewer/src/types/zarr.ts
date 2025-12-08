@@ -6,6 +6,16 @@
  */
 
 /**
+ * nD bounding box (min/max per dimension)
+ */
+export interface PositionBounds {
+  /** Minimum value per dimension */
+  min: number[];
+  /** Maximum value per dimension */
+  max: number[];
+}
+
+/**
  * Scene-level dimension information stored in Zarr attributes
  */
 export interface SceneDimensionAttrs {
@@ -39,6 +49,9 @@ export interface ZarrSceneAttrs {
   /** Physical units */
   units?: string;
 
+  /** Scene-level position bounds (union of all node bounds) */
+  position_bounds?: PositionBounds;
+
   /** Any additional metadata */
   [key: string]: unknown;
 }
@@ -64,6 +77,9 @@ export interface ZarrNodeAttrs {
   /** Points metadata */
   num_points?: number;
   max_radius?: number;
+
+  /** Position bounds (nD bounding box) */
+  position_bounds?: PositionBounds;
 
   /** Broadcasting dimensions */
   broadcast_dims?: string[];

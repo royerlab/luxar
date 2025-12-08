@@ -363,12 +363,14 @@ describe('SceneManager', () => {
       expect(sceneManager.camera.far).toBe(1000);
     });
 
-    it('should call updateSize during initialization', async () => {
-      const updateSizeSpy = vi.spyOn(sceneManager, 'updateSize');
+    it('should call doUpdateSize directly during initialization (no debounce)', async () => {
+      // Spy on private doUpdateSize method using type assertion
+      const doUpdateSizeSpy = vi.spyOn(sceneManager as any, 'doUpdateSize');
 
       await sceneManager.init();
 
-      expect(updateSizeSpy).toHaveBeenCalled();
+      // Should call doUpdateSize directly (immediate sizing, no debounce)
+      expect(doUpdateSizeSpy).toHaveBeenCalledWith(window.innerWidth, window.innerHeight);
     });
 
     it('should handle missing canvas element gracefully', async () => {
@@ -589,6 +591,112 @@ describe('SceneManager', () => {
 
       // Restore container
       (sceneManager as any).container = originalContainer;
+    });
+  });
+
+  describe('position bounds from metadata', () => {
+    beforeEach(async () => {
+      await sceneManager.init();
+    });
+
+    it('should return null when no position bounds in scene', () => {
+      // Clear scene and add empty group
+      while (sceneManager.scene.children.length > 0) {
+        sceneManager.scene.remove(sceneManager.scene.children[0]);
+      }
+      const group = new THREE.Group();
+      sceneManager.scene.add(group);
+
+      // Use the private method via type assertion
+      const bounds = (sceneManager as any).getSceneBoundsFromMetadata();
+      expect(bounds).toBeNull();
+    });
+
+    it('should find position bounds from scene userData', () => {
+      // Add group with position bounds
+      const group = new THREE.Group();
+      group.userData.positionBounds = {
+        min: [0, 0, 0],
+        max: [10, 20, 30],
+      };
+      sceneManager.scene.add(group);
+
+      // Use the private method via type assertion
+      const bounds = (sceneManager as any).getSceneBoundsFromMetadata();
+
+      expect(bounds).not.toBeNull();
+      expect(bounds.min.x).toBe(0);
+      expect(bounds.min.y).toBe(0);
+      expect(bounds.min.z).toBe(0);
+      expect(bounds.max.x).toBe(10);
+      expect(bounds.max.y).toBe(20);
+      expect(bounds.max.z).toBe(30);
+    });
+
+    it('should use position bounds in autoAdjustClippingPlanes', () => {
+      // Add group with position bounds
+      const group = new THREE.Group();
+      group.userData.positionBounds = {
+        min: [-5, -5, -5],
+        max: [5, 5, 5],
+      };
+      sceneManager.scene.add(group);
+
+      // Call autoAdjustClippingPlanes
+      const result = sceneManager.autoAdjustClippingPlanes();
+
+      // Should return valid near/far values
+      expect(result.near).toBeGreaterThan(0);
+      expect(result.far).toBeGreaterThan(result.near);
+
+      // Camera should be updated
+      expect(sceneManager.camera.near).toBe(result.near);
+      expect(sceneManager.camera.far).toBe(result.far);
+    });
+
+    it('should fall back to geometry bounds when metadata not available', () => {
+      // Clear scene and add geometry without metadata bounds
+      while (sceneManager.scene.children.length > 0) {
+        sceneManager.scene.remove(sceneManager.scene.children[0]);
+      }
+
+      // Add points with geometry but no metadata bounds
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array([0, 0, 0, 10, 10, 10]);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.PointsMaterial();
+      const points = new THREE.Points(geometry, material);
+      sceneManager.scene.add(points);
+
+      // Call autoAdjustClippingPlanes - should use geometry bounds
+      const result = sceneManager.autoAdjustClippingPlanes();
+
+      // Should still return valid near/far values
+      expect(result.near).toBeGreaterThan(0);
+      expect(result.far).toBeGreaterThan(result.near);
+    });
+
+    it('should handle nD bounds by projecting to display dimensions', () => {
+      // Add group with 5D position bounds
+      const group = new THREE.Group();
+      group.userData.positionBounds = {
+        min: [0, 10, 20, 30, 40], // 5D
+        max: [5, 15, 25, 35, 45],
+      };
+      sceneManager.scene.add(group);
+
+      // Use the private method via type assertion
+      // By default, display dims are [0, 1, 2] so X=dim0, Y=dim1, Z=dim2
+      const bounds = (sceneManager as any).getSceneBoundsFromMetadata();
+
+      expect(bounds).not.toBeNull();
+      // Should project first 3 dimensions to X, Y, Z
+      expect(bounds.min.x).toBe(0);
+      expect(bounds.min.y).toBe(10);
+      expect(bounds.min.z).toBe(20);
+      expect(bounds.max.x).toBe(5);
+      expect(bounds.max.y).toBe(15);
+      expect(bounds.max.z).toBe(25);
     });
   });
 });
