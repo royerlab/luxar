@@ -36,14 +36,15 @@ export class MaterialManager {
    * Get or create a point material with caching
    */
   getPointMaterial(props: PointMaterialProperties): PointMaterial {
-    // Create cache key from properties (including radiusScale and sharpnessScale if different from 1.0)
-    const radiusScalePart =
-      props.radiusScale && props.radiusScale !== 1.0 ? `_rs${props.radiusScale.toFixed(6)}` : '';
-    const sharpnessScalePart =
-      props.sharpnessScale && props.sharpnessScale !== 1.0
-        ? `_ss${props.sharpnessScale.toFixed(6)}`
-        : '';
-    const key = `point_${props.blendingMode}_${props.opacity.toFixed(2)}_${props.gamma.toFixed(2)}${radiusScalePart}${sharpnessScalePart}`;
+    // Create cache key using integer bucketing for predictable caching behavior
+    // This prevents floating-point precision issues while still grouping similar values
+    // Clamp values to valid ranges to handle edge cases gracefully
+    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100); // 0-100 range
+    const gammaBucket = Math.round(Math.max(0, Math.min(3, props.gamma)) * 10); // 0-30 range
+    const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
+    const sharpnessBucket = props.sharpnessScale ? Math.round(Math.max(0, props.sharpnessScale) * 1000) : 1000;
+
+    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_r${radiusBucket}_s${sharpnessBucket}`;
 
     // Check cache first
     let material = this.pointMaterialCache.get(key);
