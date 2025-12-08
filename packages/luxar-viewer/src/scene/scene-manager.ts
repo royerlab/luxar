@@ -226,7 +226,10 @@ export class SceneManager extends THREE.EventDispatcher<{
         // Recreate post-processing resources (render targets, shaders)
         // Note: This is handled by PostProcessingManager's dispose/recreate cycle
         // For now, we log that resources need recreation
-        log.info(Modules.SCENE_MANAGER, 'Post-processing resources will be recreated on next render');
+        log.info(
+          Modules.SCENE_MANAGER,
+          'Post-processing resources will be recreated on next render'
+        );
 
         // Trigger a render to force resource recreation
         this.dispatchEvent({ type: 'change' });
@@ -235,9 +238,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
       } catch (error) {
         log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
-        showError(
-          'Failed to restore graphics context. Please refresh the page to continue.'
-        );
+        showError('Failed to restore graphics context. Please refresh the page to continue.');
       }
     };
 
@@ -648,7 +649,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Store the latest dimensions
     this.pendingResize = {
       width: window.innerWidth,
-      height: window.innerHeight
+      height: window.innerHeight,
     };
 
     // Cancel any pending resize

@@ -3,7 +3,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ViewStateManager, type SceneDimensions, type DimensionMetadata } from '../../../data/view-state-manager';
+import {
+  ViewStateManager,
+  type SceneDimensions,
+  type DimensionMetadata,
+} from '../../../data/view-state-manager';
 
 describe('ViewStateManager', () => {
   describe('initializeFromDimensions', () => {
@@ -12,8 +16,8 @@ describe('ViewStateManager', () => {
         dimensions: [
           { name: 'x', unit: 'um', scale: 1.0, range: [-10, 10], display: true },
           { name: 'y', unit: 'um', scale: 1.0, range: [-10, 10], display: true },
-          { name: 'z', unit: 'um', scale: 1.0, range: [-10, 10], display: true }
-        ]
+          { name: 'z', unit: 'um', scale: 1.0, range: [-10, 10], display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -31,8 +35,8 @@ describe('ViewStateManager', () => {
           { name: 'channel', unit: '', scale: 1.0, range: [0, 4], display: false, discrete: true },
           { name: 'x', unit: 'um', scale: 1.0, range: [-50, 50], display: true },
           { name: 'y', unit: 'um', scale: 1.0, range: [-50, 50], display: true },
-          { name: 'z', unit: 'um', scale: 1.0, range: [-20, 20], display: true }
-        ]
+          { name: 'z', unit: 'um', scale: 1.0, range: [-20, 20], display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -50,8 +54,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'frames', unit: '', scale: 1.0, range: [0, 9], display: false, discrete: true }, // Center = 4.5 → floor = 4
-          { name: 'x', unit: 'px', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'px', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -63,8 +67,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'wavelength', unit: 'nm', scale: 1.0, range: [400, 700], display: false }, // Continuous
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -77,8 +81,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'x', unit: 'um', scale: 1.0, display: true }, // No range
-          { name: 'y', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'y', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -93,8 +97,8 @@ describe('ViewStateManager', () => {
           { name: 'x', unit: 'um', scale: 1.0, display: true },
           { name: 'y', unit: 'um', scale: 1.0, display: true },
           { name: 'z', unit: 'um', scale: 1.0, display: true }, // 4th one, should be ignored
-          { name: 't', unit: 's', scale: 1.0, display: true } // 5th one, should be ignored
-        ]
+          { name: 't', unit: 's', scale: 1.0, display: true }, // 5th one, should be ignored
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -108,7 +112,7 @@ describe('ViewStateManager', () => {
     it('should validate correct dimensions', () => {
       const dimensions: DimensionMetadata[] = [
         { name: 'x', unit: 'um', scale: 1.0, range: [-10, 10], display: true, step: 0.1 },
-        { name: 'y', unit: 'um', scale: 1.0, range: [-10, 10], display: true, step: 0.1 }
+        { name: 'y', unit: 'um', scale: 1.0, range: [-10, 10], display: true, step: 0.1 },
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
@@ -120,7 +124,7 @@ describe('ViewStateManager', () => {
     it('should warn about duplicate dimension names', () => {
       const dimensions: DimensionMetadata[] = [
         { name: 'x', unit: 'um', scale: 1.0, display: true },
-        { name: 'x', unit: 'nm', scale: 1.0, display: false } // Duplicate!
+        { name: 'x', unit: 'nm', scale: 1.0, display: false }, // Duplicate!
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
@@ -135,72 +139,70 @@ describe('ViewStateManager', () => {
         { name: 'w', unit: 'um', scale: 1.0, display: true },
         { name: 'x', unit: 'um', scale: 1.0, display: true },
         { name: 'y', unit: 'um', scale: 1.0, display: true },
-        { name: 'z', unit: 'um', scale: 1.0, display: true } // 4th displayed
+        { name: 'z', unit: 'um', scale: 1.0, display: true }, // 4th displayed
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('4 displayed dimensions'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('4 displayed dimensions'))).toBe(true);
     });
 
     it('should warn about no displayed dimensions', () => {
       const dimensions: DimensionMetadata[] = [
         { name: 'x', unit: 'um', scale: 1.0, display: false },
-        { name: 'y', unit: 'um', scale: 1.0, display: false }
+        { name: 'y', unit: 'um', scale: 1.0, display: false },
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('no displayed dimensions'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('no displayed dimensions'))).toBe(true);
     });
 
     it('should warn about invalid range format', () => {
       const dimensions: any[] = [
-        { name: 'x', unit: 'um', scale: 1.0, range: [10, 5], display: true } // Min > Max!
+        { name: 'x', unit: 'um', scale: 1.0, range: [10, 5], display: true }, // Min > Max!
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('invalid range'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('invalid range'))).toBe(true);
     });
 
     it('should warn about negative or zero step', () => {
       const dimensions: DimensionMetadata[] = [
-        { name: 'x', unit: 'um', scale: 1.0, step: 0, display: true } // Zero step!
+        { name: 'x', unit: 'um', scale: 1.0, step: 0, display: true }, // Zero step!
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('invalid step'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('invalid step'))).toBe(true);
     });
 
     it('should warn about discrete dimensions without range', () => {
       const dimensions: DimensionMetadata[] = [
-        { name: 'channel', unit: '', scale: 1.0, discrete: true, display: false } // No range!
+        { name: 'channel', unit: '', scale: 1.0, discrete: true, display: false }, // No range!
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('should have a defined range'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('should have a defined range'))).toBe(true);
     });
 
     it('should warn about missing dimension names', () => {
       const dimensions: any[] = [
-        { unit: 'um', scale: 1.0, display: true } // No name!
+        { unit: 'um', scale: 1.0, display: true }, // No name!
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
 
-      expect(result.warnings.some(w => w.includes('missing name'))).toBe(true);
+      expect(result.warnings.some((w) => w.includes('missing name'))).toBe(true);
     });
   });
 
   describe('Edge Cases', () => {
     it('should handle single dimension', () => {
       const sceneDims: SceneDimensions = {
-        dimensions: [
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+        dimensions: [{ name: 'x', unit: 'um', scale: 1.0, display: true }],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -213,8 +215,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'time', unit: 's', scale: 1.0, range: [0, 1000000], display: false },
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -226,8 +228,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'offset', unit: 'um', scale: 1.0, range: [-100, -50], display: false },
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -239,9 +241,16 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           // Weird but valid: discrete with non-integer range
-          { name: 'weird', unit: '', scale: 1.0, range: [0.5, 5.5], display: false, discrete: true },
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          {
+            name: 'weird',
+            unit: '',
+            scale: 1.0,
+            range: [0.5, 5.5],
+            display: false,
+            discrete: true,
+          },
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -256,8 +265,8 @@ describe('ViewStateManager', () => {
         dimensions: [
           { name: 'x', unit: 'um', scale: 1.0, display: true },
           { name: 'y', unit: 'um', scale: 1.0, display: true },
-          { name: 'z', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'z', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -280,10 +289,10 @@ describe('ViewStateManager', () => {
             range: [0, 1000],
             display: false,
             discrete: true,
-            step: 10
+            step: 10,
           },
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -299,7 +308,7 @@ describe('ViewStateManager', () => {
     it('should accumulate multiple warnings', () => {
       const dimensions: any[] = [
         { name: 'x', unit: 'um', scale: 1.0, range: [10, 5], display: true, step: -1 }, // 2 warnings
-        { unit: 'nm', scale: 1.0, display: false } // 1 warning (no name)
+        { unit: 'nm', scale: 1.0, display: false }, // 1 warning (no name)
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
@@ -311,7 +320,7 @@ describe('ViewStateManager', () => {
       const dimensions: DimensionMetadata[] = [
         { name: 'x', unit: '', scale: 1.0 }, // Empty unit - valid
         { name: 'y', unit: 'um', scale: 0.001 }, // Very small scale - valid
-        { name: 'z', unit: 'km', scale: 1000.0 } // Large scale - valid
+        { name: 'z', unit: 'km', scale: 1000.0 }, // Large scale - valid
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);
@@ -326,8 +335,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'x', unit: 'um', scale: 1.0, display: true },
-          { name: 'y', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'y', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -339,8 +348,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'frame', unit: '', scale: 1.0, display: false, discrete: true },
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
@@ -353,8 +362,8 @@ describe('ViewStateManager', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
           { name: 'wavelength', unit: 'nm', scale: 1.0, display: false }, // Continuous, non-displayed
-          { name: 'x', unit: 'um', scale: 1.0, display: true }
-        ]
+          { name: 'x', unit: 'um', scale: 1.0, display: true },
+        ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);

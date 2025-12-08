@@ -80,6 +80,7 @@ The test suite uses comprehensive mocks to run tests in Node.js without a browse
 ### Mock Files
 
 #### `mocks/index.ts` (Central Export)
+
 - Re-exports all mocks
 - Provides `installAllMocks()` convenience function
 - Used in `setup.ts` to install mocks globally
@@ -90,9 +91,11 @@ installAllMocks(); // Sets up all mocks at once
 ```
 
 #### `mocks/webgl.mock.ts` (WebGL Context Mock)
+
 **Purpose**: Mock WebGL2RenderingContext for Three.js rendering tests
 
 **What it mocks**:
+
 - WebGL constants (e.g., `gl.TRIANGLES`, `gl.FLOAT`)
 - Shader compilation (`createShader`, `compileShader`, `linkProgram`)
 - Buffer operations (`createBuffer`, `bufferData`)
@@ -101,15 +104,18 @@ installAllMocks(); // Sets up all mocks at once
 - Canvas element
 
 **Key features**:
+
 - 164 lines of comprehensive WebGL API surface
 - Supports HDR extension detection
 - Tracks shader compilation for debugging
 - Mock canvas with resize support
 
 #### `mocks/browser-apis.mock.ts` (Browser APIs Mock)
+
 **Purpose**: Mock browser APIs not available in Node.js
 
 **What it mocks**:
+
 - `window.matchMedia()` - HDR/P3 color space detection
 - `ResizeObserver` - Canvas resizing
 - `IntersectionObserver` - Visibility tracking
@@ -119,9 +125,11 @@ installAllMocks(); // Sets up all mocks at once
 **Usage**: Automatically installed via `installAllBrowserMocks()`
 
 #### `mocks/opfs.mock.ts` (Origin Private File System Mock)
+
 **Purpose**: Mock browser-native persistent storage
 
 **What it mocks**:
+
 - `navigator.storage.getDirectory()` - OPFS root access
 - File handle operations (read, write, remove)
 - Directory iteration
@@ -129,24 +137,29 @@ installAllMocks(); // Sets up all mocks at once
 **Usage**: Enables cache tests without real browser storage
 
 #### `mocks/three.mock.ts` (THREE.js Mock)
+
 **Purpose**: Mock THREE.js classes for rendering tests
 
 **What it mocks**:
+
 - Core classes: `Scene`, `Camera`, `Renderer`, `Mesh`, `Geometry`, `Material`
 - Point rendering: `Points`, `PointsMaterial`, `BufferGeometry`, `BufferAttribute`
 - Post-processing: `EffectComposer`, `RenderPass`, `ShaderPass`
 - Controls: Orbit/fly controls (see `orbit-controls.mock.ts`)
 
 **Key features**:
+
 - 1524 lines of comprehensive THREE.js API surface
 - Tracks scene graph changes for assertions
 - Mock shaders with uniform tracking
 - Dispose tracking for memory leak detection
 
 #### `mocks/orbit-controls.mock.ts` (OrbitControls Mock)
+
 **Purpose**: Mock Three.js OrbitControls
 
 **What it mocks**:
+
 - `OrbitControls` class with camera manipulation
 - Event system (`addEventListener`, `removeEventListener`)
 - State properties (`enabled`, `target`, `dampingFactor`)
@@ -156,12 +169,14 @@ installAllMocks(); // Sets up all mocks at once
 ### Why Mock?
 
 **Reasons**:
+
 1. **Speed**: Unit tests run in <5s (vs 30s+ for E2E)
 2. **Isolation**: Test logic without browser/GPU dependencies
 3. **Reliability**: No flaky GPU driver issues
 4. **Debugging**: Easier to debug pure JavaScript logic
 
 **Trade-offs**:
+
 - Mocks can't catch browser-specific bugs (WebGL errors, OPFS issues)
 - Visual correctness requires E2E tests
 - Mock drift: Mocks must stay in sync with real APIs
@@ -215,6 +230,7 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
   - State synchronization
 
 **Test Boundaries**:
+
 - **Unit tests** (`unit/data/`): Mock zarr data, focus on logic
 - **E2E tests** (`e2e/data-loading.spec.ts`): Real browser + real files
 
@@ -281,6 +297,7 @@ Tests for memory management and performance optimization.
   - Automatic tier management
 
 **Cache Strategy**:
+
 - **lru-cache**: Simple LRU for general use
 - **segmented-lru-cache**: Segmented LRU for better locality
 - **two-level-caching-store**: Hot data in memory, warm data in OPFS
@@ -421,16 +438,19 @@ Full browser tests using Playwright that exercise the complete pipeline.
 - `webgl-error-detection.spec.ts` - WebGL error handling
 
 **Why E2E Tests Matter**:
+
 - Unit tests mock WebGL/browser APIs → can't catch browser-specific bugs
 - E2E tests catch: WebGL errors, OPFS issues, rendering glitches, GPU driver issues
 - Visual regression tests prevent UI breakage
 - **Critical**: Many bugs only manifest in real browsers (e.g., WebGL context loss, OPFS quota errors)
 
 **Test Artifacts** (Auto-Generated, Not Committed):
+
 - `test-results/` - Per-test screenshots, videos, traces
 - `playwright-report/` - Interactive HTML report
 
 **Viewing Results**:
+
 ```bash
 pnpm test:e2e:report  # Opens HTML report with all screenshots/videos
 ```
@@ -471,19 +491,18 @@ make viewer-test-fixtures
 ### What Fixtures Test
 
 **Encoding Compatibility** (Python → TypeScript):
+
 1. **Broadcasting**: Python writes `(1, 3)` color array → TypeScript expands to `(N, 3)`
 2. **LUT Encoding**: Python encodes 1000 colors as 10 unique values → TypeScript decodes
 3. **Quantization**: Python quantizes Float32 → Uint16 → TypeScript dequantizes
 4. **Array References**: Python writes shared array with `array_ref` → TypeScript resolves
 
-**Scene Features**:
-5. **4D/5D Data**: nD slicing, hypersphere visibility
-6. **Hierarchical Transforms**: Parent-child transform composition
-7. **HDR Colors**: Float32 colors > 1.0
+**Scene Features**: 5. **4D/5D Data**: nD slicing, hypersphere visibility 6. **Hierarchical Transforms**: Parent-child transform composition 7. **HDR Colors**: Float32 colors > 1.0
 
 ### When to Regenerate
 
 Regenerate fixtures when:
+
 - Python encoding format changes
 - New encoding modes added
 - Scene metadata schema changes
@@ -559,6 +578,7 @@ make test-all                   # Python + TypeScript tests
 ### When to Write Unit Tests vs E2E Tests
 
 **Unit Tests** (`unit/`):
+
 - ✅ Fast feedback loop (<5s)
 - ✅ Easy to debug (no browser)
 - ✅ Test logic and algorithms
@@ -566,6 +586,7 @@ make test-all                   # Python + TypeScript tests
 - **Use for**: Encoding, decoding, math, state management
 
 **E2E Tests** (`e2e/`):
+
 - ✅ Full browser integration
 - ✅ Catch visual/rendering bugs
 - ✅ Test user workflows
@@ -641,6 +662,7 @@ const dims = new DimensionsBuilder()
 ```
 
 **Benefits**:
+
 - Fluent, expressive API
 - Type-safe
 - Centralized test data generation
@@ -677,12 +699,14 @@ const mockZarrStore = {
 ### What We Test
 
 **Unit Tests Focus On**:
+
 1. **Logic correctness**: Encoding, decoding, math, algorithms
 2. **Error handling**: Invalid inputs, edge cases
 3. **State management**: No global pollution, clean isolation
 4. **API contracts**: Public interfaces behave as documented
 
 **E2E Tests Focus On**:
+
 1. **Visual correctness**: Points render correctly
 2. **Browser integration**: WebGL, OPFS, network requests
 3. **User workflows**: Load dataset → navigate → interact
@@ -699,6 +723,7 @@ const mockZarrStore = {
 Several tests document and prevent regressions of critical bugs:
 
 #### 1. nD Calculation Bug (`ndim-calculation-projectTo3D.test.ts`)
+
 - **Bug**: Wrong ndim calculation (default 3) for 4D+ data without spatial index
 - **Impact**: Block artifacts in rendering
 - **Root Cause**: Assumed 3D, didn't read from positions array
@@ -706,6 +731,7 @@ Several tests document and prevent regressions of critical bugs:
 - **Test**: Verify ndim calculated from actual data
 
 #### 2. Encoded Range Extraction Bug (`encoded-range-extraction.test.ts`)
+
 - **Bug**: LUT-encoded arrays used wrong `elementsPerPoint` (1 instead of 3)
 - **Impact**: Only 1/3 of points rendered, 2/3 appeared black
 - **Root Cause**: Didn't account for per-point element count
@@ -713,6 +739,7 @@ Several tests document and prevent regressions of critical bugs:
 - **Test**: Verify range extraction with LUT/quantization
 
 #### 3. Array Reference Bug (`array-decoder.test.ts`)
+
 - **Bug**: Array references not resolved correctly
 - **Impact**: Duplicated point data not shared (memory waste)
 - **Root Cause**: Didn't follow `array_ref` metadata
@@ -780,14 +807,17 @@ pnpm test:e2e:report
 ### Common Issues
 
 **"ReferenceError: X is not defined"**:
+
 - Check if X needs a mock in `mocks/`
 - Add mock to `setup.ts` if needed
 
 **"TypeError: X is not a function"**:
+
 - Check if mock provides the required method
 - Update mock in `mocks/` directory
 
 **"Test timeout"**:
+
 - Check for infinite loops
 - Check for unresolved promises
 - Increase timeout in test config
@@ -797,11 +827,13 @@ pnpm test:e2e:report
 ## Continuous Integration
 
 Tests run automatically on:
+
 - Every commit (pre-commit hook)
 - Pull requests (GitHub Actions)
 - Main branch merges
 
 **CI Requirements**:
+
 - All unit tests pass (696/701 passing)
 - All E2E tests pass (21 tests)
 - Coverage ≥ 80%
@@ -809,6 +841,7 @@ Tests run automatically on:
 - No linting errors
 
 **Pre-commit Checklist**:
+
 ```bash
 # 1. Run all tests
 pnpm test --run && pnpm test:e2e

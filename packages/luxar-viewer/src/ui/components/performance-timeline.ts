@@ -171,10 +171,12 @@ export class PerformanceTimeline {
 
     // Throttle renders to max 10 FPS
     if (timeSinceLastRender < this.minRenderInterval) {
-      // Schedule another frame
-      this.animationFrameId = requestAnimationFrame(() => {
-        this.performRender();
-      });
+      // Schedule another frame (guard for test environment)
+      if (typeof requestAnimationFrame !== 'undefined') {
+        this.animationFrameId = requestAnimationFrame(() => {
+          this.performRender();
+        });
+      }
       return;
     }
 
@@ -398,7 +400,7 @@ export class PerformanceTimeline {
   getStats(): {
     avgQueryTime: number;
     avgLoadTime: number;
-    } {
+  } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0 };
     }

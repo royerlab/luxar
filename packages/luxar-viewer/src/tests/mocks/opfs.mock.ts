@@ -16,9 +16,7 @@ import { vi } from 'vitest';
  */
 export function installOPFSMock(): void {
   (globalThis as any).navigator.storage = {
-    getDirectory: vi
-      .fn()
-      .mockRejectedValue(new Error('OPFS not available in test environment')),
+    getDirectory: vi.fn().mockRejectedValue(new Error('OPFS not available in test environment')),
     estimate: vi.fn().mockResolvedValue({ quota: 0, usage: 0 }),
   };
 }
