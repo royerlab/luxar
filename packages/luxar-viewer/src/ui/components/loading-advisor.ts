@@ -115,7 +115,6 @@ export class LoadingAdvisor {
     this.recommendations.set(rec.id, rec);
   }
 
-
   /**
    * Add high query time recommendation
    */

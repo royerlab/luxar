@@ -41,8 +41,12 @@ export class MaterialManager {
     // Clamp values to valid ranges to handle edge cases gracefully
     const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100); // 0-100 range
     const gammaBucket = Math.round(Math.max(0, Math.min(3, props.gamma)) * 10); // 0-30 range
-    const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
-    const sharpnessBucket = props.sharpnessScale ? Math.round(Math.max(0, props.sharpnessScale) * 1000) : 1000;
+    const radiusBucket = props.radiusScale
+      ? Math.round(Math.max(0, props.radiusScale) * 1000)
+      : 1000;
+    const sharpnessBucket = props.sharpnessScale
+      ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
+      : 1000;
 
     const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_r${radiusBucket}_s${sharpnessBucket}`;
 

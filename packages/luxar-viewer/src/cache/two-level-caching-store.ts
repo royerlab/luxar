@@ -143,9 +143,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
    */
   private async validateCache(): Promise<void> {
     try {
-      // Read root .zattrs to get content_hash
-      const rootAttrs = await this.getRootAttrs();
-      const remoteHash = rootAttrs?.content_hash;
+      // Fetch current content_hash directly from server (bypass cache)
+      const remoteHash = await this.getRemoteContentHash();
 
       // No hash → skip validation (external dataset handling)
       if (!remoteHash) {
@@ -171,13 +170,25 @@ export class TwoLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Read root .zattrs through cache layers.
+   * Get content_hash directly from remote server, bypassing cache.
+   * Used for cache validation to detect dataset changes.
+   * This ensures we always check the TRUE current hash, not a cached one.
    */
-  private async getRootAttrs(): Promise<any> {
-    const attrsKey = '.zattrs';
-    const data = await this.get(attrsKey);
-    if (!data) return null;
-    return JSON.parse(new TextDecoder().decode(data));
+  private async getRemoteContentHash(): Promise<string | null> {
+    try {
+      // Direct HTTP fetch, no cache lookup
+      const response = await fetch(`${this.baseUrl}/.zattrs`);
+      if (!response.ok) return null;
+
+      const data = await response.arrayBuffer();
+      const attrs = JSON.parse(new TextDecoder().decode(data));
+      return attrs?.content_hash ?? null;
+    } catch (error) {
+      // Network error or parse error
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
+      return null;
+    }
   }
 
   /**
@@ -234,7 +245,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
   getStats(): {
     l1: { metadataSize: number; chunksSize: number; metadataCount: number; chunksCount: number };
     l2: { size: number; count: number };
-    } {
+  } {
     return {
       l1: this.l1Cache.getStats(),
       l2: this.l2Store?.getStats() ?? { size: 0, count: 0 },

@@ -40,7 +40,10 @@ export class SceneLoader {
   private arrayRefRegistry: ArrayRefRegistry;
 
   // Error recovery tracking
-  private failedLoaders = new Map<string, { error: Error; timestamp: number; retryCount: number }>();
+  private failedLoaders = new Map<
+    string,
+    { error: Error; timestamp: number; retryCount: number }
+  >();
 
   constructor(config: LoaderConfig = {}, id?: string) {
     this.config = config;
@@ -180,7 +183,7 @@ export class SceneLoader {
         this.failedLoaders.set(path, {
           error: error as Error,
           timestamp: Date.now(),
-          retryCount
+          retryCount,
         });
 
         // Log error with retry count

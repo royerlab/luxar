@@ -58,11 +58,43 @@ export function installIntersectionObserverMock(): void {
 /**
  * Mock requestAnimationFrame and cancelAnimationFrame
  *
- * Used for animation loops
+ * Used for animation loops. Tracks pending frames for proper cleanup.
  */
 export function installAnimationFrameMock(): void {
-  (globalThis as any).requestAnimationFrame = vi.fn((cb: any) => setTimeout(cb, 16));
-  (globalThis as any).cancelAnimationFrame = vi.fn((id: any) => clearTimeout(id));
+  const pendingFrames = new Set<number>();
+  let frameIdCounter = 1;
+
+  (globalThis as any).requestAnimationFrame = vi.fn((cb: any) => {
+    const id = frameIdCounter++;
+    setTimeout(() => {
+      pendingFrames.delete(id);
+      // Wrap callback in try-catch to prevent test environment errors
+      try {
+        cb(performance.now());
+      } catch (error) {
+        // Silently ignore errors after test teardown
+        if (error && (error as any).message?.includes('test environment')) {
+          return;
+        }
+        throw error;
+      }
+    }, 16);
+    pendingFrames.add(id);
+    return id;
+  });
+
+  (globalThis as any).cancelAnimationFrame = vi.fn((id: any) => {
+    if (pendingFrames.has(id)) {
+      clearTimeout(id);
+      pendingFrames.delete(id);
+    }
+  });
+
+  // Global cleanup helper (can be called in afterEach)
+  (globalThis as any).__clearAllAnimationFrames = () => {
+    pendingFrames.forEach((id) => clearTimeout(id));
+    pendingFrames.clear();
+  };
 }
 
 /**

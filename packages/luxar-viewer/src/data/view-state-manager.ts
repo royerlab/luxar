@@ -58,8 +58,8 @@ export class ViewStateManager {
         ndim,
         currentStep: slicePosition,
         displayed,
-        metadata
-      }
+        metadata,
+      },
     };
   }
 
@@ -82,7 +82,7 @@ export class ViewStateManager {
     return {
       isValid: errors.length === 0,
       errors,
-      warnings
+      warnings,
     };
   }
 
@@ -101,7 +101,7 @@ export class ViewStateManager {
       range: dim.range as [number, number] | undefined,
       display: dim.display,
       discrete: dim.discrete,
-      step: dim.step
+      step: dim.step,
     }));
   }
 
@@ -154,10 +154,7 @@ export class ViewStateManager {
   /**
    * Build tolerance array based on dimension types
    */
-  private static buildToleranceArray(
-    metadata: DimensionMetadata[],
-    displayed: number[]
-  ): number[] {
+  private static buildToleranceArray(metadata: DimensionMetadata[], displayed: number[]): number[] {
     const ndim = metadata.length;
     const tolerance = new Array(ndim);
 
@@ -204,7 +201,9 @@ export class ViewStateManager {
           'Only the first 3 will be displayed.'
       );
     } else if (displayedCount === 0) {
-      warnings.push('Scene has no displayed dimensions. At least one dimension should be displayed.');
+      warnings.push(
+        'Scene has no displayed dimensions. At least one dimension should be displayed.'
+      );
     }
   }
 
@@ -251,7 +250,11 @@ export class ViewStateManager {
   /**
    * Log validation results
    */
-  static logValidationResults(validation: ValidationResult, ndim: number, displayedCount: number): void {
+  static logValidationResults(
+    validation: ValidationResult,
+    ndim: number,
+    displayedCount: number
+  ): void {
     // Log errors
     validation.errors.forEach((error) => log.error(Modules.SCENE_LOADER, error));
 

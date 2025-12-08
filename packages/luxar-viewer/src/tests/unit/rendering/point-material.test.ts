@@ -43,7 +43,7 @@ describe('PointMaterial', () => {
       expect(material.uniforms.invGamma.value).toBe(1.0);
       // Check pre-computed tanHalfFov (default 60 degrees)
       expect(material.uniforms.tanHalfFov.value).toBeCloseTo(
-        Math.tan(((60 * Math.PI) / 180) / 2),
+        Math.tan((60 * Math.PI) / 180 / 2),
         10
       );
       expect(material.uniforms.resolution.value).toBeInstanceOf(THREE.Vector2);

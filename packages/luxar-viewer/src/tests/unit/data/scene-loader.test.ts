@@ -387,7 +387,9 @@ describe('SceneLoader', () => {
 
       // Should log error with improved retry tracking format
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[❌] [SceneLoader] Failed to update /failing (attempt 1): Update failed')
+        expect.stringContaining(
+          '[❌] [SceneLoader] Failed to update /failing (attempt 1): Update failed'
+        )
       );
 
       // Should track the failure
