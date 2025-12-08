@@ -44,7 +44,7 @@ Comprehensive improvements made to the Luxar TypeScript test suite, addressing c
 
 - ✅ **Scene Dimensions** (3 tests)
   - scene_dimensions parsing
-  - broadcast_dims handling
+  - extend_to_all handling
   - Missing dimensions (defaults to 3D)
 
 - ✅ **Optional Arrays** (5 tests)

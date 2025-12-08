@@ -2,16 +2,17 @@
 
 Tests cover uncovered lines in scene.py:
 - Scene initialization error handling
-- add_points with broadcast_dims variations
+- add_points with extend_to_all variations
 - add_lines validation
 - add_gsplats validation
-- _auto_detect_broadcast_dims method
+- _analyze_extend_candidates method
 - get_store_path method
 - dimensions property setter
 - to_zarr method
 """
 
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -31,11 +32,11 @@ class TestSceneInitialization:
             Scene(writer=None, dimensions=Dimensions.default_3d())  # type: ignore[arg-type]
 
 
-class TestAddPointsBroadcastDims:
-    """Tests for add_points with various broadcast_dims options."""
+class TestAddPointsExtendToAll:
+    """Tests for add_points with various extend_to_all options."""
 
-    def test_broadcast_dims_auto(self) -> None:
-        """Test add_points with broadcast_dims='auto'."""
+    def test_extend_to_all_with_warning(self) -> None:
+        """Test add_points with extend_to_all=None triggers warning when candidates exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -54,19 +55,20 @@ class TestAddPointsBroadcastDims:
                 scene = compiler.create_scene(dimensions=dims)
 
                 # Create 4D positions with only one unique time value
-                # This should trigger auto-detection
+                # This should trigger warning
                 positions = np.random.rand(100, 4).astype(np.float32)
                 positions[:, 3] = 0  # All at time=0
 
-                points = scene.add_points(
-                    "test_points",
-                    positions,
-                    broadcast_dims="auto",
-                )
+                with pytest.warns(UserWarning, match="time"):
+                    points = scene.add_points(
+                        "test_points",
+                        positions,
+                        # extend_to_all=None (default)
+                    )
                 assert points is not None
 
-    def test_broadcast_dims_all(self) -> None:
-        """Test add_points with broadcast_dims='all'."""
+    def test_extend_to_all_all(self) -> None:
+        """Test add_points with extend_to_all='all'."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -90,12 +92,12 @@ class TestAddPointsBroadcastDims:
                 points = scene.add_points(
                     "test_points",
                     positions,
-                    broadcast_dims="all",
+                    extend_to_all="all",
                 )
                 assert points is not None
 
-    def test_broadcast_dims_explicit_list(self) -> None:
-        """Test add_points with explicit broadcast_dims list."""
+    def test_extend_to_all_explicit_list(self) -> None:
+        """Test add_points with explicit extend_to_all list."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -118,12 +120,45 @@ class TestAddPointsBroadcastDims:
                 points = scene.add_points(
                     "test_points",
                     positions,
-                    broadcast_dims=["time"],
+                    extend_to_all=["time"],
                 )
                 assert points is not None
 
-    def test_broadcast_dims_invalid_value(self) -> None:
-        """Test add_points with invalid broadcast_dims value."""
+    def test_extend_to_all_empty_list_silences_warning(self) -> None:
+        """Test add_points with extend_to_all=[] silences warning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension(
+                        "time", unit="s", display=False, discrete=True, range=(0, 9)
+                    ),
+                ]
+            )
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+
+                # Create 4D positions with only one unique time value
+                positions = np.random.rand(100, 4).astype(np.float32)
+                positions[:, 3] = 0  # All at time=0
+
+                # Using empty list should NOT trigger warning
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")  # Turn warnings into errors
+                    points = scene.add_points(
+                        "test_points",
+                        positions,
+                        extend_to_all=[],  # Explicitly no extension
+                    )
+                assert points is not None
+
+    def test_extend_to_all_invalid_value(self) -> None:
+        """Test add_points with invalid extend_to_all value."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -132,11 +167,11 @@ class TestAddPointsBroadcastDims:
 
                 positions = np.random.rand(100, 3).astype(np.float32)
 
-                with pytest.raises(ValueError, match="Invalid broadcast_dims"):
+                with pytest.raises(ValueError, match="Invalid extend_to_all"):
                     scene.add_points(
                         "test_points",
                         positions,
-                        broadcast_dims="invalid_value",  # type: ignore[arg-type]
+                        extend_to_all="invalid_value",  # type: ignore[arg-type]
                     )
 
     def test_add_points_1d_positions_error(self) -> None:
@@ -242,25 +277,25 @@ class TestAddGSplatsValidation:
                 assert gsplats is not None
 
 
-class TestAutoDetectBroadcastDims:
-    """Tests for _auto_detect_broadcast_dims method."""
+class TestAnalyzeExtendCandidates:
+    """Tests for _analyze_extend_candidates method."""
 
-    def test_auto_detect_no_dimensions(self) -> None:
-        """Test auto-detect returns empty when scene has no dimensions."""
+    def test_analyze_no_dimensions(self) -> None:
+        """Test analyze returns empty when scene has only displayed dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=Dimensions.default_3d())  # No dimensions
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 positions = np.random.rand(100, 3).astype(np.float32)
 
-                # Auto-detect with no dimensions should return empty
-                result = scene._auto_detect_broadcast_dims(positions)
+                # No non-displayed dimensions, so no candidates
+                result = scene._analyze_extend_candidates(positions)
                 assert result == []
 
-    def test_auto_detect_full_coverage(self) -> None:
-        """Test auto-detect returns empty when data has full coverage."""
+    def test_analyze_multiple_values_no_candidate(self) -> None:
+        """Test analyze returns empty when dimension has multiple values."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -278,7 +313,7 @@ class TestAutoDetectBroadcastDims:
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
 
-                # Create positions with full coverage (all 5 time points)
+                # Create positions with multiple time values - NOT a candidate
                 n_per_time = 20
                 positions = []
                 for t in range(5):  # 0, 1, 2, 3, 4
@@ -286,17 +321,14 @@ class TestAutoDetectBroadcastDims:
                     time_col = np.full((n_per_time, 1), t, dtype=np.float32)
                     positions.append(np.hstack([pts, time_col]))
 
-                all_positions = np.vstack(positions)  # 100 points, full coverage
+                all_positions = np.vstack(positions)
 
-                # Should not detect broadcast dims due to full coverage
-                _result = scene._auto_detect_broadcast_dims(all_positions)
-                # Even with all times present, if only one unique value per column,
-                # it might still detect broadcast
-                # The logic checks if n_points >= expected_total * 0.8
-                # Result is intentionally unused - we're testing that call doesn't crash
+                # Multiple time values means NOT a candidate
+                result = scene._analyze_extend_candidates(all_positions)
+                assert "time" not in result
 
-    def test_auto_detect_low_coverage(self) -> None:
-        """Test auto-detect with low coverage data."""
+    def test_analyze_single_value_with_range_is_candidate(self) -> None:
+        """Test analyze detects single-value dimension with larger range."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
 
@@ -314,16 +346,37 @@ class TestAutoDetectBroadcastDims:
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
 
-                # Create positions with only one time value and low coverage
-                # Expected total = 100 time points
-                # We have 5 points, which is << 80 (expected * 0.8)
+                # All points at single time value, but range is [0, 99]
                 positions = np.random.rand(5, 4).astype(np.float32)
                 positions[:, 3] = 5  # All at time=5
 
-                result = scene._auto_detect_broadcast_dims(positions)
-                # With only 5 points and 100 expected time points,
-                # and all points at the same time, "time" should be detected
+                result = scene._analyze_extend_candidates(positions)
+                # Single value with larger range = candidate
                 assert "time" in result
+
+    def test_analyze_no_range_not_candidate(self) -> None:
+        """Test analyze doesn't flag dimension without defined range."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension("time", unit="s", display=False),  # No range
+                ]
+            )
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+
+                positions = np.random.rand(5, 4).astype(np.float32)
+                positions[:, 3] = 0  # All at time=0
+
+                result = scene._analyze_extend_candidates(positions)
+                # No range defined, so not a candidate
+                assert "time" not in result
 
 
 class TestDimensionsProperty:
@@ -356,7 +409,7 @@ class TestDimensionsProperty:
             store_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
-                scene = compiler.create_scene(dimensions=Dimensions.default_3d())  # No initial dims
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 new_dims = Dimensions(
                     [

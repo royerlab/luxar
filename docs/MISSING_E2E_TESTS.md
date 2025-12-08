@@ -1076,7 +1076,7 @@ To implement these tests, we need:
 1. **demo.zarr** - 3D dataset, ~100k points, all attributes
 2. **4d_timeseries.zarr** - 4D dataset with time dimension
 3. **5d_dataset.zarr** - 5D dataset for complex nD testing
-4. **broadcast_dataset.zarr** - With broadcast_dims specified
+4. **extended_dataset.zarr** - With extend_to_all specified
 5. **no_index.zarr** - 3D dataset without spatial index
 6. **indexed_dataset.zarr** - With spatial index
 

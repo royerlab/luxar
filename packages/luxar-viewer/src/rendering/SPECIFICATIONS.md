@@ -1,7 +1,7 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.0.1
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -608,9 +608,68 @@ interface PostProcessingConfig {
 }
 ```
 
+
+### 5.3 Material Lifecycle & Memory Management
+
+**Memory Leak Prevention**: Disposed materials MUST be unregistered from MaterialManager to prevent accumulation in global update lists.
+
+**Problem Without Unregistration**:
+```typescript
+// Long-running app creates and disposes many materials
+for (let i = 0; i < 1000; i++) {
+  const material = materialManager.getPointMaterial(config);
+  // ... use material ...
+  material.dispose();  // WITHOUT unregister()
+  // Material remains in MaterialManager.registeredMaterials Set
+  // updateCameraParams() still iterates over disposed materials
+}
+// Result: Memory leak + performance degradation
+```
+
+**Solution**:
+```typescript
+// MaterialManager.unregister() method
+unregister(material: THREE.Material): void {
+  this.registeredMaterials.delete(material);
+  
+  // Also remove from cache if it's a point material
+  if (material instanceof PointMaterial) {
+    for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
+      if (cachedMaterial === material) {
+        this.pointMaterialCache.delete(key);
+        break;
+      }
+    }
+  }
+}
+
+// PointMaterial.dispose() override
+dispose(): void {
+  // Unregister from material manager to prevent memory leaks
+  materialManager.unregister(this);
+  
+  // Call parent dispose to free GPU resources
+  super.dispose();
+}
+```
+
+**When to Unregister**:
+- Material.dispose() called (automatic via override)
+- Scene cleared (dispose all objects)
+- Dataset switched (remove old materials)
+
+**Impact**: Prevents memory leaks in long-running applications and maintains performance of global material updates.
+
 ---
 
 ## Changelog
+
+- **v1.0.1** (2025-12-08): Material lifecycle improvements
+  - Added `MaterialManager.unregister()` method to remove materials from global update lists
+  - Added `PointMaterial.dispose()` override to automatically unregister on disposal
+  - Fixed memory leak where disposed materials accumulated in MaterialManager registry
+  - Long-running apps no longer accumulate dead materials
+  - See: `material-manager.ts:132-149`, `point-material.ts:241-247`
 
 - **v1.0.0** (2025-01-30): Initial specification
   - HDR rendering pipeline with 16-bit float buffers

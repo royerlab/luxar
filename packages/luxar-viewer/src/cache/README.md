@@ -344,6 +344,26 @@ All Luxar-generated datasets include hierarchical content hashes:
 // - Clears cache if mismatch
 ```
 
+
+
+**CRITICAL: Cache Validation Bypass**
+
+The validation process MUST bypass the cache when checking for dataset changes:
+
+```typescript
+// CORRECT: Bypass cache to get true server state
+private async getRemoteContentHash(): Promise<string | null> {
+  // Direct HTTP fetch - NO cache lookup
+  const response = await fetch(`${this.baseUrl}/.zattrs`);
+  // ... extract content_hash from response
+}
+
+// WRONG: Would compare cached hash against itself (always matches!)
+// const attrs = await this.get('.zattrs');  // DON'T DO THIS
+```
+
+**Why Bypass Matters**: If validation used the cache, it would read the cached `.zattrs` with the OLD hash, compare it to itself, and always validate successfully (false positive). This bug was discovered when switching datasets on the same port showed stale cached data.
+
 **External datasets** (non-Luxar):
 
 - If no `content_hash` attribute → validation skipped

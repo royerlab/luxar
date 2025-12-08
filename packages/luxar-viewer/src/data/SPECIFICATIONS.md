@@ -548,7 +548,7 @@ Stored in each group's `.zattrs`:
   "opacity": 1.0,
   "gamma": 1.0,
   "blending_mode": "additive" | "normal",
-  "broadcast_dims": ["Time", "Channel"],  // Optional: dimensions to auto-broadcast
+  "extend_to_all": ["Time", "Channel"],  // Optional: dimensions to extend visibility across
 }
 ```
 
