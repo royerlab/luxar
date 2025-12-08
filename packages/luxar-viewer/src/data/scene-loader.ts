@@ -675,25 +675,29 @@ export class SceneLoader {
     // Store reference to old geometry
     const oldGeometry = points.geometry;
 
-    // Create new geometry
-    const newGeometry = this.createGeometry(data);
+    // Save bounding box/sphere BEFORE disposal to preserve them
+    const savedBoundingBox = oldGeometry?.boundingBox?.clone() || null;
+    const savedBoundingSphere = oldGeometry?.boundingSphere?.clone() || null;
 
-    // Dispose old geometry BEFORE assignment to free memory immediately
+    // Dispose old geometry FIRST to free GPU memory immediately
     // This prevents temporary memory spike from holding both geometries
+    // Trade-off: Brief 1-frame flicker vs memory safety (memory safety wins for nD navigation)
     if (oldGeometry) {
-      // Copy bounding box/sphere to new geometry before disposal to prevent flicker
-      if (oldGeometry.boundingBox) {
-        newGeometry.boundingBox = oldGeometry.boundingBox.clone();
-      }
-      if (oldGeometry.boundingSphere) {
-        newGeometry.boundingSphere = oldGeometry.boundingSphere?.clone() || null;
-      }
-
-      // Dispose old geometry to free GPU memory
       oldGeometry.dispose();
     }
 
-    // Now assign the new geometry
+    // Create new geometry AFTER disposal (only one geometry in memory at a time)
+    const newGeometry = this.createGeometry(data);
+
+    // Restore bounding box/sphere if available (prevents recomputation)
+    if (savedBoundingBox) {
+      newGeometry.boundingBox = savedBoundingBox;
+    }
+    if (savedBoundingSphere) {
+      newGeometry.boundingSphere = savedBoundingSphere;
+    }
+
+    // Assign the new geometry
     points.geometry = newGeometry;
   }
 

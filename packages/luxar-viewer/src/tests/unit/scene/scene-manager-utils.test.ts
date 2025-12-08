@@ -216,7 +216,7 @@ describe('scene-manager-utils', () => {
   });
 
   describe('calculateClippingPlanes', () => {
-    it('should calculate appropriate clipping planes', () => {
+    it('should calculate appropriate clipping planes with 10% margin', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
@@ -224,8 +224,10 @@ describe('scene-manager-utils', () => {
 
       const planes = calculateClippingPlanes(box, 50);
 
-      expect(planes.near).toBeCloseTo(0.5, 2); // 1% of distance
-      expect(planes.far).toBeGreaterThan(50); // Distance + margin
+      // Base near = 0.5 (1% of distance), with 10% margin = 0.5 / 1.1 ≈ 0.4545
+      expect(planes.near).toBeCloseTo(0.4545, 2);
+      // Base far = 50 + 20*2 = 90, with 10% margin = 90 * 1.1 = 99
+      expect(planes.far).toBeCloseTo(99, 0);
     });
 
     it('should enforce minimum near plane', () => {
@@ -236,7 +238,25 @@ describe('scene-manager-utils', () => {
 
       const planes = calculateClippingPlanes(box, 0.01);
 
-      expect(planes.near).toBeGreaterThanOrEqual(0.001);
+      // Minimum near is 0.001 / 1.1 ≈ 0.00091
+      expect(planes.near).toBeGreaterThanOrEqual(0.0009);
+    });
+
+    it('should support custom margin parameter', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+
+      // With 0% margin (no margin)
+      const noMargin = calculateClippingPlanes(box, 50, 0);
+      expect(noMargin.near).toBeCloseTo(0.5, 2); // Exactly 1% of distance
+      expect(noMargin.far).toBeCloseTo(90, 0); // Exactly distance + 2*maxDim
+
+      // With 20% margin
+      const largeMargin = calculateClippingPlanes(box, 50, 0.2);
+      expect(largeMargin.near).toBeCloseTo(0.417, 2); // 0.5 / 1.2
+      expect(largeMargin.far).toBeCloseTo(108, 0); // 90 * 1.2
     });
   });
 

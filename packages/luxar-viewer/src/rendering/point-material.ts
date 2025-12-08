@@ -28,39 +28,39 @@ export class PointMaterial extends THREE.ShaderMaterial {
   // Static vertex shader with CORRECT world-space sizing formula
   private static readonly VERTEX_SHADER = /* glsl */ `
     precision highp float;
-    
+
     attribute float radius;
     attribute float sharpness;
-    uniform float fov;
+    uniform float tanHalfFov; // Pre-computed tan(fov/2) for performance
     uniform vec2 resolution;
     uniform float radiusScale;
     uniform float sharpnessScale;
-    
+
     varying vec3 vColor;
     varying float vSharpness;
     varying float vRadius; // Pass radius to fragment for zero-check
-    
+
     void main() {
       // Pass vertex color to fragment shader
       vColor = color;
-      
+
       // Apply sharpness scale for dtype normalization and use 2.0 as default
       float normalizedSharpness = sharpness * sharpnessScale;
       vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
-      
+
       // Transform vertex position from world space to view space
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
       gl_Position = projectionMatrix * mvPosition;
-      
+
       // CORRECT world-space point sizing formula
       // This ensures two points with radius r at distance 2r will just touch
       float distance = length(mvPosition.xyz);
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
       float normalizedRadius = radius * radiusScale;
       vRadius = normalizedRadius; // Pass to fragment shader
-      
-      // Calculate base point size
-      float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5));
+
+      // Calculate base point size using pre-computed tanHalfFov (saves tan() per vertex)
+      float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tanHalfFov);
       
       // Sharpness compensation based on visibility threshold
       // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
@@ -141,7 +141,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
         invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
 
         // Camera uniforms for world-space sizing
-        fov: { value: (60 * Math.PI) / 180 }, // Default 60 degrees in radians
+        tanHalfFov: { value: Math.tan((60 * Math.PI) / 180 / 2) }, // Pre-computed tan(fov/2) for performance
         resolution: { value: new THREE.Vector2(1, 1) }, // Will be updated immediately
 
         // Radius and sharpness scaling for dtype normalization
@@ -166,7 +166,8 @@ export class PointMaterial extends THREE.ShaderMaterial {
    * Update camera parameters for world-space point sizing
    */
   updateCameraParams(fov: number, resolution: THREE.Vector2): void {
-    this.uniforms.fov.value = fov;
+    // Pre-compute tan(fov/2) for shader performance (saves tan() per vertex)
+    this.uniforms.tanHalfFov.value = Math.tan(fov / 2);
     // Copy values to avoid reference issues
     this.uniforms.resolution.value.copy(resolution);
   }
@@ -225,7 +226,7 @@ export class PointMaterial extends THREE.ShaderMaterial {
     // Copy current uniform values
     cloned.uniforms.hdrMultiplier.value = this.uniforms.hdrMultiplier.value;
     cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;
-    cloned.uniforms.fov.value = this.uniforms.fov.value;
+    cloned.uniforms.tanHalfFov.value = this.uniforms.tanHalfFov.value;
     cloned.uniforms.resolution.value.copy(this.uniforms.resolution.value);
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
 

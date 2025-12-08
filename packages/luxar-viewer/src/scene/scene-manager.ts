@@ -325,19 +325,13 @@ export class SceneManager extends THREE.EventDispatcher<{
       hideLoadingIndicator();
       this.scene.add(root);
 
-      // Update all materials with current camera parameters after loading
-      // This is critical - materials may have been created with wrong params
-      if (this.camera && this.renderer) {
-        const fovRadians = (this.camera.fov * Math.PI) / 180;
-        const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-        materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+      // NOTE: Material parameters were already updated BEFORE loadScene() above
+      // Materials created during loading already have correct FOV/resolution
+      // No need to update again - this would be redundant work
 
-        // Also update any materials that might have been created directly (type-safe)
-        this.updatePointMaterialUniforms({
-          fov: fovRadians,
-          resolution: drawingBufferSize,
-        });
-      }
+      // Auto-adjust clipping planes based on scene bounds for optimal rendering
+      // This ensures Z-buffer precision is maximized for the loaded content
+      this.autoAdjustClippingPlanes();
 
       // Don't automatically center - let the scene designer's positioning take precedence
       // User can press 'F' to center on bounding box if desired
@@ -478,10 +472,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       // ArcballControls maintains internal gizmos that need to be synchronized
       this.controls.update();
 
-      // Reset the saved state to the current configuration
-      // This prevents the "jump" on first zoom interaction by ensuring
-      // the saved state matches the actual current state
-      this.controls.reset();
+      // Save the new centered state as the default
+      // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
+      // reset() reverts to the previously saved state, defeating the purpose
       this.controls.saveState();
 
       log.success(Modules.CONTROLS, 'Controls target updated and state saved');
@@ -550,8 +543,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     (this.controls as any).target.copy(origin);
     this.controls.update();
 
-    // Reset and save state to prevent jumps
-    this.controls.reset();
+    // Save the new origin-centered state as the default
+    // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
     this.controls.saveState();
 
     log.success(
@@ -606,13 +599,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (this.camera) {
       const fovRadians = (this.camera.fov * Math.PI) / 180;
       const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      // Material manager updates all registered materials (no scene traversal needed)
       materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-
-      // Also update any materials in the scene directly (type-safe)
-      this.updatePointMaterialUniforms({
-        fov: fovRadians,
-        resolution: drawingBufferSize,
-      });
     }
   }
 
@@ -628,16 +616,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
     this.camera.updateProjectionMatrix();
 
-    // Update material uniforms for world-space point sizing (type-safe)
+    // Update material uniforms for world-space point sizing
     const fovRadians = (this.camera.fov * Math.PI) / 180;
     const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    // Material manager updates all registered materials (no scene traversal needed)
     materialManager.updateCameraParams(fovRadians, drawingBufferSize);
-
-    // Also update any materials in the scene directly
-    this.updatePointMaterialUniforms({
-      fov: fovRadians,
-      resolution: drawingBufferSize,
-    });
   }
 
   /**
@@ -707,62 +690,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * @param multiplier - New HDR multiplier value (1.0 to 20.0)
    */
   updateHDRMultiplier(multiplier: number): void {
-    // Update all materials in the material manager
+    // Material manager updates all registered materials (no scene traversal needed)
     materialManager.updateHDRMultiplier(multiplier);
-
-    // Also update any materials in the scene directly (type-safe)
-    this.updatePointMaterialUniforms({
-      hdrMultiplier: multiplier,
-    });
-
     log.success(Modules.RENDERER, `HDR multiplier updated for all point materials: ${multiplier}`);
-  }
-
-  /**
-   * Update shader uniforms for all point materials in the scene
-   * This is a type-safe helper that validates material types and properties
-   */
-  private updatePointMaterialUniforms(updates: {
-    fov?: number;
-    resolution?: THREE.Vector2;
-    hdrMultiplier?: number;
-  }): void {
-    this.scene.traverse((object) => {
-      // Type guard: ensure it's Points with ShaderMaterial
-      if (!(object instanceof THREE.Points)) {
-        return;
-      }
-
-      // Handle material arrays
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-
-      for (const material of materials) {
-        // Type guard: ensure it's ShaderMaterial with uniforms
-        if (!(material instanceof THREE.ShaderMaterial) || !material.uniforms) {
-          continue;
-        }
-
-        // Update FOV if provided
-        if (updates.fov !== undefined && material.uniforms.fov) {
-          material.uniforms.fov.value = updates.fov;
-        }
-
-        // Update resolution if provided
-        if (updates.resolution !== undefined && material.uniforms.resolution) {
-          const resolution = material.uniforms.resolution.value;
-          if (resolution && typeof resolution.copy === 'function') {
-            resolution.copy(updates.resolution);
-          } else {
-            material.uniforms.resolution.value = updates.resolution.clone();
-          }
-        }
-
-        // Update HDR multiplier if provided
-        if (updates.hdrMultiplier !== undefined && material.uniforms.hdrMultiplier) {
-          material.uniforms.hdrMultiplier.value = updates.hdrMultiplier;
-        }
-      }
-    });
   }
 
   /**

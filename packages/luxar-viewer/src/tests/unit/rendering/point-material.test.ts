@@ -41,7 +41,11 @@ describe('PointMaterial', () => {
       expect(material.uniforms.opacity.value).toBe(1.0);
       expect(material.uniforms.gamma.value).toBe(1.0);
       expect(material.uniforms.invGamma.value).toBe(1.0);
-      expect(material.uniforms.fov.value).toBeCloseTo((60 * Math.PI) / 180);
+      // Check pre-computed tanHalfFov (default 60 degrees)
+      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(
+        Math.tan(((60 * Math.PI) / 180) / 2),
+        10
+      );
       expect(material.uniforms.resolution.value).toBeInstanceOf(THREE.Vector2);
 
       expect(material.vertexColors).toBe(true);
@@ -79,9 +83,9 @@ describe('PointMaterial', () => {
         'gl_PointSize = max(1.0, min(pointSize, resolution.y * 0.5))'
       );
 
-      // Check that normal points still get proper sizing
+      // Check that optimized point sizing uses pre-computed tanHalfFov
       expect(material.vertexShader).toContain(
-        'float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tan(fov * 0.5))'
+        'float basePointSize = 2.0 * normalizedRadius * resolution.y / (distance * tanHalfFov)'
       );
 
       // Check that sharpness compensation IS applied
@@ -100,8 +104,8 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('attribute float radius');
       expect(material.vertexShader).toContain('attribute float sharpness');
 
-      // Check for uniforms
-      expect(material.vertexShader).toContain('uniform float fov');
+      // Check for optimized uniforms (pre-computed tan(fov/2))
+      expect(material.vertexShader).toContain('uniform float tanHalfFov');
       expect(material.vertexShader).toContain('uniform vec2 resolution');
       expect(material.vertexShader).toContain('uniform float radiusScale');
       expect(material.vertexShader).toContain('uniform float sharpnessScale');
@@ -148,7 +152,9 @@ describe('PointMaterial', () => {
 
       material.updateCameraParams(fov, resolution);
 
-      expect(material.uniforms.fov.value).toBe(fov);
+      // Verify tanHalfFov was computed correctly (fov is pre-computed as tan(fov/2))
+      const expectedTanHalfFov = Math.tan(fov / 2);
+      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(expectedTanHalfFov, 10);
       expect(material.uniforms.resolution.value.x).toBe(1920);
       expect(material.uniforms.resolution.value.y).toBe(1080);
     });
