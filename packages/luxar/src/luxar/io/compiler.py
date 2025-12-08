@@ -175,6 +175,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache: Dict[str, Any] = {}
         self._is_finalized = False
 
+        # Scene-level bounds tracking (union of all node bounds)
+        # Each entry is [min_per_dim, max_per_dim] where each is a list of floats
+        self._scene_bounds: Optional[Dict[str, List[float]]] = None
+
         aprint(f"✅ Zarr compiler initialized at {self._store_path}")
 
     def __enter__(self) -> LuxarZarrCompiler:
@@ -391,7 +395,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["type"] = "points"
         group.attrs["n_points"] = n_points
 
-        # 9. Write spatial ordering metadata if built
+        # 9. Compute and store position bounds (nD bounding box)
+        # This is computed from the final positions (potentially reordered)
+        position_bounds = self._compute_position_bounds(positions)
+        group.attrs["position_bounds"] = position_bounds
+        metadata["position_bounds"] = position_bounds
+
+        # Update scene-level bounds (union of all node bounds)
+        self._update_scene_bounds(position_bounds)
+
+        # 10. Write spatial ordering metadata if built
         if ordering_data is not None:
             self._write_spatial_ordering_to_zarr(group, ordering_data)
             metadata["has_spatial_index"] = True
@@ -1097,6 +1110,56 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             **ordering_metadata,  # ordering, slice_dims, ordering_dims, etc.
         }
 
+    def _compute_position_bounds(
+        self, positions: NDArray[np.float32]
+    ) -> Dict[str, List[float]]:
+        """Compute nD bounding box from positions array.
+
+        Args:
+            positions: Positions array of shape (N, D)
+
+        Returns:
+            Dictionary with 'min' and 'max' keys, each containing a list of D floats
+        """
+        # Compute min and max along each dimension
+        min_vals = positions.min(axis=0).tolist()
+        max_vals = positions.max(axis=0).tolist()
+
+        return {"min": min_vals, "max": max_vals}
+
+    def _update_scene_bounds(self, node_bounds: Dict[str, List[float]]) -> None:
+        """Update scene-level bounds by taking union with node bounds.
+
+        Args:
+            node_bounds: Dictionary with 'min' and 'max' keys from a node
+        """
+        if self._scene_bounds is None:
+            # First node - initialize scene bounds
+            self._scene_bounds = {
+                "min": list(node_bounds["min"]),
+                "max": list(node_bounds["max"]),
+            }
+        else:
+            # Expand scene bounds to include this node
+            # Handle potentially different dimensionalities by extending with the node's values
+            node_ndim = len(node_bounds["min"])
+            scene_ndim = len(self._scene_bounds["min"])
+
+            if node_ndim > scene_ndim:
+                # Extend scene bounds with new dimensions from this node
+                self._scene_bounds["min"].extend(node_bounds["min"][scene_ndim:])
+                self._scene_bounds["max"].extend(node_bounds["max"][scene_ndim:])
+                scene_ndim = node_ndim
+
+            # Update min/max for each dimension
+            for i in range(min(node_ndim, scene_ndim)):
+                self._scene_bounds["min"][i] = min(
+                    self._scene_bounds["min"][i], node_bounds["min"][i]
+                )
+                self._scene_bounds["max"][i] = max(
+                    self._scene_bounds["max"][i], node_bounds["max"][i]
+                )
+
     def _write_positions_dataset(
         self,
         group: zarr.Group,
@@ -1403,6 +1466,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Re-open the store to consolidate metadata
             # This ensures all groups and datasets are properly written to disk
             store = zarr.open_group(self._store_path, mode="r+")
+
+            # Store scene-level position bounds (union of all node bounds)
+            if self._scene_bounds is not None:
+                store.attrs["position_bounds"] = self._scene_bounds
+                aprint(f"📦 Scene bounds: min={self._scene_bounds['min']}, max={self._scene_bounds['max']}")
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)

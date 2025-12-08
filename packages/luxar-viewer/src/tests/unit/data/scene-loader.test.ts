@@ -385,10 +385,14 @@ describe('SceneLoader', () => {
 
       await sceneLoader.updateView(viewState);
 
+      // Should log error with improved retry tracking format
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to update'),
-        expect.any(Error)
+        expect.stringContaining('[❌] [SceneLoader] Failed to update /failing (attempt 1): Update failed')
       );
+
+      // Should track the failure
+      expect(sceneLoader.hasFailures()).toBe(true);
+      expect(sceneLoader.getFailedLoaders().size).toBe(1);
     });
 
     it('should not update geometry when no points are loaded', async () => {

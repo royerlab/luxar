@@ -308,3 +308,151 @@ class TestEmptyDatasets:
                     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                     positions = np.array([], dtype=np.float32).reshape(0, 3)
                     scene.add_points("test", positions)
+
+
+class TestPositionBounds:
+    """Test position_bounds computation and storage."""
+
+    def test_single_node_bounds(self) -> None:
+        """Test that position_bounds is computed correctly for a single node."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            # Create simple positions with known bounds
+            positions = np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [10.0, 20.0, 30.0],
+                    [5.0, 10.0, 15.0],
+                ],
+                dtype=np.float32,
+            )
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("test", positions)
+
+            # Read back and verify bounds
+            store = zarr.open_group(zarr_path, mode="r")
+
+            # Check node-level bounds
+            node_bounds = store["test"].attrs["position_bounds"]
+            assert node_bounds["min"] == [0.0, 0.0, 0.0]
+            assert node_bounds["max"] == [10.0, 20.0, 30.0]
+
+            # Check scene-level bounds (should match since single node)
+            scene_bounds = store.attrs["position_bounds"]
+            assert scene_bounds["min"] == [0.0, 0.0, 0.0]
+            assert scene_bounds["max"] == [10.0, 20.0, 30.0]
+
+    def test_multiple_nodes_bounds_union(self) -> None:
+        """Test that scene bounds are the union of all node bounds."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            # Create two sets of positions with different bounds
+            positions1 = np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [5.0, 5.0, 5.0],
+                ],
+                dtype=np.float32,
+            )
+            positions2 = np.array(
+                [
+                    [-10.0, -10.0, -10.0],
+                    [20.0, 30.0, 40.0],
+                ],
+                dtype=np.float32,
+            )
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("points1", positions1)
+                scene.add_points("points2", positions2)
+
+            # Read back and verify bounds
+            store = zarr.open_group(zarr_path, mode="r")
+
+            # Check individual node bounds
+            bounds1 = store["points1"].attrs["position_bounds"]
+            assert bounds1["min"] == [0.0, 0.0, 0.0]
+            assert bounds1["max"] == [5.0, 5.0, 5.0]
+
+            bounds2 = store["points2"].attrs["position_bounds"]
+            assert bounds2["min"] == [-10.0, -10.0, -10.0]
+            assert bounds2["max"] == [20.0, 30.0, 40.0]
+
+            # Check scene-level bounds (union of both)
+            scene_bounds = store.attrs["position_bounds"]
+            assert scene_bounds["min"] == [-10.0, -10.0, -10.0]
+            assert scene_bounds["max"] == [20.0, 30.0, 40.0]
+
+    def test_nd_bounds(self) -> None:
+        """Test that position_bounds works correctly for nD data."""
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            # Create 5D positions
+            positions = np.array(
+                [
+                    [0.0, 0.0, 0.0, 0.0, 0.0],
+                    [1.0, 2.0, 3.0, 4.0, 5.0],
+                    [0.5, 1.0, 1.5, 2.0, 2.5],
+                ],
+                dtype=np.float32,
+            )
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension("time", unit="s", display=False),
+                    Dimension("channel", unit="", display=False),
+                ]
+            )
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_points("test", positions)
+
+            # Read back and verify 5D bounds
+            store = zarr.open_group(zarr_path, mode="r")
+
+            node_bounds = store["test"].attrs["position_bounds"]
+            assert len(node_bounds["min"]) == 5
+            assert len(node_bounds["max"]) == 5
+            assert node_bounds["min"] == [0.0, 0.0, 0.0, 0.0, 0.0]
+            assert node_bounds["max"] == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+            scene_bounds = store.attrs["position_bounds"]
+            assert scene_bounds["min"] == [0.0, 0.0, 0.0, 0.0, 0.0]
+            assert scene_bounds["max"] == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+    def test_bounds_with_spatial_ordering(self) -> None:
+        """Test that bounds are computed correctly even with spatial reordering."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            # Create positions - they will be reordered by spatial index
+            np.random.seed(42)
+            positions = np.random.randn(1000, 3).astype(np.float32) * 10
+
+            expected_min = positions.min(axis=0).tolist()
+            expected_max = positions.max(axis=0).tolist()
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("test", positions)
+
+            # Read back and verify bounds match original (pre-reordering) data
+            store = zarr.open_group(zarr_path, mode="r")
+            node_bounds = store["test"].attrs["position_bounds"]
+
+            # Bounds should be the same regardless of reordering
+            for i in range(3):
+                assert abs(node_bounds["min"][i] - expected_min[i]) < 1e-5
+                assert abs(node_bounds["max"][i] - expected_max[i]) < 1e-5

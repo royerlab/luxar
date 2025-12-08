@@ -19,8 +19,9 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
 } from '../utils/hdr-detection';
-import { validateFOV, calculateClippingPlanes } from './scene-manager-utils';
+import { validateFOV, calculateClippingPlanes, BoundingBox } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { sceneDimsManager } from './scene-dims-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -69,6 +70,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Store the last calculated bounding box center */
   private lastBoundingBoxCenter: THREE.Vector3 = new THREE.Vector3();
 
+  /** Resize debouncing with requestAnimationFrame for smooth resizing */
+  private resizeRAF: number | null = null;
+  private pendingResize: { width: number; height: number } | null = null;
+
   /**
    * Initialize the complete 3D scene setup
    */
@@ -84,9 +89,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.setupControls();
     this.setupPostProcessing();
 
-    // Call updateSize() during initialization to ensure consistent behavior
-    // This makes initialization go through the same path as resize events
-    this.updateSize();
+    // Call doUpdateSize() directly during initialization (no debounce needed)
+    // This ensures immediate sizing without waiting for requestAnimationFrame
+    this.doUpdateSize(window.innerWidth, window.innerHeight);
   }
 
   /**
@@ -329,8 +334,9 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
 
-      // Auto-adjust clipping planes based on scene bounds for optimal rendering
-      // This ensures Z-buffer precision is maximized for the loaded content
+      // Auto-adjust clipping planes using scene bounds from metadata
+      // This uses position_bounds stored in zarr, which represents the full dataset extent
+      // and doesn't require waiting for point data to load
       this.autoAdjustClippingPlanes();
 
       // Don't automatically center - let the scene designer's positioning take precedence
@@ -554,14 +560,38 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Update renderer and camera for window resize
+   * Update renderer and camera for window resize (debounced)
+   *
+   * This method debounces resize events using requestAnimationFrame to prevent
+   * excessive WebGL buffer reallocations during window dragging. Multiple rapid
+   * resize events are coalesced into a single update on the next frame.
    */
   updateSize(): void {
-    // Always use window dimensions for consistency
-    // Canvas dimensions can become stale after fullscreen transitions
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    // Store the latest dimensions
+    this.pendingResize = {
+      width: window.innerWidth,
+      height: window.innerHeight
+    };
 
+    // Cancel any pending resize
+    if (this.resizeRAF !== null) {
+      cancelAnimationFrame(this.resizeRAF);
+    }
+
+    // Schedule resize for next frame (coalesces multiple events)
+    this.resizeRAF = requestAnimationFrame(() => {
+      if (!this.pendingResize) return;
+
+      this.doUpdateSize(this.pendingResize.width, this.pendingResize.height);
+      this.pendingResize = null;
+      this.resizeRAF = null;
+    });
+  }
+
+  /**
+   * Actual resize logic (called once per frame at most)
+   */
+  private doUpdateSize(width: number, height: number): void {
     if (document.fullscreenElement) {
       log.success(Modules.SCENE_MANAGER, `Using fullscreen dimensions: ${width}x${height}`);
     } else {
@@ -654,10 +684,45 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Auto-adjust clipping planes based on current scene bounds
+   * Auto-adjust clipping planes based on scene bounds from metadata.
+   *
+   * This uses the position_bounds stored in zarr metadata, which represents
+   * the full dataset extent computed at compile time. This is more reliable
+   * than computing bounds from loaded geometry because:
+   * 1. It includes the full dataset, not just currently loaded points
+   * 2. It works correctly for nD data (we project to display dimensions)
+   * 3. It's available immediately without waiting for data to load
+   *
+   * Falls back to geometry-based calculation if metadata bounds are not available.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
-    // Calculate scene bounding box
+    // Try to get scene bounds from metadata first
+    const sceneBounds = this.getSceneBoundsFromMetadata();
+
+    if (sceneBounds) {
+      // Get camera distance to scene center
+      const center = new THREE.Vector3(
+        (sceneBounds.min.x + sceneBounds.max.x) / 2,
+        (sceneBounds.min.y + sceneBounds.max.y) / 2,
+        (sceneBounds.min.z + sceneBounds.max.z) / 2
+      );
+      const cameraDistance = this.camera.position.distanceTo(center);
+
+      // Use existing utility function with metadata bounds
+      const { near, far } = calculateClippingPlanes(sceneBounds, cameraDistance);
+
+      // Apply the calculated planes
+      this.updateClippingPlanes(near, far);
+
+      log.success(
+        Modules.SCENE_MANAGER,
+        `Clipping planes set from metadata bounds (near: ${near.toFixed(3)}, far: ${far.toFixed(1)})`
+      );
+
+      return { near, far };
+    }
+
+    // Fallback: Calculate scene bounding box from loaded geometry
     const box = new THREE.Box3().setFromObject(this.scene);
 
     if (box.isEmpty()) {
@@ -682,6 +747,64 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateClippingPlanes(near, far);
 
     return { near, far };
+  }
+
+  /**
+   * Get 3D bounding box from scene metadata, projecting nD bounds to display dimensions.
+   *
+   * @returns 3D bounding box or null if metadata bounds not available
+   */
+  private getSceneBoundsFromMetadata(): BoundingBox | null {
+    // Find the root group with position bounds
+    const foundBounds = this.findPositionBoundsInScene();
+
+    if (!foundBounds) {
+      return null;
+    }
+
+    // Get display dimensions from scene dimensions manager
+    const dims = sceneDimsManager.getDims();
+    const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
+
+    // Project nD bounds to 3D using display dimensions
+    const minBounds = foundBounds.min;
+    const maxBounds = foundBounds.max;
+    const min3D = { x: 0, y: 0, z: 0 };
+    const max3D = { x: 0, y: 0, z: 0 };
+
+    // Map display dimensions to X, Y, Z
+    if (displayDims.length > 0 && displayDims[0] < minBounds.length) {
+      min3D.x = minBounds[displayDims[0]];
+      max3D.x = maxBounds[displayDims[0]];
+    }
+    if (displayDims.length > 1 && displayDims[1] < minBounds.length) {
+      min3D.y = minBounds[displayDims[1]];
+      max3D.y = maxBounds[displayDims[1]];
+    }
+    if (displayDims.length > 2 && displayDims[2] < minBounds.length) {
+      min3D.z = minBounds[displayDims[2]];
+      max3D.z = maxBounds[displayDims[2]];
+    }
+
+    return { min: min3D, max: max3D };
+  }
+
+  /**
+   * Search for position bounds in the scene graph
+   */
+  private findPositionBoundsInScene(): { min: number[]; max: number[] } | null {
+    let result: { min: number[]; max: number[] } | null = null;
+
+    this.scene.traverse((object) => {
+      if (result) return; // Already found
+
+      const bounds = object.userData?.positionBounds;
+      if (bounds && Array.isArray(bounds.min) && Array.isArray(bounds.max)) {
+        result = { min: bounds.min, max: bounds.max };
+      }
+    });
+
+    return result;
   }
 
   /**
@@ -711,6 +834,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Critical for preventing memory leaks in long-running applications.
    */
   dispose(): void {
+    // Cancel any pending resize operations to prevent memory leaks
+    if (this.resizeRAF !== null) {
+      cancelAnimationFrame(this.resizeRAF);
+      this.resizeRAF = null;
+    }
+    this.pendingResize = null;
+
     // Dispose post-processing resources first
     // This includes HDR render targets, effect composer, and all passes
     this.postProcessing.dispose();
