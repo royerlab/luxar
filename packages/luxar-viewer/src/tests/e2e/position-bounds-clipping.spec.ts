@@ -14,17 +14,18 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
 
 // Use a basic example dataset which should have position_bounds set
-const DATASET = 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr';
+const DATASET_WITH_BOUNDS =
+  'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr';
 
 test.describe('Position Bounds and Clipping Planes', () => {
   test('should load scene with position_bounds from metadata', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
     await waitForLuxarReady(page);
 
     // Check if position bounds were loaded from metadata
-    const boundsInfo: { min: number[]; max: number[] } | null = await page.evaluate(() => {
+    const boundsInfo = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      let positionBounds: any = null;
+      let positionBounds: { min: number[]; max: number[] } | null = null;
 
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.positionBounds && !positionBounds) {
@@ -35,54 +36,34 @@ test.describe('Position Bounds and Clipping Planes', () => {
       return positionBounds;
     });
 
-    // Position bounds should be present in scene userData
+    // Position bounds MUST be present - this is the core feature we're testing
     expect(boundsInfo).not.toBeNull();
-    if (boundsInfo) {
-      expect(Array.isArray(boundsInfo.min)).toBe(true);
-      expect(Array.isArray(boundsInfo.max)).toBe(true);
-      expect(boundsInfo.min.length).toBeGreaterThan(0);
-      expect(boundsInfo.max.length).toBe(boundsInfo.min.length);
+    expect(boundsInfo).toBeDefined();
 
-      // Min should be less than or equal to max for each dimension
-      for (let i = 0; i < boundsInfo.min.length; i++) {
-        expect(boundsInfo.min[i]).toBeLessThanOrEqual(boundsInfo.max[i]);
-      }
+    // TypeScript narrowing - we know it's not null now
+    const bounds = boundsInfo as unknown as { min: number[]; max: number[] };
+
+    // Validate structure
+    expect(Array.isArray(bounds.min)).toBe(true);
+    expect(Array.isArray(bounds.max)).toBe(true);
+    expect(bounds.min.length).toBeGreaterThan(0);
+    expect(bounds.max.length).toBe(bounds.min.length);
+
+    // Min should be less than or equal to max for each dimension
+    for (let i = 0; i < bounds.min.length; i++) {
+      expect(bounds.min[i]).toBeLessThanOrEqual(bounds.max[i]);
     }
+
+    // Log actual values for debugging
+    console.log(`Position bounds: min=[${bounds.min.join(', ')}], max=[${bounds.max.join(', ')}]`);
   });
 
-  test('should set clipping planes based on scene bounds', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+  test('should set clipping planes from metadata bounds (not defaults)', async ({ page }) => {
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
     await waitForLuxarReady(page);
 
-    // Get camera clipping planes
-    const cameraInfo = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      return {
-        near: debug.camera.near,
-        far: debug.camera.far,
-        position: {
-          x: debug.camera.position.x,
-          y: debug.camera.position.y,
-          z: debug.camera.position.z,
-        },
-      };
-    });
-
-    // Clipping planes should be valid
-    expect(cameraInfo.near).toBeGreaterThan(0);
-    expect(cameraInfo.far).toBeGreaterThan(cameraInfo.near);
-
-    // Near/far ratio should be reasonable (less than 10000:1)
-    const ratio = cameraInfo.far / cameraInfo.near;
-    expect(ratio).toBeLessThan(10000);
-  });
-
-  test('should have clipping planes that encompass scene bounds', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
-    await waitForLuxarReady(page);
-
-    // Get both bounds and camera info
-    const sceneInfo = await page.evaluate(() => {
+    // Get both bounds and camera clipping planes
+    const info = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let positionBounds: { min: number[]; max: number[] } | null = null;
 
@@ -92,41 +73,127 @@ test.describe('Position Bounds and Clipping Planes', () => {
         }
       });
 
-      // Calculate scene size from bounds (first 3 dims = X, Y, Z)
-      let sceneSize = 0;
-      if (positionBounds && (positionBounds as any).min && (positionBounds as any).min.length >= 3) {
-        const bounds = positionBounds as { min: number[]; max: number[] };
-        const dx = bounds.max[0] - bounds.min[0];
-        const dy = bounds.max[1] - bounds.min[1];
-        const dz = bounds.max[2] - bounds.min[2];
-        sceneSize = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      }
-
       return {
-        positionBounds,
-        sceneSize,
+        bounds: positionBounds,
         camera: {
           near: debug.camera.near,
           far: debug.camera.far,
-          position: debug.camera.position.clone(),
+        },
+        // Default values from config
+        defaults: {
+          near: 0.1,
+          far: 1000,
         },
       };
     });
 
-    // If we have scene bounds, verify clipping planes accommodate them
-    if (sceneInfo.positionBounds && sceneInfo.sceneSize > 0) {
-      // Far plane should be large enough to see the entire scene
-      // (scene size + some margin for camera distance)
-      expect(sceneInfo.camera.far).toBeGreaterThan(sceneInfo.sceneSize);
-    }
+    // Bounds MUST be present for this test to be meaningful
+    expect(info.bounds).not.toBeNull();
+
+    // Clipping planes should be valid
+    expect(info.camera.near).toBeGreaterThan(0);
+    expect(info.camera.far).toBeGreaterThan(info.camera.near);
+
+    // Near/far ratio should be reasonable (less than 10000:1)
+    const ratio = info.camera.far / info.camera.near;
+    expect(ratio).toBeLessThan(10000);
+
+    // CRITICAL: Clipping planes should NOT be defaults if bounds exist
+    // This verifies that autoAdjustClippingPlanes actually ran with metadata bounds
+    // At least one of near/far should differ from defaults
+    // (they might coincidentally match defaults, but unlikely for real data)
+    const isNotDefault =
+      Math.abs(info.camera.near - info.defaults.near) > 0.001 ||
+      Math.abs(info.camera.far - info.defaults.far) > 1;
+
+    // Log for debugging
+    console.log(
+      `Clipping: near=${info.camera.near.toFixed(4)}, far=${info.camera.far.toFixed(1)}, ` +
+        `defaults: near=${info.defaults.near}, far=${info.defaults.far}`
+    );
+
+    expect(isNotDefault).toBe(true);
+  });
+
+  test('should have clipping planes that encompass scene bounds', async ({ page }) => {
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
+    await waitForLuxarReady(page);
+
+    // Get both bounds and camera info
+    const sceneInfo = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let foundBounds: { min: number[]; max: number[] } | null = null;
+
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.positionBounds && !foundBounds) {
+          foundBounds = obj.userData.positionBounds as { min: number[]; max: number[] };
+        }
+      });
+
+      // Calculate scene diagonal from bounds (first 3 dims = X, Y, Z)
+      let sceneDiagonal = 0;
+      let sceneCenter = { x: 0, y: 0, z: 0 };
+      if (foundBounds !== null) {
+        const bounds = foundBounds as { min: number[]; max: number[] };
+        if (bounds.min.length >= 3) {
+          const bMin = bounds.min;
+          const bMax = bounds.max;
+          const dx = bMax[0] - bMin[0];
+          const dy = bMax[1] - bMin[1];
+          const dz = bMax[2] - bMin[2];
+          sceneDiagonal = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          sceneCenter = {
+            x: (bMin[0] + bMax[0]) / 2,
+            y: (bMin[1] + bMax[1]) / 2,
+            z: (bMin[2] + bMax[2]) / 2,
+          };
+        }
+      }
+
+      // Calculate camera distance to scene center
+      const cameraPos = debug.camera.position;
+      const distanceToCenter = Math.sqrt(
+        Math.pow(cameraPos.x - sceneCenter.x, 2) +
+          Math.pow(cameraPos.y - sceneCenter.y, 2) +
+          Math.pow(cameraPos.z - sceneCenter.z, 2)
+      );
+
+      return {
+        positionBounds: foundBounds,
+        sceneDiagonal,
+        sceneCenter,
+        distanceToCenter,
+        camera: {
+          near: debug.camera.near,
+          far: debug.camera.far,
+          position: { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z },
+        },
+      };
+    });
+
+    // Must have bounds for this test to be meaningful
+    expect(sceneInfo.positionBounds).not.toBeNull();
+    expect(sceneInfo.sceneDiagonal).toBeGreaterThan(0);
+
+    // Far plane should be large enough to see the entire scene from current camera position
+    // Far plane should at least cover: camera distance + half scene diagonal
+    const minimumFar = sceneInfo.distanceToCenter + sceneInfo.sceneDiagonal / 2;
+    expect(sceneInfo.camera.far).toBeGreaterThanOrEqual(minimumFar * 0.9); // 10% tolerance
+
+    // Log for debugging
+    console.log(
+      `Scene diagonal: ${sceneInfo.sceneDiagonal.toFixed(2)}, ` +
+        `Camera distance: ${sceneInfo.distanceToCenter.toFixed(2)}, ` +
+        `Far plane: ${sceneInfo.camera.far.toFixed(2)}, ` +
+        `Minimum needed: ${minimumFar.toFixed(2)}`
+    );
   });
 
   test('should update clipping planes when autoAdjust is called', async ({ page }) => {
-    await page.goto(`/?src=${DATASET}&debug`);
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
     await waitForLuxarReady(page);
 
-    // Manually set clipping planes to invalid values
-    // (No need to store initial values - just test adjustment works)
+    // Manually set clipping planes to obviously wrong values
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       debug.camera.near = 0.001;
@@ -134,21 +201,132 @@ test.describe('Position Bounds and Clipping Planes', () => {
       debug.camera.updateProjectionMatrix();
     });
 
+    // Verify they were changed
+    const wrongClipping = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      return { near: debug.camera.near, far: debug.camera.far };
+    });
+    expect(wrongClipping.near).toBeCloseTo(0.001, 4);
+    expect(wrongClipping.far).toBeCloseTo(1, 1);
+
     // Call autoAdjustClippingPlanes via the scene manager
-    // Note: We access it through the app components
-    const updatedClipping = await page.evaluate(() => {
+    const result = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const app = debug.app;
-      if (app && app.components && app.components.sceneManager) {
-        return app.components.sceneManager.autoAdjustClippingPlanes();
+
+      // Verify sceneManager exists
+      if (!app?.components?.sceneManager) {
+        return { error: 'sceneManager not found' };
       }
-      return null;
+
+      const adjusted = app.components.sceneManager.autoAdjustClippingPlanes();
+      return {
+        adjusted,
+        cameraAfter: {
+          near: debug.camera.near,
+          far: debug.camera.far,
+        },
+      };
     });
 
-    // Should have adjusted clipping planes
-    if (updatedClipping) {
-      expect(updatedClipping.near).toBeGreaterThan(0.001);
-      expect(updatedClipping.far).toBeGreaterThan(1);
-    }
+    // Must not have error
+    expect(result).not.toHaveProperty('error');
+
+    // Must have adjusted values
+    const adjustedResult = result as {
+      adjusted: { near: number; far: number };
+      cameraAfter: { near: number; far: number };
+    };
+
+    expect(adjustedResult.adjusted).toBeDefined();
+    expect(adjustedResult.adjusted.near).toBeGreaterThan(0.001);
+    expect(adjustedResult.adjusted.far).toBeGreaterThan(1);
+
+    // Camera should now have the adjusted values
+    expect(adjustedResult.cameraAfter.near).toBe(adjustedResult.adjusted.near);
+    expect(adjustedResult.cameraAfter.far).toBe(adjustedResult.adjusted.far);
+
+    // Log for debugging
+    console.log(
+      `Auto-adjust: near ${wrongClipping.near} -> ${adjustedResult.adjusted.near.toFixed(4)}, ` +
+        `far ${wrongClipping.far} -> ${adjustedResult.adjusted.far.toFixed(1)}`
+    );
+  });
+
+  test('should use 10% margin on calculated clipping planes', async ({ page }) => {
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
+    await waitForLuxarReady(page);
+
+    // Get bounds and camera info to verify margin is applied
+    const info = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      let foundBounds: { min: number[]; max: number[] } | null = null;
+
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.positionBounds && !foundBounds) {
+          foundBounds = obj.userData.positionBounds as { min: number[]; max: number[] };
+        }
+      });
+
+      if (!foundBounds) return null;
+
+      // Extract arrays for TypeScript type narrowing
+      const bounds = foundBounds as { min: number[]; max: number[] };
+      const bMin = bounds.min;
+      const bMax = bounds.max;
+
+      // Calculate expected values (matching scene-manager-utils.ts logic)
+      const dx = bMax[0] - bMin[0];
+      const dy = bMax[1] - bMin[1];
+      const dz = bMax[2] - bMin[2];
+      const maxDim = Math.max(dx, dy, dz);
+
+      const sceneCenter = {
+        x: (bMin[0] + bMax[0]) / 2,
+        y: (bMin[1] + bMax[1]) / 2,
+        z: (bMin[2] + bMax[2]) / 2,
+      };
+
+      const cameraPos = debug.camera.position;
+      const cameraDistance = Math.sqrt(
+        Math.pow(cameraPos.x - sceneCenter.x, 2) +
+          Math.pow(cameraPos.y - sceneCenter.y, 2) +
+          Math.pow(cameraPos.z - sceneCenter.z, 2)
+      );
+
+      // Expected calculations (from scene-manager-utils.ts with 10% margin)
+      const baseNear = Math.max(0.001, cameraDistance * 0.01);
+      const expectedNear = baseNear / 1.1; // 10% margin makes near smaller
+
+      const baseFar = cameraDistance + maxDim * 2;
+      const expectedFar = baseFar * 1.1; // 10% margin makes far larger
+
+      return {
+        actual: {
+          near: debug.camera.near,
+          far: debug.camera.far,
+        },
+        expected: {
+          near: expectedNear,
+          far: expectedFar,
+        },
+        cameraDistance,
+        maxDim,
+      };
+    });
+
+    expect(info).not.toBeNull();
+    if (!info) return;
+
+    // Verify near plane is approximately correct (with some tolerance for floating point)
+    expect(info.actual.near).toBeCloseTo(info.expected.near, 2);
+
+    // Verify far plane is approximately correct
+    expect(info.actual.far).toBeCloseTo(info.expected.far, 0);
+
+    console.log(
+      `Margin test: near actual=${info.actual.near.toFixed(4)} expected=${info.expected.near.toFixed(4)}, ` +
+        `far actual=${info.actual.far.toFixed(1)} expected=${info.expected.far.toFixed(1)}`
+    );
   });
 });
