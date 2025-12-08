@@ -85,7 +85,7 @@ describe('MaterialManager', () => {
       // Test REAL vertex shader content (THREE.js provides position, we provide custom attributes)
       expect(material.vertexShader).toContain('attribute float radius');
       expect(material.vertexShader).toContain('attribute float sharpness');
-      expect(material.vertexShader).toContain('uniform float fov');
+      expect(material.vertexShader).toContain('uniform float tanHalfFov');
       expect(material.vertexShader).toContain('uniform vec2 resolution');
       expect(material.vertexShader).toContain('varying vec3 vColor');
 
@@ -95,8 +95,8 @@ describe('MaterialManager', () => {
       expect(material.fragmentShader).toContain('uniform float gamma');
       expect(material.fragmentShader).toContain('gl_FragColor');
 
-      // Test REAL uniforms initialized
-      expect(material.uniforms.fov).toBeDefined();
+      // Test REAL uniforms initialized (with optimized tanHalfFov)
+      expect(material.uniforms.tanHalfFov).toBeDefined();
       expect(material.uniforms.resolution).toBeDefined();
       expect(material.uniforms.hdrMultiplier).toBeDefined();
       expect(material.uniforms.opacity).toBeDefined();
@@ -282,12 +282,12 @@ describe('MaterialManager', () => {
 
       manager.updateCameraParams(newFov, newResolution);
 
-      // Both materials should be updated
-      expect(material1.uniforms.fov.value).toBe(newFov);
+      // Both materials should be updated with pre-computed tanHalfFov
+      expect(material1.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
       expect(material1.uniforms.resolution.value.x).toBe(1920);
       expect(material1.uniforms.resolution.value.y).toBe(1080);
 
-      expect(material2.uniforms.fov.value).toBe(newFov);
+      expect(material2.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
       expect(material2.uniforms.resolution.value.x).toBe(1920);
       expect(material2.uniforms.resolution.value.y).toBe(1080);
     });
@@ -327,8 +327,8 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      // Should have current params
-      expect(material.uniforms.fov.value).toBe(fov);
+      // Should have current params (with pre-computed tanHalfFov)
+      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(fov / 2), 10);
       expect(material.uniforms.resolution.value.x).toBe(2560);
       expect(material.uniforms.resolution.value.y).toBe(1440);
     });
@@ -495,7 +495,7 @@ describe('MaterialManager', () => {
 
       // Verify world-space sizing formula
       expect(material.vertexShader).toContain('2.0 * normalizedRadius * resolution.y');
-      expect(material.vertexShader).toContain('distance * tan(fov * 0.5)');
+      expect(material.vertexShader).toContain('distance * tanHalfFov');
     });
 
     it('should generate shaders with HDR support', () => {
@@ -552,8 +552,8 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      // Should have current params
-      expect(material.uniforms.fov.value).toBe(fov);
+      // Should have current params (with pre-computed tanHalfFov)
+      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(fov / 2), 10);
       expect(material.uniforms.resolution.value.x).toBe(3840);
       expect(material.uniforms.resolution.value.y).toBe(2160);
     });
@@ -565,15 +565,15 @@ describe('MaterialManager', () => {
         gamma: 1.0,
       });
 
-      const initialFov = material.uniforms.fov.value;
+      const initialTanHalfFov = material.uniforms.tanHalfFov.value;
 
       // Update params
       const newFov = Math.PI / 4;
       manager.updateCameraParams(newFov, new THREE.Vector2(1280, 720));
 
-      // Material should be updated
-      expect(material.uniforms.fov.value).toBe(newFov);
-      expect(material.uniforms.fov.value).not.toBe(initialFov);
+      // Material should be updated with pre-computed tanHalfFov
+      expect(material.uniforms.tanHalfFov.value).toBeCloseTo(Math.tan(newFov / 2), 10);
+      expect(material.uniforms.tanHalfFov.value).not.toBe(initialTanHalfFov);
     });
   });
 
