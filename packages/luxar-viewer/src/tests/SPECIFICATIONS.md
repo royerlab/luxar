@@ -1,7 +1,7 @@
 # luxar-viewer.tests - Test Suite Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-12-07
+**Version**: 1.0.1
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -652,6 +652,15 @@ pnpm test --run
 ---
 
 ## Changelog
+
+### v1.0.1 (2025-12-08)
+
+- Mock infrastructure improvements for reliability
+- Enhanced requestAnimationFrame mock with try-catch wrapper
+- Added pending frames tracking for proper cleanup
+- Added typeof guard in performance-timeline component
+- Prevents test teardown errors and spurious failures
+- See: `browser-apis.mock.ts:63-98`, `performance-timeline.ts:175`
 
 ### v1.0.0 (2025-12-07)
 

@@ -93,7 +93,7 @@ Points nodes contain the actual point data.
   "blending_mode": "additive",
   "n_points": 10000,
   "max_radius": 2.5,
-  "broadcast_dims": ["Time", "Channel"]  // Optional: broadcasting configuration
+  "extend_to_all": ["Time", "Channel"]  // Optional: extend visibility to all values of these dimensions
 }
 ```
 

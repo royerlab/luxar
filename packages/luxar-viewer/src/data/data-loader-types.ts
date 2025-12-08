@@ -145,8 +145,8 @@ export interface SceneNode {
     max_radius?: number;
     num_points?: number;
 
-    /** Broadcasting dimensions */
-    broadcast_dims?: string[];
+    /** Dimensions to extend visibility across (points visible at all values) */
+    extend_to_all?: string[];
 
     /** Any additional attributes */
     [key: string]: unknown;

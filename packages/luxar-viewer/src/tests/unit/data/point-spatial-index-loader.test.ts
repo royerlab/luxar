@@ -325,10 +325,10 @@ describe('PointSpatialIndexLoader', () => {
     });
   });
 
-  describe('broadcasting', () => {
-    it('should return all points when broadcasting dimension is navigated', async () => {
-      // Setup node with broadcast dimensions
-      mockNode.attrs.broadcast_dims = ['time'];
+  describe('extend_to_all', () => {
+    it('should return all points when extended dimension is navigated', async () => {
+      // Setup node with extend_to_all dimensions
+      mockNode.attrs.extend_to_all = ['time'];
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2], // x, y, z displayed
@@ -350,12 +350,12 @@ describe('PointSpatialIndexLoader', () => {
       // Should not call queryPointSpatialIndex but return all points
       const result = await loader.loadPoints(viewState);
 
-      // When broadcasting, returns all points
+      // When extending, returns all points
       expect(result.metadata.totalPoints).toBeGreaterThan(0);
     });
 
-    it('should use spatial index when not broadcasting', async () => {
-      mockNode.attrs.broadcast_dims = ['channel']; // Different dimension
+    it('should use spatial index when not extending', async () => {
+      mockNode.attrs.extend_to_all = ['channel']; // Different dimension
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

@@ -734,7 +734,7 @@ describe('zarr-loader', () => {
       // Scene dimensions should be stored
     });
 
-    it('should handle broadcast_dims in node attrs', async () => {
+    it('should handle extend_to_all in node attrs', async () => {
       mockStoreContents = [
         { path: '/', kind: 'group' },
         { path: '/Points1', kind: 'group' },
@@ -749,7 +749,7 @@ describe('zarr-loader', () => {
         attrs: {
           type: 'points',
           num_points: 100,
-          broadcast_dims: ['time', 'channel'], // Broadcast across these dims
+          extend_to_all: ['time', 'channel'], // Extend visibility across these dims
         },
         contents: new Map([['positions', { type: 'array' }]]),
       };
@@ -761,7 +761,7 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/broadcast.zarr');
+      await loadScene('http://localhost:8000/extend.zarr');
     });
 
     it('should handle missing scene_dimensions gracefully', async () => {

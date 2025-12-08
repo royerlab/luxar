@@ -1,7 +1,7 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.0.1
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -525,7 +525,160 @@ document.addEventListener('fullscreenchange', () => {
 
 ---
 
+
+
+---
+
+## 7. WebGL Context Loss Handling
+
+### 7.1 Purpose
+
+Handle WebGL context loss and restoration gracefully to prevent application crashes when GPU resets occur.
+
+**Common Causes of Context Loss**:
+- GPU driver crashes or resets
+- System sleep/hibernate
+- Too many WebGL contexts (browser limit)
+- Out of GPU memory
+- GPU overheating or hardware issues
+
+### 7.2 Event Handling Setup
+
+**Initialization**:
+
+```typescript
+class SceneManager {
+  private isContextLost: boolean = false;
+  private contextLostHandler: ((event: Event) => void) | null = null;
+  private contextRestoredHandler: ((event: Event) => void) | null = null;
+
+  private setupContextLossHandling(): void {
+    const canvas = this.canvasElement;
+
+    // Context loss handler
+    this.contextLostHandler = (event: Event) => {
+      event.preventDefault(); // CRITICAL: Required to allow restoration
+      this.isContextLost = true;
+
+      log.error(Modules.SCENE_MANAGER, 
+        'WebGL context lost! GPU driver issue, system sleep, or memory pressure.');
+
+      showError('Graphics context lost - attempting to restore...');
+    };
+
+    // Context restoration handler
+    this.contextRestoredHandler = async (_event: Event) => {
+      log.info(Modules.SCENE_MANAGER, 'WebGL context restored - recreating resources...');
+
+      try {
+        this.isContextLost = false;
+
+        // Force renderer to recreate internal state
+        this.renderer.resetState();
+
+        // Trigger render to force resource recreation
+        this.dispatchEvent({ type: 'change' });
+
+        hideLoadingIndicator();
+        log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
+      } catch (error) {
+        log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
+        showError('Failed to restore graphics context. Please refresh the page.');
+      }
+    };
+
+    // Register event listeners
+    canvas.addEventListener('webglcontextlost', this.contextLostHandler, false);
+    canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
+  }
+}
+```
+
+### 7.3 Context Loss Detection
+
+**Public API**:
+
+```typescript
+isWebGLContextLost(): boolean {
+  return this.isContextLost;
+}
+```
+
+**Usage**:
+
+```typescript
+// Check before rendering
+if (sceneManager.isWebGLContextLost()) {
+  // Skip render, wait for restoration
+  return;
+}
+
+// Normal rendering
+sceneManager.render();
+```
+
+### 7.4 Resource Recreation
+
+**What Needs Recreation**:
+- WebGL internal state (renderer.resetState())
+- Render targets (post-processing buffers)
+- Shaders and programs (automatic on first use)
+- Textures (reupload data)
+- Buffers (reupload geometry data)
+
+**Automatic Recreation**:
+THREE.js handles most recreation automatically when rendering after context restoration. The key is:
+1. Call `event.preventDefault()` in contextlost handler
+2. Call `renderer.resetState()` after restoration
+3. Trigger a render to force resource recreation
+
+### 7.5 Error Recovery
+
+**Failure Scenarios**:
+
+```typescript
+// If restoration fails:
+// 1. Log error with details
+// 2. Show user-friendly error message
+// 3. Prompt page refresh
+
+catch (error) {
+  log.error(Modules.SCENE_MANAGER, 'Context restoration failed:', error);
+  showError('Failed to restore graphics. Please refresh the page to continue.');
+}
+```
+
+**User Experience**:
+- Immediate feedback on context loss ("Graphics context lost...")
+- Progress indication during restoration
+- Success confirmation or error guidance
+- No application crash - graceful degradation
+
+### 7.6 Cleanup
+
+**Disposal**:
+
+```typescript
+dispose(): void {
+  // Remove context loss handlers
+  if (this.contextLostHandler) {
+    this.canvasElement.removeEventListener('webglcontextlost', this.contextLostHandler, false);
+    this.contextLostHandler = null;
+  }
+
+  if (this.contextRestoredHandler) {
+    this.canvasElement.removeEventListener('webglcontextrestored', this.contextRestoredHandler, false);
+    this.contextRestoredHandler = null;
+  }
+
+  // ... other cleanup
+}
+```
+
+---
+
 ## 6. Dimension Coordination
+
 
 ### 6.1 Scene Dimensions Manager
 
@@ -714,6 +867,15 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.0.1** (2025-12-08): WebGL context loss handling
+  - Added `setupContextLossHandling()` method in SceneManager
+  - Added event listeners for `webglcontextlost` and `webglcontextrestored`
+  - Added `isWebGLContextLost()` public API method
+  - Proper cleanup in dispose() method
+  - Graceful recovery from GPU resets, system sleep, and memory pressure
+  - User-friendly error messages and recovery flow
+  - See: `scene-manager.ts:197-250`
 
 - **v1.0.0** (2025-01-30): Initial specification
   - Scene management with THREE.js integration

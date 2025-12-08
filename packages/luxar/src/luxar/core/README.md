@@ -561,11 +561,11 @@ dims = Dimensions([...])
 scene = compiler.create_scene(dimensions=dims)
 ```
 
-### 3. Use Explicit Broadcasting
+### 3. Use Explicit Dimension Extension
 ```python
 # Explicit is better than implicit
 scene.add_points('pts', positions,
-                broadcast_dims=['time', 'channel'])
+                extend_to_all=['time', 'channel'])
 ```
 
 ### 4. Validate Data Before Writing

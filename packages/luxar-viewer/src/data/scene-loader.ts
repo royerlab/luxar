@@ -254,11 +254,11 @@ export class SceneLoader {
         children: [],
       };
 
-      // Log if broadcast_dims is present
-      if (attrs?.broadcast_dims) {
+      // Log if extend_to_all is present
+      if (attrs?.extend_to_all) {
         log.data(
           Modules.SCENE_LOADER,
-          `Node ${entry.path} has broadcast_dims: ${attrs.broadcast_dims.join(', ')}`
+          `Node ${entry.path} has extend_to_all: ${attrs.extend_to_all.join(', ')}`
         );
       }
 

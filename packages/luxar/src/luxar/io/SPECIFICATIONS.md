@@ -57,7 +57,7 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 - `color_mode`: Required for float32 colors: `"sdr"` or `"hdr"`
 - `sharpness`: Optional - (N,) array, (1,) array, scalar float, or None
 - `scene_dimensions`: Optional dimension specifications for compound ordering
-- `**attrs`: Additional attributes (transform, opacity, broadcast_dims, etc.)
+- `**attrs`: Additional attributes (transform, opacity, extend_to_all, etc.)
 
 **Scalar Convenience** (v1.4.0):
 For uniform attributes, callers can provide scalars directly instead of arrays:
@@ -524,13 +524,13 @@ chunk_bounds        # (num_chunks, D, 2) float32, single chunk
   "ordering_max": [100.0, 100.0, 100.0],
   "ordering_bits_per_dim": 21,
   "chunk_size": 2000,
-  "broadcast_dims": ["Time"]
+  "extend_to_all": ["Time"]
 }
 ```
 
 **Notes**:
 - `ordering_min/max` only covers morton dimensions (used for Morton normalization)
-- `broadcast_dims` is optional - only present if points should appear at all values of specified dimensions (see core/SPECIFICATIONS.md)
+- `extend_to_all` is optional - only present if points should appear at all values of specified dimensions (see core/SPECIFICATIONS.md)
 
 **GSplats Group** (`/splats_name/`):
 ```
@@ -722,7 +722,7 @@ scene.get_lines(name: str) -> Dict[str, Any]
         'gamma': float,          # (default 1.0)
         'blending_mode': str,    # (default 'additive')
         'transform': ndarray,    # (4, 4) if present, else None)
-        'broadcast_dims': List[str],  # (if present, else not in attrs)
+        'extend_to_all': List[str],  # (if present, else not in attrs)
 
         # Spatial ordering metadata (if ordered)
         'ordering': str,          # 'morton', 'hilbert', or 'none'
@@ -887,7 +887,7 @@ assert len(data['chunk_bounds']) > 0
 - `ordering_bits_per_dim`: int - bits per morton dimension
 - `chunk_size`: int - elements per chunk
 - `max_radius`: Maximum radius
-- `broadcast_dims`: Optional list of dimension names for broadcasting
+- `extend_to_all`: Optional list of dimension names for visibility extension
 - `opacity`, `gamma`, `blending_mode`: Rendering attributes
 - `transform`: Optional 16-element list (column-major)
 
@@ -1014,7 +1014,7 @@ assert len(data['chunk_bounds']) > 0
   - Consolidated chunking sections (removed outdated "Chunking Strategy" section)
   - Morton bits calculation clarified: uses `len(ordering_dims)`, not total dimensions
   - Fixed bytes_per_point formula: uses `n_dims` (all dimensions), not `n_ordering_dims`
-  - Added `broadcast_dims` to Points Attributes schema
+  - Added `extend_to_all` to Points Attributes schema
   - Added `spatial_extend_dims` to Root Attributes schema
   - Fixed examples to use `chunk_size: 2000` consistently
   - Updated all array descriptions to say "compound-sorted" instead of "Morton-sorted"

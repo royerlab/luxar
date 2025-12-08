@@ -331,42 +331,43 @@ Points support chunk-level spatial indexing:
 - Enables client to determine visible chunks without loading point data
 - Bounds calculation: `min(position - radius)`, `max(position + radius)` per chunk
 
-**Broadcasting** (`broadcast_dims`):
-For nD scenes with non-displayed dimensions (e.g., Time, Channel), points can be broadcast to appear at all values of specified dimensions without data duplication.
+**Dimension Extension** (`extend_to_all`):
+For nD scenes with non-displayed dimensions (e.g., Time, Channel), points can be extended to appear at all values of specified dimensions without data duplication.
 
-*Parameter*: `broadcast_dims: Optional[Union[List[str], str]]`
+*Parameter*: `extend_to_all: Optional[Union[List[str], str]]`
 
 | Value | Behavior |
 |-------|----------|
-| `None` (default) | No broadcasting - points only visible at their explicit dimension values |
-| `["Time"]` | Broadcast across Time dimension only |
-| `["Time", "Channel"]` | Broadcast across both Time and Channel |
-| `"all"` | Broadcast across ALL non-displayed dimensions |
+| `None` (default) | No extension - points only visible at their explicit dimension values. A warning is issued if candidates are detected. |
+| `[]` (empty list) | Explicitly no extension (silences the warning) |
+| `["Time"]` | Extend across Time dimension only |
+| `["Time", "Channel"]` | Extend across both Time and Channel |
+| `"all"` | Extend across ALL non-displayed dimensions |
 
 *Example*:
 ```python
 # Points at time=0, channel=0 - only visible at that slice
-scene.add_points("static", positions, broadcast_dims=None)
+scene.add_points("static", positions, extend_to_all=[])
 
 # Points appear at all time values (channel=0 only)
-scene.add_points("time_invariant", positions, broadcast_dims=["Time"])
+scene.add_points("time_invariant", positions, extend_to_all=["Time"])
 
 # Points appear everywhere (all times, all channels)
-scene.add_points("global_markers", positions, broadcast_dims="all")
+scene.add_points("global_markers", positions, extend_to_all="all")
 ```
 
 *Storage*:
-- `broadcast_dims` is stored as a zarr attribute: `{"broadcast_dims": ["Time", "Channel"]}`
+- `extend_to_all` is stored as a zarr attribute: `{"extend_to_all": ["Time", "Channel"]}`
 - **Position values**: Original input coordinates are stored unchanged
   - Example: If input has `time=0`, the stored position has `time=0`
-  - The viewer ignores these values for broadcast dimensions
+  - The viewer ignores these values for extended dimensions
 - **Compound ordering**: Points are sorted normally (by their actual time value)
-  - Broadcast points end up in their "natural" position in the sorted order
+  - Extended points end up in their "natural" position in the sorted order
   - This is intentional - the viewer handles loading specially
 
 *Query Behavior* (viewer-side):
-- When querying the spatial index, the viewer checks `broadcast_dims` attribute
-- If any broadcast dimension matches the current navigation dimension:
+- When querying the spatial index, the viewer checks `extend_to_all` attribute
+- If any extended dimension matches the current navigation dimension:
   - **Bypass spatial index entirely**
   - **Load ALL points** for this group (return full range `[0, totalPoints]`)
 - This simple approach works because broadcast groups are typically small (markers, labels)
@@ -1427,14 +1428,15 @@ This specification is sufficient to re-implement the core package in any languag
 - **v0.9.1** (2025-11-28): Cross-reference fix
   - Fixed: Related Specifications now correctly references `io/SPECIFICATIONS.md` (was `io/README.md`)
 
-- **v0.9.0**: Broadcasting, nD slicing semantics, and dimension flag resolution
-  - **broadcast_dims**: New API for Points to appear across all values of specified dimensions
-    - `broadcast_dims=None` (default): No broadcasting
-    - `broadcast_dims=["Time"]`: Broadcast across Time dimension
-    - `broadcast_dims="all"`: Broadcast across ALL non-displayed dimensions
+- **v0.9.0**: Dimension extension (extend_to_all), nD slicing semantics, and dimension flag resolution
+  - **extend_to_all**: API for Points to appear across all values of specified dimensions
+    - `extend_to_all=None` (default): No extension, warns if candidates detected
+    - `extend_to_all=[]`: Explicitly no extension (silences warning)
+    - `extend_to_all=["Time"]`: Extend across Time dimension
+    - `extend_to_all="all"`: Extend across ALL non-displayed dimensions
     - Clarified storage: Original position values stored unchanged, viewer ignores them
-    - Clarified query: Viewer bypasses spatial index, loads all points for broadcast groups
-    - Added performance note: Broadcast groups should be small (markers, labels)
+    - Clarified query: Viewer bypasses spatial index, loads all points for extended groups
+    - Added performance note: Extended groups should be small (markers, labels)
   - **nD Slicing Visual Semantics**: New section documenting viewer behavior
     - Hypersphere intersection formula: `R_effective = √(R² - D²)`
     - Spatial dimensions: Smooth visibility based on hypersphere intersection
