@@ -1,7 +1,7 @@
 # luxar-viewer.cache - Technical Specification
 
-**Version**: 1.2.0
-**Last Updated**: 2025-12-06
+**Version**: 1.2.1
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -452,16 +452,19 @@ For complete details, see: [`docs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/C
 **Process**:
 
 ```
-1. Read root .zattrs (through cache layers)
-2. Extract content_hash
+1. Fetch root .zattrs DIRECTLY from HTTP (bypass cache!)
+   - CRITICAL: Uses getRemoteContentHash() not get()
+   - Prevents circular reference (comparing cached hash to itself)
+2. Extract content_hash from fresh server response
 3. Compare with L2 cached hash
 4. If different:
    - Log warning
    - Clear L2 completely
-   - Clear L1
    - Fetch fresh data
 5. Update cached hash
 ```
+
+**Why Direct Fetch?**: The validation MUST bypass cache to detect true server state changes. If validation used `get()`, it would read the cached `.zattrs` with the old hash, compare it to itself, and always validate successfully (false positive). This bug was discovered when switching datasets on the same port showed stale cached data.
 
 **External Datasets**:
 
@@ -661,6 +664,14 @@ Prevents metadata thrashing:
 ---
 
 ## Changelog
+
+- **v1.2.1** (2025-12-08): Cache validation bypass fix
+  - **CRITICAL BUG FIX**: `validateCache()` now bypasses cache when fetching content_hash
+  - Added `getRemoteContentHash()` method that fetches `.zattrs` directly from HTTP
+  - Removed `getRootAttrs()` method (was reading from cache, causing false positives)
+  - Fixes issue where switching datasets on same port showed stale data
+  - Added 2 comprehensive unit tests verifying bypass behavior
+  - See: `two-level-caching-store.ts:172-192`
 
 - **v1.2.0** (2025-12-06): Shallow bucketing for OPFS storage
   - Added 256-bucket directory structure to distribute files
