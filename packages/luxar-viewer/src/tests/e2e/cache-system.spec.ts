@@ -221,17 +221,31 @@ test.describe('OPFS Cache System', () => {
     await page.goto(`/?src=${DATASET}&debug&cache-debug`);
     await waitForLuxarReady(page);
 
+    // Wait for data to actually load (cache activity happens during data loading)
+    const state = await getLuxarState(page);
+    expect(state.totalPoints).toBeGreaterThan(0);
+
+    // Give a moment for cache operations to complete and logs to be captured
+    await page.waitForTimeout(1000);
+
     // Check console for content hash validation logs
     const consoleLogs = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       if (!debug || !debug.consoleInterceptor) return [];
-      return debug.consoleInterceptor.getBufferedMessages().map((m: any) => m.text || m);
+      return debug.consoleInterceptor.getBufferedMessages().map((m: any) => {
+        // Convert to string - handle both string and object formats
+        if (typeof m === 'string') return m;
+        if (m.text) return m.text;
+        if (m.args && m.args.length > 0) return m.args.join(' ');
+        return String(m);
+      });
     });
 
     // Should see cache-related logs (if cache-debug is enabled)
-    const cacheRelated = consoleLogs.filter(
-      (log: string) => log.toLowerCase().includes('cache') || log.toLowerCase().includes('opfs')
-    );
+    const cacheRelated = consoleLogs.filter((log: string) => {
+      const logStr = String(log).toLowerCase();
+      return logStr.includes('cache') || logStr.includes('opfs');
+    });
 
     // With cache-debug, we should see some cache activity
     expect(cacheRelated.length).toBeGreaterThan(0);

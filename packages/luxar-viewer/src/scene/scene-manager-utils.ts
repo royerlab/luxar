@@ -184,21 +184,30 @@ export function validateFOV(fov: number, min: number = 10, max: number = 120): n
 /**
  * Calculates camera clipping planes based on scene bounds
  *
+ * Adds a 10% safety margin to both near and far planes to ensure
+ * objects at scene boundaries remain visible during camera movement.
+ *
  * @param box - Scene bounding box
  * @param cameraDistance - Distance from camera to center
+ * @param margin - Safety margin multiplier (default 0.1 = 10%)
  * @returns Near and far clipping plane distances
  */
 export function calculateClippingPlanes(
   box: BoundingBox,
-  cameraDistance: number
+  cameraDistance: number,
+  margin: number = 0.1
 ): { near: number; far: number } {
   const maxDim = getBoundingBoxMaxDimension(box);
 
   // Near plane: 1% of camera distance, but at least 0.001
-  const near = Math.max(0.001, cameraDistance * 0.01);
+  // Apply margin: reduce near plane by margin% to allow getting closer
+  const baseNear = Math.max(0.001, cameraDistance * 0.01);
+  const near = baseNear / (1 + margin);
 
-  // Far plane: camera distance + scene size + margin
-  const far = cameraDistance + maxDim * 2;
+  // Far plane: camera distance + scene size
+  // Apply margin: increase far plane by margin% to provide extra space
+  const baseFar = cameraDistance + maxDim * 2;
+  const far = baseFar * (1 + margin);
 
   return { near, far };
 }

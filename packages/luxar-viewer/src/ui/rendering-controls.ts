@@ -2036,10 +2036,14 @@ export class RenderingControls {
     this.settings.chromaticAberrationEnabled = shouldEnableAll;
     this.settings.lensDistortionEnabled = shouldEnableAll;
 
-    // Enable film grain mode only when turning ON cinematic mode (if not already enabled)
+    // Enable film grain mode and set cinematic noise intensity when turning ON cinematic mode
     // Leave film grain unchanged when turning OFF cinematic mode
-    if (shouldEnableAll && !this.settings.noisePremultiply) {
-      this.settings.noisePremultiply = true;
+    if (shouldEnableAll) {
+      if (!this.settings.noisePremultiply) {
+        this.settings.noisePremultiply = true;
+      }
+      // Set cinematic noise intensity (0.25 for subtle but noticeable film grain)
+      this.settings.noiseIntensity = 0.25;
     }
 
     // FOV switching: 35mm for cinematic, 50mm Normal for regular
