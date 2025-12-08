@@ -347,29 +347,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -430,26 +430,26 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Query spatial index for visible point ranges
    */
   private queryVisibleRanges(viewState: ViewState): PointRange[] {
-    // Check if this node has broadcast dimensions
-    const broadcastDims = this.node.attrs.broadcast_dims || [];
+    // Check if this node has extend_to_all dimensions
+    const extendDims = this.node.attrs.extend_to_all || [];
 
-    if (broadcastDims.length > 0) {
-      // Check if we're navigating through a broadcast dimension
+    if (extendDims.length > 0) {
+      // Check if we're navigating through an extended dimension
       const currentNonDisplayedDims =
         viewState.dimensions?.metadata
           ?.filter((_meta, idx) => !viewState.displayDims.includes(idx))
           ?.map((meta) => meta.name)
           ?.filter((name) => name) || [];
 
-      const isBroadcasting = broadcastDims.some((bdim) => currentNonDisplayedDims.includes(bdim));
+      const isExtending = extendDims.some((edim) => currentNonDisplayedDims.includes(edim));
 
-      if (isBroadcasting) {
+      if (isExtending) {
         log.custom(
           LogEmoji.BROADCAST,
           Modules.SPATIAL_INDEX_LOADER,
-          `Broadcasting ${this.node.path} across: ${broadcastDims.join(', ')}`
+          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
         );
-        // Return all points for broadcast dimensions
+        // Return all points for extended dimensions
         const totalPoints =
           this.node.attrs.num_points ||
           this.chunkIndex?.metadata.total_points ||

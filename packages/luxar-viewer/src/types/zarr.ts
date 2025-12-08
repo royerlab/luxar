@@ -81,8 +81,8 @@ export interface ZarrNodeAttrs {
   /** Position bounds (nD bounding box) */
   position_bounds?: PositionBounds;
 
-  /** Broadcasting dimensions */
-  broadcast_dims?: string[];
+  /** Dimensions to extend visibility across (points visible at all values of these dimensions) */
+  extend_to_all?: string[];
 
   /** Arrays in this group */
   arrays?: string[];

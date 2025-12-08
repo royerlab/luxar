@@ -392,6 +392,77 @@ animationController.setPerformanceStats(performanceStats);
 
 ---
 
+
+
+---
+
+## WebGL Context Loss Recovery
+
+### What is Context Loss?
+
+WebGL contexts can be lost due to:
+
+- GPU driver crashes or resets
+- System sleep/hibernate
+- Too many WebGL contexts (browser limit ~16)
+- Out of GPU memory
+- GPU overheating
+
+When this happens, all WebGL resources are lost and rendering stops.
+
+### How Luxar Handles It
+
+The SceneManager automatically handles context loss and restoration:
+
+```typescript
+// Automatic recovery - no user action needed
+canvas.addEventListener('webglcontextlost', (event) => {
+  event.preventDefault(); // Allow restoration
+  // Show user message: "Graphics context lost - attempting to restore..."
+});
+
+canvas.addEventListener('webglcontextrestored', async () => {
+  // Recreate WebGL resources
+  renderer.resetState();
+  // Trigger re-render
+  // Show success message: "Graphics context restored"
+});
+```
+
+### User Experience
+
+**During Context Loss**:
+1. Rendering stops
+2. User sees message: "Graphics context lost - attempting to restore..."
+3. Loading indicator appears
+
+**During Restoration**:
+1. WebGL resources automatically recreated
+2. Rendering resumes
+3. User sees: "Graphics context successfully restored"
+
+**If Restoration Fails**:
+- Error message: "Failed to restore graphics. Please refresh the page."
+- User can continue using UI, but rendering disabled
+
+### For Developers
+
+Check context status:
+
+```typescript
+// Check if context is lost
+if (sceneManager.isWebGLContextLost()) {
+  // Skip rendering operations
+  return;
+}
+
+// Safe to render
+sceneManager.render();
+```
+
+**Best Practice**: Don't create WebGL-dependent operations during context loss. Wait for restoration.
+
+
 ## Usage Examples
 
 ### Complete Setup

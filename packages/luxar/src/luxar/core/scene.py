@@ -6,6 +6,7 @@ scene hierarchy and provides convenient methods for building points scenes.
 
 from __future__ import annotations
 
+import warnings
 from os import PathLike
 from typing import Any, List, Optional, Tuple, Union
 
@@ -131,15 +132,15 @@ class Scene(Node):
             Union[np.ndarray[Any, np.dtype[np.float32]], np.ndarray[Any, Any]]
         ] = None,
         parent: Optional[Node] = None,
-        broadcast_dims: Optional[Union[List[str], str]] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
         grid_shape: Optional[Tuple[int, ...]] = None,
         **attrs: Any,
     ) -> Points:
         """Add a points node to the scene.
 
         Important: Position arrays must ALWAYS include ALL scene dimensions, even when
-        broadcasting. Broadcasting means "show these points at all values of specified
-        dimensions", not "skip these dimensions from the position array".
+        using extend_to_all. Extension means "show these points at all values of
+        specified dimensions", not "skip these dimensions from the position array".
 
         Example:
             For a 5D scene (X, Y, Z, Time, Channel), if you want points to appear
@@ -147,7 +148,7 @@ class Scene(Node):
 
             CORRECT:
                 positions = [[x, y, z, 0, 0]]  # Include Time=0, Channel=0
-                scene.add_points("pts", positions, broadcast_dims=["Time", "Channel"])
+                scene.add_points("pts", positions, extend_to_all=["Time", "Channel"])
 
             INCORRECT:
                 positions = [[x, y, z]]  # Missing Time and Channel dimensions!
@@ -162,12 +163,16 @@ class Scene(Node):
             sharpness: Optional array of shape (N,) for point edge sharpness, or single
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root
-            broadcast_dims: Controls broadcasting behavior for non-displayed dimensions.
-                - None (default): No broadcasting, points only appear at their defined values
-                - List of dimension names: Broadcast to all values of specified dimensions
-                  e.g., ["Time", "Channel"] makes points appear at all times and channels
-                - "auto": Auto-detect broadcast dimensions (use with caution - can be ambiguous)
-                - "all": Broadcast to all non-displayed dimensions
+            extend_to_all: Controls visibility across non-displayed dimensions.
+                - None (default): Points only visible at their defined dimension values.
+                  If candidates for extension are detected, a warning will suggest
+                  setting this parameter explicitly.
+                - List of dimension names: Extend visibility to all values of specified
+                  dimensions, e.g., ["Time", "Channel"] makes points visible at all
+                  times and channels regardless of the current slice position.
+                - "all": Extend to all non-displayed dimensions (points always visible).
+                - []: Explicitly no extension (silences the warning).
+            grid_shape: Optional tuple specifying the grid shape for structured data
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
@@ -196,38 +201,46 @@ class Scene(Node):
 
             # Dimensions are managed only at scene level - no per-node validation needed
 
-            # Handle broadcast dimensions based on user specification
-            final_broadcast_dims = []
+            # Handle extend_to_all based on user specification
+            final_extend_dims: List[str] = []
 
-            if broadcast_dims is None:
-                # Default: No broadcasting
-                final_broadcast_dims = []
-            elif broadcast_dims == "auto":
-                # Auto-detect (use with caution)
+            if extend_to_all is None:
+                # Default: No extension, but warn if candidates detected
                 if self._dimensions is not None:
-                    final_broadcast_dims = self._auto_detect_broadcast_dims(positions)
-                    if final_broadcast_dims:
-                        aprint(
-                            f"  🔍 Auto-detected broadcast dimensions: {final_broadcast_dims}"
+                    candidates = self._analyze_extend_candidates(positions)
+                    if candidates:
+                        warnings.warn(
+                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
+                            f"If these points should be visible at ALL values of these dimensions, use:\n"
+                            f"    extend_to_all={candidates}\n"
+                            f"If intentional (points only at these specific values), use:\n"
+                            f"    extend_to_all=[]  # Explicit: no extension\n"
+                            f"Set extend_to_all explicitly to silence this warning.",
+                            UserWarning,
+                            stacklevel=2,
                         )
-            elif broadcast_dims == "all":
-                # Broadcast all non-displayed dimensions
+                final_extend_dims = []
+            elif extend_to_all == "all":
+                # Extend to all non-displayed dimensions
                 if self._dimensions is not None:
-                    final_broadcast_dims = [
+                    final_extend_dims = [
                         dim.name
                         for dim in self._dimensions.dimensions
                         if not dim.display and dim.name
                     ]
-            elif isinstance(broadcast_dims, list):
-                # Use explicit list
-                final_broadcast_dims = broadcast_dims
+            elif isinstance(extend_to_all, list):
+                # Use explicit list (including empty list to silence warning)
+                final_extend_dims = extend_to_all
             else:
-                raise ValueError(f"Invalid broadcast_dims value: {broadcast_dims}")
+                raise ValueError(
+                    f"Invalid extend_to_all value: {extend_to_all}. "
+                    f"Expected None, list of dimension names, 'all', or []."
+                )
 
-            # Add broadcast_dims to attributes if we have any
-            if final_broadcast_dims:
-                attrs["broadcast_dims"] = final_broadcast_dims
-                aprint(f"  📡 Broadcasting across dimensions: {final_broadcast_dims}")
+            # Add extend_to_all to attributes if we have any
+            if final_extend_dims:
+                attrs["extend_to_all"] = final_extend_dims
+                aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
             # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
@@ -416,68 +429,61 @@ class Scene(Node):
             aprint(f"Failed to add gsplats node '{name}': {e}")
             raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
-    def _auto_detect_broadcast_dims(self, positions: np.ndarray) -> List[str]:
-        """Auto-detect which dimensions should be broadcast based on data.
+    def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
+        """Analyze which dimensions might be candidates for extend_to_all.
 
-        A dimension should be broadcast if:
-        1. It has only a single unique value across all points, AND
-        2. The total number of points suggests incomplete coverage
+        This method identifies dimensions where the user might want to extend
+        visibility. It does NOT auto-apply extension - only suggests candidates
+        for the warning message.
+
+        A dimension is a candidate if:
+        1. It is not displayed (non-spatial dimension)
+        2. It has only ONE unique value in the data
+        3. It has a defined range that is larger than just that single value
+
+        This suggests the user may have data at a "placeholder" value and might
+        want those points visible across all values of that dimension.
 
         Args:
             positions: Position array to analyze
 
         Returns:
-            List of dimension names that should be auto-broadcasted
+            List of dimension names that are candidates for extension
         """
-        broadcast_dims: list[str] = []
+        candidates: List[str] = []
 
         if self._dimensions is None:
-            return broadcast_dims
+            return candidates
 
         data_ndim = positions.shape[1]
-        n_points = positions.shape[0]
-
-        # Calculate expected total points for full coverage
-        expected_total = 1
-        non_displayed_sizes = []
 
         for i, dim in enumerate(self._dimensions.dimensions):
-            if not dim.display and i < data_ndim:
-                if dim.range and dim.discrete:
-                    # For discrete dimensions, use the range
-                    dim_size = int(dim.range[1] - dim.range[0] + 1)
-                else:
-                    # For continuous dimensions, check unique values
-                    dim_size = len(np.unique(positions[:, i]))
-                non_displayed_sizes.append((i, dim, dim_size))
-                expected_total *= dim_size
-
-        # If we have full coverage or close to it, don't broadcast anything
-        # Allow some tolerance for non-grid datasets
-        if n_points >= expected_total * 0.8:
-            return broadcast_dims
-
-        # Check each non-displayed dimension
-        for i, dim in enumerate(self._dimensions.dimensions):
-            # Skip displayed dimensions
+            # Skip displayed dimensions (they're always "extended" in the spatial sense)
             if dim.display:
                 continue
 
             # Skip if this dimension is beyond the data's dimensionality
             if i >= data_ndim:
-                # Dimension not present in data - should be broadcast
-                if dim.name:
-                    broadcast_dims.append(dim.name)
                 continue
 
             # Check if this dimension has only one unique value
             unique_values = np.unique(positions[:, i])
-            if len(unique_values) == 1:
-                # Single value AND incomplete coverage - good candidate for broadcasting
-                if dim.name:
-                    broadcast_dims.append(dim.name)
+            if len(unique_values) != 1:
+                # Multiple values - user clearly has data across this dimension
+                continue
 
-        return broadcast_dims
+            # Single value - check if dimension has a larger range
+            if dim.range is not None:
+                value = unique_values[0]
+                range_min, range_max = dim.range
+
+                # If the range covers more than just this single value,
+                # it's a candidate for extension
+                if range_max > range_min and (value >= range_min and value <= range_max):
+                    if dim.name:
+                        candidates.append(dim.name)
+
+        return candidates
 
     def get_store_path(self) -> str:
         """Get the path to the backing Zarr store.

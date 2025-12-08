@@ -1558,14 +1558,14 @@ function calculateEffectiveRadius(
 }
 ```
 
-#### Broadcasting
+#### Dimension Extension
 ```typescript
 // Points can appear across multiple slices without duplication
 // Example: Show same cells across all time points
 
 // In Zarr attrs:
 {
-  broadcast_dims: ['time'],  // Broadcast across time dimension
+  extend_to_all: ['time'],  // Extend visibility across time dimension
   // ...
 }
 

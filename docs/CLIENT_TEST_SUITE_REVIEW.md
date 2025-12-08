@@ -641,7 +641,7 @@ describe('loadScene', () => {
   describe('Dimension Loading', () => {
     it('should parse scene_dimensions attr');
     it('should create SimpleDims object');
-    it('should handle broadcast_dims');
+    it('should handle extend_to_all');
   });
 
   describe('Spatial Index Loading', () => {
@@ -872,7 +872,7 @@ describe('loadScene', () => {
     it('should parse scene_dimensions');
     it('should create DimensionMetadata array');
     it('should set displayed vs non-displayed');
-    it('should extract broadcast_dims');
+    it('should extract extend_to_all');
   });
 
   describe('Spatial Index', () => {

@@ -306,18 +306,18 @@ describe('SceneLoader', () => {
       expect(mockRootLoc.resolve).toHaveBeenCalled();
     });
 
-    it('should detect and log broadcast dimensions', async () => {
+    it('should detect and log extend_to_all dimensions', async () => {
       const consoleSpy = vi.spyOn(console, 'log');
 
-      // Setup node with broadcast_dims
+      // Setup node with extend_to_all
       mockZarrGroup.attrs = {
         type: 'points',
-        broadcast_dims: ['time', 'channel'],
+        extend_to_all: ['time', 'channel'],
       };
 
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('broadcast_dims'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('extend_to_all'));
     });
 
     it('should handle missing spatial index gracefully for 3D points', async () => {
