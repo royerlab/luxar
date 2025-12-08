@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { config } from '../config';
+import { materialManager } from './material-manager';
 
 /**
  * Configuration for point material creation
@@ -231,5 +232,18 @@ export class PointMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
 
     return cloned as this;
+  }
+
+  /**
+   * Dispose this material and unregister from MaterialManager
+   * This prevents memory leaks by removing the material from global update lists
+   */
+  dispose(): void {
+    // Unregister from material manager to prevent memory leaks
+    // This removes the material from global update lists and cache
+    materialManager.unregister(this);
+
+    // Call parent dispose to free GPU resources (shaders, uniforms)
+    super.dispose();
   }
 }
