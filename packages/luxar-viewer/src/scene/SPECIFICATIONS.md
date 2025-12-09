@@ -1,7 +1,7 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.0.1
-**Last Updated**: 2025-12-08
+**Version**: 1.1.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -488,7 +488,70 @@ function updatePixelRatio(): void {
 - During initialization
 - On window DPI change (rare)
 
-### 5.3 Fullscreen Handling
+### 5.3 Resize Debouncing (Performance Optimization)
+
+**Purpose**: Prevent excessive GPU buffer reallocations during window dragging.
+
+**Problem**: Window resize events fire rapidly (60+ times/sec during drag). Each resize triggers expensive WebGL buffer reallocations, causing stuttering and poor UX.
+
+**Solution**: Debounce resize events using `requestAnimationFrame` coalescing.
+
+**Implementation**:
+
+```typescript
+class SceneManager {
+  private resizeRAF: number | null = null;
+  private pendingResize: { width: number; height: number } | null = null;
+
+  updateSize(): void {
+    // Store latest dimensions (multiple rapid events update this)
+    this.pendingResize = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+
+    // Cancel any pending resize
+    if (this.resizeRAF !== null) {
+      cancelAnimationFrame(this.resizeRAF);
+    }
+
+    // Schedule resize for next frame (coalesces multiple events)
+    this.resizeRAF = requestAnimationFrame(() => {
+      if (!this.pendingResize) return;
+
+      this.doUpdateSize(this.pendingResize.width, this.pendingResize.height);
+      this.pendingResize = null;
+      this.resizeRAF = null;
+    });
+  }
+
+  private doUpdateSize(width: number, height: number): void {
+    // Actual resize logic (called once per frame at most)
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+    postProcessing.resize(width, height);
+    materialManager.updateCameraParams(fov, resolution);
+  }
+}
+```
+
+**Benefits**:
+- **Coalescing**: Multiple resize events in one frame → single GPU reallocation
+- **Smooth UX**: No stuttering during window drag
+- **Resource Efficiency**: Prevents memory thrashing
+- **Frame-Synchronized**: Resizes happen on frame boundaries
+
+**Performance Impact**:
+- Without debouncing: 60+ buffer reallocations/sec during drag
+- With debouncing: 1 buffer reallocation/frame (~60/sec max, typically much less)
+- Memory savings: Prevents temporary buffer duplication
+
+**Implementation Location**: `scene-manager.ts:647-692`
+
+---
+
+### 5.4 Fullscreen Handling
 
 **Fullscreen Entry**:
 
@@ -870,6 +933,13 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-12-09): Resize debouncing optimization
+  - **ADDED**: Section 5.3 documenting resize debouncing with requestAnimationFrame
+  - Documents performance optimization that prevents GPU buffer thrashing
+  - Explains coalescing algorithm and benefits
+  - Implementation at scene-manager.ts:647-692
+  - No functional changes - documentation only
 
 - **v1.0.1** (2025-12-08): WebGL context loss handling
   - Added `setupContextLossHandling()` method in SceneManager
