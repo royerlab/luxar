@@ -92,8 +92,12 @@ class Lines(DataNode):
 
     @property
     def line_type(self) -> LineType:
-        """Get line type."""
-        return self._metadata.get("line_type", "polyline")  # type: ignore
+        """Get original line type (user-specified)."""
+        # Support both old 'line_type' and new 'original_line_type' keys
+        result = self._metadata.get(
+            "original_line_type", self._metadata.get("line_type", "polyline")
+        )
+        return result  # type: ignore[return-value]
 
     @property
     def has_colors(self) -> bool:
@@ -109,3 +113,13 @@ class Lines(DataNode):
     def max_width(self) -> float:
         """Get maximum line width."""
         return float(self._metadata.get("max_width", 0.0))
+
+    @property
+    def has_spatial_index(self) -> bool:
+        """Check if lines have spatial indexing enabled."""
+        return bool(self._metadata.get("has_spatial_index", False))
+
+    @property
+    def ordering(self) -> str:
+        """Get spatial ordering method (e.g., 'morton', 'hilbert', 'none')."""
+        return str(self._metadata.get("ordering", "none"))

@@ -127,6 +127,7 @@ materialManager.updateHDRMultiplier(newIntensity);
 **Memory Leak Prevention**: Always dispose geometries and points when done. The material system handles cleanup automatically.
 
 **Key Points**:
+
 - Materials are cached by properties (opacity, gamma, blending mode)
 - Global uniform updates affect all materials simultaneously
 - Disposal is automatic - no manual material cleanup needed

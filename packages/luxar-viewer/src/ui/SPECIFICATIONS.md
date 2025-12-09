@@ -272,6 +272,7 @@ Provides real-time FPS and performance tracking using stats.js library.
 ### 3.2 Architecture
 
 **Design Decisions**:
+
 - Uses industry-standard stats.js library for accuracy
 - Minimal performance overhead (only measures when visible)
 - Positioned bottom-left to avoid blocking other UI
@@ -387,6 +388,7 @@ class UIComponent {
 Comprehensive UI for controlling all rendering parameters in real-time using lil-gui library.
 
 **Features**:
+
 - All effect controls (bloom, DOF, AO, tone mapping, AA, vignette, chromatic aberration, lens distortion, detector noise)
 - Cinematic mode presets with intelligent toggle
 - Settings persistence per-scene using localStorage
@@ -396,6 +398,7 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 ### 5.2 Architecture
 
 **Design Decisions**:
+
 - Uses lil-gui library for immediate-mode GUI
 - Settings bound directly to live objects (no manual syncing)
 - Per-scene settings storage with unique keys
@@ -404,6 +407,7 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 - Tooltips on all controls for discoverability
 
 **Key Components**:
+
 1. **Navigation Folder**: Control type selector + mode-specific settings
 2. **Camera Folder**: FOV presets + manual FOV slider + clipping planes
 3. **HDR Folder**: Intensity + tone mapping type
@@ -437,6 +441,7 @@ class RenderingControls {
 ### 5.4 Settings Persistence
 
 **Storage Key Generation**:
+
 ```typescript
 function generateSettingsKey(sceneId: string): string {
   return `luxar-rendering-settings-${sceneId}`;
@@ -444,6 +449,7 @@ function generateSettingsKey(sceneId: string): string {
 ```
 
 **Serialization**:
+
 ```typescript
 function serializeSettings(settings: RenderingSettings): string {
   return JSON.stringify(settings);
@@ -459,6 +465,7 @@ function deserializeSettings(json: string): RenderingSettings | null {
 ```
 
 **Scene ID Format**: `{zarr_url_sanitized}_{scene_name}`
+
 - Example: `http___localhost_8000_data_zarr_scene1`
 
 ### 5.5 Cinematic Mode Algorithm
@@ -466,6 +473,7 @@ function deserializeSettings(json: string): RenderingSettings | null {
 **Purpose**: Toggle multiple effects intelligently using majority vote.
 
 **Algorithm**:
+
 ```typescript
 function toggleCinematicMode(): void {
   // 1. Check current state of all cinematic effects
@@ -546,6 +554,7 @@ File browser UI for navigating directories and selecting Zarr datasets from vari
 ### 6.2 Architecture
 
 **Design Decisions**:
+
 - Uses DirectoryNavigator from data package for server-agnostic browsing
 - Breadcrumb navigation for easy path traversal
 - Visual indicators for Zarr datasets vs regular files
@@ -554,6 +563,7 @@ File browser UI for navigating directories and selecting Zarr datasets from vari
 - Modal overlay with backdrop blur
 
 **Navigation Strategies**:
+
 1. **WebDAV**: PROPFIND requests for directory listings
 2. **HTML Parsing**: Parse `<a>` tags from directory index pages
 3. **Index File**: Read `.directory-index.json` if present
@@ -584,6 +594,7 @@ class DatasetBrowser {
 ### 6.4 URL Path Extraction
 
 **Algorithm**:
+
 ```typescript
 function extractBaseUrl(url: string): string {
   // Parse URL
@@ -651,6 +662,7 @@ browser.show();
 In-app developer console that captures all browser console output in a persistent ring buffer and displays it in an accessible UI overlay.
 
 **Features**:
+
 - Captures console.log, warn, error, info, debug from app start
 - Ring buffer prevents memory overflow (10,000 messages max)
 - Real-time filtering by text
@@ -662,6 +674,7 @@ In-app developer console that captures all browser console output in a persisten
 ### 7.2 Architecture
 
 **Design Decisions**:
+
 - Uses global console interceptor that starts early (before app init)
 - Ring buffer implementation to prevent memory growth
 - Listener pattern for real-time updates when visible
@@ -669,6 +682,7 @@ In-app developer console that captures all browser console output in a persisten
 - DOM manipulation optimized with fragment building
 
 **Key Components**:
+
 1. **Console Interceptor**: Global singleton that intercepts all console calls
 2. **Ring Buffer**: Fixed-size circular buffer for message storage
 3. **Message Formatting**: Type-aware formatting (strings, objects, errors)
@@ -699,6 +713,7 @@ class DebugConsole {
 ### 7.4 Console Interceptor Integration
 
 **Architecture**:
+
 ```typescript
 // Early initialization (src/utils/console-interceptor.ts)
 class ConsoleInterceptor {
@@ -732,6 +747,7 @@ consoleInterceptor.intercept(); // Starts immediately on import
 ### 7.5 Message Rendering
 
 **Algorithm**:
+
 ```typescript
 function renderMessage(message: BufferedMessage): void {
   const messageEl = document.createElement('div');
@@ -823,6 +839,7 @@ Utility functions for common UI operations: loading indicators, error display, h
 ### 8.2 Architecture
 
 **Design Decisions**:
+
 - Pure functions for simple operations
 - Singleton pattern for spinners (only one CSS keyframe injection)
 - Auto-dismiss for error messages with manual dismiss option
@@ -851,6 +868,7 @@ function cleanupUI(): void; // Removes all UI elements
 ### 8.4 Error Display Algorithm
 
 **Features**:
+
 - Clear error message with icon
 - Helpful guidance for common issues
 - Keyboard shortcuts displayed
@@ -859,6 +877,7 @@ function cleanupUI(): void; // Removes all UI elements
 - Prevents multiple error dialogs (removes existing)
 
 **Structure**:
+
 ```typescript
 function showError(message: string): void {
   // 1. Remove existing error (prevent duplicates)
@@ -909,6 +928,7 @@ function showError(message: string): void {
 ### 8.5 Help Overlay Structure
 
 **Collapsible Categories**:
+
 1. **Basic Controls**: Mouse, keyboard basics (expanded by default)
 2. **Fly Mode Controls**: WASD, arrows, roll (collapsed)
 3. **nD Navigation**: Dimension selection and navigation (collapsed)
@@ -916,6 +936,7 @@ function showError(message: string): void {
 5. **Tips**: Best practices and hints (collapsed)
 
 **Expansion Algorithm**:
+
 ```typescript
 function createCollapsibleCategory(category: HelpCategory): HTMLElement {
   const header = document.createElement('div');
@@ -995,6 +1016,7 @@ HTML template functions for generating UI content in the Data Loading Monitor. E
 ### 9.2 Architecture
 
 **Design Decisions**:
+
 - Pure functions for each template component
 - Centralized formatting (bytes, numbers, percentages)
 - Consistent color system from config
@@ -1044,6 +1066,7 @@ function renderRecommendation(rec: Recommendation): string;
 ### 9.4 Metric Card Template
 
 **Algorithm**:
+
 ```typescript
 function renderMetricCard(
   title: string,
@@ -1083,6 +1106,7 @@ function renderMetricCard(
 ### 9.5 Progress Bar Algorithm
 
 **Color Determination**:
+
 ```typescript
 function getProgressColor(percent: number): string {
   if (percent <= 60) return MonitorColors.success;
@@ -1121,6 +1145,7 @@ function renderProgressBar(
 ### 9.6 Formatting Utilities
 
 **Number Formatting**:
+
 ```typescript
 function formatNumber(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
@@ -1183,6 +1208,7 @@ AI-powered recommendation engine that analyzes loading performance and provides 
 ### 10.2 Architecture
 
 **Design Decisions**:
+
 - Rule-based system with severity levels (error, warning, info)
 - Analyzes global statistics to detect patterns
 - Provides specific, actionable recommendations
@@ -1190,6 +1216,7 @@ AI-powered recommendation engine that analyzes loading performance and provides 
 - Stateless analysis (no historical tracking)
 
 **Recommendation Categories**:
+
 1. **Performance Issues**: Slow queries, high latency
 2. **Memory Issues**: Cache pressure, high eviction rate
 3. **Network Issues**: Low bandwidth, packet loss indicators
@@ -1214,6 +1241,7 @@ class LoadingAdvisor {
 ### 10.4 Analysis Algorithm
 
 **Rule Evaluation**:
+
 ```typescript
 function analyze(stats: GlobalStats): Recommendation[] {
   const recommendations: Recommendation[] = [];
@@ -1260,11 +1288,7 @@ function analyze(stats: GlobalStats): Recommendation[] {
   }
 
   // Rule 5: Good performance (informational)
-  if (
-    stats.avgQueryTime < 50 &&
-    stats.cacheHitRate > 0.8 &&
-    stats.totalQueries > 10
-  ) {
+  if (stats.avgQueryTime < 50 && stats.cacheHitRate > 0.8 && stats.totalQueries > 10) {
     recommendations.push({
       severity: 'info',
       title: 'Excellent Performance',
@@ -1308,6 +1332,7 @@ Real-time canvas-based graph showing loading performance metrics over time.
 ### 11.2 Architecture
 
 **Design Decisions**:
+
 - HTML5 Canvas for efficient rendering
 - 60-second rolling window
 - Multiple metric tracks (query time, load time, points loaded)
@@ -1315,6 +1340,7 @@ Real-time canvas-based graph showing loading performance metrics over time.
 - Throttled updates (10 FPS) to reduce CPU usage
 
 **Data Structure**:
+
 ```typescript
 interface TimelineDataPoint {
   timestamp: number; // Unix timestamp in ms
@@ -1346,6 +1372,7 @@ class PerformanceTimeline {
 ### 11.4 Rendering Algorithm
 
 **Canvas Drawing**:
+
 ```typescript
 function render(): void {
   const ctx = canvas.getContext('2d');
@@ -1434,6 +1461,7 @@ timeline.dispose();
 ### 12.1 Lifecycle Management
 
 **Initialization Order**:
+
 ```typescript
 // 1. Core UI components (independent)
 const performanceMonitor = new PerformanceMonitor();
@@ -1455,6 +1483,7 @@ const datasetBrowser = new DatasetBrowser({
 ```
 
 **Disposal Order** (reverse of initialization):
+
 ```typescript
 // 1. On-demand components
 datasetBrowser?.close();
@@ -1476,6 +1505,7 @@ cleanupUI();
 ### 12.2 Cross-Component Communication
 
 **Event Flow**:
+
 ```
 User Input → Input Manager
   ↓
@@ -1493,6 +1523,7 @@ Animation Controller
 ```
 
 **State Synchronization**:
+
 ```typescript
 // Rendering controls sync from scene on show
 renderingControls.show(); // Calls syncCurrentState() internally
@@ -1512,6 +1543,7 @@ function renderLoop() {
 ### 12.3 Global Keyboard Shortcuts
 
 **Priority Handling** (highest to lowest):
+
 1. **Escape**: Close active panel (highest priority)
 2. **Modal Dialogs**: Error messages, help overlay
 3. **Panel Toggles**: R (rendering), P (performance), M (data monitor), O (dataset browser)
@@ -1520,6 +1552,7 @@ function renderLoop() {
 6. **Camera Controls**: WASD, arrows, Space (lowest priority)
 
 **Conflict Resolution**:
+
 - Input elements inside panels prevent propagation
 - Escape always closes topmost panel
 - Rendering controls panel absorbs focus during interaction

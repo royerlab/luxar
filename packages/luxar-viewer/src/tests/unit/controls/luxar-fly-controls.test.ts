@@ -533,7 +533,7 @@ describe('LuxarFlyControls', () => {
 
       // Apply variable delta times (simulating frame drops)
       controls.update(0.016); // 60fps frame
-      controls.update(0.050); // Frame drop
+      controls.update(0.05); // Frame drop
       controls.update(0.016); // Back to normal
 
       // Should still move forward (no NaN or infinity)

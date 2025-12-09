@@ -366,10 +366,10 @@ interface InitializationConfig {
 
 ```typescript
 // URL activation
-http://localhost:5173/?debug
+//localhost:5173/?debug
 
 // Programmatic activation
-localStorage.setItem('luxar_debug', 'true');
+http: localStorage.setItem('luxar_debug', 'true');
 ```
 
 **TypeScript Declaration**:
@@ -412,15 +412,16 @@ declare global {
 
 ```typescript
 window.__luxarDebug = {
-  app: LuxarApp,              // Application instance
+  app: LuxarApp, // Application instance
   consoleInterceptor: object, // Ring buffer console interceptor
-  version: string             // Application version (e.g., '1.0.0')
+  version: string, // Application version (e.g., '1.0.0')
 };
 ```
 
 **Purpose**: Available immediately during initialization, before any components are created.
 
 **Usage**:
+
 ```javascript
 // Check version
 console.log(window.__luxarDebug.version);
@@ -470,6 +471,7 @@ window.__luxarDebug.consoleInterceptor.getMessages();
 **Important**: Runtime properties only available after `app.init()` completes. Check `runtimeReady` flag.
 
 **Usage**:
+
 ```javascript
 // Access Three.js scene
 window.__luxarDebug.scene.children;
@@ -491,6 +493,7 @@ window.__luxarDebug.controls.setOrbitMode();
 **Purpose**: Get comprehensive snapshot of current application state.
 
 **Signature**:
+
 ```typescript
 getState(): {
   totalPoints: number;
@@ -515,6 +518,7 @@ getState(): {
 ```
 
 **Usage**:
+
 ```javascript
 const state = window.__luxarDebug.getState();
 console.log(`Loaded ${state.totalPoints} points`);
@@ -523,6 +527,7 @@ console.log(`Dimensions: ${state.dimensions?.ndim}D`);
 ```
 
 **Implementation Details**:
+
 - Traverses scene to count points across all `THREE.Points` objects
 - Inspects geometry attributes for metadata
 - Queries `sceneDimsManager` for dimensional state
@@ -533,11 +538,13 @@ console.log(`Dimensions: ${state.dimensions?.ndim}D`);
 **Purpose**: Trigger a single frame render (useful for stable screenshots).
 
 **Signature**:
+
 ```typescript
 renderOnce(): void
 ```
 
 **Usage**:
+
 ```javascript
 // Take screenshot after ensuring fresh render
 window.__luxarDebug.renderOnce();
@@ -553,11 +560,13 @@ setTimeout(() => {
 **Purpose**: Get `SceneLoaderManager` singleton for cache inspection.
 
 **Signature**:
+
 ```typescript
 async getSceneLoader(): Promise<SceneLoaderManager>
 ```
 
 **Usage**:
+
 ```javascript
 const manager = await window.__luxarDebug.getSceneLoader();
 const loader = manager.getDefaultLoader();
@@ -591,6 +600,7 @@ interface CacheDebugAPI {
 **Purpose**: Get cache statistics (sizes, hit rates, datasets).
 
 **Returns**:
+
 ```typescript
 {
   l1: { size: number; maxSize: number; hitRate: number };
@@ -599,6 +609,7 @@ interface CacheDebugAPI {
 ```
 
 **Usage**:
+
 ```javascript
 const stats = await window.__luxarDebug.cache.getStats();
 console.log(`L1 cache: ${stats.l1.size} / ${stats.l1.maxSize} bytes`);
@@ -610,6 +621,7 @@ console.log(`L2 datasets: ${stats.l2.datasets.join(', ')}`);
 **Purpose**: List all datasets in L2 cache with metadata.
 
 **Returns**:
+
 ```typescript
 {
   datasets: Array<{
@@ -621,9 +633,10 @@ console.log(`L2 datasets: ${stats.l2.datasets.join(', ')}`);
 ```
 
 **Usage**:
+
 ```javascript
 const datasets = await window.__luxarDebug.cache.listDatasets();
-datasets.forEach(d => {
+datasets.forEach((d) => {
   console.log(`${d.name}: ${d.chunkCount} chunks, ${d.totalSize} bytes`);
 });
 ```
@@ -633,6 +646,7 @@ datasets.forEach(d => {
 **Purpose**: Clear L1 (memory) cache only, preserving L2 (IndexedDB).
 
 **Usage**:
+
 ```javascript
 await window.__luxarDebug.cache.clearL1();
 console.log('L1 cache cleared - L2 preserved');
@@ -643,6 +657,7 @@ console.log('L1 cache cleared - L2 preserved');
 **Purpose**: Clear L2 (IndexedDB) cache only, preserving L1 (memory).
 
 **Usage**:
+
 ```javascript
 await window.__luxarDebug.cache.clearL2();
 console.log('L2 cache cleared - L1 preserved');
@@ -653,6 +668,7 @@ console.log('L2 cache cleared - L1 preserved');
 **Purpose**: Clear both L1 and L2 caches completely.
 
 **Usage**:
+
 ```javascript
 await window.__luxarDebug.cache.clearAll();
 console.log('All caches cleared');
@@ -667,6 +683,7 @@ console.log('All caches cleared');
 **Why**: Ensures ALL console output from application start is captured, including early errors and initialization logs.
 
 **Implementation**:
+
 ```typescript
 // CRITICAL: Import console interceptor FIRST before any other code
 // This ensures we capture ALL console output from the very beginning
@@ -680,18 +697,20 @@ log.custom(LogEmoji.START, Modules.LUXAR, 'Application starting...');
 ```
 
 **Ring Buffer Mechanism**:
+
 - Fixed-size circular buffer (10,000 messages)
 - Oldest messages discarded when buffer full
 - Preserves message type (log, warn, error, info, debug)
 - Timestamp for each message
 
 **Usage**:
+
 ```javascript
 // Get all captured console messages
 const messages = window.__luxarDebug.consoleInterceptor.getMessages();
 
 // Filter by type
-const errors = messages.filter(m => m.type === 'error');
+const errors = messages.filter((m) => m.type === 'error');
 
 // Recent messages (last 100)
 const recent = messages.slice(-100);
@@ -708,6 +727,7 @@ const recent = messages.slice(-100);
 **Activation**: Press `Ctrl+L` to toggle debug console visibility.
 
 **Features**:
+
 - Displays all captured console messages with timestamps
 - Color-coded by log level (error, warn, info, log)
 - Auto-scroll to latest messages
@@ -717,6 +737,7 @@ const recent = messages.slice(-100);
 **Configuration**: See `config/debug-console.ts` for dimensions and styling.
 
 **Usage**:
+
 ```javascript
 // Programmatically show debug console
 document.dispatchEvent(new CustomEvent('toggle-debug-console'));
@@ -731,6 +752,7 @@ document.dispatchEvent(new CustomEvent('toggle-debug-console'));
 **Playwright Integration**: See `PLAYWRIGHT_GUIDE.md` for complete details.
 
 **Quick Commands**:
+
 ```bash
 # Headless mode - shows browser console in terminal
 cd packages/luxar-viewer
@@ -741,6 +763,7 @@ pnpm agent:debug:visible
 ```
 
 **Output Format**:
+
 ```
 [BROWSER-CONSOLE-LOG] [🚀] [Luxar] Application starting...
 [BROWSER-CONSOLE-ERROR] Failed to load spatial index: 404
@@ -757,6 +780,7 @@ Screenshot saved: debug-view.png
 ```
 
 **AI Debug Pattern**:
+
 1. User reports issue
 2. AI runs `pnpm agent:debug`
 3. AI reads console output and state JSON

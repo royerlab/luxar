@@ -428,9 +428,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         line_type: str = "polyline",
         **attrs: Any,
     ) -> dict[str, Any]:
-        """Write lines data to Zarr.
+        """Write lines data to Zarr with dual spatial indexing.
 
-        Lines do NOT support spatial indexing (per spec) - arrays stored in original order.
+        Lines support dual spatial indexing for efficient lazy loading:
+        - Vertices ordered in D-space (like Points)
+        - Segments ordered in (2×D)-space (concatenating both endpoints)
+
+        All line types are internally converted to indexed representation.
 
         Scalar convenience: widths, colors, and sharpness accept scalars:
         - widths=0.1 → all vertices get width 0.1
@@ -512,18 +516,44 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         elif isinstance(widths, (int, float)) and widths <= 0:
             raise ValueError(f"Width must be positive (> 0). Got {widths}")
 
-        # Calculate n_segments
-        if line_type == "segments":
-            n_segments = n_vertices // 2
-        elif line_type == "polyline":
-            n_segments = n_vertices - 1
-        elif line_type == "loop":
-            n_segments = n_vertices
-        elif line_type == "indexed":
-            n_segments = len(indices) // 2
+        # Convert line type to indexed representation (unified internal format)
+        from .ordering import convert_to_indexed
+
+        segments = convert_to_indexed(n_vertices, line_type, indices)
+        n_segments = segments.shape[0]
+
+        aprint(f"  → Converted {line_type} to {n_segments:,} indexed segments")
+
+        # Get max_width before spatial ordering
+        if isinstance(widths, (int, float)):
+            max_width = float(widths)
+        else:
+            max_width = float(np.max(widths))
+
+        # Apply dual spatial ordering if enabled
+        ordering_data = self._build_lines_spatial_ordering_if_enabled(
+            vertices, segments, widths, n_vertices, n_dims, n_segments
+        )
+
+        # Apply reordering if spatial ordering was applied
+        if ordering_data is not None:
+            vertices = ordering_data["sorted_vertices"]
+            segments = ordering_data["sorted_segments"]
+            vertex_sort_order = ordering_data["vertex_sort_indices"]
+
+            # Reorder per-vertex arrays (skip scalars and broadcasted)
+            if isinstance(widths, np.ndarray) and widths.shape[0] > 1:
+                widths = widths[vertex_sort_order]
+            if colors is not None and isinstance(colors, np.ndarray) and colors.shape[0] > 1:
+                colors = colors[vertex_sort_order]
+            if sharpness is not None and isinstance(sharpness, np.ndarray) and sharpness.shape[0] > 1:
+                sharpness = sharpness[vertex_sort_order]
 
         # Write vertices using ArrayEncoder (COORDINATE)
-        chunks_2d = _calculate_intelligent_chunks((n_vertices, n_dims))
+        chunks_2d = _calculate_intelligent_chunks(
+            (n_vertices, n_dims),
+            spatial_index_data=ordering_data.get("vertex_ordering") if ordering_data else None,
+        )
         self._encoder.encode(
             data=vertices,
             zarr_group=group,
@@ -534,14 +564,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
+        # Write segments array (always, not just for indexed type)
+        segment_chunk_size = ordering_data["segment_ordering"]["chunk_size"] if ordering_data else 2048
+        self._encoder.encode(
+            data=segments,
+            zarr_group=group,
+            name="segments",
+            semantic_type=SemanticType.INDEX,
+            mode=self._encoding_mode,
+            chunks=(segment_chunk_size, 2),
+            compressor=self.compressor,
+        )
+        aprint(f"  ✓ Wrote segments ({n_segments:,} pairs)")
+
         # Write widths using ArrayEncoder (POSITIVE_SCALAR)
         # Handle both scalar and array inputs
         if isinstance(widths, (int, float)):
-            max_width = float(widths)
             n_elems = n_vertices
             chunks_1d = None  # Scalar doesn't need chunks
         else:
-            max_width = float(np.max(widths))
             n_elems = None  # Array already has correct size
             chunks_1d = _calculate_intelligent_chunks((n_vertices,))
 
@@ -561,7 +602,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "n_vertices": n_vertices,
             "n_segments": n_segments,
             "ndim": n_dims,
-            "line_type": line_type,
+            "original_line_type": line_type,  # Store original user-specified type
             "has_colors": False,
             "has_sharpness": False,
             "max_width": max_width,
@@ -626,18 +667,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             metadata["has_sharpness"] = True
 
-        # Write indices if provided (INDEX semantic type)
-        if indices is not None:
-            chunks_indices = _calculate_intelligent_chunks((len(indices),))
-            self._encoder.encode(
-                data=indices,
-                zarr_group=group,
-                name="indices",
-                semantic_type=SemanticType.INDEX,
-                mode=self._encoding_mode,
-                chunks=chunks_indices,
-                compressor=self.compressor,
-            )
+        # Write spatial ordering data (chunk bounds and metadata)
+        if ordering_data is not None:
+            self._write_lines_spatial_ordering_to_zarr(group, ordering_data)
+            metadata["has_spatial_index"] = True
+            metadata["ordering"] = ordering_data["ordering"]
+            metadata["vertex_ordering"] = ordering_data["vertex_ordering"]
+            metadata["segment_ordering"] = ordering_data["segment_ordering"]
+        else:
+            metadata["ordering"] = "none"
 
         # Process transform if present
         if "transform" in attrs:
@@ -645,13 +683,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
 
-        # Set attributes
+        # Set attributes (all core metadata per spec Section 6.6)
         group.attrs.update(attrs)
         group.attrs["type"] = "lines"
-        group.attrs["line_type"] = line_type
         group.attrs["n_vertices"] = n_vertices
         group.attrs["n_segments"] = n_segments
+        group.attrs["ndim"] = n_dims
+        group.attrs["original_line_type"] = line_type
+        group.attrs["has_colors"] = metadata["has_colors"]
+        group.attrs["has_sharpness"] = metadata["has_sharpness"]
         group.attrs["max_width"] = max_width
+
+        # Add ordering metadata to attrs if present
+        if ordering_data is not None:
+            group.attrs["ordering"] = ordering_data["ordering"]
+            group.attrs["vertex_ordering"] = ordering_data["vertex_ordering"]
+            group.attrs["segment_ordering"] = ordering_data["segment_ordering"]
+        else:
+            group.attrs["ordering"] = "none"
 
         self._metadata_cache[path] = metadata
         aprint(f"✅ Lines written to {path}")
@@ -1403,6 +1452,165 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         aprint(
             f"  ✓ Spatial ordering written: {ordering_data['ordering']} with {len(chunk_bounds)} chunks"
+        )
+
+    def _build_lines_spatial_ordering_if_enabled(
+        self,
+        vertices: NDArray[np.float32],
+        segments: NDArray[np.uint32],
+        widths: Union[NDArray[np.float32], float],
+        n_vertices: int,
+        n_dims: int,
+        n_segments: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Build dual spatial ordering for Lines (vertices + segments).
+
+        Args:
+            vertices: Vertex positions
+            segments: Segment index pairs
+            widths: Vertex widths (array or scalar)
+            n_vertices: Number of vertices
+            n_dims: Number of dimensions
+            n_segments: Number of segments
+
+        Returns:
+            Dict with sorted arrays, sort indices, chunk bounds, and ordering metadata.
+            Or None if spatial ordering is disabled.
+        """
+        if not self.enable_spatial_index or n_vertices == 0:
+            return None
+
+        # Get scene dimensions from attrs
+        if "scene_dimensions" not in self.store.attrs:
+            aprint("  ⚠️ No scene dimensions - skipping spatial ordering")
+            return None
+
+        from ..core.dimensions import Dimensions
+
+        scene_dims_dict = self.store.attrs["scene_dimensions"]
+        dimensions = Dimensions.from_dict(scene_dims_dict)
+
+        aprint(f"  🔍 Applying dual {self.ordering_method} ordering...")
+
+        # Import ordering functions
+        from .ordering import (
+            compute_segment_chunk_bounds,
+            compute_vertex_chunk_bounds,
+            order_lines_spatial,
+        )
+
+        # Apply dual spatial ordering
+        (
+            sorted_vertices,
+            sorted_segments,
+            vertex_sort_indices,
+            segment_sort_indices,
+            ordering_metadata,
+        ) = order_lines_spatial(
+            vertices,
+            segments,
+            dimensions.dimensions,
+            method=self.ordering_method,
+        )
+
+        # Compute chunk sizes (from TARGET_CHUNK_BYTES)
+        from ..typing_utils import TARGET_CHUNK_BYTES
+
+        # Vertex chunk size
+        bytes_per_vertex = n_dims * 4 + 8  # Position + width + overhead
+        vertex_chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_vertex)
+        vertex_chunk_size = min(vertex_chunk_size, n_vertices)
+
+        # Segment chunk size
+        bytes_per_segment = 8 + 8  # 2 uint32 indices + overhead
+        segment_chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_segment)
+        segment_chunk_size = min(segment_chunk_size, n_segments)
+
+        # Add chunk_size to metadata
+        ordering_metadata["vertex_ordering"]["chunk_size"] = vertex_chunk_size
+        ordering_metadata["segment_ordering"]["chunk_size"] = segment_chunk_size
+
+        # Compute vertex chunk bounds
+        vertex_chunk_bounds = compute_vertex_chunk_bounds(
+            sorted_vertices,
+            vertex_chunk_size,
+            slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],
+        )
+
+        # Compute segment chunk bounds
+        # Need to expand widths if scalar or broadcasted
+        if isinstance(widths, (int, float)):
+            widths_expanded = np.full(n_vertices, float(widths), dtype=np.float32)
+        elif isinstance(widths, np.ndarray) and widths.shape[0] == 1:
+            # Broadcasted
+            widths_expanded = np.full(n_vertices, widths[0], dtype=np.float32)
+        else:
+            widths_expanded = widths[vertex_sort_indices]  # Apply same reordering
+
+        segment_chunk_bounds = compute_segment_chunk_bounds(
+            sorted_vertices,
+            sorted_segments,
+            widths_expanded,
+            segment_chunk_size,
+            slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],  # Use D-space dims
+        )
+
+        aprint(
+            f"  ✓ Dual ordering complete: {len(vertex_chunk_bounds)} vertex chunks, "
+            f"{len(segment_chunk_bounds)} segment chunks"
+        )
+
+        return {
+            "sorted_vertices": sorted_vertices,
+            "sorted_segments": sorted_segments,
+            "vertex_sort_indices": vertex_sort_indices,
+            "segment_sort_indices": segment_sort_indices,
+            "vertex_chunk_bounds": vertex_chunk_bounds,
+            "segment_chunk_bounds": segment_chunk_bounds,
+            "ordering": self.ordering_method,
+            **ordering_metadata,
+        }
+
+    def _write_lines_spatial_ordering_to_zarr(
+        self, group: zarr.Group, ordering_data: Dict[str, Any]
+    ) -> None:
+        """Write Lines spatial ordering metadata and dual chunk bounds to Zarr.
+
+        Args:
+            group: Parent Zarr group
+            ordering_data: Ordering data with chunk bounds and metadata
+        """
+        aprint("  📝 Writing Lines spatial ordering metadata...")
+
+        # Write vertex_chunk_bounds
+        vertex_chunk_bounds = ordering_data["vertex_chunk_bounds"]
+        if len(vertex_chunk_bounds) > 0:
+            n_dims = vertex_chunk_bounds.shape[1]
+            group.create_dataset(
+                "vertex_chunk_bounds",
+                data=vertex_chunk_bounds,
+                shape=vertex_chunk_bounds.shape,
+                dtype=np.float32,
+                chunks=(vertex_chunk_bounds.shape[0], n_dims, 2),
+                compressor=self.compressor,
+            )
+
+        # Write segment_chunk_bounds
+        segment_chunk_bounds = ordering_data["segment_chunk_bounds"]
+        if len(segment_chunk_bounds) > 0:
+            n_dims = segment_chunk_bounds.shape[1]
+            group.create_dataset(
+                "segment_chunk_bounds",
+                data=segment_chunk_bounds,
+                shape=segment_chunk_bounds.shape,
+                dtype=np.float32,
+                chunks=(segment_chunk_bounds.shape[0], n_dims, 2),
+                compressor=self.compressor,
+            )
+
+        aprint(
+            f"  ✓ Dual spatial ordering written: {len(vertex_chunk_bounds)} vertex chunks, "
+            f"{len(segment_chunk_bounds)} segment chunks"
         )
 
     def _compute_content_hashes(self, store: zarr.Group) -> str:
