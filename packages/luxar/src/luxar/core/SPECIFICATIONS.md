@@ -1,7 +1,7 @@
 # luxar.core - Technical Specification
 
-**Version**: 0.11.1
-**Last Updated**: 2025-12-03
+**Version**: 0.12.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -396,18 +396,23 @@ scene.add_points("global_markers", positions, extend_to_all="all")
 - Represents connected sequences of vertices with interpolated attributes
 - Supports multiple connectivity types: segments, polylines, closed loops, indexed
 - Rendered as thick, anti-aliased tubes/ribbons with polynomial edge falloff
+- Supports spatial indexing via dual ordering (vertices + segments)
 
-**Data Arrays**:
+#### 6.1 Data Arrays
 
 | Array | Shape | Dtype | Required | Description |
 |-------|-------|-------|----------|-------------|
-| vertices | (N, d) | float32 | Yes | Vertex positions in d dimensions |
-| colors | (N, 3) or (1, 3) | float32/uint8 | No | Per-vertex RGB colors (interpolated along segments) |
-| widths | (N,) or (1,) | float32 | Yes | Per-vertex line thickness in scene units (interpolated along segments) |
-| sharpness | (N,) or (1,) | float32 | No | Per-vertex edge softness (interpolated along segments) |
-| indices | (M*2,) | uint32 | Conditional | Flat array of vertex indices for `indexed` type only |
+| vertices | (V, d) | float32 | Yes | Vertex positions in d dimensions |
+| segments | (S, 2) | uint32 | Yes | Vertex index pairs (internal representation) |
+| colors | (V, 3) or (1, 3) | float32/uint8 | No | Per-vertex RGB colors (interpolated along segments) |
+| widths | (V,) or (1,) | float32 | Yes | Per-vertex line thickness in scene units (interpolated along segments) |
+| sharpness | (V,) or (1,) | float32 | No | Per-vertex edge softness (interpolated along segments) |
+| vertex_chunk_bounds | (num_v_chunks, d, 2) | float32 | Yes* | Bounding boxes for vertex chunks |
+| segment_chunk_bounds | (num_s_chunks, d, 2) | float32 | Yes* | Bounding boxes for segment chunks |
 
-**Understanding Vertices and Indices**:
+*Required when `ordering != "none"` (spatial indexing enabled)
+
+**Understanding Vertices and Segments**:
 
 The `vertices` array stores coordinate data:
 ```python
@@ -419,43 +424,90 @@ vertices = [
 ]
 ```
 
-Segments are defined by pairs of indices into the vertices array. For example, segment `(0, 1)` means "draw a line from `vertices[0]` to `vertices[1]`".
+The `segments` array stores pairs of vertex indices:
+```python
+segments = [
+    [0, 1],   # segment connecting vertex 0 to vertex 1
+    [1, 2],   # segment connecting vertex 1 to vertex 2
+    [2, 3],   # segment connecting vertex 2 to vertex 3
+]
+```
 
-**Line Types and Connectivity**:
+#### 6.2 Unified Indexed Representation
 
-| Type | `line_type` Value | Index Array | Segment Generation |
-|------|-------------------|-------------|-------------------|
-| Segments | `"segments"` | None (implicit) | Vertex pairs: (0,1), (2,3), (4,5)... |
-| Polyline | `"polyline"` | None (implicit) | Consecutive: (0,1), (1,2), (2,3)... |
-| Loop | `"loop"` | None (implicit) | Consecutive + wrap: (0,1), (1,2)...(N-1,0) |
-| Indexed | `"indexed"` | Required | Explicit: (indices[0],indices[1]), (indices[2],indices[3])... |
+**Internal Representation**: All line types are converted to indexed representation internally. This unifies the storage format and enables spatial indexing.
+
+| User-Specified Type | Internal Conversion to Segments Array |
+|---------------------|---------------------------------------|
+| `"segments"` | Direct: `[[0,1], [2,3], [4,5], ...]` |
+| `"polyline"` | Sequential: `[[0,1], [1,2], [2,3], ...]` |
+| `"loop"` | Sequential + wrap: `[[0,1], [1,2], ..., [N-1,0]]` |
+| `"indexed"` | Reshape provided indices: `indices.reshape(-1, 2)` |
+
+**Benefits**:
+- Single internal representation simplifies spatial indexing
+- User API remains unchanged (convenience preserved)
+- Internal optimizations decoupled from API surface
+
+**Conversion Algorithm**:
+```python
+def convert_to_indexed(n_vertices: int, line_type: str, indices: Optional[np.ndarray]) -> np.ndarray:
+    """Convert any line type to indexed segment pairs.
+
+    Returns:
+        segments: (S, 2) uint32 array of vertex index pairs
+    """
+    if line_type == "indexed":
+        return indices.reshape(-1, 2)
+    elif line_type == "segments":
+        return np.arange(n_vertices, dtype=np.uint32).reshape(-1, 2)
+    elif line_type == "polyline":
+        return np.column_stack([
+            np.arange(n_vertices - 1, dtype=np.uint32),
+            np.arange(1, n_vertices, dtype=np.uint32)
+        ])
+    elif line_type == "loop":
+        return np.column_stack([
+            np.arange(n_vertices, dtype=np.uint32),
+            np.roll(np.arange(n_vertices, dtype=np.uint32), -1)
+        ])
+```
+
+#### 6.3 Line Types (User API)
+
+| Type | `line_type` Value | User Provides | Segment Generation |
+|------|-------------------|---------------|-------------------|
+| Segments | `"segments"` | vertices only | Vertex pairs: (0,1), (2,3), (4,5)... |
+| Polyline | `"polyline"` | vertices only | Consecutive: (0,1), (1,2), (2,3)... |
+| Loop | `"loop"` | vertices only | Consecutive + wrap: (0,1), (1,2)...(N-1,0) |
+| Indexed | `"indexed"` | vertices + indices | Explicit pairs from indices array |
 
 **Examples by Line Type**:
 
 ```python
 # SEGMENTS: 6 vertices → 3 independent segments
-vertices = [[0,0], [1,0], [2,0], [2,1], [3,0], [3,1]]  # N=6
+vertices = [[0,0], [1,0], [2,0], [2,1], [3,0], [3,1]]  # V=6
 line_type = "segments"
-# Segments: (0,1), (2,3), (4,5) - pairs of vertices
+# Internal segments: [[0,1], [2,3], [4,5]]
 
 # POLYLINE: 4 vertices → 3 connected segments
-vertices = [[0,0], [1,0], [1,1], [0,1]]  # N=4
+vertices = [[0,0], [1,0], [1,1], [0,1]]  # V=4
 line_type = "polyline"
-# Segments: (0,1), (1,2), (2,3) - consecutive vertices
+# Internal segments: [[0,1], [1,2], [2,3]]
 
 # LOOP: 4 vertices → 4 segments (closed)
-vertices = [[0,0], [1,0], [1,1], [0,1]]  # N=4
+vertices = [[0,0], [1,0], [1,1], [0,1]]  # V=4
 line_type = "loop"
-# Segments: (0,1), (1,2), (2,3), (3,0) - closes back to start
+# Internal segments: [[0,1], [1,2], [2,3], [3,0]]
 
 # INDEXED: arbitrary connectivity with vertex reuse
-vertices = [[0,0], [1,0], [0.5,0.866]]  # N=3 (triangle corners)
-indices = [0, 1, 1, 2, 2, 0]  # M*2=6 → 3 segments
+vertices = [[0,0], [1,0], [0.5,0.866]]  # V=3 (triangle corners)
+indices = [0, 1, 1, 2, 2, 0]  # Flat array
 line_type = "indexed"
-# Segments: (0,1), (1,2), (2,0) - forms a triangle
+# Internal segments: [[0,1], [1,2], [2,0]]
 ```
 
-**Attribute Interpolation**:
+#### 6.4 Attribute Interpolation
 
 All per-vertex attributes (colors, widths, sharpness) are **linearly interpolated** along each segment:
 - At segment start: use start vertex's attribute value
@@ -464,74 +516,355 @@ All per-vertex attributes (colors, widths, sharpness) are **linearly interpolate
 
 This enables smooth color gradients, tapered lines, and varying edge softness.
 
-**Metadata**:
-```python
-{
-    "n_vertices": int,      # Number of vertices (N)
-    "n_segments": int,      # Number of line segments
-    "ndim": int,            # Dimensionality (d)
-    "line_type": str,       # "segments", "polyline", "loop", "indexed"
-    "has_colors": bool,
-    "has_sharpness": bool,
-    "max_width": float,     # Maximum width (for rendering bounds)
-}
-```
-
-**Computed Metadata**:
-- `max_width`: `max(widths)` - the maximum value in the widths array. For broadcast widths `(1,)`, this is that single value.
-- `n_segments`: computed from `n_vertices` and `line_type` per the segment count formula below.
-
 **Sharpness Interpolation**:
 Sharpness is linearly interpolated along each segment, affecting the cross-sectional falloff at each point along the line. The interpolated sharpness value at position `t` along segment `(v0, v1)` is:
 ```
 sharpness_t = sharpness[v0] * (1-t) + sharpness[v1] * t
 ```
 
-**Default Values** (when optional arrays not provided):
+#### 6.5 Spatial Indexing for Lines
+
+Lines support spatial indexing through **dual ordering**: vertices and segments are ordered independently for optimal spatial locality.
+
+##### 6.5.1 Dual Spatial Ordering
+
+**Key Insight**: Lines have two arrays that benefit from spatial ordering:
+1. **Vertices**: Ordered in D-dimensional space (same as Points)
+2. **Segments**: Ordered in **2D-dimensional space** (captures full segment geometry)
+
+**Why 2D for Segments?**
+
+A segment connecting P1 → P2 is represented as the concatenation `(P1, P2)` in 2D space:
+```
+Segment: (x1, y1, z1) → (x2, y2, z2)
+Becomes: (x1, y1, z1, x2, y2, z2)  ← 6D point for 3D lines
+```
+
+This captures the **full geometric nature** of the segment:
+- Similar start points cluster together
+- Similar end points cluster together
+- Similar orientation/length segments cluster together
+
+**Why not midpoint ordering?** Midpoint loses orientation information:
+
+| Segment | Endpoints | Midpoint | 2D Representation |
+|---------|-----------|----------|-------------------|
+| A | (0,0,0)→(2,2,2) | (1,1,1) | (0,0,0,2,2,2) |
+| B | (0,2,0)→(2,0,2) | (1,1,1) | (0,2,0,2,0,2) |
+| C | (1,1,0)→(1,1,2) | (1,1,1) | (1,1,0,1,1,2) |
+
+All three have identical midpoints but very different 2D representations, enabling proper spatial clustering.
+
+##### 6.5.2 Ordering Algorithm
+
+```python
+def order_lines_spatial(vertices, segments, dimensions, method="morton"):
+    """Apply dual spatial ordering to lines.
+
+    Args:
+        vertices: (V, D) float32 vertex positions
+        segments: (S, 2) uint32 index pairs (from unified representation)
+        dimensions: List of Dimension objects
+        method: "morton" or "hilbert"
+
+    Returns:
+        sorted_vertices, sorted_segments, vertex_sort_indices,
+        segment_sort_indices, metadata
+    """
+    V, D = vertices.shape
+    S = segments.shape[0]
+
+    # 1. Order vertices in D-space (with compound ordering for discrete dims)
+    vertex_sort_indices, vertex_metadata = sort_points_compound(
+        vertices, dimensions, method=method
+    )
+    sorted_vertices = vertices[vertex_sort_indices]
+
+    # 2. Create inverse mapping for index remapping
+    inverse_map = np.argsort(vertex_sort_indices)
+    remapped_segments = inverse_map[segments]
+
+    # 3. Build 2D segment coordinates for ordering
+    segment_coords_2d = np.concatenate([
+        sorted_vertices[remapped_segments[:, 0]],  # Start points
+        sorted_vertices[remapped_segments[:, 1]]   # End points
+    ], axis=1)  # Shape: (S, 2*D)
+
+    # 4. Order segments in 2D-space (with compound ordering)
+    segment_sort_indices, segment_metadata = sort_segments_compound(
+        segment_coords_2d, dimensions, method=method
+    )
+    sorted_segments = remapped_segments[segment_sort_indices]
+
+    return (sorted_vertices, sorted_segments,
+            vertex_sort_indices, segment_sort_indices,
+            {"vertex_ordering": vertex_metadata,
+             "segment_ordering": segment_metadata})
+```
+
+##### 6.5.3 Extended Morton Encoding (128-bit)
+
+Standard 64-bit Morton codes have limited precision for high-dimensional segment data:
+
+| Dimensions | 64-bit (bits/dim) | 128-bit (bits/dim) |
+|------------|-------------------|---------------------|
+| 3D vertices | 21 bits (~2M) | 42 bits |
+| 6D segments (3D) | 10 bits (~1K) | 21 bits (~2M) |
+| 10D segments (5D) | 6 bits (~64) | 12 bits (~4K) |
+| 12D segments (6D) | 5 bits (~32) | 10 bits (~1K) |
+
+**Auto-Selection**: Use 128-bit Morton when `64 / n_dims < 10` bits per dimension.
+
+**Implementation**: Morton codes are computed using Python arbitrary-precision integers or paired uint64. Only sort indices are needed - codes are not stored.
+
+```python
+def morton_encode_128bit(coords, bits_per_dim):
+    """Encode to 128-bit Morton as (high, low) uint64 pairs."""
+    n_points, n_dims = coords.shape
+    high = np.zeros(n_points, dtype=np.uint64)
+    low = np.zeros(n_points, dtype=np.uint64)
+
+    for i in range(n_points):
+        for bit in range(bits_per_dim):
+            for dim in range(n_dims):
+                bit_pos = bit * n_dims + dim
+                if (coords[i, dim] >> bit) & 1:
+                    if bit_pos < 64:
+                        low[i] |= np.uint64(1) << bit_pos
+                    else:
+                        high[i] |= np.uint64(1) << (bit_pos - 64)
+    return high, low
+
+# Sort lexicographically by (high, low)
+sort_indices = np.lexsort((low, high))
+```
+
+##### 6.5.4 Compound Ordering for Discrete Dimensions
+
+Like Points, Lines support compound ordering for nD data with discrete dimensions (time, channel):
+
+```
+Primary Sort:   Discrete dimensions (lexicographic)
+Secondary Sort: Morton/Hilbert code of spatial dimensions
+```
+
+**For Vertices**: Same as Points - discrete dims first, then spatial Morton in D-space.
+
+**For Segments**: Discrete dimensions appear twice (from both endpoints) in the 2D space:
+- `slice_dims_2d`: Discrete dims from P1 and P2 concatenated
+- `ordering_dims_2d`: Spatial dims from P1 and P2 concatenated
+
+##### 6.5.5 Dual Chunk Bounding Boxes
+
+Lines require **two** chunk bounds arrays:
+
+**vertex_chunk_bounds**: `(num_vertex_chunks, D, 2)` - Bounds for vertex chunks
+```python
+def compute_vertex_chunk_bounds(vertices, chunk_size):
+    num_chunks = (V + chunk_size - 1) // chunk_size
+    bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
+    for i in range(num_chunks):
+        chunk = vertices[i*chunk_size : (i+1)*chunk_size]
+        bounds[i, :, 0] = chunk.min(axis=0)
+        bounds[i, :, 1] = chunk.max(axis=0)
+    return bounds
+```
+
+**segment_chunk_bounds**: `(num_segment_chunks, D, 2)` - Bounds for segment chunks, **including line width**
+```python
+def compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None):
+    num_chunks = (S + chunk_size - 1) // chunk_size
+    bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
+    discrete_dims = set(slice_dims) if slice_dims else set()
+
+    for i in range(num_chunks):
+        chunk_segs = segments[i*chunk_size : (i+1)*chunk_size]
+        p1 = vertices[chunk_segs[:, 0]]
+        p2 = vertices[chunk_segs[:, 1]]
+        w1 = widths[chunk_segs[:, 0]]
+        w2 = widths[chunk_segs[:, 1]]
+        max_w = np.maximum(w1, w2)[:, np.newaxis]
+
+        for d in range(D):
+            if d in discrete_dims:
+                # Discrete: no width expansion
+                bounds[i, d, 0] = min(p1[:, d].min(), p2[:, d].min()) - 0.5
+                bounds[i, d, 1] = max(p1[:, d].max(), p2[:, d].max()) + 0.5
+            else:
+                # Spatial: include width extent
+                bounds[i, d, 0] = min((p1[:, d] - max_w[:, 0]).min(),
+                                      (p2[:, d] - max_w[:, 0]).min())
+                bounds[i, d, 1] = max((p1[:, d] + max_w[:, 0]).max(),
+                                      (p2[:, d] + max_w[:, 0]).max())
+    return bounds
+```
+
+Both bounds arrays are in **D-dimensional space** (not 2D) for view frustum intersection tests.
+
+##### 6.5.6 Query Algorithm (Viewer-Side)
+
+```
+1. Load segment_chunk_bounds (lightweight, cached)
+2. Query: which segment chunks intersect view bounds? (AABB test)
+3. Load matching segment chunks → get (v1, v2) pairs
+4. Collect unique vertex indices from loaded segments
+5. Determine which vertex chunks contain those indices
+6. Load required vertex chunks
+7. Render segments using loaded vertex data
+```
+
+**Segment Visibility Query**:
+```typescript
+function queryVisibleSegmentChunks(
+  segmentChunkBounds: Float32Array,  // (numChunks * D * 2)
+  viewBounds: Float32Array,          // (D * 2)
+  numChunks: number,
+  numDims: number
+): number[] {
+  const visible: number[] = [];
+  for (let chunk = 0; chunk < numChunks; chunk++) {
+    let intersects = true;
+    for (let d = 0; d < numDims; d++) {
+      const chunkMin = segmentChunkBounds[(chunk * numDims + d) * 2];
+      const chunkMax = segmentChunkBounds[(chunk * numDims + d) * 2 + 1];
+      const viewMin = viewBounds[d * 2];
+      const viewMax = viewBounds[d * 2 + 1];
+      if (chunkMax < viewMin || chunkMin > viewMax) {
+        intersects = false;
+        break;
+      }
+    }
+    if (intersects) visible.push(chunk);
+  }
+  return visible;
+}
+```
+
+#### 6.6 Metadata
+
+```python
+{
+    "n_vertices": int,           # Number of vertices (V)
+    "n_segments": int,           # Number of line segments (S)
+    "ndim": int,                 # Dimensionality (d)
+    "original_line_type": str,   # User-specified type: "segments", "polyline", "loop", "indexed"
+    "has_colors": bool,
+    "has_sharpness": bool,
+    "max_width": float,          # Maximum width (for rendering bounds)
+
+    # Spatial indexing metadata (when ordering != "none")
+    "ordering": str,             # "none", "morton", "hilbert"
+    "ordering_precision": int,   # 64 or 128 bits
+
+    "vertex_ordering": {
+        "slice_dims": [int, ...],      # Discrete dimension indices
+        "ordering_dims": [int, ...],   # Spatial dimension indices
+        "ordering_min": [float, ...],  # Min bounds for Morton normalization
+        "ordering_max": [float, ...],  # Max bounds for Morton normalization
+        "ordering_bits_per_dim": int,  # Bits per dimension
+        "chunk_size": int              # Vertices per chunk
+    },
+
+    "segment_ordering": {
+        "slice_dims": [int, ...],      # Discrete dims in 2D space (0..2D-1)
+        "ordering_dims": [int, ...],   # Spatial dims in 2D space (0..2D-1)
+        "ordering_min": [float, ...],  # Min bounds (2D dimensions)
+        "ordering_max": [float, ...],  # Max bounds (2D dimensions)
+        "ordering_bits_per_dim": int,  # Bits per 2D dimension
+        "chunk_size": int              # Segments per chunk
+    }
+}
+```
+
+**Computed Metadata**:
+- `max_width`: `max(widths)` - maximum width value. For broadcast widths `(1,)`, this is that single value.
+- `n_segments`: computed from conversion to indexed representation.
+
+#### 6.7 Storage Schema
+
+```
+/lines_name/
+  vertices/                  # (V, D) float32, Morton-ordered in D-space
+  segments/                  # (S, 2) uint32, Morton-ordered in 2D-space
+  widths/                    # (V,) or (1,) float32, ordered with vertices
+  colors/                    # (V, 3) float32/uint8, ordered with vertices (optional)
+  sharpness/                 # (V,) float32, ordered with vertices (optional)
+  vertex_chunk_bounds        # (num_v_chunks, D, 2) float32
+  segment_chunk_bounds       # (num_s_chunks, D, 2) float32
+```
+
+**Zarr Attributes**:
+```json
+{
+  "type": "lines",
+  "n_vertices": 100000,
+  "n_segments": 150000,
+  "ndim": 5,
+  "original_line_type": "polyline",
+  "ordering": "morton",
+  "ordering_precision": 128,
+  "max_width": 0.5,
+  "has_colors": true,
+  "has_sharpness": false,
+  "vertex_ordering": {
+    "slice_dims": [3, 4],
+    "ordering_dims": [0, 1, 2],
+    "ordering_min": [0.0, 0.0, 0.0],
+    "ordering_max": [100.0, 100.0, 100.0],
+    "ordering_bits_per_dim": 21,
+    "chunk_size": 2000
+  },
+  "segment_ordering": {
+    "slice_dims": [3, 4, 8, 9],
+    "ordering_dims": [0, 1, 2, 5, 6, 7],
+    "ordering_min": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "ordering_max": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+    "ordering_bits_per_dim": 10,
+    "chunk_size": 3000
+  }
+}
+```
+
+#### 6.8 Default Values
+
 - colors: white `[1.0, 1.0, 1.0]`
 - sharpness: `2.0` (quadratic polynomial falloff)
 
-**Segment Count Formula** (integer division):
-- `segments`: N // 2 (must have even N)
-- `polyline`: N - 1
-- `loop`: N
+#### 6.9 Segment Count Formula (User API)
+
+When user provides `line_type`, segment count is computed:
+- `segments`: V // 2 (must have even V)
+- `polyline`: V - 1
+- `loop`: V
 - `indexed`: len(indices) // 2
 
-**Validation Rules**:
+#### 6.10 Validation Rules
+
 - `line_type` must be one of: `"segments"`, `"polyline"`, `"loop"`, `"indexed"`
 - `widths` must be positive (> 0)
 - `sharpness` must be in [0, 31] range
 - Minimum vertex counts:
-  - `segments`: N ≥ 2 (at least one segment)
-  - `polyline`: N ≥ 2 (at least one segment)
-  - `loop`: N ≥ 3 (minimum closed shape is a triangle)
-  - `indexed`: N ≥ 2 (at least two vertices to form a segment)
-- For `segments` type: N must be even (pairs of vertices)
+  - `segments`: V ≥ 2 (at least one segment)
+  - `polyline`: V ≥ 2 (at least one segment)
+  - `loop`: V ≥ 3 (minimum closed shape is a triangle)
+  - `indexed`: V ≥ 2 (at least two vertices to form a segment)
+- For `segments` type: V must be even (pairs of vertices)
 - For `indexed` type: `indices` array is required and must have len ≥ 2
 - For `indexed` type: `len(indices)` must be even (pairs form segments)
-- For `indexed` type: all index values must be < N (valid vertex references)
+- For `indexed` type: all index values must be < V (valid vertex references)
 - For non-`indexed` types: `indices` array must not be present
-- Empty Lines (N=0) are NOT valid for finalized nodes (see Points validation for streaming exception)
-- **Zero segments is always an error**: Lines must have at least one segment. For `indexed` type, this means `len(indices) >= 2`. For other types, this means sufficient vertices per the segment count formula.
+- Empty Lines (V=0) are NOT valid for finalized nodes
+- **Zero segments is always an error**: Lines must have at least one segment.
 - All validation failures raise `ValueError`
 
-**Encoding**: Uses `luxar.encoding` with semantic types:
+#### 6.11 Encoding
+
+Uses `luxar.encoding` with semantic types:
 - vertices: COORDINATE
+- segments: INDEX (uint32, pairs of vertex indices)
 - colors: COLOR
 - widths: POSITIVE_SCALAR
 - sharpness: BOUNDED_SCALAR [0, 31]
-- indices: INDEX (adaptive bit-depth: uint8/uint16/uint32 based on max vertex count)
-
-**Storage Order**:
-Lines are stored in their original order (NOT Morton-sorted). The connectivity constraints (segments, polylines, loops, indexed) make spatial reordering non-trivial.
-
-**Spatial Index**:
-**Lines do NOT support spatial indexing** in the current version. A different indexing approach is needed due to:
-- Segments span between two vertices (can't assign to single cell)
-- Indexed lines have complex vertex sharing
-- Polylines/loops must maintain vertex sequence
-
-This is a known limitation - spatial indexing for lines will be addressed in a future version.
 
 ---
 
@@ -1384,6 +1717,22 @@ This specification is sufficient to re-implement the core package in any languag
 ---
 
 ## Changelog
+
+- **v0.12.0** (2025-12-09): Lines spatial indexing via dual ordering
+  - **MAJOR**: Lines now support spatial indexing for efficient lazy loading
+  - **Unified indexed representation**: All line types (segments, polyline, loop, indexed) converted internally to indexed pairs
+  - **Dual spatial ordering**: Vertices ordered in D-space, segments ordered in 2D-space
+  - **2D segment ordering**: Segments treated as 2D-dimensional points (concatenated endpoints) for proper geometric clustering
+  - **Extended Morton encoding**: 128-bit support for high-dimensional data (auto-selected when 64-bit gives <10 bits/dim)
+  - **Dual chunk bounds**: `vertex_chunk_bounds` and `segment_chunk_bounds` arrays for two-phase queries
+  - **Width-aware bounds**: Segment chunk bounds include line width extent
+  - **Compound ordering**: Discrete dimension support (time, channel) same as Points
+  - Added `segments` array (S, 2) uint32 - internal indexed representation
+  - Added `original_line_type` metadata - preserves user-specified type
+  - Added `ordering`, `ordering_precision`, `vertex_ordering`, `segment_ordering` metadata
+  - Changed `indices` from user-provided to internal `segments` array
+  - Section restructured with subsections 6.1-6.11 for clarity
+  - Viewer query algorithm specified (segment chunks → vertex chunks → render)
 
 - **v0.11.1** (2025-12-03): Default radius for Points
   - Added default radius of `0.5` for Points when radii not provided

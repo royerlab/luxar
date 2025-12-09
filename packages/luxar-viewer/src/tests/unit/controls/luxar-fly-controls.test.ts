@@ -432,6 +432,133 @@ describe('LuxarFlyControls', () => {
     });
   });
 
+  describe('roll controls', () => {
+    it('should roll left with Q key', () => {
+      // Simulate Q key press
+      const keyEvent = new KeyboardEvent('keydown', { key: 'q' });
+      window.dispatchEvent(keyEvent);
+
+      const initialOrientation = (controls as any).orientation.clone();
+
+      // Update with time delta
+      controls.update(0.1);
+
+      // Orientation should have changed (roll applied)
+      const newOrientation = (controls as any).orientation;
+      expect(newOrientation.equals(initialOrientation)).toBe(false);
+
+      // Clean up
+      const keyUpEvent = new KeyboardEvent('keyup', { key: 'q' });
+      window.dispatchEvent(keyUpEvent);
+    });
+
+    it('should roll right with E key', () => {
+      // Simulate E key press
+      const keyEvent = new KeyboardEvent('keydown', { key: 'e' });
+      window.dispatchEvent(keyEvent);
+
+      const initialOrientation = (controls as any).orientation.clone();
+
+      // Update with time delta
+      controls.update(0.1);
+
+      // Orientation should have changed (roll applied)
+      const newOrientation = (controls as any).orientation;
+      expect(newOrientation.equals(initialOrientation)).toBe(false);
+
+      // Clean up
+      const keyUpEvent = new KeyboardEvent('keyup', { key: 'e' });
+      window.dispatchEvent(keyUpEvent);
+    });
+
+    it('should combine roll with other rotations', () => {
+      // Simulate Q (roll) + mouse look
+      const qKey = new KeyboardEvent('keydown', { key: 'q' });
+      window.dispatchEvent(qKey);
+
+      // Add some angular velocity via lookState
+      (controls as any).lookState.horizontal = 0.1;
+      (controls as any).lookState.vertical = 0.05;
+
+      const initialOrientation = (controls as any).orientation.clone();
+
+      controls.update(0.016);
+
+      // Should apply both roll and look rotation
+      const newOrientation = (controls as any).orientation;
+      expect(newOrientation.equals(initialOrientation)).toBe(false);
+
+      // Clean up
+      const qKeyUp = new KeyboardEvent('keyup', { key: 'q' });
+      window.dispatchEvent(qKeyUp);
+      (controls as any).lookState.horizontal = 0;
+      (controls as any).lookState.vertical = 0;
+    });
+  });
+
+  describe('frame-rate independence', () => {
+    it('should produce consistent movement at different frame rates', () => {
+      // Set up movement
+      (controls as any).moveState.forward = 1;
+
+      // Save initial position
+      const startPos = camera.position.clone();
+
+      // Simulate 60fps (one frame at 16.67ms)
+      const controls60fps = new LuxarFlyControls(camera, domElement);
+      camera.position.copy(startPos);
+      (controls60fps as any).moveState.forward = 1;
+      controls60fps.update(0.016);
+      const pos60fps = camera.position.clone();
+      controls60fps.dispose();
+
+      // Simulate 30fps (one frame at 33.33ms)
+      const controls30fps = new LuxarFlyControls(camera, domElement);
+      camera.position.copy(startPos);
+      (controls30fps as any).moveState.forward = 1;
+      controls30fps.update(0.033);
+      const pos30fps = camera.position.clone();
+      controls30fps.dispose();
+
+      // Positions should be very close (frame-rate independent physics)
+      // Small difference acceptable due to discrete time steps
+      const distance = pos60fps.distanceTo(pos30fps);
+      expect(distance).toBeLessThan(0.01); // Within 1% tolerance
+    });
+
+    it('should handle variable delta times correctly', () => {
+      (controls as any).moveState.forward = 1;
+
+      const startPos = camera.position.clone();
+
+      // Apply variable delta times (simulating frame drops)
+      controls.update(0.016); // 60fps frame
+      controls.update(0.050); // Frame drop
+      controls.update(0.016); // Back to normal
+
+      // Should still move forward (no NaN or infinity)
+      expect(camera.position.z).toBeLessThan(startPos.z);
+      expect(isFinite(camera.position.x)).toBe(true);
+      expect(isFinite(camera.position.y)).toBe(true);
+      expect(isFinite(camera.position.z)).toBe(true);
+    });
+
+    it('should apply damping correctly with different delta times', () => {
+      controls.damping = 0.9; // 90% damping (direct property access)
+      (controls as any).velocity.set(10, 0, 0); // Initial velocity
+
+      // Update with delta time
+      controls.update(0.016); // One frame at 60fps
+
+      // Velocity should decay according to: v * damping^(delta*60)
+      // Formula: v_new = v_old * (0.9)^(0.016*60) = v_old * (0.9)^0.96
+      const expectedDecay = Math.pow(0.9, 0.016 * 60);
+      const actualVelocity = (controls as any).velocity.x;
+
+      expect(actualVelocity).toBeCloseTo(10 * expectedDecay, 1);
+    });
+  });
+
   describe('state management', () => {
     it('should save state', () => {
       // Should not throw
