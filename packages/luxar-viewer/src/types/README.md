@@ -55,8 +55,20 @@ interface DimensionMetadata {
   /** Whether values are discrete (integers) vs continuous */
   discrete?: boolean;
 
+  /** Whether dimension wraps around (for angles, periodic states) */
+  cyclic?: boolean;
+
   /** Step size for navigation in this dimension */
   step?: number;
+
+  /** Whether points extend through this dimension (true for spatial dims) */
+  spatial?: boolean;
+
+  /** Optional category labels for categorical dimensions */
+  categories?: string[];
+
+  /** Optional human-readable description for UI tooltips */
+  description?: string;
 }
 ```
 
@@ -64,8 +76,10 @@ interface DimensionMetadata {
 
 - **Scientific Data**: Physical dimensions with units and scales
 - **Time Series**: Temporal dimensions with discrete time points
-- **Categorical Data**: Discrete dimensions like channels, conditions, or treatments
+- **Categorical Data**: Discrete dimensions like channels (using `categories` field)
 - **Spatial Coordinates**: X, Y, Z with physical units and continuous navigation
+- **Periodic Dimensions**: Angles or cyclic time (using `cyclic` field)
+- **Spatial vs Categorical**: Use `spatial` field to distinguish physical extent
 
 ### SimpleDims Interface
 
@@ -132,6 +146,29 @@ const timeDim: DimensionMetadata = {
   scale: 1.0,
   discrete: true, // Exact integer matching required
   step: 1.0, // Integer frame steps
+  spatial: false, // Points exist at discrete time points
+};
+
+// Cyclic dimension (angles)
+const angleDim: DimensionMetadata = {
+  name: 'Theta',
+  unit: 'deg',
+  scale: 1.0,
+  range: [0, 360],
+  cyclic: true, // Wraps from 360° to 0°
+  discrete: false,
+};
+
+// Categorical dimension (with labels)
+const channelDim: DimensionMetadata = {
+  name: 'Channel',
+  unit: '',
+  scale: 1.0,
+  range: [0, 2],
+  discrete: true,
+  categories: ['DAPI', 'GFP', 'RFP'], // Human-readable labels
+  spatial: false, // Points don't extend through channels
+  description: 'Fluorescence imaging channel',
 };
 ```
 

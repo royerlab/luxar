@@ -778,7 +778,7 @@ export class RenderingControls {
 
     // Bloom subfolder - moved here from top level
     const bloomFolder = effectsFolder.addFolder('Bloom');
-    bloomFolder.open(); // Open by default since it's commonly used
+    bloomFolder.close(); // Closed by default like all other effects
 
     const bloomThresholdControl = bloomFolder
       .add(this.settings, 'bloomThreshold', 0, 1, 0.01)

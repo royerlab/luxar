@@ -1,7 +1,7 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 2.0.0
-**Last Updated**: 2025-12-01
+**Version**: 1.1.1
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -678,189 +678,28 @@ function loadPointsNode(store, path, attrs, arrayRefRegistry):
 
 ## 5. Cache Management
 
-### 5.1 Purpose
+**Note**: Cache management has been moved to a dedicated `cache/` package.
 
-Efficient caching is critical for interactive performance with massive datasets. The cache stores loaded point ranges to avoid redundant network requests.
+The data loading system integrates with the two-level caching architecture provided by `luxar-viewer.cache`:
 
-### 5.2 Cache Key Structure
+- **L1 Cache**: In-memory segmented LRU cache (100MB default)
+- **L2 Cache**: OPFS persistent storage (2GB default)
+- **Prefetching**: Intelligent adjacent chunk loading
 
-**Format**: `<array_path>:<start>-<end>`
+**Architecture**:
 
-**Example**: `/scene/points/positions:1000-2000`
+- `TwoLevelCachingStore` wraps the zarr.FetchStore
+- All zarr chunk fetches automatically go through the cache
+- Spatial index queries benefit from cached chunk metadata
+- No manual cache management needed at data layer
 
-**Rationale**: Keys uniquely identify a loaded range for a specific array, enabling efficient lookups.
+**For Complete Details**: See `../cache/SPECIFICATIONS.md` (v1.2.1) for full cache architecture specification
 
-### 5.3 Range Cache Data Structure
+**Integration Point**: SceneLoader creates TwoLevelCachingStore when loading scenes (see scene-loader.ts:89-112)
 
-```
-class RangeCache:
-    // Map from array path to list of cached ranges
-    cache: Map<string, CachedRange[]>
+### 5.1 Legacy Note
 
-    struct CachedRange:
-        start: number       // Inclusive start index
-        end: number         // Exclusive end index
-        data: TypedArray    // Cached data
-        lastAccess: number  // Timestamp for LRU
-        accessCount: number // Count for LFU
-```
-
-### 5.4 Cache Lookup Algorithm
-
-**Query**: Does the cache contain data for range `[start, end)` in `arrayPath`?
-
-```
-function cacheHas(arrayPath, requestedStart, requestedEnd):
-    if arrayPath not in cache:
-        return false
-
-    ranges = cache[arrayPath]
-
-    // Check if ANY cached range fully contains the requested range
-    for cachedRange in ranges:
-        if cachedRange.start <= requestedStart and cachedRange.end >= requestedEnd:
-            return true
-
-    return false
-```
-
-### 5.5 Cache Extraction Algorithm
-
-**Purpose**: Extract requested data from cached ranges, possibly spanning multiple cache entries.
-
-```
-function cacheGet(arrayPath, requestedStart, requestedEnd):
-    ranges = cache[arrayPath]
-
-    // Find all overlapping ranges
-    overlapping = ranges.filter(r =>
-        r.start < requestedEnd and r.end > requestedStart
-    ).sort((a, b) => a.start - b.start)
-
-    if overlapping.length == 0:
-        return null  // Cache miss
-
-    // Check if overlapping ranges fully cover requested range
-    if overlapping[0].start > requestedStart:
-        return null  // Gap at start
-
-    for i in 0..overlapping.length-2:
-        if overlapping[i].end < overlapping[i+1].start:
-            return null  // Gap between ranges
-
-    if overlapping[overlapping.length-1].end < requestedEnd:
-        return null  // Gap at end
-
-    // Extract data from overlapping ranges
-    result = new TypedArray(requestedEnd - requestedStart)
-    resultOffset = 0
-
-    for range in overlapping:
-        // Calculate overlap
-        overlapStart = max(requestedStart, range.start)
-        overlapEnd = min(requestedEnd, range.end)
-
-        // Copy overlapping portion
-        srcOffset = overlapStart - range.start
-        copyLength = overlapEnd - overlapStart
-
-        result.set(
-            range.data.subarray(srcOffset, srcOffset + copyLength),
-            resultOffset
-        )
-
-        resultOffset += copyLength
-
-    return result
-```
-
-### 5.6 Cache Insertion Algorithm
-
-**Purpose**: Store newly loaded data, merging with existing ranges if adjacent.
-
-```
-function cacheSet(arrayPath, start, end, data):
-    if arrayPath not in cache:
-        cache[arrayPath] = []
-
-    ranges = cache[arrayPath]
-
-    newRange = {
-        start: start,
-        end: end,
-        data: data,
-        lastAccess: Date.now(),
-        accessCount: 1
-    }
-
-    // Check for adjacent ranges to merge
-    merged = false
-    for i in 0..ranges.length-1:
-        existing = ranges[i]
-
-        // Case 1: New range is immediately before existing
-        if newRange.end == existing.start:
-            // Prepend data
-            existing.data = concat(newRange.data, existing.data)
-            existing.start = newRange.start
-            merged = true
-            break
-
-        // Case 2: New range is immediately after existing
-        if newRange.start == existing.end:
-            // Append data
-            existing.data = concat(existing.data, newRange.data)
-            existing.end = newRange.end
-            merged = true
-            break
-
-    if !merged:
-        // Insert in sorted order
-        ranges.push(newRange)
-        ranges.sort((a, b) => a.start - b.start)
-
-    // Check memory limit and evict if necessary
-    if getTotalMemory() > maxMemoryMB * 1024 * 1024:
-        evictLRU()  // or evictLFU() depending on strategy
-```
-
-### 5.7 Cache Eviction Strategies
-
-**LRU (Least Recently Used)**:
-
-```
-function evictLRU():
-    // Find range with oldest lastAccess
-    oldestRange = null
-    oldestTime = Infinity
-
-    for path in cache:
-        for range in cache[path]:
-            if range.lastAccess < oldestTime:
-                oldestTime = range.lastAccess
-                oldestRange = {path, range}
-
-    // Remove oldest range
-    cache[oldestRange.path].remove(oldestRange.range)
-```
-
-**LFU (Least Frequently Used)**:
-
-```
-function evictLFU():
-    // Find range with lowest accessCount
-    leastUsed = null
-    minCount = Infinity
-
-    for path in cache:
-        for range in cache[path]:
-            if range.accessCount < minCount:
-                minCount = range.accessCount
-                leastUsed = {path, range}
-
-    // Remove least used range
-    cache[leastUsed.path].remove(leastUsed.range)
-```
+**Previous Implementation**: This section previously documented a `RangeCache` class that has been removed in favor of the dedicated cache package. The cache system is now much more sophisticated with two-level storage, content-hash validation, and intelligent prefetching.
 
 ---
 
@@ -950,6 +789,12 @@ interface DimensionMetadata {
 ---
 
 ## Changelog
+
+- **v1.1.1** (2025-12-08): Documentation cleanup
+  - Removed obsolete RangeCache documentation from Section 5
+  - Cache management now handled by dedicated `cache/` package
+  - Cleaned up duplicate Section 6 headers
+  - No functional changes to specification
 
 - **v2.0.0** (2025-12-01): Chunk-based spatial index system
   - **BREAKING**: Replaced grid-based spatial index with chunk-based system

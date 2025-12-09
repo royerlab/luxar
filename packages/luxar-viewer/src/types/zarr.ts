@@ -17,6 +17,7 @@ export interface PositionBounds {
 
 /**
  * Scene-level dimension information stored in Zarr attributes
+ * Mirrors Python's luxar.core.Dimension class for full compatibility
  */
 export interface SceneDimensionAttrs {
   dimensions: Array<{
@@ -29,6 +30,7 @@ export interface SceneDimensionAttrs {
     step?: number;
     cyclic?: boolean;
     spatial?: boolean;
+    categories?: string[]; // Category labels for categorical dimensions
     description?: string;
   }>;
 }
