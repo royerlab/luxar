@@ -1,7 +1,7 @@
 # luxar-viewer.core - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.1.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -22,6 +22,7 @@ The `luxar-viewer.core` package provides application initialization, component o
 3. [Dataset Loading](#dataset-loading)
 4. [Error Handling](#error-handling)
 5. [Resource Cleanup](#resource-cleanup)
+6. [Debug Interface](#debug-interface)
 
 ---
 
@@ -350,7 +351,469 @@ interface InitializationConfig {
 
 ---
 
+## 6. Debug Interface
+
+### 6.1 Debug Interface Architecture
+
+**Purpose**: Expose internal application state and helpers for testing, development, and AI-assisted debugging.
+
+**Critical Design**: Two-stage initialization pattern:
+
+1. **Stage 1 - Base Interface** (`main.ts`): Expose foundation properties before runtime initialization
+2. **Stage 2 - Runtime Components** (`app.ts`): Add runtime properties after components are initialized
+
+**Activation**: Debug interface only available when `?debug` URL parameter is present OR `localStorage.luxar_debug === 'true'`
+
+```typescript
+// URL activation
+http://localhost:5173/?debug
+
+// Programmatic activation
+localStorage.setItem('luxar_debug', 'true');
+```
+
+**TypeScript Declaration**:
+
+```typescript
+declare global {
+  interface Window {
+    __luxarDebug?: {
+      // Base properties (available from main.ts)
+      app: LuxarApp;
+      consoleInterceptor: typeof consoleInterceptor;
+      version: string;
+
+      // Runtime properties (added by app.ts after initialization)
+      scene?: THREE.Scene;
+      camera?: THREE.PerspectiveCamera;
+      renderer?: THREE.WebGLRenderer;
+      controls?: any;
+      postProcessing?: any;
+      animationController?: any;
+      inputHandler?: any;
+      renderingControls?: any;
+      getState?: () => any;
+      renderOnce?: () => void;
+      getSceneLoader?: () => Promise<any>;
+      runtimeReady?: boolean;
+      cache?: CacheDebugAPI;
+    };
+  }
+}
+```
+
+---
+
+### 6.2 Base Debug Properties (Stage 1)
+
+**Location**: `main.ts` (lines 64-71)
+
+**Properties**:
+
+```typescript
+window.__luxarDebug = {
+  app: LuxarApp,              // Application instance
+  consoleInterceptor: object, // Ring buffer console interceptor
+  version: string             // Application version (e.g., '1.0.0')
+};
+```
+
+**Purpose**: Available immediately during initialization, before any components are created.
+
+**Usage**:
+```javascript
+// Check version
+console.log(window.__luxarDebug.version);
+
+// Access app instance
+window.__luxarDebug.app.components;
+
+// Read console history
+window.__luxarDebug.consoleInterceptor.getMessages();
+```
+
+---
+
+### 6.3 Runtime Debug Properties (Stage 2)
+
+**Location**: `app.ts` `setupDebugInterface()` method (lines 273-440)
+
+**Properties**:
+
+```typescript
+{
+  // Three.js core components
+  scene: THREE.Scene,                      // Main scene object
+  camera: THREE.PerspectiveCamera,         // Active camera
+  renderer: THREE.WebGLRenderer,           // WebGL renderer instance
+  controls: ControlsManager,               // Camera controls manager
+  postProcessing: PostProcessingManager,   // HDR post-processing pipeline
+
+  // Application components
+  animationController: AnimationController, // Animation loop controller
+  inputHandler: InputHandler,              // Input event handler
+  renderingControls: RenderingControls,    // Rendering UI controls
+
+  // Helper functions (see sections below)
+  getState: () => StateSnapshot,           // Get current state
+  renderOnce: () => void,                  // Trigger single frame
+  getSceneLoader: () => Promise<SceneLoaderManager>, // Get loader instance
+
+  // Cache API (see section 6.5)
+  cache: CacheDebugAPI,
+
+  // Ready flag
+  runtimeReady: boolean                    // True when runtime props added
+}
+```
+
+**Important**: Runtime properties only available after `app.init()` completes. Check `runtimeReady` flag.
+
+**Usage**:
+```javascript
+// Access Three.js scene
+window.__luxarDebug.scene.children;
+
+// Get camera position
+const pos = window.__luxarDebug.camera.position;
+console.log(`Camera at (${pos.x}, ${pos.y}, ${pos.z})`);
+
+// Access controls
+window.__luxarDebug.controls.setOrbitMode();
+```
+
+---
+
+### 6.4 Helper Functions
+
+#### getState()
+
+**Purpose**: Get comprehensive snapshot of current application state.
+
+**Signature**:
+```typescript
+getState(): {
+  totalPoints: number;
+  pointClouds: Array<{
+    name: string;
+    pointCount: number;
+    visible: boolean;
+    hasColors: boolean;
+    hasRadii: boolean;
+    hasSharpness: boolean;
+  }>;
+  dimensions: {
+    ndim: number;
+    displayed: number[];
+    currentStep: number[];
+  } | null;
+  cameraPosition: { x: number; y: number; z: number };
+  cameraFov: number;
+  isAnimating: boolean;
+  initialized: boolean;
+}
+```
+
+**Usage**:
+```javascript
+const state = window.__luxarDebug.getState();
+console.log(`Loaded ${state.totalPoints} points`);
+console.log(`Camera FOV: ${state.cameraFov}`);
+console.log(`Dimensions: ${state.dimensions?.ndim}D`);
+```
+
+**Implementation Details**:
+- Traverses scene to count points across all `THREE.Points` objects
+- Inspects geometry attributes for metadata
+- Queries `sceneDimsManager` for dimensional state
+- Returns camera position and FOV
+
+#### renderOnce()
+
+**Purpose**: Trigger a single frame render (useful for stable screenshots).
+
+**Signature**:
+```typescript
+renderOnce(): void
+```
+
+**Usage**:
+```javascript
+// Take screenshot after ensuring fresh render
+window.__luxarDebug.renderOnce();
+setTimeout(() => {
+  // Screenshot code here
+}, 100);
+```
+
+**Implementation**: Calls `animationController.startAnimation()` to trigger render loop.
+
+#### getSceneLoader()
+
+**Purpose**: Get `SceneLoaderManager` singleton for cache inspection.
+
+**Signature**:
+```typescript
+async getSceneLoader(): Promise<SceneLoaderManager>
+```
+
+**Usage**:
+```javascript
+const manager = await window.__luxarDebug.getSceneLoader();
+const loader = manager.getDefaultLoader();
+console.log(loader);
+```
+
+**Note**: Uses dynamic import to avoid circular dependencies.
+
+---
+
+### 6.5 Cache Debug API
+
+**Purpose**: Inspect and manipulate two-tier cache (L1 memory + L2 IndexedDB).
+
+**Location**: `app.ts` lines 362-423
+
+**API Methods**:
+
+```typescript
+interface CacheDebugAPI {
+  getStats(): Promise<CacheStats>;
+  listDatasets(): Promise<DatasetList>;
+  clearL1(): Promise<void>;
+  clearL2(): Promise<void>;
+  clearAll(): Promise<void>;
+}
+```
+
+#### cache.getStats()
+
+**Purpose**: Get cache statistics (sizes, hit rates, datasets).
+
+**Returns**:
+```typescript
+{
+  l1: { size: number; maxSize: number; hitRate: number };
+  l2: { size: number; datasets: string[] };
+}
+```
+
+**Usage**:
+```javascript
+const stats = await window.__luxarDebug.cache.getStats();
+console.log(`L1 cache: ${stats.l1.size} / ${stats.l1.maxSize} bytes`);
+console.log(`L2 datasets: ${stats.l2.datasets.join(', ')}`);
+```
+
+#### cache.listDatasets()
+
+**Purpose**: List all datasets in L2 cache with metadata.
+
+**Returns**:
+```typescript
+{
+  datasets: Array<{
+    name: string;
+    chunkCount: number;
+    totalSize: number;
+  }>;
+}
+```
+
+**Usage**:
+```javascript
+const datasets = await window.__luxarDebug.cache.listDatasets();
+datasets.forEach(d => {
+  console.log(`${d.name}: ${d.chunkCount} chunks, ${d.totalSize} bytes`);
+});
+```
+
+#### cache.clearL1()
+
+**Purpose**: Clear L1 (memory) cache only, preserving L2 (IndexedDB).
+
+**Usage**:
+```javascript
+await window.__luxarDebug.cache.clearL1();
+console.log('L1 cache cleared - L2 preserved');
+```
+
+#### cache.clearL2()
+
+**Purpose**: Clear L2 (IndexedDB) cache only, preserving L1 (memory).
+
+**Usage**:
+```javascript
+await window.__luxarDebug.cache.clearL2();
+console.log('L2 cache cleared - L1 preserved');
+```
+
+#### cache.clearAll()
+
+**Purpose**: Clear both L1 and L2 caches completely.
+
+**Usage**:
+```javascript
+await window.__luxarDebug.cache.clearAll();
+console.log('All caches cleared');
+```
+
+---
+
+### 6.6 Console Interceptor Requirements
+
+**Critical**: Console interceptor MUST be imported FIRST in `main.ts` (line 6), before any other code.
+
+**Why**: Ensures ALL console output from application start is captured, including early errors and initialization logs.
+
+**Implementation**:
+```typescript
+// CRITICAL: Import console interceptor FIRST before any other code
+// This ensures we capture ALL console output from the very beginning
+import { consoleInterceptor } from '../utils/console-interceptor';
+
+// Log that we're starting (this will be captured)
+import { log, Modules, LogEmoji } from '../utils/log';
+log.custom(LogEmoji.START, Modules.LUXAR, 'Application starting...');
+
+// ... rest of imports ...
+```
+
+**Ring Buffer Mechanism**:
+- Fixed-size circular buffer (10,000 messages)
+- Oldest messages discarded when buffer full
+- Preserves message type (log, warn, error, info, debug)
+- Timestamp for each message
+
+**Usage**:
+```javascript
+// Get all captured console messages
+const messages = window.__luxarDebug.consoleInterceptor.getMessages();
+
+// Filter by type
+const errors = messages.filter(m => m.type === 'error');
+
+// Recent messages (last 100)
+const recent = messages.slice(-100);
+```
+
+**Importance**: Without early import, initialization errors and startup logs are lost.
+
+---
+
+### 6.7 Debug Console (Ctrl+L)
+
+**Purpose**: In-app console overlay for viewing captured console output.
+
+**Activation**: Press `Ctrl+L` to toggle debug console visibility.
+
+**Features**:
+- Displays all captured console messages with timestamps
+- Color-coded by log level (error, warn, info, log)
+- Auto-scroll to latest messages
+- Filterable by log level
+- Resizable and draggable
+
+**Configuration**: See `config/debug-console.ts` for dimensions and styling.
+
+**Usage**:
+```javascript
+// Programmatically show debug console
+document.dispatchEvent(new CustomEvent('toggle-debug-console'));
+```
+
+---
+
+### 6.8 AI-Assisted Debugging Workflow
+
+**Purpose**: Enable autonomous debugging by AI agents (Claude Code) without user intervention.
+
+**Playwright Integration**: See `PLAYWRIGHT_GUIDE.md` for complete details.
+
+**Quick Commands**:
+```bash
+# Headless mode - shows browser console in terminal
+cd packages/luxar-viewer
+pnpm agent:debug
+
+# Visible browser - watch AI interact with app
+pnpm agent:debug:visible
+```
+
+**Output Format**:
+```
+[BROWSER-CONSOLE-LOG] [🚀] [Luxar] Application starting...
+[BROWSER-CONSOLE-ERROR] Failed to load spatial index: 404
+[BROWSER-CONSOLE-LOG] Loaded 50,000 points in 245ms
+
+Scene State JSON: {
+  "totalPoints": 50000,
+  "pointClouds": [...],
+  "dimensions": {...},
+  "cameraPosition": {...}
+}
+
+Screenshot saved: debug-view.png
+```
+
+**AI Debug Pattern**:
+1. User reports issue
+2. AI runs `pnpm agent:debug`
+3. AI reads console output and state JSON
+4. AI identifies root cause
+5. AI makes fixes
+6. AI verifies with `pnpm agent:debug` again
+
+---
+
+## Data Structures
+
+### LuxarApp
+
+```typescript
+interface LuxarApp {
+  // Components
+  sceneManager: SceneManager;
+  animationController: AnimationController;
+  inputHandler: InputHandler;
+  renderingControls: RenderingControls;
+  datasetBrowser?: DatasetBrowser;
+
+  // State
+  initialized: boolean;
+  currentDataset: string | null;
+
+  // Methods
+  init(src?: string): Promise<void>;
+  loadDataset(src: string): Promise<void>;
+  cleanup(): void;
+}
+```
+
+### InitializationConfig
+
+```typescript
+interface InitializationConfig {
+  canvasId: string;
+  defaultDataset?: string;
+  enableDebug?: boolean;
+  autoStart?: boolean;
+}
+```
+
+---
+
 ## Changelog
+
+- **v1.1.0** (2025-12-09): Added comprehensive debug interface documentation
+  - Two-stage debug interface architecture (base + runtime)
+  - Base properties: app, consoleInterceptor, version
+  - Runtime properties: scene, camera, renderer, controls, postProcessing, etc.
+  - Helper functions: getState(), renderOnce(), getSceneLoader()
+  - Cache debug API: getStats(), listDatasets(), clearL1(), clearL2(), clearAll()
+  - Console interceptor requirements and early import importance
+  - Debug console (Ctrl+L) documentation
+  - AI-assisted debugging workflow with Playwright
 
 - **v1.0.0** (2025-01-30): Initial specification
   - Component initialization in dependency order
