@@ -272,6 +272,69 @@ Use **relative paths** from the specification file's location.
 - After adding new encoding modes → test full round-trip
 - After visual/rendering changes → Playwright visual regression tests
 
+### E2E Testing Best Practices (Playwright)
+
+**CRITICAL Lessons Learned**:
+
+1. **Dataset Selection for E2E Tests**:
+   - Use **3D datasets** for tests that check point loading/rendering (e.g., `build_example_structured.zarr`)
+   - **Avoid 4D/nD datasets** for simple loading tests - nD slicing may result in 0 visible points at certain slice positions
+   - For nD-specific tests, explicitly navigate to slices known to have points
+   - Check actual point counts with `luxar info <dataset>.zarr` before setting test expectations
+
+2. **URL Parameters**:
+   - ALWAYS use `src=` parameter: `http://localhost:5173/?src=<dataset>&debug`
+   - NEVER use `data=` parameter (not recognized by viewer)
+   - Always include `&debug` to enable `window.__luxarDebug` interface
+
+3. **Debug Interface Race Conditions**:
+   - ALWAYS wait for debug interface before calling methods:
+     ```typescript
+     await page.waitForFunction(
+       () => {
+         const debug = (window as any).__luxarDebug;
+         return debug && debug.getState && typeof debug.getState === 'function';
+       },
+       { timeout: 45000 }
+     );
+     ```
+   - Use `waitForLuxarReady()` helper which handles this automatically
+   - Wrap `getLuxarState()` calls in try-catch for robustness
+
+4. **WebGL Error Detection**:
+   - Filter console messages carefully - exclude info messages and performance warnings
+   - Only flag actual GL errors: `GL_INVALID_*`, `GL_OUT_OF_MEMORY`
+   - Exclude messages containing `[ℹ️]`, `GPU stall due to ReadPixels`
+
+5. **Test Stability**:
+   - Current configuration (`fullyParallel: false`, `workers: 1`) is optimal for WebGL tests
+   - Test chunking NOT required - full suite (221 tests) runs reliably in ~17 minutes
+   - Dev server stays stable across full test run with `reuseExistingServer: true`
+
+6. **Common Pitfalls**:
+   - ❌ Using `window.THREE` directly (not available in page context)
+   - ❌ Checking dimensions/points before data finishes loading
+   - ❌ Expecting specific point counts from nD datasets without considering slicing
+   - ❌ Not handling async initialization of debug interface
+   - ✅ Use `debug.scene.traverse()` and object methods directly
+   - ✅ Wait for `state.initialized && !state.isLoading` before assertions
+   - ✅ Use 3D datasets for general-purpose loading tests
+
+7. **Running E2E Tests**:
+   ```bash
+   cd packages/luxar-viewer
+   pnpm test:e2e                    # Run all E2E tests (~17 min)
+   pnpm test:e2e <file>.spec.ts     # Run specific test file
+   pnpm test:e2e:ui                 # Interactive UI mode
+   pnpm test:e2e:report             # View HTML report after run
+   ```
+
+8. **Debugging Failed E2E Tests**:
+   - Check screenshots in `test-results/<test-name>/test-failed-1.png`
+   - Watch videos: `test-results/<test-name>/video.webm`
+   - View traces: `pnpm exec playwright show-trace test-results/<test-name>/trace.zip`
+   - Read error context: `test-results/<test-name>/error-context.md`
+
 ### Git Workflow
 - Never commit `.zarr` directories (they're in .gitignore)
 - Always run all tests (Python & TypeScript), run all checks (typing, linting), and format code before committing

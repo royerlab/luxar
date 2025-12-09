@@ -1,7 +1,7 @@
 # luxar-viewer.types - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-08
+**Version**: 1.2.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -24,6 +24,7 @@ The `luxar-viewer.types` package provides the foundational type system for nD da
 4. [Navigation Utilities](#navigation-utilities)
 5. [Type Validation](#type-validation)
 6. [Data Structures](#data-structures)
+7. [Lines Types](#lines-types)
 
 ---
 
@@ -929,7 +930,261 @@ type DisplayedDimensions = number[]; // Length ≤ 3
 
 ---
 
+## 7. Lines Types
+
+### 7.1 LinesMetadata
+
+**Purpose**: Metadata for Lines nodes, read from zarr `.zattrs`.
+
+```typescript
+/**
+ * Metadata for a Lines node (from zarr attributes)
+ */
+interface LinesMetadata {
+  /** Node type identifier */
+  type: 'lines';
+
+  /** Number of vertices */
+  n_vertices: number;
+
+  /** Number of line segments */
+  n_segments: number;
+
+  /** Dimensionality of vertex positions */
+  ndim: number;
+
+  /** Original line type from Python API */
+  original_line_type: 'segments' | 'polyline' | 'loop' | 'indexed';
+
+  /** Maximum line width (world units) */
+  max_width: number;
+
+  /** Whether colors array is present */
+  has_colors: boolean;
+
+  /** Whether sharpness array is present */
+  has_sharpness: boolean;
+
+  /** Spatial ordering method */
+  ordering: 'morton' | 'hilbert' | 'none';
+
+  /** Vertex ordering metadata (when ordering != 'none') */
+  vertex_ordering?: OrderingMetadata;
+
+  /** Segment ordering metadata (when ordering != 'none') */
+  segment_ordering?: OrderingMetadata;
+}
+
+/**
+ * Ordering metadata (shared structure for vertices and segments)
+ */
+interface OrderingMetadata {
+  /** Discrete dimension indices (for compound ordering) */
+  slice_dims: number[];
+
+  /** Spatial dimension indices */
+  ordering_dims: number[];
+
+  /** Min bounds for coordinate normalization */
+  ordering_min: number[];
+
+  /** Max bounds for coordinate normalization */
+  ordering_max: number[];
+
+  /** Elements per chunk */
+  chunk_size: number;
+
+  /** Implementation detail (optional) */
+  ordering_bits_per_dim?: number;
+}
+```
+
+### 7.2 LinesChunkSpatialIndex
+
+**Purpose**: Spatial index for efficient line queries.
+
+```typescript
+/**
+ * Chunk-based spatial index for Lines
+ * Supports dual ordering (vertices + segments)
+ */
+interface LinesChunkSpatialIndex {
+  /** Lines metadata */
+  metadata: LinesMetadata;
+
+  /** Vertex chunk bounding boxes (num_v_chunks * ndim * 2) */
+  vertexChunkBounds: Float32Array;
+
+  /** Segment chunk bounding boxes (num_s_chunks * ndim * 2) */
+  segmentChunkBounds: Float32Array;
+
+  /** Total vertex chunks */
+  vertexChunkCount: number;
+
+  /** Total segment chunks */
+  segmentChunkCount: number;
+}
+```
+
+### 7.3 LoadedLinesData
+
+**Purpose**: Data returned after loading visible lines.
+
+```typescript
+/**
+ * Lines data loaded from zarr
+ * Segments use LOCAL indices into the loaded vertex arrays
+ */
+interface LoadedLinesData {
+  /** Vertex positions (N vertices × ndim dimensions), flattened row-major */
+  vertices: Float32Array;
+
+  /** Segment index pairs (M segments × 2) - local indices into vertices */
+  segments: Uint32Array;
+
+  /** Vertex widths (N), or (1) if broadcast */
+  widths: Float32Array;
+
+  /** Vertex colors (N × 3) RGB, null if not present, or (1 × 3) if broadcast */
+  colors: Float32Array | null;
+
+  /** Vertex sharpness (N), null if not present, or (1) if broadcast */
+  sharpness: Float32Array | null;
+
+  /** Number of segments loaded */
+  segmentCount: number;
+
+  /** Number of vertices loaded */
+  vertexCount: number;
+
+  /** Number of dimensions (for interpreting vertices array) */
+  ndim: number;
+}
+```
+
+### 7.4 LineRange
+
+**Purpose**: Segment index range for loading.
+
+```typescript
+/**
+ * Segment index range (for partial loading)
+ */
+interface LineRange {
+  /** Start segment index (inclusive) */
+  start: number;
+
+  /** End segment index (exclusive) */
+  end: number;
+}
+```
+
+### 7.5 LinesUserData
+
+**Purpose**: Data attached to THREE.LineSegments objects for scene management.
+
+```typescript
+/**
+ * User data attached to THREE.LineSegments in scene
+ */
+interface LinesUserData {
+  /** Node type identifier for runtime type checking */
+  nodeType: 'lines';
+
+  /** Data loader instance */
+  loader: LinesSpatialIndexLoader;
+
+  /** Zarr group attributes */
+  attrs: LinesMetadata;
+
+  /** Spatial index for queries */
+  spatialIndex: LinesChunkSpatialIndex;
+
+  /** Scene dimension metadata */
+  sceneDimensions: DimensionMetadata[];
+
+  /** Maximum line width (for bounding box expansion, NOT tolerance) */
+  maxWidth: number;
+}
+```
+
+### 7.6 LineType (Python API Types)
+
+**Purpose**: Line connectivity types from Python API.
+
+```typescript
+/**
+ * Line connectivity type (matches Python API)
+ */
+type LineType = 'segments' | 'polyline' | 'loop' | 'indexed';
+
+/**
+ * Description of each line type:
+ *
+ * - segments: Independent line segments (V pairs)
+ *   Vertices: [A, B, C, D, E, F] → Segments: A-B, C-D, E-F
+ *
+ * - polyline: Connected chain of segments
+ *   Vertices: [A, B, C, D] → Segments: A-B, B-C, C-D
+ *
+ * - loop: Polyline with closure segment
+ *   Vertices: [A, B, C, D] → Segments: A-B, B-C, C-D, D-A
+ *
+ * - indexed: Explicit connectivity via indices array
+ *   Vertices: [A, B, C], Indices: [0, 1, 1, 2, 2, 0] → Segments: A-B, B-C, C-A
+ */
+```
+
+### 7.7 Type Guards
+
+**Purpose**: Runtime type checking utilities.
+
+```typescript
+/**
+ * Check if metadata is for a Lines node
+ */
+function isLinesMetadata(attrs: unknown): attrs is LinesMetadata {
+  return (
+    typeof attrs === 'object' &&
+    attrs !== null &&
+    (attrs as Record<string, unknown>).type === 'lines'
+  );
+}
+
+/**
+ * Check if userData indicates a Lines object
+ */
+function isLinesUserData(userData: unknown): userData is LinesUserData {
+  return (
+    typeof userData === 'object' &&
+    userData !== null &&
+    (userData as Record<string, unknown>).nodeType === 'lines'
+  );
+}
+
+/**
+ * Check if THREE.Object3D is a Lines visualization
+ */
+function isLinesObject(
+  object: THREE.Object3D
+): object is THREE.LineSegments & { userData: LinesUserData } {
+  return object instanceof THREE.LineSegments && isLinesUserData(object.userData);
+}
+```
+
+---
+
 ## Changelog
+
+- **v1.2.0** (2025-12-09): Lines types
+  - **ADDED**: Section 7 - Lines Types
+  - **ADDED**: `LinesMetadata` interface for zarr attributes
+  - **ADDED**: `LinesChunkSpatialIndex` interface for dual spatial indexing
+  - **ADDED**: `LoadedLinesData` interface for loaded line data
+  - **ADDED**: `LineRange` type for segment ranges
+  - **ADDED**: `LinesUserData` interface for scene management
+  - **ADDED**: `LineType` union type matching Python API
+  - **ADDED**: Type guards for runtime type checking
 
 - **v1.1.0** (2025-12-08): Full Python compatibility
   - **ADDED**: `scale` field to DimensionMetadata (required, default 1.0)

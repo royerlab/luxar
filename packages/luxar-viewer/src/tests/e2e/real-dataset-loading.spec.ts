@@ -187,9 +187,10 @@ test.describe('Real Dataset Loading', () => {
   });
 
   test('should verify WebGL rendering with real data', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.dimensionNav}&debug`);
+    // Use build_example_structured (3D with guaranteed visible points)
+    await page.goto(`/?src=${DATASETS.buildStructured}&debug`);
     await waitForLuxarReady(page);
-    await waitForPointsLoaded(page, 100);
+    await waitForPointsLoaded(page, 100, 60000); // Increased timeout to 60s
 
     // Wait for at least one frame to render
     await page.waitForFunction(

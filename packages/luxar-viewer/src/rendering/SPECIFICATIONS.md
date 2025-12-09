@@ -1,13 +1,13 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-08
+**Version**: 1.3.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
-The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilities including HDR post-processing pipeline, custom point materials with world-space sizing, and material management for point cloud visualization.
+The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilities including HDR post-processing pipeline, custom point and line materials with world-space sizing, and material management for data visualization.
 
-**Core Responsibility**: Deliver professional-grade visual effects through pmndrs/postprocessing library integration, custom shaders for physically accurate point rendering, and efficient material caching.
+**Core Responsibility**: Deliver professional-grade visual effects through pmndrs/postprocessing library integration, custom shaders for physically accurate point and line rendering, and efficient material caching.
 
 **Related Specifications**:
 
@@ -23,6 +23,7 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 4. [Post-Processing Effects](#post-processing-effects)
 5. [Material Management](#material-management)
 6. [Anti-Aliasing](#anti-aliasing)
+7. [Line Material System](#line-material-system)
 
 ---
 
@@ -728,7 +729,322 @@ dispose(): void {
 
 ---
 
+## 7. Line Material System
+
+### 7.1 Rendering Approach Decision
+
+**Three options considered**:
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **THREE.LineSegments + LineBasicMaterial** | Simple, native THREE.js | No width control in WebGL (always 1px) |
+| **Custom shader with screen-space expansion** | Variable width, good quality | Medium complexity, per-vertex data |
+| **Mesh-based tubes/ribbons** | Full control, proper 3D | Complex, expensive for many segments |
+
+**Recommendation**: Custom shader with screen-space line expansion (Option 2).
+
+**Rationale**:
+- WebGL `lineWidth` is deprecated and ignored on most hardware (always 1px)
+- Mesh tubes are too expensive for millions of line segments
+- Screen-space expansion provides variable widths with acceptable quality
+
+### 7.2 Custom Line Material
+
+**Base**: `THREE.ShaderMaterial` with custom vertex and fragment shaders for line segments
+
+**Attributes** (per vertex):
+
+- `position`: vec3 - Vertex position in object space
+- `color`: vec3 - Vertex RGB color (interpolated along segment)
+- `lineWidth`: float - World-space line thickness (half-width from centerline)
+- `sharpness`: float - Edge falloff power
+
+**Uniforms**:
+
+- `uFOV`: float - Camera field of view (radians)
+- `uResolution`: vec2 - Framebuffer resolution [width, height]
+- `uHDRMultiplier`: float - HDR boost factor
+- `uOpacity`: float - Global opacity multiplier
+- `uGamma`: float - Gamma correction factor
+
+### 7.3 Line Vertex Shader
+
+**Purpose**: Transform line vertices and pass data for fragment-stage width expansion.
+
+**Note**: Width expansion happens in fragment shader since THREE.LineSegments renders 1px lines.
+
+```glsl
+// Vertex Shader (for THREE.LineSegments)
+attribute vec3 position;
+attribute vec3 color;
+attribute float lineWidth;
+attribute float sharpness;
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+
+varying vec3 vColor;
+varying float vLineWidth;
+varying float vSharpness;
+varying float vDistance;
+
+void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+
+    // Store distance for width calculation in fragment shader
+    vDistance = length(mvPosition.xyz);
+
+    gl_Position = projectionMatrix * mvPosition;
+
+    // Pass to fragment shader
+    vColor = color;
+    vLineWidth = lineWidth;
+    vSharpness = sharpness;
+}
+```
+
+### 7.4 Line Fragment Shader
+
+**Purpose**: Render line with width and edge falloff.
+
+**Challenge**: Standard THREE.LineSegments renders 1px lines. For proper width, we need either:
+1. Geometry-based approach (instanced quads) - more complex setup
+2. Post-process edge expansion - limited quality
+
+**Recommended Implementation**: Use geometry instancing with quads:
+
+```typescript
+// Instead of THREE.LineSegments, create instanced quads for each segment
+// Each quad is expanded in the vertex shader based on lineWidth
+
+class LineMaterial extends THREE.ShaderMaterial {
+  // Custom geometry with instanced quads
+  // Each segment instance has: start position, end position, start color, end color, etc.
+}
+```
+
+### 7.5 Geometry-Based Thick Lines (Recommended)
+
+**Approach**: Create a quad per line segment, oriented to face camera and expanded to line width.
+
+**Instanced Attributes** (per segment):
+
+```typescript
+// Per-segment instance data
+interface LineSegmentInstance {
+  startPos: vec3; // Start vertex position
+  endPos: vec3; // End vertex position
+  startColor: vec3; // Start vertex color
+  endColor: vec3; // End vertex color
+  startWidth: float; // Start half-width
+  endWidth: float; // End half-width
+  startSharpness: float; // Start falloff
+  endSharpness: float; // End falloff
+}
+```
+
+**Vertex Shader** (instanced quad expansion):
+
+```glsl
+// Instanced Thick Line Vertex Shader
+attribute vec3 aStartPos;
+attribute vec3 aEndPos;
+attribute vec3 aStartColor;
+attribute vec3 aEndColor;
+attribute float aStartWidth;
+attribute float aEndWidth;
+attribute float aStartSharpness;
+attribute float aEndSharpness;
+
+// Per-vertex within quad (0-3)
+attribute vec2 aQuadCorner; // (-1,-1), (1,-1), (-1,1), (1,1)
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform vec2 uResolution;
+uniform float uFOV;
+
+varying vec3 vColor;
+varying float vSharpness;
+varying float vLinePos; // 0 at center, 1 at edge
+
+void main() {
+    // Determine position along segment (0 or 1)
+    float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+
+    // Interpolate attributes
+    vec3 worldPos = mix(aStartPos, aEndPos, t);
+    vec3 color = mix(aStartColor, aEndColor, t);
+    float width = mix(aStartWidth, aEndWidth, t);
+    float sharpness = mix(aStartSharpness, aEndSharpness, t);
+
+    // Transform to view space
+    vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
+    vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
+    vec4 mvPos = modelViewMatrix * vec4(worldPos, 1.0);
+
+    // Calculate perpendicular direction in screen space
+    vec4 clipStart = projectionMatrix * mvStart;
+    vec4 clipEnd = projectionMatrix * mvEnd;
+
+    vec2 screenStart = clipStart.xy / clipStart.w;
+    vec2 screenEnd = clipEnd.xy / clipEnd.w;
+
+    vec2 lineDir = normalize(screenEnd - screenStart);
+    vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
+
+    // Calculate pixel width from world width
+    float distance = length(mvPos.xyz);
+    float pixelWidth = 2.0 * width * uResolution.y / (distance * tan(uFOV * 0.5));
+
+    // Offset by perpendicular * width
+    float offset = aQuadCorner.y; // -1 or 1
+    vec4 clipPos = projectionMatrix * mvPos;
+    clipPos.xy += perpendicular * offset * pixelWidth / uResolution * clipPos.w;
+
+    gl_Position = clipPos;
+
+    // Pass to fragment
+    vColor = color;
+    vSharpness = sharpness;
+    vLinePos = abs(offset); // 0 at center, 1 at edge
+}
+```
+
+**Fragment Shader**:
+
+```glsl
+// Thick Line Fragment Shader
+varying vec3 vColor;
+varying float vSharpness;
+varying float vLinePos;
+
+uniform float uHDRMultiplier;
+uniform float uOpacity;
+
+void main() {
+    // Calculate intensity based on distance from center
+    float intensity = pow(1.0 - vLinePos, vSharpness);
+
+    // Apply HDR multiplier (gamma correction done in post-processing)
+    vec3 finalColor = vColor * intensity * uHDRMultiplier;
+
+    gl_FragColor = vec4(finalColor, intensity * uOpacity);
+}
+```
+
+**Note**: Gamma correction is NOT applied in the fragment shader. Like points, lines render to the HDR float buffer, and tone mapping/gamma happens in post-processing.
+
+### 7.6 Line Width Calculation
+
+**World-Space Width**: Line widths are specified in scene units (same as point radii).
+
+**Pixel Width Formula**:
+
+```
+pixelWidth = 2 × width × resolution.y / (distance × tan(FOV / 2))
+```
+
+Same formula as point sizing, ensuring visual consistency between points and lines.
+
+### 7.6.1 Sharpness Compensation (Optional)
+
+**Problem**: Soft-edged lines (sharpness < infinity) appear thinner than their nominal width due to falloff at edges.
+
+**Solution** (same as Points):
+
+```
+compensation = 1.0 + (sharpness - 1.0) × 0.15
+adjustedWidth = width × compensation
+```
+
+**Effect**:
+- s=1: 1.0× width (no compensation for sharp edges)
+- s=2: 1.15× width (default sharpness)
+- s=4: 1.45× width
+- s=8: 2.05× width
+
+**Implementation Note**: This is optional. If not applied, lines with low sharpness will appear thinner than specified but this may be acceptable depending on aesthetic goals.
+
+### 7.7 Blending Configuration
+
+Lines use the same blending as points for visual consistency:
+
+```typescript
+material.blending = THREE.AdditiveBlending;
+material.transparent = true;
+material.depthWrite = false;
+material.depthTest = true;
+```
+
+**Rationale**: Additive blending allows overlapping lines to accumulate brightness, matching point behavior.
+
+### 7.8 Color Interpolation
+
+Colors are linearly interpolated along each segment:
+
+```glsl
+// In vertex shader
+float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+vec3 color = mix(aStartColor, aEndColor, t);
+```
+
+**Interpolation across segment length**: The `t` parameter represents position along the segment (0 at start, 1 at end). Colors blend smoothly.
+
+### 7.9 Performance Considerations
+
+**Segment Count Limits**:
+
+| Segments | Performance |
+|----------|-------------|
+| < 100K | Smooth (60 fps) |
+| 100K-1M | Good (30-60 fps) |
+| 1M-10M | Moderate (10-30 fps) |
+| > 10M | May require LOD |
+
+**Optimizations**:
+
+1. **Instanced rendering**: One draw call for all segments
+2. **Indexed geometry**: Reuse vertices at segment junctions (if polyline)
+3. **Frustum culling**: Skip segments outside view
+4. **Spatial chunking**: Load only visible segment chunks (see data/SPECIFICATIONS.md Section 7)
+
+### 7.10 LineMaterialConfig
+
+```typescript
+interface LineMaterialConfig {
+  blendingMode: 'additive' | 'normal';
+  opacity: number; // 0.0 to 1.0
+  hdrMultiplier: number; // Typically 16.0
+}
+```
+
+### 7.11 LineMaterialUniforms
+
+```typescript
+interface LineMaterialUniforms {
+  uFOV: { value: number }; // Radians
+  uResolution: { value: THREE.Vector2 }; // [width, height]
+  uHDRMultiplier: { value: number }; // Typically 16.0
+  uOpacity: { value: number }; // 0.0 to 1.0
+}
+```
+
+**Note**: No gamma uniform - gamma correction handled in post-processing pipeline (same as points).
+
+---
+
 ## Changelog
+
+- **v1.3.0** (2025-12-09): Line Material System
+  - **ADDED**: Section 7 - Line Material System
+  - Documented rendering approach decision (custom shader with screen-space expansion)
+  - Added instanced quad geometry approach for thick lines
+  - Added line vertex and fragment shaders
+  - Added world-space width calculation (same formula as points)
+  - Documented color interpolation along segments
+  - Added performance considerations and optimization strategies
+  - Added `LineMaterialConfig` and `LineMaterialUniforms` data structures
 
 - **v1.2.0** (2025-12-08): DetectorNoiseEffect simplified and enhanced
   - Added Fixed Pattern Noise (FPN) - static per-pixel offset from detector non-uniformities

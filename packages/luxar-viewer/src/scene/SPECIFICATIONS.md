@@ -1,13 +1,13 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Last Updated**: 2025-12-09
 
 ## Purpose
 
-The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loop, camera controls, and nD dimension coordination for point cloud visualization. It serves as the central orchestrator for all 3D rendering operations.
+The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loop, camera controls, and nD dimension coordination for point cloud and line visualization. It serves as the central orchestrator for all 3D rendering operations.
 
-**Core Responsibility**: Maintain the 3D scene state, coordinate camera and controls, manage the render loop with intelligent idle detection, and synchronize nD dimension navigation across all scene objects.
+**Core Responsibility**: Maintain the 3D scene state, coordinate camera and controls, manage the render loop with intelligent idle detection, and synchronize nD dimension navigation across all scene objects (Points and Lines).
 
 **Related Specifications**:
 
@@ -75,21 +75,38 @@ Scene (THREE.Scene)
 ├── Loaded Data Groups (THREE.Group)
 │   ├── Points A (THREE.Points)
 │   ├── Points B (THREE.Points)
+│   ├── Lines A (THREE.LineSegments)
+│   ├── Lines B (THREE.LineSegments)
 │   └── Nested Groups
-│       └── More Points
+│       ├── More Points
+│       └── More Lines
 └── Helper Objects (optional)
     ├── Grid Helper
     └── Axes Helper
 ```
 
-**Object Metadata** (stored in `userData`):
+**Object Metadata - Points** (stored in `userData`):
 
 ```typescript
 interface PointsUserData {
+  nodeType: 'points';
   loader: PointSpatialIndexLoader; // Data loader instance
   attrs: ZarrGroupAttrs; // Node attributes from zarr
   spatialIndex: PointSpatialIndex; // Spatial index for queries
   sceneDimensions: DimensionMetadata[]; // Scene coordinate system
+}
+```
+
+**Object Metadata - Lines** (stored in `userData`):
+
+```typescript
+interface LinesUserData {
+  nodeType: 'lines';
+  loader: LinesSpatialIndexLoader; // Lines data loader instance
+  attrs: ZarrGroupAttrs; // Node attributes from zarr
+  spatialIndex: LinesChunkSpatialIndex; // Dual spatial index (vertices + segments)
+  sceneDimensions: DimensionMetadata[]; // Scene coordinate system
+  maxWidth: number; // Maximum line width (for bounding box expansion)
 }
 ```
 
@@ -280,7 +297,7 @@ Calculate the axis-aligned bounding box (AABB) encompassing all scene objects fo
 
 ### 3.2 Bounding Box Algorithm
 
-**Input**: Scene graph with multiple point clouds
+**Input**: Scene graph with point clouds and line objects
 
 **Output**: `THREE.Box3` representing AABB
 
@@ -292,25 +309,43 @@ function updateBoundingBox(): THREE.Box3 {
 
   // Traverse all objects in scene
   scene.traverse((object) => {
-    // Only process point clouds
-    if (!(object instanceof THREE.Points)) {
-      return;
+    // Process point clouds
+    if (object instanceof THREE.Points) {
+      const geometry = object.geometry;
+      if (!geometry) return;
+
+      if (!geometry.boundingBox) {
+        geometry.computeBoundingBox();
+      }
+
+      if (geometry.boundingBox) {
+        const worldBox = geometry.boundingBox.clone();
+        worldBox.applyMatrix4(object.matrixWorld);
+        box.union(worldBox);
+      }
     }
 
-    // Get geometry
-    const geometry = object.geometry;
-    if (!geometry) return;
+    // Process line objects
+    if (object instanceof THREE.LineSegments) {
+      const geometry = object.geometry;
+      if (!geometry) return;
 
-    // Compute bounding box if not present
-    if (!geometry.boundingBox) {
-      geometry.computeBoundingBox();
-    }
+      if (!geometry.boundingBox) {
+        geometry.computeBoundingBox();
+      }
 
-    // Transform to world space and expand scene box
-    if (geometry.boundingBox) {
-      const worldBox = geometry.boundingBox.clone();
-      worldBox.applyMatrix4(object.matrixWorld);
-      box.union(worldBox);
+      if (geometry.boundingBox) {
+        const worldBox = geometry.boundingBox.clone();
+        worldBox.applyMatrix4(object.matrixWorld);
+
+        // Expand by max line width (stored in userData)
+        const maxWidth = object.userData.maxWidth ?? 0;
+        if (maxWidth > 0) {
+          worldBox.expandByScalar(maxWidth);
+        }
+
+        box.union(worldBox);
+      }
     }
   });
 
@@ -324,6 +359,8 @@ function updateBoundingBox(): THREE.Box3 {
 ```
 
 **Optimization**: Cache bounding boxes and only recalculate when objects are added/removed.
+
+**Note**: Line bounding boxes are expanded by `maxWidth` to account for line thickness in world space.
 
 ### 3.3 Bounding Sphere Calculation
 
@@ -824,16 +861,61 @@ class SceneDimsManager {
 sceneDimsManager.addListener(() => {
   const dims = sceneDimsManager.getDims();
 
-  // Update all points objects for new slice
+  // Update all data objects for new slice
   scene.traverse((object) => {
-    if (object instanceof THREE.Points && object.userData.loader) {
+    // Update Points
+    if (object instanceof THREE.Points && object.userData.nodeType === 'points') {
       updatePointsForDimensions(object, dims);
+    }
+
+    // Update Lines
+    if (object instanceof THREE.LineSegments && object.userData.nodeType === 'lines') {
+      updateLinesForDimensions(object, dims);
     }
   });
 
   // Trigger render
   animationController.startAnimation();
 });
+```
+
+**Lines Dimension Update**:
+
+```typescript
+async function updateLinesForDimensions(
+  linesObject: THREE.LineSegments,
+  dims: SimpleDims
+): Promise<void> {
+  const { loader, spatialIndex } = linesObject.userData as LinesUserData;
+
+  // Calculate slice position and tolerance
+  const slicePosition = getSlicePosition(dims);
+  // NOTE: segment_chunk_bounds already include line width, so spatial tolerance = 0
+  const tolerance = computeLinesTolerance(dims.dimensions);
+
+  // Load visible lines data
+  const linesData = await loader.loadForView(slicePosition, tolerance);
+
+  // Update geometry
+  const geometry = linesObject.geometry as THREE.BufferGeometry;
+
+  // Update position attribute
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(linesData.vertices, 3));
+
+  // Update index (for indexed line segments)
+  geometry.setIndex(new THREE.Uint32BufferAttribute(linesData.segments, 1));
+
+  // Update other attributes
+  if (linesData.colors) {
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(linesData.colors, 3));
+  }
+  if (linesData.widths) {
+    geometry.setAttribute('lineWidth', new THREE.Float32BufferAttribute(linesData.widths, 1));
+  }
+
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+}
 ```
 
 ### 6.3 Multi-Object Synchronization
@@ -935,6 +1017,14 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-09): Lines support
+  - **ADDED**: Lines to scene graph structure (THREE.LineSegments)
+  - **ADDED**: `LinesUserData` interface for lines metadata
+  - **UPDATED**: Bounding box algorithm to include lines with width expansion
+  - **UPDATED**: Dimension update propagation to include lines
+  - **ADDED**: `updateLinesForDimensions()` algorithm
+  - Lines now fully integrated into scene management
 
 - **v1.1.0** (2025-12-09): Resize debouncing optimization
   - **ADDED**: Section 5.3 documenting resize debouncing with requestAnimationFrame
