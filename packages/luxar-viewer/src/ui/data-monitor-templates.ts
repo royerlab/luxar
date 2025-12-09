@@ -72,8 +72,8 @@ export function renderStatGrid(
   return `
     <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
       ${stats
-        .map(
-          (stat) => `
+    .map(
+      (stat) => `
         <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
           <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
             ${stat.value}
@@ -81,8 +81,8 @@ export function renderStatGrid(
           <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
         </div>
       `
-        )
-        .join('')}
+    )
+    .join('')}
     </div>
   `;
 }
@@ -163,20 +163,20 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <!-- Primary metrics -->
       <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
         ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
-          MonitorColors.success,
-          'large'
-        )}
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
+    MonitorColors.success,
+    'large'
+  )}
       </div>
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-        { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
-        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-        { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
-      )}
+    { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
+    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+    { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
+  )}
 
       <!-- Loader list -->
       <div class="loader-list">
@@ -198,26 +198,26 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <!-- Cache overview cards -->
       <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
         ${renderMetricCard(
-          'CACHE MEMORY',
-          formatBytes(cacheMetrics.totalCacheMemory),
-          `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-          MonitorColors.success,
-          'medium'
-        )}
+    'CACHE MEMORY',
+    formatBytes(cacheMetrics.totalCacheMemory),
+    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+    MonitorColors.success,
+    'medium'
+  )}
         ${renderMetricCard(
-          'CACHED RANGES',
-          cacheMetrics.totalEntries.toString(),
-          `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
-          MonitorColors.primaryText,
-          'medium'
-        )}
+    'CACHED RANGES',
+    cacheMetrics.totalEntries.toString(),
+    `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
+    MonitorColors.primaryText,
+    'medium'
+  )}
         ${renderMetricCard(
-          'AVG RANGE SIZE',
-          formatBytes(cacheMetrics.avgEntrySize),
-          '',
-          MonitorColors.primaryText,
-          'medium'
-        )}
+    'AVG RANGE SIZE',
+    formatBytes(cacheMetrics.avgEntrySize),
+    '',
+    MonitorColors.primaryText,
+    'medium'
+  )}
       </div>
 
       <!-- Cache message -->
@@ -254,14 +254,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-        rec.suggestion
-          ? `
+  rec.suggestion
+    ? `
         <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-          : ''
-      }
+    : ''
+}
     </div>
   `;
 }
