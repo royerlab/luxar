@@ -1,7 +1,7 @@
 # luxar-viewer.types - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.1.0
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -45,17 +45,29 @@ interface DimensionMetadata {
   /** Physical unit of measurement (e.g., "μm", "s", "nm", "") */
   unit: string;
 
-  /** Min and max bounds in this dimension */
-  range: [number, number];
+  /** Scale factor for converting from array indices to real-world units */
+  scale: number;
+
+  /** Min and max bounds in this dimension (optional - can be computed from data) */
+  range?: [number, number];
+
+  /** Whether to display this dimension in 3D view (optional - default false, max 3 can be true) */
+  display?: boolean;
+
+  /** Whether values are discrete (integers) vs continuous (floats) */
+  discrete?: boolean;
+
+  /** Whether dimension wraps around (for angles, periodic states) */
+  cyclic?: boolean;
 
   /** Navigation step size (optional, auto-calculated if not provided) */
   step?: number;
 
-  /** Whether to display this dimension in 3D view (max 3 can be true) */
-  display: boolean;
+  /** Whether points extend through this dimension (true for spatial dims) */
+  spatial?: boolean;
 
-  /** Whether values are discrete (integers) vs continuous (floats) */
-  discrete?: boolean;
+  /** Optional category labels for categorical dimensions */
+  categories?: string[];
 
   /** Optional description for UI tooltips */
   description?: string;
@@ -93,13 +105,29 @@ interface DimensionMetadata {
 
 **Unicode Support**: Full Unicode unit symbols supported (μ, Å, etc.)
 
+#### scale
+
+**Type**: `number`
+
+**Purpose**: Scale factor for converting from array indices to real-world units
+
+**Default**: `1.0` (no scaling)
+
+**Usage**:
+
+- Coordinate transformation: `real_value = array_index * scale`
+- Unit conversion helper
+- Essential for proper physical interpretation
+
+**Example**: If positions are stored in micrometers but scale=0.001, the actual physical unit is nanometers
+
 #### range
 
-**Type**: `[number, number]`
+**Type**: `[number, number] | undefined`
 
 **Purpose**: Minimum and maximum coordinate values
 
-**Invariant**: `range[0] <= range[1]`
+**Invariant**: `range[0] <= range[1]` (when present)
 
 **Calculation**: Determined from actual data or specified explicitly
 
@@ -166,6 +194,79 @@ displayed = range(max(0, D - 3), D)
 - Discrete: Time frames, channels, categorical conditions
 - Continuous: Spatial coordinates (x, y, z)
 
+#### cyclic
+
+**Type**: `boolean | undefined`
+
+**Purpose**: Whether dimension wraps around at its boundaries
+
+**Default**: `false` (non-periodic)
+
+**Use Cases**:
+
+- **Angles**: 0° and 360° are equivalent
+- **Periodic time**: For repeating cycles
+- **Phase**: Wrapped phase values
+
+**Navigation Behavior**:
+
+- Normal: Navigation stops at range boundaries
+- Cyclic: Navigation wraps from max to min and vice versa
+
+**Example**: For angle dimension with range [0, 360], pressing ] at 359° wraps to 0°
+
+#### spatial
+
+**Type**: `boolean | undefined`
+
+**Purpose**: Whether points physically extend through this dimension
+
+**Auto-Determination**:
+
+- `display === true` → `spatial = true` (displayed dims are always spatial)
+- `display === false` → `spatial = false` (non-displayed dims typically categorical/discrete)
+
+**Implications**:
+
+- **Spatial dimensions**: Use radius-based slicing (points visible within tolerance)
+- **Non-spatial dimensions**: Exact matching or discrete steps
+
+**Examples**:
+
+- Spatial: X, Y, Z coordinates (points have extent)
+- Non-spatial: Time frame index, channel ID (points exist at discrete values)
+
+#### categories
+
+**Type**: `string[] | undefined`
+
+**Purpose**: Category labels for categorical dimensions
+
+**When Present**:
+
+- Dimension is automatically treated as discrete
+- Range is auto-set to [0, categories.length - 1]
+- Step is auto-set to 1.0
+- UI can show category names instead of numeric indices
+
+**Validation**:
+
+- Must have at least 1 category
+- Category labels must be unique
+- Max label length: 1024 characters
+
+**Example**:
+
+```typescript
+{
+  name: "channel",
+  unit: "",
+  categories: ["DAPI", "GFP", "RFP"],
+  discrete: true,
+  range: [0, 2]
+}
+```
+
 #### description
 
 **Type**: `string | undefined`
@@ -176,19 +277,32 @@ displayed = range(max(0, D - 3), D)
 
 ### 1.4 Compatibility with Python
 
-**Python Dimension Class** (from `luxar.core`):
+**Python Dimension Class** (from `luxar.core.dimensions`):
 
 ```python
 @dataclass
 class Dimension:
     name: str
-    unit: str
-    range: tuple[float, float]
-    step: float | None = None
-    display: bool = False
+    unit: str = ""
+    range: Optional[Tuple[float, float]] = None
+    step: Optional[float] = None
+    display: bool = True
     discrete: bool = False
+    cyclic: bool = False
+    scale: float = 1.0
+    spatial: Optional[bool] = None
+    categories: Optional[List[str]] = None
     description: str = ""
 ```
+
+**Field Mapping** (Python → TypeScript):
+
+All Python fields are preserved in TypeScript with identical semantics:
+
+- `name`, `unit`, `scale`, `description` → Direct mapping
+- `range`, `step`, `display`, `discrete`, `cyclic` → Direct mapping
+- `spatial` → Direct mapping (auto-determined if None)
+- `categories` → Direct mapping (triggers discrete=True in Python)
 
 **JSON Serialization** (Python → TypeScript):
 
@@ -201,13 +315,27 @@ Python writes to zarr `.zattrs`:
       {
         "name": "x",
         "unit": "μm",
+        "scale": 1.0,
         "range": [0, 100],
         "step": 0.1,
         "display": true,
         "discrete": false,
+        "cyclic": false,
+        "spatial": true,
         "description": "Spatial X coordinate"
       },
-      ...
+      {
+        "name": "channel",
+        "unit": "",
+        "scale": 1.0,
+        "range": [0, 2],
+        "step": 1.0,
+        "display": false,
+        "discrete": true,
+        "spatial": false,
+        "categories": ["DAPI", "GFP", "RFP"],
+        "description": "Fluorescence channel"
+      }
     ]
   }
 }
@@ -802,6 +930,16 @@ type DisplayedDimensions = number[]; // Length ≤ 3
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-12-08): Full Python compatibility
+  - **ADDED**: `scale` field to DimensionMetadata (required, default 1.0)
+  - **ADDED**: `cyclic` field for periodic dimensions (angles, wrapped time)
+  - **ADDED**: `spatial` field to distinguish spatial vs categorical dimensions
+  - **ADDED**: `categories` field for categorical dimension labels
+  - **UPDATED**: `range` and `display` changed to optional (matching Python defaults)
+  - **UPDATED**: Python compatibility section with complete field mapping
+  - **UPDATED**: JSON serialization examples with all fields
+  - All fields now mirror Python `luxar.core.Dimension` class exactly
 
 - **v1.0.0** (2025-01-30): Initial specification
   - DimensionMetadata structure (aligned with Python `luxar.core.Dimension`)
