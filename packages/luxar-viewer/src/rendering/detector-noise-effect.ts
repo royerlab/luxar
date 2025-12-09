@@ -288,7 +288,7 @@ export class DetectorNoiseEffect extends Effect {
     deltaTime?: number
   ): void {
     if (deltaTime !== undefined) {
-      this._time += deltaTime + Math.random(); // Add randomness to avoid temporal periodicity in noise pattern
+      this._time += deltaTime;
       this.uniforms.get('time')!.value = this._time;
     }
   }
