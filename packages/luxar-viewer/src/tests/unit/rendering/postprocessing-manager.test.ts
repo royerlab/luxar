@@ -22,6 +22,32 @@ vi.mock('postprocessing', () => ({
   EffectPass: vi.fn().mockImplementation(() => ({
     dispose: vi.fn(),
   })),
+  // Effect base class for custom effects
+  Effect: class MockEffect {
+    uniforms: Map<string, THREE.Uniform>;
+    blendFunction: number;
+    name: string;
+    blendMode: { opacity: { value: number }; setOpacity: (v: number) => void };
+
+    constructor(name: string, _fragmentShader: string, options: any) {
+      this.name = name;
+      this.blendFunction = options?.blendFunction ?? 2; // NORMAL
+      this.uniforms = options?.uniforms ?? new Map();
+      this.blendMode = {
+        opacity: { value: 1.0 },
+        setOpacity: (v: number) => {
+          this.blendMode.opacity.value = v;
+        },
+      };
+    }
+
+    update() {}
+  },
+  EffectAttribute: {
+    NONE: 0,
+    DEPTH: 1,
+    CONVOLUTION: 2,
+  },
   BloomEffect: vi.fn().mockImplementation(() => ({
     intensity: 1.0,
     mipmapBlurPass: {
@@ -52,6 +78,19 @@ vi.mock('postprocessing', () => ({
     darkness: 0.5,
     offset: 0.5,
   })),
+  NoiseEffect: vi.fn().mockImplementation(() => ({
+    blendMode: {
+      opacity: { value: 1.0 },
+      setOpacity: vi.fn(),
+      blendFunction: 1,
+    },
+  })),
+  LensDistortionEffect: vi.fn().mockImplementation(() => ({
+    distortion: new THREE.Vector2(),
+    principalPoint: new THREE.Vector2(),
+    focalLength: new THREE.Vector2(1, 1),
+    skew: 0,
+  })),
   KernelSize: {
     VERY_SMALL: 0,
     SMALL: 1,
@@ -64,6 +103,9 @@ vi.mock('postprocessing', () => ({
     ADD: 0,
     SCREEN: 1,
     NORMAL: 2,
+    MULTIPLY: 3,
+    OVERLAY: 4,
+    SOFT_LIGHT: 5,
   },
   ToneMappingMode: {
     LINEAR: 0,
@@ -301,6 +343,46 @@ describe('PostProcessingManager', () => {
       manager.setChromaticAberration(true, 0.5);
       manager.updateChromaticAberration(0.8);
       expect(manager).toBeDefined();
+    });
+  });
+
+  describe('detector noise effect', () => {
+    it('should enable detector noise with default parameters', () => {
+      manager.setDetectorNoiseEnabled(true);
+      const status = manager.getEffectsStatus();
+      expect(status.detectorNoise).toBe(true);
+    });
+
+    it('should enable detector noise with custom parameters', () => {
+      manager.setDetectorNoiseEnabled(true, 0.05, 0.02, 0.01);
+      const status = manager.getEffectsStatus();
+      expect(status.detectorNoise).toBe(true);
+    });
+
+    it('should disable detector noise', () => {
+      manager.setDetectorNoiseEnabled(true);
+      manager.setDetectorNoiseEnabled(false);
+      const status = manager.getEffectsStatus();
+      expect(status.detectorNoise).toBe(false);
+    });
+
+    it('should update detector noise settings', () => {
+      manager.setDetectorNoiseEnabled(true);
+      manager.updateDetectorNoiseSettings({
+        readoutSigma: 0.03,
+        photonGain: 0.015,
+        fpnSigma: 0.008,
+      });
+      expect(manager).toBeDefined();
+    });
+
+    it('should report animation requirement for detector noise', () => {
+      // First verify no continuous animation needed by default
+      expect(manager.needsContinuousAnimation()).toBe(false);
+
+      // Enable detector noise - always requires animation (temporal noise)
+      manager.setDetectorNoiseEnabled(true);
+      expect(manager.needsContinuousAnimation()).toBe(true);
     });
   });
 

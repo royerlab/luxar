@@ -392,8 +392,6 @@ animationController.setPerformanceStats(performanceStats);
 
 ---
 
-
-
 ---
 
 ## WebGL Context Loss Recovery
@@ -432,16 +430,19 @@ canvas.addEventListener('webglcontextrestored', async () => {
 ### User Experience
 
 **During Context Loss**:
+
 1. Rendering stops
 2. User sees message: "Graphics context lost - attempting to restore..."
 3. Loading indicator appears
 
 **During Restoration**:
+
 1. WebGL resources automatically recreated
 2. Rendering resumes
 3. User sees: "Graphics context successfully restored"
 
 **If Restoration Fails**:
+
 - Error message: "Failed to restore graphics. Please refresh the page."
 - User can continue using UI, but rendering disabled
 
@@ -461,7 +462,6 @@ sceneManager.render();
 ```
 
 **Best Practice**: Don't create WebGL-dependent operations during context loss. Wait for restoration.
-
 
 ## Usage Examples
 

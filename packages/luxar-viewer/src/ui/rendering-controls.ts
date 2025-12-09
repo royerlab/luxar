@@ -853,93 +853,96 @@ export class RenderingControls {
         '• 10-12 = Very smooth (slowest)'
     );
 
-    // Noise subfolder (film grain / TV static) - after bloom
-    const noiseFolder = effectsFolder.addFolder('Noise');
-    noiseFolder.close();
+    // Detector Noise subfolder (physics-based: Shot + Readout + FPN)
+    const detectorNoiseFolder = effectsFolder.addFolder('Detector Noise');
+    detectorNoiseFolder.close();
 
-    const noiseEnabledControl = noiseFolder
-      .add(this.settings, 'noiseEnabled')
+    const detectorNoiseEnabledControl = detectorNoiseFolder
+      .add(this.settings, 'detectorNoiseEnabled')
       .name('Enabled')
       .onChange((value: boolean) => {
-        this.postProcessing.setNoiseEnabled(
+        this.postProcessing.setDetectorNoiseEnabled(
           value,
-          this.settings.noiseIntensity,
-          this.settings.noisePremultiply,
-          this.settings.noiseBlendMode
+          this.settings.detectorNoiseReadoutSigma,
+          this.settings.detectorNoisePhotonGain,
+          this.settings.detectorNoiseFpnSigma
         );
         this.saveSettings();
-        // Keep animation running when noise is enabled (like auto-rotate)
+        // Keep animation running when detector noise is enabled
         if (value) {
           this.animationController?.startAnimation();
         }
         this.triggerAnimation();
       });
 
-    // Set tooltip for noise enabled
-    noiseEnabledControl.domElement.setAttribute(
+    // Set tooltip for detector noise enabled
+    detectorNoiseEnabledControl.domElement.setAttribute(
       'title',
-      'Noise: Adds film grain or TV static effect\n' +
-        '• Simulates analog film or video noise\n' +
-        '• Can add vintage or cinematic feel\n' +
-        '• Minimal performance impact'
+      'Detector Noise (Physics-Based):\n' +
+        '• Shot noise: Poisson noise from photon statistics\n' +
+        '• Readout noise: Temporal Gaussian noise from electronics\n' +
+        '• Fixed Pattern Noise: Static per-pixel offset\n' +
+        '• Ideal for scientific imaging aesthetics'
     );
 
-    const noiseIntensityControl = noiseFolder
-      .add(this.settings, 'noiseIntensity', 0, 1.0, 0.01)
-      .name('Intensity')
+    const detectorNoiseReadoutSigmaControl = detectorNoiseFolder
+      .add(this.settings, 'detectorNoiseReadoutSigma', 0, 0.1, 0.001)
+      .name('Readout Noise')
       .onChange((value: number) => {
-        this.postProcessing.updateNoiseSettings(value, undefined, undefined);
+        this.postProcessing.updateDetectorNoiseSettings({ readoutSigma: value });
         this.saveSettings();
         this.triggerAnimation();
       });
 
-    // Set tooltip for noise intensity
-    noiseIntensityControl.domElement.setAttribute(
+    // Set tooltip for readout sigma
+    detectorNoiseReadoutSigmaControl.domElement.setAttribute(
       'title',
-      'Noise Intensity: Amount of noise/grain\n' +
-        '• 0 = No noise\n' +
-        '• 0.05 = Subtle grain (default)\n' +
-        '• 0.15 = Moderate noise\n' +
-        '• 0.5 = Heavy static\n' +
-        '• 1.0 = Maximum noise'
+      'Readout Noise (temporal, varies each frame):\n' +
+        '• Signal-independent electronic noise\n' +
+        '• 0 = No readout noise\n' +
+        '• 0.01 = Subtle (default)\n' +
+        '• 0.05 = Moderate (old detector)\n' +
+        '• 0.1 = High (uncooled sensor)'
     );
 
-    const noisePremultiplyControl = noiseFolder
-      .add(this.settings, 'noisePremultiply')
-      .name('Film Grain Mode')
-      .onChange((value: boolean) => {
-        this.postProcessing.updateNoiseSettings(undefined, value, undefined);
+    const detectorNoisePhotonGainControl = detectorNoiseFolder
+      .add(this.settings, 'detectorNoisePhotonGain', 0.0001, 0.1, 0.0001)
+      .name('Shot Noise')
+      .onChange((value: number) => {
+        this.postProcessing.updateDetectorNoiseSettings({ photonGain: value });
         this.saveSettings();
         this.triggerAnimation();
       });
 
-    // Set tooltip for premultiply
-    noisePremultiplyControl.domElement.setAttribute(
+    // Set tooltip for photon gain
+    detectorNoisePhotonGainControl.domElement.setAttribute(
       'title',
-      'Film Grain Mode:\n' +
-        '• Off: TV static / digital noise style\n' +
-        '• On: Film grain style (premultiplied alpha)\n' +
-        '• Film grain looks more organic and cinematic'
+      'Shot Noise (Poisson, signal-dependent):\n' +
+        '• Higher = more visible shot noise (fewer photons)\n' +
+        '• 0.001 = Bright illumination (minimal shot noise)\n' +
+        '• 0.01 = Normal conditions (default)\n' +
+        '• 0.05 = Low light (visible shot noise)\n' +
+        '• 0.1 = Very low light (strong shot noise)'
     );
 
-    const noiseBlendModeControl = noiseFolder
-      .add(this.settings, 'noiseBlendMode', ['SCREEN', 'ADD', 'MULTIPLY', 'OVERLAY', 'SOFT_LIGHT'])
-      .name('Blend Mode')
-      .onChange((value: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT') => {
-        this.postProcessing.updateNoiseSettings(undefined, undefined, value);
+    const detectorNoiseFpnControl = detectorNoiseFolder
+      .add(this.settings, 'detectorNoiseFpnSigma', 0, 0.05, 0.001)
+      .name('Fixed Pattern')
+      .onChange((value: number) => {
+        this.postProcessing.updateDetectorNoiseSettings({ fpnSigma: value });
         this.saveSettings();
         this.triggerAnimation();
       });
 
-    // Set tooltip for blend mode
-    noiseBlendModeControl.domElement.setAttribute(
+    // Set tooltip for FPN
+    detectorNoiseFpnControl.domElement.setAttribute(
       'title',
-      'Noise Blend Mode:\n' +
-        '• SCREEN: Brightens image (default, good for dark scenes)\n' +
-        '• ADD: Additive blending (brighter)\n' +
-        '• MULTIPLY: Darkens image (good for bright scenes)\n' +
-        '• OVERLAY: Mix of multiply and screen\n' +
-        '• SOFT_LIGHT: Subtle overlay effect'
+      'Fixed Pattern Noise (static, constant per pixel):\n' +
+        '• Per-pixel offset from detector non-uniformities\n' +
+        '• 0 = No FPN (perfect detector)\n' +
+        '• 0.005 = Subtle (default, good detector)\n' +
+        '• 0.02 = Moderate (older detector)\n' +
+        '• 0.05 = High (uncalibrated sensor)'
     );
 
     // Depth of Field subfolder
@@ -1777,16 +1780,16 @@ export class RenderingControls {
       this.settings.chromaticAberrationStrength
     );
 
-    // Apply noise effect
-    this.postProcessing.setNoiseEnabled(
-      this.settings.noiseEnabled,
-      this.settings.noiseIntensity,
-      this.settings.noisePremultiply,
-      this.settings.noiseBlendMode
+    // Apply detector noise effect
+    this.postProcessing.setDetectorNoiseEnabled(
+      this.settings.detectorNoiseEnabled,
+      this.settings.detectorNoiseReadoutSigma,
+      this.settings.detectorNoisePhotonGain,
+      this.settings.detectorNoiseFpnSigma
     );
 
-    // Start animation if noise is enabled (from loaded settings)
-    if (this.settings.noiseEnabled) {
+    // Start animation if detector noise is enabled (from loaded settings)
+    if (this.settings.detectorNoiseEnabled) {
       this.animationController?.startAnimation();
     }
 
@@ -2011,13 +2014,13 @@ export class RenderingControls {
   }
 
   /**
-   * Toggle cinematic mode - intelligently manages noise, vignette, chromatic aberration, and lens distortion
+   * Toggle cinematic mode - intelligently manages detector noise, vignette, chromatic aberration, and lens distortion
    * Uses majority vote to determine whether to turn effects on or off
    */
   toggleCinematicMode(): void {
     // Get current state of cinematic effects
     const cinematicEffects = [
-      this.settings.noiseEnabled,
+      this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
       this.settings.chromaticAberrationEnabled,
       this.settings.lensDistortionEnabled,
@@ -2031,19 +2034,17 @@ export class RenderingControls {
     const shouldEnableAll = enabledCount < totalEffects / 2;
 
     // Apply cinematic mode settings
-    this.settings.noiseEnabled = shouldEnableAll;
+    this.settings.detectorNoiseEnabled = shouldEnableAll;
     this.settings.vignetteEnabled = shouldEnableAll;
     this.settings.chromaticAberrationEnabled = shouldEnableAll;
     this.settings.lensDistortionEnabled = shouldEnableAll;
 
-    // Enable film grain mode and set cinematic noise intensity when turning ON cinematic mode
-    // Leave film grain unchanged when turning OFF cinematic mode
+    // Set cinematic detector noise parameters when turning ON cinematic mode
+    // Uses subtle physics-based noise for film-like look
     if (shouldEnableAll) {
-      if (!this.settings.noisePremultiply) {
-        this.settings.noisePremultiply = true;
-      }
-      // Set cinematic noise intensity (0.25 for subtle but noticeable film grain)
-      this.settings.noiseIntensity = 0.25;
+      this.settings.detectorNoiseReadoutSigma = 0.015; // Subtle temporal noise
+      this.settings.detectorNoisePhotonGain = 0.008; // Low shot noise
+      this.settings.detectorNoiseFpnSigma = 0.003; // Subtle fixed pattern
     }
 
     // FOV switching: 35mm for cinematic, 50mm Normal for regular
@@ -2079,11 +2080,11 @@ export class RenderingControls {
     // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
     this.postProcessing.startDeferRebuild();
 
-    this.postProcessing.setNoiseEnabled(
-      this.settings.noiseEnabled,
-      this.settings.noiseIntensity,
-      this.settings.noisePremultiply,
-      this.settings.noiseBlendMode
+    this.postProcessing.setDetectorNoiseEnabled(
+      this.settings.detectorNoiseEnabled,
+      this.settings.detectorNoiseReadoutSigma,
+      this.settings.detectorNoisePhotonGain,
+      this.settings.detectorNoiseFpnSigma
     );
 
     this.postProcessing.setVignetteEnabled(
@@ -2127,8 +2128,8 @@ export class RenderingControls {
     this.saveSettings();
     this.triggerAnimation();
 
-    // Start animation if noise is now enabled (like auto-rotate)
-    if (this.settings.noiseEnabled) {
+    // Start animation if detector noise is now enabled (requires continuous rendering)
+    if (this.settings.detectorNoiseEnabled) {
       this.animationController?.startAnimation();
     }
 
@@ -2137,7 +2138,7 @@ export class RenderingControls {
     const fovText = shouldEnableAll ? '35mm (63°)' : '50mm Normal (47°)';
     log.info(
       Modules.RENDERER,
-      `Cinematic mode ${modeText}: noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
+      `Cinematic mode ${modeText}: detector noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
         `chromatic aberration=${shouldEnableAll}, lens distortion=${shouldEnableAll}, FOV=${fovText}`
     );
   }
