@@ -1,13 +1,13 @@
 # luxar-viewer.utils - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-08
+**Version**: 1.2.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
 The `luxar-viewer.utils` package provides specialized utility functions for console debugging, HDR display detection, memory management, and structured logging.
 
-**Core Responsibility**: Provide robust, well-tested utility functions for system-level operations including console output capture, display capability detection, and standardized logging.
+**Core Responsibility**: Provide robust, well-tested utility functions for system-level operations including console output capture, display capability detection, adaptive memory management, and standardized logging.
 
 ---
 
@@ -17,6 +17,7 @@ The `luxar-viewer.utils` package provides specialized utility functions for cons
 2. [HDR Detection](#hdr-detection)
 3. [Memory Detection](#memory-detection)
 4. [Structured Logging](#structured-logging)
+5. [Memory Monitoring](#memory-monitoring)
 
 ---
 
@@ -24,7 +25,7 @@ The `luxar-viewer.utils` package provides specialized utility functions for cons
 
 ### 1.1 Purpose
 
-Capture all browser console output in a ring buffer for in-app debugging.
+Capture all browser console output in a ring buffer for in-app debugging. Provides real-time message streaming via listener callbacks and chronological message retrieval.
 
 ### 1.2 Ring Buffer Implementation
 
@@ -32,52 +33,95 @@ Capture all browser console output in a ring buffer for in-app debugging.
 
 ```typescript
 class ConsoleInterceptor {
-  private messageBuffer: BufferedMessage[] = new Array(maxBufferSize);
+  private messageBuffer: BufferedMessage[] = [];
   private bufferIndex: number = 0;
   private hasWrapped: boolean = false;
   private readonly maxBufferSize = 10000;
+  private listeners: Set<(message: BufferedMessage) => void> = new Set();
+  private originalConsole: {
+    log: typeof console.log;
+    warn: typeof console.warn;
+    error: typeof console.error;
+    info: typeof console.info;
+    debug: typeof console.debug;
+  };
 
-  intercept(): void {
+  private startInterception(): void {
     // Save original console methods
-    const originalLog = console.log;
-    const originalWarn = console.warn;
-    const originalError = console.error;
+    this.originalConsole = {
+      log: console.log.bind(console),
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+      info: console.info.bind(console),
+      debug: console.debug.bind(console),
+    };
 
     // Override console methods
     console.log = (...args) => {
-      this.addMessage('log', args);
-      originalLog.apply(console, args);
+      this.captureMessage('log', args);
+      this.originalConsole.log(...args);
     };
 
-    // ... same for warn, error, info, debug
+    console.error = (...args) => {
+      const stack = this.extractStack(args[0]);
+      this.captureMessage('error', args, stack);
+      this.originalConsole.error(...args);
+    };
+
+    // ... same for warn, info, debug
   }
 
-  private addMessage(type: string, args: any[]): void {
+  private extractStack(error: any): string | undefined {
+    // Extract stack trace from Error objects
+    if (error?.stack) return error.stack;
+
+    // Create stack for error messages without objects
+    if (typeof error === 'string' && error.toLowerCase().includes('error')) {
+      return new Error().stack;
+    }
+
+    return undefined;
+  }
+
+  private captureMessage(type: string, args: any[], stack?: string): void {
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),
-      args: args,
-      stack: type === 'error' ? new Error().stack : undefined,
+      args: [...args], // Clone to prevent mutation
+      stack,
     };
 
     // Ring buffer insertion
-    this.messageBuffer[this.bufferIndex] = message;
-    this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize;
-
-    if (this.bufferIndex === 0) {
+    if (this.messageBuffer.length < this.maxBufferSize) {
+      // Buffer not full yet, just append
+      this.messageBuffer.push(message);
+      this.bufferIndex = this.messageBuffer.length;
+    } else {
+      // Buffer full, overwrite oldest
+      this.messageBuffer[this.bufferIndex] = message;
+      this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize;
       this.hasWrapped = true;
     }
 
-    // Notify listeners
-    this.notifyListeners(message);
+    // Notify all listeners
+    this.listeners.forEach((listener) => {
+      try {
+        listener(message);
+      } catch (err) {
+        // Use original console to avoid recursion
+        this.originalConsole.error('Error in console listener:', err);
+      }
+    });
   }
 
   getBufferedMessages(): BufferedMessage[] {
     if (!this.hasWrapped) {
-      // Buffer not full yet, return filled portion
-      return this.messageBuffer.slice(0, this.bufferIndex);
+      // Buffer not full yet, return as-is
+      return [...this.messageBuffer];
     } else {
-      // Buffer wrapped, return in correct order
+      // Buffer wrapped, reconstruct chronological order
+      // Oldest: bufferIndex to end
+      // Newest: 0 to bufferIndex-1
       return [
         ...this.messageBuffer.slice(this.bufferIndex),
         ...this.messageBuffer.slice(0, this.bufferIndex),
@@ -87,7 +131,99 @@ class ConsoleInterceptor {
 }
 ```
 
-**Critical**: Must be imported at the **very top** of `main.ts` to capture all output from app start.
+### 1.3 Public API
+
+**Listener Management**:
+
+```typescript
+// Add callback for real-time messages
+addListener(callback: (message: BufferedMessage) => void): void;
+
+// Remove listener
+removeListener(callback: (message: BufferedMessage) => void): void;
+```
+
+**Buffer Management**:
+
+```typescript
+// Clear all buffered messages
+clearBuffer(): void;
+
+// Get all messages in chronological order
+getBufferedMessages(): BufferedMessage[];
+
+// Get original console methods (for safe logging)
+getOriginalConsole(): typeof console;
+```
+
+**Statistics**:
+
+```typescript
+getStats(): {
+  total: number;
+  maxSize: number;
+  types: {
+    log: number;
+    warn: number;
+    error: number;
+    info: number;
+    debug: number;
+  };
+  oldestMessage?: Date;
+  newestMessage?: Date;
+}
+```
+
+**Cleanup**:
+
+```typescript
+// Restore original console methods
+restore(): void;
+```
+
+### 1.4 Circular Dependency Handling
+
+**Problem**: Console interceptor is imported at app start (before any other code). It cannot use the logging utility (`log.ts`) without creating a circular dependency.
+
+**Solution**: Use `originalConsole` methods directly for console interceptor's own logging:
+
+```typescript
+this.originalConsole.log(
+  '[🎬] [ConsoleInterceptor] Console interception started'
+);
+```
+
+### 1.5 Usage
+
+**Critical**: Must be imported at the **very top** of `main.ts` to capture all output from app start:
+
+```typescript
+// main.ts - MUST be first import
+import { consoleInterceptor } from './utils/console-interceptor';
+
+// ... rest of imports
+```
+
+**Real-Time Monitoring**:
+
+```typescript
+import { consoleInterceptor } from './utils/console-interceptor';
+
+// Listen for new messages
+consoleInterceptor.addListener((message) => {
+  if (message.type === 'error') {
+    // Handle errors
+    displayErrorToUser(message.args.join(' '));
+  }
+});
+
+// Get statistics
+const stats = consoleInterceptor.getStats();
+console.log(`Captured ${stats.total} messages (${stats.types.error} errors)`);
+
+// Clear buffer
+consoleInterceptor.clearBuffer();
+```
 
 ---
 
@@ -229,49 +365,427 @@ function detectAvailableMemory(): number {
 
 **Standard**: `[emoji] [Module] message`
 
-**Module Enum**:
+All logs follow consistent formatting that works seamlessly with the console interceptor. This is a lightweight wrapper ensuring standardization while preserving console interceptor compatibility.
+
+### 4.2 Module Constants
+
+Complete list of predefined module identifiers:
 
 ```typescript
-enum Modules {
-  Luxar = 'Luxar',
-  Data = 'Data',
-  Scene = 'Scene',
-  Rendering = 'Rendering',
-  Controls = 'Controls',
-  Input = 'Input',
-}
+export const Modules = {
+  // Core
+  LUXAR: 'Luxar',
+  APP: 'App',
+  MAIN: 'Main',
+
+  // Data Loading
+  SCENE_LOADER: 'SceneLoader',
+  SPATIAL_INDEX_LOADER: 'PointSpatialIndexLoader',
+  SPATIAL_INDEX: 'PointSpatialIndex',
+  DATA_MONITOR: 'DataMonitor',
+  ZARR_LOADER: 'ZarrLoader',
+  RANGE_CACHE: 'RangeCache',
+  CACHE: 'Cache',
+  SCENE_DIMS: 'SceneDims',
+
+  // Rendering
+  RENDERER: 'Renderer',
+  POST_PROCESSING: 'PostProcessing',
+  HDR: 'HDR',
+  SCENE_MANAGER: 'SceneManager',
+
+  // Controls
+  CONTROLS: 'Controls',
+  ORBIT_CONTROLS: 'OrbitControls',
+  FLY_CONTROLS: 'FlyControls',
+  INPUT: 'Input',
+  INPUT_CONTEXT: 'InputContext',
+
+  // UI
+  UI: 'UI',
+  DEBUG_CONSOLE: 'DebugConsole',
+  DATA_LOADING_MONITOR: 'DataLoadingMonitor',
+  RENDERING_CONTROLS: 'RenderingControls',
+
+  // Utils
+  MEMORY: 'Memory',
+  PERFORMANCE: 'Performance',
+  CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',
+} as const;
 ```
 
-**Emoji Convention**:
+### 4.3 Emoji Constants
+
+Complete list of standard log emojis categorized by purpose:
 
 ```typescript
-enum LogEmoji {
-  Info = 'ℹ️',
-  Success = '✅',
-  Warning = '⚠️',
-  Error = '❌',
-  Loading = '⏳',
-  Debug = '🔧',
-}
+export const LogEmoji = {
+  // Status
+  START: '🚀',
+  SUCCESS: '✅',
+  ERROR: '❌',
+  WARNING: '⚠️',
+  INFO: 'ℹ️',
+
+  // Actions
+  LOAD: '📥',
+  SAVE: '💾',
+  UPDATE: '🔄',
+  DELETE: '🗑️',
+  SEARCH: '🔍',
+  QUERY: '🔍',
+  CLEAN: '🧹',
+  BROADCAST: '📡',
+  TARGET: '🎯',
+  ROCKET: '🚀',
+
+  // Data
+  DATA: '📊',
+  CACHE: '💾',
+  NETWORK: '🌐',
+  FILE: '📄',
+  SCENE: '🎬',
+
+  // Rendering
+  RENDER: '🎨',
+  RESIZE: '📐',
+  FULLSCREEN: '🖥️',
+  HDR: '🌟',
+  EFFECT: '✨',
+
+  // Controls
+  CONTROLS: '🎮',
+  INPUT: '⌨️',
+
+  // UI
+  UI: '🖼️',
+  WINDOW: '🪟',
+  PANEL: '📋',
+
+  // Debug
+  DEBUG: '🐛',
+  CONSOLE: '🔧',
+  MONITOR: '📊',
+  PERFORMANCE: '⚡',
+  MEMORY: '💾',
+} as const;
 ```
 
-### 4.2 Logging Function
+### 4.4 Core Logging API
+
+The `log` object provides 10 specialized methods for different log levels and actions:
+
+#### Basic Log Levels
 
 ```typescript
-function log(module: Modules, message: string, emoji: LogEmoji = LogEmoji.Info): void {
-  console.log(`[${emoji}] [${module}] ${message}`);
-}
+// Informational message (default level)
+log.info(module: string, message: string, ...args: any[]): void;
+// Output: [ℹ️] [Module] message
+
+// Success notification
+log.success(module: string, message: string, ...args: any[]): void;
+// Output: [✅] [Module] message
+
+// Error message (uses console.error)
+log.error(module: string, message: string, ...args: any[]): void;
+// Output: [❌] [Module] message
+
+// Warning message (uses console.warn)
+log.warning(module: string, message: string, ...args: any[]): void;
+// Output: [⚠️] [Module] message
 ```
 
-**Usage**:
+#### Action-Specific Methods
+
+```typescript
+// Loading/fetching operations
+log.load(module: string, message: string, ...args: any[]): void;
+// Output: [📥] [Module] message
+
+// Update/modification operations
+log.update(module: string, message: string, ...args: any[]): void;
+// Output: [🔄] [Module] message
+
+// Query/search operations
+log.query(module: string, message: string, ...args: any[]): void;
+// Output: [🔍] [Module] message
+
+// Data-related messages
+log.data(module: string, message: string, ...args: any[]): void;
+// Output: [📊] [Module] message
+```
+
+#### Advanced Methods
+
+```typescript
+// Custom emoji for specialized cases
+log.custom(emoji: string, module: string, message: string, ...args: any[]): void;
+// Output: [emoji] [Module] message
+
+// Raw pre-formatted message (for special cases)
+log.raw(formattedMessage: string, ...args: any[]): void;
+// Output: formattedMessage (as-is)
+```
+
+### 4.5 Utility Functions
+
+```typescript
+// Format a message manually (rarely needed)
+formatLog(emoji: string, module: string, message: string): string;
+
+// Create a module-specific logger (convenience wrapper)
+createModuleLogger(module: string): {
+  log: (message: string, ...args: any[]) => void;
+  info: (message: string, ...args: any[]) => void;
+  success: (message: string, ...args: any[]) => void;
+  error: (message: string, ...args: any[]) => void;
+  warning: (message: string, ...args: any[]) => void;
+  load: (message: string, ...args: any[]) => void;
+  update: (message: string, ...args: any[]) => void;
+  query: (message: string, ...args: any[]) => void;
+  data: (message: string, ...args: any[]) => void;
+  custom: (emoji: string, message: string, ...args: any[]) => void;
+};
+```
+
+### 4.6 Usage Examples
+
+**Basic Usage**:
 
 ```typescript
 import { log, Modules, LogEmoji } from '../utils/log';
 
-log(Modules.Data, 'Loading spatial index...', LogEmoji.Loading);
-log(Modules.Data, 'Loaded 50 cells → 12K points', LogEmoji.Success);
-log(Modules.Rendering, 'MSAA incompatible with additive blending', LogEmoji.Warning);
+// Informational logging
+log.info(Modules.DATA_MONITOR, 'Starting data monitor');
+log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
+log.warning(Modules.RENDERER, 'MSAA incompatible with additive blending');
+log.error(Modules.ZARR_LOADER, 'Failed to fetch chunk', error);
+
+// Action-specific logging
+log.load(Modules.SPATIAL_INDEX_LOADER, 'Loading spatial index...');
+log.query(Modules.SPATIAL_INDEX, 'Query result: 50 cells → 12K points');
+log.update(Modules.SCENE_MANAGER, 'Camera position updated', newPosition);
+log.data(Modules.RANGE_CACHE, 'Cache size: 45MB / 512MB');
+
+// Custom emoji
+log.custom('🎯', Modules.CONTROLS, 'Target locked at [0, 0, 0]');
 ```
+
+**Module-Specific Logger**:
+
+```typescript
+import { createModuleLogger, Modules } from '../utils/log';
+
+const logger = createModuleLogger(Modules.SPATIAL_INDEX);
+
+// All methods automatically use the module
+logger.load('Loading index for /points/0');
+logger.query('Query result: 12,000 points');
+logger.success('Index loaded successfully');
+logger.error('Invalid query bounds', bounds);
+```
+
+**Advanced Logging with Extra Arguments**:
+
+```typescript
+// Extra arguments are passed to console methods
+log.data(Modules.SCENE_LOADER, 'Loaded node:', {
+  name: 'points/0',
+  count: 12000,
+  bounds: [0, 0, 0, 100, 100, 100],
+});
+
+// Logs: [📊] [SceneLoader] Loaded node: {name: 'points/0', ...}
+```
+
+---
+
+## 5. Memory Monitoring
+
+### 5.1 Purpose
+
+Dynamic memory monitoring that adapts cache sizes based on real-time memory pressure. Prevents out-of-memory errors by reducing cache usage when heap utilization is high.
+
+### 5.2 MemoryMonitor Class
+
+**Responsibility**: Monitor JavaScript heap usage and trigger cache size adjustments when memory pressure exceeds thresholds.
+
+**Architecture**:
+
+```typescript
+export class MemoryMonitor {
+  private callback?: (newSizeMB: number) => void;
+  private currentSizeMB: number;
+  private intervalId?: number;
+
+  constructor(initialSizeMB: number, callback?: (newSizeMB: number) => void) {
+    this.currentSizeMB = initialSizeMB;
+    this.callback = callback;
+  }
+
+  start(): void;
+  stop(): void;
+}
+```
+
+### 5.3 Monitoring Algorithm
+
+**Polling Interval**: 10 seconds
+
+**Memory Pressure Thresholds**:
+
+```typescript
+const CRITICAL_THRESHOLD = 0.85; // 85% heap usage
+const HIGH_THRESHOLD = 0.7; // 70% heap usage
+const MIN_CACHE_MB = 128; // Minimum useful cache size
+const ADJUSTMENT_THRESHOLD = 64; // Only adjust if change > 64MB
+```
+
+**Adjustment Logic**:
+
+```typescript
+start(): void {
+  // Only works with Chrome's performance.memory API
+  if (!(performance as any).memory) return;
+
+  this.intervalId = window.setInterval(() => {
+    const mem = (performance as any).memory;
+    const usagePercent = mem.usedJSHeapSize / mem.jsHeapSizeLimit;
+
+    let newSize = this.currentSizeMB;
+
+    if (usagePercent > CRITICAL_THRESHOLD) {
+      // Critical: reduce by 50%
+      newSize = Math.max(MIN_CACHE_MB, this.currentSizeMB * 0.5);
+    } else if (usagePercent > HIGH_THRESHOLD) {
+      // High: reduce by 25%
+      newSize = Math.max(MIN_CACHE_MB * 2, this.currentSizeMB * 0.75);
+    }
+
+    // Only notify if change is significant (> 64MB)
+    if (Math.abs(newSize - this.currentSizeMB) > ADJUSTMENT_THRESHOLD) {
+      this.currentSizeMB = Math.round(newSize);
+      if (this.callback) {
+        this.callback(this.currentSizeMB);
+      }
+      console.log(
+        `💾 [Luxar] Adjusted cache to ${this.currentSizeMB}MB (memory pressure: ${(usagePercent * 100).toFixed(0)}%)`
+      );
+    }
+  }, 10000);
+}
+```
+
+### 5.4 Integration with Cache Systems
+
+**Typical Usage Pattern**:
+
+```typescript
+import { detectMemory, MemoryMonitor } from './utils/memory-detector';
+
+// Initial memory detection
+const memInfo = detectMemory();
+let currentCacheSizeMB = memInfo.recommendedCacheMB;
+
+// Create cache with initial size
+const cache = new RangeCache(currentCacheSizeMB);
+
+// Start monitoring and adapt cache size
+const monitor = new MemoryMonitor(currentCacheSizeMB, (newSizeMB) => {
+  console.log(`Adjusting cache from ${currentCacheSizeMB}MB to ${newSizeMB}MB`);
+  cache.setMaxSize(newSizeMB);
+  currentCacheSizeMB = newSizeMB;
+});
+
+monitor.start();
+
+// Cleanup on app shutdown
+window.addEventListener('beforeunload', () => {
+  monitor.stop();
+});
+```
+
+### 5.5 Memory Detection Strategy
+
+**Primary Method**: Chrome's `performance.memory` API (most accurate)
+
+```typescript
+if ((performance as any).memory) {
+  const mem = (performance as any).memory;
+  const heapLimitMB = mem.jsHeapSizeLimit / (1024 * 1024);
+  const usedMB = mem.usedJSHeapSize / (1024 * 1024);
+  const availableMB = heapLimitMB - usedMB;
+
+  // Use 80% of available heap for cache
+  const recommendedMB = Math.round(availableMB * 0.8);
+  return Math.max(128, recommendedMB);
+}
+```
+
+**Fallback 1**: Device Memory API (estimates based on total device RAM)
+
+```typescript
+if ((navigator as any).deviceMemory) {
+  const deviceGB = (navigator as any).deviceMemory;
+
+  // Conservative estimates based on device RAM
+  let estimatedHeapMB: number;
+
+  if (deviceGB <= 2) {
+    estimatedHeapMB = deviceGB * 1024 * 0.25; // 25% for low-memory devices
+  } else if (deviceGB <= 8) {
+    estimatedHeapMB = deviceGB * 1024 * 0.35; // 35% for mid-range
+  } else {
+    estimatedHeapMB = deviceGB * 1024 * 0.5; // 50% for high-memory systems
+  }
+
+  return Math.max(128, Math.round(estimatedHeapMB * 0.8));
+}
+```
+
+**Fallback 2**: Platform-based defaults
+
+```typescript
+// Mobile detection
+const isMobile =
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
+
+return isMobile ? 256 : 1024; // MB
+```
+
+### 5.6 Return Values
+
+```typescript
+interface MemoryInfo {
+  recommendedCacheMB: number; // Recommended cache size in MB
+  confidence: 'high' | 'medium' | 'low'; // Detection method confidence
+  source: 'api' | 'device' | 'default'; // Which detection method was used
+}
+```
+
+**Confidence Levels**:
+
+- `high` + `api`: Chrome's performance.memory API (actual heap size)
+- `medium` + `device`: Device Memory API (estimated from total RAM)
+- `low` + `default`: Platform detection fallback (conservative defaults)
+
+### 5.7 Design Rationale
+
+**Why No Upper Bound**:
+
+The detection algorithm intentionally has no artificial maximum cache size. It uses the browser's actual heap limit as the constraint, allowing high-memory systems to utilize available resources effectively.
+
+**Why 80% of Available Heap**:
+
+Spatial index loading is the primary memory consumer in Luxar. Being aggressive with cache sizing (80% of available heap) is safe because:
+
+1. Other memory consumers (THREE.js scene, UI) are relatively small
+2. Memory monitor will reduce cache if pressure rises
+3. Modern browsers have efficient garbage collection
+
+**Why 10-Second Polling**:
+
+Memory pressure changes slowly. 10-second intervals provide responsive adaptation without excessive overhead.
 
 ---
 
@@ -309,6 +823,18 @@ interface HDRCapabilities {
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-09): Complete documentation of all missing features
+  - **ADDED**: Section 5 - Memory Monitoring (MemoryMonitor class with 150 lines of implementation)
+  - **EXPANDED**: Console Interceptor - Documented all 7 public methods (getStats, clearBuffer, restore, listeners, etc.)
+  - **EXPANDED**: Structured Logging - Complete API documentation for all 10 log methods
+  - **ADDED**: Complete LogEmoji constants list (30+ emojis across 7 categories)
+  - **ADDED**: Complete Modules constants list (25+ module identifiers)
+  - **ADDED**: Memory detection strategy with 3-tier fallback system
+  - **ADDED**: Circular dependency handling pattern for console interceptor
+  - **ADDED**: Integration examples for memory monitoring with cache systems
+  - **ADDED**: Design rationale for memory monitoring thresholds
+  - Documentation now covers 100% of the utils package functionality
 
 - **v1.1.0** (2025-12-08): Correct HDR function documentation
   - **CORRECTED**: `configureHDRRenderer()` documentation - function only logs capabilities, does NOT configure renderer
