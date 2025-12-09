@@ -1,7 +1,7 @@
 # luxar-viewer.input - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.1.0
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -28,24 +28,39 @@ The `luxar-viewer.input` package provides context-aware keyboard and mouse input
 
 ### 1.1 Context Types
 
+**Implementation**: String literal enum with separate priority field
+
 ```typescript
 enum InputContext {
-  NAVIGATION = 0, // Default 3D navigation (orbit/arcball)
-  FLY_CONTROLS = 1, // Fly mode active (WASD enabled)
-  TYPING = 2, // Text input focused (all shortcuts disabled)
-  DIMENSION_NAV = 3, // nD dimension navigation (1-9, [, ])
-  UI_OVERLAY = 4, // UI panel open (Tab, Enter, Esc)
-  MODAL = 5, // Modal dialog (highest priority)
+  NAVIGATION = 'navigation', // Default 3D navigation (orbit/arcball)
+  FLY_CONTROLS = 'fly_controls', // Fly mode active (WASD enabled)
+  TYPING = 'typing', // Text input focused (all shortcuts disabled)
+  UI_INTERACTION = 'ui_interaction', // UI panels and controls
+  DIMENSION_NAV = 'dimension_nav', // nD dimension navigation (1-9, [, ])
 }
 ```
 
-**Priority Order**: Higher enum value = higher priority
+**Context Configuration**:
 
-**Example**:
+Each context has a separate configuration with explicit priority:
+
+```typescript
+interface ContextConfig {
+  name: string;
+  priority: number; // Higher priority overrides lower
+  allowedKeys?: string[]; // Whitelist of allowed keys
+  blockedKeys?: string[]; // Blacklist of blocked keys
+  passthrough?: boolean; // Pass unhandled keys to lower contexts
+}
+```
+
+**Priority Order** (higher number = higher priority):
 
 ```
-MODAL (5) > UI_OVERLAY (4) > TYPING (2) > FLY_CONTROLS (1) > NAVIGATION (0)
+TYPING (10) > UI_INTERACTION (5) > DIMENSION_NAV (2) > FLY_CONTROLS (1) > NAVIGATION (0)
 ```
+
+**Note**: No MODAL context currently implemented (5 contexts total)
 
 ### 1.2 Context Stack
 
@@ -77,12 +92,14 @@ class InputContextManager {
 **Example Flow**:
 
 ```
-1. Start: [NAVIGATION]
-2. Enter fly mode: [NAVIGATION, FLY_CONTROLS]
-3. Open modal: [NAVIGATION, FLY_CONTROLS, MODAL]
-4. Close modal: [NAVIGATION, FLY_CONTROLS]
-5. Exit fly mode: [NAVIGATION]
+1. Start: ['navigation']
+2. Enter fly mode: ['navigation', 'fly_controls']
+3. Open UI panel: ['navigation', 'fly_controls', 'ui_interaction']
+4. Close UI panel: ['navigation', 'fly_controls']
+5. Exit fly mode: ['navigation']
 ```
+
+**Current Implementation**: Context stack maintains history but current context is tracked separately via `currentContext` field rather than stack top.
 
 ---
 
@@ -355,6 +372,17 @@ interface InputHandler {
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-12-08): Match actual implementation
+  - **BREAKING**: Changed InputContext from numeric enum to string literal enum
+  - **ADDED**: ContextConfig interface with explicit `priority` field
+  - **ADDED**: `allowedKeys`, `blockedKeys`, `passthrough` configuration options
+  - **CHANGED**: Priority system now uses separate numeric field instead of enum value
+  - **REMOVED**: MODAL context (not currently implemented - only 5 contexts)
+  - **RENAMED**: UI_OVERLAY → UI_INTERACTION for consistency
+  - **UPDATED**: Context stack implementation details
+  - **UPDATED**: Priority order: TYPING(10) > UI_INTERACTION(5) > DIMENSION_NAV(2) > FLY_CONTROLS(1) > NAVIGATION(0)
+  - All specifications now match actual code implementation
 
 - **v1.0.0** (2025-01-30): Initial specification
   - Context-based input routing with priority system

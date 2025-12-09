@@ -62,7 +62,7 @@ Comprehensive system for detecting and configuring HDR display capabilities:
 **Core Functions**:
 
 - `detectHDRCapabilities()` - Complete capability detection
-- `configureHDRRenderer()` - Optimal Three.js renderer setup
+- `configureHDRRenderer()` - Log detected HDR capabilities (legacy name, doesn't actually configure renderer)
 - `logHDRCapabilities()` - Detailed capability reporting
 - `isHDRDisplay()` - Simple boolean HDR check
 
@@ -153,24 +153,19 @@ const colorDepth = {
 };
 ```
 
-### Renderer Configuration
+### HDR Capability Logging
 
 ```typescript
 export function configureHDRRenderer(
-  renderer: THREE.WebGLRenderer,
+  renderer: THREE.WebGLRenderer, // Unused - for backward compatibility
   capabilities: HDRCapabilities
 ): void {
-  // Set optimal color space based on display capabilities
-  if (capabilities.rec2020Gamut && capabilities.hdr) {
-    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  } else if (capabilities.p3Gamut) {
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-  }
-
-  // Note: Tone mapping is now handled by PostProcessingManager
-  // to avoid conflicts with the pmndrs library
+  // Log detected capabilities (informational only)
+  // Does NOT configure renderer - PostProcessingManager handles that
 }
 ```
+
+**Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
 
 ## Dimension Navigation
 

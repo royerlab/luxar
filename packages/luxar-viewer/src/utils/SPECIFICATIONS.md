@@ -1,7 +1,7 @@
 # luxar-viewer.utils - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.1.0
+**Last Updated**: 2025-12-08
 
 ## Purpose
 
@@ -149,24 +149,42 @@ function detectHDRCapabilities(renderer: THREE.WebGLRenderer): HDRCapabilities {
 }
 ```
 
-### 2.2 Renderer Configuration
+### 2.2 Capability Logging
 
-**Purpose**: Configure THREE.js renderer based on detected capabilities.
+**Purpose**: Log detected HDR capabilities to console for informational purposes.
+
+**IMPORTANT**: This function does NOT configure the renderer. All HDR configuration is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
 
 ```typescript
-function configureHDRRenderer(renderer: THREE.WebGLRenderer, capabilities: HDRCapabilities): void {
-  // Set output color space based on display
+function configureHDRRenderer(
+  _renderer: THREE.WebGLRenderer, // Underscore indicates unused parameter
+  capabilities: HDRCapabilities
+): void {
+  // Log detected capabilities (informational only)
   if (capabilities.rec2020Gamut && capabilities.hdr) {
-    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    console.log(
+      'HDR display with Rec2020 gamut detected - post-processing will handle color management'
+    );
   } else if (capabilities.p3Gamut) {
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    console.log('Display P3 gamut detected - post-processing will handle color management');
   } else {
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    console.log('Standard sRGB display detected');
   }
 
-  // Note: Tone mapping handled by PostProcessingManager
+  // Note: Actual renderer configuration (outputColorSpace, toneMapping) is done by
+  // PostProcessingManager in the rendering/ package. This avoids conflicts with
+  // pmndrs/postprocessing library which manages these settings internally.
 }
 ```
+
+**Why This Design**:
+
+- PostProcessingManager sets `renderer.outputColorSpace = THREE.SRGBColorSpace`
+- PostProcessingManager sets `renderer.toneMapping = THREE.NoToneMapping`
+- The pmndrs library handles all HDR → LDR conversion internally
+- Setting these values here would be overridden and cause confusion
+
+**Function Name**: Could be renamed to `logHDRCapabilities()` for clarity, but kept for backward compatibility.
 
 ---
 
@@ -291,6 +309,13 @@ interface HDRCapabilities {
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-12-08): Correct HDR function documentation
+  - **CORRECTED**: `configureHDRRenderer()` documentation - function only logs capabilities, does NOT configure renderer
+  - **CLARIFIED**: Actual HDR configuration handled by PostProcessingManager (rendering/ package)
+  - **ADDED**: Explanation of why function is a no-op (avoids pmndrs library conflicts)
+  - **NOTED**: Function name is legacy, kept for backward compatibility
+  - No functional changes - only documentation corrections
 
 - **v1.0.0** (2025-01-30): Initial specification
   - Ring buffer console interception (10K messages)
