@@ -335,6 +335,86 @@ Use **relative paths** from the specification file's location.
    - View traces: `pnpm exec playwright show-trace test-results/<test-name>/trace.zip`
    - Read error context: `test-results/<test-name>/error-context.md`
 
+9. **Common Error Patterns and Solutions**:
+   - **"ERR_CONNECTION_REFUSED"**: Dev server not running or crashed
+     - Fix: `lsof -ti:5173,9000 | xargs kill -9` then re-run tests
+   - **"getState is not a function"**: Debug interface not initialized yet
+     - Fix: Ensure `waitForLuxarReady()` is called first
+   - **"Timeout waiting for points"**: Dataset has 0 points at current nD slice
+     - Fix: Use 3D dataset or navigate to slice with points
+   - **"Cannot read properties of undefined"**: API/object not available in page context
+     - Fix: Check `window.__luxarDebug` properties, avoid `window.THREE`
+   - **"Address already in use"**: Previous test run didn't cleanup servers
+     - Fix: `pkill -f "vite\|http.server 9000"` before running
+
+10. **Systematic Debugging Workflow**:
+    ```bash
+    # 1. Run tests and capture failures
+    pnpm test:e2e 2>&1 | tee /tmp/e2e-output.txt
+
+    # 2. Identify failure patterns
+    grep "Error:" /tmp/e2e-output.txt | sort | uniq -c
+
+    # 3. Check screenshots for visual clues
+    open test-results/<test-name>/test-failed-1.png
+
+    # 4. Fix one category at a time
+    # 5. Run focused tests to verify
+    pnpm test:e2e <specific-file>.spec.ts
+
+    # 6. Run full suite for final verification
+    pnpm test:e2e
+    ```
+
+11. **Pre-Commit Checklist**:
+    - ✅ Run unit tests: `pnpm test --run` (fast, ~5s)
+    - ✅ Run type checking: `pnpm typecheck` (fast, ~3s)
+    - ✅ Run linting: `pnpm lint` (fast, ~2s)
+    - ⚠️ Run E2E tests: Optional before commit (slow, ~17min)
+    - ✅ **Always** run full E2E suite before creating PR or merging
+
+12. **Test Output Management**:
+    - E2E tests generate **large outputs** (50k+ lines, hundreds of HTTP requests)
+    - Use `tee` to save output: `pnpm test:e2e 2>&1 | tee /tmp/e2e.txt`
+    - Filter for summaries: `grep -E "(passed|failed|Error:)" /tmp/e2e.txt`
+    - Test artifacts can grow large (videos, screenshots, traces) - clean periodically:
+      ```bash
+      rm -rf test-results/  # Remove all test artifacts
+      rm -rf playwright-report/  # Remove HTML report
+      ```
+
+13. **Dataset Freshness**:
+    - E2E tests depend on example datasets being up-to-date
+    - Regenerate if Python encoding changes: `make run-examples`
+    - Pre-flight checks verify required datasets exist
+    - Missing datasets cause test failures, not skips
+
+14. **Understanding Test Flakiness**:
+    - **Flaky** = Failed first run, passed on retry (acceptable for performance tests)
+    - **Failed** = Failed all retries (requires fixing)
+    - Performance/timing tests naturally have some flakiness due to:
+      - CPU/GPU load variability
+      - Browser garbage collection timing
+      - Network request timing
+      - Animation frame timing
+    - Current config allows 1 retry locally, 2 in CI (playwright.config.ts:36)
+    - If a test is consistently flaky (>50% flake rate), increase timeouts or make assertions less strict
+
+15. **Interpreting Test Results**:
+    - **"X passed (Ym)"** = All tests passed in Y minutes
+    - **"X failed"** = Hard failures (failed all retries)
+    - **"X flaky"** = Passed on retry (monitor but don't treat as failures)
+    - **"X skipped"** = Tests marked with .skip() or test.fixme()
+    - **Pass rate** = (passed + flaky) / (total - skipped) × 100%
+    - Target: >95% pass rate, <5% flaky rate
+
+16. **When Dev Server Crashes Mid-Test** (rare but documented):
+    - Symptom: First ~100 tests pass, then all remaining tests fail with ERR_CONNECTION_REFUSED
+    - Cause: Vite dev server crashes due to resource exhaustion or memory leak
+    - Immediate fix: Re-run tests (usually succeeds on second attempt)
+    - Long-term fix: If consistent, investigate Vite memory usage or upgrade Vite version
+    - Current status: **Not reproducible** - only seen once, likely transient issue
+
 ### Git Workflow
 - Never commit `.zarr` directories (they're in .gitignore)
 - Always run all tests (Python & TypeScript), run all checks (typing, linting), and format code before committing
