@@ -344,8 +344,6 @@ All Luxar-generated datasets include hierarchical content hashes:
 // - Clears cache if mismatch
 ```
 
-
-
 **CRITICAL: Cache Validation Bypass**
 
 The validation process MUST bypass the cache when checking for dataset changes:

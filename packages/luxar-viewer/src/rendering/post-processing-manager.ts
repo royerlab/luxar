@@ -19,11 +19,11 @@ import {
   ChromaticAberrationEffect,
   VignetteEffect,
   SSAOEffect,
-  NoiseEffect,
   LensDistortionEffect,
   KernelSize,
   BlendFunction,
 } from 'postprocessing';
+import { DetectorNoiseEffect, isDetectorNoiseEffect } from './detector-noise-effect';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -62,7 +62,7 @@ export class PostProcessingManager {
   private aoEffect?: SSAOEffect;
   private vignetteEffect?: VignetteEffectTyped;
   private chromaticEffect?: ChromaticAberrationEffectTyped;
-  private noiseEffect?: NoiseEffect;
+  private detectorNoiseEffect?: DetectorNoiseEffect;
   private lensDistortionEffect?: LensDistortionEffectTyped;
 
   // State tracking
@@ -255,8 +255,9 @@ export class PostProcessingManager {
       orderedEffects.push({ effect: this.chromaticEffect, name: 'ChromaticAberration' });
     if (this.lensDistortionEffect)
       orderedEffects.push({ effect: this.lensDistortionEffect, name: 'LensDistortion' });
-    // Noise comes AFTER lens distortion and chromatic aberration but before tone mapping
-    if (this.noiseEffect) orderedEffects.push({ effect: this.noiseEffect, name: 'Noise' });
+    // Detector noise comes AFTER lens distortion and chromatic aberration but before tone mapping
+    if (this.detectorNoiseEffect)
+      orderedEffects.push({ effect: this.detectorNoiseEffect, name: 'DetectorNoise' });
 
     // Always add tone mapping and AA at the end
     orderedEffects.push({ effect: this.toneMappingEffect, name: 'ToneMapping' });
@@ -624,100 +625,83 @@ export class PostProcessingManager {
   }
 
   /**
-   * Sets noise effect (film grain / static)
+   * Sets physics-based detector noise effect
+   *
+   * This provides realistic camera/detector noise simulation with three components:
+   * - Shot noise (Poisson): Signal-dependent noise from photon statistics
+   * - Readout noise (Gaussian, temporal): Signal-independent electronic noise, varies per frame
+   * - Fixed Pattern Noise (Gaussian, static): Per-pixel offset from detector non-uniformities
+   *
    * @param enabled - Whether to enable the effect
-   * @param intensity - Opacity/strength of the noise (0-1)
-   * @param premultiply - Whether to use premultiplied alpha (film grain style)
-   * @param blendMode - Blend mode for the effect
+   * @param readoutSigma - Temporal readout noise sigma (0-0.1 typical), default 0.01
+   * @param photonGain - Photon gain controlling shot noise visibility (0.0001-0.1 typical), default 0.01
+   * @param fpnSigma - Fixed pattern noise sigma (0-0.05 typical), default 0.005
    */
-  setNoiseEnabled(
+  setDetectorNoiseEnabled(
     enabled: boolean,
-    intensity?: number,
-    premultiply?: boolean,
-    blendMode?: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT'
+    readoutSigma?: number,
+    photonGain?: number,
+    fpnSigma?: number
   ): void {
-    if (enabled && !this.noiseEffect) {
-      const blendFunctionMap = {
-        SCREEN: BlendFunction.SCREEN,
-        ADD: BlendFunction.ADD,
-        MULTIPLY: BlendFunction.MULTIPLY,
-        OVERLAY: BlendFunction.OVERLAY,
-        SOFT_LIGHT: BlendFunction.SOFT_LIGHT,
-      };
-
-      this.noiseEffect = new NoiseEffect({
-        premultiply: premultiply ?? false,
-        blendFunction: blendFunctionMap[blendMode ?? 'SCREEN'],
+    if (enabled && !this.detectorNoiseEffect) {
+      this.detectorNoiseEffect = new DetectorNoiseEffect({
+        readoutSigma: readoutSigma ?? 0.01,
+        photonGain: photonGain ?? 0.01,
+        fpnSigma: fpnSigma ?? 0.005,
       });
-
-      // Set initial intensity
-      this.noiseEffect.blendMode.setOpacity(intensity ?? 0.05);
 
       this.rebuildEffectPass();
       log.info(
         Modules.POST_PROCESSING,
-        `Noise enabled: intensity=${intensity}, premultiply=${premultiply}, blend=${blendMode}`
+        `Detector noise enabled: readout=${readoutSigma ?? 0.01}, gain=${photonGain ?? 0.01}, fpn=${fpnSigma ?? 0.005}`
       );
-    } else if (!enabled && this.noiseEffect) {
-      this.noiseEffect = undefined;
+    } else if (!enabled && this.detectorNoiseEffect) {
+      this.detectorNoiseEffect = undefined;
       this.rebuildEffectPass();
-      log.info(Modules.POST_PROCESSING, 'Noise disabled');
+      log.info(Modules.POST_PROCESSING, 'Detector noise disabled');
     }
   }
 
   /**
-   * Updates noise effect parameters
+   * Updates detector noise parameters
+   *
+   * @param params - Object containing parameters to update
+   * @param params.readoutSigma - Temporal readout noise sigma (Gaussian)
+   * @param params.photonGain - Photon gain controlling shot noise visibility
+   * @param params.fpnSigma - Fixed pattern noise sigma (static per-pixel)
    */
-  updateNoiseSettings(
-    intensity?: number,
-    premultiply?: boolean,
-    blendMode?: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT'
-  ): void {
-    if (!this.noiseEffect) {
-      log.warning(Modules.POST_PROCESSING, 'Noise effect not initialized');
+  updateDetectorNoiseSettings(params: {
+    readoutSigma?: number;
+    photonGain?: number;
+    fpnSigma?: number;
+  }): void {
+    if (!this.detectorNoiseEffect) {
+      log.warning(Modules.POST_PROCESSING, 'Detector noise effect not initialized');
       return;
     }
 
-    if (intensity !== undefined) {
-      this.noiseEffect.blendMode.setOpacity(intensity);
+    if (!isDetectorNoiseEffect(this.detectorNoiseEffect)) {
+      log.error(Modules.POST_PROCESSING, 'Invalid detector noise effect type');
+      return;
     }
 
-    // If premultiply or blend mode changed, we need to recreate the effect
-    if (premultiply !== undefined || blendMode !== undefined) {
-      const currentIntensity = this.noiseEffect.blendMode.opacity.value;
-      const currentPremultiply = (this.noiseEffect as any).premultiply ?? false;
+    if (params.readoutSigma !== undefined) {
+      this.detectorNoiseEffect.readoutSigma = params.readoutSigma;
+    }
 
-      const blendFunctionMap = {
-        SCREEN: BlendFunction.SCREEN,
-        ADD: BlendFunction.ADD,
-        MULTIPLY: BlendFunction.MULTIPLY,
-        OVERLAY: BlendFunction.OVERLAY,
-        SOFT_LIGHT: BlendFunction.SOFT_LIGHT,
-      };
+    if (params.photonGain !== undefined) {
+      this.detectorNoiseEffect.photonGain = params.photonGain;
+    }
 
-      // Get current blend function name
-      let currentBlendName: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT' = 'SCREEN';
-      const currentBlendFunction = this.noiseEffect.blendMode.blendFunction;
-      for (const [name, func] of Object.entries(blendFunctionMap)) {
-        if (func === currentBlendFunction) {
-          currentBlendName = name as typeof currentBlendName;
-          break;
-        }
-      }
-
-      // Recreate with new settings
-      this.noiseEffect = new NoiseEffect({
-        premultiply: premultiply ?? currentPremultiply,
-        blendFunction: blendFunctionMap[blendMode ?? currentBlendName],
-      });
-
-      this.noiseEffect.blendMode.setOpacity(intensity ?? currentIntensity);
-      this.rebuildEffectPass();
+    if (params.fpnSigma !== undefined) {
+      this.detectorNoiseEffect.fpnSigma = params.fpnSigma;
     }
 
     log.update(
       Modules.POST_PROCESSING,
-      `Noise updated: intensity=${intensity}, premultiply=${premultiply}, blend=${blendMode}`
+      `Detector noise updated: ${Object.keys(params)
+        .map((k) => `${k}=${params[k as keyof typeof params]}`)
+        .join(', ')}`
     );
   }
 
@@ -900,8 +884,8 @@ export class PostProcessingManager {
    * @returns True if animation should continue running
    */
   needsContinuousAnimation(): boolean {
-    // Noise effect needs continuous updates as it changes every frame
-    return !!this.noiseEffect;
+    // Detector noise always has temporal components that need continuous updates
+    return !!this.detectorNoiseEffect;
   }
 
   /**
@@ -909,7 +893,7 @@ export class PostProcessingManager {
    */
   getEffectsStatus(): {
     bloom: boolean;
-    noise: boolean;
+    detectorNoise: boolean;
     dof: boolean;
     chromaticAberration: boolean;
     fxaa: boolean;
@@ -920,7 +904,7 @@ export class PostProcessingManager {
     vignette: boolean;
     ao: boolean;
     lensDistortion: boolean;
-    } {
+  } {
     const toneMappingNames: Record<ToneMappingMode, string> = {
       [ToneMappingMode.LINEAR]: 'Linear',
       [ToneMappingMode.REINHARD]: 'Reinhard',
@@ -932,7 +916,7 @@ export class PostProcessingManager {
 
     return {
       bloom: !!this.bloomEffect,
-      noise: !!this.noiseEffect,
+      detectorNoise: !!this.detectorNoiseEffect,
       dof: !!this.dofEffect,
       chromaticAberration: !!this.chromaticEffect,
       fxaa: this.fxaaEnabled,
@@ -1109,48 +1093,48 @@ export class PostProcessingManager {
       bloom:
         this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
           ? {
-            intensity: bloom.intensity,
-            luminanceThreshold: bloom.luminanceMaterial?.threshold,
-            radius: bloom.mipmapBlurPass?.radius,
-          }
+              intensity: bloom.intensity,
+              luminanceThreshold: bloom.luminanceMaterial?.threshold,
+              radius: bloom.mipmapBlurPass?.radius,
+            }
           : null,
       toneMapping:
         this.toneMappingEffect && isToneMappingEffectTyped(this.toneMappingEffect)
           ? {
-            mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
-          }
+              mode: this.toneMappingEffect.mode,
+              whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
+            }
           : null,
       dof:
         this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
           ? {
-            enabled: true,
-            bokehScale: this.dofEffect.bokehScale,
-            focusDistance:
+              enabled: true,
+              bokehScale: this.dofEffect.bokehScale,
+              focusDistance:
                 this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-          }
+            }
           : null,
       chromatic:
         this.chromaticEffect && isChromaticAberrationEffectTyped(this.chromaticEffect)
           ? {
-            offset: this.chromaticEffect.offset.clone(),
-          }
+              offset: this.chromaticEffect.offset.clone(),
+            }
           : null,
       vignette:
         this.vignetteEffect && isVignetteEffectTyped(this.vignetteEffect)
           ? {
-            darkness: this.vignetteEffect.darkness,
-            offset: this.vignetteEffect.offset,
-          }
+              darkness: this.vignetteEffect.darkness,
+              offset: this.vignetteEffect.offset,
+            }
           : null,
       lensDistortion:
         this.lensDistortionEffect && isLensDistortionEffectTyped(this.lensDistortionEffect)
           ? {
-            distortion: this.lensDistortionEffect.distortion.clone(),
-            principalPoint: this.lensDistortionEffect.principalPoint.clone(),
-            focalLength: this.lensDistortionEffect.focalLength.clone(),
-            skew: this.lensDistortionEffect.skew,
-          }
+              distortion: this.lensDistortionEffect.distortion.clone(),
+              principalPoint: this.lensDistortionEffect.principalPoint.clone(),
+              focalLength: this.lensDistortionEffect.focalLength.clone(),
+              skew: this.lensDistortionEffect.skew,
+            }
           : null,
       // Save AA states
       ao: this.aoEffect ? { enabled: true } : null,
@@ -1508,7 +1492,7 @@ export class PostProcessingManager {
 
     // Clear individual effect references
     this.bloomEffect = undefined;
-    this.noiseEffect = undefined;
+    this.detectorNoiseEffect = undefined;
     this.dofEffect = undefined;
     this.aoEffect = undefined;
     this.vignetteEffect = undefined;

@@ -498,11 +498,11 @@ export interface RenderingSettings {
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;
-  // Noise effect (film grain / static)
-  noiseEnabled: boolean;
-  noiseIntensity: number;
-  noisePremultiply: boolean;
-  noiseBlendMode: 'SCREEN' | 'ADD' | 'MULTIPLY' | 'OVERLAY' | 'SOFT_LIGHT';
+  // Detector noise effect (physics-based: Poisson + Gaussian + FPN)
+  detectorNoiseEnabled: boolean;
+  detectorNoiseReadoutSigma: number;
+  detectorNoisePhotonGain: number;
+  detectorNoiseFpnSigma: number;
   // Lens distortion effect
   lensDistortionEnabled: boolean;
   lensDistortionX: number;

@@ -217,6 +217,39 @@ Camera lens imperfection simulation:
 - Simulates realistic camera optics
 - **Note**: Uses separate pass due to UV transformation incompatibility
 
+#### Detector Noise (Physics-Based)
+
+Realistic camera/detector noise simulation for scientific imaging:
+
+- **Shot Noise (Poisson)**: Signal-dependent noise from photon statistics
+- **Readout Noise (Gaussian, temporal)**: Signal-independent electronic noise, varies per frame
+- **Fixed Pattern Noise (Gaussian, static)**: Per-pixel offset from detector non-uniformities
+- Configurable photon gain for low-light simulation
+- Uses efficient GPU approximations (Bob Jenkins hash, clamped logistic, Anscombe transform)
+- **Recommended for scientific visualization aesthetics**
+
+**Physics model:**
+
+```
+I_observed = Poisson(I_true / gain) × gain + Gaussian_temporal(0, σ_read²) + FPN(pixel)
+```
+
+```typescript
+// Enable physics-based detector noise
+postProcessing.setDetectorNoiseEnabled(
+  true, // enabled
+  0.01, // readoutSigma: Temporal readout noise (0-0.1)
+  0.01, // photonGain: Shot noise visibility (0.0001-0.1)
+  0.005 // fpnSigma: Fixed pattern noise (0-0.05)
+);
+
+// Update parameters dynamically
+postProcessing.updateDetectorNoiseSettings({
+  photonGain: 0.05, // Simulate low-light conditions
+  fpnSigma: 0.01, // Add more fixed pattern noise
+});
+```
+
 ---
 
 ## Anti-Aliasing Recommendations
@@ -264,7 +297,7 @@ HDR Render Target (HalfFloatType)
     ↓
 Dynamic Pass Assignment Algorithm:
 
-1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → Noise → ToneMapping → AA
+1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → Noise → DetectorNoise → ToneMapping → AA
 2. Add effects sequentially to Pass A until incompatibility detected
 3. When incompatibility found, switch to Pass B for that effect and ALL remaining effects
 4. Pass A (if exists) → Pass B (if exists) → Final Output
@@ -478,24 +511,24 @@ The rendering system has been migrated from a custom post-processing implementat
 
 ### PostProcessingManager
 
-| Method                                               | Description                     |
-| ---------------------------------------------------- | ------------------------------- |
-| `render()`                                           | Execute rendering pipeline      |
-| `updateBloomSettings(strength, radius, threshold)`   | Configure bloom                 |
-| `setToneMapping(type)`                               | Set tone mapping operator       |
-| `setNoiseEnabled(enabled, intensity, premul, blend)` | Configure noise effect          |
-| `updateNoiseSettings(intensity, premul, blend)`      | Update noise parameters         |
-| `setFXAAEnabled(enabled)`                            | Toggle FXAA                     |
-| `setSMAAEnabled(enabled)`                            | Toggle SMAA                     |
-| `setAOEnabled(enabled, quality)`                     | Configure ambient occlusion     |
-| `setDOF(enabled, focus, strength)`                   | Configure depth of field        |
-| `setVignetteEnabled(enabled, darkness, offset)`      | Configure vignette              |
-| `setChromaticAberration(enabled, strength)`          | Configure chromatic aberration  |
-| `setLensDistortionEnabled(enabled, ...params)`       | Configure lens distortion       |
-| `updateLensDistortion(params)`                       | Update lens distortion params   |
-| `needsContinuousAnimation()`                         | Check if effects need animation |
-| `resize(width, height)`                              | Update render size              |
-| `dispose()`                                          | Clean up resources              |
+| Method                                                    | Description                            |
+| --------------------------------------------------------- | -------------------------------------- |
+| `render()`                                                | Execute rendering pipeline             |
+| `updateBloomSettings(strength, radius, threshold)`        | Configure bloom                        |
+| `setToneMapping(type)`                                    | Set tone mapping operator              |
+| `setDetectorNoiseEnabled(enabled, sigma, gain, fpnSigma)` | Configure physics-based detector noise |
+| `updateDetectorNoiseSettings(params)`                     | Update detector noise parameters       |
+| `setFXAAEnabled(enabled)`                                 | Toggle FXAA                            |
+| `setSMAAEnabled(enabled)`                                 | Toggle SMAA                            |
+| `setAOEnabled(enabled, quality)`                          | Configure ambient occlusion            |
+| `setDOF(enabled, focus, strength)`                        | Configure depth of field               |
+| `setVignetteEnabled(enabled, darkness, offset)`           | Configure vignette                     |
+| `setChromaticAberration(enabled, strength)`               | Configure chromatic aberration         |
+| `setLensDistortionEnabled(enabled, ...params)`            | Configure lens distortion              |
+| `updateLensDistortion(params)`                            | Update lens distortion params          |
+| `needsContinuousAnimation()`                              | Check if effects need animation        |
+| `resize(width, height)`                                   | Update render size                     |
+| `dispose()`                                               | Clean up resources                     |
 
 ---
 
