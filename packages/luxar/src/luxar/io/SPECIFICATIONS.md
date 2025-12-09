@@ -89,8 +89,9 @@ Enable efficient lazy loading of nD point and splat data by:
 1. Sorting data by spatial locality (Morton order)
 2. Providing lightweight chunk-level bounding boxes for visibility queries
 
-**Supported Node Types**: Points, GSplats
-**Not Supported**: Lines (spatial indexing for lines requires a different approach - TBD)
+**Supported Node Types**: Points, Lines, GSplats
+
+**Note**: Lines use dual spatial indexing (vertices + segments) - see `core/SPECIFICATIONS.md` Section 6.5 for complete specification.
 
 ### Design Principles
 - **Compound ordering**: Discrete dimensions first, then Morton within each slice

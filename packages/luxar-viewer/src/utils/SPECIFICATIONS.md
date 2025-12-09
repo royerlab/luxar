@@ -188,9 +188,7 @@ restore(): void;
 **Solution**: Use `originalConsole` methods directly for console interceptor's own logging:
 
 ```typescript
-this.originalConsole.log(
-  '[🎬] [ConsoleInterceptor] Console interception started'
-);
+this.originalConsole.log('[🎬] [ConsoleInterceptor] Console interception started');
 ```
 
 ### 1.5 Usage
@@ -747,8 +745,7 @@ if ((navigator as any).deviceMemory) {
 
 ```typescript
 // Mobile detection
-const isMobile =
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
 return isMobile ? 256 : 1024; // MB
 ```

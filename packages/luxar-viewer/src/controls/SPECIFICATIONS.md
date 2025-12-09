@@ -388,8 +388,8 @@ function initializeArcballControls(): void {
   // IMPORTANT: Sync internal up vector states with camera's up vector
   // This prevents "jump" at start/end of dragging
   if (controls._up0 && controls._upState) {
-    controls._up0.copy(this.camera.up);      // Reset saved up vector
-    controls._upState.copy(this.camera.up);  // Reset current up state
+    controls._up0.copy(this.camera.up); // Reset saved up vector
+    controls._upState.copy(this.camera.up); // Reset current up state
   }
 
   // Update once to sync everything
@@ -405,6 +405,7 @@ function initializeArcballControls(): void {
 4. **With reset**: Clean slate, predictable behavior
 
 **Symptoms Without Fix**:
+
 - Camera "snaps" to unexpected orientation when entering arcball mode
 - First drag after mode switch feels wrong
 - View direction appears tilted
@@ -590,7 +591,7 @@ function update(delta: number): boolean {
 - **v1.1.0** (2025-12-09): Arcball mode switching fix
   - **ADDED**: Section 4.3 documenting critical up vector reset fix
   - Documents why camera.up.set(0,1,0) is required before arcball initialization
-  - Explains _up0 and _upState synchronization to prevent camera jumps
+  - Explains \_up0 and \_upState synchronization to prevent camera jumps
   - Documents disposal pattern (call reset() before dispose)
   - Implementation at controls-manager.ts:280-318
   - Fixes camera "snap" bug when entering arcball mode

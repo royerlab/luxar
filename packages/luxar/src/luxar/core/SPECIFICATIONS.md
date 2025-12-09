@@ -222,13 +222,18 @@ This handles the empty root path correctly: `"" + child` → `"child"`, not `"/c
 
 **Type-Specific Properties**:
 
-| Node Type | Required Arrays | Optional Arrays | Metadata Fields |
-|-----------|-----------------|-----------------|-----------------|
-| Points | positions (N, d), radii | colors, sharpness | n_points, ndim, has_colors, has_sharpness, max_radius |
-| Lines | vertices (N, d), widths | colors, sharpness, indices | n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width |
-| GSplats | centers (N, d), amplitudes, cholesky_factors | colors, sharpness | n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds |
+| Node Type | Required Arrays (user API) | Optional Arrays | Internal Arrays | Metadata Fields |
+|-----------|----------------------------|-----------------|-----------------|-----------------|
+| Points | positions (N, d), radii | colors, sharpness | - | n_points, ndim, has_colors, has_sharpness, max_radius |
+| Lines | vertices (V, d), widths | colors, sharpness, indices* | segments (S, 2) | n_vertices, n_segments, ndim, original_line_type, has_colors, has_sharpness, max_width |
+| GSplats | centers (N, d), amplitudes, cholesky_factors | colors, sharpness | - | n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds |
 
-*Note: All "Required Arrays" must be provided. "Optional Arrays" have defaults if not provided.*
+*indices required only for `line_type="indexed"` - other types generate connectivity automatically
+
+**Notes**:
+- **Required Arrays**: Must be provided by user via API
+- **Optional Arrays**: Have defaults if not provided
+- **Internal Arrays**: Generated during write, not provided by user (Lines only)
 
 **Constructor Order Invariant**:
 When subclass and parent both initialize the same attribute:
@@ -400,17 +405,29 @@ scene.add_points("global_markers", positions, extend_to_all="all")
 
 #### 6.1 Data Arrays
 
+**User-Provided Arrays** (via API):
+
 | Array | Shape | Dtype | Required | Description |
 |-------|-------|-------|----------|-------------|
 | vertices | (V, d) | float32 | Yes | Vertex positions in d dimensions |
-| segments | (S, 2) | uint32 | Yes | Vertex index pairs (internal representation) |
-| colors | (V, 3) or (1, 3) | float32/uint8 | No | Per-vertex RGB colors (interpolated along segments) |
 | widths | (V,) or (1,) | float32 | Yes | Per-vertex line thickness in scene units (interpolated along segments) |
+| colors | (V, 3) or (1, 3) | float32/uint8 | No | Per-vertex RGB colors (interpolated along segments) |
 | sharpness | (V,) or (1,) | float32 | No | Per-vertex edge softness (interpolated along segments) |
-| vertex_chunk_bounds | (num_v_chunks, d, 2) | float32 | Yes* | Bounding boxes for vertex chunks |
-| segment_chunk_bounds | (num_s_chunks, d, 2) | float32 | Yes* | Bounding boxes for segment chunks |
+| indices | (M*2,) | uint32 | Conditional* | Flat vertex index array (only for `line_type="indexed"`) |
 
-*Required when `ordering != "none"` (spatial indexing enabled)
+*For `indexed` type only; other types generate connectivity automatically
+
+**Stored Arrays** (in Zarr, generated internally):
+
+| Array | Shape | Dtype | Description |
+|-------|-------|-------|-------------|
+| vertices | (V, d) | float32 | Spatially ordered vertex positions |
+| segments | (S, 2) | uint32 | Spatially ordered index pairs (converted from line_type) |
+| widths | (V,) or (1,) | float32 | Ordered with vertices |
+| colors | (V, 3) or (1, 3) | float32/uint8 | Ordered with vertices (if provided) |
+| sharpness | (V,) or (1,) | float32 | Ordered with vertices (if provided) |
+| vertex_chunk_bounds | (num_v_chunks, d, 2) | float32 | Vertex chunk bounds (when ordering != "none") |
+| segment_chunk_bounds | (num_s_chunks, d, 2) | float32 | Segment chunk bounds (when ordering != "none") |
 
 **Understanding Vertices and Segments**:
 
@@ -530,14 +547,26 @@ Lines support spatial indexing through **dual ordering**: vertices and segments 
 
 **Key Insight**: Lines have two arrays that benefit from spatial ordering:
 1. **Vertices**: Ordered in D-dimensional space (same as Points)
-2. **Segments**: Ordered in **2D-dimensional space** (captures full segment geometry)
+2. **Segments**: Ordered in **(2×D)-dimensional space** (captures full segment geometry)
 
-**Why 2D for Segments?**
+**Notation**: "(2×D)-dimensional" means if vertices are D-dimensional, segments are treated as 2×D-dimensional (concatenating both endpoint coordinates).
 
-A segment connecting P1 → P2 is represented as the concatenation `(P1, P2)` in 2D space:
+**Ordering Method Flexibility**: The `ordering` metadata field specifies the ordering scheme used (e.g., "morton", "hilbert", or custom methods). The storage format is agnostic to the specific ordering algorithm:
+- **What matters**: That data is stored in some spatially coherent order
+- **What doesn't matter**: How that order was computed
+- **Extensibility**: New ordering schemes can be added without changing the format - just populate the standard metadata fields (`slice_dims`, `ordering_dims`, bounds, chunk_size) and use a new `ordering` value
+
+**Why (2×D)-dimensional for Segments?**
+
+A segment connecting P1 → P2 is represented as the concatenation `(P1, P2)`:
 ```
+3D Example:
 Segment: (x1, y1, z1) → (x2, y2, z2)
-Becomes: (x1, y1, z1, x2, y2, z2)  ← 6D point for 3D lines
+Becomes: (x1, y1, z1, x2, y2, z2)  ← 6D point (2×3)
+
+5D Example:
+Segment: 5D → 5D
+Becomes: 10D point (2×5)
 ```
 
 This captures the **full geometric nature** of the segment:
@@ -547,25 +576,30 @@ This captures the **full geometric nature** of the segment:
 
 **Why not midpoint ordering?** Midpoint loses orientation information:
 
-| Segment | Endpoints | Midpoint | 2D Representation |
-|---------|-----------|----------|-------------------|
+| Segment | Endpoints | Midpoint | (2×D) Representation |
+|---------|-----------|----------|----------------------|
 | A | (0,0,0)→(2,2,2) | (1,1,1) | (0,0,0,2,2,2) |
 | B | (0,2,0)→(2,0,2) | (1,1,1) | (0,2,0,2,0,2) |
 | C | (1,1,0)→(1,1,2) | (1,1,1) | (1,1,0,1,1,2) |
 
-All three have identical midpoints but very different 2D representations, enabling proper spatial clustering.
+All three have identical midpoints but very different (2×D) representations, enabling proper spatial clustering.
 
-##### 6.5.2 Ordering Algorithm
+##### 6.5.2 Ordering Algorithm (Reference Implementation)
+
+**Note**: This is a reference implementation for Morton/Hilbert ordering. Other ordering schemes are permitted as long as they produce spatially coherent orderings and store the appropriate metadata.
 
 ```python
 def order_lines_spatial(vertices, segments, dimensions, method="morton"):
-    """Apply dual spatial ordering to lines.
+    """Apply dual spatial ordering to lines using Morton or Hilbert curves.
+
+    This is a reference implementation. Alternative ordering schemes can be used
+    as long as they provide spatial coherence and populate the required metadata.
 
     Args:
         vertices: (V, D) float32 vertex positions
         segments: (S, 2) uint32 index pairs (from unified representation)
         dimensions: List of Dimension objects
-        method: "morton" or "hilbert"
+        method: Ordering method identifier (e.g., "morton", "hilbert", custom name)
 
     Returns:
         sorted_vertices, sorted_segments, vertex_sort_indices,
@@ -584,13 +618,16 @@ def order_lines_spatial(vertices, segments, dimensions, method="morton"):
     inverse_map = np.argsort(vertex_sort_indices)
     remapped_segments = inverse_map[segments]
 
-    # 3. Build 2D segment coordinates for ordering
+    # 3. Build (2×D) segment coordinates for ordering
     segment_coords_2d = np.concatenate([
         sorted_vertices[remapped_segments[:, 0]],  # Start points
         sorted_vertices[remapped_segments[:, 1]]   # End points
-    ], axis=1)  # Shape: (S, 2*D)
+    ], axis=1)  # Shape: (S, 2×D)
 
-    # 4. Order segments in 2D-space (with compound ordering)
+    # 4. Order segments in (2×D)-space (with compound ordering)
+    # Note: sort_segments_compound() applies same logic as sort_points_compound()
+    # but interprets dimensions in (2×D) space (see section 6.5.4)
+    # Implementation: luxar.io.ordering module (alongside sort_points_compound)
     segment_sort_indices, segment_metadata = sort_segments_compound(
         segment_coords_2d, dimensions, method=method
     )
@@ -602,20 +639,22 @@ def order_lines_spatial(vertices, segments, dimensions, method="morton"):
              "segment_ordering": segment_metadata})
 ```
 
-##### 6.5.3 Extended Morton Encoding (128-bit)
+##### 6.5.3 High-Dimensional Ordering (Morton Example)
 
-Standard 64-bit Morton codes have limited precision for high-dimensional segment data:
+**Note**: This section describes how to handle high-dimensional data with Morton encoding. Other ordering schemes may have their own precision/resolution considerations.
 
-| Dimensions | 64-bit (bits/dim) | 128-bit (bits/dim) |
-|------------|-------------------|---------------------|
-| 3D vertices | 21 bits (~2M) | 42 bits |
-| 6D segments (3D) | 10 bits (~1K) | 21 bits (~2M) |
-| 10D segments (5D) | 6 bits (~64) | 12 bits (~4K) |
-| 12D segments (6D) | 5 bits (~32) | 10 bits (~1K) |
+For Morton encoding specifically, standard 64-bit codes have limited precision for high-dimensional segment data:
 
-**Auto-Selection**: Use 128-bit Morton when `64 / n_dims < 10` bits per dimension.
+| Data Type | Dimensionality | 64-bit (bits/dim) | 128-bit (bits/dim) |
+|-----------|----------------|-------------------|---------------------|
+| 3D vertices | 3 | 21 bits (~2M) | 42 bits |
+| 3D segments | 6 (2×3) | 10 bits (~1K) | 21 bits (~2M) |
+| 5D segments | 10 (2×5) | 6 bits (~64) | 12 bits (~4K) |
+| 6D segments | 12 (2×6) | 5 bits (~32) | 10 bits (~1K) |
 
-**Implementation**: Morton codes are computed using Python arbitrary-precision integers or paired uint64. Only sort indices are needed - codes are not stored.
+**Auto-Selection (Morton)**: Use 128-bit Morton when `64 / n_dims < 10` bits per dimension.
+
+**Implementation Note**: Morton codes are computed using Python arbitrary-precision integers or paired uint64. Only sort indices are needed - codes themselves are not stored in the format.
 
 ```python
 def morton_encode_128bit(coords, bits_per_dim):
@@ -650,9 +689,9 @@ Secondary Sort: Morton/Hilbert code of spatial dimensions
 
 **For Vertices**: Same as Points - discrete dims first, then spatial Morton in D-space.
 
-**For Segments**: Discrete dimensions appear twice (from both endpoints) in the 2D space:
-- `slice_dims_2d`: Discrete dims from P1 and P2 concatenated
-- `ordering_dims_2d`: Spatial dims from P1 and P2 concatenated
+**For Segments**: Discrete dimensions appear twice (from both endpoints) in the (2×D) space:
+- `slice_dims`: Discrete dims from P1 and P2 concatenated (e.g., [3,4,8,9] for Time,Channel from both endpoints)
+- `ordering_dims`: Spatial dims from P1 and P2 concatenated (e.g., [0,1,2,5,6,7] for X,Y,Z from both endpoints)
 
 ##### 6.5.5 Dual Chunk Bounding Boxes
 
@@ -673,21 +712,35 @@ def compute_vertex_chunk_bounds(vertices, chunk_size):
 **segment_chunk_bounds**: `(num_segment_chunks, D, 2)` - Bounds for segment chunks, **including line width**
 ```python
 def compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None):
+    """Compute bounding boxes for segment chunks.
+
+    Args:
+        vertices: (V, D) sorted vertex positions
+        segments: (S, 2) sorted, remapped segment indices
+        widths: (V,) sorted widths array (must be expanded if broadcast)
+        chunk_size: Segments per chunk
+        slice_dims: Discrete dimension indices
+
+    Note: widths must be a full (V,) array - broadcast widths should be
+    expanded to np.full(V, width_value) before calling this function.
+    """
+    V, D = vertices.shape
+    S = segments.shape[0]
     num_chunks = (S + chunk_size - 1) // chunk_size
     bounds = np.zeros((num_chunks, D, 2), dtype=np.float32)
     discrete_dims = set(slice_dims) if slice_dims else set()
 
     for i in range(num_chunks):
         chunk_segs = segments[i*chunk_size : (i+1)*chunk_size]
-        p1 = vertices[chunk_segs[:, 0]]
-        p2 = vertices[chunk_segs[:, 1]]
-        w1 = widths[chunk_segs[:, 0]]
-        w2 = widths[chunk_segs[:, 1]]
-        max_w = np.maximum(w1, w2)[:, np.newaxis]
+        p1 = vertices[chunk_segs[:, 0]]  # Start vertex positions
+        p2 = vertices[chunk_segs[:, 1]]  # End vertex positions
+        w1 = widths[chunk_segs[:, 0]]    # Start vertex widths
+        w2 = widths[chunk_segs[:, 1]]    # End vertex widths
+        max_w = np.maximum(w1, w2)[:, np.newaxis]  # Conservative bound
 
         for d in range(D):
             if d in discrete_dims:
-                # Discrete: no width expansion
+                # Discrete: no width expansion (categorical values)
                 bounds[i, d, 0] = min(p1[:, d].min(), p2[:, d].min()) - 0.5
                 bounds[i, d, 1] = max(p1[:, d].max(), p2[:, d].max()) + 0.5
             else:
@@ -742,6 +795,7 @@ function queryVisibleSegmentChunks(
 
 #### 6.6 Metadata
 
+**Core Metadata** (always present):
 ```python
 {
     "n_vertices": int,           # Number of vertices (V)
@@ -751,30 +805,44 @@ function queryVisibleSegmentChunks(
     "has_colors": bool,
     "has_sharpness": bool,
     "max_width": float,          # Maximum width (for rendering bounds)
+}
+```
 
-    # Spatial indexing metadata (when ordering != "none")
-    "ordering": str,             # "none", "morton", "hilbert"
-    "ordering_precision": int,   # 64 or 128 bits
+**Spatial Indexing Metadata** (when `ordering != "none"`):
+
+Lines use dual ordering (vertices + segments), so ordering metadata is nested under two sub-objects. The field structure matches Points ordering metadata for consistency.
+
+```python
+{
+    "ordering": str,             # "none", "morton", "hilbert", or custom ordering method
 
     "vertex_ordering": {
-        "slice_dims": [int, ...],      # Discrete dimension indices
-        "ordering_dims": [int, ...],   # Spatial dimension indices
-        "ordering_min": [float, ...],  # Min bounds for Morton normalization
-        "ordering_max": [float, ...],  # Max bounds for Morton normalization
-        "ordering_bits_per_dim": int,  # Bits per dimension
+        # Standard ordering metadata fields (same as Points):
+        "slice_dims": [int, ...],      # Discrete dimension indices (in D-space)
+        "ordering_dims": [int, ...],   # Spatial dimension indices (in D-space)
+        "ordering_min": [float, ...],  # Min bounds for normalization
+        "ordering_max": [float, ...],  # Max bounds for normalization
+        "ordering_bits_per_dim": int,  # Bits per dimension (implementation detail)
         "chunk_size": int              # Vertices per chunk
     },
 
     "segment_ordering": {
-        "slice_dims": [int, ...],      # Discrete dims in 2D space (0..2D-1)
-        "ordering_dims": [int, ...],   # Spatial dims in 2D space (0..2D-1)
-        "ordering_min": [float, ...],  # Min bounds (2D dimensions)
-        "ordering_max": [float, ...],  # Max bounds (2D dimensions)
-        "ordering_bits_per_dim": int,  # Bits per 2D dimension
+        # Standard ordering metadata fields (in (2×D)-space):
+        "slice_dims": [int, ...],      # Discrete dims in (2×D) space (indices: 0..2×D-1)
+        "ordering_dims": [int, ...],   # Spatial dims in (2×D) space (indices: 0..2×D-1)
+        "ordering_min": [float, ...],  # Min bounds in (2×D) space
+        "ordering_max": [float, ...],  # Max bounds in (2×D) space
+        "ordering_bits_per_dim": int,  # Bits per (2×D) dimension
         "chunk_size": int              # Segments per chunk
     }
 }
 ```
+
+**Notes**:
+- Field names match Points metadata for consistency (see Points section 5)
+- `ordering_bits_per_dim` is an implementation detail (Morton/Hilbert) - not required by the format
+- Custom ordering schemes can omit `ordering_bits_per_dim` or use it for their own purposes
+- The format only requires that data is stored in some spatially coherent order - the specific method is identified by the `ordering` string
 
 **Computed Metadata**:
 - `max_width`: `max(widths)` - maximum width value. For broadcast widths `(1,)`, this is that single value.
@@ -784,16 +852,16 @@ function queryVisibleSegmentChunks(
 
 ```
 /lines_name/
-  vertices/                  # (V, D) float32, Morton-ordered in D-space
-  segments/                  # (S, 2) uint32, Morton-ordered in 2D-space
+  vertices/                  # (V, D) float32, spatially ordered in D-space
+  segments/                  # (S, 2) uint32, spatially ordered in (2×D)-space (remapped indices)
   widths/                    # (V,) or (1,) float32, ordered with vertices
   colors/                    # (V, 3) float32/uint8, ordered with vertices (optional)
   sharpness/                 # (V,) float32, ordered with vertices (optional)
-  vertex_chunk_bounds        # (num_v_chunks, D, 2) float32
-  segment_chunk_bounds       # (num_s_chunks, D, 2) float32
+  vertex_chunk_bounds        # (num_v_chunks, D, 2) float32 (when ordering != "none")
+  segment_chunk_bounds       # (num_s_chunks, D, 2) float32 (when ordering != "none")
 ```
 
-**Zarr Attributes**:
+**Zarr Attributes Example** (5D data with Time and Channel as discrete dims):
 ```json
 {
   "type": "lines",
@@ -801,11 +869,12 @@ function queryVisibleSegmentChunks(
   "n_segments": 150000,
   "ndim": 5,
   "original_line_type": "polyline",
-  "ordering": "morton",
-  "ordering_precision": 128,
   "max_width": 0.5,
   "has_colors": true,
   "has_sharpness": false,
+
+  "ordering": "morton",
+
   "vertex_ordering": {
     "slice_dims": [3, 4],
     "ordering_dims": [0, 1, 2],
@@ -814,6 +883,7 @@ function queryVisibleSegmentChunks(
     "ordering_bits_per_dim": 21,
     "chunk_size": 2000
   },
+
   "segment_ordering": {
     "slice_dims": [3, 4, 8, 9],
     "ordering_dims": [0, 1, 2, 5, 6, 7],
@@ -824,6 +894,11 @@ function queryVisibleSegmentChunks(
   }
 }
 ```
+
+**Explanation**:
+- Vertices: 5D data → dims [3,4] are discrete (Time, Channel), [0,1,2] are spatial (X,Y,Z)
+- Segments: (2×5)=10D → dims [3,4,8,9] are discrete (Time₁, Channel₁, Time₂, Channel₂), [0,1,2,5,6,7] are spatial
+- `ordering_bits_per_dim`: Morton-specific detail (21 bits for 3D vertices, 10 bits for 10D segments)
 
 #### 6.8 Default Values
 
@@ -1382,7 +1457,7 @@ Data arrays are stored using the `luxar.encoding` infrastructure:
 | POSITIVE_SCALAR | radii, widths, amplitudes | [0, ∞) | Non-negative values |
 | BOUNDED_SCALAR | sharpness | [0, 31] | Edge sharpness (all node types) |
 | CHOLESKY | cholesky_factors | unbounded | Covariance decomposition |
-| INDEX | indices | [0, N) | Integer references (adaptive uint8/16/32) |
+| INDEX | segments (Lines), indices (user-provided) | [0, N) | Integer references (adaptive uint8/16/32) |
 
 **Two-Layer Validation Note**:
 The `POSITIVE_SCALAR` semantic type accepts values >= 0 at the encoding layer. However, the core layer applies stricter validation for specific arrays:
@@ -1450,7 +1525,7 @@ Each `write_*` method:
 **Metadata Type Aliases**:
 ```python
 PointsMetadata = Dict[str, Any]   # n_points, ndim, has_colors, has_sharpness, max_radius
-LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
+LinesMetadata = Dict[str, Any]    # n_vertices, n_segments, ndim, original_line_type, has_colors, has_sharpness, max_width, ordering (optional)
 GSplatsMetadata = Dict[str, Any]  # n_splats, ndim, has_colors, has_sharpness, ordering, amplitude_range, center_bounds
 ```
 
@@ -1489,7 +1564,7 @@ Points (extends DataNode)
 Lines (extends DataNode)
   └─ type: "lines"
   └─ n_elements: n_vertices
-  └─ metadata: n_vertices, n_segments, ndim, line_type, has_colors, has_sharpness, max_width
+  └─ metadata: n_vertices, n_segments, ndim, original_line_type, has_colors, has_sharpness, max_width, ordering (optional)
 
 GSplats (extends DataNode)
   └─ type: "gsplats"
@@ -1720,19 +1795,21 @@ This specification is sufficient to re-implement the core package in any languag
 
 - **v0.12.0** (2025-12-09): Lines spatial indexing via dual ordering
   - **MAJOR**: Lines now support spatial indexing for efficient lazy loading
+  - **Format flexibility**: Ordering method specified by `ordering` metadata field - supports Morton, Hilbert, or custom schemes
   - **Unified indexed representation**: All line types (segments, polyline, loop, indexed) converted internally to indexed pairs
-  - **Dual spatial ordering**: Vertices ordered in D-space, segments ordered in 2D-space
-  - **2D segment ordering**: Segments treated as 2D-dimensional points (concatenated endpoints) for proper geometric clustering
-  - **Extended Morton encoding**: 128-bit support for high-dimensional data (auto-selected when 64-bit gives <10 bits/dim)
+  - **Dual spatial ordering**: Vertices ordered in D-space, segments ordered in (2×D)-space
+  - **(2×D) segment ordering**: Segments treated as (2×D)-dimensional points (concatenated endpoints) for proper geometric clustering
+  - **Extended precision support**: 128-bit Morton encoding for high-dimensional data (implementation detail, not format requirement)
   - **Dual chunk bounds**: `vertex_chunk_bounds` and `segment_chunk_bounds` arrays for two-phase queries
   - **Width-aware bounds**: Segment chunk bounds include line width extent
   - **Compound ordering**: Discrete dimension support (time, channel) same as Points
   - Added `segments` array (S, 2) uint32 - internal indexed representation
   - Added `original_line_type` metadata - preserves user-specified type
-  - Added `ordering`, `ordering_precision`, `vertex_ordering`, `segment_ordering` metadata
+  - Added `ordering`, `vertex_ordering`, `segment_ordering` metadata (structure matches Points for consistency)
   - Changed `indices` from user-provided to internal `segments` array
   - Section restructured with subsections 6.1-6.11 for clarity
   - Viewer query algorithm specified (segment chunks → vertex chunks → render)
+  - Clarified: Format is agnostic to ordering algorithm - only sort order matters
 
 - **v0.11.1** (2025-12-03): Default radius for Points
   - Added default radius of `0.5` for Points when radii not provided
