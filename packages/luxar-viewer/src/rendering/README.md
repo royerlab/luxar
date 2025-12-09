@@ -102,6 +102,36 @@ materialManager.updateCameraParams(fov, resolution);
 materialManager.updateHDRMultiplier(16.0);
 ```
 
+#### Material Lifecycle and Memory Management
+
+**Automatic Disposal**: Materials are automatically registered with the MaterialManager when created and unregistered when disposed. This prevents memory leaks.
+
+```typescript
+// Materials are cached and reused automatically
+const material1 = materialManager.getPointMaterial({ opacity: 1.0 });
+const material2 = materialManager.getPointMaterial({ opacity: 1.0 }); // Returns same instance
+
+// When disposing geometry/points, material is automatically handled
+points.geometry.dispose(); // Frees GPU buffers
+// Material manager keeps material alive if other objects use it
+```
+
+**Global Updates**: When camera or HDR settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed.
+
+```typescript
+// Updates all materials in the scene automatically
+materialManager.updateCameraParams(newFov, newResolution);
+materialManager.updateHDRMultiplier(newIntensity);
+```
+
+**Memory Leak Prevention**: Always dispose geometries and points when done. The material system handles cleanup automatically.
+
+**Key Points**:
+- Materials are cached by properties (opacity, gamma, blending mode)
+- Global uniform updates affect all materials simultaneously
+- Disposal is automatic - no manual material cleanup needed
+- Thread-safe caching prevents duplicate material creation
+
 ---
 
 ## Effects Library

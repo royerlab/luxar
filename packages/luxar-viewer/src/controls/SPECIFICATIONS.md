@@ -1,7 +1,7 @@
 # luxar-viewer.controls - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-01-30
+**Version**: 1.1.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -369,6 +369,48 @@ function flyToOrbit() {
 - View direction preserved
 - Zoom level maintained (where applicable)
 
+### 4.3 Arcball Mode Switching - Critical Up Vector Fix
+
+**Problem**: ArcballControls modifies the camera's up vector during rotation. When switching TO arcball mode without resetting the up vector, the camera can "jump" or have incorrect orientation.
+
+**Critical Fix** (controls-manager.ts:280-295):
+
+```typescript
+function initializeArcballControls(): void {
+  // CRITICAL: Reset the camera's up vector to prevent jumps
+  // ArcballControls modifies the up vector during rotation
+  this.camera.up.set(0, 1, 0); // Reset to default (0, 1, 0)
+  this.camera.updateMatrixWorld();
+
+  // Initialize the control with current camera state
+  controls.setCamera(this.camera);
+
+  // IMPORTANT: Sync internal up vector states with camera's up vector
+  // This prevents "jump" at start/end of dragging
+  if (controls._up0 && controls._upState) {
+    controls._up0.copy(this.camera.up);      // Reset saved up vector
+    controls._upState.copy(this.camera.up);  // Reset current up state
+  }
+
+  // Update once to sync everything
+  controls.update();
+}
+```
+
+**Why This Matters**:
+
+1. **ArcballControls maintains internal up vector state** (`_up0`, `_upState`)
+2. **Previous control mode may have modified camera.up**
+3. **Without reset**: Arcball inherits wrong up vector → camera jumps
+4. **With reset**: Clean slate, predictable behavior
+
+**Symptoms Without Fix**:
+- Camera "snaps" to unexpected orientation when entering arcball mode
+- First drag after mode switch feels wrong
+- View direction appears tilted
+
+**Disposal**: Before disposing arcball controls, call `reset()` to prevent lingering state issues (controls-manager.ts:309-311)
+
 ---
 
 ## 5. Input Management
@@ -544,6 +586,15 @@ function update(delta: number): boolean {
 ---
 
 ## Changelog
+
+- **v1.1.0** (2025-12-09): Arcball mode switching fix
+  - **ADDED**: Section 4.3 documenting critical up vector reset fix
+  - Documents why camera.up.set(0,1,0) is required before arcball initialization
+  - Explains _up0 and _upState synchronization to prevent camera jumps
+  - Documents disposal pattern (call reset() before dispose)
+  - Implementation at controls-manager.ts:280-318
+  - Fixes camera "snap" bug when entering arcball mode
+  - No functional changes - documentation only
 
 - **v1.0.0** (2025-01-30): Initial specification
   - Three control types: Orbit, Arcball, Fly
