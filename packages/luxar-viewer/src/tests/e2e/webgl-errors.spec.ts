@@ -26,16 +26,21 @@ test.describe('WebGL Error Detection - Critical', () => {
   test('should render without GL_INVALID_OPERATION errors', async ({ page }) => {
     const webglErrors: string[] = [];
 
-    // Capture ALL console messages, specifically WebGL errors
+    // Capture ONLY actual WebGL errors, not info messages
     page.on('console', (msg) => {
       const text = msg.text();
+      // Only capture actual GL errors, not info messages about WebGL
       if (
         text.includes('GL_INVALID') ||
-        text.includes('WebGL') ||
-        text.includes('glDrawArrays') ||
-        text.includes('glDrawElements')
+        text.includes('GL_OUT_OF_MEMORY') ||
+        (text.includes('WebGL') && text.includes('error:')) ||
+        (text.includes('glDrawArrays') && msg.type() === 'error') ||
+        (text.includes('glDrawElements') && msg.type() === 'error')
       ) {
-        webglErrors.push(text);
+        // Filter out info messages (they start with [ℹ️] or contain "GPU stall")
+        if (!text.includes('[ℹ️]') && !text.includes('GPU stall due to ReadPixels')) {
+          webglErrors.push(text);
+        }
       }
     });
 

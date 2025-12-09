@@ -20,10 +20,15 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
 
 /**
  * Get current Luxar state
+ * Now includes safety check for debug interface availability
  */
 export async function getLuxarState(page: Page): Promise<any> {
   return await page.evaluate(() => {
-    return (window as any).__luxarDebug.getState();
+    const debug = (window as any).__luxarDebug;
+    if (!debug || typeof debug.getState !== 'function') {
+      throw new Error('Debug interface not ready: getState() not available');
+    }
+    return debug.getState();
   });
 }
 
@@ -40,6 +45,7 @@ export async function renderOnce(page: Page): Promise<void> {
 
 /**
  * Wait for points to be loaded
+ * Now includes debug interface readiness check
  */
 export async function waitForPointsLoaded(
   page: Page,
@@ -49,10 +55,15 @@ export async function waitForPointsLoaded(
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
-    const state = await getLuxarState(page);
+    try {
+      const state = await getLuxarState(page);
 
-    if (state.totalPoints >= minPoints) {
-      return;
+      if (state && state.totalPoints >= minPoints) {
+        return;
+      }
+    } catch (e) {
+      // Debug interface not ready yet, continue waiting
+      // This can happen during initialization
     }
 
     await page.waitForTimeout(500);
