@@ -138,10 +138,11 @@ renderingControls: {
     ssaaEnabled: false,
     toneMapping: 'ACES',
     dofEnabled: false,          // Depth of field
-    noiseEnabled: false,        // Film grain/TV static
-    noiseIntensity: 0.05,
-    noisePremultiply: false,
-    noiseBlendMode: 'SCREEN',
+    // Detector noise (physics-based: Poisson + Gaussian + FPN)
+    detectorNoiseEnabled: false,
+    detectorNoiseReadoutSigma: 0.01,  // Temporal readout noise
+    detectorNoisePhotonGain: 0.01,    // Shot noise visibility
+    detectorNoiseFpnSigma: 0.005,     // Fixed pattern noise
     vignetteEnabled: false,
     aoEnabled: false,           // Ambient occlusion
     controlType: 'orbit',       // vs 'arcball' or 'fly'

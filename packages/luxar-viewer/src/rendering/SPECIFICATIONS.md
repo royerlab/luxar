@@ -1,6 +1,6 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.0.1
+**Version**: 1.1.0
 **Last Updated**: 2025-12-08
 
 ## Purpose
@@ -88,7 +88,7 @@ function buildEffectPasses(enabledEffects: Effect[]): Pass[] {
     vignette,
     chromaticAberration,
     lensDistortion,
-    noise,
+    detectorNoise,
     toneMapping,
     aa,
   ].filter((e) => e && e.enabled);
@@ -392,18 +392,82 @@ const dofEffect = new DepthOfFieldEffect(camera, {
 });
 ```
 
-### 4.4 Noise Effect
+### 4.4 Detector Noise Effect (Physics-Based)
 
-**Purpose**: Add film grain or TV static aesthetic.
+**Purpose**: Simulate realistic camera/detector noise for scientific imaging aesthetics.
+
+**Physics Model**: Combined shot noise (Poisson) + readout noise (Gaussian, temporal) + fixed pattern noise (Gaussian, static)
+
+```
+I_observed = Poisson(I_true / gain) × gain + Gaussian_temporal(0, σ_read²) + FPN(pixel)
+```
+
+**Three Noise Components**:
+
+1. **Shot Noise (Poisson)**: Signal-dependent noise from photon statistics
+2. **Readout Noise (Gaussian, temporal)**: Signal-independent electronic noise, varies per frame
+3. **Fixed Pattern Noise (Gaussian, static)**: Per-pixel offset from detector non-uniformities (dark current, gain variations)
+
+**Algorithm Components**:
+
+1. **Bob Jenkins Hash**: Fast deterministic PRNG from pixel position + time
+2. **Clamped Logistic Distribution**: Efficient Gaussian approximation (faster than Box-Muller)
+3. **Anscombe Transform**: Variance-stabilizing for Poisson approximation
+
+**Implementation**:
 
 ```typescript
-const noiseEffect = new NoiseEffect({
-  premultiply: false, // Film grain mode vs TV static
-  blendFunction: BlendFunction.SCREEN, // Additive blending
+const detectorNoiseEffect = new DetectorNoiseEffect({
+  readoutSigma: 0.01, // Temporal readout noise sigma (0-0.1)
+  photonGain: 0.01, // Controls shot noise visibility (0.0001-0.1)
+  fpnSigma: 0.005, // Fixed pattern noise sigma (0-0.05)
 });
-
-noiseEffect.blendMode.opacity.value = 0.05; // Subtle grain
 ```
+
+**Mathematical Details**:
+
+**Clamped Logistic** (Gaussian approximation):
+
+```glsl
+// Faster than Box-Muller (no sqrt, no trig)
+float clampedLogistic(float u) {
+  float f = clamp(u, 0.0001, 0.9999);
+  return clamp(log(f / (1.0 - f)), -4.0, 4.0) * 0.5513;
+}
+```
+
+**Anscombe Transform** (Poisson→Gaussian):
+
+```glsl
+// Forward: Y = 2 × sqrt(X + 3/8) → ~N(2√λ, 1)
+float anscombeForward(float x) { return 2.0 * sqrt(x + 0.375); }
+
+// Inverse: X = (Y/2)² - 3/8
+float anscombeInverse(float y) { return (y * 0.5)² - 0.375; }
+```
+
+**Fixed Pattern Noise** (static per-pixel):
+
+```glsl
+// Uses only UV coordinates (no time), so pattern is constant across frames
+vec3 normal3_fixed(vec2 seed) {
+  return vec3(
+    clampedLogistic(rngfloat2(seed)),
+    clampedLogistic(rngfloat2(seed + vec2(13.37, 7.31))),
+    clampedLogistic(rngfloat2(seed + vec2(31.17, 41.23)))
+  );
+}
+```
+
+**Use Cases**:
+
+| Scenario                | readoutSigma | photonGain | fpnSigma |
+| ----------------------- | ------------ | ---------- | -------- |
+| Bright field microscopy | 0.005        | 0.001      | 0.002    |
+| Low-light fluorescence  | 0.01         | 0.05       | 0.005    |
+| Single-molecule imaging | 0.02         | 0.1        | 0.01     |
+| Old/uncooled detector   | 0.05         | 0.01       | 0.03     |
+| Cinematic film look     | 0.015        | 0.008      | 0.003    |
 
 ---
 
@@ -608,18 +672,18 @@ interface PostProcessingConfig {
 }
 ```
 
-
 ### 5.3 Material Lifecycle & Memory Management
 
 **Memory Leak Prevention**: Disposed materials MUST be unregistered from MaterialManager to prevent accumulation in global update lists.
 
 **Problem Without Unregistration**:
+
 ```typescript
 // Long-running app creates and disposes many materials
 for (let i = 0; i < 1000; i++) {
   const material = materialManager.getPointMaterial(config);
   // ... use material ...
-  material.dispose();  // WITHOUT unregister()
+  material.dispose(); // WITHOUT unregister()
   // Material remains in MaterialManager.registeredMaterials Set
   // updateCameraParams() still iterates over disposed materials
 }
@@ -627,11 +691,12 @@ for (let i = 0; i < 1000; i++) {
 ```
 
 **Solution**:
+
 ```typescript
 // MaterialManager.unregister() method
 unregister(material: THREE.Material): void {
   this.registeredMaterials.delete(material);
-  
+
   // Also remove from cache if it's a point material
   if (material instanceof PointMaterial) {
     for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
@@ -647,13 +712,14 @@ unregister(material: THREE.Material): void {
 dispose(): void {
   // Unregister from material manager to prevent memory leaks
   materialManager.unregister(this);
-  
+
   // Call parent dispose to free GPU resources
   super.dispose();
 }
 ```
 
 **When to Unregister**:
+
 - Material.dispose() called (automatic via override)
 - Scene cleared (dispose all objects)
 - Dataset switched (remove old materials)
@@ -663,6 +729,25 @@ dispose(): void {
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-08): DetectorNoiseEffect simplified and enhanced
+  - Added Fixed Pattern Noise (FPN) - static per-pixel offset from detector non-uniformities
+  - Removed `intensity` parameter (not physics-based, was just a blend factor)
+  - Removed `animated` parameter (real detector noise always has temporal components)
+  - Retired old `NoiseEffect` (pmndrs film grain) in favor of physics-based model
+  - Three-component physics model: Shot (Poisson) + Readout (Gaussian temporal) + FPN (Gaussian static)
+  - New API: `setDetectorNoiseEnabled(enabled, readoutSigma?, photonGain?, fpnSigma?)`
+  - New config properties: `detectorNoiseReadoutSigma`, `detectorNoisePhotonGain`, `detectorNoiseFpnSigma`
+  - See: `detector-noise-effect.ts`, `post-processing-manager.ts`
+
+- **v1.1.0** (2025-12-08): Physics-based detector noise effect
+  - Added `DetectorNoiseEffect` class for realistic camera/detector noise simulation
+  - Implements combined Poisson (shot noise) + Gaussian (readout noise) model
+  - Uses Bob Jenkins hash for fast deterministic PRNG
+  - Uses clamped logistic distribution for efficient Gaussian approximation
+  - Uses Anscombe transform for Poisson approximation
+  - Integrated into PostProcessingManager via `setDetectorNoiseEnabled()`
+  - See: `detector-noise-effect.ts`, `post-processing-manager.ts`
 
 - **v1.0.1** (2025-12-08): Material lifecycle improvements
   - Added `MaterialManager.unregister()` method to remove materials from global update lists

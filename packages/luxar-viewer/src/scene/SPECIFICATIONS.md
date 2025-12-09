@@ -525,8 +525,6 @@ document.addEventListener('fullscreenchange', () => {
 
 ---
 
-
-
 ---
 
 ## 7. WebGL Context Loss Handling
@@ -536,6 +534,7 @@ document.addEventListener('fullscreenchange', () => {
 Handle WebGL context loss and restoration gracefully to prevent application crashes when GPU resets occur.
 
 **Common Causes of Context Loss**:
+
 - GPU driver crashes or resets
 - System sleep/hibernate
 - Too many WebGL contexts (browser limit)
@@ -560,8 +559,10 @@ class SceneManager {
       event.preventDefault(); // CRITICAL: Required to allow restoration
       this.isContextLost = true;
 
-      log.error(Modules.SCENE_MANAGER, 
-        'WebGL context lost! GPU driver issue, system sleep, or memory pressure.');
+      log.error(
+        Modules.SCENE_MANAGER,
+        'WebGL context lost! GPU driver issue, system sleep, or memory pressure.'
+      );
 
       showError('Graphics context lost - attempting to restore...');
     };
@@ -620,6 +621,7 @@ sceneManager.render();
 ### 7.4 Resource Recreation
 
 **What Needs Recreation**:
+
 - WebGL internal state (renderer.resetState())
 - Render targets (post-processing buffers)
 - Shaders and programs (automatic on first use)
@@ -628,6 +630,7 @@ sceneManager.render();
 
 **Automatic Recreation**:
 THREE.js handles most recreation automatically when rendering after context restoration. The key is:
+
 1. Call `event.preventDefault()` in contextlost handler
 2. Call `renderer.resetState()` after restoration
 3. Trigger a render to force resource recreation
@@ -649,6 +652,7 @@ catch (error) {
 ```
 
 **User Experience**:
+
 - Immediate feedback on context loss ("Graphics context lost...")
 - Progress indication during restoration
 - Success confirmation or error guidance
@@ -678,7 +682,6 @@ dispose(): void {
 ---
 
 ## 6. Dimension Coordination
-
 
 ### 6.1 Scene Dimensions Manager
 

@@ -324,11 +324,11 @@ export const config: AppConfig = {
       vignetteEnabled: false, // Vignette disabled by default
       vignetteDarkness: 0.5, // Vignette darkness (0-1)
       vignetteOffset: 0.5, // Vignette offset from center (0-1)
-      // Noise effect settings
-      noiseEnabled: false, // Noise disabled by default
-      noiseIntensity: 0.05, // Subtle noise intensity (0-1)
-      noisePremultiply: false, // False for TV static, true for film grain
-      noiseBlendMode: 'SCREEN' as const, // Screen blend mode works well for most cases
+      // Detector noise effect settings (physics-based: Poisson + Gaussian + FPN)
+      detectorNoiseEnabled: false, // Detector noise disabled by default
+      detectorNoiseReadoutSigma: 0.01, // Temporal readout noise sigma (0-0.1)
+      detectorNoisePhotonGain: 0.01, // Photon gain for shot noise visibility (0.0001-0.1)
+      detectorNoiseFpnSigma: 0.005, // Fixed pattern noise sigma (0-0.05)
       // Lens distortion effect settings
       lensDistortionEnabled: false, // Lens distortion disabled by default
       lensDistortionX: -0.04, // Radial distortion coefficient X (subtle barrel distortion)
