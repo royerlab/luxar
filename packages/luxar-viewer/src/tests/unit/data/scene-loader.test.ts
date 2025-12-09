@@ -528,10 +528,22 @@ describe('SceneLoader', () => {
     it('should accept column-major matrices (correct for THREE.js)', () => {
       // Column-major: translation at indices [12, 13, 14]
       const columnMajorTransform = [
-        1, 0, 0, 0, // Column 0: right vector
-        0, 1, 0, 0, // Column 1: up vector
-        0, 0, 1, 0, // Column 2: forward vector
-        10, 20, 30, 1, // Column 3: translation + w
+        1,
+        0,
+        0,
+        0, // Column 0: right vector
+        0,
+        1,
+        0,
+        0, // Column 1: up vector
+        0,
+        0,
+        1,
+        0, // Column 2: forward vector
+        10,
+        20,
+        30,
+        1, // Column 3: translation + w
       ];
 
       const isValid = (sceneLoader as any).validateTransformFormat(columnMajorTransform);
@@ -543,10 +555,22 @@ describe('SceneLoader', () => {
 
       // Row-major: translation at indices [3, 7, 11] (WRONG for THREE.js)
       const rowMajorTransform = [
-        1, 0, 0, 10, // Row 0: right + tx
-        0, 1, 0, 20, // Row 1: up + ty
-        0, 0, 1, 30, // Row 2: forward + tz
-        0, 0, 0, 1, // Row 3: homogeneous
+        1,
+        0,
+        0,
+        10, // Row 0: right + tx
+        0,
+        1,
+        0,
+        20, // Row 1: up + ty
+        0,
+        0,
+        1,
+        30, // Row 2: forward + tz
+        0,
+        0,
+        0,
+        1, // Row 3: homogeneous
       ];
 
       const isValid = (sceneLoader as any).validateTransformFormat(rowMajorTransform);
@@ -561,10 +585,22 @@ describe('SceneLoader', () => {
 
       // Suspicious transform: non-zero at row-major positions [3, 7, 11], zero at column-major [12, 13, 14]
       const suspiciousTransform = [
-        1, 0, 0, 5, // Translation at [3] (row-major)
-        0, 1, 0, 10, // Translation at [7] (row-major)
-        0, 0, 1, 15, // Translation at [11] (row-major)
-        0, 0, 0, 1, // [12, 13, 14] are zero (column-major)
+        1,
+        0,
+        0,
+        5, // Translation at [3] (row-major)
+        0,
+        1,
+        0,
+        10, // Translation at [7] (row-major)
+        0,
+        0,
+        1,
+        15, // Translation at [11] (row-major)
+        0,
+        0,
+        0,
+        1, // [12, 13, 14] are zero (column-major)
       ];
 
       const isValid = (sceneLoader as any).validateTransformFormat(suspiciousTransform);
@@ -1017,9 +1053,7 @@ describe('SceneLoader', () => {
       const consoleSpy = vi.spyOn(console, 'warn');
 
       // Should not throw, just log warning
-      await expect(
-        sceneLoader.loadScene('http://localhost:8000/test.zarr')
-      ).resolves.toBeDefined();
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Invalid scene_dimensions format')
@@ -1078,9 +1112,7 @@ describe('SceneLoader', () => {
         (sceneLoader as any).validatePointsData(emptyData);
       }).not.toThrow();
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Empty dataset detected')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Empty dataset detected'));
     });
 
     it('should detect malformed positions (not multiple of 3)', () => {
@@ -1117,9 +1149,7 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Colors length mismatch')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Colors length mismatch'));
     });
 
     it('should detect radii length mismatch', () => {
@@ -1139,9 +1169,7 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Radii length mismatch')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Radii length mismatch'));
     });
 
     it('should detect sharpness length mismatch', () => {
@@ -1161,9 +1189,7 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Sharpness length mismatch')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Sharpness length mismatch'));
     });
 
     it('should validate correct data without warnings', () => {
@@ -1246,9 +1272,7 @@ describe('SceneLoader', () => {
         (sceneLoader as any).validateColorMode(colors, metadata);
       }).not.toThrow();
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Uint16Array')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Uint16Array'));
     });
   });
 });

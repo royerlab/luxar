@@ -537,12 +537,14 @@ class SceneManager {
 ```
 
 **Benefits**:
+
 - **Coalescing**: Multiple resize events in one frame → single GPU reallocation
 - **Smooth UX**: No stuttering during window drag
 - **Resource Efficiency**: Prevents memory thrashing
 - **Frame-Synchronized**: Resizes happen on frame boundaries
 
 **Performance Impact**:
+
 - Without debouncing: 60+ buffer reallocations/sec during drag
 - With debouncing: 1 buffer reallocation/frame (~60/sec max, typically much less)
 - Memory savings: Prevents temporary buffer duplication

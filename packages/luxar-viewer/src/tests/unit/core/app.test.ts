@@ -53,11 +53,7 @@ import { AnimationController } from '../../../scene/animation-controller';
 import { InputHandler } from '../../../input/input-handler';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import {
-  cleanupUI as mockCleanupUI,
-  clearError as mockClearError,
-} from '../../../ui/helpers';
-import { sceneDimsManager } from '../../../scene/scene-dims-manager';
+import { cleanupUI as mockCleanupUI, clearError as mockClearError } from '../../../ui/helpers';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
@@ -204,9 +200,7 @@ describe('LuxarApp', () => {
 
       await app.init('http://example.com/data.zarr');
 
-      expect(callOrder.indexOf('startAnimation')).toBeLessThan(
-        callOrder.indexOf('loadSceneData')
-      );
+      expect(callOrder.indexOf('startAnimation')).toBeLessThan(callOrder.indexOf('loadSceneData'));
     });
 
     it('should set isInitialized to true after successful init', async () => {
@@ -220,10 +214,7 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init('http://example.com/data.zarr');
 
-      expect(mockAddEventListener).toHaveBeenCalledWith(
-        'beforeunload',
-        expect.any(Function)
-      );
+      expect(mockAddEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
     });
 
     it('should setup focus handling', async () => {
@@ -231,10 +222,7 @@ describe('LuxarApp', () => {
       await app.init('http://example.com/data.zarr');
 
       expect(mockAddEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
-      expect(mockAddEventListener).toHaveBeenCalledWith(
-        'visibilitychange',
-        expect.any(Function)
-      );
+      expect(mockAddEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     });
   });
 
@@ -264,13 +252,10 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init('http://example.com/data.zarr');
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://example.com/data.zarr/.zgroup',
-        { method: 'HEAD' }
-      );
-      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
-        'http://example.com/data.zarr'
-      );
+      expect(mockFetch).toHaveBeenCalledWith('http://example.com/data.zarr/.zgroup', {
+        method: 'HEAD',
+      });
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith('http://example.com/data.zarr');
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
 
@@ -310,15 +295,11 @@ describe('LuxarApp', () => {
     });
 
     it('should connect input handler to rendering controls', () => {
-      expect(mockInputHandler.setRenderingControls).toHaveBeenCalledWith(
-        mockRenderingControls
-      );
+      expect(mockInputHandler.setRenderingControls).toHaveBeenCalledWith(mockRenderingControls);
     });
 
     it('should set scene ID before loading data', () => {
-      expect(mockRenderingControls.setSceneId).toHaveBeenCalledWith(
-        'http://example.com/data.zarr'
-      );
+      expect(mockRenderingControls.setSceneId).toHaveBeenCalledWith('http://example.com/data.zarr');
     });
 
     it('should provide access to components via getter', () => {
@@ -462,10 +443,7 @@ describe('LuxarApp', () => {
     it('should remove beforeunload listener', () => {
       app.cleanup();
 
-      expect(mockRemoveEventListener).toHaveBeenCalledWith(
-        'beforeunload',
-        expect.any(Function)
-      );
+      expect(mockRemoveEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
     });
 
     it('should set isInitialized to false', () => {
@@ -508,9 +486,7 @@ describe('LuxarApp', () => {
 
       app.cleanup();
 
-      expect(disposeOrder.indexOf('scene')).toBeGreaterThan(
-        disposeOrder.indexOf('animation')
-      );
+      expect(disposeOrder.indexOf('scene')).toBeGreaterThan(disposeOrder.indexOf('animation'));
     });
   });
 
@@ -525,19 +501,14 @@ describe('LuxarApp', () => {
     });
 
     it('should register visibilitychange listener', () => {
-      expect(mockAddEventListener).toHaveBeenCalledWith(
-        'visibilitychange',
-        expect.any(Function)
-      );
+      expect(mockAddEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     });
 
     it('should trigger render on window focus', async () => {
       mockAnimationController.startAnimation.mockClear();
 
       // Find the focus handler
-      const focusHandler = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'focus'
-      )?.[1];
+      const focusHandler = mockAddEventListener.mock.calls.find((call) => call[0] === 'focus')?.[1];
 
       expect(focusHandler).toBeDefined();
       focusHandler?.();
@@ -620,11 +591,14 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
 
       // Mock URLSearchParams
-      vi.stubGlobal('URLSearchParams', class {
-        has(key: string) {
-          return key === 'debug';
+      vi.stubGlobal(
+        'URLSearchParams',
+        class {
+          has(key: string) {
+            return key === 'debug';
+          }
         }
-      });
+      );
 
       await app.init('http://example.com/data.zarr');
 

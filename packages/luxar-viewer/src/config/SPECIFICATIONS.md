@@ -79,6 +79,7 @@ export interface AppConfig {
 ## 2. Camera Configuration
 
 ### 2.1 Purpose
+
 Controls 3D perspective, field of view, clipping planes, and professional lens presets including realistic lens distortion.
 
 ### 2.2 Structure
@@ -93,15 +94,18 @@ interface CameraConfig {
   fovMax: number;
   fovSensitivity: number;
   fovPresets: Record<string, number>;
-  lensDistortionPresets: Record<string, {
-    distortionX: number;
-    distortionY: number;
-    principalPointX: number;
-    principalPointY: number;
-    focalLengthX: number;
-    focalLengthY: number;
-    skew: number;
-  }>;
+  lensDistortionPresets: Record<
+    string,
+    {
+      distortionX: number;
+      distortionY: number;
+      principalPointX: number;
+      principalPointY: number;
+      focalLengthX: number;
+      focalLengthY: number;
+      skew: number;
+    }
+  >;
 }
 ```
 
@@ -151,10 +155,7 @@ camera.updateProjectionMatrix();
 
 // Apply matching lens distortion
 const distortion = config.camera.lensDistortionPresets['85mm Portrait'];
-lensDistortionPass.uniforms.distortion.value.set(
-  distortion.distortionX,
-  distortion.distortionY
-);
+lensDistortionPass.uniforms.distortion.value.set(distortion.distortionX, distortion.distortionY);
 ```
 
 ### 2.5 Validation Rules
@@ -170,6 +171,7 @@ lensDistortionPass.uniforms.distortion.value.set(
 ## 3. Controls Configuration
 
 ### 3.1 Purpose
+
 Defines behavior for fly and orbit control systems, including movement physics, damping, rotation, and zoom parameters.
 
 ### 3.2 Structure
@@ -225,6 +227,7 @@ interface ConfigRange {
 ### 3.3 Defaults
 
 **Fly Controls**:
+
 - **inertialMode.default**: `true` (smooth physics-based movement)
 - **movement.speed**: min: 0.5, max: 50.0, default: 5.0, step: 0.1
 - **movement.acceleration**: min: 0.1, max: 2.0, default: 0.5, step: 0.1
@@ -237,6 +240,7 @@ interface ConfigRange {
 - **physics.angularVelocityThreshold**: 1e-4 (rotation stop threshold)
 
 **Orbit Controls**:
+
 - **autoRotate.speed**: min: 0.1, max: 5.0, default: 0.25, step: 0.1
 - **zoom.minDistance**: 0.1
 - **zoom.maxDistance**: 1000
@@ -257,13 +261,7 @@ flyControls.inertialMode = config.controls.fly.inertialMode.default; // true
 
 // Create UI slider from config range
 const speedRange = config.controls.fly.movement.speed;
-createSlider(
-  'Movement Speed',
-  speedRange.min,
-  speedRange.max,
-  speedRange.default,
-  speedRange.step
-);
+createSlider('Movement Speed', speedRange.min, speedRange.max, speedRange.default, speedRange.step);
 ```
 
 ### 3.5 Validation Rules
@@ -278,6 +276,7 @@ createSlider(
 ## 4. Animation Configuration
 
 ### 4.1 Purpose
+
 Controls animation loop timing, idle behavior, and performance targets for power efficiency and smooth rendering.
 
 ### 4.2 Structure
@@ -333,6 +332,7 @@ class AnimationManager {
 ## 5. Scene Configuration
 
 ### 5.1 Purpose
+
 Defines 3D scene visual properties including background color and default camera framing behavior.
 
 ### 5.2 Structure
@@ -378,6 +378,7 @@ function fitCameraToBounds(bounds: Box3) {
 ## 6. Shader Configuration
 
 ### 6.1 Purpose
+
 Controls shader-specific rendering parameters for point rendering, including HDR intensity and alpha blending.
 
 ### 6.2 Structure
@@ -428,6 +429,7 @@ const pointsMaterial = new THREE.ShaderMaterial({
 ## 7. PostProcessing Configuration
 
 ### 7.1 Purpose
+
 Controls HDR rendering, tone mapping, and post-processing effects including bloom, depth of field, ambient occlusion, vignette, chromatic aberration, detector noise, and lens distortion.
 
 ### 7.2 Structure
@@ -487,36 +489,43 @@ outputPass.toneMapping = config.postProcessing.toneMapping.final.toneMapping;
 All effect settings are in `renderingControls.defaults` (section 13):
 
 **Bloom Effects**:
+
 - **bloomThreshold**: 0.01 (luminance threshold, lower = more bloom)
 - **bloomStrength**: 0.25 (intensity multiplier)
 - **bloomRadius**: 1.0 (blur spread)
 - **bloomLevels**: 8 (mipmap levels, 1-12)
 
 **Depth of Field**:
+
 - **dofEnabled**: false
 - **dofFocus**: 10 (focus distance)
 - **dofStrength**: 0.5 (blur strength, 0-1)
 
 **Ambient Occlusion**:
+
 - **aoEnabled**: false
 - **aoQuality**: 'medium' ('low' | 'medium' | 'high' | 'ultra')
 
 **Vignette**:
+
 - **vignetteEnabled**: false
 - **vignetteDarkness**: 0.5 (0-1)
 - **vignetteOffset**: 0.5 (distance from center, 0-1)
 
 **Chromatic Aberration**:
+
 - **chromaticAberrationEnabled**: false
 - **chromaticAberrationStrength**: 0.15
 
 **Detector Noise** (physics-based: Poisson + Gaussian + FPN):
+
 - **detectorNoiseEnabled**: false
 - **detectorNoiseReadoutSigma**: 0.01 (temporal readout noise, 0-0.1)
 - **detectorNoisePhotonGain**: 0.01 (shot noise visibility, 0.0001-0.1)
 - **detectorNoiseFpnSigma**: 0.005 (fixed pattern noise, 0-0.05)
 
 **Lens Distortion**:
+
 - **lensDistortionEnabled**: false
 - **lensDistortionX**: -0.04 (radial distortion X, barrel < 0, pincushion > 0)
 - **lensDistortionY**: -0.04 (radial distortion Y)
@@ -527,6 +536,7 @@ All effect settings are in `renderingControls.defaults` (section 13):
 - **lensSkew**: 0 (skew in radians)
 
 **Lens Distortion Presets** (from `camera.lensDistortionPresets`):
+
 - `'28mm Wide'`: Barrel distortion (-0.07, -0.07)
 - `'35mm'`: Moderate barrel (-0.05, -0.05)
 - `'50mm Normal'`: No distortion (0, 0)
@@ -549,6 +559,7 @@ All effect settings are in `renderingControls.defaults` (section 13):
 ## 8. UI Configuration
 
 ### 8.1 Purpose
+
 Controls all UI styling, layout, z-index layers, timings, component configurations, and the debug console. Provides a unified design system for consistent styling.
 
 ### 8.2 Structure
@@ -583,6 +594,7 @@ interface UIConfig {
 ### 8.3 Defaults
 
 **Z-Index Layers** (semantic layering):
+
 - **Base layer** (100-199):
   - dimensionSliders: 100
   - performanceMonitor: 100
@@ -597,26 +609,31 @@ interface UIConfig {
   - statsMonitor: 2000
 
 **Timings**:
+
 - **errorAutoDismissMs**: 10000 (10s)
 - **helpClickDelayMs**: 100 (prevent accidental close)
 
 **Spinner**:
+
 - **size**: 24 pixels
 - **borderWidth**: 3 pixels
 
 **Styles** (unified design system):
+
 - **Colors**: Semantic colors (success, warning, error, info), text colors, backgrounds, cache visualization
 - **Typography**: Font families, sizes (title, body, small, tiny), line heights
 - **Spacing**: Panel, section, and element spacing with semantic names
 - **Effects**: Backdrop blur, box shadows, border radius, transitions
 
 **Debug Console**:
+
 - **panel**: defaultWidth: 600, defaultHeight: 400, min/max bounds, offsets
 - **interceptor.maxBufferSize**: 10000 messages
 - **resize.borderWidth**: 4 pixels
 - **style**: backgroundColor, borderColor, borderRadius, backdropBlur, boxShadow
 
 **Components** (per-component configs):
+
 - **datasetBrowser**: zIndex, borderRadius, padding
 - **debugConsole**: zIndex, borderRadius
 - **renderingControls**: borderRadius
@@ -670,6 +687,7 @@ debugConsole.setSize(
 ## 9. Input Configuration
 
 ### 9.1 Purpose
+
 Defines keyboard shortcuts, mouse behavior, fly mode keys, and dimension navigation keys for user interaction.
 
 ### 9.2 Structure
@@ -703,9 +721,11 @@ interface InputConfig {
 ### 9.3 Defaults
 
 **Sensitivity**:
+
 - **defaultSensitivity**: 0.1
 
 **Keyboard Shortcuts**:
+
 - **toggleFullscreen**: ' ' (space)
 - **toggleHelp**: 'h'
 - **toggleDimensions**: 'n'
@@ -723,6 +743,7 @@ interface InputConfig {
 **Dimension Keys**: `['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9']`
 
 **Mouse**:
+
 - **doubleClickDelay**: 300ms
 
 ### 9.4 Usage Example
@@ -779,6 +800,7 @@ canvas.addEventListener('click', (e) => {
 ## 10. Data Loading Configuration
 
 ### 10.1 Purpose
+
 Controls spatial query parameters, network behavior, memory management, and performance monitoring for efficient data streaming.
 
 ### 10.2 Structure
@@ -814,15 +836,18 @@ interface DataLoadingConfig {
 ### 10.3 Defaults
 
 **Spatial**:
+
 - **defaultTolerance**: 0.1 (nD slicing tolerance)
 - **defaultMaxRadius**: 0.1 (spatial query max radius)
 
 **Network**:
+
 - **timeoutMs**: 30000 (30s)
 - **maxConcurrent**: 6 (parallel chunk requests)
 - **retryAttempts**: 3
 
 **Memory**:
+
 - **targetHeapUsage**: 0.8 (80% of available heap)
 - **minCacheMB**: 128
 - **checkIntervalMs**: 10000 (10s)
@@ -830,6 +855,7 @@ interface DataLoadingConfig {
 - **adjustmentThresholds.high**: 0.7 (70%)
 
 **Monitor Timings**:
+
 - **eventCleanupInterval**: 30000ms
 - **maxEventAge**: 300000ms (5 min)
 - **ratesCacheTimeout**: 1000ms
@@ -841,6 +867,7 @@ interface DataLoadingConfig {
 - **maxQueryAge**: 60000ms (1 min)
 
 **Monitor Thresholds**:
+
 - **lowCacheHitRate**: 30%
 - **highQueryTime**: 100ms
 - **highLoadTime**: 500ms
@@ -849,6 +876,7 @@ interface DataLoadingConfig {
 - **lowQueryEfficiency**: 0.5 (50%)
 
 **Monitor Limits**:
+
 - **maxEvents**: 1000
 - **maxTimelinePoints**: 300
 - **maxAdvisorHistory**: 100
@@ -905,6 +933,7 @@ setInterval(() => {
 ## 11. WebGL Configuration
 
 ### 11.1 Purpose
+
 Controls WebGL context creation, renderer settings, render target configuration, and performance profiles for optimal GPU utilization.
 
 ### 11.2 Structure
@@ -925,6 +954,7 @@ interface WebGLConfig {
 ### 11.3 Defaults
 
 **Context** (WebGL2 context attributes):
+
 - **alpha**: false (no transparency in canvas)
 - **antialias**: true (smoother edges)
 - **depth**: true (enable depth buffer)
@@ -937,6 +967,7 @@ interface WebGLConfig {
 - **failIfMajorPerformanceCaveat**: false (don't fail on slow GPUs)
 
 **Renderer** (THREE.WebGLRenderer settings):
+
 - **antialias**: true
 - **powerPreference**: 'high-performance'
 - **preserveDrawingBuffer**: false
@@ -947,11 +978,13 @@ interface WebGLConfig {
 - **shadowMap.type**: `THREE.PCFSoftShadowMap`
 
 **RenderTarget**:
+
 - **depthBuffer**: true (needed for depth testing)
 - **stencilBuffer**: false (saves memory)
 - **samples**: 0 (MSAA disabled for additive blending compatibility)
 
 **Performance Profiles**:
+
 - **quality**: high-performance, antialias: true, precision: 'highp'
 - **balanced**: default, antialias: true, precision: 'mediump'
 - **performance**: low-power, antialias: false, precision: 'lowp'
@@ -1004,6 +1037,7 @@ if (isMobileDevice()) {
 ## 12. Cache Configuration
 
 ### 12.1 Purpose
+
 Controls OPFS-based zarr caching with two-tier architecture: L1 memory cache and L2 persistent OPFS cache for efficient data reuse.
 
 ### 12.2 Structure
@@ -1043,7 +1077,7 @@ let data = await cache.get(cacheKey);
 
 if (!data) {
   // Cache miss - fetch from network
-  data = await fetch(`${dataUrl}/${chunkPath}`).then(r => r.arrayBuffer());
+  data = await fetch(`${dataUrl}/${chunkPath}`).then((r) => r.arrayBuffer());
   await cache.set(cacheKey, data);
 }
 
@@ -1061,6 +1095,7 @@ return data;
 ## 13. Rendering Controls Configuration
 
 ### 13.1 Purpose
+
 Provides user-adjustable rendering settings with defaults for camera, bloom, anti-aliasing, tone mapping, post-processing effects, and navigation controls. Single source of truth for all visual settings.
 
 ### 13.2 Structure
@@ -1137,12 +1172,14 @@ interface RenderingSettings {
 ### 13.3 Defaults
 
 **Camera**:
+
 - **fov**: 47 (50mm Normal)
 - **fovPreset**: '50mm Normal'
 - **near**: 0.1
 - **far**: 1000
 
 **Bloom** (single source of truth):
+
 - **bloomThreshold**: 0.01
 - **bloomStrength**: 0.25
 - **bloomRadius**: 1.0
@@ -1150,6 +1187,7 @@ interface RenderingSettings {
 - **hdrMultiplier**: 16.0
 
 **Anti-aliasing**:
+
 - **fxaaEnabled**: false
 - **msaaEnabled**: false (incompatible with additive blending)
 - **msaaSamples**: 4
@@ -1160,33 +1198,40 @@ interface RenderingSettings {
 - **ssaaMultiplier**: 2.0
 
 **Tone Mapping**:
+
 - **toneMapping**: 'ACES' (cinematic look)
 
 **Depth of Field**:
+
 - **dofEnabled**: false
 - **dofFocus**: 10
 - **dofStrength**: 0.5
 
 **Chromatic Aberration**:
+
 - **chromaticAberrationEnabled**: false
 - **chromaticAberrationStrength**: 0.15
 
 **Ambient Occlusion**:
+
 - **aoEnabled**: false
 - **aoQuality**: 'medium'
 
 **Vignette**:
+
 - **vignetteEnabled**: false
 - **vignetteDarkness**: 0.5
 - **vignetteOffset**: 0.5
 
 **Detector Noise**:
+
 - **detectorNoiseEnabled**: false
 - **detectorNoiseReadoutSigma**: 0.01
 - **detectorNoisePhotonGain**: 0.01
 - **detectorNoiseFpnSigma**: 0.005
 
 **Lens Distortion**:
+
 - **lensDistortionEnabled**: false
 - **lensDistortionX**: -0.04
 - **lensDistortionY**: -0.04
@@ -1197,6 +1242,7 @@ interface RenderingSettings {
 - **lensSkew**: 0
 
 **Navigation**:
+
 - **controlType**: 'orbit'
 - **autoRotate**: false
 - **autoRotateSpeed**: 0.25
@@ -1281,11 +1327,13 @@ if (!isValid) {
 ```
 
 **Validation Functions**:
+
 - `validateConfig(config)`: Returns `ValidationResult` with errors and warnings
 - `validateAndLog(config)`: Validates and logs results automatically
 - `logValidationResults(result)`: Pretty-prints validation results
 
 **What Gets Validated**:
+
 - Camera: FOV bounds, near/far planes, sensitivity ranges
 - Rendering: HDR multiplier, alpha ranges, bloom settings
 - Controls: Damping ranges, speed limits, thresholds
