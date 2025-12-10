@@ -132,10 +132,24 @@ export class SceneLoader {
     const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
     const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
-    // Initialize scene dimensions
+    // Initialize scene dimensions - CRITICAL for extend_to_all feature
     if (sceneAttrs?.scene_dimensions) {
       this.initializeSceneDimensions(sceneAttrs.scene_dimensions);
       this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
+
+      // Log dimension initialization status for debugging
+      if (this.viewState.dimensions?.metadata) {
+        log.success(
+          Modules.SCENE_LOADER,
+          `Scene dimensions initialized: ${this.viewState.dimensions.metadata.length} dimensions, ` +
+            `displayed=[${this.viewState.displayDims.join(', ')}]`
+        );
+      }
+    } else {
+      log.warning(
+        Modules.SCENE_LOADER,
+        'No scene_dimensions found in scene metadata. extend_to_all features will not work.'
+      );
     }
 
     // Store scene-level position bounds (from Python compiler)
