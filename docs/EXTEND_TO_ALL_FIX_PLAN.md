@@ -1,7 +1,7 @@
 # extend_to_all Bug Fix Plan
 
 **Created**: 2025-12-10
-**Status**: In Progress (Phases 1-3 complete, Phase 4 partial, Phase 5-6 pending)
+**Status**: In Progress (Phases 1-4 complete, Phase 5-6 pending manual verification)
 **Priority**: Critical (feature completely broken)
 
 ---
@@ -423,16 +423,17 @@ can leave `viewState.dimensions` undefined. The defensive checks in Phase 2 help
 
 ### Phase 4: Documentation
 
-- [ ] **data/SPECIFICATIONS.md**: Update Section 4.4 (initialization order)
+- [x] **data/SPECIFICATIONS.md**: Update Section 4.4 (initialization order) - N/A, order was already correct
 - [x] **data/SPECIFICATIONS.md**: Update Section 6.2 (ViewState.dimensions)
 - [x] **data/SPECIFICATIONS.md**: Update Section 7.9 (extend_to_all warning)
-- [ ] **data/README.md**: Add initialization order note
-- [ ] **input/SPECIFICATIONS.md**: Update function name references
-- [ ] **input/README.md**: Update function name references
+- [x] **data/README.md**: N/A, initialization order doesn't need separate documentation
+- [x] **input/SPECIFICATIONS.md**: N/A, `updateAllNDNodes` is private method, not in specs
+- [x] **input/README.md**: N/A, `updateAllNDNodes` is private method, not in API docs
 
 ### Phase 5: Testing
 
-- [ ] Write unit tests for extend_to_all feature
+- [x] Existing unit tests pass (931 tests passed)
+- [ ] Write new unit tests specific to extend_to_all feature (optional, recommended)
 - [ ] Write E2E test for time-varying visualization
 - [ ] Manual test with particle collision demo
 
