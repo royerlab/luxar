@@ -17,13 +17,13 @@ import {
   SMAAPreset,
   FXAAEffect,
   ChromaticAberrationEffect,
-  VignetteEffect,
   SSAOEffect,
   LensDistortionEffect,
   KernelSize,
   BlendFunction,
 } from 'postprocessing';
 import { DetectorNoiseEffect, isDetectorNoiseEffect } from './detector-noise-effect';
+import { RobustVignetteEffect, isRobustVignetteEffect } from './robust-vignette-effect';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -32,14 +32,12 @@ import {
   ToneMappingEffectTyped,
   DepthOfFieldEffectTyped,
   ChromaticAberrationEffectTyped,
-  VignetteEffectTyped,
   LensDistortionEffectTyped,
   PerspectiveDepthMapper,
   isBloomEffectTyped,
   isToneMappingEffectTyped,
   isDepthOfFieldEffectTyped,
   isChromaticAberrationEffectTyped,
-  isVignetteEffectTyped,
   isLensDistortionEffectTyped,
 } from './postprocessing-types';
 
@@ -60,7 +58,7 @@ export class PostProcessingManager {
   private smaaEffect?: SMAAEffect;
   private fxaaEffect?: FXAAEffect;
   private aoEffect?: SSAOEffect;
-  private vignetteEffect?: VignetteEffectTyped;
+  private vignetteEffect?: RobustVignetteEffect;
   private chromaticEffect?: ChromaticAberrationEffectTyped;
   private detectorNoiseEffect?: DetectorNoiseEffect;
   private lensDistortionEffect?: LensDistortionEffectTyped;
@@ -207,6 +205,20 @@ export class PostProcessingManager {
   endDeferRebuild(): void {
     this.deferRebuild = false;
     this.rebuildEffectPass();
+  }
+
+  /**
+   * Safely dispose an effect, handling any errors
+   * Effects from pmndrs/postprocessing have a dispose() method to free GPU resources
+   */
+  private safeDisposeEffect(effect: any, effectName: string): void {
+    if (effect && typeof effect.dispose === 'function') {
+      try {
+        effect.dispose();
+      } catch (error) {
+        log.warning(Modules.POST_PROCESSING, `Error disposing ${effectName}: ${error}`);
+      }
+    }
   }
 
   /**
@@ -539,6 +551,7 @@ export class PostProcessingManager {
           `strength=${strength}, focalLength=${focalLength.toFixed(3)}`
       );
     } else if (!enabled && this.dofEffect) {
+      this.safeDisposeEffect(this.dofEffect, 'DOF');
       this.dofEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'DOF disabled');
@@ -599,6 +612,7 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, `Chromatic aberration enabled: strength=${strength}`);
     } else if (!enabled && this.chromaticEffect) {
+      this.safeDisposeEffect(this.chromaticEffect, 'ChromaticAberration');
       this.chromaticEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Chromatic aberration disabled');
@@ -656,6 +670,7 @@ export class PostProcessingManager {
         `Detector noise enabled: readout=${readoutSigma ?? 0.01}, gain=${photonGain ?? 0.01}, fpn=${fpnSigma ?? 0.005}`
       );
     } else if (!enabled && this.detectorNoiseEffect) {
+      this.safeDisposeEffect(this.detectorNoiseEffect, 'DetectorNoise');
       this.detectorNoiseEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Detector noise disabled');
@@ -710,18 +725,21 @@ export class PostProcessingManager {
    */
   setVignetteEnabled(enabled: boolean, darkness?: number, offset?: number): void {
     if (enabled && !this.vignetteEffect) {
-      this.vignetteEffect = new VignetteEffect({
+      // Use RobustVignetteEffect - identical to pmndrs VignetteEffect but handles HDR overflow
+      // This prevents NaN artifacts when Infinity × 0 occurs at vignette edges
+      this.vignetteEffect = new RobustVignetteEffect({
         darkness: darkness ?? 0.5,
         offset: offset ?? 0.5,
-      }) as VignetteEffectTyped;
+      });
       this.rebuildEffectPass();
-      log.info(Modules.POST_PROCESSING, `Vignette enabled: darkness=${darkness}, offset=${offset}`);
+      log.success(Modules.POST_PROCESSING, `RobustVignetteEffect created (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`);
     } else if (!enabled && this.vignetteEffect) {
+      this.safeDisposeEffect(this.vignetteEffect, 'Vignette');
       this.vignetteEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Vignette disabled');
     } else if (this.vignetteEffect) {
-      if (!isVignetteEffectTyped(this.vignetteEffect)) {
+      if (!isRobustVignetteEffect(this.vignetteEffect)) {
         log.error(Modules.POST_PROCESSING, 'Invalid vignette effect type');
         return;
       }
@@ -762,6 +780,7 @@ export class PostProcessingManager {
           `focalLength=(${focalLengthX}, ${focalLengthY}), skew=${skew}`
       );
     } else if (!enabled && this.lensDistortionEffect) {
+      this.safeDisposeEffect(this.lensDistortionEffect, 'LensDistortion');
       this.lensDistortionEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Lens distortion disabled');
@@ -873,6 +892,7 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, `Ambient occlusion enabled: quality=${quality}`);
     } else if (!enabled && this.aoEffect) {
+      this.safeDisposeEffect(this.aoEffect, 'AmbientOcclusion');
       this.aoEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Ambient occlusion disabled');
@@ -1121,7 +1141,7 @@ export class PostProcessingManager {
           }
           : null,
       vignette:
-        this.vignetteEffect && isVignetteEffectTyped(this.vignetteEffect)
+        this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
           ? {
             darkness: this.vignetteEffect.darkness,
             offset: this.vignetteEffect.offset,
@@ -1134,6 +1154,14 @@ export class PostProcessingManager {
             principalPoint: this.lensDistortionEffect.principalPoint.clone(),
             focalLength: this.lensDistortionEffect.focalLength.clone(),
             skew: this.lensDistortionEffect.skew,
+          }
+          : null,
+      detectorNoise:
+        this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
+          ? {
+            readoutSigma: this.detectorNoiseEffect.readoutSigma,
+            photonGain: this.detectorNoiseEffect.photonGain,
+            fpnSigma: this.detectorNoiseEffect.fpnSigma,
           }
           : null,
       // Save AA states
@@ -1234,6 +1262,36 @@ export class PostProcessingManager {
       this.lensDistortionEffect.principalPoint = savedEffects.lensDistortion.principalPoint.clone();
       this.lensDistortionEffect.focalLength = savedEffects.lensDistortion.focalLength.clone();
       this.lensDistortionEffect.skew = savedEffects.lensDistortion.skew;
+    }
+
+    // Restore vignette settings if they were saved
+    if (
+      savedEffects.vignette &&
+      this.vignetteEffect &&
+      isRobustVignetteEffect(this.vignetteEffect)
+    ) {
+      this.vignetteEffect.darkness = savedEffects.vignette.darkness;
+      this.vignetteEffect.offset = savedEffects.vignette.offset;
+    }
+
+    // Restore chromatic aberration settings if they were saved
+    if (
+      savedEffects.chromatic &&
+      this.chromaticEffect &&
+      isChromaticAberrationEffectTyped(this.chromaticEffect)
+    ) {
+      this.chromaticEffect.offset = savedEffects.chromatic.offset.clone();
+    }
+
+    // Restore detector noise settings if they were saved
+    if (
+      savedEffects.detectorNoise &&
+      this.detectorNoiseEffect &&
+      isDetectorNoiseEffect(this.detectorNoiseEffect)
+    ) {
+      this.detectorNoiseEffect.readoutSigma = savedEffects.detectorNoise.readoutSigma;
+      this.detectorNoiseEffect.photonGain = savedEffects.detectorNoise.photonGain;
+      this.detectorNoiseEffect.fpnSigma = savedEffects.detectorNoise.fpnSigma;
     }
 
     // Rebuild effect pass (this will recreate the effect chain)
