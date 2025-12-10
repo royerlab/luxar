@@ -1,7 +1,7 @@
 # extend_to_all Bug Fix Plan
 
 **Created**: 2025-12-10
-**Status**: Planning
+**Status**: In Progress (Phases 1-3 complete, Phase 4 partial, Phase 5-6 pending)
 **Priority**: Critical (feature completely broken)
 
 ---
@@ -401,26 +401,31 @@ test('detector geometry remains visible across time frames', async ({ page }) =>
 
 ### Phase 1: Core Fix
 
-- [ ] **scene-loader.ts**: Parse dimensions BEFORE loading nodes
-  - [ ] Move dimension parsing to early in `loadScene()`
-  - [ ] Initialize `viewState.dimensions` before any node loading
-  - [ ] Ensure `loadPointsNode()` and `loadLinesNode()` receive populated dimensions
+- [x] **scene-loader.ts**: Parse dimensions BEFORE loading nodes
+  - [x] Verified dimension parsing already happens in `initializeSceneDimensions()` before `loadSceneNodes()`
+  - [x] Added success/warning logging for dimension initialization status
+  - [x] Confirmed `loadPointsNode()` and `loadLinesNode()` receive populated dimensions via `this.viewState`
+
+**Note**: Investigation revealed the initialization order was already correct. The issue is that
+`initializeSceneDimensions()` has early-return paths (invalid format, validation failure) that
+can leave `viewState.dimensions` undefined. The defensive checks in Phase 2 help identify these cases.
 
 ### Phase 2: Defensive Checks
 
-- [ ] **point-spatial-index-loader.ts**: Add warning when dimensions undefined
-- [ ] **lines-spatial-index-loader.ts**: Add warning when dimensions undefined
+- [x] **point-spatial-index-loader.ts**: Add warning when dimensions undefined
+- [x] **lines-spatial-index-loader.ts**: Add warning when dimensions undefined
 
 ### Phase 3: Code Cleanup
 
-- [ ] **input-handler.ts**: Rename `updateAllNDPoints` → `updateAllNDNodes`
-- [ ] Update all call sites within input-handler.ts
+- [x] **input-handler.ts**: Rename `updateAllNDPoints` → `updateAllNDNodes`
+- [x] Update all call sites within input-handler.ts
+- [x] Updated JSDoc to clarify function updates all nD node types
 
 ### Phase 4: Documentation
 
 - [ ] **data/SPECIFICATIONS.md**: Update Section 4.4 (initialization order)
-- [ ] **data/SPECIFICATIONS.md**: Update Section 6.2 (ViewState.dimensions)
-- [ ] **data/SPECIFICATIONS.md**: Update Section 7.9 (extend_to_all warning)
+- [x] **data/SPECIFICATIONS.md**: Update Section 6.2 (ViewState.dimensions)
+- [x] **data/SPECIFICATIONS.md**: Update Section 7.9 (extend_to_all warning)
 - [ ] **data/README.md**: Add initialization order note
 - [ ] **input/SPECIFICATIONS.md**: Update function name references
 - [ ] **input/README.md**: Update function name references
