@@ -61,7 +61,7 @@ export async function waitForPointsLoaded(
       if (state && state.totalPoints >= minPoints) {
         return;
       }
-    } catch (e) {
+    } catch {
       // Debug interface not ready yet, continue waiting
       // This can happen during initialization
     }

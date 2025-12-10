@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD points datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
+The Luxar Data package provides the critical data loading infrastructure for visualizing massive nD points and lines datasets. It handles Zarr store access, hierarchical scene loading, dimension metadata extraction, and intelligent slicing operations for multi-dimensional data navigation.
 
 ### Key Features
 
@@ -23,10 +23,12 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ```
 data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
-├── scene-loader.ts                # Orchestrates hierarchical scene loading
+├── scene-loader.ts                # Orchestrates hierarchical scene loading (points + lines)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
-├── chunk-spatial-index.ts         # Chunk-based spatial index queries
-├── point-spatial-index-loader.ts  # Loads data using chunk-based spatial queries
+├── chunk-spatial-index.ts         # Chunk-based spatial index queries (points)
+├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
+├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
+├── lines-chunk-spatial-index.ts   # Dual spatial index for lines (vertices + segments)
 ├── range-cache.ts                 # Intelligent caching for range-based queries
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
@@ -608,7 +610,8 @@ import type { SimpleDims } from '@luxar/player/types';
 // Load 5D dataset (x, y, z, time, channel)
 const scene = await loadScene('http://server.com/data/5d-points.zarr');
 
-// Dimensions are automatically extracted from zarr metadata
+// Dimensions are stored ONLY at scene level (single source of truth)
+// Individual nodes (Points, Lines, Splats) access dims via ViewState
 // Navigate through dimensions
 const dims: SimpleDims = {
   ndim: 5,

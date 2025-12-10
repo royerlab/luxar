@@ -1,6 +1,6 @@
 # luxar-viewer.config - Technical Specification
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Last Updated**: 2025-12-09
 
 ## Purpose
@@ -1111,6 +1111,9 @@ interface RenderingSettings {
   fovPreset: '28mm Wide' | '35mm' | '50mm Normal' | '85mm Portrait' | '135mm Tele' | 'Custom';
   near: number;
   far: number;
+  // Dynamic clipping planes
+  dynamicClippingEnabled: boolean;
+  clippingAdaptSpeed: number;
   // Bloom (single source of truth)
   bloomThreshold: number;
   bloomStrength: number;
@@ -1177,6 +1180,11 @@ interface RenderingSettings {
 - **fovPreset**: '50mm Normal'
 - **near**: 0.1
 - **far**: 1000
+
+**Dynamic Clipping Planes**:
+
+- **dynamicClippingEnabled**: true (auto-adjust clipping planes based on camera position)
+- **clippingAdaptSpeed**: 0.1 (exponential smoothing factor, range 0.01-0.5)
 
 **Bloom** (single source of truth):
 
@@ -1286,6 +1294,7 @@ function onBloomStrengthChange(value: number) {
 
 ### 13.5 Validation Rules
 
+- **clippingAdaptSpeed**: 0.01-0.5 (lower = smoother, higher = faster response)
 - **bloomThreshold**: 0-1
 - **bloomStrength**: Typical 0-2
 - **bloomRadius**: Typical 0-2
@@ -1356,6 +1365,13 @@ if (!isValid) {
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-09): Dynamic clipping planes configuration
+  - **ADDED**: `dynamicClippingEnabled` setting (default: true)
+  - **ADDED**: `clippingAdaptSpeed` setting (default: 0.1, range: 0.01-0.5)
+  - **UPDATED**: RenderingSettings interface with dynamic clipping fields
+  - **UPDATED**: Validation rules for clippingAdaptSpeed
+  - Enables smooth automatic clipping plane adjustment as camera moves
 
 - **v1.1.0** (2025-12-09): Complete specification with all 12 configuration sections
   - **NEW**: Animation configuration (idle timeout, FPS targets)

@@ -132,7 +132,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
           const positionsArray = await zarr.open(this.zarrLocation.resolve('positions'), {
             kind: 'array',
           });
-          // The shape is [num_points, 3] for 3D data
+          // The shape is [n_points, 3] for 3D data
           this.totalPointsNoIndex = positionsArray.shape[0];
 
           // For encoded arrays (like array_ref), shape may be [0, k] but original_shape has the real count
@@ -347,29 +347,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -451,7 +451,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         );
         // Return all points for extended dimensions
         const totalPoints =
-          this.node.attrs.num_points ||
+          this.node.attrs.n_points ||
           this.chunkIndex?.metadata.total_points ||
           this.totalPointsNoIndex ||
           0;
@@ -533,7 +533,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     } else {
       // No chunk index - load all points (fallback for 3D datasets without Morton ordering)
       const totalPoints: number = (this.node.attrs.n_points ||
-        this.node.attrs.num_points ||
         this.totalPointsNoIndex ||
         0) as number;
       ranges = [{ start: 0, end: totalPoints }];
@@ -1173,7 +1172,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       radii: finalRadii as ScalarArray | undefined,
       sharpness: sharpness as ScalarArray | undefined,
       metadata: {
-        totalPoints: this.node.attrs.num_points || totalPoints,
+        totalPoints: this.node.attrs.n_points || totalPoints,
         loadedPoints: numPoints,
         bounds,
         ndim,
@@ -1203,7 +1202,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     return {
       positions: new Float32Array(0) as PositionArray,
       metadata: {
-        totalPoints: this.node.attrs.num_points || 0,
+        totalPoints: this.node.attrs.n_points || 0,
         loadedPoints: 0,
         bounds: new THREE.Box3(),
         ndim: this.chunkIndex?.metadata.ndim || 3,

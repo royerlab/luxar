@@ -73,6 +73,7 @@ describe('LuxarApp', () => {
     mockSceneManager = {
       init: vi.fn().mockResolvedValue(undefined),
       loadSceneData: vi.fn().mockResolvedValue(undefined),
+      updateDynamicClippingPlanes: vi.fn(),
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
@@ -83,6 +84,7 @@ describe('LuxarApp', () => {
 
     mockAnimationController = {
       startAnimation: vi.fn(),
+      setPerFrameCallback: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };

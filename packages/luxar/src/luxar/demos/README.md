@@ -161,7 +161,7 @@ python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --stars=500000 --arm
 - Astronomical scales and proportions
 - Realistic astrophysical effects
 
-### demo_4d_fractals.py - 4D Geometric Fractal Explorer ⭐ NEW
+### demo_4d_fractals.py - 4D Geometric Fractal Explorer
 Interactive exploration of 6 different 4D geometric fractals with categorical dimension.
 
 **Run**:
@@ -182,6 +182,30 @@ python packages/luxar/src/luxar/demos/demo_4d_fractals.py --grid=64
 - Checkerboard and Diamond patterns
 - Instant generation with vectorized operations
 - nD slicing and visualization
+
+### demo_lsystem_forest.py - L-System Tree Forest (Lines Demo)
+Beautiful procedural forest using L-system grammars to showcase the **Lines** node type.
+
+**Run**:
+```bash
+python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
+# Or with custom iterations (more = more detail, exponentially larger):
+python packages/luxar/src/luxar/demos/demo_lsystem_forest.py --iterations=6 --trees=16
+```
+
+**Demonstrates**:
+- **Lines node type** with thousands of line segments
+- L-system grammar expansion and interpretation
+- Width tapering (thick trunk → thin twigs)
+- Color gradients (bark → foliage)
+- 3D branching in all directions
+- Multiple tree varieties (elegant, fractal, willow, bush, cherry)
+- Seasonal color schemes (autumn, spring, summer, winter, cherry)
+- Per-vertex attributes (width, color, sharpness)
+- 3D turtle graphics interpretation
+
+**Background**:
+L-systems (Lindenmayer systems) were invented by botanist Aristid Lindenmayer in 1968 to model plant development. A string is iteratively expanded using production rules, then interpreted as 3D turtle graphics. The recursive structure naturally creates realistic branching patterns.
 
 ## Demo Pattern
 
@@ -388,6 +412,7 @@ python packages/luxar/src/luxar/demos/demo_cubic_array.py
 python packages/luxar/src/luxar/demos/demo_mandelbulb.py
 python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
 python packages/luxar/src/luxar/demos/demo_4d_fractals.py
+python packages/luxar/src/luxar/demos/demo_lsystem_forest.py  # Lines demo!
 
 # Or since they're executable:
 ./packages/luxar/src/luxar/demos/demo_lorenz.py
@@ -397,6 +422,7 @@ python packages/luxar/src/luxar/demos/demo_4d_fractals.py
 ./packages/luxar/src/luxar/demos/demo_mandelbulb.py
 ./packages/luxar/src/luxar/demos/demo_spiral_galaxy.py
 ./packages/luxar/src/luxar/demos/demo_4d_fractals.py
+./packages/luxar/src/luxar/demos/demo_lsystem_forest.py  # Lines demo!
 ```
 
 ## Troubleshooting

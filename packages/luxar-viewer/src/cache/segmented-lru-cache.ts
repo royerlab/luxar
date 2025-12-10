@@ -80,6 +80,9 @@ export class SegmentedLRUCache {
       chunksSize: this.chunks.size,
       metadataCount: this.metadata.count,
       chunksCount: this.chunks.count,
+      hits: this.metadata.hitCount + this.chunks.hitCount,
+      misses: this.metadata.missCount + this.chunks.missCount,
+      evictions: this.metadata.evictionCount + this.chunks.evictionCount,
     };
   }
 }

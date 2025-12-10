@@ -300,4 +300,131 @@ describe('LRUCache', () => {
       expect(cache.count).toBeLessThanOrEqual(20); // 100 / 5
     });
   });
+
+  describe('Hit/Miss Counter Tracking', () => {
+    it('should track hits correctly', () => {
+      cache.set('key1', new Uint8Array([1, 2, 3]));
+
+      expect(cache.hitCount).toBe(0);
+      cache.get('key1'); // Hit
+      expect(cache.hitCount).toBe(1);
+      cache.get('key1'); // Hit
+      cache.get('key1'); // Hit
+      expect(cache.hitCount).toBe(3);
+    });
+
+    it('should track misses correctly', () => {
+      expect(cache.missCount).toBe(0);
+      cache.get('nonexistent'); // Miss
+      expect(cache.missCount).toBe(1);
+      cache.get('another'); // Miss
+      cache.get('missing'); // Miss
+      expect(cache.missCount).toBe(3);
+    });
+
+    it('should track both hits and misses independently', () => {
+      cache.set('key1', new Uint8Array([1]));
+
+      cache.get('key1'); // Hit
+      cache.get('nonexistent'); // Miss
+      cache.get('key1'); // Hit
+      cache.get('missing'); // Miss
+
+      expect(cache.hitCount).toBe(2);
+      expect(cache.missCount).toBe(2);
+    });
+
+    it('should reset counters on clear()', () => {
+      cache.set('key1', new Uint8Array([1]));
+      cache.get('key1'); // Hit
+      cache.get('missing'); // Miss
+
+      expect(cache.hitCount).toBe(1);
+      expect(cache.missCount).toBe(1);
+
+      cache.clear();
+
+      expect(cache.hitCount).toBe(0);
+      expect(cache.missCount).toBe(0);
+    });
+
+    it('should count hit when accessing existing key that was just set', () => {
+      cache.set('key1', new Uint8Array([1]));
+      expect(cache.hitCount).toBe(0); // Set doesn't count as hit
+
+      cache.get('key1');
+      expect(cache.hitCount).toBe(1);
+    });
+
+    it('should not count as miss when has() returns false', () => {
+      // has() doesn't increment counters
+      cache.has('nonexistent');
+      expect(cache.missCount).toBe(0);
+      expect(cache.hitCount).toBe(0);
+    });
+  });
+
+  describe('Eviction Counter Tracking', () => {
+    it('should track evictions correctly', () => {
+      expect(cache.evictionCount).toBe(0);
+
+      // Fill cache: 40 + 40 = 80 bytes
+      cache.set('key1', new Uint8Array(40));
+      cache.set('key2', new Uint8Array(40));
+      expect(cache.evictionCount).toBe(0);
+
+      // Add 40 more bytes - exceeds 100, must evict key1
+      cache.set('key3', new Uint8Array(40));
+      expect(cache.evictionCount).toBe(1);
+      expect(cache.has('key1')).toBe(false);
+    });
+
+    it('should count multiple evictions in single set()', () => {
+      // Add 3 items: 30 + 30 + 30 = 90 bytes
+      cache.set('key1', new Uint8Array(30));
+      cache.set('key2', new Uint8Array(30));
+      cache.set('key3', new Uint8Array(30));
+      expect(cache.evictionCount).toBe(0);
+
+      // Add 50 bytes - needs to evict key1 (30) AND key2 (30) = 2 evictions
+      cache.set('key4', new Uint8Array(50));
+      expect(cache.evictionCount).toBe(2);
+      expect(cache.has('key1')).toBe(false);
+      expect(cache.has('key2')).toBe(false);
+    });
+
+    it('should reset eviction counter on clear()', () => {
+      cache.set('key1', new Uint8Array(40));
+      cache.set('key2', new Uint8Array(40));
+      cache.set('key3', new Uint8Array(40)); // Evicts key1
+
+      expect(cache.evictionCount).toBe(1);
+
+      cache.clear();
+      expect(cache.evictionCount).toBe(0);
+    });
+
+    it('should accumulate evictions over multiple operations', () => {
+      // Each set evicts the previous item
+      cache.set('key1', new Uint8Array(100)); // Full
+      expect(cache.evictionCount).toBe(0);
+
+      cache.set('key2', new Uint8Array(100)); // Evicts key1
+      expect(cache.evictionCount).toBe(1);
+
+      cache.set('key3', new Uint8Array(100)); // Evicts key2
+      expect(cache.evictionCount).toBe(2);
+
+      cache.set('key4', new Uint8Array(100)); // Evicts key3
+      expect(cache.evictionCount).toBe(3);
+    });
+
+    it('should not count eviction when replacing same key', () => {
+      cache.set('key1', new Uint8Array(50));
+      cache.set('key1', new Uint8Array(60)); // Replace, not evict
+
+      expect(cache.evictionCount).toBe(0);
+      expect(cache.size).toBe(60);
+    });
+  });
 });

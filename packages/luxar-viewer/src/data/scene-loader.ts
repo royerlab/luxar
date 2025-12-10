@@ -9,15 +9,26 @@ import * as zarr from 'zarrita';
 import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
+import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
+import { computeLinesTolerance } from './lines-chunk-spatial-index';
 import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './data-loader-types';
+import type { SceneGraphNode } from '../ui/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { materialManager, BlendingMode } from '../rendering/material-manager';
+import { createInstancedLinesMesh, LineMaterial } from '../rendering/line-material';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher } from '../cache';
+import type {
+  LinesMetadata,
+  LinesDataLoader,
+  LinesUserData,
+  LoadedLinesData,
+} from '../types/lines';
+import { isLinesUserData } from '../types/lines';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -33,6 +44,7 @@ export class SceneLoader {
   private store: any | null = null;
   private cachingStore: TwoLevelCachingStore | null = null;
   private loaders = new Map<string, DataLoader>();
+  private linesLoaders = new Map<string, LinesDataLoader>();
   private viewState: ViewState;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
@@ -148,6 +160,15 @@ export class SceneLoader {
     if (this.monitorId) {
       const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
       if (monitor) {
+        // Connect cache stats provider for L1/L2 cache monitoring
+        if (this.cachingStore) {
+          monitor.setCacheStatsProvider(this.cachingStore);
+        }
+
+        // Send scene graph to monitor for display
+        const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
+        monitor.setSceneGraph(sceneGraphRoot);
+
         monitor.forceUpdate();
       }
     }
@@ -157,46 +178,68 @@ export class SceneLoader {
   }
 
   /**
-   * Update all points for a new view state
+   * Update all points and lines for a new view state
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     this.viewState = { ...this.viewState, ...viewState };
 
-    log.update(Modules.SCENE_LOADER, `Updating view for ${this.loaders.size} loaders`);
+    const totalLoaders = this.loaders.size + this.linesLoaders.size;
+    log.update(Modules.SCENE_LOADER, `Updating view for ${totalLoaders} loaders`);
 
-    // Update all loaders with new view state
-    const updates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
+    // Update points loaders
+    const pointsUpdates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
       try {
         const points = await loader.updateView(this.viewState);
-        // Always update geometry, even when empty (to clear old points)
         if (points) {
           this.updatePointsGeometry(path, points);
         }
-
-        // SUCCESS: Clear any previous failures for this loader
         this.failedLoaders.delete(path);
       } catch (error) {
-        // FAILURE: Track the error for this loader
         const errorInfo = this.failedLoaders.get(path);
         const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-
         this.failedLoaders.set(path, {
           error: error as Error,
           timestamp: Date.now(),
           retryCount,
         });
-
-        // Log error with retry count
         log.error(
           Modules.SCENE_LOADER,
           `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
         );
-
-        // Don't update geometry if load failed - prevents memory leak
       }
     });
 
-    await Promise.all(updates);
+    // Update lines loaders
+    const linesUpdates = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
+      try {
+        const linesViewState = {
+          displayDims: this.viewState.displayDims,
+          slicePosition: this.viewState.slicePosition,
+          tolerance: this.viewState.tolerance,
+          dimensions: this.viewState.dimensions?.metadata,
+        };
+
+        const data = await loader.updateView(linesViewState);
+        if (data) {
+          this.updateLinesGeometry(path, data, linesViewState);
+        }
+        this.failedLoaders.delete(path);
+      } catch (error) {
+        const errorInfo = this.failedLoaders.get(path);
+        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+        this.failedLoaders.set(path, {
+          error: error as Error,
+          timestamp: Date.now(),
+          retryCount,
+        });
+        log.error(
+          Modules.SCENE_LOADER,
+          `Failed to update lines ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+        );
+      }
+    });
+
+    await Promise.all([...pointsUpdates, ...linesUpdates]);
 
     // Warn user if any loaders failed
     if (this.failedLoaders.size > 0) {
@@ -208,6 +251,57 @@ export class SceneLoader {
       console.warn(
         `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
           'Check browser console for details. Data may be incomplete.'
+      );
+    }
+  }
+
+  /**
+   * Update lines geometry for a specific path
+   */
+  private updateLinesGeometry(
+    path: string,
+    data: LoadedLinesData,
+    viewState: { displayDims: number[]; slicePosition: number[]; dimensions?: any[] }
+  ): void {
+    if (!this.rootGroup) return;
+
+    const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
+    if (!mesh || !isLinesUserData(mesh.userData)) return;
+
+    // Build new instance buffers
+    const ndim = data.ndim;
+    const tolerance = viewState.dimensions
+      ? computeLinesTolerance(viewState.dimensions, viewState.displayDims)
+      : new Array(ndim).fill(0).map((_, i) => (viewState.displayDims.includes(i) ? 1e10 : 0));
+
+    const processed = buildInstanceBuffers(
+      data,
+      viewState.slicePosition,
+      tolerance,
+      viewState.displayDims
+    );
+
+    // Dispose old geometry
+    const oldGeometry = mesh.geometry;
+    if (oldGeometry) {
+      oldGeometry.dispose();
+    }
+
+    // Create new geometry with updated data
+    const newMesh = createInstancedLinesMesh(processed, mesh.material as LineMaterial);
+
+    // Copy geometry to existing mesh
+    mesh.geometry = newMesh.geometry;
+    mesh.count = processed.segmentCount;
+
+    // Clean up temporary mesh (but not its geometry, which is now on the original mesh)
+    newMesh.geometry = new THREE.BufferGeometry(); // Replace to avoid double disposal
+    newMesh.geometry.dispose();
+
+    if (data.segmentCount === 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing lines for ${path} (no visible segments at current slice)`
       );
     }
   }
@@ -290,6 +384,12 @@ export class SceneLoader {
       if (points) {
         parentThree.add(points);
       }
+    } else if (node.type === 'lines') {
+      // Load lines
+      const lines = await this.loadLines(node, parentLoc);
+      if (lines) {
+        parentThree.add(lines);
+      }
     } else if (node.children) {
       // Create group and recurse
       const group = new THREE.Group();
@@ -319,7 +419,7 @@ export class SceneLoader {
   ): Promise<THREE.Points | null> {
     log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
     log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
-    log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.num_points || 'unknown'}`);
+    log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
 
     // Create appropriate loader
     const loader = this.createLoader(node, loc);
@@ -388,6 +488,113 @@ export class SceneLoader {
       }
       return null;
     }
+  }
+
+  /**
+   * Load a single lines node
+   */
+  private async loadLines(
+    node: SceneNode,
+    loc: zarr.Location<zarr.Readable>
+  ): Promise<THREE.Mesh | null> {
+    log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
+
+    const attrs = node.attrs as unknown as LinesMetadata;
+    log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
+    log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
+
+    // Create lines loader
+    const loader = this.createLinesLoader(node, loc);
+
+    // Store loader for updates
+    this.linesLoaders.set(node.path, loader);
+
+    try {
+      // Load lines data
+      const linesViewState = {
+        displayDims: this.viewState.displayDims,
+        slicePosition: this.viewState.slicePosition,
+        tolerance: this.viewState.tolerance,
+        dimensions: this.viewState.dimensions?.metadata,
+      };
+
+      const data = await loader.loadLines(linesViewState);
+
+      if (data.segmentCount === 0) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `No initially visible segments for ${node.path} - object created for future updates`
+        );
+      }
+
+      // Build instance buffers with nD clipping
+      const tolerance = linesViewState.dimensions
+        ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
+        : new Array(attrs.ndim || 3)
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+
+      const processed = buildInstanceBuffers(
+        data,
+        linesViewState.slicePosition,
+        tolerance,
+        linesViewState.displayDims
+      );
+
+      // Create material
+      const material = materialManager.getLineMaterial({
+        opacity: attrs.opacity ?? 1.0,
+        blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
+      });
+
+      // Create instanced mesh
+      const mesh = createInstancedLinesMesh(processed, material);
+      mesh.name = node.path;
+
+      // Store user data for identification
+      mesh.userData = {
+        nodeType: 'lines',
+        loader,
+        attrs,
+        maxWidth: attrs.max_width ?? 1.0,
+      } as LinesUserData;
+
+      // Apply transform
+      if (attrs.transform) {
+        this.applyTransform(mesh, attrs.transform);
+      }
+
+      log.success(
+        Modules.SCENE_LOADER,
+        `Loaded ${processed.segmentCount} segments for ${node.path}`
+      );
+
+      return mesh;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error);
+      log.error(Modules.SCENE_LOADER, `Failed to load lines ${node.path}: ${errorMessage}`);
+      if (error instanceof Error && error.stack) {
+        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Create a lines loader for a node
+   */
+  private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+
+    log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
+    const loader = new LinesSpatialIndexLoader(nodeLoc, node, this.arrayRefRegistry, this.store!);
+
+    return loader;
   }
 
   /**
@@ -819,6 +1026,42 @@ export class SceneLoader {
   }
 
   /**
+   * Convert internal SceneNode to SceneGraphNode for monitor display
+   */
+  private convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
+    // Get display name from path
+    const name =
+      node.path === '/' ? 'Scene' : node.path.split('/').filter(Boolean).pop() || node.path;
+
+    // Determine node type for display
+    const type = node.type as 'scene' | 'group' | 'points' | 'lines' | 'mesh';
+
+    // Build the graph node
+    const graphNode: SceneGraphNode = {
+      path: node.path,
+      name,
+      type: type === 'scene' || !type ? 'scene' : type,
+      children: [],
+      hasSpatialIndex: node.hasSpatialIndex,
+    };
+
+    // Add type-specific stats
+    if (node.type === 'points') {
+      graphNode.pointCount = node.attrs.n_points;
+    } else if (node.type === 'lines') {
+      graphNode.segmentCount = node.attrs.n_segments as number | undefined;
+      graphNode.vertexCount = node.attrs.n_vertices as number | undefined;
+    }
+
+    // Convert children recursively
+    if (node.children) {
+      graphNode.children = node.children.map((child) => this.convertToSceneGraphNode(child));
+    }
+
+    return graphNode;
+  }
+
+  /**
    * Enumerate all groups and arrays in the store
    */
   private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
@@ -906,10 +1149,17 @@ export class SceneLoader {
    * Dispose of all resources
    */
   dispose(): void {
+    // Dispose points loaders
     for (const loader of this.loaders.values()) {
       loader.dispose();
     }
     this.loaders.clear();
+
+    // Dispose lines loaders
+    for (const loader of this.linesLoaders.values()) {
+      loader.dispose();
+    }
+    this.linesLoaders.clear();
 
     // Dispose caching store (flushes L2 metadata, clears L1)
     if (this.cachingStore) {

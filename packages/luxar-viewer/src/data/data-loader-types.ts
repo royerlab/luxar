@@ -143,7 +143,7 @@ export interface SceneNode {
     gamma?: number;
     blending_mode?: string;
     max_radius?: number;
-    num_points?: number;
+    n_points?: number;
 
     /** Dimensions to extend visibility across (points visible at all values) */
     extend_to_all?: string[];

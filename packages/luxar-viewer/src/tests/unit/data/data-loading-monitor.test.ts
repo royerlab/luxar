@@ -684,7 +684,7 @@ describe('DataLoadingMonitor', () => {
         expect.stringContaining('[DataLoadingMonitor] Disposal completed with errors:')
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to disconnect loader \'/failing\'')
+        expect.stringContaining("Failed to disconnect loader '/failing'")
       );
 
       // Verify that the normal loader was still cleaned up
@@ -783,6 +783,221 @@ describe('DataLoadingMonitor', () => {
       expect(consoleWarnSpy).toHaveBeenCalled();
 
       consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe('scene graph functionality', () => {
+    it('should set and get scene graph', () => {
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/points1',
+            name: 'points1',
+            type: 'points' as const,
+            pointCount: 1000,
+            children: [],
+          },
+          {
+            path: '/group1',
+            name: 'group1',
+            type: 'group' as const,
+            children: [
+              {
+                path: '/group1/points2',
+                name: 'points2',
+                type: 'points' as const,
+                pointCount: 500,
+                children: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+      const state = monitor.getSceneGraph();
+
+      expect(state.root).toBeDefined();
+      expect(state.root?.path).toBe('/');
+      expect(state.totalNodes).toBe(4); // Scene + points1 + group1 + points2
+      expect(state.pointsNodes).toBe(2); // points1 + points2
+      expect(state.totalPoints).toBe(1500); // 1000 + 500
+    });
+
+    it('should track expanded nodes', () => {
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [{ path: '/points', name: 'points', type: 'points' as const, children: [] }],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Root should be expanded by default
+      expect(monitor.isNodeExpanded('/')).toBe(true);
+
+      // Toggle expansion
+      monitor.toggleNodeExpansion('/');
+      expect(monitor.isNodeExpanded('/')).toBe(false);
+
+      monitor.toggleNodeExpansion('/');
+      expect(monitor.isNodeExpanded('/')).toBe(true);
+
+      // New nodes start collapsed
+      expect(monitor.isNodeExpanded('/points')).toBe(false);
+      monitor.toggleNodeExpansion('/points');
+      expect(monitor.isNodeExpanded('/points')).toBe(true);
+    });
+
+    it('should count lines nodes correctly', () => {
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/lines1',
+            name: 'lines1',
+            type: 'lines' as const,
+            segmentCount: 100,
+            children: [],
+          },
+          {
+            path: '/lines2',
+            name: 'lines2',
+            type: 'lines' as const,
+            segmentCount: 200,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+      const state = monitor.getSceneGraph();
+
+      expect(state.linesNodes).toBe(2);
+      expect(state.totalSegments).toBe(300);
+    });
+  });
+
+  describe('cache stats provider integration', () => {
+    it('should connect cache stats provider', () => {
+      const mockProvider = {
+        getStats: vi.fn(() => ({
+          l1: {
+            metadataSize: 1024,
+            chunksSize: 10240,
+            metadataCount: 5,
+            chunksCount: 50,
+            hits: 100,
+            misses: 20,
+            evictions: 5,
+          },
+          l2: { size: 1024 * 1024, count: 100, reads: 80, writes: 50 },
+          network: { bytesTransferred: 5000000, requestCount: 100, bandwidth: 100000 },
+        })),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(() => Promise.resolve()),
+        clearAll: vi.fn(() => Promise.resolve()),
+        isEnabled: vi.fn(() => true),
+      };
+
+      monitor.setCacheStatsProvider(mockProvider);
+
+      // Verify provider is connected (will be used during UI rendering)
+      expect(mockProvider.getStats).not.toHaveBeenCalled(); // Not called until needed
+    });
+
+    it('should call clearL1 on provider', () => {
+      const mockProvider = {
+        getStats: vi.fn(() => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+        })),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(() => Promise.resolve()),
+        clearAll: vi.fn(() => Promise.resolve()),
+        isEnabled: vi.fn(() => true),
+      };
+
+      monitor.setCacheStatsProvider(mockProvider);
+      monitor.clearL1Cache();
+
+      expect(mockProvider.clearL1).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call clearL2 on provider', async () => {
+      const mockProvider = {
+        getStats: vi.fn(() => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+        })),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(() => Promise.resolve()),
+        clearAll: vi.fn(() => Promise.resolve()),
+        isEnabled: vi.fn(() => true),
+      };
+
+      monitor.setCacheStatsProvider(mockProvider);
+      await monitor.clearL2Cache();
+
+      expect(mockProvider.clearL2).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call clearAll on provider', async () => {
+      const mockProvider = {
+        getStats: vi.fn(() => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+        })),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(() => Promise.resolve()),
+        clearAll: vi.fn(() => Promise.resolve()),
+        isEnabled: vi.fn(() => true),
+      };
+
+      monitor.setCacheStatsProvider(mockProvider);
+      await monitor.clearAllCaches();
+
+      expect(mockProvider.clearAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle missing provider gracefully', () => {
+      // No provider set
+      expect(() => monitor.clearL1Cache()).not.toThrow();
+      expect(() => monitor.clearL2Cache()).not.toThrow();
+      expect(() => monitor.clearAllCaches()).not.toThrow();
     });
   });
 });

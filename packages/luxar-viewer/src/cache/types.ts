@@ -14,6 +14,34 @@ export interface CacheStats {
   metadataCount: number;
   /** Number of entries in chunks segment */
   chunksCount: number;
+  /** Total cache hits across all segments */
+  hits: number;
+  /** Total cache misses across all segments */
+  misses: number;
+  /** Total evictions across all segments */
+  evictions: number;
+}
+
+/**
+ * Extended statistics for the full two-level cache system.
+ * Used by CacheStatsProvider for DataLoadingMonitor integration.
+ */
+export interface ExtendedCacheStats {
+  /** L1 memory cache statistics */
+  l1: CacheStats;
+  /** L2 OPFS persistent cache statistics */
+  l2: {
+    /** Total bytes in L2 cache */
+    size: number;
+    /** Number of entries in L2 cache */
+    count: number;
+    /** Total reads from L2 */
+    reads: number;
+    /** Total writes to L2 */
+    writes: number;
+  };
+  /** Whether caching is enabled */
+  enabled: boolean;
 }
 
 /**

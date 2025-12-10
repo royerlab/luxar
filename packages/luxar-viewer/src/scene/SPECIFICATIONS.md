@@ -1,6 +1,6 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.2.0
+**Version**: 1.3.0
 **Last Updated**: 2025-12-09
 
 ## Purpose
@@ -23,8 +23,10 @@ The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loo
 2. [Animation System](#animation-system)
 3. [Bounding Box Calculation](#bounding-box-calculation)
 4. [Camera Centering](#camera-centering)
-5. [Window Resize Handling](#window-resize-handling)
-6. [Dimension Coordination](#dimension-coordination)
+5. [Dynamic Clipping Planes](#dynamic-clipping-planes)
+6. [Window Resize Handling](#window-resize-handling)
+7. [WebGL Context Loss Handling](#webgl-context-loss-handling)
+8. [Dimension Coordination](#dimension-coordination)
 
 ---
 
@@ -75,8 +77,8 @@ Scene (THREE.Scene)
 ├── Loaded Data Groups (THREE.Group)
 │   ├── Points A (THREE.Points)
 │   ├── Points B (THREE.Points)
-│   ├── Lines A (THREE.LineSegments)
-│   ├── Lines B (THREE.LineSegments)
+│   ├── Lines A (THREE.Mesh with InstancedBufferGeometry)
+│   ├── Lines B (THREE.Mesh with InstancedBufferGeometry)
 │   └── Nested Groups
 │       ├── More Points
 │       └── More Lines
@@ -92,8 +94,7 @@ interface PointsUserData {
   nodeType: 'points';
   loader: PointSpatialIndexLoader; // Data loader instance
   attrs: ZarrGroupAttrs; // Node attributes from zarr
-  spatialIndex: PointSpatialIndex; // Spatial index for queries
-  sceneDimensions: DimensionMetadata[]; // Scene coordinate system
+  spatialIndex?: PointSpatialIndex; // Spatial index for queries (optional)
 }
 ```
 
@@ -103,12 +104,16 @@ interface PointsUserData {
 interface LinesUserData {
   nodeType: 'lines';
   loader: LinesSpatialIndexLoader; // Lines data loader instance
-  attrs: ZarrGroupAttrs; // Node attributes from zarr
-  spatialIndex: LinesChunkSpatialIndex; // Dual spatial index (vertices + segments)
-  sceneDimensions: DimensionMetadata[]; // Scene coordinate system
+  attrs: LinesMetadata; // Node attributes from zarr
+  spatialIndex?: LinesChunkSpatialIndex; // Dual spatial index (optional)
   maxWidth: number; // Maximum line width (for bounding box expansion)
 }
 ```
+
+> **IMPORTANT: Dimension Architecture**
+> Dimension metadata (`sceneDimensions`) is stored ONLY at the Scene level (on the
+> `LuxarScene` root group), never on individual data nodes. This ensures a single
+> source of truth. Nodes access dimension info via `ViewState` or `SceneDimsManager`.
 
 ### 1.3 Object Management
 
@@ -325,8 +330,8 @@ function updateBoundingBox(): THREE.Box3 {
       }
     }
 
-    // Process line objects
-    if (object instanceof THREE.LineSegments) {
+    // Process line objects (Lines use THREE.Mesh with InstancedBufferGeometry)
+    if (object instanceof THREE.Mesh && object.userData.nodeType === 'lines') {
       const geometry = object.geometry;
       if (!geometry) return;
 
@@ -478,9 +483,181 @@ function focusCamera(): void {
 
 ---
 
-## 5. Window Resize Handling
+## 5. Dynamic Clipping Planes
 
-### 5.1 Resize Algorithm
+### 5.1 Purpose
+
+Automatically adjust near and far clipping planes as the camera moves to maintain optimal Z-buffer precision and prevent clipping artifacts.
+
+**Problem**: Static clipping planes set at load time become suboptimal as the user navigates:
+
+- **Zooming in close**: Objects clip against a near plane that's too far
+- **Moving far away**: Z-fighting artifacts from excessive far/near ratio
+- **Flying to scene edges**: Far plane clips objects behind the new camera position
+
+**Solution**: Smoothly interpolate clipping planes toward optimal values each frame using exponential filtering.
+
+### 5.2 Algorithm
+
+**Per-Frame Update**:
+
+```typescript
+class SceneManager {
+  // Dynamic clipping state
+  private dynamicClippingEnabled: boolean = true;
+  private clippingAdaptSpeed: number = 0.1; // 0.01 to 0.5
+  private smoothedNear: number = 0.1;
+  private smoothedFar: number = 1000;
+
+  updateDynamicClippingPlanes(): void {
+    if (!this.dynamicClippingEnabled) return;
+
+    // Get scene bounds
+    const bounds = this.getSceneBoundsFromMetadata();
+    if (!bounds) return;
+
+    // Calculate distances from camera to bounding box
+    const { nearDist, farDist } = this.calculateDistancesToBounds(bounds);
+
+    // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
+    // sqrt(3)-1 accounts for cube diagonal (corner distance is sqrt(3)× face distance)
+    // +0.1 adds extra 10% safety buffer
+    const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
+    const optimalNear = Math.max(0.001, nearDist * (1 - margin)); // ~16.8% of distance
+    const optimalFar = farDist * (1 + margin); // ~183.2% of distance
+
+    // Exponential smoothing: new = (1-α)*current + α*optimal
+    const α = this.clippingAdaptSpeed;
+    this.smoothedNear = (1 - α) * this.smoothedNear + α * optimalNear;
+    this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
+
+    // Apply safety clamps
+    this.smoothedNear = Math.max(0.001, this.smoothedNear);
+
+    // Prevent excessive far/near ratio (Z-buffer precision)
+    const maxRatio = 100000;
+    if (this.smoothedFar / this.smoothedNear > maxRatio) {
+      this.smoothedNear = this.smoothedFar / maxRatio;
+    }
+
+    // Only update camera if values changed significantly (>0.1%)
+    const nearChanged = Math.abs(this.camera.near - this.smoothedNear) / this.camera.near > 0.001;
+    const farChanged = Math.abs(this.camera.far - this.smoothedFar) / this.camera.far > 0.001;
+
+    if (nearChanged || farChanged) {
+      this.camera.near = this.smoothedNear;
+      this.camera.far = this.smoothedFar;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+}
+```
+
+### 5.3 Distance Calculation
+
+**Calculate distances from camera to bounding box corners**:
+
+```typescript
+private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; farDist: number } {
+  const cameraPos = this.camera.position;
+
+  // Get all 8 corners of bounding box
+  const corners = [
+    new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+    new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+    new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+    new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+    new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+    new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+  ];
+
+  // Find min and max distances
+  let nearDist = Infinity;
+  let farDist = 0;
+
+  for (const corner of corners) {
+    const dist = cameraPos.distanceTo(corner);
+    nearDist = Math.min(nearDist, dist);
+    farDist = Math.max(farDist, dist);
+  }
+
+  // Ensure minimum near distance
+  nearDist = Math.max(0.001, nearDist);
+
+  return { nearDist, farDist };
+}
+```
+
+### 5.4 Integration with Animation Loop
+
+**AnimationController calls the update each frame**:
+
+```typescript
+class AnimationController {
+  private animate = (): void => {
+    if (!this.isAnimating) return;
+
+    this.performanceMonitor.begin();
+    this.animationId = requestAnimationFrame(this.animate);
+
+    // Update camera controls
+    this.controls.update();
+
+    // Update dynamic clipping planes (smooth interpolation)
+    this.sceneManager.updateDynamicClippingPlanes();
+
+    // Render through post-processing pipeline
+    this.postProcessing.render();
+
+    this.performanceMonitor.end();
+  };
+}
+```
+
+### 5.5 Configuration
+
+**Settings in RenderingSettings**:
+
+```typescript
+interface RenderingSettings {
+  // ... existing settings ...
+
+  // Dynamic clipping planes
+  dynamicClippingEnabled: boolean; // Default: true
+  clippingAdaptSpeed: number; // Default: 0.1, range: 0.01-0.5
+}
+```
+
+**UI Controls**:
+
+- **Auto Clipping** (checkbox): Enables/disables dynamic adjustment
+- **Adapt Speed** (slider): Controls responsiveness (0.01 = slow/smooth, 0.5 = fast/responsive)
+
+**Behavior when disabled**: Near/Far sliders become editable for manual control.
+
+### 5.6 Performance Considerations
+
+**Computational Cost**: Minimal (~0.01ms per frame)
+
+- 8 distance calculations (corners to camera)
+- 2 exponential smoothing operations
+- Conditional projection matrix update
+
+**Optimization**: Only update projection matrix when values change >0.1%, avoiding unnecessary GPU state changes.
+
+**Smoothing Factor Guidelines**:
+
+- `0.01`: Very smooth, ~5 seconds to 95% convergence (cinematic)
+- `0.1`: Balanced, ~0.5 seconds to 95% convergence (default)
+- `0.5`: Fast response, ~0.1 seconds to 95% convergence (responsive)
+
+---
+
+## 6. Window Resize Handling
+
+### 6.1 Resize Algorithm
 
 **Purpose**: Maintain correct aspect ratio and rendering resolution when window size changes.
 
@@ -509,7 +686,7 @@ function handleResize(): void {
 
 **Critical Detail**: Call `updateProjectionMatrix()` after changing camera aspect ratio to rebuild the projection matrix.
 
-### 5.2 Pixel Ratio Handling
+### 6.2 Pixel Ratio Handling
 
 **Purpose**: Support high-DPI displays (Retina, 4K).
 
@@ -525,7 +702,7 @@ function updatePixelRatio(): void {
 - During initialization
 - On window DPI change (rare)
 
-### 5.3 Resize Debouncing (Performance Optimization)
+### 6.3 Resize Debouncing (Performance Optimization)
 
 **Purpose**: Prevent excessive GPU buffer reallocations during window dragging.
 
@@ -590,7 +767,7 @@ class SceneManager {
 
 ---
 
-### 5.4 Fullscreen Handling
+### 6.4 Fullscreen Handling
 
 **Fullscreen Entry**:
 
@@ -783,9 +960,9 @@ dispose(): void {
 
 ---
 
-## 6. Dimension Coordination
+## 8. Dimension Coordination
 
-### 6.1 Scene Dimensions Manager
+### 8.1 Scene Dimensions Manager
 
 **Purpose**: Maintain unified dimension state for all nD objects in the scene.
 
@@ -797,14 +974,21 @@ class SceneDimsManager {
   private listeners: Set<() => void> = new Set();
 
   initFromScene(scene: THREE.Scene): void {
-    // Extract dimensions from first points object with metadata
-    scene.traverse((object) => {
-      if (object.userData.sceneDimensions) {
-        this.dims = initializeDims(numPoints, totalElements, object.userData.sceneDimensions);
-        this.notifyListeners();
-        return; // Found dimensions, stop traversal
-      }
-    });
+    // Extract dimensions from scene level (single source of truth)
+    // 1. Check scene.userData.sceneDimensions
+    // 2. Check immediate children (LuxarScene root group)
+    // 3. Check scene.getObjectByName('LuxarScene')
+    let sceneDimensions = scene.userData.sceneDimensions;
+
+    if (!sceneDimensions) {
+      const luxarScene = scene.getObjectByName('LuxarScene');
+      sceneDimensions = luxarScene?.userData.sceneDimensions;
+    }
+
+    if (sceneDimensions?.dimensions) {
+      this.dims = initializeDims(sceneDimensions.dimensions);
+      this.notifyListeners();
+    }
   }
 
   getDims(): SimpleDims | null {
@@ -833,7 +1017,7 @@ class SceneDimsManager {
 }
 ```
 
-### 6.2 Dimension Update Propagation
+### 8.2 Dimension Update Propagation
 
 **Flow**:
 
@@ -868,8 +1052,8 @@ sceneDimsManager.addListener(() => {
       updatePointsForDimensions(object, dims);
     }
 
-    // Update Lines
-    if (object instanceof THREE.LineSegments && object.userData.nodeType === 'lines') {
+    // Update Lines (Lines use THREE.Mesh with InstancedBufferGeometry)
+    if (object instanceof THREE.Mesh && object.userData.nodeType === 'lines') {
       updateLinesForDimensions(object, dims);
     }
   });
@@ -882,10 +1066,7 @@ sceneDimsManager.addListener(() => {
 **Lines Dimension Update**:
 
 ```typescript
-async function updateLinesForDimensions(
-  linesObject: THREE.LineSegments,
-  dims: SimpleDims
-): Promise<void> {
+async function updateLinesForDimensions(linesObject: THREE.Mesh, dims: SimpleDims): Promise<void> {
   const { loader, spatialIndex } = linesObject.userData as LinesUserData;
 
   // Calculate slice position and tolerance
@@ -918,7 +1099,7 @@ async function updateLinesForDimensions(
 }
 ```
 
-### 6.3 Multi-Object Synchronization
+### 8.3 Multi-Object Synchronization
 
 **Invariant**: All point clouds in a scene share the **same** dimension system.
 
@@ -1018,8 +1199,17 @@ interface SceneDimsManager {
 
 ## Changelog
 
+- **v1.3.0** (2025-12-09): Dynamic clipping planes
+  - **ADDED**: Section 5 "Dynamic Clipping Planes" with exponential smoothing algorithm
+  - **ADDED**: Per-frame clipping plane adjustment based on camera-to-bounds distance
+  - **ADDED**: Configurable adapt speed parameter (0.01-0.5)
+  - **ADDED**: Safety clamps for near plane minimum and far/near ratio
+  - **UPDATED**: AnimationController integration for per-frame updates
+  - **UPDATED**: Section numbering (Window Resize → 6, WebGL Context Loss → 7, Dimension Coordination → 8)
+  - Smooth camera navigation without clipping artifacts
+
 - **v1.2.0** (2025-12-09): Lines support
-  - **ADDED**: Lines to scene graph structure (THREE.LineSegments)
+  - **ADDED**: Lines to scene graph structure (THREE.Mesh with InstancedBufferGeometry)
   - **ADDED**: `LinesUserData` interface for lines metadata
   - **UPDATED**: Bounding box algorithm to include lines with width expansion
   - **UPDATED**: Dimension update propagation to include lines

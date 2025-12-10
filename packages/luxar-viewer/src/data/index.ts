@@ -52,3 +52,24 @@ export type { DirectoryEntry, NavigationResult } from './directory-navigator';
 // Array decoding (for Python luxar.encoding compatibility)
 export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './array-decoder';
 export type { ArrayMetadata } from './array-decoder';
+
+// Lines data loading
+export { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
+export {
+  clipSegmentToSlice,
+  buildInstanceBuffers,
+  lerp,
+  lerpVec3,
+  distance3D,
+} from './lines-spatial-index-loader';
+export {
+  loadLinesChunkSpatialIndex,
+  querySegmentChunksForView,
+  queryVertexChunksForView,
+  computeLinesTolerance,
+  segmentChunkIndicesToRanges,
+  vertexChunkIndicesToRanges,
+  mergeRanges,
+  computeVertexChunksForIndices,
+  computeVertexRangesFromIndices,
+} from './lines-chunk-spatial-index';

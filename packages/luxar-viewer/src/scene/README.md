@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Luxar Scene package provides comprehensive scene management, animation control, and nD dimension coordination for complex points visualizations. It handles the THREE.js scene graph, camera management, rendering pipeline integration, and multi-dimensional data navigation.
+The Luxar Scene package provides comprehensive scene management, animation control, and nD dimension coordination for complex points and lines visualizations. It handles the THREE.js scene graph, camera management, rendering pipeline integration, and multi-dimensional data navigation.
 
 ### Key Features
 
@@ -194,13 +194,18 @@ sceneDimsManager.addListener(() => {
 ```
 Scene (THREE.Scene)
 ├── Ambient Light
-├── Point Cloud Groups
-│   ├── Transform Group
-│   │   └── Points (THREE.Points)
-│   └── Direct Points
+├── Data Groups
+│   ├── Point Cloud Groups
+│   │   ├── Transform Group
+│   │   │   └── Points (THREE.Points)
+│   │   └── Direct Points
+│   └── Lines Groups
+│       └── Lines (THREE.Mesh with InstancedBufferGeometry)
 ├── Camera (managed separately)
 └── Helper Objects (grids, axes, etc.)
 ```
+
+**Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh` or `THREE.LineSegments`) to enable thick lines with world-space width while staying under WebGL's 16 attribute location limit.
 
 ### Object Management
 
@@ -263,6 +268,13 @@ sceneManager.updateClippingPlanes(near, far);
 
 // Auto-calculate optimal planes from scene bounds
 const { near, far } = sceneManager.autoAdjustClippingPlanes();
+
+// Enable dynamic clipping (auto-adjusts each frame)
+sceneManager.setDynamicClipping(true, 0.1); // enabled, adaptSpeed
+
+// Get current dynamic clipping state
+const state = sceneManager.getDynamicClippingState();
+// { enabled: boolean, adaptSpeed: number, smoothedNear: number, smoothedFar: number }
 ```
 
 **Z-Buffer Best Practices:**
@@ -270,6 +282,40 @@ const { near, far } = sceneManager.autoAdjustClippingPlanes();
 - Keep near/far ratio under 10,000:1 for best precision
 - Use auto-adjust after loading new datasets
 - Lower near values see closer objects but reduce precision
+
+### Dynamic Clipping Planes
+
+The scene manager supports automatic per-frame clipping plane adjustment:
+
+**How It Works:**
+
+1. Each frame, calculates optimal near/far from camera-to-scene distances
+2. Uses exponential smoothing for stable transitions: `z_new = (1-α)·z_old + α·z_optimal`
+3. Applies sqrt(3)-1+0.1 ≈ 83% safety margin (accounts for cube diagonal rotation + 10% extra buffer)
+
+**Benefits:**
+
+- Always-optimal Z-buffer precision as camera moves
+- Smooth transitions prevent visual artifacts
+- Eliminates need for manual clipping adjustment
+- Perfect for exploring large-scale scenes
+
+**Configuration:**
+
+```typescript
+// Enable with default adapt speed (0.1)
+sceneManager.setDynamicClipping(true);
+
+// Fine-tune responsiveness
+sceneManager.setDynamicClipping(true, 0.05); // Slower, smoother
+sceneManager.setDynamicClipping(true, 0.3); // Faster, more responsive
+```
+
+**Adapt Speed Values:**
+
+- **0.01**: Very smooth, slow adaptation (good for cinematic)
+- **0.1**: Balanced (default) - stable yet responsive
+- **0.5**: Fast adaptation (may cause slight jitter)
 
 ### Centering Modes
 
@@ -617,29 +663,32 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method                            | Description                           |
-| --------------------------------- | ------------------------------------- |
-| `addToScene(object)`              | Add object to scene                   |
-| `clearScene()`                    | Remove all objects                    |
-| `updateBoundingBox()`             | Recalculate bounds                    |
-| `toggleCentering()`               | Switch center mode                    |
-| `getCurrentCenter()`              | Get active center point               |
-| `updateFOV(delta)`                | Adjust field of view                  |
-| `updateClippingPlanes(near, far)` | Set camera clipping planes            |
-| `autoAdjustClippingPlanes()`      | Calculate optimal clipping from scene |
-| `setControlType(type)`            | Switch control mode                   |
-| `updateSize()`                    | Handle resize                         |
-| `dispose()`                       | Clean up resources                    |
+| Method                                | Description                              |
+| ------------------------------------- | ---------------------------------------- |
+| `addToScene(object)`                  | Add object to scene                      |
+| `clearScene()`                        | Remove all objects                       |
+| `updateBoundingBox()`                 | Recalculate bounds                       |
+| `toggleCentering()`                   | Switch center mode                       |
+| `getCurrentCenter()`                  | Get active center point                  |
+| `updateFOV(delta)`                    | Adjust field of view                     |
+| `updateClippingPlanes(near, far)`     | Set camera clipping planes               |
+| `autoAdjustClippingPlanes()`          | Calculate optimal clipping from scene    |
+| `setDynamicClipping(enabled, speed?)` | Enable/disable per-frame clipping update |
+| `getDynamicClippingState()`           | Get current dynamic clipping state       |
+| `updateDynamicClippingPlanes()`       | Manually trigger dynamic clipping update |
+| `setControlType(type)`                | Switch control mode                      |
+| `updateSize()`                        | Handle resize                            |
+| `dispose()`                           | Clean up resources                       |
 
 ### AnimationController
 
-| Method                       | Description       |
-| ---------------------------- | ----------------- |
-| `startAnimation()`           | Begin render loop |
-| `pause()`                    | Pause rendering   |
-| `resume()`                   | Resume rendering  |
-| `setPerformanceStats(stats)` | Attach monitor    |
-| `dispose()`                  | Clean up          |
+| Method                       | Description                                         |
+| ---------------------------- | --------------------------------------------------- |
+| `startAnimation()`           | Begin render loop                                   |
+| `stopAnimation()`            | Stop render loop                                    |
+| `setPerFrameCallback(fn)`    | Set per-frame callback (e.g., for dynamic clipping) |
+| `setPerformanceStats(stats)` | Attach performance monitor                          |
+| `dispose()`                  | Clean up resources                                  |
 
 ### SceneDimsManager
 

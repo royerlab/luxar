@@ -1,898 +1,301 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working with this repository.
 
-## Table of Contents
-- [Development Environment](#development-environment)
-- [Project Structure](#project-structure)
-- [Development Workflow](#development-workflow)
-- [Code Standards](#code-standards)
-- [Luxar-Specific Conventions](#luxar-specific-conventions)
-- [Quick Commands Reference](#quick-commands-reference)
-- [Quality Assurance](#quality-assurance)
-- [Important Reminders](#important-reminders)
-- [Technical Documentation](#technical-documentation)
+## Quick Reference
 
-## Development Environment
-
-### Python Development with Hatch
-- **ALWAYS use Hatch** for Python tasks when possible or the corresponding `make` command:
-  - Running tests: `hatch run test` or `hatch run pytest`
-  - Running tests with coverage: `hatch run test-cov`
-  - Building: `hatch build`
-  - Installing dependencies: Dependencies are managed in `pyproject.toml`
-  - Python version management: Hatch handles this automatically
-  - Running scripts: `hatch run python script.py`
-  - Linting: `hatch run python -m ruff check .`
-  - Type checking: `hatch run mypy packages/luxar/src/luxar/`
-
-### TypeScript/JavaScript Development
-- Use pnpm for the luxar-viewer package (NOT npm)
-- Development server: `pnpm dev`
-- Build: `pnpm build`
-- Unit tests: `pnpm test --run` (use --run for non-interactive mode)
-- E2E tests: `pnpm test:e2e` (Playwright tests)
-- Coverage: `pnpm run test:coverage`
-- Type checking: `pnpm run typecheck`
-- Linting: `pnpm run lint`
-- Formatting: `pnpm run format`
-
-#### Playwright Testing & AI-Assisted Debugging
-The luxar-viewer has comprehensive Playwright integration for E2E testing and AI-assisted debugging:
-
-**AI Debugging (for Claude Code)**:
+### Python (use Hatch)
 ```bash
-cd packages/luxar-viewer
-pnpm agent:debug              # Headless mode - shows browser console logs
-pnpm agent:debug:visible      # Visible browser - watch it run
+hatch run test              # Run tests
+hatch run test-cov          # Tests with coverage
+hatch run python script.py  # Run script
+hatch run python -m ruff check .  # Lint
+hatch run mypy packages/luxar/src/luxar/  # Type check
 ```
 
-This allows Claude Code to:
-- See all browser console logs in terminal
-- Inspect Three.js scene state via JSON output
-- Take screenshots for visual verification
-- Debug issues autonomously without asking user to check browser
-
-**E2E Testing**:
+### TypeScript (use pnpm, from packages/luxar-viewer/)
 ```bash
-pnpm test:e2e                 # Run all E2E tests
-pnpm test:e2e:ui              # Interactive test UI
-pnpm test:e2e:debug           # Debug mode
-pnpm test:e2e:report          # View HTML report (after running tests)
+pnpm dev          # Dev server (port 5173)
+pnpm build        # Build
+pnpm test --run   # Unit tests
+pnpm test:e2e     # E2E tests (Playwright)
+pnpm typecheck    # Type check
+pnpm lint         # Lint
+pnpm format       # Format
 ```
 
-**E2E Test Artifacts** (Transient, Not Committed):
-
-**Playwright automatically generates**:
-- `test-results/` - Per-test artifacts (screenshots, videos, traces, error context)
-- `playwright-report/` - Interactive HTML report with all results
-
-**Viewing Test Results**:
+### Make Commands (from project root)
 ```bash
-# After running tests, view the HTML report:
-pnpm test:e2e:report
-
-# This opens an interactive report showing:
-# - All test results (pass/fail)
-# - Screenshots for every test
-# - Videos of failures
-# - Trace viewer for debugging
-# - Timings and performance
+make test-all     # All tests (Python + TypeScript)
+make check        # All quality checks
+make format-all   # Format everything
+make run-examples # Generate example datasets
+make clean        # Clean artifacts
 ```
 
-**For Claude (AI Debugging)**:
-After running E2E tests, Claude can:
-- Read screenshots from `test-results/*/test-failed-*.png`
-- Inspect error-context.md files
-- Review visual state of failed tests
-- Verify rendering correctness
+### Luxar CLI
+```bash
+luxar demo                       # Quick demo with viewer
+luxar serve <data.zarr> --viewer # Serve with viewer
+luxar info <data.zarr> --stats   # Dataset info
+luxar profiles                   # Network simulation profiles
+```
 
-**For Users**:
-- View `playwright-report/` HTML (recommended)
-- Or browse `test-results/` folders directly
-- Each test gets its own folder with complete artifacts
-
-**Important**: Always use `?debug` URL parameter to enable the debug interface:
-- `http://localhost:5173/?debug` - Exposes `window.__luxarDebug`
-- Contains: scene, camera, renderer, controls, getState(), renderOnce(), etc.
-
-See [PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md) for complete documentation.
-
-Note: When possible, use `make` commands for convenience (see below).
+---
 
 ## Project Structure
 
-### Main Directories
-- `/packages/luxar/` - Main Python package
-  - `/packages/luxar/src/luxar/` - Source code (organized into subpackages)
-    - `core/` - Core data structures (Node, Scene, Points, Dimensions, Transforms)
-    - `io/` - Input/output operations (Compiler, Streaming, Writer)
-    - `typing_utils/` - Type definitions (Protocols, Aliases, Enums, Constants)
-    - `validation/` - Validation functions
-    - `utils/` - Utility functions (Array helpers, Demo generators)
-  - `/packages/luxar/src/luxar/tests/` - Python tests
-- `/packages/luxar-viewer/` - TypeScript/WebGL viewer
-  - `/packages/luxar-viewer/src/` - TypeScript source with per-package documentation
-  - Each TypeScript package has its own README.md that MUST be kept in sync with code:
-    - `/src/controls/README.md` - Control system (orbit, fly, input management)
-    - `/src/rendering/README.md` - HDR rendering pipeline and post-processing
-    - `/src/scene/README.md` - Scene management and animation control
-    - `/src/data/README.md` - Zarr loading and nD slicing
-    - `/src/ui/README.md` - UI components and layouts
-    - `/src/input/README.md` - Input handling and context management
-    - `/src/config/README.md` - Unified configuration system
-    - `/src/utils/README.md` - Utility functions and helpers
-    - `/src/types/README.md` - TypeScript type definitions
-    - `/src/core/README.md` - Core initialization and app lifecycle
-- `/packages/luxar/examples/` - Example scripts (use `*_example.py` naming convention)
-- `/docs/` - **Documentation directory (IMPORTANT: Keep this up-to-date!)**
-  - Contains various documentation files that were moved from root
-  - Must be maintained in sync with code changes
-  - Includes technical guides, format specs, and development docs
+```
+/packages/luxar/           # Python package
+  /src/luxar/              # Source (core/, io/, utils/, validation/, typing_utils/)
+  /tests/                  # Python tests
+  /examples/               # Example scripts (*_example.py naming)
 
-### Key Documentation Files
-- `README.md` - Main project documentation
-- `CLAUDE.md` - This file - guidance for Claude Code
-- `pyproject.toml` - Python project configuration (dependencies, tools)
-- `Makefile` - Convenient development commands
-- `/docs/` folder containing:
-  - `LUXAR_ZARR_FORMAT.md` - Data format specification
-  - `CONTRIBUTING.md` - Contributing guidelines
-  - `DEVELOPMENT_TOOLS.md` - Development and build tools documentation
-  - `UI_DESIGN.md` - **UI design system and guidelines (MUST READ for UI work)**
-  - `CONSOLE_OUTPUT_STYLE.md` - **Console logging style guide and standards**
-  - `luxar-fly-controls-guide.md` - Detailed fly controls implementation guide
-  - Various technical guides and specifications
-- **TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own comprehensive README.md
-- **Python package READMEs**: **MANDATORY** - Each subpackage in `/packages/luxar/src/luxar/` MUST have its own comprehensive README.md documenting:
-  - Purpose and responsibilities of the package
-  - Key classes and functions
-  - Usage examples
-  - Internal architecture notes
-  - Dependencies and requirements
-  - Testing information
-- **Python package SPECIFICATIONS.md**: **MANDATORY** - Each major subpackage in `/packages/luxar/src/luxar/` MUST have a SPECIFICATIONS.md file that:
-  - Defines the essential logic, algorithms, and data structures
-  - Specifies behavior independent of implementation details
-  - Documents mathematical formulas and key algorithms
-  - Provides enough detail to re-implement if code was lost
-  - Focuses on WHAT and WHY, not HOW
-  - Serves as the authoritative specification for the package
-  - Should be implementation-agnostic (could re-implement in another language)
-  - **MUST include version and changelog** (see format below)
+/packages/luxar-viewer/    # TypeScript/WebGL viewer
+  /src/                    # Source with per-package READMEs
+  /docs/PLAYWRIGHT_GUIDE.md  # Comprehensive E2E testing guide
 
-**SPECIFICATIONS.md Format Requirements**:
-```markdown
-# luxar.{package} - Technical Specification
-
-**Version**: X.Y.Z
-**Last Updated**: YYYY-MM-DD
-
-## Purpose
-{Brief description of the package's purpose}
-
----
-
-{... specification content ...}
-
----
-
-## Changelog
-
-- **vX.Y.Z** (YYYY-MM-DD): {Summary of changes}
-  - {Detail 1}
-  - {Detail 2}
-  - **BREAKING**: {Breaking change if any}
-
-- **vX.Y.Z-1** (YYYY-MM-DD): {Previous version changes}
-  ...
+/docs/                     # Documentation
+  /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
+  E2E_TESTING_GUIDE.md     # E2E quick reference
+  LUXAR_ZARR_FORMAT.md     # Data format spec
+  UI_DESIGN.md             # UI design system
+  NETWORK_SIMULATION_SPEC.md  # Network simulation
 ```
 
-**Version numbering**: Use semantic versioning (MAJOR.MINOR.PATCH):
-- MAJOR: Breaking changes to the specification
-- MINOR: New features or sections added
-- PATCH: Clarifications, typo fixes, minor updates
+### Documentation Requirements
 
-**Cross-Reference Format**:
-When referencing other specifications, use this standard format:
-```markdown
-**Related Specifications**:
-- `luxar.package` - Brief description (see `relative/path/SPECIFICATIONS.md`)
-```
+**Every Python subpackage MUST have**:
+- `README.md` - Purpose, key classes, usage examples
+- `SPECIFICATIONS.md` - Algorithms, data structures, behavior specification (use template in `docs/templates/`)
 
-Examples from different package locations:
-- From root package (e.g., `core/`): `(see `encoding/SPECIFICATIONS.md`)`
-- From sub-package (e.g., `gsplats/io/`): `(see `../../encoding/SPECIFICATIONS.md`)`
-- From sibling: `(see `../other/SPECIFICATIONS.md`)`
-- To parent: `(see `../SPECIFICATIONS.md`)`
+**Every TypeScript package has**:
+- `README.md` in `/src/{package}/` - Keep in sync with code changes
 
-Use **relative paths** from the specification file's location.
-
-**CRITICAL**:
-1. When making changes to TypeScript code, ALWAYS update the corresponding package README.md
-2. When making changes to Python code:
-   - **MANDATORY**: Update the subpackage README.md if functionality changes
-   - **MANDATORY**: Update the subpackage SPECIFICATIONS.md if algorithms or core logic changes
-   - **MANDATORY**: Ensure all major Python subpackages (core, io, utils, cli, gsplats, typing_utils, validation) have comprehensive README.md AND SPECIFICATIONS.md files
-   - Check if `/docs/` folder documentation needs updating
-3. Keep all documentation synchronized with the implementation!
-4. SPECIFICATIONS.md should capture the essence that would let someone re-implement from scratch
-5. Python package structure follows best practices:
-   - Flat is better than nested (except for logical groupings)
-   - Each package has clear separation of concerns
-   - Backward compatibility maintained via main `__init__.py`
-   - Every major subpackage MUST have a README.md file
-
-## Development Workflow
-
-### Testing Strategy
-- Always run Python tests with: `hatch run test`
-- For Python test coverage reports: `hatch run test-cov`
-- View Python coverage HTML report: `open coverage/python/htmlcov/index.html`
-- View TypeScript coverage HTML report: `open coverage/typescript/index.html`
-- Minimum acceptable coverage: 80%
-- Run all tests (Python + TypeScript): `make test-all` (Note: TypeScript dependencies will be auto-installed if missing)
-- Single test file: `hatch run pytest packages/luxar/src/luxar/tests/test_specific.py`
-- **CRITICAL**: NEVER skip tests just because they're difficult to fix. If a test is failing:
-  1. First, try to fix the underlying issue
-  2. If mocking is needed (e.g., WebGL), create proper mocks
-  3. If absolutely impossible to test (rare), document WHY in detail
-  4. Skipping tests without fixing them is unacceptable and defeats the purpose of testing
-
-### Cross-Language End-to-End (E2E) Testing
-
-**IMPORTANT**: End-to-end testing that exercises both Python and TypeScript code together is crucial for this project. The Python encoder and TypeScript decoder must stay in sync - bugs in cross-language compatibility (like the array_ref resolution issue) can only be caught through E2E tests.
-
-**Why E2E Testing Matters**:
-- Python writes zarr data with specific encoding metadata
-- TypeScript reads and decodes that data
-- Unit tests in isolation can't catch mismatches between the two
-- Changes to Python encoding can silently break TypeScript decoding
-
-**Two Approaches to Cross-Language E2E Testing**:
-
-1. **Python → TypeScript Unit Tests (No Browser)**:
-   - Python generates test fixtures (zarr datasets with specific encodings)
-   - TypeScript unit tests load and verify these fixtures
-   - Example: `packages/luxar-viewer/tests/fixtures/` contains zarr datasets generated by `generate_test_data.py`
-   - Tests run with `pnpm test --run` in Node.js (no browser needed)
-   - Fast feedback loop, easy to debug
-   - **Use this for**: Data format compatibility, encoding/decoding correctness
-
-2. **Playwright-Based E2E Testing (Full Browser)**:
-   - Tests the complete pipeline: Python data → TypeScript loading → WebGL rendering
-   - **CRITICAL**: This is the only way to test browser-specific behavior (WebGL, Three.js, canvas rendering)
-   - Many bugs only manifest in the browser and cannot be caught by Node.js tests
-   - Run with: `cd packages/luxar-viewer && pnpm test:e2e`
-   - **Use this for**: Visual rendering, WebGL shaders, UI interactions, browser APIs
-
-**When to Write E2E Tests**:
-- After changing Python encoding format → verify TypeScript can still decode
-- After changing TypeScript decoder → verify it handles all Python formats
-- After adding new encoding modes → test full round-trip
-- After visual/rendering changes → Playwright visual regression tests
-
-### E2E Testing Best Practices (Playwright)
-
-**CRITICAL Lessons Learned**:
-
-1. **Dataset Selection for E2E Tests**:
-   - Use **3D datasets** for tests that check point loading/rendering (e.g., `build_example_structured.zarr`)
-   - **Avoid 4D/nD datasets** for simple loading tests - nD slicing may result in 0 visible points at certain slice positions
-   - For nD-specific tests, explicitly navigate to slices known to have points
-   - Check actual point counts with `luxar info <dataset>.zarr` before setting test expectations
-
-2. **URL Parameters**:
-   - ALWAYS use `src=` parameter: `http://localhost:5173/?src=<dataset>&debug`
-   - NEVER use `data=` parameter (not recognized by viewer)
-   - Always include `&debug` to enable `window.__luxarDebug` interface
-
-3. **Debug Interface Race Conditions**:
-   - ALWAYS wait for debug interface before calling methods:
-     ```typescript
-     await page.waitForFunction(
-       () => {
-         const debug = (window as any).__luxarDebug;
-         return debug && debug.getState && typeof debug.getState === 'function';
-       },
-       { timeout: 45000 }
-     );
-     ```
-   - Use `waitForLuxarReady()` helper which handles this automatically
-   - Wrap `getLuxarState()` calls in try-catch for robustness
-
-4. **WebGL Error Detection**:
-   - Filter console messages carefully - exclude info messages and performance warnings
-   - Only flag actual GL errors: `GL_INVALID_*`, `GL_OUT_OF_MEMORY`
-   - Exclude messages containing `[ℹ️]`, `GPU stall due to ReadPixels`
-
-5. **Test Stability**:
-   - Current configuration (`fullyParallel: false`, `workers: 1`) is optimal for WebGL tests
-   - Test chunking NOT required - full suite (221 tests) runs reliably in ~17 minutes
-   - Dev server stays stable across full test run with `reuseExistingServer: true`
-
-6. **Common Pitfalls**:
-   - ❌ Using `window.THREE` directly (not available in page context)
-   - ❌ Checking dimensions/points before data finishes loading
-   - ❌ Expecting specific point counts from nD datasets without considering slicing
-   - ❌ Not handling async initialization of debug interface
-   - ✅ Use `debug.scene.traverse()` and object methods directly
-   - ✅ Wait for `state.initialized && !state.isLoading` before assertions
-   - ✅ Use 3D datasets for general-purpose loading tests
-
-7. **Running E2E Tests**:
-   ```bash
-   cd packages/luxar-viewer
-   pnpm test:e2e                    # Run all E2E tests (~17 min)
-   pnpm test:e2e <file>.spec.ts     # Run specific test file
-   pnpm test:e2e:ui                 # Interactive UI mode
-   pnpm test:e2e:report             # View HTML report after run
-   ```
-
-8. **Debugging Failed E2E Tests**:
-   - Check screenshots in `test-results/<test-name>/test-failed-1.png`
-   - Watch videos: `test-results/<test-name>/video.webm`
-   - View traces: `pnpm exec playwright show-trace test-results/<test-name>/trace.zip`
-   - Read error context: `test-results/<test-name>/error-context.md`
-
-9. **Common Error Patterns and Solutions**:
-   - **"ERR_CONNECTION_REFUSED"**: Dev server not running or crashed
-     - Fix: `lsof -ti:5173,9000 | xargs kill -9` then re-run tests
-   - **"getState is not a function"**: Debug interface not initialized yet
-     - Fix: Ensure `waitForLuxarReady()` is called first
-   - **"Timeout waiting for points"**: Dataset has 0 points at current nD slice
-     - Fix: Use 3D dataset or navigate to slice with points
-   - **"Cannot read properties of undefined"**: API/object not available in page context
-     - Fix: Check `window.__luxarDebug` properties, avoid `window.THREE`
-   - **"Address already in use"**: Previous test run didn't cleanup servers
-     - Fix: `pkill -f "vite\|http.server 9000"` before running
-
-10. **Systematic Debugging Workflow**:
-    ```bash
-    # 1. Run tests and capture failures
-    pnpm test:e2e 2>&1 | tee /tmp/e2e-output.txt
-
-    # 2. Identify failure patterns
-    grep "Error:" /tmp/e2e-output.txt | sort | uniq -c
-
-    # 3. Check screenshots for visual clues
-    open test-results/<test-name>/test-failed-1.png
-
-    # 4. Fix one category at a time
-    # 5. Run focused tests to verify
-    pnpm test:e2e <specific-file>.spec.ts
-
-    # 6. Run full suite for final verification
-    pnpm test:e2e
-    ```
-
-11. **Pre-Commit Checklist**:
-    - ✅ Run unit tests: `pnpm test --run` (fast, ~5s)
-    - ✅ Run type checking: `pnpm typecheck` (fast, ~3s)
-    - ✅ Run linting: `pnpm lint` (fast, ~2s)
-    - ⚠️ Run E2E tests: Optional before commit (slow, ~17min)
-    - ✅ **Always** run full E2E suite before creating PR or merging
-
-12. **Test Output Management**:
-    - E2E tests generate **large outputs** (50k+ lines, hundreds of HTTP requests)
-    - Use `tee` to save output: `pnpm test:e2e 2>&1 | tee /tmp/e2e.txt`
-    - Filter for summaries: `grep -E "(passed|failed|Error:)" /tmp/e2e.txt`
-    - Test artifacts can grow large (videos, screenshots, traces) - clean periodically:
-      ```bash
-      rm -rf test-results/  # Remove all test artifacts
-      rm -rf playwright-report/  # Remove HTML report
-      ```
-
-13. **Dataset Freshness**:
-    - E2E tests depend on example datasets being up-to-date
-    - Regenerate if Python encoding changes: `make run-examples`
-    - Pre-flight checks verify required datasets exist
-    - Missing datasets cause test failures, not skips
-
-14. **Understanding Test Flakiness**:
-    - **Flaky** = Failed first run, passed on retry (acceptable for performance tests)
-    - **Failed** = Failed all retries (requires fixing)
-    - Performance/timing tests naturally have some flakiness due to:
-      - CPU/GPU load variability
-      - Browser garbage collection timing
-      - Network request timing
-      - Animation frame timing
-    - Current config allows 1 retry locally, 2 in CI (playwright.config.ts:36)
-    - If a test is consistently flaky (>50% flake rate), increase timeouts or make assertions less strict
-
-15. **Interpreting Test Results**:
-    - **"X passed (Ym)"** = All tests passed in Y minutes
-    - **"X failed"** = Hard failures (failed all retries)
-    - **"X flaky"** = Passed on retry (monitor but don't treat as failures)
-    - **"X skipped"** = Tests marked with .skip() or test.fixme()
-    - **Pass rate** = (passed + flaky) / (total - skipped) × 100%
-    - Target: >95% pass rate, <5% flaky rate
-
-16. **When Dev Server Crashes Mid-Test** (rare but documented):
-    - Symptom: First ~100 tests pass, then all remaining tests fail with ERR_CONNECTION_REFUSED
-    - Cause: Vite dev server crashes due to resource exhaustion or memory leak
-    - Immediate fix: Re-run tests (usually succeeds on second attempt)
-    - Long-term fix: If consistent, investigate Vite memory usage or upgrade Vite version
-    - Current status: **Not reproducible** - only seen once, likely transient issue
-
-### Git Workflow
-- Never commit `.zarr` directories (they're in .gitignore)
-- Always run all tests (Python & TypeScript), run all checks (typing, linting), and format code before committing
-- Use detailed descriptive commit messages
-- Pre-commit hooks are configured - install with: `hatch run pre-commit install`
-
-### Pre-commit Checklist
-Before committing, ensure overall consistency:
-- Run all tests (`make test-all`) and ensure they pass
-- Run linting and type checking (`make check`)
-- Update README.md files if functionality changed
-- Update examples if APIs have changed
-- Check that documentation reflects the current state
-- Update LUXAR_ZARR_FORMAT.md if the data format changes
-- Update DEVELOPMENT_TOOLS.md if dev and build tools change
-- Verify that new features have appropriate tests
+---
 
 ## Code Standards
 
-### General Code Style
-- Follow modern Python and TypeScript conventions
-- Follow existing code patterns in the codebase when all else is equal
-- Use type hints for all function parameters and return values
-- **ALWAYS use Arbol for Python console output** - see [Arbol Usage](#arbol-usage) section below
-- Keep docstrings concise but informative
-- TypeScript code comments should be in JSDoc format
-- Python code is formatted with ruff (88 char line length)
-- TypeScript code is formatted with prettier
-- **Console logging**: Follow the style guide in `/docs/CONSOLE_OUTPUT_STYLE.md`
-  - Use the logging utility in `/src/utils/log.ts`
-  - Format: `[emoji] [Module] message`
-  - Import: `import { log, Modules, LogEmoji } from '../utils/log';`
+### Python
+- Use type hints for all parameters and return values
+- Format with ruff (88 char line length)
+- Use PyTest (not unittest), mock only as last resort
+- **Use Arbol for console output**: Replace `print()` with `aprint()`, use `asection()` for hierarchical output
 
-### Arbol Usage
-**Arbol** is a Python library for organizing print statements in hierarchical, tree-like structures that makes console output readable and well-structured. It is MANDATORY for all Python console output in Luxar.
-
-#### What is Arbol?
-- A lightweight library that replaces `print()` with structured, hierarchical output
-- Provides automatic elapsed time measurement for code sections
-- Offers tree-like visualization of code execution flow
-- Designed to make complex scripts with many print statements comprehensible
-
-#### Key Components:
-- **`aprint()`**: Direct replacement for `print()` that integrates with the tree structure
-- **`asection(context)`**: Context manager that creates hierarchical sections in the output
-- **Automatic timing**: Each section shows elapsed time
-- **Optional colors**: Enhanced visual clarity with color packages
-
-#### When to Use:
-- **aprint()**: Replace ALL `print()` statements with `aprint()` in:
-  - Examples and demo scripts
-  - CLI tools and commands
-  - Test files (where console output is needed)
-  - Debug and development scripts
-- **asection()**: Use for logical code sections where multiple operations occur:
-  - Complex functions with multiple steps
-  - Processing loops with substantial work
-  - File I/O operations
-  - Model training or data processing phases
-  - Any code block where flat logging would be hard to follow
-
-#### Usage Examples:
 ```python
 from arbol import aprint, asection
 
-# Simple replacement for print
-aprint("Loading dataset...")
-
-# Hierarchical sections for complex operations
-with asection("Data preprocessing"):
-    aprint("Reading input files...")
-    with asection("Validation"):
-        aprint("Checking data integrity")
-        aprint("Validating dimensions")
-    aprint("Preprocessing complete")
-
-with asection("Model training"):
-    aprint("Initializing model...")
-    # ... training code ...
+with asection("Processing"):
+    aprint("Step 1...")
+    aprint("Step 2...")
 ```
 
-#### Configuration:
-- Set `Arbol.max_depth = 4` to limit tree depth
-- Use `Arbol.elapsed_time = True` for timing (default)
-- Install `ansicolors` or `colorama` for colored output
-- Configure globally in main entry points
+### TypeScript
+- Format with prettier
+- Use JSDoc comments
+- Unified config in `src/config/` (camelCase, not UPPER_SNAKE_CASE)
+- Console logging: `import { log } from '../utils/log'` with format `[emoji] [Module] message`
+- Prefix unused variables with underscore
 
-### TypeScript Configuration
-- **Configuration**: Unified configuration system in `packages/luxar-viewer/src/config/`
-- All config in `config/index.ts` with types in `config/types.ts`
-- Use camelCase consistently (not UPPER_SNAKE_CASE)
-- Prefix unused variables with underscore to avoid warnings
+---
 
-## Luxar-Specific Conventions
+## Testing
 
-### Physical Units and Data
-- Physical units: Be inclusive (support nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au)
-- Point attributes: positions (required), colors, radii, sharpness (all optional)
-- Zarr chunks: Use appropriate chunk sizes for data patterns (default 32KB elements)
-- Data types: Float32 for positions/radii/sharpness, Uint8 or Float32 for colors (HDR support)
+### Strategy
+- **Minimum coverage**: 80%
+- **NEVER skip tests** - fix them or create proper mocks
+- **Run before committing**: `make test-all && make check`
 
-### Transform System
-- All transforms are 4x4 matrices (float32)
-- Transforms are automatically validated in Node.__init__
-- Use `luxar.transforms` module for creating transforms (translate, rotate, scale, compose, etc.)
-- Node class has a `transform` property for easy access/modification
-- Transforms are stored as 16-element lists in zarr attributes
-- **CRITICAL**: Transpose matrices when storing for THREE.js compatibility (see Technical Documentation)
-
-### Scene-Level Dimensions
-- Use `Dimensions` and `Dimension` classes to define coordinate systems
-- Dimensions include: name, unit, range, step, display status
-- Scene validates all objects against defined dimensions
-- Step sizes are used for keyboard navigation in viewer
-
-### nD Point Layer Support
-- Points can have arbitrary dimensions (not just 3D)
-- Non-displayed dimensions are "sliced" for visualization
-- Radius-based slicing: points visible based on nD hypersphere intersection
-- Keyboard navigation: Press 1-9 to select dimension, [/] to navigate
-
-## Quick Commands Reference
-
-### Python/Hatch Commands
+### Python Tests
 ```bash
-hatch run test                    # Run tests
-hatch run test-cov               # Run tests with coverage
-hatch run python script.py       # Run a Python script in the Hatch environment
-hatch run python -m ruff check . # Run linting
-hatch run mypy packages/luxar/src/luxar/ # Type checking
-hatch build                      # Build distribution packages
+hatch run test                    # All tests
+hatch run pytest path/to/test.py  # Single file
+hatch run test-cov                # With coverage
 ```
 
-### Luxar CLI Commands
+### TypeScript Unit Tests
 ```bash
-luxar demo                       # Quick demo with viewer (auto-opens browser)
-luxar demo --no-serve --output demo.zarr --points 100000  # Generate demo dataset without serving
-luxar serve <data.zarr>          # Serve zarr data (default port 8000)
-luxar serve <data.zarr> --viewer # Serve data with viewer
-luxar viewer --data <data.zarr>  # Serve viewer with data
-luxar info <data.zarr>           # Display dataset information
-luxar info <data.zarr> --stats   # Display with detailed statistics
-luxar profiles                   # List network simulation profiles
-
-# Network simulation (for testing viewer performance)
-luxar serve <data.zarr> --profile 3g --viewer      # Simulate 3G mobile
-luxar serve <data.zarr> --bandwidth 1mbps --latency 200ms  # Custom simulation
-luxar demo --profile satellite --open              # Demo with high latency
-luxar viewer --data <data.zarr> --profile rural    # Test poor connection
+cd packages/luxar-viewer
+pnpm test --run                   # All unit tests
+pnpm test path/to/test.ts         # Single file
 ```
 
-### Development Commands
+### E2E Tests (Playwright)
 ```bash
-cd packages/luxar-viewer && pnpm dev         # Start viewer dev server (port 5173)
-make viewer-test                             # Run TypeScript tests
-make test-all                                # Run all tests (Python + TypeScript)
-make clean                                   # Clean all artifacts (including TypeScript dist/, node_modules/)
-make check                                   # Run all quality checks
-make format-all                              # Format all code (Python + TypeScript)
-make run-examples                            # Generate all example datasets
-make serve-examples                          # Serve examples directory
-make demo-and-serve                          # Create demo and start servers
-make stats                                   # Generate project statistics report (HTML)
+cd packages/luxar-viewer
+pnpm test:e2e                     # All E2E tests (~17 min)
+pnpm test:e2e:ui                  # Interactive mode
+pnpm agent:debug                  # AI debugging (see console logs)
+pnpm agent:debug:visible          # AI debugging with visible browser
 ```
 
-**Important Note**: Always ensure that you are at the root of the project directory when running `make` commands.
+**Key E2E rules**:
+- Use `?src=<dataset>&debug` URL format (NOT `?data=`)
+- Use 3D datasets for general tests (4D/nD slicing may show 0 points)
+- Wait for `window.__luxarDebug` before assertions
+- See `docs/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
 
-## Quality Assurance
+### Cross-Language E2E Testing
+Python encoder and TypeScript decoder must stay in sync:
+1. **Fixture-based**: Python generates zarr, TypeScript unit tests verify (fast, no browser)
+2. **Playwright**: Full pipeline through browser (catches WebGL/rendering bugs)
 
-### Code Quality Checklist
-When making significant changes:
-1. Run Python tests: `hatch run test-cov` (coverage must be >80%)
-2. Run TypeScript unit tests: `cd packages/luxar-viewer && pnpm test`
-3. **Run TypeScript E2E tests**: `cd packages/luxar-viewer && pnpm test:e2e` (Playwright)
-4. Run TypeScript build: `cd packages/luxar-viewer && pnpm build` (check current folder first!)
-5. Check Python linting: `hatch run python -m ruff check .`
-6. Check TypeScript: `pnpm run typecheck` and `pnpm run lint`
-7. Fix TypeScript unused warnings by prefixing with underscore
-8. **Update TypeScript package READMEs**: Each package in `/packages/luxar-viewer/src/` has its own README.md that MUST be updated when code changes
-9. **Update documentation in `/docs/` folder** - check ALL relevant docs for Python changes
-10. Update root README.md if features or usage changes
-11. Update LUXAR_ZARR_FORMAT.md if data structures change
-12. Add/update examples if introducing new features
-13. Run integration tests on all examples
-14. Update this CLAUDE.md file with important learnings
+When to run E2E:
+- After changing encoding format
+- After changing decoder
+- Before PR/merge (always run full suite)
 
-### TypeScript Quality Checks
-After making changes in luxar-viewer, run:
-- `pnpm run lint` - Check code style
-- `pnpm run typecheck` - Check TypeScript types
-- `pnpm run format` - Auto-fix formatting
-- `pnpm test` - Run unit tests (Vitest)
-- `pnpm test:e2e` - Run E2E tests (Playwright)
-- `pnpm run check` - Run all checks (typecheck, lint, test)
+---
 
-### AI-Assisted Debugging (IMPORTANT for Claude Code)
-When debugging TypeScript/viewer issues, use the Playwright agent driver:
+## AI-Assisted Debugging
+
+When debugging viewer issues, use the Playwright agent driver:
 
 ```bash
 cd packages/luxar-viewer
 pnpm agent:debug
 ```
 
-This shows:
-- `[BROWSER-CONSOLE-*]` - All browser console logs (errors, warnings, info)
-- JSON state dump - Three.js scene state, point counts, camera position
-- `debug-view.png` - Screenshot of current state
+**Output includes**:
+- `[BROWSER-CONSOLE-*]` - All browser console logs
+- JSON state dump - Three.js scene, point counts, camera
+- `test-results/debug/debug-view.png` - Screenshot
 
-**How to use**:
-1. User reports a bug in the viewer
-2. Run `pnpm agent:debug` to see browser console output
-3. Inspect JSON state to understand what's loaded
-4. Add debug logging (`console.log()`) if needed
-5. Run again to verify fix
-6. Remove debug logging when done
+**Debug workflow**:
+1. Run `pnpm agent:debug` to see current state
+2. Add `console.log()` if needed
+3. Run again to verify fix
+4. Remove debug logging when done
 
-**Available debug properties** (when `?debug` is in URL):
-- `window.__luxarDebug.scene` - THREE.Scene object
-- `window.__luxarDebug.camera` - Camera object
-- `window.__luxarDebug.renderer` - WebGL renderer
-- `window.__luxarDebug.getState()` - Current state snapshot
-- `window.__luxarDebug.renderOnce()` - Trigger single frame
-- `window.__luxarDebug.app` - LuxarApp instance
-- `window.__luxarDebug.consoleInterceptor` - Console message history
+**Available at `window.__luxarDebug`** (when `?debug` in URL):
+- `scene`, `camera`, `renderer`, `controls`
+- `getState()`, `renderOnce()`, `app`, `consoleInterceptor`
 
-**Example debugging workflow**:
+---
+
+## Critical Gotchas
+
+### Matrix Storage: NumPy vs THREE.js
+NumPy uses row-major, THREE.js uses column-major. **Always transpose when serializing**:
+```python
+# Writing to zarr for THREE.js
+matrix.T.ravel().tolist()
+
+# Reading back in Python
+np.array(flat_list).reshape(4, 4).T
+```
+Translation is at `[3,7,11]` in NumPy but `[12,13,14]` in THREE.js.
+
+### Constructor Initialization Order
+When subclass and parent both set the same attribute, **parent must initialize first**:
+```python
+def __init__(self):
+    super().__init__()  # First!
+    self._metadata = {...}  # Then subclass sets it
+```
+
+### Transform Composition Order
+`compose(T1, T2, T3)` applies T1 first, T3 last (right-multiply):
+```python
+result = result @ transform  # Correct
+# NOT: result = transform @ result
+```
+
+### nD Datasets in Tests
+- 4D/nD datasets may show 0 points depending on slice position
+- Use 3D datasets for general-purpose loading tests
+- For nD tests, navigate to slices known to have points
+
+---
+
+## Luxar Conventions
+
+### Physical Units
+Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
+
+### Point Attributes
+- **positions**: Required (Float32, nD)
+- **colors**: Optional (Uint8 or Float32 for HDR)
+- **radii**: Optional (Float32)
+- **sharpness**: Optional (Float32)
+
+### Transforms
+- 4x4 matrices stored as 16-element lists
+- Transpose for THREE.js compatibility (see Critical Gotchas)
+- Use `luxar.transforms` module (translate, rotate, scale, compose)
+
+### Dimensions
+- Define at Scene level using `Dimensions` and `Dimension` classes
+- Include: name, unit, range, step, display status
+- Step sizes used for keyboard navigation in viewer
+
+### nD Navigation
+- Keyboard: 1-9 selects dimension, `[`/`]` navigates
+- Radius-based slicing: points visible based on nD hypersphere intersection
+
+---
+
+## Pre-commit Checklist
+
 ```bash
-# 1. Run agent driver
-pnpm agent:debug
-
-# 2. See output:
-[BROWSER-CONSOLE-LOG] Query result: 0 cells → 0 ranges → 0 points
-# Identifies the issue: no points loaded
-
-# 3. Add debug logging to code
-console.log('[DEBUG] Spatial index query:', queryTolerance);
-
-# 4. Run again
-pnpm agent:debug
-[BROWSER-CONSOLE-LOG] [DEBUG] Spatial index query: [0, 0, 0, 0]
-# Found the bug: tolerance is all zeros!
-
-# 5. Fix and verify
-# ... make fix ...
-pnpm agent:debug
-[BROWSER-CONSOLE-LOG] Query result: 50 cells → 10 ranges → 12000 points ✅
+make test-all                    # All tests pass
+make check                       # Linting, type checking
+pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
 
-See [packages/luxar-viewer/PLAYWRIGHT_GUIDE.md](packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md) for complete guide.
+Before PR/merge:
+- Full E2E suite: `cd packages/luxar-viewer && pnpm test:e2e`
+- Update READMEs if functionality changed
+- Update SPECIFICATIONS.md if algorithms changed
+- Update LUXAR_ZARR_FORMAT.md if data format changed
 
-## Important Reminders
+---
 
-### Development Best Practices
-1. Check for existing implementations before writing new code
-2. Validate all inputs according to the type system in `types.py`
-3. Keep examples simple, well-documented, and following the same standard of file naming, style and operation as existing examples
-4. Test edge cases, especially for validation functions
-5. Do not use unittest, instead use PyTest. Using mocking only as a last resort
-6. Use `arbol` for console output in examples and CLI tools
-7. When implementing new features, avoid over-engineering - "Complete before you perfect"
-8. This is still an early-stage project, DO NOT BOTHER about backwards compatibility, deprecation or migration guides. If something needs to be changed, just change it and update all relevant documentation and examples. Do not keep old code around just for backwards compatibility.
-9. When running test 'by-hand', or doing experiments that generate files, put these files in a 'delme' directory, so that they can be easily cleaned up later
-10. Example/test datasets should always be named: 'something_something_example(.py|.zarr)' (e.g., 'test_4d_rainbow_sphere_example.zarr')
-11. Resulting zarr datasets from examples can be left in the packages/luxar/examples folder - no need to copy them elsewhere
-12. **You CAN now run and debug the viewer autonomously** using `pnpm agent:debug` (Playwright). Use this to verify fixes, inspect state, and debug issues without asking the user to open a browser. See the "AI-Assisted Debugging" section above.
-13. **Network Simulation for Performance Testing**: Use `--profile` or individual simulation flags (`--bandwidth`, `--latency`, `--jitter`, `--packet-loss`) to test viewer performance under realistic network conditions. See "Network Simulation Testing" section below.
+## Development Philosophy
 
-### Network Simulation Testing
+1. **No backwards compatibility burden** - Early-stage project, just change it
+2. **Complete before perfect** - Avoid over-engineering
+3. **Minimum viable solution** - Don't add features/refactoring beyond what's asked
+4. **Test everything** - Never skip tests, fix or mock them properly
+5. **Keep docs in sync** - Update READMEs and specs with code changes
+6. **Use existing patterns** - Follow codebase conventions
 
-**Purpose**: Test viewer performance and UX under various network conditions (3G, 4G, satellite, etc.)
+### Naming Conventions
+- Example files: `*_example.py` or `*_example.zarr`
+- Temp files: Put in `delme/` directory
+- Example outputs: Keep in `packages/luxar/examples/`
+- Never commit `.zarr` directories (in .gitignore)
 
-**Quick Examples**:
-```bash
-# List available profiles
-luxar profiles
+---
 
-# Test with slow mobile connection
-luxar serve data.zarr --profile 3g --viewer --open
+## Detailed Documentation
 
-# Custom simulation
-luxar serve data.zarr --bandwidth 500kbps --latency 200ms --jitter 10% --packet-loss 2%
+| Topic | Location |
+|-------|----------|
+| E2E Testing Quick Ref | `docs/E2E_TESTING_GUIDE.md` |
+| Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
+| Data Format Spec | `docs/LUXAR_ZARR_FORMAT.md` |
+| UI Design System | `docs/UI_DESIGN.md` |
+| Network Simulation | `docs/NETWORK_SIMULATION_SPEC.md` |
+| Console Logging Style | `docs/CONSOLE_OUTPUT_STYLE.md` |
+| Changelog | `CHANGELOG.md` |
+| Spec Template | `docs/templates/SPECIFICATIONS_TEMPLATE.md` |
 
-# Demo with high latency
-luxar demo --profile satellite --open
+---
+
+## Architecture Overview
+
+```
+Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ```
 
-**Common Testing Scenarios**:
-
-1. **Cache Effectiveness**: Test if caching reduces redundant requests under bandwidth constraints
-   ```bash
-   luxar serve data.zarr --bandwidth 100kbps --viewer
-   # Watch browser DevTools Network tab
-   ```
-
-2. **Progressive Loading**: Verify UI remains responsive during slow chunk loading
-   ```bash
-   luxar serve large_dataset.zarr --profile 3g --viewer
-   ```
-
-3. **Error Handling**: Test viewer resilience to packet loss
-   ```bash
-   luxar serve data.zarr --packet-loss 5% --viewer
-   ```
-
-4. **Latency Tolerance**: Check if high-latency networks affect UX
-   ```bash
-   luxar serve data.zarr --profile satellite --viewer
-   ```
-
-**Profiles Available**: `3g`, `4g`, `5g`, `broadband`, `fast-broadband`, `slow-broadband`, `satellite`, `rural`, `congested`
-
-**Parameters**:
-- `--profile <name>` - Use preset connection profile
-- `--bandwidth <value>` - Limit bandwidth (e.g., '1mbps', '500kbps')
-- `--latency <value>` - Add request latency (e.g., '100ms', '1s')
-- `--jitter <value>` - Add latency variation (e.g., '10%', '0.1')
-- `--packet-loss <value>` - Simulate dropped requests (e.g., '1%', '0.01')
-
-**Important Notes**:
-- Simulation applies to **data server only** (not viewer HTML/JS/CSS)
-- Individual parameters override profile defaults
-- For `viewer` command, simulation requires `--data` to be specified
-- Network simulation is for **development/testing only** - never use in production
-- View actual network performance in browser DevTools Network tab
-
-**Technical Details**: See `docs/NETWORK_SIMULATION_SPEC.md` for complete specification
-
-## Technical Documentation
-
-### Critical Compatibility Issues
-
-#### Matrix Storage Order: Python/NumPy vs TypeScript/THREE.js
-**IMPORTANT**: Python/NumPy and TypeScript/THREE.js use different matrix storage conventions:
-
-- **Python/NumPy**: Row-major order (C-style)
-  - 4x4 matrix flattened as: `[m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33]`
-  - Translation components at indices: `[3, 7, 11]` (when flattened)
-  
-- **TypeScript/THREE.js**: Column-major order (OpenGL-style)
-  - 4x4 matrix flattened as: `[m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]`
-  - Translation components at indices: `[12, 13, 14]` (when flattened)
-
-**Solution**: When storing transforms in zarr for THREE.js consumption:
-1. Transpose the matrix before flattening: `matrix.T.ravel().tolist()`
-2. When reading back in Python, transpose again: `np.array(flat_list).reshape(4, 4).T`
-
-This issue was discovered when hierarchical transforms weren't working - all objects were at origin because THREE.js was reading translation values from the wrong array indices.
-
-### Recent Updates and Learnings
-
-#### Critical Bug Fixes from Code Review (January 2025)
-- **Transform Composition Bug**: Fixed critical math error in `compose()` function
-  - **Issue**: Matrix multiplication order was reversed (left-multiply instead of right-multiply)
-  - **Impact**: `compose(T1, T2, T3)` was applying T3 first instead of T1 first
-  - **Fix**: Changed `result = transform @ result` to `result = result @ transform`
-  - **Location**: `core/transforms.py:271`
-  - **Test Added**: `test_compose_application_order()` with 4 rigorous test cases
-  - **Lesson**: Order matters for non-commutative transforms (rotate+translate). Always test with order-sensitive operations.
-
-- **Points Metadata Loss Bug**: Fixed critical constructor initialization order bug
-  - **Issue**: `Points.__init__()` set `self._metadata` before calling `super().__init__()`, then `Node.__init__()` overwrote it with empty dict
-  - **Impact**: ALL Points objects lost their metadata (has_colors, has_radii, max_radius, etc. all lost)
-  - **Fix**: Call `super().__init__()` BEFORE setting `self._metadata` in Points class
-  - **Location**: `core/points.py:50-58`
-  - **Test Added**: `test_points_metadata_preservation()` with comprehensive checks
-  - **Lesson**: When subclass and parent both initialize the same attribute, parent must initialize first
-
-#### Legacy Code Removal (January 2025)
-- **Legacy Mode Removed**: Eliminated unused "legacy mode" from Node class (~40 lines dead code)
-  - Removed `group` parameter and all `if self._group is not None:` branches
-  - Node now only supports progressive writing mode (simpler, clearer)
-  - No production code ever used legacy mode
-
-- **Deprecated Parameters Removed**: Cleaned up deprecated API surface
-  - Removed `units` parameter from `LuxarZarrCompiler` (use Dimensions instead)
-  - Removed `DimensionMetadata` class (use full-featured `Dimension` instead)
-  - Removed unused version constants (LEGACY, PREVIOUS, FUTURE)
-  - Total: ~160 lines of dead/deprecated code removed
-
-- **Result**: Clean API with one clear way to do everything, zero backward-compatibility baggage
-
-#### Code Quality Improvements (January 2025)
-- **Compiler Refactoring**: Reduced `write_points()` from 432 to 117 lines (73% reduction)
-  - Extracted 8 focused helper methods with single responsibilities
-  - Much easier to test, understand, and maintain
-
-- **Validation Consolidation**: Created `validation/types.py` centralizing all validation
-  - Eliminated ~350 lines of duplication between `protocols.py` and `validation/base.py`
-  - Clear organization: types.py (basic), base.py (detailed for writing), nd.py (dimensional)
-
-- **Transform Handling Centralized**: Added `read_transform_from_zarr()` companion function
-  - Single source of truth for NumPy ↔ THREE.js transform conversion
-  - Eliminated ~50 lines of duplicate transpose logic
-
-- **Magic Numbers Extracted**: Created 18 named constants for spatial index tuning
-  - All grid sizing heuristics now configurable via constants
-  - Self-documenting code with clear intent
-
-- **Performance**: Vectorized HSV→RGB conversion in demos (30-100x faster)
-
-- **Documentation**: Added 80+ inline comments explaining complex algorithms (cell ID calculation, grid shape heuristics, transform composition math)
-
-#### Fullscreen Resize Bug Fix (January 2025)
-- **Issue**: Point sizes changed incorrectly on first fullscreen toggle or window resize
-- **Root Cause**: Scene initialization didn't call `updateSize()`, causing different behavior on first resize
-- **Solution**: Make initialization call `this.updateSize()` in `scene-manager.ts` init() method
-- **Lesson**: Ensure initialization and resize paths are identical to avoid first-time-only bugs
-- **Testing**: Always test both initial state AND state after first resize/fullscreen
-
-#### Debug Console & Console Logging (January 2025)
-- **In-App Debug Console**: Press Ctrl+L to toggle debug console that captures all browser console output
-- **Ring Buffer Implementation**: Console interceptor uses 10,000 message ring buffer to prevent memory overflow  
-- **Early Message Capture**: Console messages captured from app initialization via early import of interceptor
-- **Configuration Constants**: Debug console dimensions and styling moved to `config/debug-console.ts`
-- **Standardized Logging**: All console logs use format: `[emoji] [Luxar] message` for consistency
-- **Debug Interface**: Debug tools available at `window.__luxarDebug` when `?debug` URL param is present
-
-#### HDR Color Pipeline Changes (January 2025)
-- **Float32 Colors**: Changed from Uint8Array to Float32Array for HDR color support
-- **nD Slicing Fix**: Updated slicing algorithms to use `sliceColorsFloat32()` for proper HDR colors
-- **WebGL Limitation**: Discovered WebGL canvas doesn't support true HDR output (limited to 8-bit)
-- **HDR Detection**: Added comprehensive HDR capability detection in `utils/hdr-detection.ts`
-
-#### World-Space Point Sizing (January 2025)
-- **Physical Accuracy**: Points now use world-space sizing instead of screen-space
-- **Key Property**: Two points with radius r at distance 2r will just touch
-- **FOV Independence**: Points maintain physical size regardless of field of view changes
-- **Implementation**: Uses angular size calculation in vertex shaders
-- **Formula**: `angularSize = 2 * atan(radius/distance)`, then converted to pixels
-- **Resolution Handling**: Uses actual framebuffer size (includes devicePixelRatio)
-
-#### nD Visualization Implementation
-- **Slicing Tolerance**: Use point radius for visibility, not fixed tolerance
-- **Scene Dimensions**: Always define at scene level for consistency
-- **Keyboard Navigation**: Simple 2-step: select dimension (1-9), navigate ([/])
-- **TypeScript Integration**: Scene dimensions loaded from zarr attrs, used for step sizes
-- **Examples**: Keep nD examples simple with clear shapes/patterns
-
-#### Data Loading Architecture Refactor (January 2025)
-- **Removed Lazy Loading**: Eliminated LazyDataManager in favor of spatial index-based loading
-- **Spatial Index Required**: All datasets now require spatial indices for efficient loading
-- **Range-Based Caching**: New RangeCache system for intelligent memory management
-- **Improved Monitoring**: Enhanced DataLoadingMonitor with better error handling and disposal
-- **Cleaner Architecture**: Removed intermediate abstractions for simpler, more maintainable code
-
-### Architecture Overview
-
-#### Data Flow
-```
-Python Data → Luxar Core → Zarr Archive → Luxar Player → WebGL → Display
-```
-
-#### Scene Graph Structure
+### Scene Graph
 - Scene (root) contains Groups and Points
-- Groups can contain other Groups and Points (hierarchical)
-- Each node has optional transform (4x4 matrix)
-- Transforms compose hierarchically (parent → child)
+- Groups can nest (hierarchical)
+- Transforms compose hierarchically (parent -> child)
 - Points have positions (nD), colors, radii, sharpness
 
-#### Zarr Storage Format
-- Chunked, compressed storage for streaming
-- Consolidated metadata for fast loading (`.zmetadata`)
-- Scene attributes: version, dimensions, units
-- Node attributes: type, transform, rendering properties
-- Array data: positions, colors, radii, sharpness
-
-### Performance Considerations
-- Target: 100K-10M points for smooth interaction
-- Chunk size: 32KB-1MB per chunk optimal
+### Performance Targets
+- 100K-10M points for smooth interaction
+- Chunk size: 32KB-1MB optimal
 - Compression: Blosc with zstd level 3
-- Use Float32 for positions/radii, Uint8 or Float32 for colors
-- Progressive loading for large datasets
-
-### Broader Vision and Known Issues
-
-#### Future Extensions
-- **Multiple blending modes**: Support different blending modes (additive, normal) per layer/object
-- **Beyond points**: Support for meshes, lines, volumes, and other geometry types
-- **Material system**: More sophisticated materials with different shading models
-- **Level of Detail (LOD)**: Automatic LOD for massive datasets
-- **Streaming**: Progressive loading and culling for TB-scale data

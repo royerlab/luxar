@@ -1,6 +1,6 @@
 # Types Package
 
-TypeScript type definitions for high-dimensional data visualization in Luxar. This package provides the fundamental data structures and interfaces for managing nD points data, dimension metadata, and coordinate system definitions.
+TypeScript type definitions for high-dimensional data visualization in Luxar. This package provides the fundamental data structures and interfaces for managing nD points and lines data, dimension metadata, and coordinate system definitions.
 
 ## Table of Contents
 
@@ -22,7 +22,8 @@ The types package defines the foundational type system for Luxar's nD visualizat
 
 ## Key Features
 
-- **nD Data Structures**: Complete type definitions for high-dimensional points
+- **nD Data Structures**: Complete type definitions for high-dimensional points and lines
+- **Lines Types**: Type definitions for line segments with nD clipping support
 - **Dimension Metadata**: Rich semantic information for dataset dimensions
 - **Navigation State**: Type-safe dimension slicing and display configuration
 - **Initialization Utilities**: Functions for creating properly structured dimension objects

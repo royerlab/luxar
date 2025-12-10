@@ -471,6 +471,9 @@ export interface RenderingSettings {
   fovPreset: '28mm Wide' | '35mm' | '50mm Normal' | '85mm Portrait' | '135mm Tele' | 'Custom';
   near: number;
   far: number;
+  // Dynamic clipping planes
+  dynamicClippingEnabled: boolean;
+  clippingAdaptSpeed: number;
   // Rendering effects (bloom is now the single source of truth)
   bloomThreshold: number;
   bloomStrength: number;
