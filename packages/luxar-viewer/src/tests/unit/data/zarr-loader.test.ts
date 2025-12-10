@@ -249,7 +249,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPointsGroup = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -301,12 +301,12 @@ describe('zarr-loader', () => {
       };
 
       const mockPointsGroup1 = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
       const mockPointsGroup2 = {
-        attrs: { type: 'points', num_points: 200 },
+        attrs: { type: 'points', n_points: 200 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -354,7 +354,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 50 },
+        attrs: { type: 'points', n_points: 50 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -395,7 +395,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -437,7 +437,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           transform: identityMatrix,
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -474,7 +474,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 50,
+          n_points: 50,
           transform: translationMatrix,
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -508,7 +508,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           // No transform attr
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -540,7 +540,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           transform: [1, 0, 0, 0], // Invalid: only 4 elements, need 16
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -578,7 +578,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           opacity: 0.5, // Semi-transparent
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -610,7 +610,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           blending_mode: 'additive',
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -642,7 +642,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           gamma: 2.2, // Gamma correction
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -672,7 +672,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           // No opacity, blending_mode, or gamma
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -718,7 +718,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -748,7 +748,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 100,
+          n_points: 100,
           extend_to_all: ['time', 'channel'], // Extend visibility across these dims
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -779,7 +779,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -815,7 +815,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -844,7 +844,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -873,7 +873,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -905,7 +905,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 2 },
+        attrs: { type: 'points', n_points: 2 },
         contents: new Map([
           ['positions', { type: 'array' }],
           ['colors', { type: 'array' }],
@@ -978,7 +978,7 @@ describe('zarr-loader', () => {
       const mockPoints = {
         attrs: {
           type: 'points',
-          num_points: 'invalid', // Should be number
+          n_points: 'invalid', // Should be number
           opacity: 'invalid', // Should be number
         },
         contents: new Map([['positions', { type: 'array' }]]),
@@ -1015,7 +1015,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -1045,7 +1045,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 100 },
+        attrs: { type: 'points', n_points: 100 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 
@@ -1132,7 +1132,7 @@ describe('zarr-loader', () => {
       };
 
       const mockPoints = {
-        attrs: { type: 'points', num_points: 1000 },
+        attrs: { type: 'points', n_points: 1000 },
         contents: new Map([['positions', { type: 'array' }]]),
       };
 

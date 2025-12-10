@@ -519,37 +519,67 @@ export class RenderingControls {
         '• Keep near/far ratio under 10,000:1 for best precision'
     );
 
-    // Auto-adjust clipping planes button
-    const autoAdjustButton = {
-      'Auto Adjust': () => {
-        const { near, far } = this.sceneManager.autoAdjustClippingPlanes();
-        this.settings.near = near;
-        this.settings.far = far;
-
-        // Update controls display
-        if (this.controllers.nearPlane) {
-          this.controllers.nearPlane.setValue(near);
-          this.controllers.nearPlane.updateDisplay();
-        }
-        if (this.controllers.farPlane) {
-          this.controllers.farPlane.setValue(far);
-          this.controllers.farPlane.updateDisplay();
-        }
-
+    // Dynamic clipping checkbox - auto-adjusts clipping planes each frame
+    const dynamicClippingControl = clippingFolder
+      .add(this.settings, 'dynamicClippingEnabled')
+      .name('Dynamic Clipping')
+      .onChange((value: boolean) => {
+        this.sceneManager.setDynamicClipping(value, this.settings.clippingAdaptSpeed);
         this.saveSettings();
         this.triggerAnimation();
-      },
-    };
 
-    const autoAdjustControl = clippingFolder.add(autoAdjustButton, 'Auto Adjust');
-    autoAdjustControl.domElement.setAttribute(
+        // Enable/disable manual near/far controls
+        this.updateClippingControlsState(value);
+
+        // Show/hide adapt speed slider
+        if (value) {
+          adaptSpeedControl.show();
+        } else {
+          adaptSpeedControl.hide();
+        }
+      });
+
+    // Store reference
+    this.controllers.dynamicClippingEnabled = dynamicClippingControl;
+
+    dynamicClippingControl.domElement.setAttribute(
       'title',
-      'Auto Adjust: Calculate optimal clipping planes\n' +
-        '• Analyzes current scene bounds\n' +
-        '• Sets near/far planes for best Z-buffer precision\n' +
-        '• Prevents Z-fighting while maximizing depth range\n' +
-        '• Recommended after loading new datasets'
+      'Dynamic Clipping: Auto-adjust clipping planes each frame\n' +
+        '• Smoothly adapts to camera position and scene bounds\n' +
+        '• Uses exponential smoothing for stable transitions\n' +
+        '• Maximizes Z-buffer precision at all times\n' +
+        '• When enabled, manual near/far controls are disabled'
     );
+
+    // Adapt speed slider (only visible when dynamic clipping is enabled)
+    const adaptSpeedControl = clippingFolder
+      .add(this.settings, 'clippingAdaptSpeed', 0.01, 0.5, 0.01)
+      .name('Adapt Speed')
+      .onChange((value: number) => {
+        this.sceneManager.setDynamicClipping(this.settings.dynamicClippingEnabled, value);
+        this.saveSettings();
+        this.triggerAnimation();
+      });
+
+    // Store reference
+    this.controllers.clippingAdaptSpeed = adaptSpeedControl;
+
+    adaptSpeedControl.domElement.setAttribute(
+      'title',
+      'Adapt Speed: How quickly clipping planes adjust\n' +
+        '• 0.01 = Very slow, smooth transitions\n' +
+        '• 0.1 = Balanced responsiveness (default)\n' +
+        '• 0.5 = Fast adaptation, may cause jitter\n' +
+        '• Lower values = smoother but slower response'
+    );
+
+    // Initially show/hide adapt speed based on dynamic clipping state
+    if (!this.settings.dynamicClippingEnabled) {
+      adaptSpeedControl.hide();
+    }
+
+    // Update manual controls state based on initial dynamic clipping setting
+    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
 
     // HDR folder
     const hdrFolder = this.gui.addFolder('HDR');
@@ -1324,6 +1354,101 @@ export class RenderingControls {
         '• Corrects for non-square pixels\n' +
         '• Usually very small values'
     );
+
+    // Reset to Defaults button at root level
+    const resetButton = {
+      'Reset to Defaults': () => {
+        this.resetToDefaults();
+      },
+    };
+
+    const resetControl = this.gui.add(resetButton, 'Reset to Defaults');
+    resetControl.domElement.setAttribute(
+      'title',
+      'Reset to Defaults: Restore all rendering settings\n' +
+        '• Resets camera, HDR, bloom, anti-aliasing\n' +
+        '• Resets all post-processing effects\n' +
+        '• Resets navigation controls\n' +
+        '• Clears saved settings for this scene'
+    );
+  }
+
+  /**
+   * Reset all rendering settings to their default values
+   */
+  private resetToDefaults(): void {
+    // Get fresh defaults from config, including fly control defaults
+    const defaults = {
+      ...config.renderingControls.defaults,
+      flyMovementSpeed: config.controls.fly.movement.speed.default,
+      flyRotationSpeed: config.controls.fly.rotation.speed.default,
+      flyInertialMode: config.controls.fly.inertialMode.default,
+      flyDamping: config.controls.fly.movement.damping.default,
+      flyRotationDamping: config.controls.fly.rotation.damping.default,
+    };
+
+    // Update settings object in place to maintain GUI bindings
+    Object.assign(this.settings, defaults);
+
+    // Apply all settings to the rendering pipeline
+    this.applySettings();
+
+    // Update all GUI controllers to reflect new values
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
+
+    // Update folder visibility based on control type
+    this.updateNavigationControls(this.settings.controlType);
+
+    // Update clipping controls state
+    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
+
+    // Show/hide adapt speed based on dynamic clipping
+    if (this.controllers.clippingAdaptSpeed) {
+      if (this.settings.dynamicClippingEnabled) {
+        this.controllers.clippingAdaptSpeed.show();
+      } else {
+        this.controllers.clippingAdaptSpeed.hide();
+      }
+    }
+
+    // Show/hide fly damping controls based on inertial mode
+    if (this.controllers.flyDamping) {
+      if (this.settings.flyInertialMode) {
+        this.controllers.flyDamping.show();
+      } else {
+        this.controllers.flyDamping.hide();
+      }
+    }
+    if (this.controllers.flyRotationDamping) {
+      if (this.settings.flyInertialMode) {
+        this.controllers.flyRotationDamping.show();
+      } else {
+        this.controllers.flyRotationDamping.hide();
+      }
+    }
+
+    // Clear saved settings for this scene
+    if (this.sceneId) {
+      const key = generateSettingsKey(this.sceneId);
+      localStorage.removeItem(key);
+    }
+
+    // Apply control type change to scene manager
+    this.sceneManager.setControlType(this.settings.controlType);
+
+    // Apply FOV change
+    const currentFOV = this.sceneManager.camera.fov;
+    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
+      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
+      this.sceneManager.updateFOV(delta);
+    }
+
+    // Trigger render
+    this.triggerAnimation();
+
+    log.info(Modules.RENDERER, 'Rendering settings reset to defaults');
   }
 
   /**
@@ -1499,6 +1624,31 @@ export class RenderingControls {
   private triggerAnimation(): void {
     // Start animation to see changes immediately
     this.animationController?.startAnimation();
+  }
+
+  /**
+   * Update clipping controls state based on dynamic clipping setting
+   * When dynamic clipping is enabled, grey out manual near/far controls
+   */
+  private updateClippingControlsState(dynamicEnabled: boolean): void {
+    const opacity = dynamicEnabled ? '0.5' : '1.0';
+    const pointerEvents = dynamicEnabled ? 'none' : 'auto';
+
+    if (this.controllers.nearPlane) {
+      const container = this.controllers.nearPlane.domElement.closest('.controller');
+      if (container instanceof HTMLElement) {
+        container.style.opacity = opacity;
+        container.style.pointerEvents = pointerEvents;
+      }
+    }
+
+    if (this.controllers.farPlane) {
+      const container = this.controllers.farPlane.domElement.closest('.controller');
+      if (container instanceof HTMLElement) {
+        container.style.opacity = opacity;
+        container.style.pointerEvents = pointerEvents;
+      }
+    }
   }
 
   /**
@@ -1713,6 +1863,30 @@ export class RenderingControls {
       this.controllers.farPlane.updateDisplay();
     }
 
+    // Sync dynamic clipping state from scene manager
+    const dynamicClippingState = this.sceneManager.getDynamicClippingState();
+    this.settings.dynamicClippingEnabled = dynamicClippingState.enabled;
+    this.settings.clippingAdaptSpeed = dynamicClippingState.adaptSpeed;
+
+    if (this.controllers.dynamicClippingEnabled) {
+      this.controllers.dynamicClippingEnabled.setValue(this.settings.dynamicClippingEnabled);
+      this.controllers.dynamicClippingEnabled.updateDisplay();
+    }
+
+    if (this.controllers.clippingAdaptSpeed) {
+      this.controllers.clippingAdaptSpeed.setValue(this.settings.clippingAdaptSpeed);
+      this.controllers.clippingAdaptSpeed.updateDisplay();
+      // Show/hide adapt speed based on dynamic clipping state
+      if (this.settings.dynamicClippingEnabled) {
+        this.controllers.clippingAdaptSpeed.show();
+      } else {
+        this.controllers.clippingAdaptSpeed.hide();
+      }
+    }
+
+    // Update near/far control state based on dynamic clipping
+    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
+
     // Update all other controllers
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
@@ -1816,6 +1990,15 @@ export class RenderingControls {
     if (this.settings.aoEnabled) {
       this.postProcessing.setAOEnabled(true, this.settings.aoQuality);
     }
+
+    // Apply dynamic clipping settings
+    this.sceneManager.setDynamicClipping(
+      this.settings.dynamicClippingEnabled,
+      this.settings.clippingAdaptSpeed
+    );
+
+    // Update near/far control state based on dynamic clipping
+    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
 
     // Trigger render to ensure changes are visible
     this.triggerAnimation();

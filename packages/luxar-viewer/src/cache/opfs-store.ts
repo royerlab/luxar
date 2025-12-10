@@ -34,6 +34,10 @@ export class OPFSStore {
   private baseUrl: string;
   private contentHash: string | null = null;
 
+  // Read/write tracking for monitoring
+  private readCount = 0;
+  private writeCount = 0;
+
   // Bucket handle cache (256 possible buckets: 00-ff)
   private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
 
@@ -82,6 +86,7 @@ export class OPFSStore {
 
       // Update LRU order
       this.touch(key);
+      this.readCount++;
 
       return data;
     } catch {
@@ -136,6 +141,7 @@ export class OPFSStore {
       }
       this.index.set(key, { size, order: this.orderCounter++ });
       this.totalSize += size;
+      this.writeCount++;
 
       // Debounced metadata save
       this.scheduleMetadataSave();
@@ -192,6 +198,8 @@ export class OPFSStore {
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
+    this.readCount = 0;
+    this.writeCount = 0;
   }
 
   /**
@@ -210,10 +218,12 @@ export class OPFSStore {
   /**
    * Get cache statistics.
    */
-  getStats(): { size: number; count: number } {
+  getStats(): { size: number; count: number; reads: number; writes: number } {
     return {
       size: this.totalSize,
       count: this.index.size,
+      reads: this.readCount,
+      writes: this.writeCount,
     };
   }
 

@@ -31,6 +31,11 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private static readonly DEFAULT_L1_SIZE = 100 * 1024 * 1024; // 100MB
   private static readonly DEFAULT_L2_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
+  // Network I/O tracking
+  private networkBytesTransferred = 0;
+  private networkRequestCount = 0;
+  private networkStartTime = Date.now();
+
   constructor(baseUrl: string, options?: TwoLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
 
@@ -119,6 +124,10 @@ export class TwoLevelCachingStore implements AsyncReadable {
       if (!response.ok) return undefined;
 
       const data = new Uint8Array(await response.arrayBuffer());
+
+      // Track network I/O
+      this.networkRequestCount++;
+      this.networkBytesTransferred += data.byteLength;
 
       // Populate both caches
       this.l1Cache.set(key, data);
@@ -241,15 +250,42 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
   /**
    * Get cache statistics.
+   * Returns extended stats compatible with CacheStatsProvider interface.
    */
   getStats(): {
-    l1: { metadataSize: number; chunksSize: number; metadataCount: number; chunksCount: number };
-    l2: { size: number; count: number };
-    } {
+    l1: {
+      metadataSize: number;
+      chunksSize: number;
+      metadataCount: number;
+      chunksCount: number;
+      hits: number;
+      misses: number;
+      evictions: number;
+    };
+    l2: { size: number; count: number; reads: number; writes: number };
+    network: { bytesTransferred: number; requestCount: number; bandwidth: number };
+  } {
+    // Calculate average bandwidth (bytes per second since start)
+    const elapsedSeconds = Math.max(1, (Date.now() - this.networkStartTime) / 1000);
+    const bandwidth = this.networkBytesTransferred / elapsedSeconds;
+
     return {
       l1: this.l1Cache.getStats(),
-      l2: this.l2Store?.getStats() ?? { size: 0, count: 0 },
+      l2: this.l2Store?.getStats() ?? { size: 0, count: 0, reads: 0, writes: 0 },
+      network: {
+        bytesTransferred: this.networkBytesTransferred,
+        requestCount: this.networkRequestCount,
+        bandwidth,
+      },
     };
+  }
+
+  /**
+   * Check if caching is enabled.
+   * Used by CacheStatsProvider interface.
+   */
+  isEnabled(): boolean {
+    return this.enabled;
   }
 
   /**

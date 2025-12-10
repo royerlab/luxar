@@ -77,7 +77,7 @@ export interface ZarrNodeAttrs {
   depth_write?: boolean;
 
   /** Points metadata */
-  num_points?: number;
+  n_points?: number;
   max_radius?: number;
 
   /** Position bounds (nD bounding box) */

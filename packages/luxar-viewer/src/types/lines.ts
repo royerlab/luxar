@@ -1,0 +1,373 @@
+/**
+ * Lines type definitions for luxar-viewer.
+ *
+ * These types mirror Python luxar.core.Lines and enable type-safe
+ * handling of line data throughout the viewer.
+ *
+ * @module types/lines
+ */
+
+import type { DimensionMetadata } from './dims';
+
+// ============================================================================
+// Metadata Types (from zarr .zattrs)
+// ============================================================================
+
+/**
+ * Ordering metadata structure (shared between vertices and segments)
+ *
+ * Lines use dual spatial indexing:
+ * - Vertices: Ordered in D-dimensional space using space-filling curves
+ * - Segments: Ordered in (2×D)-dimensional space (start+end concatenated)
+ */
+export interface OrderingMetadata {
+  /** Discrete dimension indices for compound ordering */
+  slice_dims: number[];
+
+  /** Spatial dimension indices for curve ordering */
+  ordering_dims: number[];
+
+  /** Min bounds for coordinate normalization */
+  ordering_min: number[];
+
+  /** Max bounds for coordinate normalization */
+  ordering_max: number[];
+
+  /** Elements per chunk */
+  chunk_size: number;
+
+  /** Bits per dimension for space-filling curve encoding */
+  ordering_bits_per_dim?: number;
+}
+
+/**
+ * Original line type from Python API.
+ *
+ * - 'segments': Independent line segments (pairs of vertices)
+ * - 'polyline': Connected vertices forming a continuous line
+ * - 'loop': Polyline with first and last vertex connected
+ * - 'indexed': Explicit vertex/segment indices (most flexible)
+ */
+export type LineType = 'segments' | 'polyline' | 'loop' | 'indexed';
+
+/**
+ * Lines node metadata from zarr .zattrs
+ *
+ * This interface defines all metadata stored with a Lines node in the zarr archive.
+ * It enables type-safe access to line properties throughout the viewer.
+ */
+export interface LinesMetadata {
+  /** Node type identifier */
+  type: 'lines';
+
+  /** Total vertex count */
+  n_vertices: number;
+
+  /** Total segment count */
+  n_segments: number;
+
+  /** Vertex position dimensionality */
+  ndim: number;
+
+  /** Original line type from Python API */
+  original_line_type: LineType;
+
+  /** Maximum line width in world units */
+  max_width: number;
+
+  /** Whether colors array is present */
+  has_colors: boolean;
+
+  /** Whether sharpness array is present */
+  has_sharpness: boolean;
+
+  /** Whether spatial index exists (redundant with ordering !== 'none', but explicit) */
+  has_spatial_index?: boolean;
+
+  /** Spatial ordering method */
+  ordering: 'morton' | 'hilbert' | 'none';
+
+  /** Vertex ordering metadata (when ordering != 'none') */
+  vertex_ordering?: OrderingMetadata;
+
+  /** Segment ordering metadata (when ordering != 'none') */
+  segment_ordering?: OrderingMetadata;
+
+  /** 4x4 transform matrix (column-major for THREE.js) */
+  transform?: number[];
+
+  /** Opacity multiplier */
+  opacity?: number;
+
+  /** Gamma correction */
+  gamma?: number;
+
+  /** Blending mode */
+  blending_mode?: 'additive' | 'normal';
+}
+
+// ============================================================================
+// Spatial Index Types
+// ============================================================================
+
+/**
+ * Chunk-based spatial index for Lines.
+ *
+ * Lines have dual spatial ordering:
+ * - Vertex chunks: Bounding boxes in D-space for efficient vertex lookup
+ * - Segment chunks: Bounding boxes in D-space (union of start/end) for segment queries
+ *
+ * The segment bounds already include line width, so spatial queries use tolerance=0.
+ */
+export interface LinesChunkSpatialIndex {
+  /** Lines metadata from zarr attributes */
+  metadata: LinesMetadata;
+
+  /** Vertex chunk bounding boxes (num_v_chunks * ndim * 2), flattened row-major */
+  vertexChunkBounds: Float32Array;
+
+  /** Segment chunk bounding boxes (num_s_chunks * ndim * 2), flattened row-major */
+  segmentChunkBounds: Float32Array;
+
+  /** Computed: ceil(n_vertices / vertex_ordering.chunk_size) */
+  vertexChunkCount: number;
+
+  /** Computed: ceil(n_segments / segment_ordering.chunk_size) */
+  segmentChunkCount: number;
+}
+
+// ============================================================================
+// Loaded Data Types
+// ============================================================================
+
+/**
+ * Segment range for partial loading (mirrors PointRange pattern)
+ */
+export interface SegmentRange {
+  /** Start segment index (inclusive) */
+  start: number;
+
+  /** End segment index (exclusive) */
+  end: number;
+}
+
+/**
+ * Raw lines data loaded from zarr before nD projection.
+ *
+ * At this stage:
+ * - Vertices are in full nD space
+ * - Segments use LOCAL indices into the loaded vertex arrays
+ * - Attributes may need broadcasting (scalar → per-vertex)
+ */
+export interface LoadedLinesData {
+  /** Vertex positions (N vertices * ndim dimensions), flattened row-major */
+  vertices: Float32Array;
+
+  /** Segment index pairs (M segments * 2) - local indices into vertices */
+  segments: Uint32Array;
+
+  /** Vertex widths (N,) or (1,) if broadcast */
+  widths: Float32Array;
+
+  /** Vertex colors (N * 3) RGB, null if not present */
+  colors: Float32Array | null;
+
+  /** Vertex sharpness (N,) null if not present */
+  sharpness: Float32Array | null;
+
+  /** Number of segments loaded */
+  segmentCount: number;
+
+  /** Number of vertices loaded */
+  vertexCount: number;
+
+  /** Dimensionality for interpreting vertices array */
+  ndim: number;
+}
+
+/**
+ * Processed lines data ready for GPU rendering.
+ *
+ * After nD clipping and 3D projection:
+ * - Positions are in 3D display space
+ * - Per-segment attributes ready for instanced rendering
+ * - Clipped endpoints have interpolated attributes
+ */
+export interface ProcessedLinesData {
+  /** Segment start positions in 3D display space (M * 3) */
+  startPositions: Float32Array;
+
+  /** Segment end positions in 3D display space (M * 3) */
+  endPositions: Float32Array;
+
+  /** Start vertex colors RGB (M * 3), interpolated if clipped */
+  startColors: Float32Array;
+
+  /** End vertex colors RGB (M * 3), interpolated if clipped */
+  endColors: Float32Array;
+
+  /** Start vertex widths (M,), interpolated if clipped */
+  startWidths: Float32Array;
+
+  /** End vertex widths (M,), interpolated if clipped */
+  endWidths: Float32Array;
+
+  /** Start vertex sharpness (M,), interpolated if clipped */
+  startSharpness: Float32Array;
+
+  /** End vertex sharpness (M,), interpolated if clipped */
+  endSharpness: Float32Array;
+
+  /** 3D segment lengths (M,), used for cap factor calculation */
+  segmentLengths: Float32Array;
+
+  /** Whether start endpoint was clipped (M,), 1=clipped, 0=original */
+  startClipped: Uint8Array;
+
+  /** Whether end endpoint was clipped (M,), 1=clipped, 0=original */
+  endClipped: Uint8Array;
+
+  /** Number of visible segments after clipping */
+  segmentCount: number;
+}
+
+// ============================================================================
+// nD Clipping Types
+// ============================================================================
+
+/**
+ * Result of clipping a segment to the current nD slice.
+ *
+ * Segments may:
+ * - Be fully visible (both endpoints in slice)
+ * - Be partially visible (clipped to slice boundary)
+ * - Be invisible (both endpoints outside slice, same side)
+ */
+export interface ClippedSegment {
+  /** Clipped start position in 3D display space */
+  p1: number[];
+
+  /** Clipped end position in 3D display space */
+  p2: number[];
+
+  /** Parameter t at clipped start (0-1, for attribute interpolation) */
+  t1: number;
+
+  /** Parameter t at clipped end (0-1) */
+  t2: number;
+
+  /** Whether segment should be rendered */
+  visible: boolean;
+}
+
+// ============================================================================
+// Scene Integration Types
+// ============================================================================
+
+/**
+ * Data loader interface for Lines nodes.
+ *
+ * Mirrors the DataLoader interface from points but specialized for lines.
+ */
+export interface LinesDataLoader {
+  /** Load lines data for the given view state */
+  loadLines(viewState: LinesViewState): Promise<LoadedLinesData>;
+
+  /** Update existing data for a new view state */
+  updateView(viewState: LinesViewState): Promise<LoadedLinesData>;
+
+  /** Clean up resources */
+  dispose(): void;
+}
+
+/**
+ * View state for lines loading.
+ *
+ * Extends the points ViewState pattern with lines-specific information.
+ */
+export interface LinesViewState {
+  /** Which dimensions to display (max 3, indices into nD space) */
+  displayDims: number[];
+
+  /** Current position in nD space (one value per dimension) */
+  slicePosition: number[];
+
+  /** Tolerance for slicing in each dimension */
+  tolerance: number[];
+
+  /** Dimension metadata for the dataset */
+  dimensions?: DimensionMetadata[];
+}
+
+/**
+ * User data attached to THREE.Mesh for Lines in scene.
+ *
+ * Lines use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
+ * to avoid exceeding WebGL's 16 attribute location limit.
+ *
+ * Enables runtime type checking and provides access to loader/metadata.
+ * Note: Dimension info is NOT stored here - it's only at the Scene level.
+ */
+export interface LinesUserData {
+  /** Node type identifier for runtime type checking */
+  nodeType: 'lines';
+
+  /** Data loader instance */
+  loader: LinesDataLoader;
+
+  /** Zarr group attributes */
+  attrs: LinesMetadata;
+
+  /** Maximum line width (for bounding box expansion) */
+  maxWidth: number;
+
+  /** Spatial index for queries (optional, may not exist for non-indexed data) */
+  spatialIndex?: LinesChunkSpatialIndex;
+}
+
+// ============================================================================
+// Type Guards
+// ============================================================================
+
+/**
+ * Check if metadata is for a Lines node.
+ *
+ * @param attrs - Unknown attributes object
+ * @returns True if attrs is LinesMetadata
+ */
+export function isLinesMetadata(attrs: unknown): attrs is LinesMetadata {
+  return (
+    typeof attrs === 'object' &&
+    attrs !== null &&
+    (attrs as Record<string, unknown>).type === 'lines'
+  );
+}
+
+/**
+ * Check if userData indicates a Lines object.
+ *
+ * @param userData - THREE.Object3D userData
+ * @returns True if userData is LinesUserData
+ */
+export function isLinesUserData(userData: unknown): userData is LinesUserData {
+  return (
+    typeof userData === 'object' &&
+    userData !== null &&
+    (userData as Record<string, unknown>).nodeType === 'lines'
+  );
+}
+
+/**
+ * Check if a line type is valid.
+ *
+ * @param lineType - String to check
+ * @returns True if lineType is a valid LineType
+ */
+export function isValidLineType(lineType: unknown): lineType is LineType {
+  return (
+    lineType === 'segments' ||
+    lineType === 'polyline' ||
+    lineType === 'loop' ||
+    lineType === 'indexed'
+  );
+}

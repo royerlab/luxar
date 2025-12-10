@@ -111,7 +111,7 @@ describe('PointSpatialIndexLoader', () => {
       path: '/test_points',
       type: 'points',
       attrs: {
-        num_points: 10000,
+        n_points: 10000,
         max_radius: 0.5,
       },
       hasSpatialIndex: true,

@@ -8,6 +8,11 @@ export class LRUCache<V> {
   private currentSize = 0;
   private getSize: (v: V) => number;
 
+  // Hit/miss tracking for monitoring
+  private hits = 0;
+  private misses = 0;
+  private evictions = 0;
+
   constructor(maxSize: number, getSize: (v: V) => number) {
     this.maxSize = maxSize;
     this.getSize = getSize;
@@ -16,9 +21,12 @@ export class LRUCache<V> {
   get(key: string): V | undefined {
     const value = this.cache.get(key);
     if (value !== undefined) {
+      this.hits++;
       // Move to end (most recently used) - O(1) with Map
       this.cache.delete(key);
       this.cache.set(key, value);
+    } else {
+      this.misses++;
     }
     return value;
   }
@@ -38,6 +46,7 @@ export class LRUCache<V> {
       if (!oldestKey) break; // Safety check (should never happen)
       this.currentSize -= this.getSize(this.cache.get(oldestKey)!);
       this.cache.delete(oldestKey);
+      this.evictions++;
     }
 
     this.cache.set(key, value);
@@ -60,6 +69,9 @@ export class LRUCache<V> {
   clear(): void {
     this.cache.clear();
     this.currentSize = 0;
+    this.hits = 0;
+    this.misses = 0;
+    this.evictions = 0;
   }
 
   get size(): number {
@@ -68,5 +80,17 @@ export class LRUCache<V> {
 
   get count(): number {
     return this.cache.size;
+  }
+
+  get hitCount(): number {
+    return this.hits;
+  }
+
+  get missCount(): number {
+    return this.misses;
+  }
+
+  get evictionCount(): number {
+    return this.evictions;
   }
 }

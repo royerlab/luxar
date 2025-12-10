@@ -126,11 +126,16 @@ User-adjustable settings with persistence:
 ```typescript
 renderingControls: {
   defaults: {
+    // Camera clipping
+    dynamicClippingEnabled: true,   // Auto-adjust clipping planes per frame
+    clippingAdaptSpeed: 0.1,        // Exponential smoothing (0.01-0.5)
+    // Bloom and HDR
     bloomThreshold: 0.01,
     bloomStrength: 0.5,
     bloomRadius: 0.6,
     bloomLevels: 8,
     hdrMultiplier: 16.0,
+    // Anti-aliasing
     fxaaEnabled: false,
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
@@ -276,11 +281,15 @@ interface AppConfig {
 }
 
 interface RenderingSettings {
+  // Dynamic clipping planes
+  dynamicClippingEnabled: boolean;
+  clippingAdaptSpeed: number;
+  // Bloom and HDR
   bloomThreshold: number;
   bloomStrength: number;
   // ... all user-adjustable settings
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
-  controlType: 'orbit' | 'fly';
+  controlType: 'orbit' | 'arcball' | 'fly';
 }
 ```
 

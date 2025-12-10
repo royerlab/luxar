@@ -12,8 +12,7 @@ import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 // Dataset served from Python HTTP server on port 9000
 // Use build_example_structured - it's 3D with guaranteed visible points
-const DATASET_URL =
-  'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr';
+const DATASET_URL = 'http://localhost:9000/packages/luxar/examples/build_example_structured.zarr';
 
 test.describe('Data Loading Monitor Metrics', () => {
   test.beforeEach(async ({ page }) => {

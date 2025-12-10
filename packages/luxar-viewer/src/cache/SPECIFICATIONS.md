@@ -1,7 +1,7 @@
 # luxar-viewer.cache - Technical Specification
 
-**Version**: 1.2.1
-**Last Updated**: 2025-12-08
+**Version**: 1.3.0
+**Last Updated**: 2025-12-09
 
 ## Purpose
 
@@ -595,6 +595,98 @@ if data.byteLength != expectedSize:
 
 ---
 
+## Statistics & Monitoring
+
+### Cache Statistics Interface
+
+The `TwoLevelCachingStore` provides comprehensive statistics via `getStats()`:
+
+```typescript
+interface CacheStats {
+  l1: {
+    metadataSize: number; // Bytes in metadata segment
+    chunksSize: number; // Bytes in chunks segment
+    metadataCount: number; // Entries in metadata segment
+    chunksCount: number; // Entries in chunks segment
+    hits: number; // L1 cache hits
+    misses: number; // L1 cache misses
+    evictions: number; // Total items evicted from L1
+  };
+  l2: {
+    size: number; // Total L2 cache size in bytes
+    count: number; // Number of L2 entries
+    reads: number; // L2 read count
+    writes: number; // L2 write count
+  };
+  network: {
+    bytesTransferred: number; // Total bytes from HTTP requests
+    requestCount: number; // Number of HTTP requests
+    bandwidth: number; // Average bandwidth (bytes/sec)
+  };
+}
+```
+
+### Eviction Tracking
+
+**LRU Cache eviction tracking**:
+
+- Incremented on each `set()` when items are evicted to make room
+- Reset to 0 on `clear()`
+- Aggregated across both segments in `SegmentedLRUCache`
+
+```
+while (currentSize + newItemSize > maxSize):
+    evict LRU item
+    evictions++
+```
+
+### Network I/O Tracking
+
+**Purpose**: Track HTTP fetch activity for bandwidth monitoring
+
+**Implementation**:
+
+```
+On HTTP fetch success:
+  networkRequestCount++
+  networkBytesTransferred += data.byteLength
+```
+
+**Bandwidth Calculation**:
+
+```
+elapsedSeconds = (now - startTime) / 1000
+bandwidth = bytesTransferred / elapsedSeconds  // bytes/sec
+```
+
+**Properties**:
+
+- Cumulative (not reset on clear)
+- Only tracks successful fetches (not 404s or errors)
+- Start time set on store construction
+
+### Data Monitor Integration
+
+The cache statistics are exposed to the Data Loading Monitor via the `CacheStatsProvider` interface:
+
+```typescript
+interface CacheStatsProvider {
+  getStats(): CacheStats;
+  clearL1(): void;
+  clearL2(): Promise<void>;
+  clearAll(): Promise<void>;
+  isEnabled(): boolean;
+}
+```
+
+This enables:
+
+- Real-time L1/L2/Network stats in the monitor UI
+- Cache clear buttons in the UI
+- Hit rate and eviction rate visualization
+
+---
+
 ## Implementation Notes
 
 ### Why Map for LRU?
@@ -664,6 +756,14 @@ Prevents metadata thrashing:
 ---
 
 ## Changelog
+
+- **v1.3.0** (2025-12-09): Statistics & Monitoring enhancements
+  - Added eviction counter to LRUCache (`evictions` property)
+  - Aggregated evictions in SegmentedLRUCache across both segments
+  - Added network I/O tracking: `bytesTransferred`, `requestCount`, `bandwidth`
+  - Extended `getStats()` return type to include `network` statistics
+  - Added Statistics & Monitoring section to specification
+  - Enables Data Loading Monitor to display actual cache metrics
 
 - **v1.2.1** (2025-12-08): Cache validation bypass fix
   - **CRITICAL BUG FIX**: `validateCache()` now bypasses cache when fetching content_hash

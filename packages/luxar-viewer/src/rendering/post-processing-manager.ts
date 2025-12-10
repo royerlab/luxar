@@ -732,7 +732,10 @@ export class PostProcessingManager {
         offset: offset ?? 0.5,
       });
       this.rebuildEffectPass();
-      log.success(Modules.POST_PROCESSING, `RobustVignetteEffect created (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`);
+      log.success(
+        Modules.POST_PROCESSING,
+        `RobustVignetteEffect created (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`
+      );
     } else if (!enabled && this.vignetteEffect) {
       this.safeDisposeEffect(this.vignetteEffect, 'Vignette');
       this.vignetteEffect = undefined;
@@ -924,7 +927,7 @@ export class PostProcessingManager {
     vignette: boolean;
     ao: boolean;
     lensDistortion: boolean;
-    } {
+  } {
     const toneMappingNames: Record<ToneMappingMode, string> = {
       [ToneMappingMode.LINEAR]: 'Linear',
       [ToneMappingMode.REINHARD]: 'Reinhard',
@@ -1113,56 +1116,56 @@ export class PostProcessingManager {
       bloom:
         this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
           ? {
-            intensity: bloom.intensity,
-            luminanceThreshold: bloom.luminanceMaterial?.threshold,
-            radius: bloom.mipmapBlurPass?.radius,
-          }
+              intensity: bloom.intensity,
+              luminanceThreshold: bloom.luminanceMaterial?.threshold,
+              radius: bloom.mipmapBlurPass?.radius,
+            }
           : null,
       toneMapping:
         this.toneMappingEffect && isToneMappingEffectTyped(this.toneMappingEffect)
           ? {
-            mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
-          }
+              mode: this.toneMappingEffect.mode,
+              whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
+            }
           : null,
       dof:
         this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
           ? {
-            enabled: true,
-            bokehScale: this.dofEffect.bokehScale,
-            focusDistance:
+              enabled: true,
+              bokehScale: this.dofEffect.bokehScale,
+              focusDistance:
                 this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-          }
+            }
           : null,
       chromatic:
         this.chromaticEffect && isChromaticAberrationEffectTyped(this.chromaticEffect)
           ? {
-            offset: this.chromaticEffect.offset.clone(),
-          }
+              offset: this.chromaticEffect.offset.clone(),
+            }
           : null,
       vignette:
         this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
           ? {
-            darkness: this.vignetteEffect.darkness,
-            offset: this.vignetteEffect.offset,
-          }
+              darkness: this.vignetteEffect.darkness,
+              offset: this.vignetteEffect.offset,
+            }
           : null,
       lensDistortion:
         this.lensDistortionEffect && isLensDistortionEffectTyped(this.lensDistortionEffect)
           ? {
-            distortion: this.lensDistortionEffect.distortion.clone(),
-            principalPoint: this.lensDistortionEffect.principalPoint.clone(),
-            focalLength: this.lensDistortionEffect.focalLength.clone(),
-            skew: this.lensDistortionEffect.skew,
-          }
+              distortion: this.lensDistortionEffect.distortion.clone(),
+              principalPoint: this.lensDistortionEffect.principalPoint.clone(),
+              focalLength: this.lensDistortionEffect.focalLength.clone(),
+              skew: this.lensDistortionEffect.skew,
+            }
           : null,
       detectorNoise:
         this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
           ? {
-            readoutSigma: this.detectorNoiseEffect.readoutSigma,
-            photonGain: this.detectorNoiseEffect.photonGain,
-            fpnSigma: this.detectorNoiseEffect.fpnSigma,
-          }
+              readoutSigma: this.detectorNoiseEffect.readoutSigma,
+              photonGain: this.detectorNoiseEffect.photonGain,
+              fpnSigma: this.detectorNoiseEffect.fpnSigma,
+            }
           : null,
       // Save AA states
       ao: this.aoEffect ? { enabled: true } : null,

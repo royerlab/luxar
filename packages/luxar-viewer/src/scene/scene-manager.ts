@@ -79,6 +79,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   private contextLostHandler: ((event: Event) => void) | null = null;
   private contextRestoredHandler: ((event: Event) => void) | null = null;
 
+  /** Dynamic clipping planes state */
+  private dynamicClippingEnabled: boolean =
+    config.renderingControls.defaults.dynamicClippingEnabled;
+  private clippingAdaptSpeed: number = config.renderingControls.defaults.clippingAdaptSpeed;
+  private smoothedNear: number = config.camera.near;
+  private smoothedFar: number = config.camera.far;
+
   /**
    * Initialize the complete 3D scene setup
    */
@@ -435,7 +442,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   private clearSceneContent(): void {
     // Helper function to recursively dispose of objects
     const disposeObject = (obj: THREE.Object3D) => {
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points) {
+      // Handle Mesh, Points, and InstancedMesh (used for lines)
+      if (
+        obj instanceof THREE.Mesh ||
+        obj instanceof THREE.Points ||
+        obj instanceof THREE.InstancedMesh
+      ) {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
           if (Array.isArray(obj.material)) {
@@ -485,17 +497,18 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Create a bounding box that encompasses all visible objects
     const box = new THREE.Box3();
-    let totalPointCount = 0;
+    let totalPrimitiveCount = 0;
 
     // Traverse the scene and expand the box to include all geometries
     this.scene.traverse((object) => {
+      // Handle Points objects (point clouds)
       if (object instanceof THREE.Points) {
         const geometry = object.geometry;
 
         // For points, compute bounding box from position attribute
         const positions = geometry.attributes.position;
         if (positions && positions.count > 0) {
-          totalPointCount += positions.count;
+          totalPrimitiveCount += positions.count;
 
           // First, compute the bounding box
           if (!geometry.boundingBox) {
@@ -515,6 +528,42 @@ export class SceneManager extends THREE.EventDispatcher<{
           }
         }
       }
+
+      // Handle InstancedMesh objects (legacy) and Line Mesh objects
+      // Lines use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
+      // to avoid exceeding WebGL's 16 attribute location limit
+      const isLineMesh =
+        object instanceof THREE.Mesh &&
+        object.userData?.nodeType === 'lines' &&
+        object.geometry instanceof THREE.InstancedBufferGeometry;
+
+      if (object instanceof THREE.InstancedMesh || isLineMesh) {
+        const geometry = object.geometry;
+
+        // For instanced meshes/geometries, use the precomputed bounding box
+        if (!geometry.boundingBox) {
+          geometry.computeBoundingBox();
+        }
+
+        if (geometry.boundingBox) {
+          // Get instance count (InstancedMesh has count, InstancedBufferGeometry has instanceCount)
+          const instanceCount =
+            object instanceof THREE.InstancedMesh
+              ? object.count
+              : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
+          totalPrimitiveCount += instanceCount;
+
+          const tempBox = geometry.boundingBox.clone();
+
+          // Apply object's world transform
+          tempBox.applyMatrix4(object.matrixWorld);
+
+          // Only include if box has valid size (not empty)
+          if (!tempBox.isEmpty()) {
+            box.union(tempBox);
+          }
+        }
+      }
     });
 
     // Only center camera if we have a reasonable scene
@@ -522,13 +571,13 @@ export class SceneManager extends THREE.EventDispatcher<{
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
 
-      // Don't center if bounding box is too small or too few points
+      // Don't center if bounding box is too small or too few primitives
       // This prevents awkward camera positioning on edge cases
-      if (maxDim < 1.0 || totalPointCount < 100) {
+      if (maxDim < 1.0 || totalPrimitiveCount < 100) {
         // Keep default camera position for better user experience
         log.warning(
           Modules.SCENE_MANAGER,
-          `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, points: ${totalPointCount})`
+          `Scene too small for auto-centering (size: ${maxDim.toFixed(2)}, primitives: ${totalPrimitiveCount})`
         );
         return;
       }
@@ -826,6 +875,122 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateClippingPlanes(near, far);
 
     return { near, far };
+  }
+
+  /**
+   * Update dynamic clipping planes using exponential smoothing.
+   *
+   * Called each frame by AnimationController to smoothly adjust clipping planes
+   * based on camera position relative to scene bounds. This prevents clipping
+   * artifacts when navigating and maintains optimal Z-buffer precision.
+   */
+  updateDynamicClippingPlanes(): void {
+    if (!this.dynamicClippingEnabled) return;
+
+    // Get scene bounds
+    const bounds = this.getSceneBoundsFromMetadata();
+    if (!bounds) return;
+
+    // Calculate distances from camera to bounding box corners
+    const { nearDist, farDist } = this.calculateDistancesToBounds(bounds);
+
+    // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
+    // sqrt(3)-1 accounts for cube diagonal (when rotating a cube, corner distance is sqrt(3)× face distance)
+    // +0.1 adds extra 10% safety buffer
+    const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
+    const optimalNear = Math.max(0.001, nearDist * (1 - margin)); // ~16.8% of distance
+    const optimalFar = farDist * (1 + margin); // ~183.2% of distance
+
+    // Exponential smoothing: new = (1-α)*current + α*optimal
+    const α = this.clippingAdaptSpeed;
+    this.smoothedNear = (1 - α) * this.smoothedNear + α * optimalNear;
+    this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
+
+    // Apply safety clamps
+    this.smoothedNear = Math.max(0.001, this.smoothedNear);
+
+    // Prevent excessive far/near ratio (Z-buffer precision)
+    const maxRatio = 100000;
+    if (this.smoothedFar / this.smoothedNear > maxRatio) {
+      this.smoothedNear = this.smoothedFar / maxRatio;
+    }
+
+    // Only update camera if values changed significantly (>0.1%)
+    const nearChanged = Math.abs(this.camera.near - this.smoothedNear) / this.camera.near > 0.001;
+    const farChanged = Math.abs(this.camera.far - this.smoothedFar) / this.camera.far > 0.001;
+
+    if (nearChanged || farChanged) {
+      this.camera.near = this.smoothedNear;
+      this.camera.far = this.smoothedFar;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  /**
+   * Calculate distances from camera to bounding box corners.
+   *
+   * @param bounds - Scene bounding box
+   * @returns Minimum and maximum distances from camera to box corners
+   */
+  private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; farDist: number } {
+    const cameraPos = this.camera.position;
+
+    // Get all 8 corners of bounding box
+    const corners = [
+      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+    ];
+
+    // Find min and max distances
+    let nearDist = Infinity;
+    let farDist = 0;
+
+    for (const corner of corners) {
+      const dist = cameraPos.distanceTo(corner);
+      nearDist = Math.min(nearDist, dist);
+      farDist = Math.max(farDist, dist);
+    }
+
+    // Ensure minimum near distance
+    nearDist = Math.max(0.001, nearDist);
+
+    return { nearDist, farDist };
+  }
+
+  /**
+   * Set dynamic clipping configuration.
+   *
+   * @param enabled - Whether dynamic clipping is enabled
+   * @param adaptSpeed - Exponential smoothing factor (0.01-0.5)
+   */
+  setDynamicClipping(enabled: boolean, adaptSpeed?: number): void {
+    this.dynamicClippingEnabled = enabled;
+    if (adaptSpeed !== undefined) {
+      this.clippingAdaptSpeed = Math.max(0.01, Math.min(0.5, adaptSpeed));
+    }
+
+    log.info(
+      Modules.SCENE_MANAGER,
+      `Dynamic clipping ${enabled ? 'enabled' : 'disabled'}${adaptSpeed !== undefined ? ` (adapt speed: ${this.clippingAdaptSpeed})` : ''}`
+    );
+  }
+
+  /**
+   * Get current dynamic clipping state.
+   */
+  getDynamicClippingState(): { enabled: boolean; adaptSpeed: number; near: number; far: number } {
+    return {
+      enabled: this.dynamicClippingEnabled,
+      adaptSpeed: this.clippingAdaptSpeed,
+      near: this.smoothedNear,
+      far: this.smoothedFar,
+    };
   }
 
   /**

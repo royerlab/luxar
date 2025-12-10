@@ -1,7 +1,7 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 1.2.1
-**Last Updated**: 2025-12-09
+**Version**: 1.2.3
+**Last Updated**: 2025-12-10
 
 ## Purpose
 
@@ -571,11 +571,13 @@ function loadScene(zarrURL):
     // 3. Initialize array reference registry
     arrayRefRegistry = new Map()
 
-    // 4. Create THREE.js root group
+    // 4. Create THREE.js root group (LuxarScene)
+    // IMPORTANT: sceneDimensions is stored ONLY here - single source of truth
+    // Individual data nodes (Points, Lines, Splats) do NOT store dimension info
     sceneGroup = new THREE.Group()
     sceneGroup.userData.sceneDimensions = sceneDimensions
 
-    // 5. Recursively load children
+    // 5. Recursively load children (nodes access dims via ViewState)
     loadGroupChildren(store, "/", sceneGroup, arrayRefRegistry)
 
     return sceneGroup
@@ -857,6 +859,7 @@ Stored in node `.zattrs`:
 ```
 
 **Notes**:
+
 - `segment_ordering` uses (2×D) dimensions. For 3D lines, segments are ordered in 6D space.
 - `ordering_bits_per_dim` is an implementation detail (varies by ordering scheme) - viewer can ignore it.
 
@@ -919,7 +922,7 @@ function queryLinesForView(
   linesIndex: LinesChunkSpatialIndex,
   slicePosition: number[],
   tolerance: number[]
-): { segmentChunks: number[]; segmentRanges: Array<{start: number; end: number}> } {
+): { segmentChunks: number[]; segmentRanges: Array<{ start: number; end: number }> } {
   const { metadata, segmentChunkBounds, segmentChunkCount } = linesIndex;
   const { ndim } = metadata;
 
@@ -1010,9 +1013,7 @@ async function loadLinesForView(
   // Phase 2: Load vertex data
   const vertices = await loadVertexRanges(store, vertexRanges, linesIndex.metadata.ndim);
   const widths = await loadWidthRanges(store, vertexRanges);
-  const colors = linesIndex.metadata.has_colors
-    ? await loadColorRanges(store, vertexRanges)
-    : null;
+  const colors = linesIndex.metadata.has_colors ? await loadColorRanges(store, vertexRanges) : null;
   const sharpness = linesIndex.metadata.has_sharpness
     ? await loadSharpnessRanges(store, vertexRanges)
     : null;
@@ -1051,10 +1052,7 @@ async function loadLinesForView(
 **Purpose**: Given a sparse set of vertex indices, compute minimal chunk-aligned ranges to load.
 
 ```typescript
-function computeVertexRangesFromIndices(
-  sortedIndices: number[],
-  chunkSize: number
-): PointRange[] {
+function computeVertexRangesFromIndices(sortedIndices: number[], chunkSize: number): PointRange[] {
   if (sortedIndices.length === 0) return [];
 
   const ranges: PointRange[] = [];
@@ -1113,6 +1111,35 @@ interface LineRange {
 }
 ```
 
+#### ProcessedLinesData
+
+**Purpose**: Lines data after nD slicing and endpoint clipping, ready for GPU instance buffers.
+
+```typescript
+interface ProcessedLinesData {
+  // Per-segment data (M visible segments after clipping)
+  startPositions: Float32Array; // (M * 3) - 3D display coordinates
+  endPositions: Float32Array; // (M * 3) - 3D display coordinates
+  startColors: Float32Array; // (M * 3) - RGB colors (interpolated)
+  endColors: Float32Array; // (M * 3) - RGB colors (interpolated)
+  startWidths: Float32Array; // (M,) - width at start (interpolated)
+  endWidths: Float32Array; // (M,) - width at end (interpolated)
+  startSharpness: Float32Array; // (M,) - sharpness at start (interpolated)
+  endSharpness: Float32Array; // (M,) - sharpness at end (interpolated)
+  segmentLengths: Float32Array; // (M,) - 3D segment length
+  startClipped: Uint8Array; // (M,) - 1 if start was clipped by nD slicing
+  endClipped: Uint8Array; // (M,) - 1 if end was clipped by nD slicing
+  segmentCount: number; // M visible segments
+}
+```
+
+**Key Difference from LoadedLinesData**:
+
+- `LoadedLinesData`: Raw nD vertex data with global indices (direct from zarr)
+- `ProcessedLinesData`: Per-segment 3D data after clipping (ready for GPU)
+
+**See Also**: `../rendering/SPECIFICATIONS.md` Section 7 for how `startClipped`/`endClipped` affect cap factor calculation.
+
 ### 7.9 nD Slicing for Lines
 
 **Segment Visibility**: A segment is visible if its bounding box intersects the view region.
@@ -1122,8 +1149,12 @@ interface LineRange {
 **Dimension Tolerance for Lines**:
 
 ```typescript
-function computeLinesTolerance(sceneDims: DimensionMetadata[]): number[] {
-  return sceneDims.map((dim) => {
+function computeLinesTolerance(sceneDims: DimensionMetadata[], displayDims: number[]): number[] {
+  return sceneDims.map((dim, idx) => {
+    if (displayDims.includes(idx)) {
+      // Displayed dimensions: infinite tolerance (want all segments in view)
+      return 1e10;
+    }
     if (dim.discrete) {
       return 0.5; // Discrete dims: half-unit tolerance for integer matching
     }
@@ -1134,12 +1165,119 @@ function computeLinesTolerance(sceneDims: DimensionMetadata[]): number[] {
 ```
 
 **Key Difference from Points**:
+
 - **Points**: `chunk_bounds` includes point radii, BUT point positions are at center, so query tolerance = max_radius
 - **Lines**: `segment_chunk_bounds` includes line width AND positions span the full segment extent, so query tolerance = 0
 
 **Why Zero Tolerance Works**: The Python-side `compute_segment_chunk_bounds()` already expands bounds by `max(w1, w2)` for each segment. Any segment whose bounding box (including width) intersects the view will have its chunk bounds overlap the view bounds. No additional tolerance needed.
 
-### 7.10 Lines Fallback (No Spatial Index)
+**Why Displayed Dimensions Need Infinite Tolerance**: We want to include all segments that are visible in the 3D displayed dimensions, without filtering by position along those axes. The `displayDims` parameter specifies which dimensions are being rendered.
+
+### 7.10 nD Endpoint Clipping
+
+For lines in nD space, segments may partially intersect the visible slice. We handle this with **endpoint clipping**.
+
+**Visibility Cases**:
+
+```
+Case A: Both endpoints IN slice     → Render full segment
+Case B: P1 IN, P2 OUT               → Clip P2 to slice boundary
+Case C: P1 OUT, P2 IN               → Clip P1 to slice boundary
+Case D: Both OUT, opposite sides    → Clip both to boundaries (segment crosses slice)
+Case E: Both OUT, same side         → Don't render (segment misses slice)
+```
+
+**Algorithm Summary**:
+
+1. For each non-displayed dimension, compute intersection parameters `t` where segment crosses slice boundary
+2. Accumulate valid parameter range `[t1, t2]` across all dimensions
+3. If `t1 >= t2`, segment is invisible (Case E)
+4. Otherwise, interpolate all attributes at `t1` and `t2`:
+   - 3D position (project from nD to displayed dimensions)
+   - Color (linear interpolation)
+   - Width (linear interpolation)
+   - Sharpness (linear interpolation)
+5. Track whether each endpoint was clipped (`startClipped`, `endClipped`)
+
+**Cap Factor Adjustment**: Clipped endpoints should use `capFactor = 1.0` (not 0.5) in the shader, since the "real" endpoint is outside the visible slice.
+
+**Full Algorithm**: See `docs/LINES_VIEWER_IMPLEMENTATION_PLAN.md` Section 4.4 for complete implementation.
+
+**Rendering Integration**: See `../rendering/SPECIFICATIONS.md` Section 7.4 for how `aStartClipped`/`aEndClipped` attributes affect the vertex shader's cap factor calculation.
+
+### 7.11 Optimized Encoding Handling for Lines
+
+**Purpose**: Lines vertex attributes (widths, colors, sharpness) may use various encoding modes. The `loadVertexRanges()` function must handle these efficiently to avoid performance degradation.
+
+**CRITICAL**: Load ONLY the needed ranges, then decode - NOT decode full array then extract ranges.
+
+**Encoding Priority** (same as Points):
+
+1. **Broadcasted**: Load single value, replicate to all vertices
+2. **Quantized**: Load only needed ranges, dequantize those ranges
+3. **LUT**: Load only needed ranges of indices, decode with LUT from metadata
+4. **Array Reference**: Resolve target, apply optimized loading based on target encoding
+5. **Direct**: Load ranges directly from zarr
+
+**Algorithm**:
+
+```typescript
+async function loadVertexRanges(
+  arrayName: string,
+  ranges: SegmentRange[],
+  elementsPerVertex: number
+): Promise<Float32Array> {
+  const attrs = array.attrs as ArrayMetadata;
+
+  if (isBroadcasted(attrs)) {
+    // Load once, replicate to all vertices
+    const broadcastValue = await get(array);
+    return replicateToAllVertices(broadcastValue, totalVertices);
+  } else if (isQuantized(attrs)) {
+    // Load only needed ranges of quantized data
+    const output = new Float32Array(totalElements);
+    for (const range of ranges) {
+      const quantizedData = await get(array, [slice(range.start, range.end)]);
+      const dequantized = dequantizeRange(quantizedData, quantMetadata);
+      output.set(dequantized, destOffset);
+    }
+    return output;
+  } else if (isLUTEncoded(attrs)) {
+    // Load only needed ranges of indices
+    const output = new Float32Array(totalElements);
+    for (const range of ranges) {
+      const indices = await get(array, [slice(range.start, range.end)]);
+      const decoded = decodeLUTIndices(indices, lutMetadata);
+      output.set(decoded, destOffset);
+    }
+    return output;
+  } else if (isArrayRef(attrs)) {
+    // Resolve target, apply optimized loading based on target encoding
+    const targetArray = await resolveArrayRef(attrs.encoding.target);
+    return loadVertexRangesFromTarget(targetArray, ranges, elementsPerVertex);
+  } else {
+    // Direct: load ranges directly
+    const output = new Float32Array(totalElements);
+    for (const range of ranges) {
+      const data = await get(array, [slice(range.start, range.end)]);
+      output.set(data, destOffset);
+    }
+    return output;
+  }
+}
+```
+
+**Performance Impact**:
+
+For a 250-frame animation with 2.2M total vertices but only 32K visible per frame:
+
+- **Before optimization**: Decode ALL 2.2M vertices per frame change (~35MB)
+- **After optimization**: Decode ONLY 32K needed vertices (~500KB)
+- **Improvement**: ~70x reduction in data processing per navigation step
+
+**Key Insight**: This optimization mirrors the approach already implemented in `PointSpatialIndexLoader.loadRanges()` (see lines 650-880 in point-spatial-index-loader.ts).
+
+### 7.12 Lines Fallback (No Spatial Index)
 
 When `ordering === "none"`, load all data:
 
@@ -1169,9 +1307,29 @@ function loadAllLines(store: ZarrStore, metadata: LinesMetadata): Promise<Loaded
 
 ## Changelog
 
+- **v1.2.3** (2025-12-10): Lines encoding optimization
+  - **ADDED**: Section 7.11 - Optimized Encoding Handling for Lines
+  - **FIXED**: `loadVertexRanges()` now loads only needed ranges for encoded arrays
+    - Previously decoded ENTIRE array then extracted ranges (2.2M values)
+    - Now decodes ONLY needed ranges (32K values for 250-frame animation)
+    - ~70x performance improvement for animated line datasets
+  - Supports all encoding modes: broadcasted, quantized, LUT, array_ref, direct
+  - Mirrors optimization already in `PointSpatialIndexLoader.loadRanges()`
+  - Renumbered Section 7.11 → 7.12 (Lines Fallback)
+
+- **v1.2.2** (2025-12-09): Lines spec completeness fixes
+  - **FIXED**: `computeLinesTolerance()` now accepts `displayDims` parameter
+    - Displayed dimensions use infinite tolerance (1e10)
+    - Non-displayed spatial dimensions use 0 tolerance
+    - Non-displayed discrete dimensions use 0.5 tolerance
+  - **ADDED**: `ProcessedLinesData` interface (post-clipping, GPU-ready data)
+  - **ADDED**: Section 7.10 - nD Endpoint Clipping algorithm reference
+  - Renumbered Section 7.10 → 7.11 (Lines Fallback)
+  - Added cross-references to rendering spec for cap factor handling
+
 - **v1.2.1** (2025-12-09): LoadedLinesData ndim field fix
   - **FIXED**: Added `ndim` field to `LoadedLinesData` interface for nD support
-  - `vertices` comment updated: "(N * ndim) vertex positions, flattened row-major"
+  - `vertices` comment updated: "(N \* ndim) vertex positions, flattened row-major"
   - Updated `loadLinesForView()` to return `ndim` from metadata
   - Updated `loadAllLines()` fallback to include `ndim`
   - Aligned with Python spec which supports arbitrary-dimensional lines

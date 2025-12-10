@@ -123,7 +123,7 @@ export async function loadChunkSpatialIndex(
         ordering_bits_per_dim:
           nodeAttrs.ordering_bits_per_dim || nodeAttrs.morton_bits_per_dim || 21,
         chunk_size: nodeAttrs.chunk_size || 0,
-        total_points: nodeAttrs.n_points || nodeAttrs.num_points || 0,
+        total_points: nodeAttrs.n_points || 0,
         total_chunks: numChunks,
         ndim: ndim,
       },

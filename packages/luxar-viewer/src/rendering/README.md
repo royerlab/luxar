@@ -11,8 +11,9 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 - **HDR Rendering Pipeline**: 16-bit float buffers for true HDR support
 - **Modern Post-Processing**: Powered by pmndrs/postprocessing
 - **Professional Effects**: Bloom, SSAO, DOF, tone mapping, and more
-- **Custom Shader System**: Optimized shaders for points
-- **Material Management**: Efficient caching and reuse
+- **Custom Shader System**: Optimized shaders for points and lines
+- **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
+- **Material Management**: Efficient caching and reuse for points and lines
 - **World-Space Point Sizing**: Physically accurate scaling
 - **Multiple Anti-Aliasing Options**: FXAA and SMAA support
 
@@ -22,7 +23,8 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 rendering/
 ├── postprocessing-manager.ts  # Post-processing pipeline using pmndrs
 ├── point-material.ts          # Custom points shaders
-├── material-manager.ts        # Material creation and caching
+├── line-material.ts           # Instanced line rendering with semicircle kernel
+├── material-manager.ts        # Material creation and caching (points + lines)
 └── README.md                 # This documentation
 ```
 
@@ -85,19 +87,40 @@ Advanced shader material for points rendering with custom vertex and fragment sh
 - Per-point sharpness control
 - Optimized with pre-computed uniforms
 
-### 3. Material Manager
+### 3. Line Material
 
-Singleton manager for efficient material creation and caching.
+Specialized shader material for thick lines using instanced quad geometry.
+
+**Key Features:**
+
+- **Semicircle Kernel Model**: Parabolic intensity falloff (1 - p²)^sharpness
+- **Seamless Joints**: Cap factor calculation ensures correct additive blending at joints
+- **World-Space Width**: Lines have consistent thickness regardless of distance
+- **nD Clipping**: Clipped endpoints use full intensity for correct visual appearance
+- **Per-Vertex Attributes**: Color, width, and sharpness interpolate along segments
+
+**Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`) to avoid exceeding WebGL's 16 attribute location limit.
+
+### 4. Material Manager
+
+Singleton manager for efficient material creation and caching (supports both points and lines).
 
 ```typescript
-// Get cached material
-const material = materialManager.getPointMaterial({
+// Get cached point material
+const pointMaterial = materialManager.getPointMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
   gamma: 1.0,
 });
 
-// Update global parameters
+// Get cached line material
+const lineMaterial = materialManager.getLineMaterial({
+  blendingMode: 'additive',
+  opacity: 1.0,
+  hdrMultiplier: 16.0,
+});
+
+// Update global parameters (updates both point and line materials)
 materialManager.updateCameraParams(fov, resolution);
 materialManager.updateHDRMultiplier(16.0);
 ```

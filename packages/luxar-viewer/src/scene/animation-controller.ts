@@ -41,6 +41,9 @@ export class AnimationController {
   /** Performance monitoring instance for FPS/timing metrics */
   private performanceMonitor: PerformanceMonitor;
 
+  /** Optional per-frame callback for additional updates (e.g., dynamic clipping) */
+  private perFrameCallback: (() => void) | null = null;
+
   constructor(
     _renderer: THREE.WebGLRenderer,
     _scene: THREE.Scene,
@@ -50,6 +53,14 @@ export class AnimationController {
   ) {
     // Initialize performance monitoring for frame timing analysis
     this.performanceMonitor = new PerformanceMonitor();
+  }
+
+  /**
+   * Set a callback to be called every frame before rendering.
+   * Used for dynamic clipping plane updates and other per-frame operations.
+   */
+  setPerFrameCallback(callback: (() => void) | null): void {
+    this.perFrameCallback = callback;
   }
 
   /**
@@ -82,6 +93,11 @@ export class AnimationController {
     // Update camera controls - processes mouse/touch input and applies damping
     // This must happen before rendering to reflect user interactions
     this.controls.update();
+
+    // Call per-frame callback (e.g., dynamic clipping plane updates)
+    if (this.perFrameCallback) {
+      this.perFrameCallback();
+    }
 
     // Render through HDR post-processing pipeline
     // This executes the complete chain: Scene → HDR buffer → Bloom → Tone mapping → Display

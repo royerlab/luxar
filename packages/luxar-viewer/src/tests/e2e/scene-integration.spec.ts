@@ -111,7 +111,9 @@ test.describe('Scene E2E Tests', () => {
 
       // Verify hierarchy exists
       console.log('Hierarchy info:', hierarchyInfo);
-      expect(hierarchyInfo.transformedCount + hierarchyInfo.parentChildPairs).toBeGreaterThan(0);
+      const transformedCount = hierarchyInfo.transformedCount ?? 0;
+      const parentChildPairs = hierarchyInfo.parentChildPairs ?? 0;
+      expect(transformedCount + parentChildPairs).toBeGreaterThan(0);
     });
 
     test('should handle transform_example dataset', async ({ page }) => {
