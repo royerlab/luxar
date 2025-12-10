@@ -434,6 +434,16 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const extendDims = this.node.attrs.extend_to_all || [];
 
     if (extendDims.length > 0) {
+      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
+      if (!viewState.dimensions?.metadata || viewState.dimensions.metadata.length === 0) {
+        log.warning(
+          Modules.SPATIAL_INDEX_LOADER,
+          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+            `viewState.dimensions.metadata is undefined. extend_to_all will not work. ` +
+            `Ensure scene dimensions are initialized before loading nodes.`
+        );
+      }
+
       // Check if we're navigating through an extended dimension
       const currentNonDisplayedDims =
         viewState.dimensions?.metadata

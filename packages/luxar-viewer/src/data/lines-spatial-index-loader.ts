@@ -249,6 +249,41 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
+    // Check if this node has extend_to_all dimensions
+    const extendDims: string[] = this.node.attrs.extend_to_all || [];
+
+    if (extendDims.length > 0) {
+      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
+      if (!viewState.dimensions || viewState.dimensions.length === 0) {
+        log.warning(
+          Modules.SPATIAL_INDEX_LOADER,
+          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+            `viewState.dimensions is undefined. extend_to_all will not work. ` +
+            `Ensure scene dimensions are initialized before loading nodes.`
+        );
+      }
+
+      // Check if we're navigating through an extended dimension
+      // LinesViewState.dimensions is DimensionMetadata[] directly
+      const currentNonDisplayedDims: string[] =
+        viewState.dimensions
+          ?.filter((_meta: { name?: string }, idx: number) => !viewState.displayDims.includes(idx))
+          ?.map((meta: { name?: string }) => meta.name)
+          ?.filter((name: string | undefined): name is string => !!name) || [];
+
+      const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
+
+      if (isExtending) {
+        log.custom(
+          LogEmoji.BROADCAST,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
+        );
+        // Return all segments for extended dimensions
+        return [{ start: 0, end: attrs.n_segments }];
+      }
+    }
+
     if (!this.chunkIndex) {
       // No spatial index - load all segments
       return [{ start: 0, end: attrs.n_segments }];

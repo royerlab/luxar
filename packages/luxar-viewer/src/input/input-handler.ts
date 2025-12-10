@@ -180,7 +180,7 @@ export class InputHandler {
 
     // Listen for dimension changes
     sceneDimsManager.addListener(() => {
-      this.updateAllNDPoints();
+      this.updateAllNDNodes();
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
@@ -190,9 +190,12 @@ export class InputHandler {
   }
 
   /**
-   * Update all nD points with current dimension values
+   * Update all nD nodes (points, lines, splats) with current dimension values.
+   *
+   * This function is called when dimension slice positions change and updates
+   * ALL nD-aware data nodes in the scene, not just points.
    */
-  private async updateAllNDPoints(): Promise<void> {
+  private async updateAllNDNodes(): Promise<void> {
     const dims = sceneDimsManager.getDims();
     if (!dims) {
       return;
