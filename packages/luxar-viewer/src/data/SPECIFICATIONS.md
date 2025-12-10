@@ -1,6 +1,6 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 1.2.3
+**Version**: 1.2.5
 **Last Updated**: 2025-12-10
 
 ## Purpose
@@ -739,13 +739,26 @@ interface ChunkSpatialIndex {
 
 **Purpose**: Encapsulates current view configuration for nD navigation.
 
-```
+```typescript
 interface ViewState {
     displayDims: number[]           // Indices of displayed dimensions [0-2]
     slicePosition: number[]         // Current position in nD space
     tolerance: number[]             // Search radius per dimension
+    dimensions?: SimpleDims         // REQUIRED for extend_to_all feature
+}
+
+interface SimpleDims {
+    metadata: DimensionMetadata[]   // Full dimension info with names
+    ndim: number                    // Total dimensionality
+    displayed: number[]             // Displayed dimension indices
+    currentStep: number[]           // Current slice position
 }
 ```
+
+**CRITICAL**: The `dimensions` field is required for the `extend_to_all` feature to work.
+If `dimensions` is undefined, nodes with `extend_to_all` will fall back to normal spatial
+queries and may not be visible at all slice positions. Ensure `dimensions` is initialized
+from scene metadata BEFORE loading any data nodes.
 
 ### 6.3 PointRange
 
@@ -835,6 +848,7 @@ Stored in node `.zattrs`:
   "max_width": 0.5,
   "has_colors": true,
   "has_sharpness": false,
+  "extend_to_all": ["time"],  // Optional: dimensions to extend visibility across
 
   "ordering": "hilbert",
 
@@ -1140,9 +1154,68 @@ interface ProcessedLinesData {
 
 **See Also**: `../rendering/SPECIFICATIONS.md` Section 7 for how `startClipped`/`endClipped` affect cap factor calculation.
 
-### 7.9 nD Slicing for Lines
+### 7.9 Lines Dimension Extension (extend_to_all)
 
-**Segment Visibility**: A segment is visible if its bounding box intersects the view region.
+**Purpose**: Allow static lines (e.g., detector geometry) to be visible at all values of a dimension without data duplication.
+
+**Example Use Case**: Particle physics detector geometry should be visible at all time frames, but storing geometry for each frame would be wasteful. With `extend_to_all=["time"]`, the geometry is stored once but shown at all times.
+
+**Metadata**: The `extend_to_all` attribute in lines `.zattrs` specifies which dimensions to extend:
+
+```json
+{
+  "type": "lines",
+  "extend_to_all": ["time"],  // Show at all time values
+  ...
+}
+```
+
+**Algorithm**:
+
+```typescript
+function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
+  const attrs = this.node.attrs as LinesMetadata;
+  const extendDims: string[] = attrs.extend_to_all || [];
+
+  if (extendDims.length > 0) {
+    // Check if navigating through an extended dimension
+    const currentNonDisplayedDims = viewState.dimensions
+      .filter((_, idx) => !viewState.displayDims.includes(idx))
+      .map(meta => meta.name)
+      .filter(name => !!name);
+
+    const isExtending = extendDims.some(edim => currentNonDisplayedDims.includes(edim));
+
+    if (isExtending) {
+      // Return ALL segments - no spatial filtering
+      return [{ start: 0, end: attrs.n_segments }];
+    }
+  }
+
+  // Normal spatial query...
+}
+```
+
+**Key Behavior**:
+- When navigating through an extended dimension, ALL segments are returned (no spatial filtering)
+- This ensures the lines remain visible regardless of slice position in that dimension
+- Works identically to `extend_to_all` for points
+
+**CRITICAL Requirement**: `viewState.dimensions` MUST be populated with dimension metadata
+for `extend_to_all` to work. The algorithm matches dimension NAMES (e.g., "time") against
+the `extend_to_all` list, which requires knowing which non-displayed dimensions exist.
+If `viewState.dimensions` is undefined, the loader logs a warning and falls back to
+normal spatial query behavior (extend_to_all silently fails).
+
+**Python API**:
+```python
+# Create lines visible at all time values
+scene.add_lines('detector', vertices, widths=0.1, extend_to_all=["time"])
+```
+
+### 7.10 nD Slicing for Lines
+
+**Segment Visibility**: A segment is visible if its bounding box intersects the view region (unless bypassed by `extend_to_all`).
 
 **CRITICAL**: The `segment_chunk_bounds` **already include line width extent** (as specified in Python spec Section 6.5.5). This means the tolerance for spatial dimensions in the query should NOT include width again.
 
@@ -1306,6 +1379,23 @@ function loadAllLines(store: ZarrStore, metadata: LinesMetadata): Promise<Loaded
 ---
 
 ## Changelog
+
+- **v1.2.5** (2025-12-10): extend_to_all defensive checks and documentation
+  - **ADDED**: Defensive warning in PointSpatialIndexLoader when `extend_to_all` is specified but `viewState.dimensions.metadata` is undefined
+  - **ADDED**: Defensive warning in LinesSpatialIndexLoader when `extend_to_all` is specified but `viewState.dimensions` is undefined
+  - **ADDED**: Success/warning logging in SceneLoader for dimension initialization status
+  - **UPDATED**: Section 6.2 (ViewState) - documented `dimensions` field and its requirement for `extend_to_all`
+  - **UPDATED**: Section 7.9 - added CRITICAL requirement note about `viewState.dimensions`
+  - These changes help debug cases where `extend_to_all` silently fails due to missing dimension metadata
+
+- **v1.2.4** (2025-12-10): Lines extend_to_all support
+  - **ADDED**: Section 7.9 - Lines Dimension Extension (extend_to_all)
+  - **ADDED**: `extend_to_all` field to Lines metadata format (Section 7.3)
+  - Lines now support `extend_to_all=["time"]` for static geometry visible at all dimension values
+  - Bypasses spatial filtering when navigating through extended dimensions
+  - Works identically to points extend_to_all (implemented in Python and TypeScript)
+  - Example use case: Particle detector geometry visible at all time frames without data duplication
+  - Renumbered Section 7.9 → 7.10 (nD Slicing for Lines)
 
 - **v1.2.3** (2025-12-10): Lines encoding optimization
   - **ADDED**: Section 7.11 - Optimized Encoding Handling for Lines
