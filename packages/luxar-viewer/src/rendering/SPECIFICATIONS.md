@@ -1,6 +1,6 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.3.0
+**Version**: 1.3.5
 **Last Updated**: 2025-12-09
 
 ## Purpose
@@ -731,122 +731,99 @@ dispose(): void {
 
 ## 7. Line Material System
 
-### 7.1 Rendering Approach Decision
+### 7.1 Mathematical Foundation: Semicircle Kernel Convolution
+
+**Problem**: Lines with additive blending must render seamlessly at joints where two segments meet (a-b-c). A naive approach causes double-brightness at junction points.
+
+**Solution**: Model line intensity as the convolution of a radial kernel with the line path. When two segments share an endpoint, the convolutions naturally combine without double-counting due to associativity.
+
+**Semicircle Kernel Choice**:
+
+```
+f(r) = √(1 - (r/R)²)  for r < R, 0 otherwise
+```
+
+This kernel is chosen because:
+
+1. Convolution with a line path yields a **parabolic profile** (cheap to compute)
+2. The integral at endpoints is exactly **half** the body value
+3. Two adjacent endpoints sum to full intensity (correct joint rendering)
+
+**Derivation**:
+
+For a perpendicular distance `p` from the line centerline:
+
+```
+I(p) = ∫ f(|x - path(t)|) dt
+
+For a straight segment and semicircle kernel:
+I(p) = ∫_{-√(R²-p²)}^{+√(R²-p²)} √(1 - (p² + u²)/R²) du
+
+Result: I(p) = (π/2) × (1 - p²/R²)
+
+Normalized: I(p) / I(0) = 1 - p²/R²
+```
+
+**Body Profile**: `intensity = 1 - (p/R)²` where p is perpendicular distance, R is line half-width
+
+**Endpoint Behavior**: At segment endpoints, only half the integration range contributes:
+
+- Body integral: full parabola region
+- Endpoint integral: half-disk → exactly half the body intensity
+
+### 7.2 Rendering Approach Decision
 
 **Three options considered**:
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **THREE.LineSegments + LineBasicMaterial** | Simple, native THREE.js | No width control in WebGL (always 1px) |
-| **Custom shader with screen-space expansion** | Variable width, good quality | Medium complexity, per-vertex data |
-| **Mesh-based tubes/ribbons** | Full control, proper 3D | Complex, expensive for many segments |
+| Approach                                   | Pros                        | Cons                                   |
+| ------------------------------------------ | --------------------------- | -------------------------------------- |
+| **THREE.LineSegments + LineBasicMaterial** | Simple, native THREE.js     | No width control in WebGL (always 1px) |
+| **Instanced quads with custom shaders**    | Variable width, cap control | Medium complexity                      |
+| **Mesh-based tubes/ribbons**               | Full control, proper 3D     | Expensive for many segments            |
 
-**Recommendation**: Custom shader with screen-space line expansion (Option 2).
+**Recommendation**: Instanced quads with `THREE.Mesh` using `InstancedBufferGeometry`.
 
 **Rationale**:
+
 - WebGL `lineWidth` is deprecated and ignored on most hardware (always 1px)
-- Mesh tubes are too expensive for millions of line segments
-- Screen-space expansion provides variable widths with acceptable quality
+- Instanced quads allow variable width AND cap factor control for proper joints
+- Modern approach, performant for millions of segments
 
-### 7.2 Custom Line Material
+### 7.3 Custom Line Material
 
-**Base**: `THREE.ShaderMaterial` with custom vertex and fragment shaders for line segments
+**Base**: `THREE.ShaderMaterial` with custom vertex and fragment shaders for instanced quad segments
 
-**Attributes** (per vertex):
+**Attributes** (per instance/segment):
 
-- `position`: vec3 - Vertex position in object space
-- `color`: vec3 - Vertex RGB color (interpolated along segment)
-- `lineWidth`: float - World-space line thickness (half-width from centerline)
-- `sharpness`: float - Edge falloff power
+- `aStartPos`: vec3 - Segment start position (3D display space)
+- `aEndPos`: vec3 - Segment end position (3D display space)
+- `aStartColor`: vec3 - RGB color at start vertex (HDR)
+- `aEndColor`: vec3 - RGB color at end vertex (HDR)
+- `aStartWidth`: float - Start vertex half-width (world units)
+- `aEndWidth`: float - End vertex half-width (world units)
+- `aStartSharpness`: float - Start vertex sharpness
+- `aEndSharpness`: float - End vertex sharpness
+- `aSegmentLength`: float - World-space length of segment (for cap calculation)
+- `aStartClipped`: float - 1.0 if start was clipped by nD slicing
+- `aEndClipped`: float - 1.0 if end was clipped by nD slicing
+
+**Per-vertex attribute** (quad corners):
+
+- `aQuadCorner`: vec2 - Corner position: (-1,-1), (1,-1), (-1,1), (1,1)
 
 **Uniforms**:
 
 - `uFOV`: float - Camera field of view (radians)
 - `uResolution`: vec2 - Framebuffer resolution [width, height]
-- `uHDRMultiplier`: float - HDR boost factor
+- `uHDRMultiplier`: float - HDR boost factor (typ. 16.0)
 - `uOpacity`: float - Global opacity multiplier
-- `uGamma`: float - Gamma correction factor
 
-### 7.3 Line Vertex Shader
+### 7.4 Line Vertex Shader
 
-**Purpose**: Transform line vertices and pass data for fragment-stage width expansion.
-
-**Note**: Width expansion happens in fragment shader since THREE.LineSegments renders 1px lines.
+**Purpose**: Expand quad vertices to form thick line segment in screen space, compute cap factor for endpoints.
 
 ```glsl
-// Vertex Shader (for THREE.LineSegments)
-attribute vec3 position;
-attribute vec3 color;
-attribute float lineWidth;
-attribute float sharpness;
-
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
-
-varying vec3 vColor;
-varying float vLineWidth;
-varying float vSharpness;
-varying float vDistance;
-
-void main() {
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-
-    // Store distance for width calculation in fragment shader
-    vDistance = length(mvPosition.xyz);
-
-    gl_Position = projectionMatrix * mvPosition;
-
-    // Pass to fragment shader
-    vColor = color;
-    vLineWidth = lineWidth;
-    vSharpness = sharpness;
-}
-```
-
-### 7.4 Line Fragment Shader
-
-**Purpose**: Render line with width and edge falloff.
-
-**Challenge**: Standard THREE.LineSegments renders 1px lines. For proper width, we need either:
-1. Geometry-based approach (instanced quads) - more complex setup
-2. Post-process edge expansion - limited quality
-
-**Recommended Implementation**: Use geometry instancing with quads:
-
-```typescript
-// Instead of THREE.LineSegments, create instanced quads for each segment
-// Each quad is expanded in the vertex shader based on lineWidth
-
-class LineMaterial extends THREE.ShaderMaterial {
-  // Custom geometry with instanced quads
-  // Each segment instance has: start position, end position, start color, end color, etc.
-}
-```
-
-### 7.5 Geometry-Based Thick Lines (Recommended)
-
-**Approach**: Create a quad per line segment, oriented to face camera and expanded to line width.
-
-**Instanced Attributes** (per segment):
-
-```typescript
-// Per-segment instance data
-interface LineSegmentInstance {
-  startPos: vec3; // Start vertex position
-  endPos: vec3; // End vertex position
-  startColor: vec3; // Start vertex color
-  endColor: vec3; // End vertex color
-  startWidth: float; // Start half-width
-  endWidth: float; // End half-width
-  startSharpness: float; // Start falloff
-  endSharpness: float; // End falloff
-}
-```
-
-**Vertex Shader** (instanced quad expansion):
-
-```glsl
-// Instanced Thick Line Vertex Shader
+// Instanced Thick Line Vertex Shader with Cap Factor
 attribute vec3 aStartPos;
 attribute vec3 aEndPos;
 attribute vec3 aStartColor;
@@ -855,9 +832,12 @@ attribute float aStartWidth;
 attribute float aEndWidth;
 attribute float aStartSharpness;
 attribute float aEndSharpness;
+attribute float aSegmentLength;
+attribute float aStartClipped;   // 1.0 if start was clipped by nD slicing
+attribute float aEndClipped;     // 1.0 if end was clipped by nD slicing
 
-// Per-vertex within quad (0-3)
-attribute vec2 aQuadCorner; // (-1,-1), (1,-1), (-1,1), (1,1)
+// Per-vertex within quad
+attribute vec2 aQuadCorner; // x: -1 (start) or +1 (end), y: -1 or +1 (perp direction)
 
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
@@ -866,109 +846,154 @@ uniform float uFOV;
 
 varying vec3 vColor;
 varying float vSharpness;
-varying float vLinePos; // 0 at center, 1 at edge
+varying float vPerpNorm;   // Signed: -1 at bottom edge, +1 at top edge (GPU interpolates)
+varying float vCapFactor;  // 0.5 at endpoints, 1.0 in body (or 1.0 if clipped)
 
 void main() {
-    // Determine position along segment (0 or 1)
+    // Determine position along segment: t=0 at start, t=1 at end
     float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
 
-    // Interpolate attributes
+    // Interpolate all per-vertex attributes along segment
     vec3 worldPos = mix(aStartPos, aEndPos, t);
-    vec3 color = mix(aStartColor, aEndColor, t);
+    vColor = mix(aStartColor, aEndColor, t);
     float width = mix(aStartWidth, aEndWidth, t);
-    float sharpness = mix(aStartSharpness, aEndSharpness, t);
+    vSharpness = mix(aStartSharpness, aEndSharpness, t);
 
     // Transform to view space
     vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
     vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
     vec4 mvPos = modelViewMatrix * vec4(worldPos, 1.0);
 
-    // Calculate perpendicular direction in screen space
+    // Calculate screen-space direction
     vec4 clipStart = projectionMatrix * mvStart;
     vec4 clipEnd = projectionMatrix * mvEnd;
-
     vec2 screenStart = clipStart.xy / clipStart.w;
     vec2 screenEnd = clipEnd.xy / clipEnd.w;
-
     vec2 lineDir = normalize(screenEnd - screenStart);
     vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
 
     // Calculate pixel width from world width
     float distance = length(mvPos.xyz);
-    float pixelWidth = 2.0 * width * uResolution.y / (distance * tan(uFOV * 0.5));
+    float pixelHalfWidth = width * uResolution.y / (distance * tan(uFOV * 0.5));
 
-    // Offset by perpendicular * width
-    float offset = aQuadCorner.y; // -1 or 1
+    // Perpendicular position: -1 at bottom edge, +1 at top edge
+    // GPU interpolates this across the quad, giving 0 at centerline
+    vPerpNorm = aQuadCorner.y;
+
+    // Offset position perpendicular to line direction
     vec4 clipPos = projectionMatrix * mvPos;
-    clipPos.xy += perpendicular * offset * pixelWidth / uResolution * clipPos.w;
+    clipPos.xy += perpendicular * aQuadCorner.y * pixelHalfWidth / uResolution * clipPos.w;
 
     gl_Position = clipPos;
 
-    // Pass to fragment
-    vColor = color;
-    vSharpness = sharpness;
-    vLinePos = abs(offset); // 0 at center, 1 at edge
+    // --- Cap Factor Calculation with Clipping Awareness ---
+    // Normal: 0.5 at true endpoints, 1.0 in body
+    // Clipped endpoints: force 1.0 (the "real" endpoint is outside the slice)
+    float distFromStart = t * aSegmentLength;
+    float distFromEnd = (1.0 - t) * aSegmentLength;
+
+    // Base cap factor from distance to nearest endpoint
+    float distToNearest = min(distFromStart, distFromEnd);
+    float baseCap = (distToNearest >= width) ? 1.0 : 0.5 + 0.5 * (distToNearest / width);
+
+    // Override if the nearest endpoint was clipped
+    float nearestIsStart = step(distFromEnd, distFromStart);  // 1 if closer to start
+    float nearestClipped = mix(aEndClipped, aStartClipped, nearestIsStart);
+
+    // If nearest endpoint was clipped, use full intensity (1.0)
+    vCapFactor = mix(baseCap, 1.0, nearestClipped);
 }
 ```
 
-**Fragment Shader**:
+### 7.5 Line Fragment Shader
+
+**Purpose**: Render line with parabolic intensity profile and cap factor for seamless joints.
 
 ```glsl
-// Thick Line Fragment Shader
-varying vec3 vColor;
-varying float vSharpness;
-varying float vLinePos;
-
+// Line Fragment Shader with Semicircle Kernel Convolution Profile
 uniform float uHDRMultiplier;
 uniform float uOpacity;
 
-void main() {
-    // Calculate intensity based on distance from center
-    float intensity = pow(1.0 - vLinePos, vSharpness);
+varying vec3 vColor;
+varying float vSharpness;        // Per-vertex sharpness (interpolated from vertex shader)
+varying float vPerpNorm;         // Interpolated: 0 at centerline, ±1 at edges
+varying float vCapFactor;        // 0.5 at endpoints, 1.0 in body
 
-    // Apply HDR multiplier (gamma correction done in post-processing)
+void main() {
+    // Compute distance from centerline (0 to 1)
+    float p = abs(vPerpNorm);
+
+    // Discard pixels outside the line width
+    if (p >= 1.0) discard;
+
+    // Parabolic falloff from semicircle kernel convolution
+    // Base profile: (1 - p²) where p = distance from centerline
+    // With per-vertex sharpness: (1 - p²)^sharpness
+    float p2 = p * p;
+    float perpFalloff = pow(1.0 - p2, vSharpness);
+
+    // Apply cap factor for correct joint intensity
+    // At endpoints: capFactor = 0.5 → two adjacent segments sum to 1.0
+    // In body: capFactor = 1.0 → full intensity
+    float intensity = vCapFactor * perpFalloff;
+
+    // HDR output (gamma correction in post-processing)
     vec3 finalColor = vColor * intensity * uHDRMultiplier;
 
     gl_FragColor = vec4(finalColor, intensity * uOpacity);
 }
 ```
 
-**Note**: Gamma correction is NOT applied in the fragment shader. Like points, lines render to the HDR float buffer, and tone mapping/gamma happens in post-processing.
+### 7.6 Cap Factor Visualization
 
-### 7.6 Line Width Calculation
+```
+Segment a-b:           Segment b-c:
+  a ═══════════ b        b ═══════════ c
+
+Cap factor along segment:
+
+    0.5 → 1.0         1.0          1.0 → 0.5
+    |-------|---------------------|-------|
+    a      a+w       body        c-w      c
+         (ramp)                 (ramp)
+
+At joint b:
+  - Segment a-b contributes 0.5 at endpoint b
+  - Segment b-c contributes 0.5 at endpoint b
+  - Total: 0.5 + 0.5 = 1.0 ✓ (correct with additive blending)
+```
+
+### 7.7 Line Width Calculation
 
 **World-Space Width**: Line widths are specified in scene units (same as point radii).
 
-**Pixel Width Formula**:
+**Pixel Half-Width Formula**:
 
 ```
-pixelWidth = 2 × width × resolution.y / (distance × tan(FOV / 2))
+pixelHalfWidth = width × resolution.y / (distance × tan(FOV / 2))
 ```
 
-Same formula as point sizing, ensuring visual consistency between points and lines.
+This is half the point size formula (since lines have half-width, points have full radius).
 
-### 7.6.1 Sharpness Compensation (Optional)
+**Consistency**: A line with width `w` connecting two points of radius `w` will perfectly join them.
 
-**Problem**: Soft-edged lines (sharpness < infinity) appear thinner than their nominal width due to falloff at edges.
+### 7.8 Sharpness Parameter
 
-**Solution** (same as Points):
+**Purpose**: Artistic control over edge falloff, independent of the mathematical model.
 
-```
-compensation = 1.0 + (sharpness - 1.0) × 0.15
-adjustedWidth = width × compensation
-```
+**Default**: `sharpness = 1.0` (pure parabolic profile from semicircle kernel)
 
-**Effect**:
-- s=1: 1.0× width (no compensation for sharp edges)
-- s=2: 1.15× width (default sharpness)
-- s=4: 1.45× width
-- s=8: 2.05× width
+**Effect of sharpness values**:
 
-**Implementation Note**: This is optional. If not applied, lines with low sharpness will appear thinner than specified but this may be acceptable depending on aesthetic goals.
+- `s = 1.0`: Parabolic profile `(1 - p²)`
+- `s = 2.0`: Sharper falloff `(1 - p²)²`
+- `s = 0.5`: Softer falloff `√(1 - p²)` (approaches semicircle itself)
 
-### 7.7 Blending Configuration
+**Note**: Sharpness does NOT affect the cap factor math - it only modifies the perpendicular falloff for artistic purposes.
 
-Lines use the same blending as points for visual consistency:
+### 7.9 Blending Configuration
+
+Lines use the same additive blending as points:
 
 ```typescript
 material.blending = THREE.AdditiveBlending;
@@ -977,9 +1002,9 @@ material.depthWrite = false;
 material.depthTest = true;
 ```
 
-**Rationale**: Additive blending allows overlapping lines to accumulate brightness, matching point behavior.
+**Critical**: The cap factor model is designed specifically for additive blending. Using different blend modes will produce incorrect joint intensities.
 
-### 7.8 Color Interpolation
+### 7.10 Color Interpolation
 
 Colors are linearly interpolated along each segment:
 
@@ -989,27 +1014,61 @@ float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
 vec3 color = mix(aStartColor, aEndColor, t);
 ```
 
-**Interpolation across segment length**: The `t` parameter represents position along the segment (0 at start, 1 at end). Colors blend smoothly.
+**Smooth gradients**: Color changes smoothly from start to end of each segment.
 
-### 7.9 Performance Considerations
+### 7.11 Geometry Setup
+
+**Instanced Quad Geometry**:
+
+```typescript
+// Base quad geometry (2 triangles, 4 vertices)
+const quadGeometry = new THREE.BufferGeometry();
+
+// Quad corners: two triangles covering [-1,1] x [-1,1]
+const corners = new Float32Array([
+  -1,
+  -1, // bottom-left (start, bottom)
+  1,
+  -1, // bottom-right (end, bottom)
+  -1,
+  1, // top-left (start, top)
+  1,
+  1, // top-right (end, top)
+]);
+quadGeometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(corners, 2));
+
+// Indices for two triangles
+quadGeometry.setIndex([0, 1, 2, 2, 1, 3]);
+
+// Instanced attributes (per segment)
+const instancedGeometry = new THREE.InstancedBufferGeometry();
+instancedGeometry.copy(quadGeometry);
+
+// Set up instance attributes from loaded line data
+instancedGeometry.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(startPositions, 3));
+instancedGeometry.setAttribute('aEndPos', new THREE.InstancedBufferAttribute(endPositions, 3));
+// ... etc for colors, width, sharpness, segmentLength
+```
+
+### 7.12 Performance Considerations
 
 **Segment Count Limits**:
 
-| Segments | Performance |
-|----------|-------------|
-| < 100K | Smooth (60 fps) |
-| 100K-1M | Good (30-60 fps) |
-| 1M-10M | Moderate (10-30 fps) |
-| > 10M | May require LOD |
+| Segments | Performance          |
+| -------- | -------------------- |
+| < 100K   | Smooth (60 fps)      |
+| 100K-1M  | Good (30-60 fps)     |
+| 1M-10M   | Moderate (10-30 fps) |
+| > 10M    | May require LOD      |
 
 **Optimizations**:
 
-1. **Instanced rendering**: One draw call for all segments
-2. **Indexed geometry**: Reuse vertices at segment junctions (if polyline)
-3. **Frustum culling**: Skip segments outside view
-4. **Spatial chunking**: Load only visible segment chunks (see data/SPECIFICATIONS.md Section 7)
+1. **Instanced rendering**: One draw call for all visible segments
+2. **Spatial chunking**: Load only visible segment chunks (see data/SPECIFICATIONS.md Section 7)
+3. **Frustum culling**: Spatial index query excludes off-screen segments
+4. **Instance buffer updates**: Only update GPU buffers when visible segments change
 
-### 7.10 LineMaterialConfig
+### 7.13 LineMaterialConfig
 
 ```typescript
 interface LineMaterialConfig {
@@ -1019,7 +1078,9 @@ interface LineMaterialConfig {
 }
 ```
 
-### 7.11 LineMaterialUniforms
+**Note**: Sharpness is per-vertex (aStartSharpness/aEndSharpness), not a global config parameter.
+
+### 7.14 LineMaterialUniforms
 
 ```typescript
 interface LineMaterialUniforms {
@@ -1030,15 +1091,63 @@ interface LineMaterialUniforms {
 }
 ```
 
-**Note**: No gamma uniform - gamma correction handled in post-processing pipeline (same as points).
+**Note**: No gamma or sharpness uniforms - gamma correction handled in post-processing pipeline (same as points), and sharpness is per-vertex (aStartSharpness/aEndSharpness).
 
 ---
 
 ## Changelog
 
+- **v1.3.5** (2025-12-09): Vignette artifacts fix and detector noise improvements
+  - **BUGFIX**: Fixed vignette artifacts with additive blending (alpha overflow)
+    - Added `RobustVignetteEffect` to replace pmndrs `VignetteEffect`
+    - Root cause: Additive blending accumulates alpha, which can overflow to Infinity in Float16
+    - Fix: Force alpha to 1.0 in vignette output (screen-space effects should always be opaque)
+    - See: `robust-vignette-effect.ts`
+  - **BUGFIX**: Fixed detector noise time overflow after long sessions
+    - Use `mod(time, 1000.0)` to prevent precision loss
+  - **BUGFIX**: Fixed detector noise "burning" in dark areas
+    - Anscombe transform bias (3/8) was brightening near-black pixels
+    - Added smoothstep blend to reduce shot noise influence for dark pixels
+  - **IMPROVEMENT**: Added `safeDisposeEffect()` helper for proper effect cleanup
+  - **IMPROVEMENT**: Added state preservation in `recreateComposer()` for vignette and detector noise
+
+- **v1.3.4** (2025-12-09): Per-vertex attribute cleanup
+  - **FIXED**: Removed unused `sharpness` from `LineMaterialConfig` (sharpness is per-vertex)
+  - **FIXED**: Removed unused `uSharpness` from `LineMaterialUniforms` (sharpness is per-vertex)
+  - Added clarifying notes about per-vertex sharpness via aStartSharpness/aEndSharpness
+  - Synced with data spec v1.2.2
+
+- **v1.3.3** (2025-12-09): nD slicing with endpoint clipping
+  - **ADDED**: aStartClipped, aEndClipped attributes for clipping awareness
+  - Cap factor now respects clipped endpoints (force 1.0 for clipped ends)
+  - Clipped endpoints don't contribute to joint intensity reduction
+  - Updated vertex shader with clipping-aware cap factor calculation
+
+- **v1.3.2** (2025-12-09): Critical shader bug fixes and per-vertex attributes
+  - **BUGFIX**: Fixed vPerpNorm always being 1.0 (was using abs() on -1/+1 values)
+    - Now passes signed value to fragment shader, computes abs() there
+    - GPU interpolation gives 0 at centerline, ±1 at edges
+  - **CHANGE**: Per-vertex sharpness instead of global uniform
+    - Added aStartSharpness, aEndSharpness instanced attributes
+    - Sharpness interpolates along segment like color and width
+  - **CHANGE**: Variable width per segment (aStartWidth, aEndWidth)
+  - Removed uSharpness uniform (now per-vertex varying)
+  - Updated all attribute names for consistency
+
+- **v1.3.1** (2025-12-09): Semicircle kernel convolution model for lines
+  - **MAJOR**: Added mathematical foundation for seamless joint rendering
+  - **MODEL**: Semicircle kernel f(r) = √(1-(r/R)²) produces parabolic body profile
+  - **JOINTS**: Cap factor (0.5 at endpoints → 1.0 in body) enables correct additive blending
+  - **CRITICAL**: Two adjacent segments sum to full intensity at shared endpoint
+  - Derived closed-form convolution result for efficient GPU computation
+  - Added cap factor calculation in vertex shader
+  - Updated fragment shader with parabolic falloff: `(1 - p²)^sharpness`
+  - Added cap factor visualization diagram
+  - Documented sharpness as artistic control independent of mathematical model
+
 - **v1.3.0** (2025-12-09): Line Material System
   - **ADDED**: Section 7 - Line Material System
-  - Documented rendering approach decision (custom shader with screen-space expansion)
+  - Documented rendering approach decision (instanced quads with THREE.Mesh + InstancedBufferGeometry)
   - Added instanced quad geometry approach for thick lines
   - Added line vertex and fragment shaders
   - Added world-space width calculation (same formula as points)

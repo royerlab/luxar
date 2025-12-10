@@ -144,8 +144,10 @@ const fragmentShader = /* glsl */ `
 
   void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
     // Seeds for random number generation
-    vec3 temporalSeed = vec3(uv * 1000.0, time);  // Changes each frame
-    vec2 fixedSeed = uv * 1000.0;                  // Constant per pixel
+    // Use modulo to prevent precision loss after long sessions
+    float wrappedTime = mod(time, 1000.0);
+    vec3 temporalSeed = vec3(uv * 1000.0, wrappedTime);  // Changes each frame
+    vec2 fixedSeed = uv * 1000.0;                         // Constant per pixel
 
     // Original intensity (assuming linear color space)
     vec3 intensity = inputColor.rgb;
@@ -156,6 +158,14 @@ const fragmentShader = /* glsl */ `
     vec3 photonCount = intensity / max(photonGain, 0.0001);
     vec3 noisyPhotons = poissonNoise(temporalSeed, photonCount);
     vec3 afterShot = noisyPhotons * photonGain;
+
+    // FIX: The Anscombe transform has a bias (3/8) that produces non-zero output
+    // even for zero input, causing "burning" in dark areas (e.g., from vignette).
+    // Blend shot noise with original intensity based on brightness to prevent
+    // dark pixels from being artificially brightened.
+    // For very dark pixels (< 0.01), gradually reduce shot noise influence.
+    vec3 shotNoiseWeight = smoothstep(vec3(0.0), vec3(0.01), intensity);
+    afterShot = mix(intensity, afterShot, shotNoiseWeight);
 
     // === 2. Readout noise (Gaussian, temporal) ===
     // Signal-independent electronic noise, varies each frame
