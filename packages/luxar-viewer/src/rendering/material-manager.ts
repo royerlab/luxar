@@ -3,11 +3,12 @@
  *
  * This module manages all materials in the scene, providing caching,
  * global uniform updates, and support for multiple material types.
- * Currently supports point materials, with future support for lines, meshes, etc.
+ * Supports point materials and line materials.
  */
 
 import * as THREE from 'three';
 import { PointMaterial } from './point-material';
+import { LineMaterial } from './line-material';
 import { log, Modules } from '../utils/log';
 
 // Supported blending modes
@@ -22,12 +23,20 @@ export interface PointMaterialProperties {
   sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
 }
 
+// Line material properties
+export interface LineMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  hdrMultiplier?: number;
+}
+
 /**
  * Manages all materials in the scene with caching and global updates.
- * Future: Will handle line, mesh, volume materials in addition to points.
+ * Supports points, lines, and future material types.
  */
 export class MaterialManager {
   private pointMaterialCache = new Map<string, PointMaterial>();
+  private lineMaterialCache = new Map<string, LineMaterial>();
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
@@ -87,6 +96,42 @@ export class MaterialManager {
   }
 
   /**
+   * Get or create a line material with caching
+   */
+  getLineMaterial(props: LineMaterialProperties): LineMaterial {
+    // Create cache key
+    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
+    const hdrBucket = props.hdrMultiplier ? Math.round(Math.max(0, props.hdrMultiplier) * 10) : 160; // Default 16.0 → 160
+
+    const key = `line_${props.blendingMode}_o${opacityBucket}_h${hdrBucket}`;
+
+    // Check cache first
+    let material = this.lineMaterialCache.get(key);
+    if (material) {
+      return material;
+    }
+
+    // Create new LineMaterial instance
+    material = new LineMaterial({
+      opacity: props.opacity,
+      blendingMode: props.blendingMode,
+      hdrMultiplier: props.hdrMultiplier,
+    });
+
+    // Register for global updates
+    this.registeredMaterials.add(material);
+
+    // Update with current camera params
+    material.updateCameraParams(this.currentFov, this.currentResolution);
+
+    // Cache it
+    this.lineMaterialCache.set(key, material);
+
+    log.info(Modules.RENDERER, `Created line material: ${key}`);
+    return material;
+  }
+
+  /**
    * Convert our blending mode to Three.js blending constant
    */
   private getThreeBlending(mode: BlendingMode): THREE.Blending {
@@ -108,8 +153,9 @@ export class MaterialManager {
     this.registeredMaterials.forEach((material) => {
       if (material instanceof PointMaterial) {
         material.updateHDRMultiplier(multiplier);
+      } else if (material instanceof LineMaterial) {
+        material.updateHDRMultiplier(multiplier);
       }
-      // Future: handle other material types
     });
   }
 
@@ -140,12 +186,18 @@ export class MaterialManager {
   unregister(material: THREE.Material): void {
     this.registeredMaterials.delete(material);
 
-    // Also remove from cache if it's a point material
+    // Also remove from cache based on material type
     if (material instanceof PointMaterial) {
-      // Find and remove from cache
       for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
         if (cachedMaterial === material) {
           this.pointMaterialCache.delete(key);
+          break;
+        }
+      }
+    } else if (material instanceof LineMaterial) {
+      for (const [key, cachedMaterial] of this.lineMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.lineMaterialCache.delete(key);
           break;
         }
       }
@@ -160,17 +212,27 @@ export class MaterialManager {
       material.dispose();
     });
     this.pointMaterialCache.clear();
+    this.lineMaterialCache.clear();
     this.registeredMaterials.clear();
   }
 
   /**
    * Get cache statistics
    */
-  getCacheStats(): { pointMaterials: number; totalRegistered: number; keys: string[] } {
+  getCacheStats(): {
+    pointMaterials: number;
+    lineMaterials: number;
+    totalRegistered: number;
+    keys: string[];
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
+      lineMaterials: this.lineMaterialCache.size,
       totalRegistered: this.registeredMaterials.size,
-      keys: Array.from(this.pointMaterialCache.keys()),
+      keys: [
+        ...Array.from(this.pointMaterialCache.keys()),
+        ...Array.from(this.lineMaterialCache.keys()),
+      ],
     };
   }
 }

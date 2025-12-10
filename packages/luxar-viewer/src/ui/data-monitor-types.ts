@@ -217,6 +217,29 @@ export interface CacheMetrics {
   queriesPerSec: number;
   loadsPerSec: number;
   bandwidth: number;
+  /** L1 memory cache breakdown (optional, only when CacheStatsProvider connected) */
+  l1?: {
+    size: number;
+    count: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+  };
+  /** L2 OPFS cache breakdown (optional, only when CacheStatsProvider connected) */
+  l2?: {
+    size: number;
+    count: number;
+    reads: number;
+    writes: number;
+  };
+  /** Whether caching is enabled */
+  enabled?: boolean;
+  /** Network I/O stats (optional, only when CacheStatsProvider connected) */
+  network?: {
+    bytesTransferred: number;
+    requestCount: number;
+    bandwidth: number;
+  };
 }
 
 /**
@@ -246,4 +269,92 @@ export interface GridCellState {
   isQueried: boolean;
   points: number;
   lastAccess?: number;
+}
+
+/**
+ * Node type for scene graph display
+ */
+export type SceneGraphNodeType = 'scene' | 'group' | 'points' | 'lines' | 'mesh';
+
+/**
+ * Scene graph node for UI display.
+ * Simplified version of SceneNode from data-loader-types.ts.
+ */
+export interface SceneGraphNode {
+  /** Path in the zarr store */
+  path: string;
+  /** Display name (last component of path or 'Scene') */
+  name: string;
+  /** Node type */
+  type: SceneGraphNodeType;
+  /** Number of points (for points nodes) */
+  pointCount?: number;
+  /** Number of segments (for lines nodes) */
+  segmentCount?: number;
+  /** Number of vertices (for lines nodes) */
+  vertexCount?: number;
+  /** Whether this node is currently loading */
+  isLoading?: boolean;
+  /** Whether this node has a spatial index */
+  hasSpatialIndex?: boolean;
+  /** Child nodes */
+  children: SceneGraphNode[];
+  /** UI state: whether node is expanded in tree view */
+  isExpanded?: boolean;
+}
+
+/**
+ * Scene graph state for monitor
+ */
+export interface SceneGraphState {
+  /** Root node of the scene graph */
+  root: SceneGraphNode | null;
+  /** Total number of nodes */
+  totalNodes: number;
+  /** Number of points nodes */
+  pointsNodes: number;
+  /** Number of lines nodes */
+  linesNodes: number;
+  /** Total points across all nodes */
+  totalPoints: number;
+  /** Total segments across all lines */
+  totalSegments: number;
+}
+
+/**
+ * Interface for objects that provide cache statistics.
+ * Used for loose coupling between TwoLevelCachingStore and DataLoadingMonitor.
+ */
+export interface CacheStatsProvider {
+  /** Get current cache statistics */
+  getStats(): {
+    l1: {
+      metadataSize: number;
+      chunksSize: number;
+      metadataCount: number;
+      chunksCount: number;
+      hits: number;
+      misses: number;
+      evictions: number;
+    };
+    l2: {
+      size: number;
+      count: number;
+      reads: number;
+      writes: number;
+    };
+    network: {
+      bytesTransferred: number;
+      requestCount: number;
+      bandwidth: number;
+    };
+  };
+  /** Clear L1 memory cache */
+  clearL1(): void;
+  /** Clear L2 OPFS cache */
+  clearL2(): Promise<void>;
+  /** Clear all caches (L1 + L2) */
+  clearAll(): Promise<void>;
+  /** Check if caching is enabled */
+  isEnabled(): boolean;
 }

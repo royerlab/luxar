@@ -11,6 +11,8 @@ import type {
   LoaderMetrics,
   Recommendation,
   CacheMetrics,
+  SceneGraphNode,
+  SceneGraphState,
 } from './data-monitor-types';
 import { config } from '../config';
 
@@ -72,8 +74,8 @@ export function renderStatGrid(
   return `
     <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
       ${stats
-    .map(
-      (stat) => `
+        .map(
+          (stat) => `
         <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
           <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
             ${stat.value}
@@ -81,8 +83,8 @@ export function renderStatGrid(
           <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
         </div>
       `
-    )
-    .join('')}
+        )
+        .join('')}
     </div>
   `;
 }
@@ -113,7 +115,7 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
 export function renderSecondaryMetrics(
   memory: { used: number; limit: number },
   querySpeed: { avgTime: number; perSec: number },
-  loadSpeed: { count: number; bandwidth: number }
+  network: { bytesTransferred: number; requestCount: number; bandwidth: number } | undefined
 ): string {
   const memoryPercent = memory.limit > 0 ? (memory.used / memory.limit) * 100 : 0;
 
@@ -126,7 +128,7 @@ export function renderSecondaryMetrics(
         </div>
         ${renderProgressBar(memoryPercent, getCacheMemoryColor(memoryPercent), '', 2)}
       </div>
-      
+
       <div style="flex: 1;">
         <span style="color: ${MonitorColors.muted}; font-size: 10px;">QUERY SPEED</span>
         <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
@@ -136,14 +138,14 @@ export function renderSecondaryMetrics(
           ${querySpeed.perSec.toFixed(1)}/sec
         </div>
       </div>
-      
+
       <div style="flex: 1;">
-        <span style="color: ${MonitorColors.muted}; font-size: 10px;">LOAD SPEED</span>
+        <span style="color: ${MonitorColors.muted}; font-size: 10px;">NETWORK I/O</span>
         <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
-          ${loadSpeed.count} loads
+          ${network ? formatBytes(network.bytesTransferred) : '0B'}
         </div>
         <div style="color: ${MonitorColors.dimmed}; font-size: 10px;">
-          ${formatBytes(loadSpeed.bandwidth)}/s
+          ${network ? `${network.requestCount} req · ${formatBytes(network.bandwidth)}/s` : '0 req'}
         </div>
       </div>
     </div>
@@ -163,66 +165,175 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <!-- Primary metrics -->
       <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
         ${renderMetricCard(
-    'VISIBLE POINTS',
-    formatNumber(stats.visiblePoints),
-    `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
-    MonitorColors.success,
-    'large'
-  )}
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
+          MonitorColors.success,
+          'large'
+        )}
       </div>
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-    { used: stats.totalMemory, limit: cacheMetrics.memoryLimit },
-    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-    { count: stats.totalLoads, bandwidth: stats.totalMemoryUsed }
-  )}
+        { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
+        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+        cacheMetrics.network
+      )}
 
-      <!-- Loader list -->
-      <div class="loader-list">
-        <h4 style="margin: 0 0 8px 0; font-size: 11px; color: ${MonitorColors.muted};">ACTIVE LOADERS</h4>
-        <div style="max-height: 150px; overflow-y: auto;">
-          <div id="loader-list-content"></div>
-        </div>
+      <!-- Scene graph or loader list (injected by monitor) -->
+      <div class="scene-or-loaders">
+        <div id="loader-list-content"></div>
       </div>
     </div>
   `;
 }
 
 /**
- * Template for cache tab content
+ * Small clear button style
+ */
+function clearButtonStyle(): string {
+  return `
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px;
+    color: ${MonitorColors.muted};
+    font-size: 9px;
+    padding: 2px 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  `;
+}
+
+/**
+ * Template for cache tab content with L1/L2 breakdown
  */
 export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
+  // Check if caching is disabled
+  if (cacheMetrics.enabled === false) {
+    return `
+      <div class="cache-content">
+        <div style="text-align: center; padding: 30px; color: ${MonitorColors.muted};">
+          <div style="font-size: 32px; margin-bottom: 10px;">🚫</div>
+          <div style="font-size: 14px;">Caching is disabled</div>
+          <div style="font-size: 11px; margin-top: 8px; opacity: 0.6;">
+            Remove ?no-cache from URL to enable
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Check if we have L1/L2 breakdown
+  const hasL1L2 = cacheMetrics.l1 !== undefined && cacheMetrics.l2 !== undefined;
+
+  if (!hasL1L2) {
+    // Fallback to basic view if no cache stats provider connected
+    return `
+      <div class="cache-content">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
+          ${renderMetricCard(
+            'CACHE MEMORY',
+            formatBytes(cacheMetrics.totalCacheMemory),
+            `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+            MonitorColors.success,
+            'medium'
+          )}
+          ${renderMetricCard(
+            'CACHED ENTRIES',
+            cacheMetrics.totalEntries.toString(),
+            '',
+            MonitorColors.primaryText,
+            'medium'
+          )}
+        </div>
+        <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
+          Loading cache statistics...
+        </div>
+      </div>
+    `;
+  }
+
+  // L1 hit rate calculation
+  const l1Total = cacheMetrics.l1!.hits + cacheMetrics.l1!.misses;
+  const l1HitRate = l1Total > 0 ? (cacheMetrics.l1!.hits / l1Total) * 100 : 0;
+
   return `
     <div class="cache-content">
-      <!-- Cache overview cards -->
-      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
-        ${renderMetricCard(
-    'CACHE MEMORY',
-    formatBytes(cacheMetrics.totalCacheMemory),
-    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-    MonitorColors.success,
-    'medium'
-  )}
-        ${renderMetricCard(
-    'CACHED RANGES',
-    cacheMetrics.totalEntries.toString(),
-    `${cacheMetrics.evictionsPerMin.toFixed(0)} evict/min`,
-    MonitorColors.primaryText,
-    'medium'
-  )}
-        ${renderMetricCard(
-    'AVG RANGE SIZE',
-    formatBytes(cacheMetrics.avgEntrySize),
-    '',
-    MonitorColors.primaryText,
-    'medium'
-  )}
+      <!-- L1 Memory Cache Section -->
+      <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;">L1 MEMORY CACHE</span>
+          <button data-action="clearL1" style="${clearButtonStyle()}" title="Clear L1 cache">Clear</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div title="L1 memory cache: fast in-memory storage for recently accessed chunks">
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">SIZE</div>
+            <div style="font-size: 16px; font-weight: bold; color: ${MonitorColors.success};" title="${cacheMetrics.l1!.size.toLocaleString()} bytes">
+              ${formatBytes(cacheMetrics.l1!.size)}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l1!.count} cached entries in memory">
+              ${cacheMetrics.l1!.count} entries
+            </div>
+          </div>
+          <div title="Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses">
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">HIT RATE</div>
+            <div style="font-size: 16px; font-weight: bold; color: ${l1HitRate > 80 ? MonitorColors.success : l1HitRate > 50 ? MonitorColors.warning : MonitorColors.error};">
+              ${l1HitRate.toFixed(1)}%
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l1!.hits.toLocaleString()} cache hits / ${cacheMetrics.l1!.misses.toLocaleString()} cache misses">
+              ${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss
+            </div>
+          </div>
+          <div title="Entries removed from cache when memory limit reached (LRU = Least Recently Used)">
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">EVICTIONS</div>
+            <div style="font-size: 16px; font-weight: bold; color: ${cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed};" title="${cacheMetrics.l1!.evictions.toLocaleString()} entries evicted">
+              ${formatNumber(cacheMetrics.l1!.evictions)}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};">
+              LRU removed
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- Cache message -->
-      <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
-        L0 in-memory cache metrics removed. Monitoring L1/L2 OPFS zarr cache instead.
+      <!-- L2 OPFS Cache Section -->
+      <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;" title="Origin Private File System: persistent browser storage for cached data">L2 OPFS CACHE</span>
+          <button data-action="clearL2" style="${clearButtonStyle()}" title="Clear L2 persistent cache (data will need to be re-downloaded)">Clear</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div title="L2 persistent cache: stored in browser's Origin Private File System, survives page reloads">
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">SIZE</div>
+            <div style="font-size: 18px; font-weight: bold; color: ${MonitorColors.info};" title="${cacheMetrics.l2!.size.toLocaleString()} bytes">
+              ${formatBytes(cacheMetrics.l2!.size)}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l2!.count} entries stored on disk">
+              ${cacheMetrics.l2!.count} entries
+            </div>
+          </div>
+          <div title="Disk I/O operations: reads from cache, writes to cache">
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">I/O</div>
+            <div style="font-size: 18px; font-weight: bold; color: ${MonitorColors.primaryText};" title="${cacheMetrics.l2!.reads.toLocaleString()} read operations from disk">
+              ${formatNumber(cacheMetrics.l2!.reads)} reads
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l2!.writes.toLocaleString()} write operations to disk">
+              ${formatNumber(cacheMetrics.l2!.writes)} writes
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Combined Stats + Clear All -->
+      <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;" title="Combined L1 + L2 cache usage">TOTAL</span>
+          <button data-action="clearAll" style="${clearButtonStyle()}" title="Clear both L1 and L2 caches (all cached data will be removed)">Clear All</button>
+        </div>
+        <div style="font-size: 14px; font-weight: bold; color: ${MonitorColors.primaryText}; margin-bottom: 6px;" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
+          ${formatBytes(cacheMetrics.totalCacheMemory)}
+        </div>
+        ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColor(cacheMetrics.memoryPercent), `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit`, 6)}
       </div>
     </div>
   `;
@@ -254,14 +365,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-  rec.suggestion
-    ? `
+        rec.suggestion
+          ? `
         <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-    : ''
-}
+          : ''
+      }
     </div>
   `;
 }
@@ -311,4 +422,156 @@ function getProgressColor(percent: number): string {
   if (percent <= 60) return MonitorColors.success;
   if (percent <= 80) return MonitorColors.warning;
   return MonitorColors.error;
+}
+
+// Scene graph tree rendering
+
+/**
+ * Get icon for scene graph node type
+ */
+function getNodeTypeIcon(type: string): string {
+  const icons: Record<string, string> = {
+    scene: '🌐',
+    group: '📁',
+    points: '⚬',
+    lines: '╱',
+    mesh: '⬡',
+  };
+  return icons[type] || '•';
+}
+
+/**
+ * Get node type color
+ */
+function getNodeTypeColor(type: string): string {
+  const colors: Record<string, string> = {
+    scene: MonitorColors.info,
+    group: MonitorColors.muted,
+    points: MonitorColors.success,
+    lines: MonitorColors.warning,
+    mesh: '#9b59b6',
+  };
+  return colors[type] || MonitorColors.primaryText;
+}
+
+/**
+ * Render a single scene graph tree node
+ */
+function renderSceneGraphNode(
+  node: SceneGraphNode,
+  expandedNodes: Set<string>,
+  depth: number = 0
+): string {
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expandedNodes.has(node.path);
+  const indent = depth * 16;
+
+  // Node stats and tooltips
+  let statsText = '';
+  let statsTooltip = '';
+  if (node.type === 'points' && node.pointCount !== undefined) {
+    statsText = formatNumber(node.pointCount);
+    statsTooltip = `${node.pointCount.toLocaleString()} points in this layer`;
+  } else if (node.type === 'lines') {
+    if (node.segmentCount !== undefined) {
+      statsText = formatNumber(node.segmentCount);
+      statsTooltip = `${node.segmentCount.toLocaleString()} line segments`;
+      if (node.vertexCount !== undefined) {
+        statsTooltip += `, ${node.vertexCount.toLocaleString()} vertices`;
+      }
+    }
+  } else if (node.type === 'group' && hasChildren) {
+    // For groups, show child count
+    statsText = `${node.children.length}`;
+    statsTooltip = `${node.children.length} child node${node.children.length !== 1 ? 's' : ''}`;
+  }
+
+  // Build tooltip for the whole node
+  const nodeTypeDescriptions: Record<string, string> = {
+    scene: 'Root scene node',
+    group: 'Container for organizing nodes',
+    points: 'Point cloud layer',
+    lines: 'Line segments layer',
+    mesh: 'Mesh geometry',
+  };
+  const nodeTooltip = `${nodeTypeDescriptions[node.type] || node.type}${node.hasSpatialIndex ? ' (indexed)' : ''}`;
+
+  // Expand/collapse toggle
+  const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
+  const toggleStyle = hasChildren ? 'cursor: pointer; user-select: none;' : 'opacity: 0.3;';
+
+  return `
+    <div style="padding: 2px 0;">
+      <div style="display: flex; align-items: center; padding-left: ${indent}px;" title="${nodeTooltip}">
+        <!-- Toggle -->
+        <span
+          ${hasChildren ? `data-action="toggleNode" data-node-path="${node.path}"` : ''}
+          style="width: 16px; font-size: 9px; color: ${MonitorColors.muted}; ${toggleStyle}"
+          ${hasChildren ? `title="${isExpanded ? 'Collapse' : 'Expand'} ${node.name}"` : ''}
+        >${toggleIcon}</span>
+
+        <!-- Icon & Name -->
+        <span style="font-size: 11px; margin-right: 4px;">${getNodeTypeIcon(node.type)}</span>
+        <span style="font-size: 11px; color: ${getNodeTypeColor(node.type)}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${node.name}
+        </span>
+
+        <!-- Stats badge -->
+        ${
+          statsText
+            ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
+            : ''
+        }
+
+        <!-- Loading indicator -->
+        ${node.isLoading ? '<span style="font-size: 9px; margin-left: 4px;" title="Loading data...">⏳</span>' : ''}
+      </div>
+
+      <!-- Children (if expanded) -->
+      ${
+        isExpanded && hasChildren
+          ? node.children
+              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+              .join('')
+          : ''
+      }
+    </div>
+  `;
+}
+
+/**
+ * Render scene graph tree component
+ */
+export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<string>): string {
+  if (!state.root) {
+    return `
+      <div style="color: ${MonitorColors.dimmed}; font-size: 10px; padding: 8px;">
+        No scene loaded
+      </div>
+    `;
+  }
+
+  // Header with stats
+  const headerStats = [
+    state.pointsNodes > 0 ? `${state.pointsNodes} points` : null,
+    state.linesNodes > 0 ? `${state.linesNodes} lines` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  return `
+    <div class="scene-graph-tree">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <h4 style="margin: 0; font-size: 11px; color: ${MonitorColors.muted};">SCENE GRAPH</h4>
+        ${
+          headerStats
+            ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
+            : ''
+        }
+      </div>
+      <div style="max-height: 180px; overflow-y: auto; background: ${MonitorColors.sectionBg}; border-radius: 4px; padding: 4px;">
+        ${renderSceneGraphNode(state.root, expandedNodes)}
+      </div>
+    </div>
+  `;
 }

@@ -297,6 +297,9 @@ export const config: AppConfig = {
       fovPreset: '50mm Normal', // Default to normal lens equivalent
       near: 0.1, // Near clipping plane (default matches camera.near)
       far: 1000, // Far clipping plane (default matches camera.far)
+      // Dynamic clipping planes
+      dynamicClippingEnabled: true, // Auto-adjust clipping planes based on camera position
+      clippingAdaptSpeed: 0.1, // Exponential smoothing factor (0.01-0.5, lower = smoother)
       // Bloom settings - single source of truth (moved from config.rendering.bloom)
       bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom
       bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)

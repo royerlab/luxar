@@ -1,9 +1,9 @@
 # Lines Viewer Implementation Plan
 
-**Version**: 1.1.0
+**Version**: 1.3.0
 **Created**: 2025-12-09
 **Last Updated**: 2025-12-09
-**Status**: Draft - Reviewed
+**Status**: Draft - Complete
 
 ## Overview
 
@@ -591,13 +591,272 @@ async function loadLinesForView(viewState: ViewState): Promise<LoadedLinesData> 
 }
 ```
 
-### 4.4 Tasks
+### 4.4 nD Slicing with Endpoint Clipping
+
+For lines in nD space, segments may partially intersect the visible slice. We handle this with **endpoint clipping**.
+
+**Visibility Cases**:
+
+```
+Case A: Both endpoints IN slice     → Render full segment
+Case B: P1 IN, P2 OUT               → Clip P2 to slice boundary
+Case C: P1 OUT, P2 IN               → Clip P1 to slice boundary
+Case D: Both OUT, opposite sides    → Clip both to boundaries (segment crosses slice)
+Case E: Both OUT, same side         → Don't render (segment misses slice)
+```
+
+**Algorithm**:
+
+```typescript
+interface ClippedSegment {
+  p1: number[];           // Clipped start position (3D display coords)
+  p2: number[];           // Clipped end position (3D display coords)
+  t1: number;             // Parameter at clipped start (0-1, for attribute interpolation)
+  t2: number;             // Parameter at clipped end (0-1)
+  visible: boolean;       // Whether segment should be rendered
+}
+
+function clipSegmentToSlice(
+  p1: number[],           // Start vertex (nD)
+  p2: number[],           // End vertex (nD)
+  slicePosition: number[],
+  tolerance: number[],    // Per-dimension (0 for spatial, 0.5 for discrete)
+  displayDims: number[]   // [d0, d1, d2] - which dims to display
+): ClippedSegment {
+
+  // For each non-displayed dimension, check if segment crosses slice
+  let t1 = 0.0;  // Parameter at start
+  let t2 = 1.0;  // Parameter at end
+
+  for (let dim = 0; dim < p1.length; dim++) {
+    if (displayDims.includes(dim)) continue;  // Skip displayed dimensions
+
+    const tol = tolerance[dim];
+    const sliceMin = slicePosition[dim] - tol;
+    const sliceMax = slicePosition[dim] + tol;
+
+    const v1 = p1[dim];
+    const v2 = p2[dim];
+
+    // Classify endpoints relative to slice
+    const p1In = v1 >= sliceMin && v1 <= sliceMax;
+    const p2In = v2 >= sliceMin && v2 <= sliceMax;
+
+    if (p1In && p2In) {
+      // Both in - no clipping needed for this dimension
+      continue;
+    }
+
+    if (!p1In && !p2In) {
+      // Both out - check if on same side
+      if ((v1 < sliceMin && v2 < sliceMin) || (v1 > sliceMax && v2 > sliceMax)) {
+        return { p1: [], p2: [], t1: 0, t2: 0, visible: false };  // Case E
+      }
+      // Opposite sides - clip both (Case D)
+    }
+
+    // Compute intersection parameters
+    const dv = v2 - v1;
+    if (Math.abs(dv) < 1e-10) continue;  // Parallel to slice
+
+    // t where line crosses sliceMin
+    const tMin = (sliceMin - v1) / dv;
+    // t where line crosses sliceMax
+    const tMax = (sliceMax - v1) / dv;
+
+    // Clip t1 (entry) and t2 (exit) to valid range
+    if (dv > 0) {
+      // Moving from low to high
+      t1 = Math.max(t1, tMin);
+      t2 = Math.min(t2, tMax);
+    } else {
+      // Moving from high to low
+      t1 = Math.max(t1, tMax);
+      t2 = Math.min(t2, tMin);
+    }
+
+    if (t1 >= t2) {
+      return { p1: [], p2: [], t1: 0, t2: 0, visible: false };  // No valid range
+    }
+  }
+
+  // Interpolate clipped positions
+  const clippedP1 = p1.map((v, i) => v + t1 * (p2[i] - v));
+  const clippedP2 = p1.map((v, i) => v + t2 * (p2[i] - v));
+
+  // Project to 3D display space
+  const display1 = displayDims.map(d => clippedP1[d]);
+  const display2 = displayDims.map(d => clippedP2[d]);
+
+  return { p1: display1, p2: display2, t1, t2, visible: true };
+}
+```
+
+**Attribute Interpolation**: When a segment is clipped, per-vertex attributes must be interpolated:
+
+```typescript
+// For clipped segment with t1, t2 parameters:
+const clippedStartColor = lerpVec3(startColor, endColor, t1);
+const clippedEndColor = lerpVec3(startColor, endColor, t2);
+const clippedStartWidth = lerp(startWidth, endWidth, t1);
+const clippedEndWidth = lerp(startWidth, endWidth, t2);
+const clippedStartSharpness = lerp(startSharpness, endSharpness, t1);
+const clippedEndSharpness = lerp(endSharpness, endSharpness, t2);
+
+// Segment length is recalculated from clipped positions
+const clippedLength = distance3D(clippedP1, clippedP2);
+```
+
+**Cap Factor Adjustment**: Clipped endpoints are NOT true segment endpoints - they should have `capFactor = 1.0` (not 0.5) since the "real" endpoint is outside the slice.
+
+```typescript
+// Track whether each end was clipped
+interface ClippedSegmentData {
+  // ... positions, colors, etc ...
+  startWasClipped: boolean;  // If true, use capFactor=1.0 at start
+  endWasClipped: boolean;    // If true, use capFactor=1.0 at end
+}
+```
+
+### 4.5 Instance Buffer Construction
+
+After loading and clipping, convert per-vertex data to per-segment GPU instance buffers.
+
+**Input** (from loader + clipper):
+
+```typescript
+interface ProcessedLinesData {
+  // Per-segment data (M segments)
+  startPositions: Float32Array;  // (M, 3) - 3D display coords
+  endPositions: Float32Array;    // (M, 3)
+  startColors: Float32Array;     // (M, 3)
+  endColors: Float32Array;       // (M, 3)
+  startWidths: Float32Array;     // (M,)
+  endWidths: Float32Array;       // (M,)
+  startSharpness: Float32Array;  // (M,)
+  endSharpness: Float32Array;    // (M,)
+  segmentLengths: Float32Array;  // (M,)
+  startClipped: Uint8Array;      // (M,) - 1 if start was clipped
+  endClipped: Uint8Array;        // (M,) - 1 if end was clipped
+  segmentCount: number;
+}
+```
+
+**Transformation Algorithm**:
+
+```typescript
+function buildInstanceBuffers(
+  loadedData: LoadedLinesData,
+  slicePosition: number[],
+  tolerance: number[],
+  displayDims: number[]
+): ProcessedLinesData {
+  const { vertices, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+
+  // Pre-allocate output arrays (may be smaller after clipping)
+  const maxSegments = segmentCount;
+  const startPositions = new Float32Array(maxSegments * 3);
+  const endPositions = new Float32Array(maxSegments * 3);
+  const startColors = new Float32Array(maxSegments * 3);
+  const endColors = new Float32Array(maxSegments * 3);
+  const startWidths = new Float32Array(maxSegments);
+  const endWidths = new Float32Array(maxSegments);
+  const startSharpness = new Float32Array(maxSegments);
+  const endSharpness = new Float32Array(maxSegments);
+  const segmentLengths = new Float32Array(maxSegments);
+  const startClipped = new Uint8Array(maxSegments);
+  const endClipped = new Uint8Array(maxSegments);
+
+  let outIdx = 0;
+
+  for (let i = 0; i < segmentCount; i++) {
+    // Get vertex indices
+    const v0 = segments[i * 2];
+    const v1 = segments[i * 2 + 1];
+
+    // Extract nD positions
+    const p1 = Array.from(vertices.slice(v0 * ndim, (v0 + 1) * ndim));
+    const p2 = Array.from(vertices.slice(v1 * ndim, (v1 + 1) * ndim));
+
+    // Clip to slice
+    const clipped = clipSegmentToSlice(p1, p2, slicePosition, tolerance, displayDims);
+    if (!clipped.visible) continue;
+
+    // Write 3D positions
+    startPositions.set(clipped.p1, outIdx * 3);
+    endPositions.set(clipped.p2, outIdx * 3);
+
+    // Interpolate and write colors
+    const c0 = colors ? Array.from(colors.slice(v0 * 3, (v0 + 1) * 3)) : [1, 1, 1];
+    const c1 = colors ? Array.from(colors.slice(v1 * 3, (v1 + 1) * 3)) : [1, 1, 1];
+    const startC = lerpVec3(c0, c1, clipped.t1);
+    const endC = lerpVec3(c0, c1, clipped.t2);
+    startColors.set(startC, outIdx * 3);
+    endColors.set(endC, outIdx * 3);
+
+    // Interpolate widths
+    const w0 = widths[v0];
+    const w1 = widths[v1];
+    startWidths[outIdx] = lerp(w0, w1, clipped.t1);
+    endWidths[outIdx] = lerp(w0, w1, clipped.t2);
+
+    // Interpolate sharpness (default 1.0 if not present)
+    const s0 = sharpness ? sharpness[v0] : 1.0;
+    const s1 = sharpness ? sharpness[v1] : 1.0;
+    startSharpness[outIdx] = lerp(s0, s1, clipped.t1);
+    endSharpness[outIdx] = lerp(s0, s1, clipped.t2);
+
+    // Calculate 3D segment length
+    segmentLengths[outIdx] = distance3D(clipped.p1, clipped.p2);
+
+    // Track clipping for cap factor adjustment
+    startClipped[outIdx] = clipped.t1 > 0 ? 1 : 0;
+    endClipped[outIdx] = clipped.t2 < 1 ? 1 : 0;
+
+    outIdx++;
+  }
+
+  // Trim arrays to actual size
+  return {
+    startPositions: startPositions.slice(0, outIdx * 3),
+    endPositions: endPositions.slice(0, outIdx * 3),
+    startColors: startColors.slice(0, outIdx * 3),
+    endColors: endColors.slice(0, outIdx * 3),
+    startWidths: startWidths.slice(0, outIdx),
+    endWidths: endWidths.slice(0, outIdx),
+    startSharpness: startSharpness.slice(0, outIdx),
+    endSharpness: endSharpness.slice(0, outIdx),
+    segmentLengths: segmentLengths.slice(0, outIdx),
+    startClipped: startClipped.slice(0, outIdx),
+    endClipped: endClipped.slice(0, outIdx),
+    segmentCount: outIdx,
+  };
+}
+
+// Helper functions
+function lerp(a: number, b: number, t: number): number {
+  return a + t * (b - a);
+}
+
+function lerpVec3(a: number[], b: number[], t: number): number[] {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+
+function distance3D(a: number[], b: number[]): number {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+```
+
+### 4.6 Tasks
 
 - [ ] Create `src/data/lines-spatial-index-loader.ts`
 - [ ] Implement `LinesSpatialIndexLoader` class
 - [ ] Implement segment range loading
 - [ ] Implement vertex range computation from indices
 - [ ] Implement index remapping
+- [ ] Implement `clipSegmentToSlice()` for nD slicing
+- [ ] Implement `buildInstanceBuffers()` transformation
 - [ ] Handle broadcast arrays (widths, colors)
 - [ ] Handle encoded arrays (LUT, quantized)
 - [ ] Add monitoring events
@@ -608,79 +867,231 @@ async function loadLinesForView(viewState: ViewState): Promise<LoadedLinesData> 
 
 ### 5.1 Goal
 
-Create custom shader material for thick lines using instanced quads.
+Create custom shader material for thick lines using instanced quads, with mathematically correct intensity for additive blending.
 
-### 5.2 Rendering Approach: Instanced Quads
+### 5.2 Mathematical Foundation: Semicircle Kernel
+
+**Key insight**: Lines are "smeared points" - the intensity at any point is the convolution of a radial kernel with the line path.
+
+**The problem with naive approach**: If we use the same intensity function as points, joints between segments would be overbright (double intensity where two segments meet).
+
+**Solution**: Use a **semicircle kernel** that produces a **parabolic profile** after convolution:
+
+```
+Kernel function:     f(r) = √(1 - (r/R)²)     for r < R
+
+Convolution result:  I_body(p) ∝ (1 - (p/R)²)  ← Parabola!
+```
+
+**Why this works for joints**:
+
+The convolution integral over a line segment gives exactly **half intensity at endpoints**:
+
+```
+Body (middle of segment):  I_body(p) = full intensity
+Endpoint (at segment tip): I_end(p) = I_body(p) / 2
+```
+
+When two segments meet at joint `b`:
+```
+Segment a-b endpoint:  0.5 × I_body
+Segment b-c endpoint:  0.5 × I_body
+─────────────────────────────────────
+Sum (additive):        1.0 × I_body  ✓ Seamless!
+```
+
+### 5.3 Rendering Approach: Instanced Quads
 
 WebGL `lineWidth` is always 1px on most hardware. We use **instanced quads** instead:
 
 ```
-Each segment becomes a quad:
+Each segment becomes a quad with cap regions:
+
+  cap     ←───── body ─────→     cap
+region          region          region
+  ├─R─┤                        ├─R─┤
 
      startVertex ─────────────── endVertex
          │                           │
-    ┌────┼───────────────────────────┼────┐
+    ┌────●───────────────────────────●────┐
     │    │                           │    │  ← Quad expanded
-    │    │      LINE SEGMENT         │    │    by lineWidth
+    │    │      LINE SEGMENT         │    │    by lineWidth R
     │    │                           │    │
-    └────┼───────────────────────────┼────┘
+    └────●───────────────────────────●────┘
          │                           │
+        cap                         cap
+      factor=0.5                  factor=0.5
 ```
 
-### 5.3 File: `src/rendering/line-material.ts`
+### 5.4 File: `src/rendering/line-material.ts`
 
 **Instanced Attributes (per segment)**:
-- `aStartPos`: vec3 - Start vertex position
-- `aEndPos`: vec3 - End vertex position
-- `aStartColor`: vec3 - Start vertex color
-- `aEndColor`: vec3 - End vertex color
-- `aStartWidth`: float - Start half-width
-- `aEndWidth`: float - End half-width
-- `aStartSharpness`: float - Start falloff
-- `aEndSharpness`: float - End falloff
+- `aStartPos`: vec3 - Start vertex position (3D display space)
+- `aEndPos`: vec3 - End vertex position (3D display space)
+- `aStartColor`: vec3 - Start vertex color (HDR)
+- `aEndColor`: vec3 - End vertex color (HDR)
+- `aStartWidth`: float - Start half-width (world units)
+- `aEndWidth`: float - End half-width (world units)
+- `aStartSharpness`: float - Start vertex sharpness
+- `aEndSharpness`: float - End vertex sharpness
+- `aSegmentLength`: float - Length of segment (for cap factor calculation)
+- `aStartClipped`: float - 1.0 if start was clipped (force capFactor=1.0)
+- `aEndClipped`: float - 1.0 if end was clipped (force capFactor=1.0)
 
 **Static Geometry (per quad)**:
 - 4 vertices with `aQuadCorner`: `(-1,-1), (1,-1), (-1,1), (1,1)`
 - 6 indices: `[0, 1, 2, 2, 1, 3]`
 
-**Vertex Shader** (key logic):
+**Vertex Shader**:
 ```glsl
-// Determine position along segment (0 = start, 1 = end)
-float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+attribute vec2 aQuadCorner;      // Static: quad corner (-1 to 1)
+attribute vec3 aStartPos;        // Instanced: segment start
+attribute vec3 aEndPos;          // Instanced: segment end
+attribute vec3 aStartColor;      // Instanced: start color
+attribute vec3 aEndColor;        // Instanced: end color
+attribute float aStartWidth;     // Instanced: start width
+attribute float aEndWidth;       // Instanced: end width
+attribute float aStartSharpness; // Instanced: start sharpness
+attribute float aEndSharpness;   // Instanced: end sharpness
+attribute float aSegmentLength;  // Instanced: segment length
+attribute float aStartClipped;   // Instanced: 1.0 if start was clipped
+attribute float aEndClipped;     // Instanced: 1.0 if end was clipped
 
-// Interpolate attributes
-vec3 worldPos = mix(aStartPos, aEndPos, t);
-vec3 color = mix(aStartColor, aEndColor, t);
-float width = mix(aStartWidth, aEndWidth, t);
+uniform float uFOV;
+uniform vec2 uResolution;
 
-// Calculate perpendicular in screen space
-vec2 lineDir = normalize(screenEnd - screenStart);
-vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
+varying vec3 vColor;
+varying float vSharpness;        // Per-vertex sharpness (interpolated)
+varying float vPerpNorm;         // Signed: -1 at bottom edge, +1 at top edge
+varying float vCapFactor;        // 0.5 at endpoints, 1.0 in body
 
-// Calculate pixel width from world width
-float pixelWidth = 2.0 * width * uResolution.y / (distance * tan(uFOV * 0.5));
+void main() {
+    // Position along segment: 0 = start, 1 = end
+    float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
 
-// Offset by perpendicular * width
-clipPos.xy += perpendicular * aQuadCorner.y * pixelWidth / uResolution * clipPos.w;
+    // Interpolate attributes along segment
+    vec3 worldPos = mix(aStartPos, aEndPos, t);
+    vColor = mix(aStartColor, aEndColor, t);
+    float width = mix(aStartWidth, aEndWidth, t);
+    vSharpness = mix(aStartSharpness, aEndSharpness, t);
+
+    // Project to clip space
+    vec4 clipStart = projectionMatrix * modelViewMatrix * vec4(aStartPos, 1.0);
+    vec4 clipEnd = projectionMatrix * modelViewMatrix * vec4(aEndPos, 1.0);
+    vec4 clipPos = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+
+    // Screen-space line direction and perpendicular
+    vec2 screenStart = clipStart.xy / clipStart.w;
+    vec2 screenEnd = clipEnd.xy / clipEnd.w;
+    vec2 lineDir = normalize(screenEnd - screenStart);
+    vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
+
+    // World-space to pixel conversion (perspective-correct)
+    float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
+    float pixelWidth = width * uResolution.y / (dist * tan(uFOV * 0.5));
+
+    // Perpendicular position: -1 at bottom edge, +1 at top edge
+    // GPU interpolates this across the quad, giving 0 at centerline
+    vPerpNorm = aQuadCorner.y;
+    clipPos.xy += perpendicular * aQuadCorner.y * pixelWidth / uResolution * clipPos.w;
+
+    // Cap factor calculation with clipping awareness
+    // Normal cap factor: 0.5 at true endpoints, 1.0 in body
+    // Clipped endpoints: force 1.0 (the "real" endpoint is outside the slice)
+    float distFromStart = t * aSegmentLength;
+    float distFromEnd = (1.0 - t) * aSegmentLength;
+
+    // Base cap factor from distance to nearest endpoint
+    float distToNearest = min(distFromStart, distFromEnd);
+    float baseCap = (distToNearest >= width) ? 1.0 : 0.5 + 0.5 * (distToNearest / width);
+
+    // Override if the nearest endpoint was clipped
+    float nearestIsStart = step(distFromEnd, distFromStart);  // 1 if closer to start
+    float nearestClipped = mix(aEndClipped, aStartClipped, nearestIsStart);
+
+    // If nearest endpoint was clipped, use full intensity (1.0)
+    vCapFactor = mix(baseCap, 1.0, nearestClipped);
+
+    gl_Position = clipPos;
+}
 ```
 
 **Fragment Shader**:
 ```glsl
+uniform float uHDRMultiplier;
+uniform float uOpacity;
+
+varying vec3 vColor;
+varying float vSharpness;        // Per-vertex sharpness (interpolated)
+varying float vPerpNorm;         // Interpolated: 0 at centerline, ±1 at edges
+varying float vCapFactor;        // 0.5 at endpoints, 1.0 in body
+
 void main() {
-    float intensity = pow(1.0 - vLinePos, vSharpness);
+    // Compute distance from centerline (0 to 1)
+    float p = abs(vPerpNorm);
+
+    // Discard pixels outside the line width
+    if (p >= 1.0) discard;
+
+    // Parabolic falloff from semicircle kernel convolution
+    // Base: (1 - p²) where p = distance from centerline
+    // With per-vertex sharpness: (1 - p²)^sharpness
+    float perpFalloff = pow(1.0 - p * p, vSharpness);
+
+    // Apply cap factor for correct joint intensity
+    float intensity = vCapFactor * perpFalloff;
+
+    // HDR output (gamma correction in post-processing)
     vec3 finalColor = vColor * intensity * uHDRMultiplier;
+
     gl_FragColor = vec4(finalColor, intensity * uOpacity);
 }
 ```
 
-### 5.4 Tasks
+### 5.5 Cap Factor Visualization
+
+```
+Intensity along a segment (at centerline, perpFalloff = 1.0):
+
+capFactor:  0.5 ──────────── 1.0 ──────────── 0.5
+              ╱                                 ╲
+             ╱                                   ╲
+            ╱                                     ╲
+           ╱           FULL INTENSITY              ╲
+          ╱                                         ╲
+─────────●───────────────────────────────────────────●─────────
+      endpoint                                    endpoint
+
+When two segments join at a vertex:
+
+Segment 1:  ... ────── 1.0 ────── 0.5
+                                  │
+Segment 2:                        0.5 ────── 1.0 ────── ...
+                                  │
+Sum:        ... ────── 1.0 ────── 1.0 ────── 1.0 ────── ...
+                                   ↑
+                              Seamless join!
+```
+
+### 5.6 Comparison: Points vs Lines
+
+| Aspect | Points | Lines |
+|--------|--------|-------|
+| Kernel | `(1 - r/R)^s` | `√(1 - (r/R)²)` (semicircle) |
+| Profile | `(1 - r/R)^s` (same) | `(1 - p²)^s` (parabolic) |
+| Blending | Additive | Additive (same!) |
+| Joint handling | N/A | Cap factor (0.5 → 1.0) |
+| Shader cost | `pow(1-r, s)` | `pow(1-p*p, s)` (similar) |
+
+### 5.7 Tasks
 
 - [ ] Create `src/rendering/line-material.ts`
-- [ ] Implement vertex shader with screen-space expansion
-- [ ] Implement fragment shader with falloff
+- [ ] Implement vertex shader with screen-space expansion and cap factor
+- [ ] Implement fragment shader with parabolic falloff
 - [ ] Create `LineMaterial` class extending `THREE.ShaderMaterial`
 - [ ] Add `getLineMaterial()` to `MaterialManager`
-- [ ] Test with simple line dataset
+- [ ] Test joint rendering with polyline dataset
+- [ ] Verify additive blending produces seamless joints
 
 ---
 
@@ -778,6 +1189,7 @@ if (object instanceof THREE.InstancedMesh && isLinesUserData(object.userData)) {
 
 ```python
 # Python script to generate test lines dataset
+import numpy as np
 import luxar
 
 scene = luxar.Scene([
@@ -786,7 +1198,7 @@ scene = luxar.Scene([
     luxar.Dimension("z", "um", range=(0, 100)),
 ])
 
-# Simple polyline
+# Simple polyline (square loop)
 vertices = np.array([
     [0, 0, 0],
     [50, 0, 0],
@@ -802,15 +1214,16 @@ colors = np.array([
     [1, 1, 0],
 ], dtype=np.float32)
 
-lines = luxar.Lines(
+# Use scene.add_lines() API (Lines created internally)
+scene.add_lines(
+    "test_lines",
     vertices=vertices,
     widths=widths,
     colors=colors,
     line_type="loop",
 )
 
-scene.add("test_lines", lines)
-luxar.write(scene, "test_lines_example.zarr")
+luxar.compile(scene, "test_lines_example.zarr")
 ```
 
 ### 7.4 Tasks
@@ -886,7 +1299,6 @@ luxar.write(scene, "test_lines_example.zarr")
 
 **Rationale**: Conceptually, a line is a continuous series of overlapping points dragged along a path. This means:
 - The cross-sectional falloff is based on **perpendicular distance to the centerline**
-- The same `intensity = pow(1.0 - r, sharpness)` formula as Points
 - Caps are naturally round (like point circles at endpoints)
 
 **Visual Concept**:
@@ -900,12 +1312,38 @@ luxar.write(scene, "test_lines_example.zarr")
     r              └────────────────┘
 ```
 
-**Fragment Shader**:
-```glsl
-// vLinePos is perpendicular distance from centerline, normalized to [0, 1]
-// 0 = on centerline, 1 = at edge
-float intensity = pow(1.0 - vLinePos, vSharpness);
+### 9.4 Joint Rendering Model ✓
+
+**Decision**: Use semicircle kernel convolution model with cap factor for seamless additive blending.
+
+**Problem**: With naive intensity functions, joints between adjacent segments (a-b-c) would have double brightness at the shared endpoint b.
+
+**Solution**: Mathematical model based on convolution theory:
+
+1. **Semicircle Kernel**: `f(r) = √(1 - (r/R)²)` instead of point-like `(1-r)^s`
+2. **Parabolic Profile**: Convolution yields `intensity = (1 - p²)^sharpness`
+3. **Cap Factor**: Endpoints naturally contribute exactly half intensity
+
+**Why it works**:
 ```
+Segment a-b at endpoint b:  0.5 × full intensity
+Segment b-c at endpoint b:  0.5 × full intensity
+─────────────────────────────────────────────────
+Sum (additive blending):    1.0 × full intensity ✓
+```
+
+**Cap Factor Calculation**:
+```glsl
+float distFromEnd = min(t, 1.0 - t) * aSegmentLength;
+vCapFactor = (distFromEnd >= width) ? 1.0 : 0.5 + 0.5 * (distFromEnd / width);
+```
+
+**Rationale**: This approach:
+- Works correctly with additive blending (Luxar's default)
+- Produces smooth, seamless joints without visual artifacts
+- Is computationally cheap (just `1 - p*p` with optional power)
+- Has clean mathematical foundation (convolution associativity)
+- Differs from point kernel intentionally to solve joint problem
 
 ---
 
@@ -948,6 +1386,42 @@ float intensity = pow(1.0 - vLinePos, vSharpness);
 ---
 
 ## Changelog
+
+- **v1.3.0** (2025-12-09): nD slicing and instance buffer construction
+  - **ADDED**: Section 4.4 - nD Slicing with Endpoint Clipping
+    - Line segment clipping algorithm for nD → 3D projection
+    - 5 visibility cases: both in, one in/out, crossing, both out
+    - Attribute interpolation for clipped segments
+    - Cap factor adjustment for clipped endpoints
+  - **ADDED**: Section 4.5 - Instance Buffer Construction
+    - Complete algorithm for per-vertex → per-segment transformation
+    - ProcessedLinesData interface with all GPU instance attributes
+    - Clipping integration with buildInstanceBuffers()
+  - **ADDED**: aStartClipped, aEndClipped instance attributes
+  - Updated vertex shader with clipping-aware cap factor
+  - Updated rendering spec to v1.3.3
+
+- **v1.2.1** (2025-12-09): Critical shader bug fixes
+  - **BUGFIX**: Fixed vPerpNorm always being 1.0 (was using abs() on quad corners)
+    - Vertex shader now passes signed vPerpNorm to fragment shader
+    - Fragment shader computes `p = abs(vPerpNorm)` for actual distance
+    - GPU interpolation gives 0 at centerline, ±1 at edges
+  - **CHANGE**: Per-vertex sharpness (aStartSharpness, aEndSharpness)
+  - **CHANGE**: Per-vertex width (aStartWidth, aEndWidth)
+  - Fixed test data generation to use `scene.add_lines()` API
+  - Updated rendering spec to v1.3.2
+
+- **v1.2.0** (2025-12-09): Semicircle kernel model for joint rendering
+  - **MAJOR**: Section 5 completely rewritten with mathematical foundation
+  - Added semicircle kernel convolution model: `f(r) = √(1-(r/R)²)`
+  - Derived parabolic body profile: `(1 - p²)^sharpness`
+  - Added cap factor algorithm for seamless joints with additive blending
+  - Endpoints contribute 0.5 intensity → two adjacent segments sum to 1.0
+  - Updated vertex shader with cap factor calculation
+  - Updated fragment shader with parabolic falloff
+  - Added Section 9.4: Joint Rendering Model design decision
+  - Added intensity visualization diagrams
+  - Added comparison table: Points vs Lines
 
 - **v1.1.0** (2025-12-09): First review pass
   - Added `has_spatial_index` field to `LinesMetadata`

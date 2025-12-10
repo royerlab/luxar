@@ -1081,11 +1081,13 @@ interface LineRange {
 
 ### 7.5 LinesUserData
 
-**Purpose**: Data attached to THREE.LineSegments objects for scene management.
+**Purpose**: Data attached to THREE.Mesh objects (with InstancedBufferGeometry) for scene management.
 
 ```typescript
 /**
- * User data attached to THREE.LineSegments in scene
+ * User data attached to THREE.Mesh with InstancedBufferGeometry in scene.
+ * Lines use THREE.Mesh (not InstancedMesh) to avoid exceeding WebGL's 16 attribute location limit.
+ * Note: Dimension info is NOT stored here - it's only at the Scene level.
  */
 interface LinesUserData {
   /** Node type identifier for runtime type checking */
@@ -1097,11 +1099,8 @@ interface LinesUserData {
   /** Zarr group attributes */
   attrs: LinesMetadata;
 
-  /** Spatial index for queries */
-  spatialIndex: LinesChunkSpatialIndex;
-
-  /** Scene dimension metadata */
-  sceneDimensions: DimensionMetadata[];
+  /** Spatial index for queries (optional, may not exist for non-indexed data) */
+  spatialIndex?: LinesChunkSpatialIndex;
 
   /** Maximum line width (for bounding box expansion, NOT tolerance) */
   maxWidth: number;
@@ -1163,12 +1162,17 @@ function isLinesUserData(userData: unknown): userData is LinesUserData {
 }
 
 /**
- * Check if THREE.Object3D is a Lines visualization
+ * Check if THREE.Object3D is a Lines visualization.
+ * Lines use THREE.Mesh with InstancedBufferGeometry (not LineSegments or InstancedMesh)
+ * to enable thick lines with world-space width while staying under WebGL's
+ * 16 attribute location limit.
  */
-function isLinesObject(
-  object: THREE.Object3D
-): object is THREE.LineSegments & { userData: LinesUserData } {
-  return object instanceof THREE.LineSegments && isLinesUserData(object.userData);
+function isLinesObject(object: THREE.Object3D): object is THREE.Mesh & { userData: LinesUserData } {
+  return (
+    object instanceof THREE.Mesh &&
+    object.geometry instanceof THREE.InstancedBufferGeometry &&
+    isLinesUserData(object.userData)
+  );
 }
 ```
 

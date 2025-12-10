@@ -18,6 +18,9 @@ import type {
   MonitorEventType,
   LoaderType,
   CacheMetrics,
+  CacheStatsProvider,
+  SceneGraphNode,
+  SceneGraphState,
 } from './data-monitor-types';
 
 import { PerformanceTimeline } from './components/performance-timeline';
@@ -108,6 +111,7 @@ import {
   renderOverviewContent,
   renderCacheContent,
   renderInsightsContent,
+  renderSceneGraphTree,
 } from './data-monitor-templates';
 
 /**
@@ -161,6 +165,22 @@ export class DataLoadingMonitor {
 
   // UI event handler bound to this instance
   private uiEventHandler = this.handleUIEvent.bind(this);
+
+  // Cache stats provider for L1/L2 cache metrics
+  private cacheStatsProvider: CacheStatsProvider | null = null;
+
+  // Scene graph state
+  private sceneGraphState: SceneGraphState = {
+    root: null,
+    totalNodes: 0,
+    pointsNodes: 0,
+    linesNodes: 0,
+    totalPoints: 0,
+    totalSegments: 0,
+  };
+
+  // Track expanded nodes in scene graph tree (by path)
+  private expandedNodes = new Set<string>(['/']);
 
   constructor(container: HTMLElement, config?: Partial<MonitorConfig>) {
     this.container = container;
@@ -246,6 +266,118 @@ export class DataLoadingMonitor {
     }
 
     log.info(Modules.DATA_MONITOR, 'All loaders disconnected and monitor state reset');
+  }
+
+  /**
+   * Set the cache stats provider for L1/L2 cache monitoring.
+   * This enables the monitor to display actual cache statistics.
+   */
+  public setCacheStatsProvider(provider: CacheStatsProvider | null): void {
+    this.cacheStatsProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'Cache stats provider connected');
+    }
+  }
+
+  /**
+   * Clear L1 memory cache.
+   */
+  public clearL1Cache(): void {
+    if (this.cacheStatsProvider) {
+      this.cacheStatsProvider.clearL1();
+      log.info(Modules.DATA_MONITOR, 'L1 cache cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
+   * Clear L2 OPFS cache.
+   */
+  public async clearL2Cache(): Promise<void> {
+    if (this.cacheStatsProvider) {
+      await this.cacheStatsProvider.clearL2();
+      log.info(Modules.DATA_MONITOR, 'L2 cache cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
+   * Clear all caches (L1 + L2).
+   */
+  public async clearAllCaches(): Promise<void> {
+    if (this.cacheStatsProvider) {
+      await this.cacheStatsProvider.clearAll();
+      log.info(Modules.DATA_MONITOR, 'All caches cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
+   * Set the scene graph for display in the monitor.
+   * Called by SceneLoader after loading scene.
+   */
+  public setSceneGraph(root: SceneGraphNode): void {
+    // Calculate stats from scene graph
+    const stats = this.calculateSceneGraphStats(root);
+    this.sceneGraphState = {
+      root,
+      ...stats,
+    };
+    log.info(
+      Modules.DATA_MONITOR,
+      `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalPoints} points, ${stats.totalSegments} segments`
+    );
+    if (this.uiState.isVisible) {
+      this.updateUI();
+    }
+  }
+
+  /**
+   * Get current scene graph state.
+   */
+  public getSceneGraph(): SceneGraphState {
+    return this.sceneGraphState;
+  }
+
+  /**
+   * Toggle expansion state of a node in the scene graph tree.
+   */
+  public toggleNodeExpansion(path: string): void {
+    if (this.expandedNodes.has(path)) {
+      this.expandedNodes.delete(path);
+    } else {
+      this.expandedNodes.add(path);
+    }
+    this.updateUI();
+  }
+
+  /**
+   * Check if a node is expanded in the tree view.
+   */
+  public isNodeExpanded(path: string): boolean {
+    return this.expandedNodes.has(path);
+  }
+
+  /**
+   * Calculate statistics from scene graph tree.
+   */
+  private calculateSceneGraphStats(node: SceneGraphNode): Omit<SceneGraphState, 'root'> {
+    let totalNodes = 1;
+    let pointsNodes = node.type === 'points' ? 1 : 0;
+    let linesNodes = node.type === 'lines' ? 1 : 0;
+    let totalPoints = node.pointCount || 0;
+    let totalSegments = node.segmentCount || 0;
+
+    for (const child of node.children) {
+      const childStats = this.calculateSceneGraphStats(child);
+      totalNodes += childStats.totalNodes;
+      pointsNodes += childStats.pointsNodes;
+      linesNodes += childStats.linesNodes;
+      totalPoints += childStats.totalPoints;
+      totalSegments += childStats.totalSegments;
+    }
+
+    return { totalNodes, pointsNodes, linesNodes, totalPoints, totalSegments };
   }
 
   /**
@@ -471,6 +603,22 @@ export class DataLoadingMonitor {
         this.setTimeRange(select.value);
         break;
       }
+      case 'clearL1':
+        this.clearL1Cache();
+        break;
+      case 'clearL2':
+        this.clearL2Cache();
+        break;
+      case 'clearAll':
+        this.clearAllCaches();
+        break;
+      case 'toggleNode': {
+        const nodePath = target.dataset.nodePath;
+        if (nodePath) {
+          this.toggleNodeExpansion(nodePath);
+        }
+        break;
+      }
     }
   }
 
@@ -591,11 +739,11 @@ export class DataLoadingMonitor {
         </div>
 
         ${
-  hasSpatialIndex && this.config.showSpatialGrid
-    ? `
+          hasSpatialIndex && this.config.showSpatialGrid
+            ? `
         `
-    : ''
-}
+            : ''
+        }
       </div>
     `;
   }
@@ -742,8 +890,18 @@ export class DataLoadingMonitor {
     // Use the template function for the main content
     const content = renderOverviewContent(stats, cacheMetrics);
 
-    // Replace the loader list placeholder with actual content
-    return content.replace('<div id="loader-list-content"></div>', this.renderCompactLoaderList());
+    // Replace the loader list placeholder with scene graph tree (or compact loader list if no scene graph)
+    if (this.sceneGraphState.root) {
+      return content.replace(
+        '<div id="loader-list-content"></div>',
+        renderSceneGraphTree(this.sceneGraphState, this.expandedNodes)
+      );
+    } else {
+      return content.replace(
+        '<div id="loader-list-content"></div>',
+        this.renderCompactLoaderList()
+      );
+    }
   }
 
   /**
@@ -860,7 +1018,8 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Get cache metrics aggregated across all loaders
+   * Get cache metrics aggregated across all loaders.
+   * When a CacheStatsProvider is connected, uses actual L1/L2 cache stats.
    */
   private getCacheMetrics(): CacheMetrics {
     let totalCacheMemory = 0;
@@ -868,19 +1027,60 @@ export class DataLoadingMonitor {
     let totalEntries = 0;
     let evictions = 0;
 
-    // Aggregate from all loaders
+    // Get L1/L2/network breakdown from cache stats provider if available
+    let l1Stats: CacheMetrics['l1'] | undefined;
+    let l2Stats: CacheMetrics['l2'] | undefined;
+    let networkStats: CacheMetrics['network'] | undefined;
+    let cacheEnabled = true;
+
+    if (this.cacheStatsProvider) {
+      const stats = this.cacheStatsProvider.getStats();
+      cacheEnabled = this.cacheStatsProvider.isEnabled();
+
+      // L1 stats
+      l1Stats = {
+        size: stats.l1.metadataSize + stats.l1.chunksSize,
+        count: stats.l1.metadataCount + stats.l1.chunksCount,
+        hits: stats.l1.hits,
+        misses: stats.l1.misses,
+        evictions: stats.l1.evictions,
+      };
+
+      // L2 stats
+      l2Stats = {
+        size: stats.l2.size,
+        count: stats.l2.count,
+        reads: stats.l2.reads,
+        writes: stats.l2.writes,
+      };
+
+      // Network stats
+      networkStats = {
+        bytesTransferred: stats.network.bytesTransferred,
+        requestCount: stats.network.requestCount,
+        bandwidth: stats.network.bandwidth,
+      };
+
+      // Update totals from cache stats
+      totalCacheMemory = l1Stats.size + l2Stats.size;
+      totalEntries = l1Stats.count + l2Stats.count;
+    }
+
+    // Also aggregate from loaders for memory limit and evictions
     for (const [path, loader] of this.loaders) {
       // Get fresh metrics from the loader
       const metrics = loader.getMetrics();
       this.metrics.set(path, metrics);
 
-      totalCacheMemory += metrics.memoryUsed;
       memoryLimit += metrics.memoryLimit;
       evictions += metrics.evictions;
 
-      // Get actual cached ranges from the loader's cache stats
-      if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
-        totalEntries += metrics.spatialIndex.rangesInCache;
+      // If no cache stats provider, fall back to loader metrics
+      if (!this.cacheStatsProvider) {
+        totalCacheMemory += metrics.memoryUsed;
+        if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
+          totalEntries += metrics.spatialIndex.rangesInCache;
+        }
       }
     }
 
@@ -889,22 +1089,31 @@ export class DataLoadingMonitor {
     // Calculate rates once and reuse
     this.calculateRates();
 
+    // Calculate hit rate from L1 stats if available
+    const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
+    const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
+
     return {
       totalCacheMemory,
       memoryLimit,
       memoryPercent,
       totalEntries,
-      totalAccesses: 0, // L0 cache removed
-      recentHitRate: 0, // L0 cache removed
-      evictionsPerMin: evictions, // Simplified
+      totalAccesses: totalL1Accesses,
+      recentHitRate,
+      evictionsPerMin: evictions,
       avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
-      reuseRatio: 0, // L0 cache removed
-      hitsPerSecond: 0, // L0 cache removed
-      missesPerSecond: 0, // L0 cache removed
-      avgAccessTime: 0, // L0 cache removed
+      reuseRatio: 0,
+      hitsPerSecond: l1Stats ? l1Stats.hits / 60 : 0, // Simplified rate
+      missesPerSecond: l1Stats ? l1Stats.misses / 60 : 0, // Simplified rate
+      avgAccessTime: 0,
       queriesPerSec: this.cachedRates.queriesPerSec,
       loadsPerSec: this.cachedRates.loadsPerSec,
       bandwidth: this.cachedRates.bandwidth,
+      // L1/L2/Network breakdown
+      l1: l1Stats,
+      l2: l2Stats,
+      network: networkStats,
+      enabled: cacheEnabled,
     };
   }
 

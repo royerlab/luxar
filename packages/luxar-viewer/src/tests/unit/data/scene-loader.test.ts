@@ -334,7 +334,7 @@ describe('SceneLoader', () => {
       // Mock the open call to return points type
       (zarr.open as any).mockImplementation((_loc: any, _opts: any) =>
         Promise.resolve({
-          attrs: { type: 'points', num_points: 1000 },
+          attrs: { type: 'points', n_points: 1000 },
         })
       );
 

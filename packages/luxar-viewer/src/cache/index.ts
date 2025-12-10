@@ -13,4 +13,4 @@ export { ChunkPrefetcher } from './chunk-prefetcher';
 // Types
 export type { TwoLevelCachingStoreOptions } from './two-level-caching-store';
 export type { ChunkPrefetcherOptions } from './chunk-prefetcher';
-export type { CacheStats, OPFSMetadata } from './types';
+export type { CacheStats, ExtendedCacheStats, OPFSMetadata } from './types';

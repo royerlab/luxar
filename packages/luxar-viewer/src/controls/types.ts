@@ -70,6 +70,9 @@ export interface RenderingControllers {
   fovPreset?: Controller;
   nearPlane?: Controller;
   farPlane?: Controller;
+  // Dynamic clipping controls
+  dynamicClippingEnabled?: Controller;
+  clippingAdaptSpeed?: Controller;
   // Lens distortion controls
   lensDistortionX?: Controller;
   lensDistortionY?: Controller;

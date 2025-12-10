@@ -1,6 +1,6 @@
 # luxar-viewer.ui - Technical Specification
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Last Updated**: 2025-12-09
 
 ## Purpose
@@ -30,7 +30,8 @@ The `luxar-viewer.ui` package provides user interface components for controlling
 9. [Data Monitor Templates](#9-data-monitor-templates)
 10. [Loading Advisor](#10-loading-advisor)
 11. [Performance Timeline](#11-performance-timeline)
-12. [Component Integration](#12-component-integration)
+12. [Scene Graph Tree](#12-scene-graph-tree)
+13. [Component Integration](#13-component-integration)
 
 ---
 
@@ -1456,9 +1457,212 @@ timeline.dispose();
 
 ---
 
-## 12. Component Integration
+## 12. Scene Graph Tree
 
-### 12.1 Lifecycle Management
+### 12.1 Purpose
+
+Collapsible tree view showing the hierarchical scene structure with per-node statistics. Replaces the simple "Active Loaders" list in the Overview tab.
+
+### 12.2 Architecture
+
+**Design Decisions**:
+
+- Recursive tree rendering for arbitrary depth
+- Click-to-expand/collapse for nodes with children
+- Per-node type icons and color coding
+- Statistics display (points count, segment count) per node
+- Integration with SceneLoader's scene graph structure
+
+**Node Types**:
+
+| Type   | Icon | Color   | Stats Displayed |
+| ------ | ---- | ------- | --------------- |
+| scene  | 🌐   | Info    | -               |
+| group  | 📁   | Muted   | -               |
+| points | ⚬    | Success | Point count     |
+| lines  | ╱    | Warning | Segment count   |
+| mesh   | ⬡    | Purple  | -               |
+
+### 12.3 Data Structures
+
+**SceneGraphNode Interface**:
+
+```typescript
+interface SceneGraphNode {
+  path: string; // Path in zarr store
+  name: string; // Display name (last path component)
+  type: SceneGraphNodeType; // 'scene' | 'group' | 'points' | 'lines' | 'mesh'
+  pointCount?: number; // For points nodes
+  segmentCount?: number; // For lines nodes
+  vertexCount?: number; // For lines nodes
+  isLoading?: boolean; // Loading indicator
+  hasSpatialIndex?: boolean; // Whether node has spatial index
+  children: SceneGraphNode[];
+}
+
+interface SceneGraphState {
+  root: SceneGraphNode | null;
+  totalNodes: number;
+  pointsNodes: number;
+  linesNodes: number;
+  totalPoints: number;
+  totalSegments: number;
+}
+```
+
+### 12.4 Tree Rendering Algorithm
+
+**Recursive Rendering**:
+
+```typescript
+function renderSceneGraphNode(
+  node: SceneGraphNode,
+  expandedNodes: Set<string>,
+  depth: number = 0
+): string {
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expandedNodes.has(node.path);
+  const indent = depth * 16; // px per level
+
+  // Build node stats text
+  let statsText = '';
+  if (node.type === 'points' && node.pointCount !== undefined) {
+    statsText = formatNumber(node.pointCount) + ' pts';
+  } else if (node.type === 'lines' && node.segmentCount !== undefined) {
+    statsText = formatNumber(node.segmentCount) + ' seg';
+  }
+
+  // Toggle icon
+  const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
+
+  // Render node HTML
+  let html = `
+    <div style="padding: 2px 0;">
+      <div style="display: flex; align-items: center; padding-left: ${indent}px;">
+        <span data-action="toggleNode" data-node-path="${node.path}"
+              style="width: 16px; cursor: pointer;">${toggleIcon}</span>
+        <span style="font-size: 11px;">${getNodeTypeIcon(node.type)}</span>
+        <span style="color: ${getNodeTypeColor(node.type)};">${node.name}</span>
+        ${statsText ? `<span style="color: dimmed;">${statsText}</span>` : ''}
+        ${node.isLoading ? '<span>⏳</span>' : ''}
+      </div>
+      ${
+        isExpanded && hasChildren
+          ? node.children
+              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+              .join('')
+          : ''
+      }
+    </div>
+  `;
+
+  return html;
+}
+```
+
+### 12.5 SceneLoader Integration
+
+**Conversion from SceneNode**:
+
+```typescript
+// In SceneLoader
+private convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
+  const name = node.path === '/'
+    ? 'Scene'
+    : node.path.split('/').filter(Boolean).pop() || node.path;
+
+  const graphNode: SceneGraphNode = {
+    path: node.path,
+    name,
+    type: node.type as SceneGraphNodeType,
+    children: [],
+    hasSpatialIndex: node.hasSpatialIndex,
+  };
+
+  // Add type-specific stats
+  if (node.type === 'points') {
+    graphNode.pointCount = node.attrs.n_points;
+  } else if (node.type === 'lines') {
+    graphNode.segmentCount = node.attrs.n_segments;
+    graphNode.vertexCount = node.attrs.n_vertices;
+  }
+
+  // Recursively convert children
+  if (node.children) {
+    graphNode.children = node.children.map(child =>
+      this.convertToSceneGraphNode(child)
+    );
+  }
+
+  return graphNode;
+}
+```
+
+**Integration Point**:
+
+```typescript
+// After scene load completes
+const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
+monitor.setSceneGraph(sceneGraphRoot);
+```
+
+### 12.6 State Management
+
+**Expansion State**:
+
+- Tracked in `DataLoadingMonitor` via `expandedNodes: Set<string>`
+- Node paths used as keys for O(1) lookup
+- Root node (`/`) expanded by default
+- State persists during monitor visibility toggle
+
+**Toggle Handler**:
+
+```typescript
+// In DataLoadingMonitor.handleUIEvent()
+case 'toggleNode': {
+  const nodePath = target.dataset.nodePath;
+  if (nodePath) {
+    this.toggleNodeExpansion(nodePath);
+  }
+  break;
+}
+
+public toggleNodeExpansion(path: string): void {
+  if (this.expandedNodes.has(path)) {
+    this.expandedNodes.delete(path);
+  } else {
+    this.expandedNodes.add(path);
+  }
+  this.updateUI();
+}
+```
+
+### 12.7 Integration Points
+
+- **SceneLoader**: Provides scene graph data after loading
+- **DataLoadingMonitor**: Manages tree state and rendering
+- **data-monitor-templates.ts**: Contains renderSceneGraphTree() function
+- **data-monitor-types.ts**: Defines SceneGraphNode and SceneGraphState types
+
+### 12.8 Usage Example
+
+```typescript
+// SceneLoader sets scene graph after loading
+const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
+monitor.setSceneGraph(sceneGraphRoot);
+
+// Monitor renders tree in Overview tab
+const treeHtml = renderSceneGraphTree(this.sceneGraphState, this.expandedNodes);
+
+// User clicks toggle
+// → handleUIEvent() → toggleNodeExpansion() → updateUI()
+```
+
+---
+
+## 13. Component Integration
+
+### 13.1 Lifecycle Management
 
 **Initialization Order**:
 
@@ -1693,6 +1897,22 @@ interface BufferedMessage {
 ---
 
 ## Changelog
+
+- **v1.2.0** (2025-12-09): Scene Graph Tree and monitoring enhancements
+  - **Added**: Scene Graph Tree component (Section 12)
+    - Collapsible tree view showing hierarchical scene structure
+    - Per-node type icons and color coding (scene, group, points, lines, mesh)
+    - Per-node statistics display (point count, segment count)
+    - Click-to-expand/collapse interaction
+    - Integration with SceneLoader's scene graph structure
+    - SceneGraphNode and SceneGraphState type definitions
+  - **Added**: Cache monitoring integration
+    - L1/L2 cache statistics display with eviction counters
+    - Network I/O tracking (bytes transferred, request count, bandwidth)
+    - Clear L1/L2 buttons in Cache tab
+    - CacheStatsProvider interface for loose coupling
+  - **Enhanced**: Overview tab now shows scene graph tree instead of simple loader list
+  - **Enhanced**: Secondary metrics bar shows Network I/O instead of Load Speed
 
 - **v1.1.0** (2025-12-09): Comprehensive specification update
   - **Added**: Rendering Controls (2,153 lines) - Complete documentation of all effect controls, cinematic mode, settings persistence, lil-gui integration, FOV presets, lens distortion, navigation controls

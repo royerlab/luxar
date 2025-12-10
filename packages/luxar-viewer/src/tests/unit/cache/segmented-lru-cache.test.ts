@@ -271,4 +271,143 @@ describe('SegmentedLRUCache', () => {
       expect(stats.chunksSize).toBe(81920);
     });
   });
+
+  describe('Hit/Miss Counter Aggregation', () => {
+    it('should aggregate hits from both segments', () => {
+      cache.set('.zmetadata', new Uint8Array(100));
+      cache.set('chunk', new Uint8Array(100));
+
+      // Hit metadata
+      cache.get('.zmetadata');
+      // Hit chunk
+      cache.get('chunk');
+      cache.get('chunk');
+
+      const stats = cache.getStats();
+      expect(stats.hits).toBe(3); // 1 metadata + 2 chunks
+    });
+
+    it('should aggregate misses from both segments', () => {
+      cache.set('.zmetadata', new Uint8Array(100));
+      cache.set('chunk', new Uint8Array(100));
+
+      // Miss in metadata segment (checks metadata first, then chunks)
+      cache.get('missing_meta'); // Checked in both segments = 2 misses
+      // Miss in chunks segment
+      cache.get('missing_chunk'); // Also checked in both = 2 misses
+
+      const stats = cache.getStats();
+      // Each get() that finds nothing checks both segments
+      expect(stats.misses).toBe(4); // 2 + 2
+    });
+
+    it('should track hits and misses accurately for metadata files', () => {
+      cache.set('.zmetadata', new Uint8Array(100));
+      cache.set('.zarray', new Uint8Array(100));
+
+      cache.get('.zmetadata'); // Hit
+      cache.get('.zarray'); // Hit
+      cache.get('.zattrs'); // Miss (not set)
+
+      const stats = cache.getStats();
+      expect(stats.hits).toBe(2);
+      // Miss counts both segments being checked
+      expect(stats.misses).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should reset hit/miss counters on clear()', () => {
+      cache.set('.zmetadata', new Uint8Array(100));
+      cache.set('chunk', new Uint8Array(100));
+
+      cache.get('.zmetadata'); // Hit
+      cache.get('missing'); // Miss
+
+      let stats = cache.getStats();
+      expect(stats.hits).toBeGreaterThan(0);
+
+      cache.clear();
+
+      stats = cache.getStats();
+      expect(stats.hits).toBe(0);
+      expect(stats.misses).toBe(0);
+    });
+
+    it('should track hits for promoted items from chunks to metadata lookup', () => {
+      // When we get() a metadata file, it first checks metadata segment (hit)
+      cache.set('.zmetadata', new Uint8Array(100));
+      cache.get('.zmetadata'); // Should be a hit in metadata segment
+
+      const stats = cache.getStats();
+      expect(stats.hits).toBe(1);
+      expect(stats.misses).toBe(0); // No misses because found in first segment
+    });
+  });
+
+  describe('Eviction Counter Aggregation', () => {
+    it('should aggregate evictions from both segments', () => {
+      // Use 50MB cache: metadata=10MB (min), chunks=40MB
+      const smallCache = new SegmentedLRUCache(50 * 1024 * 1024);
+
+      // Fill metadata segment (10MB)
+      smallCache.set('.zmetadata', new Uint8Array(5 * 1024 * 1024)); // 5MB
+      smallCache.set('.zarray', new Uint8Array(5 * 1024 * 1024)); // 10MB total
+
+      // Add more metadata to trigger eviction
+      smallCache.set('.zattrs', new Uint8Array(6 * 1024 * 1024)); // 16MB > 10MB, evicts 2
+
+      let stats = smallCache.getStats();
+      expect(stats.evictions).toBeGreaterThan(0); // Metadata evictions
+
+      // Fill chunks segment
+      smallCache.set('chunk1', new Uint8Array(20 * 1024 * 1024)); // 20MB
+      smallCache.set('chunk2', new Uint8Array(20 * 1024 * 1024)); // 40MB total
+      smallCache.set('chunk3', new Uint8Array(25 * 1024 * 1024)); // 65MB > 40MB, evicts chunk1
+
+      stats = smallCache.getStats();
+      // Should have evictions from both segments
+      expect(stats.evictions).toBeGreaterThan(1);
+    });
+
+    it('should reset eviction counter on clear()', () => {
+      // Use 50MB cache
+      const smallCache = new SegmentedLRUCache(50 * 1024 * 1024);
+
+      // Trigger some evictions
+      smallCache.set('.zmetadata', new Uint8Array(10 * 1024 * 1024)); // 10MB (fills metadata)
+      smallCache.set('.zattrs', new Uint8Array(5 * 1024 * 1024)); // Evicts from metadata
+
+      let stats = smallCache.getStats();
+      expect(stats.evictions).toBeGreaterThan(0);
+
+      smallCache.clear();
+
+      stats = smallCache.getStats();
+      expect(stats.evictions).toBe(0);
+    });
+
+    it('should track evictions independently in each segment', () => {
+      // Use 50MB cache: metadata=10MB, chunks=40MB
+      const smallCache = new SegmentedLRUCache(50 * 1024 * 1024);
+
+      // Fill and evict from metadata only
+      smallCache.set('.zmetadata', new Uint8Array(10 * 1024 * 1024)); // Full
+      smallCache.set('.zarray', new Uint8Array(5 * 1024 * 1024)); // Evicts .zmetadata
+
+      let stats = smallCache.getStats();
+      const metadataEvictions = stats.evictions;
+      expect(metadataEvictions).toBeGreaterThan(0);
+
+      // Fill chunks without eviction
+      smallCache.set('chunk1', new Uint8Array(10 * 1024 * 1024));
+
+      stats = smallCache.getStats();
+      expect(stats.evictions).toBe(metadataEvictions); // No new evictions
+
+      // Now trigger chunk eviction
+      smallCache.set('chunk2', new Uint8Array(35 * 1024 * 1024)); // Needs to evict chunk1
+
+      stats = smallCache.getStats();
+      expect(stats.evictions).toBeGreaterThan(metadataEvictions); // Added chunk eviction
+    });
+  });
 });
