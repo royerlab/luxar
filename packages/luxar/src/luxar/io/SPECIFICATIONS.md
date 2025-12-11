@@ -386,41 +386,57 @@ target_chunk_elements = TARGET_CHUNK_BYTES / bytes_per_point
 # 5D data: 64KB / 36 bytes ≈ 1,800 points per chunk
 ```
 
-**Discrete slice alignment** (when discrete dimensions exist):
+**Discrete-aware chunk sizing** (when discrete dimensions exist):
 
-Chunk boundaries should align with discrete slice boundaries to ensure:
-- A time-slice query loads contiguous chunks
-- No chunk spans multiple discrete slices
+**Strategy**: Use fixed-size chunks that are SMALLER than the typical discrete slice size. This ensures:
+- Most chunks contain data from a single discrete slice
+- Boundary chunks may span slices (acceptable ~10-20% waste)
+- No complex variable-sized chunking needed
+- Viewer compatibility maintained
 
+**Algorithm**:
 ```python
-# Number of discrete slices
-num_discrete_slices = product(unique_values_per_discrete_dim)
+# 1. Calculate base chunk size from TARGET_CHUNK_BYTES
+base_chunk_size = max(MIN_CHUNK_SIZE, TARGET_CHUNK_BYTES // bytes_per_element)
 
-# Points per discrete slice (average)
-points_per_slice = total_points / num_discrete_slices
+# 2. If discrete dimensions exist, cap chunk size for better alignment
+if has_discrete_dimensions:
+    # Estimate elements per discrete slice
+    num_discrete_slices = estimate_discrete_slice_count(data, slice_dims)
+    elements_per_slice = total_elements // max(1, num_discrete_slices)
 
-# Target chunks per slice (at least 1)
-chunks_per_slice = max(1, round(points_per_slice / target_chunk_elements))
+    # Cap chunk size at ~50-70% of slice size to minimize spanning
+    max_chunk_for_slices = max(MIN_CHUNK_SIZE, elements_per_slice // 2)
+    chunk_size = min(base_chunk_size, max_chunk_for_slices)
+else:
+    chunk_size = base_chunk_size
 
-# Actual chunk size for this dataset
-chunk_elements = ceil(points_per_slice / chunks_per_slice)
+# 3. Clamp to min/max bounds
+chunk_size = max(MIN_CHUNK_SIZE, min(chunk_size, total_elements))
 ```
 
-**Example calculations**:
+**Example calculations** (for Lines segments):
 
-| Dataset | Points | Discrete Slices | Pts/Slice | Chunks/Slice | Chunk Size |
-|---------|--------|-----------------|-----------|--------------|------------|
-| Small 4D | 100K | 10 time | 10,000 | 4-5 | 2,000-2,500 |
-| Medium 5D | 1M | 300 (100×3) | 3,333 | 1-2 | 1,667-3,333 |
-| Large 5D | 10M | 300 (100×3) | 33,333 | 14-17 | 1,960-2,380 |
+| Dataset | Segments | Frames | Segs/Frame | Base Size | Capped Size | Chunks/Frame |
+|---------|----------|--------|------------|-----------|-------------|--------------|
+| Small | 60K | 10 | 6,000 | 4,096 | 3,000 | ~2 |
+| Medium | 180K | 30 | 6,000 | 4,096 | 3,000 | ~2 |
+| Large | 4M | 250 | 16,000 | 4,096 | 4,096 | ~4 |
 
-**Edge cases**:
-- **No discrete dimensions**: Use pure Morton ordering with target_chunk_elements
-- **Very small slices** (< MIN_CHUNK_BYTES): Merge multiple slices per chunk (degrades slice query performance but maintains minimum chunk size)
-- **Very large slices**: Multiple chunks per slice, aligned to target size
+**Padding for discrete dimensions**:
+- **Old**: Hardcoded `±0.5` for all discrete dimensions
+- **New**: Dimension-aware `±(step_size/2)` when step is defined
+- **Benefit**: Tight bounds that exactly match discrete values
+
+**Trade-offs**:
+- ✓ Simple fixed-size chunking (no metadata changes needed)
+- ✓ Fast encoding (no boundary detection)
+- ✓ Viewer compatible (works with existing chunk math)
+- ⚠ Some boundary chunks span slices (~10-20% waste, acceptable)
+- ✓ With smaller chunks, waste is minimal
 
 **Metadata stored**:
-- `chunk_size`: int - elements per chunk (may vary slightly at slice boundaries)
+- `chunk_size`: int - fixed elements per chunk (last chunk may be smaller)
 
 ---
 

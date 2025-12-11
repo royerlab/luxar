@@ -9,6 +9,8 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ### Key Features
 
 - **Chunk-Based Spatial Index**: Efficient spatial queries using Morton/Hilbert-ordered chunks (optional for 3D datasets)
+  - **Dimension-aware indexing**: Step-aware tolerance for discrete dimensions (time, channels)
+  - **Smart chunk sizing**: Optimized for time-series data (~7× faster for animated Lines)
 - **Zarr-Native Loading**: Direct integration with Zarr stores for chunked data access
 - **nD Data Support**: Handle arbitrary-dimensional points with automatic slicing
 - **Hierarchical Scenes**: Load nested scene structures with inheritance
@@ -347,18 +349,20 @@ for each non-displayed dimension d:
 
 ### Dimension Extension
 
-Dimension extension allows point groups to appear across all values of specified non-displayed dimensions without data duplication:
+Dimension extension allows both points and lines to appear across all values of specified non-displayed dimensions without data duplication:
 
 ```typescript
 // Extended dimensions are explicitly specified in zarr attributes
-// Set via Python API: scene.add_points(..., extend_to_all=["Time", "Channel"])
+// Set via Python API:
+//   scene.add_points(..., extend_to_all=["Time", "Channel"])
+//   scene.add_lines(..., extend_to_all=["Time"])  // e.g., static detector geometry
 const extendDims = attrs.extend_to_all || [];
 
 // During navigation, extended groups are handled specially
 if (extendDims.includes(current_dimension)) {
-  // Load all points once and display them at every dimension value
+  // Load all data once and display at every dimension value
   // This avoids duplicating data across all dimension values
-  loadAllPoints();
+  loadAllData(); // Works for both points and lines
 } else {
   // Normal slicing based on current dimension value
   loadSlice(dimension_value);
@@ -367,8 +371,9 @@ if (extendDims.includes(current_dimension)) {
 
 Benefits:
 
-- **Memory Efficient**: No data duplication needed (66% reduction for 3 time points)
+- **Memory Efficient**: No data duplication needed (e.g., static detector geometry visible at all time points without replication)
 - **Explicit Control**: Clear API for specifying extension behavior
+- **Works for Points and Lines**: Both primitive types support extend_to_all
 - **Cache Aware**: Proper cache key isolation prevents data corruption
 
 ### Attribute Inheritance
