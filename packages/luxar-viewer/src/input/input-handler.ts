@@ -187,6 +187,11 @@ export class InputHandler {
       // Trigger animation to render the changes
       this.animationController.startAnimation();
     });
+
+    // Trigger initial update now that listener is registered
+    // This ensures data loads at the correct initial slice position
+    this.updateAllNDNodes();
+    this.animationController.startAnimation();
   }
 
   /**

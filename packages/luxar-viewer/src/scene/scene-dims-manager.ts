@@ -155,12 +155,9 @@ export class SceneDimsManager {
       metadata,
     };
 
-    // Notify all listeners of the initial dimension state
-    // This triggers:
-    // - Initial data load at correct slice position
-    // - Slider visual update to match data
-    // - Scene render with properly positioned data
-    this.notifyListeners();
+    // Note: We don't call notifyListeners() here because listeners haven't been
+    // registered yet. The initial update is triggered manually in input-handler.ts
+    // after the listener is registered.
 
     return true;
   }
