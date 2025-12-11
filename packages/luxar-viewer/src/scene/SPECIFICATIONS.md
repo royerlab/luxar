@@ -1,7 +1,7 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.4.0
-**Last Updated**: 2025-12-10
+**Version**: 1.5.0
+**Last Updated**: 2025-12-11
 
 ## Purpose
 
@@ -992,7 +992,7 @@ class SceneDimsManager {
   private dims: SimpleDims | null = null;
   private listeners: Set<() => void> = new Set();
 
-  initFromScene(scene: THREE.Scene): void {
+  initFromScene(scene: THREE.Scene): boolean {
     // Extract dimensions from scene level (single source of truth)
     // 1. Check scene.userData.sceneDimensions
     // 2. Check immediate children (LuxarScene root group)
@@ -1006,24 +1006,23 @@ class SceneDimsManager {
 
     if (sceneDimensions?.dimensions) {
       this.dims = initializeDims(sceneDimensions.dimensions);
-      this.notifyListeners();
+      // Note: notifyListeners() NOT called here because listeners
+      // haven't been registered yet. Initial update triggered manually
+      // in input-handler.ts after listener registration.
+      return true;
     }
+    return false;
   }
 
   getDims(): SimpleDims | null {
     return this.dims;
   }
 
-  setDimensionValue(dimIndex: number, value: number): boolean {
-    if (!this.dims) return false;
+  setDimensionValue(dimIndex: number, value: number): void {
+    if (!this.dims) return;
 
-    const changed = jumpToDimension(this.dims, dimIndex, value, this.getRanges());
-
-    if (changed) {
-      this.notifyListeners();
-    }
-
-    return changed;
+    this.dims.currentStep[dimIndex] = value;
+    this.notifyListeners(); // Trigger reactive updates
   }
 
   addListener(callback: () => void): void {
@@ -1035,6 +1034,100 @@ class SceneDimsManager {
   }
 }
 ```
+
+### 8.1.1 Dimension Initialization Policy
+
+**Policy** (implemented in `scene-dims-manager.ts:118-140`):
+
+When initializing non-displayed dimensions, the system uses a type-aware strategy:
+
+| Dimension Type | Initial Value | Rationale | Examples |
+|----------------|---------------|-----------|----------|
+| **Discrete/Categorical** | **Minimum (first position)** | Sequence data starts at beginning, not middle | Time series (t=0), channels (channel 0), frames (frame 0) |
+| **Continuous Spatial** | **Center** | No natural "first" position in spatial dimensions | 4th spatial dimension (W=0), hyperspatial coordinates |
+| **Displayed (X,Y,Z)** | **0** | Camera-controlled, not slice-controlled | Displayed X, Y, Z axes |
+
+**Implementation** (simplified from actual code):
+
+```typescript
+// Initialize dimension positions
+const currentStep = new Array(ndim).fill(0);
+
+for (let i = 0; i < ndim; i++) {
+  if (metadata[i].display !== true) {
+    const [min, max] = this.dimensionRanges[i];
+
+    // Discrete/categorical: start at first position (minimum)
+    if (metadata[i].discrete || metadata[i].categories) {
+      currentStep[i] = min;  // e.g., t=0, channel=0
+    } else {
+      // Continuous spatial: start at center
+      currentStep[i] = (min + max) / 2;  // e.g., W=0 for range [-100, 100]
+    }
+  }
+  // Displayed dimensions start at 0 (camera controls actual view)
+}
+```
+
+**Why This Matters**:
+
+- **Time-series datasets** start at t=0 (beginning) instead of mid-timeline
+- **Multi-channel data** starts at first channel (DAPI, GFP channel 0)
+- **Spatial 4D+** still centers (W=0 makes sense for symmetric spatial data)
+- **Slider position matches displayed data** on initial viewer load
+
+**User Experience Impact**:
+
+```
+Before fix:
+  Time slider shows: 25 ns (middle)
+  Data displayed:     0 ns (start)
+  Result: Confusing mismatch!
+
+After fix:
+  Time slider shows: 0 ns (start)
+  Data displayed:    0 ns (start)
+  Result: Perfect match!
+```
+
+### 8.1.2 Initial Update Trigger
+
+**Critical Implementation Detail**:
+
+The `initFromScene()` method sets up dimension state but does NOT call `notifyListeners()` because listeners haven't been registered yet. The initial update is triggered manually in `input-handler.ts` after listener registration:
+
+```typescript
+// From input-handler.ts:191-194
+sceneDimsManager.addListener(() => {
+  this.updateAllNDNodes();
+  // ... slider updates, animation trigger
+});
+
+// Trigger initial update now that listener is registered
+this.updateAllNDNodes();
+this.animationController.startAnimation();
+```
+
+**Sequence**:
+
+```
+1. sceneDimsManager.initFromScene(scene)
+   → Dimension state created with initial positions
+   → Listeners list empty, so no notifications
+   
+2. sceneDimsManager.addListener(callback)
+   → Listener registered for future updates
+   
+3. inputHandler.updateAllNDNodes()  ← INITIAL TRIGGER
+   → Data loads at correct initial position
+   → First render with proper slice
+   
+4. User changes slider
+   → sceneDimsManager.setDimensionValue()
+   → notifyListeners() → callback() → updateAllNDNodes()
+```
+
+This two-phase initialization ensures data loads at the correct initial position while avoiding premature notifications to unregistered listeners.
 
 ### 8.2 Dimension Update Propagation
 
@@ -1145,6 +1238,7 @@ function validateSceneDimensions(scene: THREE.Scene): boolean {
 }
 ```
 
+
 ---
 
 ## Data Structures
@@ -1217,6 +1311,15 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.5.0** (2025-12-11): Dimension initialization fix documentation
+  - **ADDED**: Section 8.1.1 "Dimension Initialization Policy" documenting type-aware initialization
+  - **ADDED**: Section 8.1.2 "Initial Update Trigger" documenting two-phase initialization sequence
+  - **UPDATED**: Section 8.1 "Scene Dimensions Manager" with accurate implementation notes
+  - **IMPROVED**: Discrete/categorical dimensions now initialize to minimum (t=0, channel=0) not center
+  - **IMPROVED**: Documentation now matches actual implementation in scene-dims-manager.ts:118-194 and input-handler.ts:191-194
+  - Documents fixes from commits 3c548d5 and d619d82
+
 
 - **v1.4.0** (2025-12-10): Camera-inside-bounding-box handling
   - **IMPROVED**: Dynamic clipping now detects when camera is inside the bounding box
