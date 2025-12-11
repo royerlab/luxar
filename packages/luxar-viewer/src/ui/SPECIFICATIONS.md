@@ -1,7 +1,7 @@
 # luxar-viewer.ui - Technical Specification
 
-**Version**: 1.2.0
-**Last Updated**: 2025-12-09
+**Version**: 1.3.0
+**Last Updated**: 2025-12-10
 
 ## Purpose
 
@@ -411,9 +411,101 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 
 1. **Navigation Folder**: Control type selector + mode-specific settings
 2. **Camera Folder**: FOV presets + manual FOV slider + clipping planes
-3. **HDR Folder**: Intensity + tone mapping type
+3. **HDR Folder**: Intensity (logarithmic slider) + tone mapping type
 4. **Anti-Aliasing Folder**: SSAA, FXAA, MSAA, SMAA with settings
 5. **Post-Processing Effects Folder**: Bloom, noise, DOF, chromatic aberration, vignette, lens distortion, AO
+
+### 5.2a Logarithmic Slider Pattern
+
+**Purpose**: For parameters with wide range where perceptual differences are proportional to ratios rather than absolute differences (e.g., HDR intensity from 0.01 to 100).
+
+**Problem**: Linear sliders make it difficult to select low values precisely when the range spans multiple orders of magnitude. The difference between 0.01 and 0.1 is perceptually significant but occupies only 0.09% of a linear slider's range.
+
+**Solution**: Use a shadow property representing the log10 of the actual value, giving equal slider distance to each order of magnitude.
+
+**Algorithm**:
+
+```typescript
+// Define range in log space
+const logMin = Math.log10(0.01);  // -2 (maps to slider left)
+const logMax = Math.log10(100);   // +2 (maps to slider right)
+
+// Shadow object holds log value for lil-gui binding
+const hdrLogValue = { log: Math.log10(this.settings.hdrMultiplier) };
+
+// Create slider bound to log value
+const hdrControl = hdrFolder
+  .add(hdrLogValue, 'log', logMin, logMax, 0.01)
+  .name('Intensity')
+  .onChange((logValue: number) => {
+    // Convert log to actual value
+    const actualValue = Math.pow(10, logValue);
+    this.settings.hdrMultiplier = actualValue;
+    this.sceneManager.updateHDRMultiplier(actualValue);
+    this.saveSettings();
+    this.triggerAnimation();
+  });
+
+// Update controller reference for external sync
+this.controllers.hdrMultiplier = hdrControl;
+this.hdrLogValue = hdrLogValue; // Store for sync updates
+```
+
+**Sync from External State**:
+
+When `syncCurrentState()` is called, the log value must be updated to match the actual hdrMultiplier:
+
+```typescript
+syncCurrentState(): void {
+  // ... other sync code ...
+
+  // Sync logarithmic HDR slider
+  if (this.hdrLogValue) {
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+    this.controllers.hdrMultiplier?.updateDisplay();
+  }
+}
+```
+
+**Display Value Formatting**:
+
+Since lil-gui doesn't support custom value formatters, we override the controller's `updateDisplay` method to show the actual intensity value instead of the log value:
+
+```typescript
+// Helper to format the actual intensity value for display
+const formatIntensity = (logValue: number): string => {
+  const actual = Math.pow(10, logValue);
+  if (actual >= 10) return actual.toFixed(0);    // "15"
+  if (actual >= 1) return actual.toFixed(1);     // "1.5"
+  if (actual >= 0.1) return actual.toFixed(2);   // "0.15"
+  return actual.toFixed(3);                       // "0.015"
+};
+
+// Override updateDisplay to show actual intensity value
+const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
+(hdrControl as any).updateDisplay = () => {
+  originalUpdateDisplay();
+  // After lil-gui updates, override the input value with formatted intensity
+  const input = (hdrControl as any).$input as HTMLInputElement;
+  if (input) {
+    input.value = formatIntensity(this.hdrLogValue.log);
+  }
+  return hdrControl;
+};
+```
+
+This ensures users see meaningful values like "0.08" or "1.5" instead of "-1.12" or "0.18". The override approach is necessary because lil-gui's `updateDisplay()` always sets `$input.value` from the bound property.
+
+**Slider Position to Value Mapping**:
+- **Left edge** (log=-2): displays "0.01" (very dim)
+- **Center** (log=0): displays "1.0" (neutral)
+- **Right edge** (log=+2): displays "100" (very bright)
+
+**Perceptual Benefits**:
+- Equal slider distance for equal perceptual change
+- Easy to select 0.1, 1.0, 10.0 (each one slider-width apart)
+- Fine control at both low and high ends of range
+- Display shows actual multiplier value (not logarithm)
 
 ### 5.3 Public API
 
@@ -1897,6 +1989,14 @@ interface BufferedMessage {
 ---
 
 ## Changelog
+
+- **v1.3.0** (2025-12-10): Logarithmic HDR intensity slider
+  - **ADDED**: Section 5.2a "Logarithmic Slider Pattern" documenting the shadow property approach
+  - **IMPROVED**: HDR intensity slider now uses logarithmic scale (0.01 to 100)
+  - **IMPROVED**: Equal slider distance for equal perceptual change (orders of magnitude)
+  - **IMPROVED**: Display shows actual intensity value (e.g., "0.08") instead of log value (e.g., "-1.12")
+  - **IMPROVED**: Tooltip explains the logarithmic scale behavior
+  - Fine control at both low and high ends of intensity range
 
 - **v1.2.0** (2025-12-09): Scene Graph Tree and monitoring enhancements
   - **Added**: Scene Graph Tree component (Section 12)

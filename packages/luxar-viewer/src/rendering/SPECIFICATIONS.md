@@ -848,6 +848,7 @@ varying vec3 vColor;
 varying float vSharpness;
 varying float vPerpNorm;   // Signed: -1 at bottom edge, +1 at top edge (GPU interpolates)
 varying float vCapFactor;  // 0.5 at endpoints, 1.0 in body (or 1.0 if clipped)
+varying float vPixelWidth; // Line width in pixels (for anti-aliasing)
 
 void main() {
     // Determine position along segment: t=0 at start, t=1 at end
@@ -859,30 +860,41 @@ void main() {
     float width = mix(aStartWidth, aEndWidth, t);
     vSharpness = mix(aStartSharpness, aEndSharpness, t);
 
-    // Transform to view space
-    vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
-    vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
-    vec4 mvPos = modelViewMatrix * vec4(worldPos, 1.0);
+    // Project to clip space
+    vec4 clipStart = projectionMatrix * modelViewMatrix * vec4(aStartPos, 1.0);
+    vec4 clipEnd = projectionMatrix * modelViewMatrix * vec4(aEndPos, 1.0);
+    vec4 clipPos = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
 
-    // Calculate screen-space direction
-    vec4 clipStart = projectionMatrix * mvStart;
-    vec4 clipEnd = projectionMatrix * mvEnd;
-    vec2 screenStart = clipStart.xy / clipStart.w;
-    vec2 screenEnd = clipEnd.xy / clipEnd.w;
-    vec2 lineDir = normalize(screenEnd - screenStart);
-    vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
+    // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
+    vec2 ndcStart = clipStart.xy / clipStart.w;
+    vec2 ndcEnd = clipEnd.xy / clipEnd.w;
+    vec2 pixelStart = (ndcStart * 0.5 + 0.5) * uResolution;
+    vec2 pixelEnd = (ndcEnd * 0.5 + 0.5) * uResolution;
 
-    // Calculate pixel width from world width
-    float distance = length(mvPos.xyz);
-    float pixelHalfWidth = width * uResolution.y / (distance * tan(uFOV * 0.5));
+    // Compute line direction and perpendicular in pixel space (aspect-ratio correct)
+    vec2 pixelDir = pixelEnd - pixelStart;
+    float pixelLen = length(pixelDir);
+    vec2 lineDir = pixelLen > 0.0001 ? pixelDir / pixelLen : vec2(1.0, 0.0);
+    vec2 perpendicular = vec2(-lineDir.y, lineDir.x);  // Unit vector in pixel space
+
+    // Calculate pixel width from world width (perspective-correct)
+    float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
+    float rawPixelWidth = width * uResolution.y / (dist * tan(uFOV * 0.5));
+
+    // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
+    float minPixelWidth = 1.5;
+    float pixelWidth = max(rawPixelWidth, minPixelWidth);
+
+    // Pass raw pixel width to fragment shader for intensity scaling
+    vPixelWidth = rawPixelWidth;
 
     // Perpendicular position: -1 at bottom edge, +1 at top edge
-    // GPU interpolates this across the quad, giving 0 at centerline
     vPerpNorm = aQuadCorner.y;
 
-    // Offset position perpendicular to line direction
-    vec4 clipPos = projectionMatrix * mvPos;
-    clipPos.xy += perpendicular * aQuadCorner.y * pixelHalfWidth / uResolution * clipPos.w;
+    // Expand quad by perpendicular offset in pixel space, then convert to clip space
+    vec2 pixelOffset = perpendicular * aQuadCorner.y * pixelWidth;
+    vec2 ndcOffset = pixelOffset / uResolution * 2.0;
+    clipPos.xy += ndcOffset * clipPos.w;
 
     gl_Position = clipPos;
 
@@ -907,10 +919,10 @@ void main() {
 
 ### 7.5 Line Fragment Shader
 
-**Purpose**: Render line with parabolic intensity profile and cap factor for seamless joints.
+**Purpose**: Render line with parabolic intensity profile, cap factor for seamless joints, and edge anti-aliasing.
 
 ```glsl
-// Line Fragment Shader with Semicircle Kernel Convolution Profile
+// Line Fragment Shader with Semicircle Kernel Convolution Profile and Edge AA
 uniform float uHDRMultiplier;
 uniform float uOpacity;
 
@@ -918,6 +930,7 @@ varying vec3 vColor;
 varying float vSharpness;        // Per-vertex sharpness (interpolated from vertex shader)
 varying float vPerpNorm;         // Interpolated: 0 at centerline, ±1 at edges
 varying float vCapFactor;        // 0.5 at endpoints, 1.0 in body
+varying float vPixelWidth;       // Raw line width in pixels (before minimum clamping)
 
 void main() {
     // Compute distance from centerline (0 to 1)
@@ -932,10 +945,19 @@ void main() {
     float p2 = p * p;
     float perpFalloff = pow(1.0 - p2, vSharpness);
 
+    // Anti-aliasing: smooth falloff at edges
+    // The AA region is ~1 pixel wide in the rendered quad
+    float minPixelWidth = 1.5;
+    float renderedWidth = max(vPixelWidth, minPixelWidth);
+    float aaWidth = 1.0 / renderedWidth;
+    float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);
+
+    // Intensity scaling for sub-pixel lines
+    // When a line is rendered wider than intended, reduce intensity proportionally
+    float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
+
     // Apply cap factor for correct joint intensity
-    // At endpoints: capFactor = 0.5 → two adjacent segments sum to 1.0
-    // In body: capFactor = 1.0 → full intensity
-    float intensity = vCapFactor * perpFalloff;
+    float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
 
     // HDR output (gamma correction in post-processing)
     vec3 finalColor = vColor * intensity * uHDRMultiplier;
@@ -943,6 +965,53 @@ void main() {
     gl_FragColor = vec4(finalColor, intensity * uOpacity);
 }
 ```
+
+### 7.5a Anti-Aliasing for Thin Lines
+
+**Problem**: When lines are very thin (sub-pixel or only a few pixels wide), two issues cause severe aliasing:
+1. **Rasterization gaps**: Sub-pixel quads may not cover every pixel along the line
+2. **Hard edge discard**: The `discard` at `p >= 1.0` creates jagged edges
+
+**Solution**: A two-part approach:
+
+**Part 1: Minimum Pixel Width**
+
+Enforce a minimum rendered width of 1.5 pixels to ensure continuous rasterization:
+
+```glsl
+// In vertex shader
+float minPixelWidth = 1.5;
+float pixelWidth = max(rawPixelWidth, minPixelWidth);
+vPixelWidth = rawPixelWidth;  // Pass raw width to fragment shader
+```
+
+**Part 2: Intensity Scaling + Edge Smoothing**
+
+In the fragment shader, compensate for the wider rendering and smooth edges:
+
+```glsl
+float minPixelWidth = 1.5;
+float renderedWidth = max(vPixelWidth, minPixelWidth);
+
+// Edge anti-aliasing: ~1 pixel smooth region
+float aaWidth = 1.0 / renderedWidth;
+float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);
+
+// Intensity scaling: reduce brightness for lines rendered wider than intended
+float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
+
+float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
+```
+
+**Behavior**:
+- **Wide lines (10+ pixels)**: Rendered at actual width, full intensity, small AA region
+- **Thin lines (1.5+ pixels)**: Rendered at actual width, smooth edges
+- **Sub-pixel lines (<1.5 pixels)**: Rendered at 1.5px but with reduced intensity proportional to actual width
+
+**Visual Effect**:
+- Eliminates "dashed/stippled" appearance from rasterization gaps
+- Smooth edges instead of jagged discard boundaries
+- Sub-pixel lines appear as expected thin/faint lines rather than broken segments
 
 ### 7.6 Cap Factor Visualization
 
@@ -1096,6 +1165,17 @@ interface LineMaterialUniforms {
 ---
 
 ## Changelog
+
+- **v1.3.6** (2025-12-11): Line rendering anti-aliasing and aspect ratio fix
+  - **BUGFIX**: Fixed aspect ratio issue in line perpendicular calculation
+    - Now computes line direction in pixel space instead of NDC space
+    - Ensures correct line width regardless of screen aspect ratio
+  - **ADDED**: Minimum pixel width (1.5px) to prevent sub-pixel rasterization gaps
+  - **ADDED**: Intensity scaling for sub-pixel lines (preserves visual weight)
+  - **ADDED**: Section 7.5a "Edge Anti-Aliasing for Thin Lines"
+  - **ADDED**: `vPixelWidth` varying passed from vertex to fragment shader
+  - **IMPROVED**: Smooth edge falloff using `smoothstep` for thin lines
+  - **FIXED**: Eliminated "dashed/stippled" aliasing artifacts on thin detector geometry lines
 
 - **v1.3.5** (2025-12-09): Vignette artifacts fix and detector noise improvements
   - **BUGFIX**: Fixed vignette artifacts with additive blending (alpha overflow)

@@ -102,10 +102,14 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('varying float vSharpness');
       expect(material.vertexShader).toContain('varying float vPerpNorm');
       expect(material.vertexShader).toContain('varying float vCapFactor');
+      expect(material.vertexShader).toContain('varying float vPixelWidth');
 
-      // Check for screen-space expansion
+      // Check for screen-space expansion with aspect ratio handling
       expect(material.vertexShader).toContain('perpendicular');
       expect(material.vertexShader).toContain('pixelWidth');
+      expect(material.vertexShader).toContain('pixelStart');
+      expect(material.vertexShader).toContain('pixelEnd');
+      expect(material.vertexShader).toContain('minPixelWidth');
 
       // Check for cap factor calculation
       expect(material.vertexShader).toContain('baseCap');
@@ -125,6 +129,13 @@ describe('LineMaterial', () => {
 
       // Check for cap factor application
       expect(material.fragmentShader).toContain('vCapFactor');
+
+      // Check for anti-aliasing and intensity scaling
+      expect(material.fragmentShader).toContain('vPixelWidth');
+      expect(material.fragmentShader).toContain('smoothstep');
+      expect(material.fragmentShader).toContain('edgeAA');
+      expect(material.fragmentShader).toContain('widthScale');
+      expect(material.fragmentShader).toContain('minPixelWidth');
 
       // Check for discard outside line width
       expect(material.fragmentShader).toContain('discard');

@@ -226,6 +226,33 @@ export class SceneLoader {
     // Update lines loaders
     const linesUpdates = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
       try {
+        // Get mesh to check extend_to_all attribute
+        const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+        const extendDims: string[] = attrs?.extend_to_all || [];
+
+        // Check if we can skip this update (extend_to_all optimization)
+        if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+          const dims = this.viewState.dimensions.metadata;
+          const nonDisplayedDims = dims
+            .filter((_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx))
+            .map((d: { name?: string }) => d.name)
+            .filter((name: string | undefined): name is string => !!name);
+
+          const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+            extendDims.includes(dimName)
+          );
+
+          if (isFullyExtended) {
+            // All non-displayed dimensions are extended - geometry is unchanged
+            log.info(
+              Modules.SCENE_LOADER,
+              `Skipping update for ${path} - all non-displayed dims are extended`
+            );
+            return;
+          }
+        }
+
         const linesViewState = {
           displayDims: this.viewState.displayDims,
           slicePosition: this.viewState.slicePosition,
@@ -284,9 +311,24 @@ export class SceneLoader {
 
     // Build new instance buffers
     const ndim = data.ndim;
-    const tolerance = viewState.dimensions
+    let tolerance = viewState.dimensions
       ? computeLinesTolerance(viewState.dimensions, viewState.displayDims)
       : new Array(ndim).fill(0).map((_, i) => (viewState.displayDims.includes(i) ? 1e10 : 0));
+
+    // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
+    const attrs = mesh.userData.attrs as { extend_to_all?: string[] };
+    const extendDims: string[] = attrs.extend_to_all || [];
+    if (extendDims.length > 0 && viewState.dimensions) {
+      tolerance = [...tolerance]; // Make a copy to avoid mutating shared array
+      for (const dimName of extendDims) {
+        const dimIndex = viewState.dimensions.findIndex(
+          (d: { name?: string }) => d.name === dimName
+        );
+        if (dimIndex >= 0 && dimIndex < tolerance.length) {
+          tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
+        }
+      }
+    }
 
     const processed = buildInstanceBuffers(
       data,
@@ -542,11 +584,26 @@ export class SceneLoader {
       }
 
       // Build instance buffers with nD clipping
-      const tolerance = linesViewState.dimensions
+      let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+
+      // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
+      // This ensures segments aren't clipped when navigating through extended dimensions
+      const extendDims: string[] = attrs.extend_to_all || [];
+      if (extendDims.length > 0 && linesViewState.dimensions) {
+        tolerance = [...tolerance]; // Make a copy to avoid mutating shared array
+        for (const dimName of extendDims) {
+          const dimIndex = linesViewState.dimensions.findIndex(
+            (d: { name?: string }) => d.name === dimName
+          );
+          if (dimIndex >= 0 && dimIndex < tolerance.length) {
+            tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
+          }
+        }
+      }
 
       const processed = buildInstanceBuffers(
         data,

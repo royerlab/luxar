@@ -171,9 +171,12 @@ export interface GlobalStats {
   activeFallbackLoaders: number; // Kept for compatibility but always 0
   totalPoints: number; // Cumulative points loaded (for throughput)
   totalMemory: number;
-  // Dataset metrics (NEW)
+  // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
   visiblePoints: number; // Currently visible/rendered points
+  // Dataset metrics - Lines
+  datasetSegments: number; // Total segments in all line datasets
+  visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
   // Additional properties expected by tests
   totalQueries: number;
   totalLoads: number;

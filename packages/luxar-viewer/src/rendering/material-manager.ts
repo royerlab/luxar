@@ -224,7 +224,7 @@ export class MaterialManager {
     lineMaterials: number;
     totalRegistered: number;
     keys: string[];
-  } {
+    } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

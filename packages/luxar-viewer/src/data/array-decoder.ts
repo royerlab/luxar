@@ -428,10 +428,8 @@ export class ArrayDecoder {
       throw new Error(`Unsupported quantization dtype: ${dtype}`);
     }
 
-    log.info(
-      Modules.ZARR_LOADER,
-      `Dequantizing: ${dtype} [0, ${max_int}] → float [${min_val.toFixed(3)}, ${max_val.toFixed(3)}]`
-    );
+    // Note: Removed per-chunk dequantization logging - too verbose for production
+    // Each array load can trigger 100+ log messages, causing performance issues
 
     const result = new Float32Array(data.length);
 

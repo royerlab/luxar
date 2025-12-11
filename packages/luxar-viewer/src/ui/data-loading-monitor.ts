@@ -739,11 +739,11 @@ export class DataLoadingMonitor {
         </div>
 
         ${
-          hasSpatialIndex && this.config.showSpatialGrid
-            ? `
+  hasSpatialIndex && this.config.showSpatialGrid
+    ? `
         `
-            : ''
-        }
+    : ''
+}
       </div>
     `;
   }
@@ -997,6 +997,11 @@ export class DataLoadingMonitor {
     this.calculateRates();
     const qps = this.cachedRates.queriesPerSec;
 
+    // Get line segment stats from scene graph
+    const datasetSegments = this.sceneGraphState.totalSegments;
+    // For lines, visible typically equals total (no spatial filtering like points)
+    const visibleSegments = this.sceneGraphState.totalSegments;
+
     return {
       totalLoaders: this.loaders.size,
       activeSpatialLoaders: activeSpatial,
@@ -1005,6 +1010,8 @@ export class DataLoadingMonitor {
       totalMemory,
       datasetSize, // Total points in all datasets (from zarr metadata)
       visiblePoints, // Currently visible/rendered points
+      datasetSegments, // Total segments in all line datasets
+      visibleSegments, // Currently visible segments (for lines, typically equals total)
       totalQueries,
       totalLoads,
       totalCacheHits: 0, // L0 cache removed

@@ -73,6 +73,8 @@ export interface RenderingControllers {
   // Dynamic clipping controls
   dynamicClippingEnabled?: Controller;
   clippingAdaptSpeed?: Controller;
+  // HDR controls
+  hdrMultiplier?: Controller;
   // Lens distortion controls
   lensDistortionX?: Controller;
   lensDistortionY?: Controller;

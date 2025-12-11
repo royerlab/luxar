@@ -83,10 +83,20 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 **Control Categories:**
 
 - **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration, lens distortion
+- **HDR**: Intensity control with **logarithmic slider** (0.01-100, equal slider distance per order of magnitude)
 - **Anti-Aliasing**: FXAA, SMAA, MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
 - **Camera**: FOV presets (28mm-135mm equivalents), manual FOV control, clipping plane adjustments
 - **Materials**: Opacity, gamma, blending modes
+
+**Logarithmic HDR Intensity Slider:**
+
+The HDR intensity slider uses a logarithmic scale to provide equal perceptual control across its entire range:
+- **Left edge**: 0.01 (very dim)
+- **Center**: 1.0 (neutral)
+- **Right edge**: 100 (very bright)
+
+This ensures that moving the slider the same distance always produces the same perceived change in brightness, regardless of the current value.
 
 **Panel Layout:**
 
@@ -109,7 +119,7 @@ Rendering Controls
 │       ├── Far Plane (slider, 10-10000)
 │       └── Auto Adjust (button)
 ├── HDR
-│   ├── Intensity (slider)
+│   ├── Intensity (logarithmic slider, 0.01-100)
 │   └── Tone Mapping (type selector)
 ├── Anti-Aliasing
 │   ├── SSAA □ (with resolution multiplier)
