@@ -98,6 +98,8 @@ Specialized shader material for thick lines using instanced quad geometry.
 - **World-Space Width**: Lines have consistent thickness regardless of distance
 - **nD Clipping**: Clipped endpoints use full intensity for correct visual appearance
 - **Per-Vertex Attributes**: Color, width, and sharpness interpolate along segments
+- **Aspect-Ratio Correct**: Perpendicular direction computed in pixel space for correct line width
+- **Anti-Aliasing for Thin Lines**: Minimum pixel width (1.5px) prevents sub-pixel rendering gaps; intensity scaling preserves visual weight of thin lines; smooth edge falloff using smoothstep
 
 **Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`) to avoid exceeding WebGL's 16 attribute location limit.
 
