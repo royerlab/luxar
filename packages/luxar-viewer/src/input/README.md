@@ -84,6 +84,46 @@ class InputHandler {
 }
 ```
 
+
+**Dimension Initialization Lifecycle:**
+
+The `InputHandler` coordinates dimension system initialization through `initDimensionSliders()`:
+
+```typescript
+initDimensionSliders(): void {
+  // 1. Initialize scene dimension manager from loaded scene
+  if (!sceneDimsManager.initFromScene(this.sceneManager.scene)) {
+    return; // No nD objects found
+  }
+
+  // 2. Create dimension slider UI
+  this.dimensionSliders = new DimensionSliders({...});
+
+  // 3. Register listener for dimension changes
+  sceneDimsManager.addListener(() => {
+    this.updateAllNDNodes();
+    this.dimensionSliders?.update();
+    this.animationController.startAnimation();
+  });
+
+  // 4. CRITICAL: Trigger initial update (lines 191-194)
+  // This ensures data loads at correct initial slice position
+  this.updateAllNDNodes();
+  this.animationController.startAnimation();
+}
+```
+
+**Why the Manual Initial Trigger?**
+
+The `sceneDimsManager.initFromScene()` sets up dimension state but does NOT call `notifyListeners()` because listeners haven't been registered yet. The initial update is triggered manually after listener registration to ensure:
+
+- Data loads at correct initial position (t=0 for time, channel=0 for channels)
+- Slider position matches displayed data from first render
+- No race condition between initialization and listener registration
+
+See `input-handler.ts:191-194` for implementation and `scene-dims-manager.ts:157-160` for the rationale.
+
+
 ### 2. Input Context Manager
 
 The `InputContextManager` manages input contexts to prevent conflicts between different UI systems.

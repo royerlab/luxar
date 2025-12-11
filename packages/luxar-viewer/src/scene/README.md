@@ -395,6 +395,49 @@ const distance = calculateDistance(point.position, slicePosition);
 point.visible = distance <= radius;
 ```
 
+
+### Dimension Initialization
+
+**Initial Slice Position** (on viewer startup):
+
+When nD datasets load, dimensions initialize based on their type:
+
+| Dimension Type | Initial Position | Example |
+|----------------|------------------|---------|
+| **Time/Frames** | Start (t=0) | Time-series starts at first frame |
+| **Channels** | First channel (0) | Multi-channel data shows first channel (DAPI, GFP) |
+| **Discrete dimensions** | Minimum value | Frame 0, category 0 |
+| **Continuous spatial** | Center (0) | 4th spatial dimension (W) centers at 0 |
+
+**Behavior**:
+
+```typescript
+// Time-series (discrete, range 0-50ns)
+Initial position: t = 0 ns ✓ (not 25ns)
+
+// Multi-channel (discrete, 0-3)  
+Initial position: channel = 0 ✓ (not channel 2)
+
+// 4D spatial (continuous, -100 to +100)
+Initial position: W = 0 ✓ (center makes sense)
+```
+
+**Why It Matters**:
+
+- Slider position matches displayed data from first load
+- Time-series animations start at beginning, not middle
+- Multi-channel data shows first channel first
+- No confusing mismatch between UI and visualization
+
+**Implementation Details**:
+
+The initialization happens in two phases:
+1. `sceneDimsManager.initFromScene()` sets up dimension state
+2. `inputHandler.initDimensionSliders()` triggers initial data load
+
+See `scene-dims-manager.ts:118-140` for initialization logic and `input-handler.ts:191-194` for the initial update trigger.
+
+
 ### Keyboard Navigation
 
 Navigate through dimensions with keyboard:
