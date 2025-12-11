@@ -386,57 +386,50 @@ target_chunk_elements = TARGET_CHUNK_BYTES / bytes_per_point
 # 5D data: 64KB / 36 bytes ≈ 1,800 points per chunk
 ```
 
-**Discrete-aware chunk sizing** (when discrete dimensions exist):
+**Dimension-aware padding for discrete dimensions**:
 
-**Strategy**: Use fixed-size chunks that are SMALLER than the typical discrete slice size. This ensures:
-- Most chunks contain data from a single discrete slice
-- Boundary chunks may span slices (acceptable ~10-20% waste)
-- No complex variable-sized chunking needed
-- Viewer compatibility maintained
+The key optimization for time-series and nD data is **step-aware padding** rather than chunk size adjustments.
 
-**Algorithm**:
+**Padding Strategy**:
 ```python
-# 1. Calculate base chunk size from TARGET_CHUNK_BYTES
-base_chunk_size = max(MIN_CHUNK_SIZE, TARGET_CHUNK_BYTES // bytes_per_element)
-
-# 2. If discrete dimensions exist, cap chunk size for better alignment
-if has_discrete_dimensions:
-    # Estimate elements per discrete slice
-    num_discrete_slices = estimate_discrete_slice_count(data, slice_dims)
-    elements_per_slice = total_elements // max(1, num_discrete_slices)
-
-    # Cap chunk size at ~50-70% of slice size to minimize spanning
-    max_chunk_for_slices = max(MIN_CHUNK_SIZE, elements_per_slice // 2)
-    chunk_size = min(base_chunk_size, max_chunk_for_slices)
+# For discrete dimensions (time, channel, etc.):
+if dimensions[d].step is defined:
+    padding = step_size / 2  # Tight bounds matching step granularity
 else:
-    chunk_size = base_chunk_size
+    padding = 0.5  # Backwards-compatible fallback
 
-# 3. Clamp to min/max bounds
-chunk_size = max(MIN_CHUNK_SIZE, min(chunk_size, total_elements))
+# Chunk bounds for discrete dimension d:
+chunk_min = data_min - padding
+chunk_max = data_max + padding
 ```
 
-**Example calculations** (for Lines segments):
+**Combined with viewer tolerance**:
+```typescript
+// Viewer query tolerance (must match encoder padding!)
+if (dim.discrete && dim.step) {
+    tolerance = dim.step / 2;  // Matches encoder padding
+} else {
+    tolerance = 0.5;  // Fallback
+}
+```
 
-| Dataset | Segments | Frames | Segs/Frame | Base Size | Capped Size | Chunks/Frame |
-|---------|----------|--------|------------|-----------|-------------|--------------|
-| Small | 60K | 10 | 6,000 | 4,096 | 3,000 | ~2 |
-| Medium | 180K | 30 | 6,000 | 4,096 | 3,000 | ~2 |
-| Large | 4M | 250 | 16,000 | 4,096 | 4,096 | ~4 |
+**Impact**:
+- **Before**: Query range = ±(0.5 + 0.5) = ±1.0 around time value
+- **After**: Query range = ±(0.1 + 0.1) = ±0.2 around time value (for step=0.2)
+- **5× tighter bounds** → only ~2 boundary chunks match instead of many
 
-**Padding for discrete dimensions**:
-- **Old**: Hardcoded `±0.5` for all discrete dimensions
-- **New**: Dimension-aware `±(step_size/2)` when step is defined
-- **Benefit**: Tight bounds that exactly match discrete values
+**Chunk Sizing**:
+- Uses standard TARGET_CHUNK_BYTES calculation (~4,096 segments)
+- With tight padding, boundary waste is minimal (~2 chunks × 4,096 = ~8K segments)
+- ~0.2% waste for typical 4M segment dataset (acceptable)
 
-**Trade-offs**:
-- ✓ Simple fixed-size chunking (no metadata changes needed)
-- ✓ Fast encoding (no boundary detection)
-- ✓ Viewer compatible (works with existing chunk math)
-- ⚠ Some boundary chunks span slices (~10-20% waste, acceptable)
-- ✓ With smaller chunks, waste is minimal
+**Performance**:
+- **Improvement**: ~10× reduction in vertex loading (294K → ~32K)
+- **Key factor**: Step-aware padding, not chunk size
+- **Simple**: No special chunk sizing logic needed
 
 **Metadata stored**:
-- `chunk_size`: int - fixed elements per chunk (last chunk may be smaller)
+- `chunk_size`: int - standard TARGET_CHUNK_BYTES calculation
 
 ---
 
