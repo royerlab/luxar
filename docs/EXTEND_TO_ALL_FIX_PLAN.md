@@ -456,8 +456,8 @@ can leave `viewState.dimensions` undefined. The defensive checks in Phase 2 help
 ### C. Points extend_to_all logic
 `packages/luxar-viewer/src/data/point-spatial-index-loader.ts` lines 433-444
 
-### D. updateAllNDPoints function
-`packages/luxar-viewer/src/input/input-handler.ts` lines 192-207
+### D. updateAllNDNodes function (renamed from updateAllNDPoints)
+`packages/luxar-viewer/src/input/input-handler.ts` lines 198+
 
 ### E. SceneDimsManager initialization
 `packages/luxar-viewer/src/scene/scene-dims-manager.ts` lines 121-139

@@ -19,7 +19,12 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
 } from '../utils/hdr-detection';
-import { validateFOV, calculateClippingPlanes, BoundingBox } from './scene-manager-utils';
+import {
+  validateFOV,
+  calculateClippingPlanes,
+  BoundingBox,
+  isPointInBoundingBox,
+} from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
 
@@ -891,14 +896,17 @@ export class SceneManager extends THREE.EventDispatcher<{
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Calculate distances from camera to bounding box corners
-    const { nearDist, farDist } = this.calculateDistancesToBounds(bounds);
+    // Calculate distances from camera to bounding box
+    const { nearDist, farDist, isInside } = this.calculateDistancesToBounds(bounds);
 
     // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
     // sqrt(3)-1 accounts for cube diagonal (when rotating a cube, corner distance is sqrt(3)× face distance)
     // +0.1 adds extra 10% safety buffer
     const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
-    const optimalNear = Math.max(0.001, nearDist * (1 - margin)); // ~16.8% of distance
+
+    // When camera is inside the bounding box, use minimum near plane directly
+    // to avoid clipping nearby points. When outside, apply margin to corner distance.
+    const optimalNear = isInside ? 0.001 : Math.max(0.001, nearDist * (1 - margin));
     const optimalFar = farDist * (1 + margin); // ~183.2% of distance
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
@@ -927,13 +935,28 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Calculate distances from camera to bounding box corners.
+   * Calculate distances from camera to bounding box.
+   *
+   * When the camera is outside the bounding box, returns distances to the
+   * nearest and farthest corners. When the camera is inside the bounding box,
+   * returns the minimum possible near distance to avoid clipping nearby points.
    *
    * @param bounds - Scene bounding box
-   * @returns Minimum and maximum distances from camera to box corners
+   * @returns Minimum and maximum distances from camera to box corners,
+   *          with isInside flag indicating if camera is inside the box
    */
-  private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; farDist: number } {
+  private calculateDistancesToBounds(bounds: BoundingBox): {
+    nearDist: number;
+    farDist: number;
+    isInside: boolean;
+  } {
     const cameraPos = this.camera.position;
+
+    // Check if camera is inside the bounding box
+    const isInside = isPointInBoundingBox(
+      { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z },
+      bounds
+    );
 
     // Get all 8 corners of bounding box
     const corners = [
@@ -947,7 +970,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
     ];
 
-    // Find min and max distances
+    // Find min and max distances to corners
     let nearDist = Infinity;
     let farDist = 0;
 
@@ -957,10 +980,16 @@ export class SceneManager extends THREE.EventDispatcher<{
       farDist = Math.max(farDist, dist);
     }
 
-    // Ensure minimum near distance
-    nearDist = Math.max(0.001, nearDist);
+    // If camera is inside the bounding box, use minimum near distance
+    // to avoid clipping nearby points
+    if (isInside) {
+      nearDist = 0.001; // Minimum practical near plane
+    } else {
+      // Ensure minimum near distance for outside case
+      nearDist = Math.max(0.001, nearDist);
+    }
 
-    return { nearDist, farDist };
+    return { nearDist, farDist, isInside };
   }
 
   /**

@@ -93,6 +93,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
     varying float vSharpness;
     varying float vPerpNorm;  // Signed: -1 at bottom edge, +1 at top edge
     varying float vCapFactor; // 0.5 at true endpoints, 1.0 in body
+    varying float vPixelWidth; // Line width in pixels (for anti-aliasing)
 
     void main() {
       // Position along segment: 0 = start, 1 = end
@@ -109,27 +110,44 @@ export class LineMaterial extends THREE.ShaderMaterial {
       vec4 clipEnd = projectionMatrix * modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 clipPos = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
 
-      // Screen-space line direction and perpendicular
-      vec2 screenStart = clipStart.xy / clipStart.w;
-      vec2 screenEnd = clipEnd.xy / clipEnd.w;
-      vec2 screenDir = screenEnd - screenStart;
-      float screenLen = length(screenDir);
+      // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
+      // NDC to pixels: ndc * resolution / 2 (NDC range -1 to +1, pixels range 0 to resolution)
+      vec2 ndcStart = clipStart.xy / clipStart.w;
+      vec2 ndcEnd = clipEnd.xy / clipEnd.w;
+      vec2 pixelStart = (ndcStart * 0.5 + 0.5) * uResolution;
+      vec2 pixelEnd = (ndcEnd * 0.5 + 0.5) * uResolution;
+
+      // Compute line direction and perpendicular in pixel space (aspect-ratio correct)
+      vec2 pixelDir = pixelEnd - pixelStart;
+      float pixelLen = length(pixelDir);
 
       // Handle degenerate segments (zero length in screen space)
-      vec2 lineDir = screenLen > 0.0001 ? screenDir / screenLen : vec2(1.0, 0.0);
-      vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
+      vec2 lineDir = pixelLen > 0.0001 ? pixelDir / pixelLen : vec2(1.0, 0.0);
+      vec2 perpendicular = vec2(-lineDir.y, lineDir.x);  // Unit vector in pixel space
 
       // World-space to pixel conversion (perspective-correct)
       float dist = length((modelViewMatrix * vec4(worldPos, 1.0)).xyz);
       float tanHalfFov = tan(uFOV * 0.5);
-      float pixelWidth = width * uResolution.y / (dist * tanHalfFov);
+      float rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
+
+      // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
+      // Lines thinner than ~1.5 pixels cause severe aliasing due to rasterization gaps
+      float minPixelWidth = 1.5;
+      float pixelWidth = max(rawPixelWidth, minPixelWidth);
+
+      // Pass raw pixel width to fragment shader for intensity scaling
+      // This allows thin lines to render at minimum width but with reduced intensity
+      vPixelWidth = rawPixelWidth;
 
       // Perpendicular position: -1 at bottom edge, +1 at top edge
       // GPU interpolates this across the quad, giving 0 at centerline
       vPerpNorm = aQuadCorner.y;
 
-      // Expand quad in screen space by perpendicular offset
-      clipPos.xy += perpendicular * aQuadCorner.y * pixelWidth / uResolution * clipPos.w;
+      // Expand quad by perpendicular offset in pixel space, then convert to clip space
+      // pixelOffset is in pixels, convert to NDC then to clip space
+      vec2 pixelOffset = perpendicular * aQuadCorner.y * pixelWidth;
+      vec2 ndcOffset = pixelOffset / uResolution * 2.0;
+      clipPos.xy += ndcOffset * clipPos.w;
 
       // Cap factor calculation with clipping awareness
       // Normal cap factor: 0.5 at true endpoints, 1.0 in body
@@ -170,12 +188,13 @@ export class LineMaterial extends THREE.ShaderMaterial {
     varying float vSharpness;
     varying float vPerpNorm;  // Interpolated: 0 at centerline, ±1 at edges
     varying float vCapFactor; // 0.5 at endpoints, 1.0 in body
+    varying float vPixelWidth; // Raw line width in pixels (before minimum clamping)
 
     void main() {
       // Compute distance from centerline (0 to 1)
       float p = abs(vPerpNorm);
 
-      // Discard pixels outside the line width
+      // Discard pixels clearly outside the line width
       if (p >= 1.0) discard;
 
       // Parabolic falloff from semicircle kernel convolution
@@ -183,8 +202,21 @@ export class LineMaterial extends THREE.ShaderMaterial {
       // With per-vertex sharpness: (1 - p²)^sharpness
       float perpFalloff = pow(1.0 - p * p, vSharpness);
 
+      // Anti-aliasing: smooth falloff at edges
+      // The AA region is ~1 pixel wide in the rendered quad
+      // Since we enforce minimum 1.5px width, use that as reference
+      float minPixelWidth = 1.5;
+      float renderedWidth = max(vPixelWidth, minPixelWidth);
+      float aaWidth = 1.0 / renderedWidth;  // ~1 pixel in normalized coords
+      float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);
+
+      // Intensity scaling for sub-pixel lines
+      // When a line is rendered wider than intended, reduce intensity proportionally
+      // This preserves the visual "weight" of thin lines
+      float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
+
       // Apply cap factor for correct joint intensity
-      float intensity = vCapFactor * perpFalloff;
+      float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
 
       // HDR output (gamma correction in post-processing)
       vec3 finalColor = vColor * intensity * uHDRMultiplier;

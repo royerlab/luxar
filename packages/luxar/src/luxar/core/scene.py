@@ -288,9 +288,24 @@ class Scene(Node):
         indices: Optional[np.ndarray[Any, Any]] = None,
         line_type: str = "polyline",
         parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> Lines:
         """Add a lines node to the scene.
+
+        Important: Vertex arrays must ALWAYS include ALL scene dimensions, even when
+        using extend_to_all. Extension means "show these lines at all values of
+        specified dimensions", not "skip these dimensions from the vertex array".
+
+        Example:
+            For a 4D scene (X, Y, Z, Time), if you want lines to appear at all times:
+
+            CORRECT:
+                vertices = [[x1, y1, z1, 0], [x2, y2, z2, 0]]  # Include Time=0
+                scene.add_lines("lines", vertices, widths=0.1, extend_to_all=["Time"])
+
+            INCORRECT:
+                vertices = [[x1, y1, z1], [x2, y2, z2]]  # Missing Time dimension!
 
         Args:
             name: Name of the lines node
@@ -301,6 +316,14 @@ class Scene(Node):
             indices: Optional array of vertex indices for indexed line type
             line_type: Type of line connectivity ("segments", "polyline", "loop", "indexed")
             parent: Parent node, defaults to scene root
+            extend_to_all: Controls visibility across non-displayed dimensions.
+                - None (default): Lines only visible at their defined dimension values.
+                  If candidates for extension are detected, a warning will suggest
+                  setting this parameter explicitly.
+                - List of dimension names: Extend visibility to all values of specified
+                  dimensions, e.g., ["Time"] makes lines visible at all times.
+                - "all": Extend to all non-displayed dimensions (lines always visible).
+                - []: Explicitly no extension (silences the warning).
             **attrs: Additional attributes for the node
 
         Returns:
@@ -324,6 +347,47 @@ class Scene(Node):
             aprint(
                 f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
             )
+
+            # Handle extend_to_all based on user specification
+            final_extend_dims: List[str] = []
+
+            if extend_to_all is None:
+                # Default: No extension, but warn if candidates detected
+                if self._dimensions is not None:
+                    candidates = self._analyze_extend_candidates(vertices)
+                    if candidates:
+                        warnings.warn(
+                            f"Dimension(s) {candidates} have single values but defined ranges.\n"
+                            f"If these lines should be visible at ALL values of these dimensions, use:\n"
+                            f"    extend_to_all={candidates}\n"
+                            f"If intentional (lines only at these specific values), use:\n"
+                            f"    extend_to_all=[]  # Explicit: no extension\n"
+                            f"Set extend_to_all explicitly to silence this warning.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+                final_extend_dims = []
+            elif extend_to_all == "all":
+                # Extend to all non-displayed dimensions
+                if self._dimensions is not None:
+                    final_extend_dims = [
+                        dim.name
+                        for dim in self._dimensions.dimensions
+                        if not dim.display and dim.name
+                    ]
+            elif isinstance(extend_to_all, list):
+                # Use explicit list (including empty list to silence warning)
+                final_extend_dims = extend_to_all
+            else:
+                raise ValueError(
+                    f"Invalid extend_to_all value: {extend_to_all}. "
+                    f"Expected None, list of dimension names, 'all', or []."
+                )
+
+            # Add extend_to_all to attributes if we have any
+            if final_extend_dims:
+                attrs["extend_to_all"] = final_extend_dims
+                aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
             # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self

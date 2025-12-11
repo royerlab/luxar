@@ -563,9 +563,13 @@ scene = compiler.create_scene(dimensions=dims)
 
 ### 3. Use Explicit Dimension Extension
 ```python
-# Explicit is better than implicit
+# Explicit is better than implicit - works for both points and lines
 scene.add_points('pts', positions,
                 extend_to_all=['time', 'channel'])
+
+# Lines can also extend across dimensions (e.g., static detector geometry)
+scene.add_lines('detector', vertices, widths=0.1,
+               extend_to_all=['time'])  # Visible at all time values
 ```
 
 ### 4. Validate Data Before Writing

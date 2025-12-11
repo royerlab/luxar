@@ -400,7 +400,7 @@ export class PerformanceTimeline {
   getStats(): {
     avgQueryTime: number;
     avgLoadTime: number;
-  } {
+    } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0 };
     }

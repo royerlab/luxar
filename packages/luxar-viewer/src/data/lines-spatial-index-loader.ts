@@ -187,11 +187,35 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const vertexRanges = computeVertexRangesFromIndices(sortedIndices);
     const mergedVertexRanges = mergeRanges(vertexRanges);
 
+    // DIAGNOSTIC: Show vertex index distribution
+    const minIdx = sortedIndices[0];
+    const maxIdx = sortedIndices[sortedIndices.length - 1];
+    const indexSpan = maxIdx - minIdx + 1;
+    const efficiency = sortedIndices.length / indexSpan;
+
     log.info(
       LogEmoji.LOAD,
       Modules.SPATIAL_INDEX_LOADER,
       `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
     );
+    log.info(
+      Modules.SPATIAL_INDEX_LOADER,
+      `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
+    );
+    if (mergedVertexRanges.length <= 10) {
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `  Ranges: ${mergedVertexRanges.map(r => `[${r.start}-${r.end})`).join(', ')}`
+      );
+    } else {
+      const first5 = mergedVertexRanges.slice(0, 5).map(r => `[${r.start}-${r.end})`).join(', ');
+      const last5 = mergedVertexRanges
+        .slice(-5)
+        .map(r => `[${r.start}-${r.end})`)
+        .join(', ');
+      log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
+      log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
+    }
 
     // Load vertex data
     const vertices = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
@@ -237,7 +261,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   /**
-   * Update view for new position
+   * Update view for new position.
+   * Note: extend_to_all optimization is handled at scene-loader level,
+   * which skips calling this method entirely for fully-extended nodes.
    */
   async updateView(viewState: LinesViewState): Promise<LoadedLinesData> {
     return this.loadLines(viewState);
@@ -258,8 +284,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         log.warning(
           Modules.SPATIAL_INDEX_LOADER,
           `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-            `viewState.dimensions is undefined. extend_to_all will not work. ` +
-            `Ensure scene dimensions are initialized before loading nodes.`
+            'viewState.dimensions is undefined. extend_to_all will not work. ' +
+            'Ensure scene dimensions are initialized before loading nodes.'
         );
       }
 
