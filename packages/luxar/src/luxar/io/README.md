@@ -43,6 +43,10 @@ with LuxarZarrCompiler(
 - **Scalar convenience (v1.4.0)**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
 - Compound ordering for nD data (discrete dims → spatial curve)
+- **Dimension-aware spatial indexing**: Optimized for time-series and nD slicing
+  - Step-aware padding for tight discrete bounds
+  - Smart chunk sizing (smaller chunks for animated data)
+  - ~7× performance improvement for time-animated Lines
 - Semantic type-based encoding (via `luxar.encoding`)
 - Automatic chunk size calculation
 - Metadata consolidation for fast loading

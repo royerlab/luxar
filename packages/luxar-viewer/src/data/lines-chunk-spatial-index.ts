@@ -58,7 +58,7 @@ export async function loadLinesChunkSpatialIndex(
       segmentBoundsData.data as ArrayBuffer | ArrayLike<number>
     );
 
-    // Compute chunk counts
+    // Compute chunk counts from metadata
     const vertexChunkCount = Math.ceil(attrs.n_vertices / attrs.vertex_ordering.chunk_size);
     const segmentChunkCount = Math.ceil(attrs.n_segments / attrs.segment_ordering.chunk_size);
 
@@ -224,7 +224,7 @@ export function queryVertexChunksForView(
  * @returns Tolerance array for spatial queries
  */
 export function computeLinesTolerance(
-  sceneDimensions: Array<{ discrete?: boolean }>,
+  sceneDimensions: Array<{ discrete?: boolean; step?: number }>,
   displayDims: number[]
 ): number[] {
   return sceneDimensions.map((dim, idx) => {
@@ -233,7 +233,12 @@ export function computeLinesTolerance(
       return 1e10;
     }
     if (dim.discrete) {
-      // Discrete dimensions: half-unit for integer matching
+      // Discrete dimensions: use half of step size if available
+      // This matches the encoder's padding strategy for tight bounds
+      if (dim.step !== undefined && dim.step !== null) {
+        return dim.step / 2;
+      }
+      // Fallback for backwards compatibility
       return 0.5;
     }
     // Spatial dimensions: zero - bounds already include width!

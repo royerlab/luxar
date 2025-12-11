@@ -686,6 +686,7 @@ def compute_vertex_chunk_bounds(
     vertices: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
+    dimensions: Optional[list] = None,
 ) -> np.ndarray:  # type: ignore[return]
     """Compute chunk bounding boxes for vertices (no radius/width expansion).
 
@@ -693,6 +694,7 @@ def compute_vertex_chunk_bounds(
         vertices: Vertex positions (already sorted), shape (V, D)
         chunk_size: Number of vertices per chunk
         slice_dims: Indices of discrete (non-spatial) dimensions
+        dimensions: Optional list of Dimension objects for step-aware padding
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -710,9 +712,14 @@ def compute_vertex_chunk_bounds(
 
         for d in range(n_dims):
             if d in discrete_dims:
-                # Discrete: tight bounds with small tolerance
-                chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min() - 0.5
-                chunk_bounds[chunk_idx, d, 1] = chunk_verts[:, d].max() + 0.5
+                # Discrete: tight bounds with step-aware padding
+                # Use half of step size if available, fallback to 0.5
+                if dimensions and d < len(dimensions) and dimensions[d].step:
+                    padding = dimensions[d].step / 2.0
+                else:
+                    padding = 0.5
+                chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min() - padding
+                chunk_bounds[chunk_idx, d, 1] = chunk_verts[:, d].max() + padding
             else:
                 # Spatial: exact bounds (no size expansion for vertices)
                 chunk_bounds[chunk_idx, d, 0] = chunk_verts[:, d].min()
@@ -727,6 +734,7 @@ def compute_segment_chunk_bounds(
     widths: np.ndarray,
     chunk_size: int,
     slice_dims: Optional[list[int]] = None,
+    dimensions: Optional[list] = None,
 ) -> np.ndarray:  # type: ignore[return]
     """Compute chunk bounding boxes for segments (includes line width).
 
@@ -742,6 +750,7 @@ def compute_segment_chunk_bounds(
         widths: Vertex widths (already sorted), shape (V,)
         chunk_size: Number of segments per chunk
         slice_dims: Indices of discrete (non-spatial) dimensions
+        dimensions: Optional list of Dimension objects for step-aware padding
 
     Returns:
         chunk_bounds: Bounding boxes, shape (num_chunks, D, 2)
@@ -767,12 +776,17 @@ def compute_segment_chunk_bounds(
 
         for d in range(D):
             if d in discrete_dims:
-                # Discrete: no width expansion (categorical values)
+                # Discrete: no width expansion, step-aware padding
+                # Use half of step size if available, fallback to 0.5
+                if dimensions and d < len(dimensions) and dimensions[d].step:
+                    padding = dimensions[d].step / 2.0
+                else:
+                    padding = 0.5
                 chunk_bounds[chunk_idx, d, 0] = (
-                    min(p1[:, d].min(), p2[:, d].min()) - 0.5
+                    min(p1[:, d].min(), p2[:, d].min()) - padding
                 )
                 chunk_bounds[chunk_idx, d, 1] = (
-                    max(p1[:, d].max(), p2[:, d].max()) + 0.5
+                    max(p1[:, d].max(), p2[:, d].max()) + padding
                 )
             else:
                 # Spatial: include width extent
