@@ -193,6 +193,15 @@ test.describe('Position Bounds and Clipping Planes', () => {
     await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
     await waitForLuxarReady(page);
 
+    // Disable dynamic clipping so we can test static auto-adjust in isolation
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const app = debug.app;
+      if (app?.components?.sceneManager) {
+        app.components.sceneManager.setDynamicClipping(false);
+      }
+    });
+
     // Manually set clipping planes to obviously wrong values
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -256,6 +265,16 @@ test.describe('Position Bounds and Clipping Planes', () => {
   test('should use 10% margin on calculated clipping planes', async ({ page }) => {
     await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
     await waitForLuxarReady(page);
+
+    // Disable dynamic clipping and call autoAdjust to test static calculation
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const app = debug.app;
+      if (app?.components?.sceneManager) {
+        app.components.sceneManager.setDynamicClipping(false);
+        app.components.sceneManager.autoAdjustClippingPlanes();
+      }
+    });
 
     // Get bounds and camera info to verify margin is applied
     const info = await page.evaluate(() => {

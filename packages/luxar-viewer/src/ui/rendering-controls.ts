@@ -60,6 +60,9 @@ export class RenderingControls {
   private orbitFolder?: GUI;
   private flyFolder?: GUI;
 
+  /** Shadow object for logarithmic HDR intensity slider */
+  private hdrLogValue: { log: number } = { log: 0 };
+
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
@@ -585,25 +588,67 @@ export class RenderingControls {
     const hdrFolder = this.gui.addFolder('HDR');
     hdrFolder.open();
 
+    // Logarithmic HDR intensity slider
+    // Using shadow property pattern: slider controls log10(value), giving equal
+    // distance for equal perceptual change (orders of magnitude)
+    const logMin = Math.log10(0.01); // -2
+    const logMax = Math.log10(100); // +2
+
+    // Initialize shadow log value from current settings
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+
+    // Helper to format the actual intensity value for display
+    const formatIntensity = (logValue: number): string => {
+      const actual = Math.pow(10, logValue);
+      if (actual >= 10) return actual.toFixed(0);
+      if (actual >= 1) return actual.toFixed(1);
+      if (actual >= 0.1) return actual.toFixed(2);
+      return actual.toFixed(3);
+    };
+
     const hdrControl = hdrFolder
-      .add(this.settings, 'hdrMultiplier', 0.01, 100, 0.01)
+      .add(this.hdrLogValue, 'log', logMin, logMax, 0.01)
       .name('Intensity')
-      .onChange((value: number) => {
+      .onChange((logValue: number) => {
+        // Convert log to actual value
+        const actualValue = Math.pow(10, logValue);
+        this.settings.hdrMultiplier = actualValue;
         // Update shader config and trigger material updates
         // HDR multiplier is now handled through material manager
-        this.sceneManager.updateHDRMultiplier(value);
+        this.sceneManager.updateHDRMultiplier(actualValue);
         this.saveSettings();
         this.triggerAnimation();
       });
 
+    // Override updateDisplay to show actual intensity value instead of log value
+    // This is necessary because lil-gui doesn't support custom value formatters
+    const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (hdrControl as any).updateDisplay = () => {
+      originalUpdateDisplay();
+      // After lil-gui updates the display, override the input value with formatted intensity
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const input = (hdrControl as any).$input as HTMLInputElement | undefined;
+      if (input) {
+        input.value = formatIntensity(this.hdrLogValue.log);
+      }
+      return hdrControl;
+    };
+
+    // Store controller reference for sync updates
+    this.controllers.hdrMultiplier = hdrControl;
+
+    // Initial display update to show actual value
+    hdrControl.updateDisplay();
+
     // Set tooltip on the DOM element
     hdrControl.domElement.setAttribute(
       'title',
-      'Intensity: Multiplies point light emission\n' +
-        '• Controls how bright points appear in HDR space\n' +
-        '• Applied during rendering before tone mapping\n' +
-        '• Higher values = stronger glow/bloom effects\n' +
-        '• Can create values >1.0 for realistic bright sources'
+      'Intensity: Multiplies point brightness (logarithmic slider)\n' +
+        '• Range: 0.01× (dim) to 100× (bright)\n' +
+        '• 1.0 = neutral (no change)\n' +
+        '• Higher values increase glow/bloom effects\n' +
+        '• Logarithmic scale: equal slider distance = equal perceived change'
     );
 
     // Tone Mapping selector - moved to HDR folder
@@ -1744,7 +1789,11 @@ export class RenderingControls {
           ...loadedSettings,
         });
 
+        // Sync logarithmic HDR slider shadow value
+        this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+
         // Update GUI to reflect loaded values
+        // Note: HDR controller's updateDisplay is overridden to show actual intensity
         this.gui.controllersRecursive().forEach((controller) => {
           controller.updateDisplay();
         });
@@ -1886,6 +1935,14 @@ export class RenderingControls {
 
     // Update near/far control state based on dynamic clipping
     this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
+
+    // Sync logarithmic HDR slider
+    // The shadow log value must be updated to match the actual hdrMultiplier
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+    if (this.controllers.hdrMultiplier) {
+      // updateDisplay is overridden to show actual intensity value
+      this.controllers.hdrMultiplier.updateDisplay();
+    }
 
     // Update all other controllers
     this.gui.controllersRecursive().forEach((controller) => {

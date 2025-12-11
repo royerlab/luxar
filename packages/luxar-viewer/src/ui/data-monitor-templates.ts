@@ -74,8 +74,8 @@ export function renderStatGrid(
   return `
     <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
       ${stats
-        .map(
-          (stat) => `
+    .map(
+      (stat) => `
         <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
           <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
             ${stat.value}
@@ -83,8 +83,8 @@ export function renderStatGrid(
           <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
         </div>
       `
-        )
-        .join('')}
+    )
+    .join('')}
     </div>
   `;
 }
@@ -156,29 +156,89 @@ export function renderSecondaryMetrics(
  * Template for overview tab content
  */
 export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {
-  // Calculate visible percentage of dataset
-  const visiblePercent =
+  // Calculate visible percentage of points dataset
+  const visiblePointsPercent =
     stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
+
+  // Calculate visible percentage of segments dataset
+  const visibleSegmentsPercent =
+    stats.datasetSegments > 0
+      ? ((stats.visibleSegments / stats.datasetSegments) * 100).toFixed(1)
+      : '0';
+
+  // Determine what to show based on available data
+  const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+  const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
+  const showBoth = hasPoints && hasLines;
+
+  // Build primary metrics section
+  let primaryMetrics = '';
+  if (showBoth) {
+    // Show both side by side
+    primaryMetrics = `
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
+        ${renderMetricCard(
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+    MonitorColors.success,
+    'medium'
+  )}
+        ${renderMetricCard(
+    'VISIBLE LINES',
+    formatNumber(stats.visibleSegments),
+    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+    MonitorColors.warning,
+    'medium'
+  )}
+      </div>
+    `;
+  } else if (hasPoints) {
+    // Show only points (large)
+    primaryMetrics = `
+      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+        ${renderMetricCard(
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+    MonitorColors.success,
+    'large'
+  )}
+      </div>
+    `;
+  } else if (hasLines) {
+    // Show only lines (large)
+    primaryMetrics = `
+      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+        ${renderMetricCard(
+    'VISIBLE LINES',
+    formatNumber(stats.visibleSegments),
+    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+    MonitorColors.warning,
+    'large'
+  )}
+      </div>
+    `;
+  } else {
+    // No data yet
+    primaryMetrics = `
+      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+        ${renderMetricCard('LOADING', '...', 'Waiting for data', MonitorColors.muted, 'large')}
+      </div>
+    `;
+  }
 
   return `
     <div class="overview-content">
       <!-- Primary metrics -->
-      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
-        ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePercent}% of ${formatNumber(stats.datasetSize)} total`,
-          MonitorColors.success,
-          'large'
-        )}
-      </div>
+      ${primaryMetrics}
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-        { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
-        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-        cacheMetrics.network
-      )}
+    { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
+    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+    cacheMetrics.network
+  )}
 
       <!-- Scene graph or loader list (injected by monitor) -->
       <div class="scene-or-loaders">
@@ -232,19 +292,19 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <div class="cache-content">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
           ${renderMetricCard(
-            'CACHE MEMORY',
-            formatBytes(cacheMetrics.totalCacheMemory),
-            `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-            MonitorColors.success,
-            'medium'
-          )}
+    'CACHE MEMORY',
+    formatBytes(cacheMetrics.totalCacheMemory),
+    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+    MonitorColors.success,
+    'medium'
+  )}
           ${renderMetricCard(
-            'CACHED ENTRIES',
-            cacheMetrics.totalEntries.toString(),
-            '',
-            MonitorColors.primaryText,
-            'medium'
-          )}
+    'CACHED ENTRIES',
+    cacheMetrics.totalEntries.toString(),
+    '',
+    MonitorColors.primaryText,
+    'medium'
+  )}
         </div>
         <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
           Loading cache statistics...
@@ -365,14 +425,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-        rec.suggestion
-          ? `
+  rec.suggestion
+    ? `
         <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-          : ''
-      }
+    : ''
+}
     </div>
   `;
 }
@@ -518,10 +578,10 @@ function renderSceneGraphNode(
 
         <!-- Stats badge -->
         ${
-          statsText
-            ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
-            : ''
-        }
+  statsText
+    ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
+    : ''
+}
 
         <!-- Loading indicator -->
         ${node.isLoading ? '<span style="font-size: 9px; margin-left: 4px;" title="Loading data...">⏳</span>' : ''}
@@ -529,12 +589,12 @@ function renderSceneGraphNode(
 
       <!-- Children (if expanded) -->
       ${
-        isExpanded && hasChildren
-          ? node.children
-              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
-              .join('')
-          : ''
-      }
+  isExpanded && hasChildren
+    ? node.children
+      .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+      .join('')
+    : ''
+}
     </div>
   `;
 }
@@ -564,10 +624,10 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
         <h4 style="margin: 0; font-size: 11px; color: ${MonitorColors.muted};">SCENE GRAPH</h4>
         ${
-          headerStats
-            ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
-            : ''
-        }
+  headerStats
+    ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
+    : ''
+}
       </div>
       <div style="max-height: 180px; overflow-y: auto; background: ${MonitorColors.sectionBg}; border-radius: 4px; padding: 4px;">
         ${renderSceneGraphNode(state.root, expandedNodes)}

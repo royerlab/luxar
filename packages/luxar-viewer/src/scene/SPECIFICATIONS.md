@@ -1,7 +1,7 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.3.0
-**Last Updated**: 2025-12-09
+**Version**: 1.4.0
+**Last Updated**: 2025-12-10
 
 ## Purpose
 
@@ -517,13 +517,16 @@ class SceneManager {
     if (!bounds) return;
 
     // Calculate distances from camera to bounding box
-    const { nearDist, farDist } = this.calculateDistancesToBounds(bounds);
+    const { nearDist, farDist, isInside } = this.calculateDistancesToBounds(bounds);
 
     // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
     // sqrt(3)-1 accounts for cube diagonal (corner distance is sqrt(3)× face distance)
     // +0.1 adds extra 10% safety buffer
     const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
-    const optimalNear = Math.max(0.001, nearDist * (1 - margin)); // ~16.8% of distance
+
+    // When camera is inside the bounding box, use minimum near plane directly
+    // to avoid clipping nearby points. When outside, apply margin to corner distance.
+    const optimalNear = isInside ? 0.001 : Math.max(0.001, nearDist * (1 - margin));
     const optimalFar = farDist * (1 + margin); // ~183.2% of distance
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
@@ -555,11 +558,21 @@ class SceneManager {
 
 ### 5.3 Distance Calculation
 
-**Calculate distances from camera to bounding box corners**:
+**Calculate distances from camera to bounding box, handling inside-box case**:
 
 ```typescript
-private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; farDist: number } {
+private calculateDistancesToBounds(bounds: BoundingBox): {
+  nearDist: number;
+  farDist: number;
+  isInside: boolean;
+} {
   const cameraPos = this.camera.position;
+
+  // Check if camera is inside the bounding box
+  const isInside = isPointInBoundingBox(
+    { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z },
+    bounds
+  );
 
   // Get all 8 corners of bounding box
   const corners = [
@@ -573,7 +586,7 @@ private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; far
     new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
   ];
 
-  // Find min and max distances
+  // Find min and max distances to corners
   let nearDist = Infinity;
   let farDist = 0;
 
@@ -583,10 +596,16 @@ private calculateDistancesToBounds(bounds: BoundingBox): { nearDist: number; far
     farDist = Math.max(farDist, dist);
   }
 
-  // Ensure minimum near distance
-  nearDist = Math.max(0.001, nearDist);
+  // If camera is inside the bounding box, use minimum near distance
+  // to avoid clipping nearby points
+  if (isInside) {
+    nearDist = 0.001; // Minimum practical near plane
+  } else {
+    // Ensure minimum near distance for outside case
+    nearDist = Math.max(0.001, nearDist);
+  }
 
-  return { nearDist, farDist };
+  return { nearDist, farDist, isInside };
 }
 ```
 
@@ -1198,6 +1217,13 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.4.0** (2025-12-10): Camera-inside-bounding-box handling
+  - **IMPROVED**: Dynamic clipping now detects when camera is inside the bounding box
+  - **IMPROVED**: When inside, near plane is set to minimum (0.001) to avoid clipping nearby points
+  - **UPDATED**: `calculateDistancesToBounds()` now returns `isInside` flag
+  - **UPDATED**: `updateDynamicClippingPlanes()` uses `isInside` to skip margin calculation when inside
+  - Eliminates clipping artifacts when exploring inside point clouds
 
 - **v1.3.0** (2025-12-09): Dynamic clipping planes
   - **ADDED**: Section 5 "Dynamic Clipping Planes" with exponential smoothing algorithm

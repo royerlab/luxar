@@ -741,17 +741,17 @@ interface ChunkSpatialIndex {
 
 ```typescript
 interface ViewState {
-    displayDims: number[]           // Indices of displayed dimensions [0-2]
-    slicePosition: number[]         // Current position in nD space
-    tolerance: number[]             // Search radius per dimension
-    dimensions?: SimpleDims         // REQUIRED for extend_to_all feature
+  displayDims: number[]; // Indices of displayed dimensions [0-2]
+  slicePosition: number[]; // Current position in nD space
+  tolerance: number[]; // Search radius per dimension
+  dimensions?: SimpleDims; // REQUIRED for extend_to_all feature
 }
 
 interface SimpleDims {
-    metadata: DimensionMetadata[]   // Full dimension info with names
-    ndim: number                    // Total dimensionality
-    displayed: number[]             // Displayed dimension indices
-    currentStep: number[]           // Current slice position
+  metadata: DimensionMetadata[]; // Full dimension info with names
+  ndim: number; // Total dimensionality
+  displayed: number[]; // Displayed dimension indices
+  currentStep: number[]; // Current slice position
 }
 ```
 
@@ -848,7 +848,7 @@ Stored in node `.zattrs`:
   "max_width": 0.5,
   "has_colors": true,
   "has_sharpness": false,
-  "extend_to_all": ["time"],  // Optional: dimensions to extend visibility across
+  "extend_to_all": ["time"], // Optional: dimensions to extend visibility across
 
   "ordering": "hilbert",
 
@@ -1181,10 +1181,10 @@ function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
     // Check if navigating through an extended dimension
     const currentNonDisplayedDims = viewState.dimensions
       .filter((_, idx) => !viewState.displayDims.includes(idx))
-      .map(meta => meta.name)
-      .filter(name => !!name);
+      .map((meta) => meta.name)
+      .filter((name) => !!name);
 
-    const isExtending = extendDims.some(edim => currentNonDisplayedDims.includes(edim));
+    const isExtending = extendDims.some((edim) => currentNonDisplayedDims.includes(edim));
 
     if (isExtending) {
       // Return ALL segments - no spatial filtering
@@ -1197,17 +1197,74 @@ function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
 ```
 
 **Key Behavior**:
+
 - When navigating through an extended dimension, ALL segments are returned (no spatial filtering)
 - This ensures the lines remain visible regardless of slice position in that dimension
 - Works identically to `extend_to_all` for points
 
-**CRITICAL Requirement**: `viewState.dimensions` MUST be populated with dimension metadata
-for `extend_to_all` to work. The algorithm matches dimension NAMES (e.g., "time") against
-the `extend_to_all` list, which requires knowing which non-displayed dimensions exist.
-If `viewState.dimensions` is undefined, the loader logs a warning and falls back to
-normal spatial query behavior (extend_to_all silently fails).
+**CRITICAL Requirements**:
+
+1. **Dimension metadata**: `viewState.dimensions` MUST be populated with dimension metadata
+   for `extend_to_all` to work. The algorithm matches dimension NAMES (e.g., "time") against
+   the `extend_to_all` list, which requires knowing which non-displayed dimensions exist.
+   If `viewState.dimensions` is undefined, the loader logs a warning and falls back to
+   normal spatial query behavior (extend_to_all silently fails).
+
+2. **Tolerance override for clipping**: Lines have TWO places that filter visibility:
+   - `queryVisibleSegmentRanges()` - spatial index query (handled above)
+   - `buildInstanceBuffers()` - clips segments based on tolerance per dimension
+
+   For `extend_to_all` to work fully, tolerance must be set to infinity (`1e10`) for
+   extended dimensions BEFORE calling `buildInstanceBuffers`. This is done in
+   `scene-loader.ts` in both `loadLines()` and `updateLinesGeometry()`:
+
+   ```typescript
+   const extendDims: string[] = attrs.extend_to_all || [];
+   if (extendDims.length > 0 && viewState.dimensions) {
+     tolerance = [...tolerance]; // Copy to avoid mutation
+     for (const dimName of extendDims) {
+       const dimIndex = viewState.dimensions.findIndex((d) => d.name === dimName);
+       if (dimIndex >= 0 && dimIndex < tolerance.length) {
+         tolerance[dimIndex] = 1e10; // Effectively infinite
+       }
+     }
+   }
+   ```
+
+   Without this tolerance override, segments are clipped even when the spatial query
+   returns all segments, causing the geometry to disappear when navigating through
+   extended dimensions.
+
+3. **Scene-loader update skip (performance optimization)**: When ALL non-displayed
+   dimensions are extended, the entire update is skipped in `scene-loader.ts`. This
+   prevents unnecessary data loading and geometry rebuilding when navigating through
+   dimensions that don't affect the node's visibility:
+
+   ```typescript
+   // In updateLoaders() - check if we can skip this update
+   const extendDims: string[] = attrs?.extend_to_all || [];
+   if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+     const nonDisplayedDims = dims
+       .filter((_, idx) => !this.viewState.displayDims.includes(idx))
+       .map((d) => d.name)
+       .filter((name) => !!name);
+
+     const isFullyExtended = nonDisplayedDims.every((dimName) =>
+       extendDims.includes(dimName)
+     );
+
+     if (isFullyExtended) {
+       // Skip update - geometry is unchanged
+       return;
+     }
+   }
+   ```
+
+   This optimization is handled at the scene-loader level (the orchestration layer)
+   rather than in individual loaders, ensuring no work is done when it's not needed.
 
 **Python API**:
+
 ```python
 # Create lines visible at all time values
 scene.add_lines('detector', vertices, widths=0.1, extend_to_all=["time"])
@@ -1379,6 +1436,16 @@ function loadAllLines(store: ZarrStore, metadata: LinesMetadata): Promise<Loaded
 ---
 
 ## Changelog
+
+- **v1.2.6** (2025-12-10): extend_to_all performance optimization
+  - **ADDED**: Scene-loader update skip for fully-extended lines nodes
+    - When ALL non-displayed dimensions are in `extend_to_all`, skip entire update
+    - Prevents unnecessary data loading and geometry rebuilding
+    - Optimization handled at scene-loader orchestration level
+  - **UPDATED**: Section 7.9 - documented scene-loader skip as 3rd critical requirement
+  - **REMOVED**: Redundant loader-level caching in LinesSpatialIndexLoader
+    - Scene-loader skip makes it unnecessary (was never reached)
+    - Cleaner code with single optimization at correct abstraction level
 
 - **v1.2.5** (2025-12-10): extend_to_all defensive checks and documentation
   - **ADDED**: Defensive warning in PointSpatialIndexLoader when `extend_to_all` is specified but `viewState.dimensions.metadata` is undefined

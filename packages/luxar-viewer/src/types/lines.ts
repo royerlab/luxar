@@ -104,6 +104,14 @@ export interface LinesMetadata {
 
   /** Blending mode */
   blending_mode?: 'additive' | 'normal';
+
+  /**
+   * List of dimension names to extend visibility across.
+   * Lines with extend_to_all will be visible regardless of slice position
+   * in the specified dimensions (e.g., ['time'] makes geometry visible
+   * at all time values).
+   */
+  extend_to_all?: string[];
 }
 
 // ============================================================================

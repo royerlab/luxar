@@ -290,15 +290,17 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 **How It Works:**
 
 1. Each frame, calculates optimal near/far from camera-to-scene distances
-2. Uses exponential smoothing for stable transitions: `z_new = (1-α)·z_old + α·z_optimal`
-3. Applies sqrt(3)-1+0.1 ≈ 83% safety margin (accounts for cube diagonal rotation + 10% extra buffer)
+2. **Detects if camera is inside the bounding box** - if so, uses minimum near plane (0.001)
+3. When outside, applies sqrt(3)-1+0.1 ≈ 83% safety margin (accounts for cube diagonal rotation + 10% extra buffer)
+4. Uses exponential smoothing for stable transitions: `z_new = (1-α)·z_old + α·z_optimal`
 
 **Benefits:**
 
 - Always-optimal Z-buffer precision as camera moves
+- **No clipping when exploring inside point clouds** - near plane automatically minimized
 - Smooth transitions prevent visual artifacts
 - Eliminates need for manual clipping adjustment
-- Perfect for exploring large-scale scenes
+- Perfect for exploring large-scale scenes from any viewpoint
 
 **Configuration:**
 
