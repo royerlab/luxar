@@ -50,13 +50,13 @@ describe('SceneDimsManager', () => {
       expect(dims!.displayed).toEqual([0, 1, 2]);
     });
 
-    it('should initialize non-displayed dimensions to center of range', () => {
+    it('should initialize non-displayed dimensions based on type', () => {
       manager.initFromScene(mockScene);
       const dims = manager.getDims();
-      // Non-displayed dimensions start at center of range to maximize chance of visible data
-      expect(dims!.currentStep[3]).toBe(5); // time: center of [0, 10]
-      // Discrete dimensions are floored: floor((0+3)/2) = floor(1.5) = 1
-      expect(dims!.currentStep[4]).toBe(1); // channel: floored center of [0, 3]
+      // Continuous spatial dimensions start at center
+      expect(dims!.currentStep[3]).toBe(5); // time: center of [0, 10] (continuous)
+      // Discrete dimensions start at minimum (first position)
+      expect(dims!.currentStep[4]).toBe(0); // channel: minimum of [0, 3] (discrete)
     });
 
     it('should extract dimension ranges', () => {
