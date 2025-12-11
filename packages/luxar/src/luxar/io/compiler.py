@@ -1516,14 +1516,30 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Compute chunk sizes (from TARGET_CHUNK_BYTES)
         from ..typing_utils import TARGET_CHUNK_BYTES
 
+        # Minimum chunk size to maintain efficiency
+        MIN_CHUNK_SIZE = 512
+
         # Vertex chunk size
         bytes_per_vertex = n_dims * 4 + 8  # Position + width + overhead
-        vertex_chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_vertex)
+        vertex_chunk_size = max(MIN_CHUNK_SIZE, TARGET_CHUNK_BYTES // bytes_per_vertex)
         vertex_chunk_size = min(vertex_chunk_size, n_vertices)
 
-        # Segment chunk size
+        # Segment chunk size (with discrete-aware sizing)
         bytes_per_segment = 8 + 8  # 2 uint32 indices + overhead
-        segment_chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_segment)
+        base_segment_chunk_size = max(MIN_CHUNK_SIZE, TARGET_CHUNK_BYTES // bytes_per_segment)
+
+        # For discrete dimensions: use smaller chunks for better alignment
+        # Simple approach: cap at 2048 to ensure multiple chunks per typical time frame
+        if ordering_metadata["vertex_ordering"]["slice_dims"]:
+            # Use smaller chunks for discrete data (2048 max)
+            segment_chunk_size = min(base_segment_chunk_size, 2048)
+            aprint(
+                f"  ℹ️  Discrete-aware chunk sizing: using chunk_size={segment_chunk_size} "
+                f"(capped for discrete alignment)"
+            )
+        else:
+            segment_chunk_size = base_segment_chunk_size
+
         segment_chunk_size = min(segment_chunk_size, n_segments)
 
         # Add chunk_size to metadata
@@ -1535,6 +1551,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             sorted_vertices,
             vertex_chunk_size,
             slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],
+            dimensions=dimensions.dimensions,
         )
 
         # Compute segment chunk bounds
@@ -1553,6 +1570,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             widths_expanded,
             segment_chunk_size,
             slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],  # Use D-space dims
+            dimensions=dimensions.dimensions,
         )
 
         aprint(
