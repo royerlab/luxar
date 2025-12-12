@@ -93,7 +93,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
 
     // Slider value should match the dimension state
     // (For discrete dims at minimum, this should be the range minimum)
-    expect(sliderData.currentStep).toBeDefined();
+    expect(sliderData!.currentStep).toBeDefined();
   });
 
   test('should not cause visual jump on first slider interaction', async ({ page }) => {
@@ -101,9 +101,8 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
-    // Get initial point count
-    const initialState = await getLuxarState(page);
-    const initialPoints = initialState.totalPoints;
+    // Wait for initial state to be ready
+    await getLuxarState(page);
 
     // Find and interact with first slider
     await page.evaluate(() => {
