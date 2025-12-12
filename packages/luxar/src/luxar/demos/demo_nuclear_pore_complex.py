@@ -369,10 +369,10 @@ def element_to_color(elements: np.ndarray, is_backbone: np.ndarray = None) -> np
         mask = elements == element_idx
         colors[mask] = color
 
-    # Dim sidechain atoms if backbone info provided
+    # Brighten sidechain atoms if backbone info provided
     if is_backbone is not None:
         sidechain_mask = ~is_backbone
-        colors[sidechain_mask] *= 0.6  # Dim sidechains to emphasize backbone
+        colors[sidechain_mask] *= 1.2  # Make sidechains brighter for emphasis
 
     return colors
 
@@ -536,15 +536,15 @@ def generate_nuclear_pore_complex(
 
             # Scale radii for visibility
             if representation == "calpha":
-                radii *= 2.0  # Larger for C-alpha trace
+                radii *= 0.4  # Larger for C-alpha trace
             else:
-                radii *= 1.2  # Moderate scaling for all atoms
+                radii *= 0.4  # Moderate scaling for all atoms
 
             aprint("✓ Van der Waals radii applied (different per element):")
-            aprint(f"  C: {1.70 * 0.1 * 1.2:.3f} nm")
-            aprint(f"  N: {1.55 * 0.1 * 1.2:.3f} nm")
-            aprint(f"  O: {1.52 * 0.1 * 1.2:.3f} nm")
-            aprint(f"  S: {1.80 * 0.1 * 1.2:.3f} nm")
+            aprint(f"  C: {1.70 * 0.1 * 0.4:.3f} nm")
+            aprint(f"  N: {1.55 * 0.1 * 0.4:.3f} nm")
+            aprint(f"  O: {1.52 * 0.1 * 0.4:.3f} nm")
+            aprint(f"  S: {1.80 * 0.1 * 0.4:.3f} nm")
 
         # Write to Zarr
         with asection("Creating Luxar scene"):
@@ -559,7 +559,7 @@ def generate_nuclear_pore_complex(
                 scene = compiler.create_scene(dimensions=dims)
 
                 # Sharpness for crisp, sharp protein atoms
-                sharpness = np.full(len(sym_positions), 6.0, dtype=np.float32)
+                sharpness = np.full(len(sym_positions), 1, dtype=np.float32)
 
                 scene.add_points(
                     "nuclear_pore_complex",
@@ -709,9 +709,9 @@ def main() -> None:
     aprint("✓ Cleanup complete")
     aprint("")
     aprint("Try different representations:")
-    aprint("  --representation=calpha    (default, clean backbone)")
+    aprint("  --representation=calpha    (clean backbone trace)")
     aprint("  --representation=backbone  (CA, C, N, O atoms)")
-    aprint("  --representation=all       (all atoms, very dense)")
+    aprint("  --representation=all       (default, all atoms, very dense)")
     aprint("")
     aprint("Try different coloring:")
     aprint("  --color=element       (CPK coloring - default)")
