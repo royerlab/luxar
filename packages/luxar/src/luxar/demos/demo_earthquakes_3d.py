@@ -94,6 +94,7 @@ from pathlib import Path
 import numpy as np
 import requests
 from arbol import aprint, asection
+from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
@@ -105,7 +106,14 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 EARTH_RADIUS = 1.0
 
 # Sphere resolution (number of points on Earth surface)
-EARTH_POINTS = 30000  # Provides smooth sphere
+EARTH_POINTS = 120000  # High resolution for texture mapping (4x increase)
+
+# NASA Blue Marble image URL (5400x2700 equirectangular projection)
+BLUE_MARBLE_URL = "https://neo.gsfc.nasa.gov/archive/bluemarble/bmng/world_8km/world.200401.3x5400x2700.jpg"
+
+# Downscale target (balance between quality and memory)
+TEXTURE_WIDTH = 2048
+TEXTURE_HEIGHT = 1024
 
 # Default query parameters
 DEFAULT_DAYS = 30  # Last 30 days
@@ -198,25 +206,314 @@ def latlon_to_xyz(lat: float, lon: float, radius: float = 1.0) -> np.ndarray:
 
 
 # =============================================================================
-# Land/Sea Coloring (Simple Heuristic)
+# NASA Blue Marble Texture Mapping
 # =============================================================================
+
+
+def download_and_prepare_earth_texture(
+    cache_path: Path | None = None,
+) -> np.ndarray:
+    """Download NASA Blue Marble image and prepare for texture mapping.
+
+    Downloads the NASA Blue Marble true-color Earth image in equirectangular
+    projection, downscales it to a manageable size, and returns as numpy array.
+
+    The Blue Marble images are created from MODIS satellite observations and
+    show Earth's continents, oceans, ice, and clouds in beautiful detail.
+
+    Image format: Equirectangular projection (simple lat/lon grid)
+    - Longitude: -180° to +180° maps to left-to-right (0 to width)
+    - Latitude: +90° to -90° maps to top-to-bottom (0 to height)
+
+    Args:
+        cache_path: Optional path to cache the downloaded image
+
+    Returns:
+        RGB array of shape (height, width, 3) with values 0-255
+    """
+    with asection("Downloading NASA Blue Marble Earth texture"):
+        # Check cache first
+        if cache_path and cache_path.exists():
+            aprint(f"Loading cached texture from {cache_path}")
+            img = Image.open(cache_path)
+        else:
+            aprint("Downloading from NASA NEO...")
+            aprint(f"  URL: {BLUE_MARBLE_URL}")
+            aprint("  Original size: 5400x2700 pixels (~30 MB)")
+
+            try:
+                response = requests.get(BLUE_MARBLE_URL, timeout=120, stream=True)
+                response.raise_for_status()
+
+                # Load image from response
+                from io import BytesIO
+
+                img = Image.open(BytesIO(response.content))
+                aprint(f"✓ Downloaded: {img.size[0]}x{img.size[1]} pixels")
+
+                # Save to cache if specified
+                if cache_path:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    img.save(cache_path, "JPEG", quality=85)
+                    aprint(f"✓ Cached to {cache_path}")
+
+            except requests.exceptions.RequestException as e:
+                aprint(f"❌ Error downloading Blue Marble image: {e}")
+                aprint("")
+                aprint("💡 Falling back to heuristic coloring...")
+                aprint("   (continents will be approximate)")
+                raise
+
+        # Downscale to target resolution
+        if img.size[0] != TEXTURE_WIDTH or img.size[1] != TEXTURE_HEIGHT:
+            aprint(
+                f"Downscaling to {TEXTURE_WIDTH}x{TEXTURE_HEIGHT} "
+                f"(from {img.size[0]}x{img.size[1]})..."
+            )
+            img = img.resize(
+                (TEXTURE_WIDTH, TEXTURE_HEIGHT), Image.Resampling.LANCZOS
+            )
+            aprint("✓ Downscaled")
+
+        # Convert to numpy array
+        texture = np.array(img, dtype=np.uint8)
+        aprint(f"✓ Texture ready: {texture.shape} ({texture.dtype})")
+
+        # Close image
+        img.close()
+
+    return texture
+
+
+def sample_texture_at_latlon(
+    lat: float,
+    lon: float,
+    texture: np.ndarray,
+) -> np.ndarray:
+    """Sample RGB color from Earth texture at given latitude/longitude.
+
+    Uses bilinear interpolation for smooth color sampling.
+
+    Equirectangular projection mapping:
+    - lon ∈ [-180, +180] → x ∈ [0, width]
+    - lat ∈ [+90, -90] → y ∈ [0, height]
+
+    Note: latitude is inverted (top of image = +90°, bottom = -90°)
+
+    Args:
+        lat: Latitude in degrees (-90 to +90)
+        lon: Longitude in degrees (-180 to +180)
+        texture: RGB texture array (height, width, 3)
+
+    Returns:
+        RGB color as float32 array [0, 1]
+    """
+    height, width = texture.shape[:2]
+
+    # Convert lat/lon to texture coordinates
+    # lon: -180 to +180 → 0 to width
+    x = (lon + 180.0) / 360.0 * width
+
+    # lat: +90 to -90 → 0 to height (inverted!)
+    y = (90.0 - lat) / 180.0 * height
+
+    # Clamp to valid range
+    x = np.clip(x, 0, width - 1)
+    y = np.clip(y, 0, height - 1)
+
+    # Bilinear interpolation for smooth sampling
+    x0 = int(np.floor(x))
+    x1 = min(x0 + 1, width - 1)
+    y0 = int(np.floor(y))
+    y1 = min(y0 + 1, height - 1)
+
+    # Interpolation weights
+    wx = x - x0
+    wy = y - y0
+
+    # Sample four nearest pixels
+    c00 = texture[y0, x0].astype(np.float32)
+    c01 = texture[y0, x1].astype(np.float32)
+    c10 = texture[y1, x0].astype(np.float32)
+    c11 = texture[y1, x1].astype(np.float32)
+
+    # Bilinear interpolation
+    c0 = c00 * (1 - wx) + c01 * wx
+    c1 = c10 * (1 - wx) + c11 * wx
+    color = c0 * (1 - wy) + c1 * wy
+
+    # Normalize to [0, 1]
+    return color / 255.0
+
+
+def compute_earth_colors_from_texture(
+    positions: np.ndarray,
+    texture: np.ndarray,
+) -> np.ndarray:
+    """Compute colors for Earth surface points using NASA Blue Marble texture.
+
+    Projects sphere points onto equirectangular texture map and samples colors.
+
+    Args:
+        positions: Array of (x, y, z) coordinates on sphere
+        texture: RGB texture array from Blue Marble
+
+    Returns:
+        Array of RGB colors (n_points, 3) in range [0, 1]
+    """
+    n_points = len(positions)
+    colors = np.zeros((n_points, 3), dtype=np.float32)
+
+    aprint(f"Mapping {n_points:,} points to Earth texture...")
+
+    # Vectorized lat/lon calculation for speed
+    x = positions[:, 0]
+    y = positions[:, 1]
+    z = positions[:, 2]
+
+    # Calculate lat/lon for all points
+    lats = np.degrees(np.arcsin(y / EARTH_RADIUS))
+    # Negate longitude to flip horizontally (match image orientation)
+    lons = -np.degrees(np.arctan2(z, x))
+
+    # Sample texture for each point
+    for i in range(n_points):
+        colors[i] = sample_texture_at_latlon(lats[i], lons[i], texture)
+
+        # Progress indicator for large point counts
+        if (i + 1) % 20000 == 0:
+            aprint(f"  Progress: {i+1:,}/{n_points:,} ({(i+1)/n_points*100:.1f}%)")
+
+    aprint("✓ Texture mapping complete")
+
+    return colors
+
+
+# =============================================================================
+# Land/Sea Coloring (Fallback Heuristic - used if texture download fails)
+# =============================================================================
+
+
+def is_land(lat: float, lon: float) -> bool:
+    """Determine if a lat/lon point is on land or in ocean.
+
+    Uses a more detailed heuristic that approximates major continents
+    and excludes major oceans and seas.
+
+    Not perfect, but significantly better than rectangular regions!
+
+    Args:
+        lat: Latitude in degrees (-90 to 90)
+        lon: Longitude in degrees (-180 to 180)
+
+    Returns:
+        True if land, False if ocean
+    """
+    # NORTH AMERICA
+    if -170 < lon < -50 and 15 < lat < 72:
+        # Exclude Alaska-Bering water gaps
+        if lon < -130 and lat > 60 and lon > -170:
+            return False
+        # Exclude Hudson Bay
+        if -95 < lon < -75 and 55 < lat < 65:
+            return False
+        # Exclude Gulf of Mexico (rough)
+        if -98 < lon < -80 and 18 < lat < 30:
+            return False
+        return True
+
+    # SOUTH AMERICA (narrower at bottom, wider at top)
+    if -82 < lon < -34 and -56 < lat < 13:
+        # Exclude the gap at Panama
+        if lon > -80 and lat > 8:
+            return False
+        # Taper at southern tip (Chile)
+        if lat < -40 and (lon < -75 or lon > -65):
+            return False
+        return True
+
+    # EUROPE (including Scandinavia, Mediterranean)
+    if -11 < lon < 40 and 35 < lat < 71:
+        # Exclude Mediterranean Sea (rough)
+        if 10 < lon < 37 and 35 < lat < 42:
+            return False
+        return True
+
+    # AFRICA (wide at top, narrow at bottom)
+    if -18 < lon < 52 and -35 < lat < 37:
+        # Exclude Red Sea
+        if 32 < lon < 45 and 12 < lat < 28:
+            return False
+        # Taper at southern tip
+        if lat < -30 and (lon < 15 or lon > 35):
+            return False
+        return True
+
+    # MIDDLE EAST / ARABIA
+    if 35 < lon < 60 and 12 < lat < 42:
+        return True
+
+    # ASIA (large and complex)
+    # Central/Northern Asia
+    if 40 < lon < 180 and 35 < lat < 75:
+        # Exclude Sea of Okhotsk roughly
+        if 140 < lon < 160 and 50 < lat < 60:
+            return False
+        return True
+
+    # Indian Subcontinent
+    if 68 < lon < 90 and 8 < lat < 35:
+        return True
+
+    # Southeast Asia and Indonesia
+    if 95 < lon < 140 and -10 < lat < 25:
+        # This is complex (many islands), but approximate mainland
+        if lat > 10:  # Mainland
+            return True
+        # Indonesia - spotty coverage is fine
+        if 100 < lon < 125:
+            return True
+
+    # AUSTRALIA
+    if 113 < lon < 154 and -44 < lat < -10:
+        # Exclude Gulf of Carpentaria (rough)
+        if 135 < lon < 142 and -15 < lat < -10:
+            return False
+        return True
+
+    # NEW ZEALAND (two main islands)
+    if 166 < lon < 179 and -47 < lat < -34:
+        return True
+
+    # ANTARCTICA (southern cap)
+    if lat < -60:
+        return True
+
+    # GREENLAND
+    if -75 < lon < -12 and 60 < lat < 84:
+        return True
+
+    # JAPAN (rough)
+    if 128 < lon < 146 and 30 < lat < 46:
+        return True
+
+    # UK and Ireland
+    if -11 < lon < 2 and 50 < lat < 60:
+        return True
+
+    # Madagascar
+    if 43 < lon < 51 and -26 < lat < -12:
+        return True
+
+    # Default: ocean
+    return False
 
 
 def compute_earth_colors(positions: np.ndarray) -> np.ndarray:
     """Compute colors for Earth surface points (continents vs oceans).
 
-    Uses a simple heuristic based on latitude/longitude patterns.
-    Not geographically accurate but provides visual distinction.
-
-    For a production version, you could use:
-    - global-land-mask library
-    - Coastline shapefiles
-    - Satellite texture maps
-
-    This heuristic roughly captures:
-    - Pacific Ocean (large area)
-    - Atlantic Ocean
-    - Major continents
+    Uses a detailed heuristic that approximates real continental boundaries.
+    Much more accurate than simple rectangular regions!
 
     Args:
         positions: Array of (x, y, z) coordinates on sphere
@@ -235,36 +532,21 @@ def compute_earth_colors(positions: np.ndarray) -> np.ndarray:
         lat = np.degrees(np.arcsin(y / EARTH_RADIUS))
         lon = np.degrees(np.arctan2(z, x))
 
-        # Simple heuristic for land vs sea
-        # Default: ocean (blue)
-        is_land = False
-
-        # North America: rough approximation
-        if -170 < lon < -50 and 15 < lat < 70:
-            is_land = True
-
-        # South America
-        if -85 < lon < -35 and -55 < lat < 12:
-            is_land = True
-
-        # Europe and Africa
-        if -15 < lon < 50 and -35 < lat < 70:
-            is_land = True
-
-        # Asia
-        if 50 < lon < 150 and 0 < lat < 75:
-            is_land = True
-
-        # Australia
-        if 110 < lon < 160 and -45 < lat < -10:
-            is_land = True
-
-        if is_land:
-            # Land: greenish-brown
-            colors[i] = np.array([0.3, 0.5, 0.2]) + np.random.uniform(-0.1, 0.1, 3)
+        if is_land(lat, lon):
+            # Land: varied earth tones (browns, greens)
+            base_color = np.array([0.35, 0.45, 0.25])  # Greenish-brown
+            # Add variation based on latitude (greener near equator, browner at poles)
+            lat_factor = 1.0 - abs(lat) / 90.0
+            base_color[1] += 0.1 * lat_factor  # More green near equator
+            # Add random variation for texture
+            variation = np.random.uniform(-0.08, 0.08, 3)
+            colors[i] = base_color + variation
         else:
-            # Ocean: deep blue
-            colors[i] = np.array([0.1, 0.2, 0.4]) + np.random.uniform(-0.05, 0.05, 3)
+            # Ocean: varied blue depths
+            base_color = np.array([0.08, 0.18, 0.35])  # Deep ocean blue
+            # Add depth variation
+            variation = np.random.uniform(-0.04, 0.04, 3)
+            colors[i] = base_color + variation
 
     return np.clip(colors, 0, 1)
 
@@ -293,7 +575,7 @@ def download_earthquake_data(
         List of earthquake dictionaries with keys:
         - latitude, longitude, depth, magnitude, time, place
     """
-    with asection(f"Downloading USGS earthquake data"):
+    with asection("Downloading USGS earthquake data"):
         # Calculate date range
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
@@ -311,7 +593,7 @@ def download_earthquake_data(
             f"minmagnitude={min_magnitude}"
         )
 
-        aprint(f"Querying USGS API...")
+        aprint("Querying USGS API...")
         aprint(f"  Date range: {start_str} to {end_str}")
         aprint(f"  Minimum magnitude: {min_magnitude}")
 
@@ -411,7 +693,8 @@ def generate_earthquake_lines(
         eq_time = eq["time"]
 
         # Base position on Earth surface
-        base_pos = latlon_to_xyz(lat, lon, EARTH_RADIUS)
+        # Negate longitude to match the flipped Earth texture coordinate system
+        base_pos = latlon_to_xyz(lat, -lon, EARTH_RADIUS)
 
         # Calculate spike height based on magnitude
         # Higher magnitude = taller spike
@@ -475,11 +758,27 @@ def generate_earthquake_scene(
         aprint("⚠️  No earthquakes found matching criteria")
         return 0, 0
 
+    # Download and prepare Earth texture
+    cache_dir = Path.home() / ".cache" / "luxar"
+    cache_file = cache_dir / "blue_marble_2048x1024.jpg"
+
+    try:
+        earth_texture = download_and_prepare_earth_texture(cache_file)
+        use_texture = True
+    except Exception:
+        aprint("⚠️  Falling back to heuristic coloring")
+        use_texture = False
+
     # Generate Earth sphere
     with asection(f"Generating Earth sphere ({EARTH_POINTS:,} points)"):
         earth_positions = generate_fibonacci_sphere(EARTH_POINTS, EARTH_RADIUS)
-        earth_colors = compute_earth_colors(earth_positions)
-        aprint(f"✓ Generated Earth surface")
+
+        if use_texture:
+            earth_colors = compute_earth_colors_from_texture(earth_positions, earth_texture)
+        else:
+            earth_colors = compute_earth_colors(earth_positions)
+
+        aprint(f"✓ Generated Earth surface with {EARTH_POINTS:,} points")
 
     # Generate earthquake lines
     with asection("Generating earthquake visualization"):
@@ -558,7 +857,7 @@ def main() -> None:
     aprint("  Data Source: U.S. Geological Survey")
     aprint("  https://earthquake.usgs.gov/")
     aprint("")
-    aprint(f"  Query parameters:")
+    aprint("  Query parameters:")
     aprint(f"    • Last {days} days")
     aprint(f"    • Minimum magnitude: {min_mag}")
     aprint("")
