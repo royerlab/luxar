@@ -7,6 +7,7 @@ This package contains the command-line interface (CLI) for Luxar, providing tool
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
 - `utils.py` - Utility functions for CLI operations
+- `network_simulation.py` - Network simulation middleware and profile definitions
 
 ## Available Commands
 
@@ -44,12 +45,23 @@ luxar info data.zarr --stats  # Include detailed statistics
 luxar info data.zarr --format json # JSON output
 ```
 
+### `luxar profiles`
+List available network simulation profiles for testing.
+```bash
+luxar profiles                # Display all network profiles with descriptions
+```
+
+**Available profiles:** 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
+
+Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
+
 
 ## Key Features
 
 - **Browser Integration**: Automatic browser opening for viewer commands
 - **Tree View**: Beautiful hierarchical display of zarr structures
 - **Port Management**: Automatic port finding when defaults are occupied
+- **Network Simulation**: Test viewer performance under various network conditions (9 profiles)
 - **CORS Support**: Proper CORS headers for cross-origin access
 - **Directory Listing**: JSON/HTML directory listings for zarr exploration
 
@@ -81,7 +93,7 @@ The CLI is thoroughly tested with:
 - Unit tests for all utility functions
 - Integration tests for command workflows
 - Mocked server tests to avoid blocking
-- 40+ tests with 75% coverage
+- Comprehensive test suite with good coverage
 
 ## Dependencies
 

@@ -37,7 +37,7 @@ The `luxar-viewer.core` package provides application initialization, component o
 ```typescript
 async function init(src?: string): Promise<void> {
   // 1. Foundation: Scene management
-  this.sceneManager = new SceneManager(canvasId);
+  this.sceneManager = new SceneManager();
   await this.sceneManager.init();
 
   // 2. Animation system (depends on scene)
@@ -56,7 +56,7 @@ async function init(src?: string): Promise<void> {
   // 4. UI controls (depends on scene and animation)
   this.renderingControls = new RenderingControls(
     this.sceneManager.postProcessing,
-    this.sceneManager.controls
+    this.sceneManager
   );
 
   // 5. Cross-linking (bidirectional dependencies)

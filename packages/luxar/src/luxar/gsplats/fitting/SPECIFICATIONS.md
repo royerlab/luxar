@@ -45,7 +45,7 @@ class FitConfig:
     # Input data
     V: np.ndarray                            # Input image/volume to fit (ndim >= 1)
     seeds: Optional[np.ndarray | float]      # Centers array (N, d) OR float proportion (e.g., 0.01 = 1%)
-    seed_method: str                         # Method for auto seed generation: "auto", "multiscale_gaussian", "multiscale_decomposition"
+    seed_method: str                         # Method for auto seed generation: "gaussian", "decomposition", "both", or combinations
     seed_kwargs: Dict[str, Any]              # Additional parameters for seed generation function
 
     # Normalization

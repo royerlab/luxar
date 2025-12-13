@@ -255,7 +255,7 @@ class Node:
         """Get the gamma value for this node.
 
         Returns:
-            Gamma value (0.2 to 2.0), defaults to 1.0 if not set
+            Gamma value (0.1 to 10.0), defaults to 1.0 if not set
         """
         return float(self.attrs.get("gamma", 1.0))
 
@@ -264,7 +264,7 @@ class Node:
         """Set the gamma value for this node.
 
         Args:
-            value: Gamma value (0.2 to 2.0)
+            value: Gamma value (0.1 to 10.0)
 
         Raises:
             ValueError: If gamma is not in valid range
@@ -314,7 +314,7 @@ class Node:
         """Set gamma and return self for chaining.
 
         Args:
-            value: Gamma value (0.2 to 2.0)
+            value: Gamma value (0.1 to 10.0)
 
         Returns:
             Self for method chaining

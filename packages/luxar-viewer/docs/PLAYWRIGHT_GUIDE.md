@@ -663,7 +663,6 @@ test('no memory leaks', async ({ page }) => {
 
 - [Playwright Documentation](https://playwright.dev)
 - [Three.js Testing Guide](https://threejs.org/docs/#manual/en/introduction/Testing)
-- [Luxar Architecture Review](../../../docs/CLIENT_ARCHITECTURE_REVIEW.md)
 - [WebGL Debugging Tools](https://www.khronos.org/webgl/wiki/Debugging)
 
 ---

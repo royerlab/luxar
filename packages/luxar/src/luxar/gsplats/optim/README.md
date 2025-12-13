@@ -363,9 +363,9 @@ for iteration in range(1000):
         
         # Seed new splats where needed
         if should_seed(prediction, target):
-            centers_new, Ls_new, amps_new = generate_new_splats(...)
+            centers_new, Ls_new, amps_new, sharpness_new = generate_new_splats(...)
             n_added = coordinator.add_splats(
-                centers_new, Ls_new, amps_new, 
+                centers_new, Ls_new, amps_new, sharpness_new,
                 lr_new=0.02  # Higher LR for new splats
             )
             print(f"Added {n_added} splats, removed {n_removed} splats")
@@ -504,12 +504,14 @@ Add new Gaussian splats during optimization (seeding, splitting):
 centers_new = torch.randn(10, 3)  # 10 new 3D splats
 Ls_new = torch.eye(3).expand(10, 3, 3)  # Isotropic covariances
 amps_new = torch.ones(10) * 0.5  # Moderate amplitudes
+sharpness_new = torch.ones(10) * 2.0  # Standard Gaussian sharpness
 
 # Add with coordinator (updates model, optimizer, scheduler atomically)
 n_added = coordinator.add_splats(
     centers_new,
     Ls_new,
     amps_new,
+    sharpness_new,
     lr_new=0.02  # Optional: higher LR for new splats
 )
 
@@ -552,12 +554,14 @@ Complete model reset (e.g., reseeding, dimension changes):
 centers = torch.randn(50, 3)
 Ls = torch.eye(3).expand(50, 3, 3)
 amps = torch.ones(50) * 0.5
+sharpness = torch.ones(50) * 2.0
 
 # Replace with coordinator
 n_new = coordinator.replace_all_splats(
     centers,
     Ls,
     amps,
+    sharpness,
     lr_reset=0.01  # Reset all learning rates
 )
 ```
@@ -633,8 +637,8 @@ remove_splats(keep_mask)
 ```python
 __init__(model, optimizer, scheduler=None)
 prune_splats(keep_mask) -> int
-add_splats(centers_new, Ls_new, amps_new, lr_new=None) -> int
-replace_all_splats(centers, Ls, amps, lr_reset=None) -> int
+add_splats(centers_new, Ls_new, amps_new, sharpness_new, lr_new=None) -> int
+replace_all_splats(centers, Ls, amps, sharpness, lr_reset=None) -> int
 get_status() -> dict
 ```
 

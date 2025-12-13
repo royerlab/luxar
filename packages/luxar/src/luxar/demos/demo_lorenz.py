@@ -122,9 +122,6 @@ def generate_lorenz_attractor(
         colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
         aprint("✓ Generated rainbow color gradient")
 
-        # Create growing radii (trajectory appears to grow over time)
-        np.linspace(0.01, 0.5, n_points).astype(np.float32)
-
     # Write to zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
@@ -143,7 +140,7 @@ def generate_lorenz_attractor(
             scene.add_points(
                 "LorenzAttractor",
                 positions * 100.0 - 50.0,  # Scale and offset for good framing
-                colors=colors*0.5,  # Dim colors for better visibility
+                colors=colors * 0.5,  # Dim colors for better visibility
                 radii=1.0,  # Uniform radius for visibility
                 opacity=0.9,
                 blending_mode="additive",

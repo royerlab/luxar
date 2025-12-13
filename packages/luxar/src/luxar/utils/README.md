@@ -91,8 +91,9 @@ Generates the famous Lorenz attractor with:
 ```python
 def create_random_spheres(
     store_path: str,
-    n_spheres: int = 10,
-    points_per_sphere: int = 1000
+    n_spheres: int = 100,
+    points_per_sphere: int = 1000,
+    seed: Optional[int] = None
 ) -> None:
 ```
 Creates multiple spherical points:
@@ -103,9 +104,10 @@ Creates multiple spherical points:
 ### Time Series Demo
 ```python
 def create_time_series_demo(
-    store_path: str,
-    n_timesteps: int = 100,
-    n_points: int = 1000
+    store_path: PathLike,
+    n_timepoints: int = 10,
+    n_points_per_time: int = 1000,
+    seed: Optional[int] = None
 ) -> None:
 ```
 Generates time-varying data:

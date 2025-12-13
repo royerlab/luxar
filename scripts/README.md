@@ -76,6 +76,6 @@ DOI: 10.1051/0004-6361/202243940
 ---
 
 **See also:**
-- `/docs/GAIA_GALAXY.md` - Full methodology and references
-- `demo_gaia_milky_way_3m.py` - Converts raw data to Luxar and visualizes
+- `demo_gaia_milky_way_3m.py` - Converts raw data to Luxar format and visualizes
 - `demo_gaia_milky_way_8m.py` - Larger 8M star dataset demo
+- ESA Gaia Archive: https://gea.esac.esa.int/archive/

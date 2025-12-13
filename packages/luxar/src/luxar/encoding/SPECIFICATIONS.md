@@ -713,15 +713,17 @@ Users can specify encoding preference through modes:
 
 | Semantic Type | AUTO | PRECISION | MEMORY | AUTO Lossy? |
 |---------------|------|-----------|--------|-------------|
-| **Coordinate** | float32 | float32 | float16 | No |
+| **Coordinate** | float32 | float32 | float16† | No |
 | **Color (SDR)** | uint8 | float32 | uint8 | Yes* |
-| **Color (HDR)** | float32 | float32 | float16 | No |
+| **Color (HDR)** | float32 | float32 | float16† | No |
 | **Bounded Scalar** | uint8 | float32 | uint8 | Yes |
 | **Positive Scalar** | analyze range | float32 | uint8 (normalized) | Depends |
-| **Cholesky** | float32 | float32 | float16 | No |
+| **Cholesky** | float32 | float32 | float16† | No |
 | **Index** | smallest uint | smallest uint | smallest uint | No |
 
 *SDR colors: uint8 provides 256 levels per channel, sufficient for display but lossy for float32 input.
+
+†float16 in MEMORY mode requires `float16_allowed=True`. When `float16_allowed=False` (default), float32 is used instead for TypeScript/WebGL compatibility.
 
 ### 9.2 AUTO Mode Details
 
@@ -938,15 +940,24 @@ The `ArrayEncoder` is the main entry point for encoding arrays. It maintains an 
 class ArrayEncoder:
     """Unified encoder with internal registry for deduplication."""
 
-    def __init__(self, broadcast_rtol: float = 0.0, broadcast_atol: float = 0.0):
+    def __init__(
+        self,
+        broadcast_rtol: float = 0.0,
+        broadcast_atol: float = 0.0,
+        float16_allowed: bool = False
+    ):
         """
         Args:
             broadcast_rtol: Relative tolerance for broadcasting check (default: exact equality)
             broadcast_atol: Absolute tolerance for broadcasting check (default: exact equality)
+            float16_allowed: Enable float16 encoding in MEMORY mode (default: False)
+                             Set to False for TypeScript/WebGL compatibility (no native float16 support).
+                             When False, MEMORY mode uses float32 instead of float16 for all float types.
         """
         self._registry = ArrayRefRegistry()
         self._broadcast_rtol = broadcast_rtol
         self._broadcast_atol = broadcast_atol
+        self._float16_allowed = float16_allowed
 
     def encode(
         self,

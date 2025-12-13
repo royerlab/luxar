@@ -520,8 +520,13 @@ result.save(
 **Encoding modes** (see `luxar.encoding.SPECIFICATIONS.md` Section 9):
 - `AUTO`: Analyze data and select encoding (may be lossy for some types, e.g., SDR colors → uint8)
 - `PRECISION`: Full float32, lossless only (broadcasting still allowed)
-- `MEMORY`: Aggressive quantization for minimum storage
+- `MEMORY`: Aggressive quantization for minimum storage (uses float16 only if float16_allowed=True)
 - `CUSTOM`: Explicit encoder selection per array (advanced use)
+
+**Float16 compatibility** (`float16_allowed` parameter in save_gsplats()):
+- Default: `False` for TypeScript/WebGL compatibility (no native float16 support)
+- When False, MEMORY mode uses float32 instead of float16 for coordinates, colors, cholesky factors
+- Set to `True` only if decoder supports float16 natively
 
 ### Loading
 

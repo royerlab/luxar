@@ -83,11 +83,9 @@ def generate_performance_test_dataset(
         rng = np.random.default_rng(seed)
 
         aprint(f"Seed: {seed}")
-        aprint(f"Points continuously distributed across 4D space (W, X, Y, Z)")
-        aprint(f"W dimension: [-50, 50] (use slider for smooth navigation)")
-        aprint(
-            "Creating multi-cluster particle system..."
-        )
+        aprint("Points continuously distributed across 4D space (W, X, Y, Z)")
+        aprint("W dimension: [-50, 50] (use slider for smooth navigation)")
+        aprint("Creating multi-cluster particle system...")
 
         # Generate multiple clusters with different characteristics
         n_clusters = 8
@@ -97,7 +95,7 @@ def generate_performance_test_dataset(
         all_radii = []
 
         for i in range(n_clusters):
-            with asection(f"Cluster {i+1}/{n_clusters}"):
+            with asection(f"Cluster {i + 1}/{n_clusters}"):
                 # Random cluster center (3D spatial)
                 center = rng.uniform(-100, 100, size=3).astype(np.float32)
 
@@ -106,7 +104,9 @@ def generate_performance_test_dataset(
 
                 # Generate 4D spatial points in this cluster
                 # W dimension: uniformly distributed across full range for continuous slicing
-                w_coords = rng.uniform(-50, 50, size=(points_per_cluster, 1)).astype(np.float32)
+                w_coords = rng.uniform(-50, 50, size=(points_per_cluster, 1)).astype(
+                    np.float32
+                )
 
                 # X, Y, Z dimensions: Gaussian distribution around cluster center
                 xyz_coords = rng.normal(
@@ -114,10 +114,14 @@ def generate_performance_test_dataset(
                 ).astype(np.float32)
 
                 # Combine into 4D positions (W, X, Y, Z)
-                cluster_points = np.hstack([w_coords, xyz_coords])  # Shape: (points_per_cluster, 4)
+                cluster_points = np.hstack(
+                    [w_coords, xyz_coords]
+                )  # Shape: (points_per_cluster, 4)
 
                 # Color based on cluster position and distance from center (3D spatial only)
-                spatial_positions = cluster_points[:, 1:4]  # Extract x, y, z (skip time dimension)
+                spatial_positions = cluster_points[
+                    :, 1:4
+                ]  # Extract x, y, z (skip time dimension)
                 distances = np.linalg.norm(spatial_positions - center, axis=1)
                 max_dist = distances.max()
 
@@ -125,7 +129,9 @@ def generate_performance_test_dataset(
                 t = distances / max_dist  # 0 at center, 1 at edge
 
                 # Use HSV color space for smooth gradients
-                hue = (i / n_clusters + t * 0.3) % 1.0  # Vary hue by cluster and distance
+                hue = (
+                    i / n_clusters + t * 0.3
+                ) % 1.0  # Vary hue by cluster and distance
                 saturation = 0.8 + 0.2 * t  # More saturated at edges
                 value = 0.6 + 0.4 * (1 - t)  # Brighter at center
 
@@ -140,17 +146,41 @@ def generate_performance_test_dataset(
                 r = np.where(
                     h_i == 0,
                     value,
-                    np.where(h_i == 1, q, np.where(h_i == 2, p, np.where(h_i == 3, p, np.where(h_i == 4, t_val, value))))
+                    np.where(
+                        h_i == 1,
+                        q,
+                        np.where(
+                            h_i == 2,
+                            p,
+                            np.where(h_i == 3, p, np.where(h_i == 4, t_val, value)),
+                        ),
+                    ),
                 )
                 g = np.where(
                     h_i == 0,
                     t_val,
-                    np.where(h_i == 1, value, np.where(h_i == 2, value, np.where(h_i == 3, q, np.where(h_i == 4, p, p))))
+                    np.where(
+                        h_i == 1,
+                        value,
+                        np.where(
+                            h_i == 2,
+                            value,
+                            np.where(h_i == 3, q, np.where(h_i == 4, p, p)),
+                        ),
+                    ),
                 )
                 b = np.where(
                     h_i == 0,
                     p,
-                    np.where(h_i == 1, p, np.where(h_i == 2, t_val, np.where(h_i == 3, value, np.where(h_i == 4, value, q))))
+                    np.where(
+                        h_i == 1,
+                        p,
+                        np.where(
+                            h_i == 2,
+                            t_val,
+                            np.where(h_i == 3, value, np.where(h_i == 4, value, q)),
+                        ),
+                    ),
                 )
 
                 cluster_colors = np.column_stack([r, g, b]).astype(np.float32)
@@ -172,9 +202,7 @@ def generate_performance_test_dataset(
         colors = np.vstack(all_colors)
         radii = np.concatenate(all_radii)
 
-        aprint(
-            f"✓ Combined {n_clusters} clusters into {len(positions):,} total points"
-        )
+        aprint(f"✓ Combined {n_clusters} clusters into {len(positions):,} total points")
 
     # Write to zarr with performance-optimized settings
     with asection("Writing to Zarr (optimized for large datasets)"):
@@ -182,7 +210,15 @@ def generate_performance_test_dataset(
             [
                 # W is the slicing dimension (slider appears because display=False)
                 # IMPORTANT: spatial=True for radius-based slicing to work!
-                Dimension("w", unit="units", range=(-50, 50), step=0.01, discrete=False, spatial=True, display=False),
+                Dimension(
+                    "w",
+                    unit="units",
+                    range=(-50, 50),
+                    step=0.01,
+                    discrete=False,
+                    spatial=True,
+                    display=False,
+                ),
                 # X, Y, Z are the displayed dimensions (shown in 3D space)
                 Dimension("x", unit="units", range=(-150, 150), display=True),
                 Dimension("y", unit="units", range=(-150, 150), display=True),
@@ -204,10 +240,14 @@ def generate_performance_test_dataset(
 
         total_points = len(positions)
         aprint(f"✓ Written {total_points:,} points (4D: W, X, Y, Z) to {output_path}")
-        aprint(f"✓ Dataset size: ~{total_points * 48 / 1_000_000:.1f} MB (4D positions + colors + radii)")
-        aprint(f"✓ W range: [-50, 50] continuously distributed")
-        aprint(f"✓ 4D Navigation: Use slider or press [1] then [ / ] to navigate through W dimension")
-        aprint(f"✓ Moving slider will show smooth continuous slicing through 4D space")
+        aprint(
+            f"✓ Dataset size: ~{total_points * 48 / 1_000_000:.1f} MB (4D positions + colors + radii)"
+        )
+        aprint("✓ W range: [-50, 50] continuously distributed")
+        aprint(
+            "✓ 4D Navigation: Use slider or press [1] then [ / ] to navigate through W dimension"
+        )
+        aprint("✓ Moving slider will show smooth continuous slicing through 4D space")
 
 
 def main() -> None:
@@ -236,9 +276,11 @@ def main() -> None:
     aprint("This demo generates a large 4D dataset and serves it with network")
     aprint("simulation to test viewer performance under realistic conditions.")
     aprint("")
-    aprint(f"Dataset: {n_points:,} points × 10 timesteps = {n_points * 10:,} total points")
+    aprint(
+        f"Dataset: {n_points:,} points × 10 timesteps = {n_points * 10:,} total points"
+    )
     aprint(f"Size: ~{n_points * 10 * 48 / 1_000_000:.1f} MB (4D positions with time)")
-    aprint(f"Use [4] then [ / ] keys to navigate time and trigger progressive loading")
+    aprint("Use [4] then [ / ] keys to navigate time and trigger progressive loading")
 
     if not no_simulation:
         aprint(f"Network Profile: {network_profile}")

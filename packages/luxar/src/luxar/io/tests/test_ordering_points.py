@@ -59,9 +59,9 @@ class TestChunkBoundsPoints:
         # First chunk: points [0,0] and [1,1], with radii 0.5
         # Min should be 0-0.5=-0.5, max should be 1+0.5=1.5
         assert bounds[0, 0, 0] == pytest.approx(-0.5, abs=0.01)  # X min
-        assert bounds[0, 0, 1] == pytest.approx(1.5, abs=0.01)   # X max
+        assert bounds[0, 0, 1] == pytest.approx(1.5, abs=0.01)  # X max
         assert bounds[0, 1, 0] == pytest.approx(-0.5, abs=0.01)  # Y min
-        assert bounds[0, 1, 1] == pytest.approx(1.5, abs=0.01)   # Y max
+        assert bounds[0, 1, 1] == pytest.approx(1.5, abs=0.01)  # Y max
 
     def test_chunk_bounds_discrete_dimensions_no_expansion(self) -> None:
         """CRITICAL TEST: Discrete dimensions should NOT expand by radius.
@@ -115,7 +115,7 @@ class TestChunkBoundsPoints:
         # First chunk: spatial coords [0,0,0] and [1,1,1], radii=5
         # Min should be 0-5=-5, max should be 1+5=6
         assert bounds[0, 1, 0] == pytest.approx(-5.0, abs=0.01)  # Z min
-        assert bounds[0, 1, 1] == pytest.approx(6.0, abs=0.01)   # Z max
+        assert bounds[0, 1, 1] == pytest.approx(6.0, abs=0.01)  # Z max
 
     def test_chunk_bounds_multiple_discrete_dims(self) -> None:
         """Test with multiple discrete dimensions (e.g., time and channel)."""
@@ -144,11 +144,11 @@ class TestChunkBoundsPoints:
 
         # Time bounds: should span 0 to 1 with ±0.5 tolerance
         assert bounds[0, 0, 0] >= -0.6  # time min
-        assert bounds[0, 0, 1] <= 1.6   # time max
+        assert bounds[0, 0, 1] <= 1.6  # time max
 
         # Channel bounds: should span 0 to 1 with ±0.5 tolerance
         assert bounds[0, 1, 0] >= -0.6  # channel min
-        assert bounds[0, 1, 1] <= 1.6   # channel max
+        assert bounds[0, 1, 1] <= 1.6  # channel max
 
         # Spatial dimensions (z, y, x) should be expanded by radius
         # All at coord 5, radius 3 -> [2, 8]
@@ -218,7 +218,7 @@ class TestChunkBoundsPoints:
 
         # Time (discrete) should have tight bounds: 0 to 5 with ±0.5
         assert bounds[0, 0, 0] >= -0.6  # time min
-        assert bounds[0, 0, 1] <= 5.6   # time max
+        assert bounds[0, 0, 1] <= 5.6  # time max
 
     def test_chunk_bounds_varying_radii(self) -> None:
         """Test with varying radii per point."""
@@ -291,8 +291,8 @@ class TestChunkBoundsDiscreteFiltering:
             # The gap should be: (next_min) - (this_max) >= -0.5 (small overlap is ok)
             gap = next_chunk_min - chunk_max
             assert gap >= -0.5, (
-                f"Chunks {i} and {i+1} overlap too much in discrete dim: "
-                f"chunk {i} max={chunk_max}, chunk {i+1} min={next_chunk_min}, gap={gap}"
+                f"Chunks {i} and {i + 1} overlap too much in discrete dim: "
+                f"chunk {i} max={chunk_max}, chunk {i + 1} min={next_chunk_min}, gap={gap}"
             )
 
     def test_query_at_discrete_value_finds_correct_chunks(self) -> None:
@@ -334,5 +334,9 @@ class TestChunkBoundsDiscreteFiltering:
         # Possibly chunk 1 or 3 if they're very close (tolerance touches)
         assert 2 in matching_chunks, f"Chunk 2 should match, got {matching_chunks}"
         # Chunks 0 and 4 should definitely NOT match
-        assert 0 not in matching_chunks, "Chunk 0 (orbital=0) should NOT match query for orbital=2"
-        assert 4 not in matching_chunks, "Chunk 4 (orbital=4) should NOT match query for orbital=2"
+        assert 0 not in matching_chunks, (
+            "Chunk 0 (orbital=0) should NOT match query for orbital=2"
+        )
+        assert 4 not in matching_chunks, (
+            "Chunk 4 (orbital=4) should NOT match query for orbital=2"
+        )

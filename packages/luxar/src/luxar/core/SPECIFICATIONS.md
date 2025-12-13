@@ -127,11 +127,13 @@ This discriminator enables the viewer to determine how to render each node.
 
 ### 3. Group (Container Node)
 
+**Implementation Note**: Groups are implemented as `Node` instances with `type="group"` attribute, not as a separate `Group` class. The term "Group" in this documentation refers to this logical concept rather than a distinct Python class.
+
 **Specification**:
 - Container node for organizing data nodes hierarchically
 - Does NOT hold array data (only metadata and children)
 - Can have transforms and rendering attributes
-- Created via `Scene.add_group()` or `Node.add_group()`
+- Created via `Scene.add_group()` or `Node.add_group()` (both return `Node` instances)
 
 **Key Properties**:
 - `name`: Group identifier
@@ -286,6 +288,9 @@ Valid range: [0, 31]. This is a polynomial falloff, NOT a Gaussian.
 
 **Computed Metadata**:
 - `max_radius`: `max(radii)` - the maximum value in the radii array. For broadcast radii `(1,)`, this is that single value.
+
+**Legacy Properties**:
+- The `Points` class has a `has_radii` property that reads from metadata. While radii are now always present (explicit or default), this property still exists for backward compatibility and indicates whether radii were explicitly provided.
 
 **Default Values** (when arrays not provided):
 - radii: `0.5` (applied by `Scene.add_points()` when not specified)

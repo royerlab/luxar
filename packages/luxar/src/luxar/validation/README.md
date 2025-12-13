@@ -6,6 +6,11 @@ The `validation` package provides comprehensive validation functions for Luxar d
 
 This package ensures data integrity throughout the Luxar pipeline by validating inputs at critical points, providing clear error messages that help users quickly identify and fix issues.
 
+**See Also:**
+- `../core/README.md` - Scene, Points, Lines, GSplats classes that use validation
+- `../typing_utils/README.md` - Constants (GAMMA_MIN, SHARPNESS_MAX, etc.) used in validation
+- `SPECIFICATIONS.md` (this package) - Detailed validation rules and algorithms
+
 ## Modules
 
 ### `types.py`
@@ -18,12 +23,12 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_positions()`: Validate position arrays (N, D) with optional dimensionality check
 - `validate_colors()`: Validate color arrays in HDR float32 format
 - `validate_radii()`: Validate radii arrays (positive values)
-- `validate_sharpness()`: Validate sharpness arrays (positive values, warns on atypical range)
+- `validate_sharpness()`: Validate sharpness arrays (positive values only)
 - `validate_transform()`: Validate 4x4 transformation matrices
 - `validate_node_type()`: Validate node type strings
 - `validate_physical_unit()`: Validate physical unit strings
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
-- `validate_gamma()`: Validate gamma values (0.2-2.0)
+- `validate_gamma()`: Validate gamma values (0.1-10.0)
 - `validate_blending_mode()`: Validate blending mode strings
 - **`validate_categories()`**: **NEW** - Validate category lists for categorical dimensions
 - **`validate_category_indices()`**: **NEW** - Validate category index arrays
@@ -309,7 +314,11 @@ Luxar expects RGB colors. If you have RGBA, use colors[:, :3] to extract RGB."
 ```
 
 ### Range Warnings
+
+**Note**: While SPECIFICATIONS.md v1.0.2 indicates the typical range warning was removed, the implementation in `types.py` still emits this warning. Only `base.py` write-time validation enforces the full [0, 31] range.
+
 ```python
+# Warning from types.py (still present):
 Warning: "Sharpness values outside typical range [0.5, 10.0] detected.
 Values < 0.5 create uniform disks, values > 10 create hard edges."
 ```
@@ -474,7 +483,7 @@ def validate_categorical_positions(positions, dimensions):
 - `MIN_CATEGORIES = 1` - Minimum number of categories
 - `MAX_CATEGORY_LABEL_LENGTH = 1024` - Maximum length per label
 - `OPACITY_MIN = 0.0`, `OPACITY_MAX = 1.0` - Opacity range
-- `GAMMA_MIN = 0.2`, `GAMMA_MAX = 2.0` - Gamma range
+- `GAMMA_MIN = 0.1`, `GAMMA_MAX = 10.0` - Gamma range
 - `SHARPNESS_MAX = 31.0` - Maximum typical sharpness value
 
 ## Dependencies
@@ -490,10 +499,12 @@ External:
 ## Testing
 
 Tests are located in `validation/tests/`:
-- `test_types.py` - Type validation tests (including categorical)
-- `test_base.py` - Write-time validation tests
-- `test_nd.py` - nD validation tests
-- `test_categories.py` - Categorical dimension validation tests
+- `test_types_validation.py` - Type validation tests (includes categorical dimension tests)
+- `test_base_validation.py` - Write-time validation tests
+- `test_validation_nd.py` - nD validation tests
+- `test_config_validation.py` - Config validation tests
+- `test_points_validation.py` - Points-specific validation tests
+- `test_validation_module.py` - Module-level integration tests
 
 Run tests:
 ```bash

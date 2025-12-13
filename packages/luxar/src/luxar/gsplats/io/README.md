@@ -96,12 +96,12 @@ Spatial ordering arranges splats along space-filling curves to improve compressi
 
 ### Ordering Functions
 
-**`sort_splats_spatially()`** - Main interface
+**`sort_splats_spatial()`** - Main interface
 
 ```python
-from luxar.gsplats.io import sort_splats_spatially
+from luxar.gsplats.io import sort_splats_spatial
 
-indices, metadata = sort_splats_spatially(
+indices, metadata = sort_splats_spatial(
     centers,
     method="hilbert",  # or "morton"
     resolution=None,   # Auto-computed if None
@@ -112,12 +112,12 @@ sorted_centers = centers[indices]
 sorted_amplitudes = amplitudes[indices]
 ```
 
-**`compute_chunk_bounds()`** - Compute spatial index
+**`compute_chunk_bounds_gsplats()`** - Compute spatial index
 
 ```python
-from luxar.gsplats.io import compute_chunk_bounds
+from luxar.gsplats.io import compute_chunk_bounds_gsplats
 
-chunk_bounds = compute_chunk_bounds(
+chunk_bounds = compute_chunk_bounds_gsplats(
     centers=sorted_centers,
     cholesky_factors=sorted_cholesky,
     chunk_size=2048,
@@ -296,11 +296,12 @@ print(f"Compression: {info['compression_ratio']}x")
 
 ### Code Organization
 
-- **`ordering.py`**: Spatial ordering algorithms (Morton/Hilbert)
 - **`save_gsplats.py`**: Save function with validation and encoding
 - **`load_gsplats.py`**: Load function with automatic decoding
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
 - **`tests/`**: Comprehensive tests (53 tests total)
+
+**Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience.
 
 ### Dependencies
 

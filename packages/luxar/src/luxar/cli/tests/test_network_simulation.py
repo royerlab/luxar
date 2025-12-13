@@ -297,9 +297,18 @@ class TestNetworkProfilesConstant:
 
     def test_all_profiles_have_required_keys(self):
         """Test all profiles have required keys."""
-        required_keys = {"name", "bandwidth", "latency", "jitter", "packet_loss", "description"}
+        required_keys = {
+            "name",
+            "bandwidth",
+            "latency",
+            "jitter",
+            "packet_loss",
+            "description",
+        }
         for profile_name, profile in NETWORK_PROFILES.items():
-            assert required_keys.issubset(profile.keys()), f"Profile {profile_name} missing keys"
+            assert required_keys.issubset(profile.keys()), (
+                f"Profile {profile_name} missing keys"
+            )
 
     def test_profile_values_are_valid(self):
         """Test all profile values can be parsed."""
@@ -313,12 +322,14 @@ class TestNetworkProfilesConstant:
             assert latency >= 0, f"Profile {profile_name} has invalid latency"
 
             # Test jitter is in range
-            assert 0.0 <= profile["jitter"] <= 1.0, f"Profile {profile_name} has invalid jitter"
+            assert 0.0 <= profile["jitter"] <= 1.0, (
+                f"Profile {profile_name} has invalid jitter"
+            )
 
             # Test packet loss is in range
-            assert (
-                0.0 <= profile["packet_loss"] <= 1.0
-            ), f"Profile {profile_name} has invalid packet_loss"
+            assert 0.0 <= profile["packet_loss"] <= 1.0, (
+                f"Profile {profile_name} has invalid packet_loss"
+            )
 
 
 class TestNetworkSimulationMiddleware:
@@ -401,7 +412,9 @@ class TestNetworkSimulationMiddleware:
 
         async def test_async():
             # 1 Mbps = 125 KB/s, so 10KB should take ~0.08s
-            middleware = NetworkSimulationMiddleware(dummy_app, bandwidth_limit_mbps=1.0)
+            middleware = NetworkSimulationMiddleware(
+                dummy_app, bandwidth_limit_mbps=1.0
+            )
 
             scope = {"type": "http"}
             messages = []
@@ -433,7 +446,9 @@ class TestNetworkSimulationMiddleware:
             async def dummy_app(scope, receive, send):
                 nonlocal call_count
                 call_count += 1
-                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send(
+                    {"type": "http.response.start", "status": 200, "headers": []}
+                )
                 await send({"type": "http.response.body", "body": b"test"})
 
             # 50% packet loss for easier statistical testing

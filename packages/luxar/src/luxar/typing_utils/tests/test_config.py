@@ -54,7 +54,10 @@ class TestConfigConstants:
         """Test memory estimation constants."""
         assert MEMORY_PER_POINT_POSITIONS == 12  # 3 * float32
         assert MEMORY_PER_POINT_COLORS == 3  # 3 * uint8
-        assert MEMORY_PER_POINT_TOTAL == MEMORY_PER_POINT_POSITIONS + MEMORY_PER_POINT_COLORS
+        assert (
+            MEMORY_PER_POINT_TOTAL
+            == MEMORY_PER_POINT_POSITIONS + MEMORY_PER_POINT_COLORS
+        )
 
     def test_log_level_default(self) -> None:
         """Test default log level is INFO."""

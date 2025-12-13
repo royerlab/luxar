@@ -895,7 +895,7 @@ When adding new tests:
 - [CLAUDE.md](../../../../CLAUDE.md) - Development guidance for AI assistants
 - [PLAYWRIGHT_GUIDE.md](../../docs/PLAYWRIGHT_GUIDE.md) - Playwright testing guide
 - [LUXAR_ZARR_FORMAT.md](../../../../docs/LUXAR_ZARR_FORMAT.md) - Data format specification
-- [UI_DESIGN.md](../../../../docs/UI_DESIGN.md) - UI design system
+- [Console Output Style](../../../../docs/CONSOLE_OUTPUT_STYLE.md) - Logging style guide
 
 ---
 

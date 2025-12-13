@@ -470,6 +470,113 @@ vec3 normal3_fixed(vec2 seed) {
 | Old/uncooled detector   | 0.05         | 0.01       | 0.03     |
 | Cinematic film look     | 0.015        | 0.008      | 0.003    |
 
+### 4.5 RobustVignetteEffect (Custom Implementation)
+
+**Purpose**: Screen edge darkening effect that handles additive blending artifacts.
+
+**Problem Solved**: The standard pmndrs `VignetteEffect` preserves alpha channel values, which causes rendering artifacts when:
+- Using additive blending (`THREE.AdditiveBlending`) with many overlapping points/lines
+- Alpha values accumulate and can exceed 1.0 or even overflow to `Infinity` in Float16 HDR buffers
+- Subsequent effects receive problematic alpha values causing brightness artifacts
+
+**Solution**: `RobustVignetteEffect` forces output alpha to 1.0, preventing alpha overflow artifacts while maintaining identical visual output.
+
+**Implementation**:
+```typescript
+// Drop-in replacement for VignetteEffect
+import { RobustVignetteEffect } from '../rendering/robust-vignette-effect';
+
+const vignetteEffect = new RobustVignetteEffect({
+  darkness: 0.5,    // Edge darkening amount [0, 1]
+  offset: 0.5,      // Vignette start distance [0, 1]
+});
+```
+
+**Key Differences from Standard VignetteEffect**:
+- ✅ Identical parameters and visual output
+- ✅ Compatible with additive blending
+- ✅ Prevents alpha overflow in Float16 HDR buffers
+- ✅ No brightness artifacts in dark areas (e.g., vignette edges)
+
+**Technical Detail**: The fix is simple but critical - the fragment shader's final line sets `gl_FragColor.a = 1.0;` instead of preserving the input alpha. This prevents accumulated alpha from additive blending from propagating through the effect pipeline.
+
+**Use Case**: Always use `RobustVignetteEffect` instead of pmndrs `VignetteEffect` when:
+- Using additive blending for points or lines
+- Using Float16 HDR render targets
+- Rendering many overlapping transparent objects
+
+### 4.6 PerspectiveDepthMapper (Utility Class)
+
+**Purpose**: Converts between different depth representations for effects that need depth information (e.g., DOF, SSAO).
+
+**Problem**: THREE.js stores depth in various formats:
+- **View-space depth**: Linear distance from camera in world units (negative Z in view space)
+- **NDC depth**: Non-linear depth in [0, 1] stored in depth buffer
+- **Camera-relative depth**: Distance from camera origin
+- **Normalized linear depth**: Linear depth normalized to [near, far] range
+
+Effects like DOF need specific depth representations, requiring conversions between these formats.
+
+**Implementation**:
+```typescript
+import { PerspectiveDepthMapper } from '../rendering/postprocessing-types';
+
+const mapper = new PerspectiveDepthMapper(camera);
+
+// Four conversion methods:
+const viewZ = mapper.getViewZ(ndc);           // NDC → view-space Z
+const ndcDepth = mapper.getNDC(viewZ);        // view-space Z → NDC
+const linearDepth = mapper.getLinear(ndc);    // NDC → normalized linear
+const orthoDepth = mapper.getOrtho(viewZ);    // view-space Z → orthographic
+```
+
+**Conversion Formulas**:
+
+1. **NDC to View-Space Z**: `getViewZ(ndc)`
+   ```glsl
+   viewZ = (near * far) / (far - ndc * (far - near))
+   ```
+   Converts non-linear depth buffer value to linear view-space distance.
+
+2. **View-Space Z to NDC**: `getNDC(viewZ)`
+   ```glsl
+   ndc = (far * (viewZ - near)) / (viewZ * (far - near))
+   ```
+   Inverse of the above transformation.
+
+3. **NDC to Normalized Linear**: `getLinear(ndc)`
+   ```glsl
+   linear = (viewZ - near) / (far - near)
+   ```
+   Linear depth in [0, 1] where 0 = near plane, 1 = far plane.
+
+4. **View-Space Z to Orthographic**: `getOrtho(viewZ)`
+   ```glsl
+   ortho = (viewZ + (far + near) / 2) / (far - near)
+   ```
+   Used for orthographic projections (less common).
+
+**Usage with DOF Effect**:
+```typescript
+const mapper = new PerspectiveDepthMapper(camera);
+const dofEffect = new DepthOfFieldEffect(camera, {
+  focusDistance: mapper.getViewZ(0.5), // Focus at middle depth
+  // ...other params
+});
+```
+
+**Key Properties**:
+- `near`: Camera near plane distance
+- `far`: Camera far plane distance
+- All methods handle perspective projection math correctly
+- Thread-safe (pure functions based on camera parameters)
+
+**When to Use**:
+- Setting DOF focus distances from screen-space depth
+- Converting depth buffer values for custom shaders
+- Debugging depth-based effects
+- Implementing custom depth-dependent effects
+
 ---
 
 ## 5. Material Management

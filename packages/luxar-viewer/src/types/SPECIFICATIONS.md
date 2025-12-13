@@ -597,14 +597,23 @@ function getDimensionRanges(positions, ndim, numPoints) {
 
 ## 4. Navigation Utilities
 
-### 4.1 getNavigableDimensions
+**Note**: Navigation utility functions are implemented in the `input` package (`src/input/input-handler-utils.ts`), not the types package. This section documents the concepts; see `src/input/SPECIFICATIONS.md` for implementation details.
+
+### 4.1 Dimension Navigation (in input package)
+
+**Actual Implementation**: `src/input/input-handler-utils.ts`
+
+**Available Functions**:
+- `getNonDisplayedDimensions(dims)`: Returns list of non-displayed dimension indices
+- `calculateStepSize(dim, stepType, config)`: Computes step size for navigation
+- `calculateNextPosition(current, step, range, wrap)`: Calculates next position with wrapping
 
 **Purpose**: Identify which dimensions can be navigated via keyboard (non-displayed dimensions).
 
-**Signature**:
+**Conceptual Signature** (actual implementation in input package):
 
 ```typescript
-function getNavigableDimensions(dims: SimpleDims): number[];
+function getNonDisplayedDimensions(dims: SimpleDims): number[];
 ```
 
 **Algorithm**:
@@ -634,7 +643,9 @@ const primaryDim = navigable[0]; // First non-displayed dimension
 const secondaryDim = navigable[1]; // Second non-displayed dimension
 ```
 
-### 4.2 stepDimension
+### 4.2 Dimension Stepping (in input package)
+
+**Note**: Implemented in `src/input/input-handler-utils.ts`, not in types package.
 
 **Purpose**: Move to next/previous step in a dimension with proper bounds handling.
 
@@ -706,145 +717,34 @@ function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
 }
 ```
 
-### 4.3 jumpToDimension
+### 4.3 Dimension Jumping (via scene-dims-manager)
+
+**Note**: Direct dimension updates handled by `SceneDimsManager` in `src/scene/scene-dims-manager.ts`.
 
 **Purpose**: Jump to a specific position in a dimension (e.g., from slider).
 
-**Signature**:
-
-```typescript
-function jumpToDimension(
-  dims: SimpleDims,
-  dimIndex: number,
-  value: number,
-  ranges: Array<[number, number]>
-): boolean;
-```
-
-**Algorithm**:
-
-```typescript
-function jumpToDimension(dims, dimIndex, value, ranges) {
-  // 1. Validate
-  if (dimIndex < 0 || dimIndex >= dims.ndim) {
-    return false;
-  }
-
-  if (dims.displayed.includes(dimIndex)) {
-    return false; // Can't set displayed dimension
-  }
-
-  // 2. Clamp to valid range
-  const [min, max] = ranges[dimIndex];
-  const clamped = Math.max(min, Math.min(max, value));
-
-  // 3. Update
-  if (Math.abs(clamped - dims.currentStep[dimIndex]) > 1e-10) {
-    dims.currentStep[dimIndex] = clamped;
-    return true;
-  }
-
-  return false;
-}
-```
+**Implementation Location**: Dimension updates happen through the scene manager's dimension coordination system, not as standalone type utilities.
 
 ---
 
-## 5. Type Validation
+## 5. Type Safety and Validation
 
-### 5.1 validateDims
+**Note**: The types package provides TypeScript interfaces for compile-time type safety. Runtime validation is handled by:
+- **TypeScript's type system** at compile time
+- **Python validation** on data encoding (see `luxar.validation` package)
+- **Implicit validation** in initialization functions (e.g., `initializeDims()` performs checks)
 
-**Purpose**: Runtime validation of `SimpleDims` structure.
+### 5.1 Validation Approach
 
-**Signature**:
+**No Runtime Validation Functions**: The types package does NOT provide standalone validation functions like `validateDims()` or `validateDimensionMetadata()`.
 
-```typescript
-function validateDims(dims: SimpleDims): boolean;
-```
+**Where Validation Happens**:
+1. **Compile-time**: TypeScript enforces interface structure
+2. **Initialization**: `initializeDims()` validates ndim > 0 and array lengths
+3. **Python encoding**: `luxar.validation` package performs comprehensive checks
+4. **Type guards**: Available for Lines types (see Section 7.7)
 
-**Algorithm**:
-
-```typescript
-function validateDims(dims) {
-  // 1. Check ndim is positive
-  if (dims.ndim < 1) {
-    throw new Error(`Invalid ndim: ${dims.ndim}`);
-  }
-
-  // 2. Check currentStep length
-  if (dims.currentStep.length !== dims.ndim) {
-    throw new Error(`currentStep length ${dims.currentStep.length} != ndim ${dims.ndim}`);
-  }
-
-  // 3. Check displayed dimensions
-  if (dims.displayed.length > 3) {
-    throw new Error(`Too many displayed dimensions: ${dims.displayed.length} (max 3)`);
-  }
-
-  for (const dimIdx of dims.displayed) {
-    if (dimIdx < 0 || dimIdx >= dims.ndim) {
-      throw new Error(`Invalid displayed dimension index: ${dimIdx} (ndim=${dims.ndim})`);
-    }
-  }
-
-  // 4. Check for duplicate displayed dimensions
-  if (new Set(dims.displayed).size !== dims.displayed.length) {
-    throw new Error(`Duplicate displayed dimensions: ${dims.displayed}`);
-  }
-
-  // 5. Check metadata length (if present)
-  if (dims.metadata && dims.metadata.length !== dims.ndim) {
-    throw new Error(`metadata length ${dims.metadata.length} != ndim ${dims.ndim}`);
-  }
-
-  return true;
-}
-```
-
-### 5.2 validateDimensionMetadata
-
-**Purpose**: Validate individual dimension metadata.
-
-```typescript
-function validateDimensionMetadata(meta: DimensionMetadata, index: number): boolean {
-  // 1. Check required fields
-  if (!meta.name || typeof meta.name !== 'string') {
-    throw new Error(`Dimension ${index}: invalid name`);
-  }
-
-  if (typeof meta.unit !== 'string') {
-    throw new Error(`Dimension ${index}: invalid unit`);
-  }
-
-  // 2. Check range
-  if (!Array.isArray(meta.range) || meta.range.length !== 2) {
-    throw new Error(`Dimension ${index}: invalid range`);
-  }
-
-  const [min, max] = meta.range;
-  if (typeof min !== 'number' || typeof max !== 'number') {
-    throw new Error(`Dimension ${index}: range values must be numbers`);
-  }
-
-  if (min > max) {
-    throw new Error(`Dimension ${index}: min ${min} > max ${max}`);
-  }
-
-  // 3. Check step (if present)
-  if (meta.step !== undefined) {
-    if (typeof meta.step !== 'number' || meta.step <= 0) {
-      throw new Error(`Dimension ${index}: invalid step ${meta.step}`);
-    }
-  }
-
-  // 4. Check display flag
-  if (typeof meta.display !== 'boolean') {
-    throw new Error(`Dimension ${index}: display must be boolean`);
-  }
-
-  return true;
-}
-```
+**Design Philosophy**: Trust Python-encoded data; TypeScript provides type safety, not runtime validation.
 
 ---
 
@@ -1069,8 +969,9 @@ interface LoadedLinesData {
 ```typescript
 /**
  * Segment index range (for partial loading)
+ * Note: Actual implementation uses name "SegmentRange" not "LineRange"
  */
-interface LineRange {
+interface SegmentRange {
   /** Start segment index (inclusive) */
   start: number;
 
