@@ -54,9 +54,9 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
         y = np.linspace(-5, 5, grid_size)
         xx, yy = np.meshgrid(x, y)
 
-        positions = np.column_stack([xx.flatten(), yy.flatten(), np.zeros(xx.size)]).astype(
-            np.float32
-        )
+        positions = np.column_stack(
+            [xx.flatten(), yy.flatten(), np.zeros(xx.size)]
+        ).astype(np.float32)
 
         # Sharpness increases from left to right
         normalized_x = (positions[:, 0] + 10) / 20  # 0 to 1
@@ -132,10 +132,16 @@ def create_sharpness_comparison_example(scene) -> None:
             positions[:, 0] += 15
 
             scene.add_points(
-                f"Sharpness_{label}", positions, colors, radii=radii, sharpness=sharpness
+                f"Sharpness_{label}",
+                positions,
+                colors,
+                radii=radii,
+                sharpness=sharpness,
             )
 
-        aprint(f"✓ Added {len(sharpness_values) * n_points_per_row:,} points (6 comparison rows)")
+        aprint(
+            f"✓ Added {len(sharpness_values) * n_points_per_row:,} points (6 comparison rows)"
+        )
 
 
 def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
@@ -167,7 +173,9 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
         # 1/3 soft points
         sharpness[: n_points // 3] = rng.uniform(0.5, 1.5, n_points // 3)
         # 1/3 medium points
-        sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(2.0, 4.0, n_points // 3)
+        sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(
+            2.0, 4.0, n_points // 3
+        )
         # 1/3 sharp points
         sharpness[2 * n_points // 3 :] = rng.uniform(
             6.0, 15.0, n_points - 2 * n_points // 3
@@ -177,14 +185,18 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
         rng.shuffle(sharpness)
 
         # Size varies with sharpness (sharp points are smaller)
-        radii = 0.4 - (sharpness - 0.5) * 0.02  # Larger soft points, smaller sharp points
+        radii = (
+            0.4 - (sharpness - 0.5) * 0.02
+        )  # Larger soft points, smaller sharp points
         radii = np.clip(radii, 0.1, 0.4).astype(np.float32)
 
         # Color based on sharpness (blue=soft, green=medium, red=sharp)
         normalized_sharp = (sharpness - 0.5) / 14.5
         colors = np.zeros((n_points, 3), dtype=np.float32)
         colors[:, 0] = normalized_sharp  # Red for sharp
-        colors[:, 1] = 0.5 * (1 - np.abs(normalized_sharp - 0.5) * 2)  # Green for medium
+        colors[:, 1] = 0.5 * (
+            1 - np.abs(normalized_sharp - 0.5) * 2
+        )  # Green for medium
         colors[:, 2] = 1 - normalized_sharp  # Blue for soft
 
         # Offset down and left
@@ -194,7 +206,9 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
         scene.add_points(
             "MixedSharpnessCloud", positions, colors, radii=radii, sharpness=sharpness
         )
-        aprint(f"✓ Added {len(positions):,} points (mixed cloud: blue=soft, green=medium, red=sharp)")
+        aprint(
+            f"✓ Added {len(positions):,} points (mixed cloud: blue=soft, green=medium, red=sharp)"
+        )
 
 
 def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
@@ -302,7 +316,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1].startswith("--points="):
         # Scale all point counts proportionally
-        scale = int(sys.argv[1].split("=")[1]) / (gradient_points + mixed_points + wave_points)
+        scale = int(sys.argv[1].split("=")[1]) / (
+            gradient_points + mixed_points + wave_points
+        )
         gradient_points = int(gradient_points * scale)
         mixed_points = int(mixed_points * scale)
         wave_points = int(wave_points * scale)

@@ -270,9 +270,7 @@ def download_and_prepare_earth_texture(
                 f"Downscaling to {TEXTURE_WIDTH}x{TEXTURE_HEIGHT} "
                 f"(from {img.size[0]}x{img.size[1]})..."
             )
-            img = img.resize(
-                (TEXTURE_WIDTH, TEXTURE_HEIGHT), Image.Resampling.LANCZOS
-            )
+            img = img.resize((TEXTURE_WIDTH, TEXTURE_HEIGHT), Image.Resampling.LANCZOS)
             aprint("✓ Downscaled")
 
         # Convert to numpy array
@@ -382,7 +380,9 @@ def compute_earth_colors_from_texture(
 
         # Progress indicator for large point counts
         if (i + 1) % 20000 == 0:
-            aprint(f"  Progress: {i+1:,}/{n_points:,} ({(i+1)/n_points*100:.1f}%)")
+            aprint(
+                f"  Progress: {i + 1:,}/{n_points:,} ({(i + 1) / n_points * 100:.1f}%)"
+            )
 
     aprint("✓ Texture mapping complete")
 
@@ -774,7 +774,9 @@ def generate_earthquake_scene(
         earth_positions = generate_fibonacci_sphere(EARTH_POINTS, EARTH_RADIUS)
 
         if use_texture:
-            earth_colors = compute_earth_colors_from_texture(earth_positions, earth_texture)
+            earth_colors = compute_earth_colors_from_texture(
+                earth_positions, earth_texture
+            )
         else:
             earth_colors = compute_earth_colors(earth_positions)
 
@@ -888,7 +890,9 @@ def main() -> None:
 
             aprint("")
             aprint("=" * 70)
-            aprint(f"SCENE COMPLETE: {total_points:,} points, {total_lines:,} earthquakes")
+            aprint(
+                f"SCENE COMPLETE: {total_points:,} points, {total_lines:,} earthquakes"
+            )
             aprint("=" * 70)
             aprint("")
             aprint("Earthquake Magnitude Scale:")

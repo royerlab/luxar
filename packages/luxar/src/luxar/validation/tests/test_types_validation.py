@@ -457,6 +457,15 @@ class TestRadiiValidation:
         with pytest.raises(ValueError, match="All radii must be positive values"):
             validate_radii(radii_all_negative, n_points)
 
+    def test_radii_broadcast_single_value(self) -> None:
+        """Test that single-element radii array is accepted (broadcast support)."""
+        radii = np.array([1.5], dtype=np.float32)
+        n_points = 100
+        result = validate_radii(radii, n_points)
+        assert result.shape == (1,)
+        assert result[0] == 1.5
+        assert result.dtype == np.float32
+
 
 class TestSharpnessValidation:
     """Test validate_sharpness function."""
@@ -491,23 +500,28 @@ class TestSharpnessValidation:
         result = validate_sharpness(sharpness, n_points)
         assert result.shape == (n_points,)
 
-    def test_sharpness_out_of_range_warning(self) -> None:
-        """Test that sharpness outside [0.5, 10.0] triggers warning."""
+    def test_sharpness_out_of_range_no_warning(self) -> None:
+        """Test that values outside old typical range are accepted without warning.
+
+        Per SPECIFICATIONS.md v1.0.2, the arbitrary "typical range" warning was removed.
+        Basic validation only checks positivity. Full range [0, 31] enforced by base.py.
+        """
         n_points = 3
-        # Very low values
+
+        # Very low values - should be accepted without warning
         sharpness_low = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
-            validate_sharpness(sharpness_low, n_points)
+        result = validate_sharpness(sharpness_low, n_points)
+        assert result.shape == (3,)
 
-        # Very high values
-        sharpness_high = np.array([15.0, 20.0, 100.0], dtype=np.float32)
-        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
-            validate_sharpness(sharpness_high, n_points)
+        # Very high values - should be accepted without warning
+        sharpness_high = np.array([15.0, 20.0, 30.0], dtype=np.float32)
+        result = validate_sharpness(sharpness_high, n_points)
+        assert result.shape == (3,)
 
-        # Mixed with some outside range
+        # Mixed - no warning
         sharpness_mixed = np.array([0.3, 5.0, 15.0], dtype=np.float32)
-        with pytest.warns(UserWarning, match="Sharpness values outside typical range"):
-            validate_sharpness(sharpness_mixed, n_points)
+        result = validate_sharpness(sharpness_mixed, n_points)
+        assert result.shape == (3,)
 
     def test_sharpness_not_numpy_array(self) -> None:
         """Test that non-numpy array raises ValueError."""
@@ -538,6 +552,15 @@ class TestSharpnessValidation:
             ValueError, match="Sharpness shape .* doesn't match positions"
         ):
             validate_sharpness(sharpness_wrong_length, n_points)
+
+    def test_sharpness_broadcast_single_value(self) -> None:
+        """Test that single-element sharpness array is accepted (broadcast support)."""
+        sharpness = np.array([2.0], dtype=np.float32)
+        n_points = 100
+        result = validate_sharpness(sharpness, n_points)
+        assert result.shape == (1,)
+        assert result[0] == 2.0
+        assert result.dtype == np.float32
 
     def test_sharpness_negative_values(self) -> None:
         """Test that negative sharpness values raise ValueError."""

@@ -722,12 +722,49 @@ Prevents metadata thrashing:
 
 ---
 
+## Historical Architecture Decisions
+
+### Why No L0 (Decoded Array) Cache?
+
+An earlier architecture included a 4-layer cache system with an L0 "RangeCache" that cached decoded Float32Array data. This was **removed** for the following reasons:
+
+**Problems with L0 Cache:**
+1. **Memory inefficiency**: 10× worse coverage per MB vs L1
+   - L1 (compressed): ~100MB caches 1GB of decoded data (10× compression)
+   - L0 (decoded): 100MB caches only 100MB of data
+   - Trade-off: L1 gives 10× more coverage for same memory
+
+2. **Minimal performance benefit**: Saves only ~2ms per hit
+   - Decompression overhead: ~2ms (Blosc WASM)
+   - Network latency: ~100ms (50× larger bottleneck)
+   - Prefetching at L1 provides better overall performance
+
+3. **Cache fragmentation**: Range-based keys led to ~50% miss rate
+   - Queries for `positions[100:200]` miss cache for `positions[0:300]`
+   - Unable to assemble results from overlapping cached ranges
+   - Chunk-based L1 caching has 95%+ hit rate with prefetching
+
+4. **Selective caching**: Only cached Float32Array, not Uint8Array colors
+   - Largest arrays (colors) weren't cached at all
+   - Inconsistent performance benefits
+
+5. **Added complexity**: 20% more code for <1ms average improvement
+   - Harder to debug and maintain
+   - Reduced code clarity
+
+**Decision**: Use 3-layer architecture (L1 Memory + L2 OPFS + L3 Network)
+- ChunkPrefetcher at L1 provides better latency hiding
+- Simpler, more efficient, easier to maintain
+- Measured impact: 0.7ms slower queries but 36% better memory coverage
+
+---
+
 ## Related Specifications
 
 **Luxar viewer data loading**:
 
-- RangeCache - Decoded array caching (see `../data/README.md`)
 - Spatial index loading (see `../data/README.md`)
+- ArrayDecoder (see `../data/README.md`)
 
 **Zarr format**:
 

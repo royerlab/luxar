@@ -156,7 +156,9 @@ class TestSaveGsplats:
             # MEMORY mode uses float32 by default (float16_allowed=False for compatibility)
             # Check encoding metadata
             enc = root["splats/centers"].attrs.get("encoding", {})
-            assert enc["name"] == "float16"  # Should be float16 because we passed float16_allowed=True
+            assert (
+                enc["name"] == "float16"
+            )  # Should be float16 because we passed float16_allowed=True
 
     def test_save_with_fitting_info(self) -> None:
         """Test save with fitting metadata."""

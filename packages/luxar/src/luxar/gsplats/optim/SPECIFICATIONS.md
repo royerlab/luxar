@@ -830,6 +830,7 @@ def add_splats(
     centers_new: torch.Tensor,    # (n_new, d)
     Ls_new: torch.Tensor,          # (n_new, d, d)
     amps_new: torch.Tensor,        # (n_new,)
+    sharpness_new: torch.Tensor,   # (n_new,)
     lr_new: Optional[float] = None # Learning rate for new splats
 ) -> int:
     """
@@ -859,6 +860,7 @@ def replace_all_splats(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
+    sharpness: torch.Tensor,
     lr_reset: Optional[float] = None
 ) -> int:
     """

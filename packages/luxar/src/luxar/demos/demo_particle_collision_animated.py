@@ -463,7 +463,10 @@ def generate_helix_track_with_times(
             break
 
     if len(points) < 2:
-        points = [particle.origin.tolist(), (particle.origin + [0.1, 0.1, 0.1]).tolist()]
+        points = [
+            particle.origin.tolist(),
+            (particle.origin + [0.1, 0.1, 0.1]).tolist(),
+        ]
         arc_lengths = [0.0, 0.1]
 
     points = np.array(points, dtype=np.float32)
@@ -478,7 +481,7 @@ def generate_helix_track_with_times(
     n_segments = len(points) - 1
     vertices = np.zeros((n_segments * 2, 3), dtype=np.float32)
     vertices[0::2] = points[:-1]  # Segment start points
-    vertices[1::2] = points[1:]   # Segment end points
+    vertices[1::2] = points[1:]  # Segment end points
 
     # Birth times for segment vertices (continuous at joints)
     birth_times = np.zeros(n_segments * 2, dtype=np.float32)
@@ -534,7 +537,7 @@ def generate_straight_track_with_times(
     for i in range(n_points):
         t = i * 0.5
         pos = particle.origin + direction * t
-        r = np.sqrt(pos[0]**2 + pos[1]**2)
+        r = np.sqrt(pos[0] ** 2 + pos[1] ** 2)
         if r > max_radius or abs(pos[2]) > DETECTOR_LENGTH:
             break
         points.append(pos)
@@ -758,16 +761,13 @@ def generate_collision_event(
         if i > 0 and i % 2 == 1:
             phi = (phi + np.pi + rng.normal(0, 0.3)) % (2 * np.pi)
 
-        direction = np.array([
-            np.sin(theta) * np.cos(phi),
-            np.sin(theta) * np.sin(phi),
-            np.cos(theta)
-        ])
+        direction = np.array(
+            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        )
 
         jet_energy = total_energy / n_jets * rng.uniform(0.5, 1.5)
         jet_particles = generate_jet(
-            vertex, direction, jet_energy, rng,
-            n_particles=int(8 + jet_energy / 30)
+            vertex, direction, jet_energy, rng, n_particles=int(8 + jet_energy / 30)
         )
         particles.extend(jet_particles)
 
@@ -778,11 +778,9 @@ def generate_collision_event(
         theta = np.arccos(rng.uniform(-0.8, 0.8))
         phi = rng.uniform(0, 2 * np.pi)
 
-        direction = np.array([
-            np.sin(theta) * np.cos(phi),
-            np.sin(theta) * np.sin(phi),
-            np.cos(theta)
-        ])
+        direction = np.array(
+            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        )
 
         lepton_energy = rng.uniform(20, 100)
         px, py, pz = direction * lepton_energy
@@ -805,11 +803,9 @@ def generate_collision_event(
     if rng.random() < 0.3:
         theta = np.arccos(rng.uniform(-0.7, 0.7))
         phi = rng.uniform(0, 2 * np.pi)
-        direction = np.array([
-            np.sin(theta) * np.cos(phi),
-            np.sin(theta) * np.sin(phi),
-            np.cos(theta)
-        ])
+        direction = np.array(
+            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        )
         photon_energy = rng.uniform(10, 50)
 
         particles.append(
@@ -856,9 +852,14 @@ def generate_detector_geometry(
     layers = [
         # Inner tracking: gold/bronze tones (silicon sensors)
         (BEAM_PIPE_RADIUS, [0.3, 0.25, 0.15], 0.012, 48),  # Beam pipe
-        (TRACKER_INNER, [0.35, 0.30, 0.15], 0.010, 64),     # Pixel detector
-        ((TRACKER_INNER + TRACKER_OUTER) / 2, [0.30, 0.28, 0.12], 0.008, 64),  # Strip tracker
-        (TRACKER_OUTER, [0.25, 0.25, 0.10], 0.008, 64),     # TRT outer
+        (TRACKER_INNER, [0.35, 0.30, 0.15], 0.010, 64),  # Pixel detector
+        (
+            (TRACKER_INNER + TRACKER_OUTER) / 2,
+            [0.30, 0.28, 0.12],
+            0.008,
+            64,
+        ),  # Strip tracker
+        (TRACKER_OUTER, [0.25, 0.25, 0.10], 0.008, 64),  # TRT outer
         # EM Calorimeter: green/teal (lead-liquid argon)
         (ECAL_INNER, [0.10, 0.30, 0.25], 0.010, 72),
         (ECAL_OUTER, [0.08, 0.28, 0.22], 0.010, 72),
@@ -899,10 +900,9 @@ def generate_detector_geometry(
             y = radius * np.sin(angle)
 
             # Full length longitudinal lines
-            vertices.extend([
-                [x, y, -DETECTOR_LENGTH * 0.5],
-                [x, y, DETECTOR_LENGTH * 0.5]
-            ])
+            vertices.extend(
+                [[x, y, -DETECTOR_LENGTH * 0.5], [x, y, DETECTOR_LENGTH * 0.5]]
+            )
             widths.extend([width * 0.5, width * 0.5])
             colors.extend([color, color])
             sharpness_vals.extend([1.5, 1.5])
@@ -911,8 +911,8 @@ def generate_detector_geometry(
     endcap_z = [DETECTOR_LENGTH * 0.5, -DETECTOR_LENGTH * 0.5]
     endcap_layers = [
         (TRACKER_OUTER, ECAL_INNER, [0.20, 0.25, 0.15], 0.006),  # Tracker endcap
-        (ECAL_OUTER, HCAL_INNER, [0.10, 0.25, 0.20], 0.006),     # ECAL endcap
-        (HCAL_OUTER, MUON_INNER, [0.25, 0.15, 0.08], 0.006),     # HCAL endcap
+        (ECAL_OUTER, HCAL_INNER, [0.10, 0.25, 0.20], 0.006),  # ECAL endcap
+        (HCAL_OUTER, MUON_INNER, [0.25, 0.15, 0.08], 0.006),  # HCAL endcap
     ]
 
     n_radial = 16  # Radial spokes in endcaps
@@ -926,10 +926,7 @@ def generate_detector_geometry(
                 x_outer = r_outer * np.cos(angle)
                 y_outer = r_outer * np.sin(angle)
 
-                vertices.extend([
-                    [x_inner, y_inner, z],
-                    [x_outer, y_outer, z]
-                ])
+                vertices.extend([[x_inner, y_inner, z], [x_outer, y_outer, z]])
                 widths.extend([width, width])
                 colors.extend([color, color])
                 sharpness_vals.extend([1.5, 1.5])
@@ -942,10 +939,7 @@ def generate_detector_geometry(
         x = BEAM_PIPE_RADIUS * np.cos(angle)
         y = BEAM_PIPE_RADIUS * np.sin(angle)
 
-        vertices.extend([
-            [x, y, -DETECTOR_LENGTH * 0.8],
-            [x, y, DETECTOR_LENGTH * 0.8]
-        ])
+        vertices.extend([[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]])
         widths.extend([0.015, 0.015])
         colors.extend([beam_color, beam_color])
         sharpness_vals.extend([2.5, 2.5])
@@ -1091,13 +1085,21 @@ def generate_animated_detector_scene(
         total_time_ns = 50.0  # nanoseconds for full event evolution
         time_per_frame = total_time_ns / (n_frames - 1)
 
-        dims = Dimensions([
-            Dimension("x", unit="m", display=True),
-            Dimension("y", unit="m", display=True),
-            Dimension("z", unit="m", display=True),
-            Dimension("time", unit="ns", display=False,
-                     range=(0, total_time_ns), step=time_per_frame, discrete=True),
-        ])
+        dims = Dimensions(
+            [
+                Dimension("x", unit="m", display=True),
+                Dimension("y", unit="m", display=True),
+                Dimension("z", unit="m", display=True),
+                Dimension(
+                    "time",
+                    unit="ns",
+                    display=False,
+                    range=(0, total_time_ns),
+                    step=time_per_frame,
+                    discrete=True,
+                ),
+            ]
+        )
         scene = compiler.create_scene(dimensions=dims)
 
         rng = np.random.default_rng(42)
@@ -1107,7 +1109,9 @@ def generate_animated_detector_scene(
         # Using extend_to_all to show detector at every time without duplication
         # =====================================================================
         with asection("Creating detector geometry"):
-            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(rng)
+            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(
+                rng
+            )
 
             n_det_verts = len(det_verts)
 
@@ -1127,7 +1131,9 @@ def generate_animated_detector_scene(
                 extend_to_all=["time"],  # Extend to all time values!
             )
             n_det = len(det_verts) // 2
-            aprint(f"Detector geometry: {n_det:,} segments (extends to all time values)")
+            aprint(
+                f"Detector geometry: {n_det:,} segments (extends to all time values)"
+            )
             total_segments += n_det
 
         # =====================================================================
@@ -1156,8 +1162,8 @@ def generate_animated_detector_scene(
 
                 for particle in particles:
                     particle.origin = particle.origin + event_offset
-                    vertices, widths, colors, birth_times = generate_helix_track_with_times(
-                        particle, rng
+                    vertices, widths, colors, birth_times = (
+                        generate_helix_track_with_times(particle, rng)
                     )
 
                     if len(vertices) > 0:
@@ -1166,8 +1172,8 @@ def generate_animated_detector_scene(
                         all_track_colors.append(colors)
                         all_track_birth_times.append(birth_times)
 
-                pos, colors, radii, sharp, birth_times = generate_calorimeter_deposits_with_times(
-                    particles, rng
+                pos, colors, radii, sharp, birth_times = (
+                    generate_calorimeter_deposits_with_times(particles, rng)
                 )
                 if len(pos) > 0:
                     all_deposit_pos.append(pos)
@@ -1186,7 +1192,9 @@ def generate_animated_detector_scene(
         with asection("Writing animated particle tracks"):
             if all_track_verts:
                 n_tracks = len(all_track_verts)
-                aprint(f"  Tracks: {n_tracks}, resampling to {SEGMENTS_PER_TRACK} segments each")
+                aprint(
+                    f"  Tracks: {n_tracks}, resampling to {SEGMENTS_PER_TRACK} segments each"
+                )
 
                 frame_positions = []
                 frame_colors = []
@@ -1200,7 +1208,9 @@ def generate_animated_detector_scene(
                     frame_progress = f / (n_frames - 1)
 
                     for track_idx in range(n_tracks):
-                        track_verts = all_track_verts[track_idx]  # (N*2, 3) segment vertices
+                        track_verts = all_track_verts[
+                            track_idx
+                        ]  # (N*2, 3) segment vertices
                         track_colors = all_track_colors[track_idx]
                         track_widths = all_track_widths[track_idx]
                         track_birth = all_track_birth_times[track_idx]
@@ -1219,7 +1229,9 @@ def generate_animated_detector_scene(
 
                         # Get the visible portion of the track
                         last_visible_idx = np.where(visible_mask)[0][-1]
-                        visible_end = (last_visible_idx + 1) * 2  # Include both vertices of last segment
+                        visible_end = (
+                            last_visible_idx + 1
+                        ) * 2  # Include both vertices of last segment
 
                         # Extract visible track points (convert segments to polyline)
                         seg_starts = track_verts[0:visible_end:2]
@@ -1263,7 +1275,7 @@ def generate_animated_detector_scene(
 
                         for i, target in enumerate(target_arcs):
                             # Find segment containing this arc length
-                            idx = np.searchsorted(arc_length, target, side='right') - 1
+                            idx = np.searchsorted(arc_length, target, side="right") - 1
                             idx = np.clip(idx, 0, n_pts - 2)
 
                             # Interpolate within segment
@@ -1276,9 +1288,17 @@ def generate_animated_detector_scene(
                             else:
                                 t = 0.0
 
-                            resampled_pts[i] = polyline[idx] * (1 - t) + polyline[idx + 1] * t
-                            resampled_colors[i] = color_polyline[idx] * (1 - t) + color_polyline[idx + 1] * t
-                            resampled_widths[i] = width_polyline[idx] * (1 - t) + width_polyline[idx + 1] * t
+                            resampled_pts[i] = (
+                                polyline[idx] * (1 - t) + polyline[idx + 1] * t
+                            )
+                            resampled_colors[i] = (
+                                color_polyline[idx] * (1 - t)
+                                + color_polyline[idx + 1] * t
+                            )
+                            resampled_widths[i] = (
+                                width_polyline[idx] * (1 - t)
+                                + width_polyline[idx + 1] * t
+                            )
 
                         # Convert resampled points to segments
                         n_segs = n_resample - 1
@@ -1316,7 +1336,9 @@ def generate_animated_detector_scene(
 
                     total_verts = len(all_positions)
                     aprint(f"  Total track vertices: {total_verts:,}")
-                    aprint(f"  ~{SEGMENTS_PER_TRACK} segments/track x {n_tracks} tracks x {n_frames} frames")
+                    aprint(
+                        f"  ~{SEGMENTS_PER_TRACK} segments/track x {n_tracks} tracks x {n_frames} frames"
+                    )
                     total_segments += total_verts // 2
 
         # =====================================================================
@@ -1334,7 +1356,9 @@ def generate_animated_detector_scene(
                 aprint(f"  Deposit points: {n_deposits:,}")
 
                 # Convert birth_times to birth_frames
-                deposit_birth_frames = (deposit_birth_times * (n_frames - 1)).astype(np.int32)
+                deposit_birth_frames = (deposit_birth_times * (n_frames - 1)).astype(
+                    np.int32
+                )
 
                 # Build per-frame geometry
                 frame_positions = []
@@ -1382,7 +1406,9 @@ def generate_animated_detector_scene(
                     total_pts = len(all_positions)
                     naive_pts = n_deposits * n_frames
                     efficiency = 100 * (1 - total_pts / naive_pts)
-                    aprint(f"  Total deposit points: {total_pts:,} ({efficiency:.0f}% smaller than naive)")
+                    aprint(
+                        f"  Total deposit points: {total_pts:,} ({efficiency:.0f}% smaller than naive)"
+                    )
                     total_points += total_pts
 
         # =====================================================================
@@ -1408,8 +1434,12 @@ def generate_animated_detector_scene(
 
             n_vertex_points = len(vertex_pos_base)
 
-            vertex_positions_4d = np.zeros((n_frames * n_vertex_points, 4), dtype=np.float32)
-            vertex_colors_4d = np.zeros((n_frames * n_vertex_points, 3), dtype=np.float32)
+            vertex_positions_4d = np.zeros(
+                (n_frames * n_vertex_points, 4), dtype=np.float32
+            )
+            vertex_colors_4d = np.zeros(
+                (n_frames * n_vertex_points, 3), dtype=np.float32
+            )
             vertex_radii_4d = np.zeros(n_frames * n_vertex_points, dtype=np.float32)
 
             for f in range(n_frames):
@@ -1426,7 +1456,9 @@ def generate_animated_detector_scene(
                 vertex_colors_4d[start:end] = vertex_colors_base * brightness
 
                 # Size also decreases
-                vertex_radii_4d[start:end] = vertex_radii_base * max(0.3, 1.0 - 0.5 * frame_progress)
+                vertex_radii_4d[start:end] = vertex_radii_base * max(
+                    0.3, 1.0 - 0.5 * frame_progress
+                )
 
             scene.add_points(
                 "collision_vertices",

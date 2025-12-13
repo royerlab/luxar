@@ -1,9 +1,12 @@
 # Implementation Document: Dimension Initialization Fix
 
 **Date**: 2025-12-11
-**Issue**: Slider position mismatch on viewer startup
-**Status**: Ready for implementation
-**Priority**: High (UX bug affecting all nD datasets)
+**Status**: ✅ IMPLEMENTED (Commits: d619d82, 3c548d5, 6e3453d)
+**Issue**: Slider position mismatch on viewer startup (FIXED)
+**Priority**: High (UX bug affecting all nD datasets - RESOLVED)
+
+> **Note**: This document is kept for its architectural insights about dimension management
+> and listener patterns. The bug has been fixed and E2E tests added.
 
 ---
 
@@ -423,7 +426,7 @@ test('time dimension initializes to first frame', async ({ page }) => {
 
 ### Phase 3: Documentation (Day 2)
 1. ✅ Update `packages/luxar-viewer/src/scene/README.md`
-2. ✅ Update `docs/UI_DESIGN.md` with initialization policy
+2. ✅ Document initialization policy in ui/SPECIFICATIONS.md
 3. ✅ Add entry to `CHANGELOG.md`:
    ```markdown
    ### Fixed

@@ -89,7 +89,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Rescales amplitudes to original intensity range               │ │
 │ │ • Compiles optimization statistics                              │ │
 │ │ • Stores movie frames for visualization                         │ │
-│ │ • Returns (params, amps, stats) tuple                           │ │
+│ │ • Returns GaussianSplatResult dataclass                         │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
@@ -194,19 +194,23 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 ### `results.py` - Result Finalization
 **Purpose:** Processes and packages optimization results.
 
-**Key Function:** `finalize_results(optimization_results, config, preprocessed_data) -> (params, amps, stats)`
+**Key Function:** `finalize_results(optimization_results, config, preprocessed_data) -> GaussianSplatResult`
 
 **Operations:**
 1. Extracts parameters from best state (not final state)
-2. Packs parameters: `params = [centers | packed_Cholesky | sharpness]`
-   - Shape: `(N, d + d*(d+1)//2 + 1)` where last column is per-splat sharpness
-3. Rescales amplitudes to original intensity range
-4. Compiles comprehensive statistics (including sharpness statistics)
-5. Stores movie frames for visualization
+2. Converts tensors to numpy arrays with separate fields:
+   - `centers`: Shape `(N, d)` - splat center positions
+   - `cholesky_factors`: Shape `(N, d*(d+1)//2)` - packed lower-triangular Cholesky factors
+   - `sharpnesses`: Shape `(N,)` - per-splat sharpness values
+   - `amplitudes`: Shape `(N,)` - rescaled to original intensity range
+3. Compiles comprehensive statistics (including sharpness statistics)
+4. Stores movie frames for visualization
+5. Returns `GaussianSplatResult` dataclass containing all results
 
 **Critical Details:**
+- Returns a structured dataclass (not a tuple) with named fields for clarity
 - Amplitudes are rescaled using the original intensity range, allowing direct comparison with input data
-- Sharpness values (last column of params) preserve per-splat learned sharpness variation
+- All arrays are separate fields, not concatenated (easier to work with)
 
 ### `visualization.py` - Display Helpers
 **Purpose:** Optional visualization of results.
@@ -441,4 +445,4 @@ The refactoring preserved all functionality while improving:
 
 **Documentation:**
 - `../README.md` - Main package documentation
-- `../docs/dynamic_gsplats_management.md` - Dynamic operations details
+- `SPECIFICATIONS.md` - Complete technical specification

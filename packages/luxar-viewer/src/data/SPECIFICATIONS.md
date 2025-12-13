@@ -1331,9 +1331,7 @@ Case E: Both OUT, same side         → Don't render (segment misses slice)
 
 **Cap Factor Adjustment**: Clipped endpoints should use `capFactor = 1.0` (not 0.5) in the shader, since the "real" endpoint is outside the visible slice.
 
-**Full Algorithm**: See `docs/LINES_VIEWER_IMPLEMENTATION_PLAN.md` Section 4.4 for complete implementation.
-
-**Rendering Integration**: See `../rendering/SPECIFICATIONS.md` Section 7.4 for how `aStartClipped`/`aEndClipped` attributes affect the vertex shader's cap factor calculation.
+**Rendering Integration**: See `../rendering/SPECIFICATIONS.md` Section 7.4 for how `aStartClipped`/`aEndClipped` attributes affect the vertex shader's cap factor calculation and the complete clipping algorithm implementation.
 
 ### 7.11 Optimized Encoding Handling for Lines
 

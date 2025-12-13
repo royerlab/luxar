@@ -437,7 +437,10 @@ def generate_helix_track(
             break
 
     if len(points) < 2:
-        points = [particle.origin.tolist(), (particle.origin + [0.1, 0.1, 0.1]).tolist()]
+        points = [
+            particle.origin.tolist(),
+            (particle.origin + [0.1, 0.1, 0.1]).tolist(),
+        ]
 
     points = np.array(points, dtype=np.float32)
 
@@ -457,7 +460,7 @@ def generate_helix_track(
     # This ensures widths match at shared vertices (joints)
     widths = np.zeros(n_segments * 2, dtype=np.float32)
     widths[0::2] = vertex_widths[:-1]  # start of each segment
-    widths[1::2] = vertex_widths[1:]   # end of each segment
+    widths[1::2] = vertex_widths[1:]  # end of each segment
 
     # Colors with smooth fade along track
     # Use per-vertex colors for continuity at joints
@@ -472,7 +475,7 @@ def generate_helix_track(
     # Expand to segment format
     colors = np.zeros((n_segments * 2, 3), dtype=np.float32)
     colors[0::2] = vertex_colors[:-1]  # start of each segment
-    colors[1::2] = vertex_colors[1:]   # end of each segment
+    colors[1::2] = vertex_colors[1:]  # end of each segment
 
     return vertices, widths, colors
 
@@ -831,7 +834,9 @@ def generate_detector_geometry(
             x = radius * np.cos(angle)
             y = radius * np.sin(angle)
 
-            vertices.extend([[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]])
+            vertices.extend(
+                [[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]]
+            )
             widths.extend([width * 0.5, width * 0.5])
             colors.extend([color, color])
             sharpness_vals.extend([2.0, 2.0])
@@ -1076,7 +1081,9 @@ def generate_detector_scene(
 
         # Generate detector geometry
         with asection("Creating detector geometry"):
-            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(rng)
+            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(
+                rng
+            )
             scene.add_lines(
                 "detector_geometry",
                 vertices=det_verts,
@@ -1122,7 +1129,9 @@ def generate_detector_scene(
                         all_track_colors.append(colors)
 
                 # Generate calorimeter deposits
-                pos, colors, radii, sharp = generate_calorimeter_deposits(particles, rng)
+                pos, colors, radii, sharp = generate_calorimeter_deposits(
+                    particles, rng
+                )
                 if len(pos) > 0:
                     all_deposit_pos.append(pos)
                     all_deposit_colors.append(colors)
@@ -1248,7 +1257,9 @@ def main() -> None:
 
         aprint("")
         aprint("=" * 70)
-        aprint(f"SCENE COMPLETE: {total_segments:,} line segments, {total_points:,} points")
+        aprint(
+            f"SCENE COMPLETE: {total_segments:,} line segments, {total_points:,} points"
+        )
         aprint("=" * 70)
         aprint("")
         aprint("Particle colors:")
@@ -1280,7 +1291,9 @@ def main() -> None:
             aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\nError: {e}")
-            aprint("Make sure the viewer is built: cd packages/luxar-viewer && pnpm build")
+            aprint(
+                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+            )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\nError: 'luxar' command not found")

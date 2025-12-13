@@ -6,6 +6,49 @@ The `core` module contains the fundamental data structures and classes that form
 
 The core module implements Luxar's hierarchical scene graph architecture, enabling organization of large-scale visualization data with transforms, metadata, and nD dimensional support.
 
+## Getting Started
+
+### Quick Example - Create Your First Scene
+
+```python
+import numpy as np
+from luxar import LuxarZarrCompiler, Dimensions, Dimension
+
+# Create sample data
+positions = np.random.randn(1000, 3).astype(np.float32)
+colors = np.random.rand(1000, 3).astype(np.float32)
+
+# Create scene
+with LuxarZarrCompiler('my_scene.zarr') as compiler:
+    # Define 3D dimensions
+    dims = Dimensions([
+        Dimension("x", unit="um", display=True),
+        Dimension("y", unit="um", display=True),
+        Dimension("z", unit="um", display=True),
+    ])
+
+    compiler.create_scene(dimensions=dims)
+
+    # Add points
+    compiler.write_points(
+        "MyPoints",
+        positions=positions,
+        colors=colors,
+        radii=1.0,  # Scalar broadcasts to all points
+        opacity=0.8,
+        blending_mode="additive"
+    )
+
+# View with: luxar serve my_scene.zarr --viewer
+```
+
+**Key Concepts:**
+- **Scene**: Root container defining dimensions
+- **Nodes**: Hierarchical organization (groups can contain groups/data)
+- **DataNodes**: Points, Lines, GSplats - the actual renderable data
+- **Transforms**: 4x4 matrices for positioning/rotation/scaling
+- **Dimensions**: Support nD data with keyboard navigation
+
 ## Key Components
 
 ### 1. Scene (`scene.py`)
@@ -86,7 +129,7 @@ group.set_opacity(0.5).set_gamma(1.0)
 **Key Properties:**
 - `transform` - 4x4 transformation matrix
 - `opacity` - Rendering opacity (0.0-1.0)
-- `gamma` - Gamma correction (0.2-2.0)
+- `gamma` - Gamma correction (0.1-10.0)
 - `blending_mode` - Blending mode ('normal', 'additive')
 - `children` - List of child nodes
 - `parent` - Parent node reference
@@ -415,11 +458,25 @@ combined = luxar.compose(t1, t2, t3)
 node.transform = combined
 ```
 
+**Visual Composition Example:**
+```
+Point → [Translate] → [Rotate] → [Scale] → Final Position
+        ↑             ↑           ↑
+     compose(Translate, Rotate, Scale)
+        ↑             ↑           ↑
+      First        Second       Last
+     Applied      Applied      Applied
+
+Example: compose(translate(5,0,0), rotate_z(90°), scale(2,2,2))
+Point (1,0,0) → Translate → (6,0,0) → Rotate → (0,6,0) → Scale → (0,12,0)
+```
+
 **Important Notes:**
 - All matrices are 4x4 homogeneous transforms (float32)
 - Matrices are automatically transposed for THREE.js when stored
 - Use `to_list()` and `from_list()` for serialization (handles transpose)
-- Composition order: `compose(A, B, C)` applies A first, then B, then C
+- Composition order: `compose(A, B, C)` applies A first, then B, then C (LEFT-to-RIGHT)
+- In matrix math: `result = result @ A @ B @ C` (right-multiplication)
 
 ## Architecture
 

@@ -1,7 +1,7 @@
 # luxar.cli - Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Version**: 1.1.0
+**Last Updated**: 2025-12-11
 
 ## Purpose
 
@@ -116,6 +116,60 @@ The `cli` package provides command-line interface for building, serving, and ins
 └── group2 (group)
     └── points2 (points: 500 points)
 ```
+
+---
+
+## Network Simulation
+
+Luxar CLI provides comprehensive network simulation capabilities for testing viewer performance under various network conditions (3G, 4G, 5G, broadband, satellite, etc.).
+
+**Available Commands**:
+- `luxar profiles` - List all 9 network simulation profiles with detailed parameters
+- Network parameters available on: `serve`, `viewer`, `demo` commands
+
+**CLI Options** (applicable to serve/viewer/demo):
+- `--profile PROFILE` - Apply preset network profile (e.g., '3g', 'broadband', 'satellite')
+- `--bandwidth, -b BANDWIDTH` - Limit bandwidth (e.g., '1mbps', '500kbps', '10mbps')
+- `--latency, -l LATENCY` - Add network latency (e.g., '100ms', '500ms')
+- `--jitter, -j JITTER` - Add latency jitter (e.g., '10%', '0.1')
+- `--packet-loss LOSS` - Simulate packet loss (e.g., '1%', '0.01')
+
+**Example Usage**:
+```bash
+# Test with 3G mobile network conditions
+luxar serve data.zarr --profile 3g --viewer --open
+
+# Custom worst-case scenario
+luxar demo --bandwidth 100kbps --latency 500ms --jitter 50% --packet-loss 5%
+```
+
+**Implementation**:
+- Middleware: `luxar/cli/network_simulation.py` (NetworkSimulationMiddleware)
+- Integration: Automatically applied to serve/viewer/demo commands when network options specified
+
+**Design Decision - Pure ASGI Middleware**:
+
+The implementation uses a pure ASGI wrapper approach (wrapping the complete FastAPI app before passing to uvicorn) rather than alternatives:
+
+- ✅ **Chosen**: Pure ASGI middleware wrapper
+  - Full control over ASGI message flow (can intercept receive/send)
+  - Enables true packet loss simulation (can drop requests entirely)
+  - Works with streaming responses
+  - Clean separation from FastAPI app configuration
+  - Easy to conditionally enable/disable
+
+- ❌ **Rejected**: Starlette BaseHTTPMiddleware
+  - Limited control (request-response pattern only)
+  - Cannot implement true packet loss (can't drop requests cleanly)
+  - Less flexible for low-level simulation
+
+- ❌ **Rejected**: FastAPI @middleware decorator
+  - Request-response pattern, not suitable for packet loss
+  - Less control over streaming behavior
+
+**Integration Point**: Middleware wraps the complete app after all routes/middleware configured, applied only to data server (not viewer HTML server).
+
+**Detailed Documentation**: See `docs/NETWORK_SIMULATION_SPEC.md` for complete specification including algorithms, profiles, and testing guidelines.
 
 ---
 
@@ -260,6 +314,15 @@ If all fail: return None
 ---
 
 ## Changelog
+
+### v1.1.0 (2025-12-11)
+- Added network simulation documentation (Section "Network Simulation")
+- Documented `luxar profiles` command
+- Documented network simulation options for serve/viewer/demo commands (--profile, --bandwidth, --latency, --jitter, --packet-loss)
+- Cross-referenced NETWORK_SIMULATION_SPEC.md for detailed specification
+- Note: Network simulation feature was implemented 2025-12-06 (commit 87c078e)
+
+
 
 - **v1.0.0** (2025-11-27): Initial versioned specification
   - Documented demo, serve, viewer, info commands

@@ -21,11 +21,60 @@ The encoding system provides:
 4. **Multiple Encoding Strategies**: Broadcasting, array references, LUT encoding, dtype encoding
 5. **HDR Support**: Preserve high dynamic range data where needed
 
+### Encoding Pipeline Visual
+
+```
+Input Array (numpy float32)
+    ↓
+┌─────────────────────────────────────────────┐
+│ Semantic Type Detection                     │ ← What does data represent?
+│ • COORDINATE → spatial position data        │
+│ • COLOR → RGB/HDR color values              │
+│ • POSITIVE_SCALAR → radii, amplitudes       │
+│ • BOUNDED_SCALAR → sharpness, opacity       │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ Encoding Mode Selection                     │ ← Quality vs compression
+│ • LOSSLESS: No quantization                 │
+│ • BALANCED: 16-bit quantization             │
+│ • AGGRESSIVE: 8-bit quantization            │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ Strategy Selection (Priority Order)         │
+│ 1. BROADCAST (scalar/small arrays)          │ ← Store once, apply to all
+│ 2. ARRAY_REF (duplicates)                   │ ← Deduplicate shared data
+│ 3. LUT (many-to-one mapping)                │ ← Palette for repeated values
+│ 4. DTYPE (quantize + compress)              │ ← Standard quantization
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ Encoding Execution                          │
+│ • Quantize: float32 → uint16/uint8          │
+│ • Store metadata: {scale, offset, min, max} │
+│ • Compress: blosc/zstd level 3              │
+└─────────────────────────────────────────────┘
+    ↓
+Zarr Array (compressed, deduplicated, optimized)
+    │
+    ├─ .zarray (dtype, chunks, compressor)
+    ├─ .zattrs (encoding metadata)
+    └─ chunks/ (compressed binary data)
+
+Decoding reverses: decompress → dequantize → reconstruct float32
+```
+
 ## Key Components
 
 ### 1. ArrayEncoder (`encoder.py`)
 
 **Main entry point for encoding arrays.** Writes directly to zarr groups and follows a strict priority order.
+
+**See Also:**
+- `../io/SPECIFICATIONS.md` - How encoding integrates with I/O layer
+- `../core/SPECIFICATIONS.md` - Points, Lines, GSplats data structures that use encoding
+- `SPECIFICATIONS.md` (this package) - Detailed encoding algorithms
 
 **Purpose:**
 Unified encoding system with automatic deduplication and intelligent encoding selection.

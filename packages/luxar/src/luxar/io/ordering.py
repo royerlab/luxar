@@ -336,8 +336,12 @@ def compute_chunk_bounds_points(
                     chunk_bounds[chunk_idx, d, 1] = chunk_positions[:, d].max() + 0.5
                 else:
                     # Spatial: include safety margin
-                    chunk_bounds[chunk_idx, d, 0] = chunk_positions[:, d].min() - safety_margin[d]
-                    chunk_bounds[chunk_idx, d, 1] = chunk_positions[:, d].max() + safety_margin[d]
+                    chunk_bounds[chunk_idx, d, 0] = (
+                        chunk_positions[:, d].min() - safety_margin[d]
+                    )
+                    chunk_bounds[chunk_idx, d, 1] = (
+                        chunk_positions[:, d].max() + safety_margin[d]
+                    )
 
     return chunk_bounds
 
@@ -579,18 +583,12 @@ def sort_segments_compound(
             high, low = spatial_codes
             sort_indices = np.lexsort(
                 [low, high]
-                + [
-                    slice_values[:, i]
-                    for i in range(len(slice_dims_2d) - 1, -1, -1)
-                ]
+                + [slice_values[:, i] for i in range(len(slice_dims_2d) - 1, -1, -1)]
             )
         else:
             sort_indices = np.lexsort(
                 [spatial_codes]
-                + [
-                    slice_values[:, i]
-                    for i in range(len(slice_dims_2d) - 1, -1, -1)
-                ]
+                + [slice_values[:, i] for i in range(len(slice_dims_2d) - 1, -1, -1)]
             )
     else:
         # Pure spatial ordering (no discrete dimensions)
