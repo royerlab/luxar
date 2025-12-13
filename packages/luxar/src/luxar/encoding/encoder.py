@@ -165,7 +165,9 @@ class ArrayEncoder:
         # Priority 1: Broadcasting (skip for COORDINATE - positions must not be broadcasted)
         if self._is_uniform(data) and semantic_type != SemanticType.COORDINATE:
             # Use n_elements if provided, otherwise infer from data shape
-            broadcast_n_elements = n_elements if n_elements is not None else data.shape[0]
+            broadcast_n_elements = (
+                n_elements if n_elements is not None else data.shape[0]
+            )
             self._encode_broadcasted(
                 zarr_group, name, data, broadcast_n_elements, chunks, compressor
             )

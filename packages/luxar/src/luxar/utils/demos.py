@@ -301,7 +301,10 @@ def create_time_series_demo(
 
         # Write as single 4D dataset
         compiler.write_points(
-            "time_series", positions_array, colors=colors_array, radii=0.1  # Scalar passthrough
+            "time_series",
+            positions_array,
+            colors=colors_array,
+            radii=0.1,  # Scalar passthrough
         )
 
     aprint(f"✓ Time series demo created at {store_path}")

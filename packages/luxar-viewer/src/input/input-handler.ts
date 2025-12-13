@@ -77,10 +77,34 @@ export class InputHandler {
   private contextManager: InputContextManager;
 
   /**
-   * Constructs the input handler with required system dependencies.
+   * Create a new input handler for nD visualization interaction.
    *
-   * @param sceneManager - Scene management system
-   * @param animationController - Animation and rendering coordination
+   * Sets up the complete input handling infrastructure including context
+   * management and debug console. Does not register event listeners until
+   * init() is called.
+   *
+   * The input handler coordinates keyboard, mouse, and touch input across
+   * the entire application, managing conflicts between different UI contexts
+   * (navigation, typing, fly controls, etc.).
+   *
+   * @param sceneManager - Scene management system providing access to THREE.js
+   *                       scene, camera, controls, and renderer
+   * @param animationController - Animation loop coordinator for triggering
+   *                              re-renders after input events
+   *
+   * @example
+   * ```typescript
+   * const sceneManager = new SceneManager(canvas);
+   * const animController = new AnimationController(sceneManager);
+   * const inputHandler = new InputHandler(sceneManager, animController);
+   *
+   * // Initialize event listeners
+   * inputHandler.init();
+   *
+   * // Later, when scene loads, initialize dimension navigation
+   * await sceneManager.loadScene(url);
+   * inputHandler.initDimensionSliders();
+   * ```
    */
   constructor(
     private sceneManager: SceneManager,
@@ -94,20 +118,53 @@ export class InputHandler {
   }
 
   /**
-   * Associates rendering controls for advanced UI interactions.
+   * Associate rendering controls for post-processing and visual effects.
    *
-   * @param controls - Rendering controls interface
+   * Enables keyboard shortcuts (R, C) to toggle rendering controls panel
+   * and cinematic mode. Should be called after rendering controls are
+   * created. Optional - rendering controls integration is not required
+   * for basic functionality.
+   *
+   * @param controls - Rendering controls UI component providing access to
+   *                   bloom, HDR, noise, and other post-processing effects
+   *
+   * @example
+   * ```typescript
+   * const renderingControls = new RenderingControls(sceneManager);
+   * inputHandler.setRenderingControls(renderingControls);
+   *
+   * // Now 'R' key toggles rendering controls panel
+   * // Now 'C' key toggles cinematic mode
+   * ```
    */
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
   }
 
   /**
-   * Initializes all event listeners for user interaction.
+   * Initialize all event listeners for user interaction.
    *
-   * This sets up the complete input handling system including keyboard,
-   * mouse, touch, and window events. Should be called once during
-   * application initialization.
+   * Sets up the complete input handling system including:
+   * - Window events (resize, wheel, keyboard, fullscreen)
+   * - Control events (orbit/arcball/fly control integration)
+   * - User interaction events (mousedown, touchstart)
+   * - Context-specific key bindings
+   *
+   * Must be called once during application initialization, after scene manager
+   * is created but before scene loading. Event listeners are automatically
+   * cleaned up when dispose() is called.
+   *
+   * @example
+   * ```typescript
+   * const app = new LuxarApp();
+   * const inputHandler = new InputHandler(sceneManager, animController);
+   *
+   * // Initialize input system
+   * inputHandler.init();
+   *
+   * // Input handlers are now active
+   * // User can press H for help, P for performance, etc.
+   * ```
    */
   init(): void {
     this.setupWindowEvents();
@@ -116,7 +173,23 @@ export class InputHandler {
   }
 
   /**
-   * Clear dimension UI and reset dimension manager
+   * Clear dimension UI and reset dimension manager to initial state.
+   *
+   * Disposes of dimension sliders and resets the scene dimension manager.
+   * Used when loading a new scene to ensure clean state. The dimension
+   * manager is reset to allow it to be reinitialized with new scene metadata.
+   *
+   * This is called automatically before loading a new scene. You typically
+   * don't need to call this manually unless implementing custom scene
+   * switching logic.
+   *
+   * @example
+   * ```typescript
+   * // Before loading new scene
+   * inputHandler.clearDimensionUI();
+   * await sceneManager.loadScene(newUrl);
+   * inputHandler.initDimensionSliders();
+   * ```
    */
   clearDimensionUI(): void {
     // Dispose of existing dimension sliders
@@ -133,17 +206,46 @@ export class InputHandler {
   }
 
   /**
-   * Initializes dimension navigation UI after scene loading completes.
+   * Initialize dimension navigation UI after scene loading completes.
    *
-   * This method is called after the scene is fully loaded and dimension
+   * This method must be called after the scene is fully loaded and dimension
    * metadata is available. It sets up:
-   * - Scene dimension manager integration
-   * - Interactive dimension sliders
-   * - Reactive updates for all nD objects
-   * - Keyboard navigation targets
+   * - Scene dimension manager integration with scene metadata
+   * - Interactive dimension sliders UI for non-displayed dimensions
+   * - Reactive update system for all nD objects (points, lines, splats)
+   * - Keyboard navigation targets ([/] keys and number keys 1-9)
    *
    * The initialization process ensures all nD objects share the same
    * dimensional coordinate system and respond consistently to navigation.
+   * If no nD objects are found in the scene, initialization is skipped
+   * gracefully (3D-only scene).
+   *
+   * @example
+   * ```typescript
+   * // After scene loads
+   * await sceneManager.loadScene(url);
+   *
+   * // Initialize dimension navigation
+   * inputHandler.initDimensionSliders();
+   *
+   * // Now users can:
+   * // - Press 1-9 to select dimension
+   * // - Press [ ] to navigate selected dimension
+   * // - Use sliders to navigate visually
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Check if dimension sliders were created
+   * inputHandler.initDimensionSliders();
+   *
+   * const dims = sceneDimsManager.getDims();
+   * if (!dims) {
+   *   console.log('No nD objects in scene (3D only)');
+   * } else {
+   *   console.log(`Navigating ${dims.ndim}D dataset`);
+   * }
+   * ```
    */
   initDimensionSliders(): void {
     // Initialize scene dims manager
@@ -197,8 +299,29 @@ export class InputHandler {
   /**
    * Update all nD nodes (points, lines, splats) with current dimension values.
    *
-   * This function is called when dimension slice positions change and updates
-   * ALL nD-aware data nodes in the scene, not just points.
+   * Called automatically when dimension slice positions change. Updates ALL
+   * nD-aware data nodes in the scene by:
+   * - Querying spatial indices for visible chunks in current slice
+   * - Loading necessary data chunks from cache/HTTP
+   * - Updating point positions, colors, and other attributes
+   * - Triggering re-render to display new data
+   *
+   * This is the core of nD navigation - it translates dimension changes into
+   * data updates. The update is asynchronous because it may need to fetch
+   * data over the network.
+   *
+   * @private
+   * @returns Promise that resolves when all nD nodes have been updated and
+   *          data loading is complete (or in progress)
+   *
+   * @example
+   * ```typescript
+   * // Called automatically by dimension change listener:
+   * sceneDimsManager.addListener(() => {
+   *   this.updateAllNDNodes();  // Update data for new slice
+   *   this.animationController.startAnimation();  // Re-render
+   * });
+   * ```
    */
   private async updateAllNDNodes(): Promise<void> {
     const dims = sceneDimsManager.getDims();
@@ -215,7 +338,18 @@ export class InputHandler {
   }
 
   /**
-   * Setup window-level event listeners
+   * Set up window-level event listeners for global input handling.
+   *
+   * Registers listeners for:
+   * - Window resize: Updates canvas size and camera aspect ratio
+   * - Mouse wheel: Zoom and FOV control (Shift+wheel for FOV)
+   * - Keyboard: All keyboard shortcuts and navigation
+   * - Fullscreen changes: Adjusts canvas styling for fullscreen mode
+   *
+   * All listeners are bound to class instance and stored for cleanup.
+   * Called once during init().
+   *
+   * @private
    */
   private setupWindowEvents(): void {
     const onResize = this.onWindowResize.bind(this);
@@ -244,7 +378,13 @@ export class InputHandler {
   }
 
   /**
-   * Setup control-specific event listeners
+   * Set up event listeners for THREE.js orbit/arcball controls.
+   *
+   * Registers listeners on the controls object to trigger animation
+   * when user interacts with camera controls (orbit, pan, zoom).
+   * Ensures smooth rendering during camera manipulation.
+   *
+   * @private
    */
   private setupControlEvents(): void {
     const startAnimation = this.animationController.startAnimation;
@@ -259,7 +399,13 @@ export class InputHandler {
   }
 
   /**
-   * Setup user interaction event listeners
+   * Set up user interaction event listeners for canvas.
+   *
+   * Registers listeners for mousedown and touchstart on the canvas
+   * to trigger animation when user begins interaction. Provides
+   * visual feedback that system is responding to input.
+   *
+   * @private
    */
   private setupUserInteractionEvents(): void {
     const startAnimation = this.animationController.startAnimation;
@@ -275,7 +421,13 @@ export class InputHandler {
   }
 
   /**
-   * Handle window resize events
+   * Handle window resize events.
+   *
+   * Updates canvas size, camera aspect ratio, and renderer dimensions
+   * when browser window is resized. Triggers re-render to display
+   * resized view without distortion.
+   *
+   * @private
    */
   private onWindowResize(): void {
     this.sceneManager.updateSize();
@@ -284,7 +436,16 @@ export class InputHandler {
   }
 
   /**
-   * Handle fullscreen change events
+   * Handle fullscreen mode enter/exit events.
+   *
+   * Adjusts canvas styling when entering or exiting fullscreen to ensure
+   * proper display. Adds multiple size update passes to handle browser
+   * transition timing issues. Sets background color for aesthetic fullscreen
+   * experience.
+   *
+   * Fullscreen is triggered by Space key (when not focused on UI element).
+   *
+   * @private
    */
   private onFullscreenChange(): void {
     const canvas = this.sceneManager.renderer.domElement;
@@ -326,7 +487,16 @@ export class InputHandler {
   }
 
   /**
-   * Handle mouse wheel events (zoom and FOV control)
+   * Handle mouse wheel events for zoom and FOV control.
+   *
+   * Normal wheel: Zoom in/out via orbit controls
+   * Shift+wheel: Adjust field of view (wide angle vs telephoto)
+   *
+   * FOV changes update rendering controls display if active, switching
+   * preset to "Custom" since FOV was manually adjusted.
+   *
+   * @param event - Wheel event with deltaY for scroll direction/amount
+   * @private
    */
   private onWheel(event: WheelEvent): void {
     this.animationController.startAnimation();
@@ -345,7 +515,13 @@ export class InputHandler {
   }
 
   /**
-   * Register all key bindings with the context manager
+   * Register context-specific key bindings with context manager.
+   *
+   * Currently a no-op placeholder. Fly control bindings are handled
+   * directly when fly mode is active. This method exists for future
+   * context-based key binding registration if needed.
+   *
+   * @private
    */
   private registerKeyBindings(): void {
     // No need to register fly control bindings here

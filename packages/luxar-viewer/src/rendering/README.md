@@ -21,12 +21,79 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 
 ```
 rendering/
-├── postprocessing-manager.ts  # Post-processing pipeline using pmndrs
+├── post-processing-manager.ts # Post-processing pipeline using pmndrs
 ├── point-material.ts          # Custom points shaders
 ├── line-material.ts           # Instanced line rendering with semicircle kernel
 ├── material-manager.ts        # Material creation and caching (points + lines)
-└── README.md                 # This documentation
+├── robust-vignette-effect.ts  # Custom vignette for additive blending
+├── detector-noise-effect.ts   # Physics-based detector noise
+├── postprocessing-types.ts    # Type utilities and depth mapper
+└── README.md                  # This documentation
 ```
+
+---
+
+## Getting Started
+
+### Step 1: Initialize Post-Processing
+
+```typescript
+import { PostProcessingManager } from './rendering/post-processing-manager';
+
+const postProcessing = new PostProcessingManager(renderer, scene, camera, {
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
+
+// In your render loop
+function animate() {
+  requestAnimationFrame(animate);
+  postProcessing.render(); // Renders scene with all effects
+}
+```
+
+### Step 2: Enable Bloom (HDR Glow)
+
+```typescript
+postProcessing.updateBloomSettings(
+  0.3,   // strength: how intense the glow (0-1)
+  0.85,  // radius: how far it spreads (0-1)
+  0.01   // threshold: HDR values above this glow
+);
+```
+
+### Step 3: Choose Tone Mapping
+
+```typescript
+// AgX: Neutral, film-like (recommended)
+postProcessing.setToneMapping('AgX');
+
+// Or try others:
+// 'ACES' - Cinematic with warm tones
+// 'Reinhard' - Classic, simple
+// 'Linear' - No tone mapping
+```
+
+### Step 4: Add Anti-Aliasing
+
+```typescript
+// SMAA: Best quality (recommended for static scenes)
+postProcessing.setSMAAEnabled(true);
+
+// OR FXAA: Faster (better for real-time interaction)
+postProcessing.setFXAAEnabled(true);
+```
+
+### Step 5: Use Quality Presets (Optional)
+
+```typescript
+// Quick setup for different performance targets
+postProcessing.setQualityPreset('high');   // All effects, high settings
+postProcessing.setQualityPreset('medium'); // Balanced
+postProcessing.setQualityPreset('low');    // Performance priority
+```
+
+**You're done!** Your scene now has professional HDR rendering with bloom, tone mapping, and anti-aliasing.
 
 ---
 
@@ -254,6 +321,7 @@ Screen edge darkening:
 - Adjustable darkness
 - Configurable offset
 - Minimal performance cost
+- **Custom Implementation**: Uses `RobustVignetteEffect` to prevent alpha overflow artifacts with additive blending and Float16 HDR buffers
 
 #### Chromatic Aberration
 
@@ -353,7 +421,7 @@ HDR Render Target (HalfFloatType)
     ↓
 Dynamic Pass Assignment Algorithm:
 
-1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → Noise → DetectorNoise → ToneMapping → AA
+1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → DetectorNoise → ToneMapping → AA
 2. Add effects sequentially to Pass A until incompatibility detected
 3. When incompatibility found, switch to Pass B for that effect and ALL remaining effects
 4. Pass A (if exists) → Pass B (if exists) → Final Output
@@ -513,53 +581,78 @@ function animate() {
 
 ---
 
-## Migration from Custom System
-
-The rendering system has been migrated from a custom post-processing implementation to the pmndrs/postprocessing library. Key benefits:
-
-1. **Better Performance**: Single-pass effect composition
-2. **More Effects**: Access to professional-grade effects
-3. **Active Maintenance**: Regular updates and bug fixes
-4. **Community Support**: Large user base and documentation
-5. **Future-Proof**: Industry-standard implementation
-
-### Breaking Changes
-
-- MSAA no longer supported (use SMAA instead)
-- SSAA temporarily unavailable (coming soon)
-- Some method signatures changed
-- Effect parameters may differ slightly
-
----
-
 ## Troubleshooting
 
 ### Common Issues
 
 **Problem: Black screen after enabling effects**
 
-- Check console for WebGL errors
-- Verify HDR buffer support
-- Try disabling effects one by one
+- Check browser console for WebGL errors
+- Verify HDR buffer support: `renderer.capabilities.isWebGL2`
+- Try disabling effects one by one to isolate the issue
+- Check if depth buffer is available (required for DOF, SSAO)
+- Verify tone mapping is enabled (required for HDR pipeline)
 
 **Problem: Poor performance with all effects**
 
-- Reduce effect quality settings
-- Disable SSAO first (highest cost)
-- Use FXAA instead of SMAA
-- Reduce bloom mipmap levels
+- Use quality presets: `setQualityPreset('medium')` or `'low'`
+- Disable SSAO first (highest cost: ~2-3ms)
+- Use FXAA instead of SMAA (FXAA < 0.5ms, SMAA ~1-2ms)
+- Reduce bloom mipmap levels: `setBloomLevels(3)` instead of default 8
+- Disable detector noise if not needed
+- Lower SSAA multiplier or disable: `setSSAAEnabled(false)`
+- Monitor with: `getPerformanceMetrics()` to identify bottlenecks
 
 **Problem: Colors look wrong**
 
-- Verify tone mapping settings
-- Check HDR multiplier value
-- Ensure proper color space (sRGB)
+- Verify tone mapping operator: try 'AgX' or 'ACES Filmic' instead of 'Reinhard'
+- Check HDR multiplier value (typical range: 8-32)
+- Ensure proper color space: `renderer.outputColorSpace = THREE.SRGBColorSpace`
+- Verify bloom threshold isn't too low (washing out colors)
+- Check gamma correction in materials (should be 1.0 for linear workflow)
 
 **Problem: Effects not visible**
 
-- Check effect enabled state
-- Verify threshold values
-- Ensure proper effect order
+- Check effect enabled state in debug console
+- Verify threshold values (bloom threshold too high, AO intensity too low)
+- Ensure proper effect order (tone mapping must be last)
+- Check if effect is in compatible pass (see incompatibility warnings)
+- Verify camera near/far planes for depth-dependent effects (DOF, SSAO)
+
+**Problem: Thin lines have aliasing/gaps**
+
+- Line material automatically handles this with 1.5px minimum width
+- Ensure anti-aliasing is enabled (SMAA or FXAA)
+- Check that line widths are properly set (not zero or NaN)
+- For very thin lines, increase width slightly or use higher SSAA
+
+**Problem: Bright artifacts in dark areas (additive blending)**
+
+- This is caused by alpha overflow in Float16 buffers
+- Solution: RobustVignetteEffect is automatically used (prevents this issue)
+- If you see this with custom effects, ensure alpha is clamped to 1.0
+
+**Problem: nD slicing shows no points**
+
+- Points with zero effective radius are filtered in fragment shader
+- Navigate to a different slice where points intersect the hyperplane
+- Check dimension ranges and current slider positions
+- Verify the dataset has points in the current nD region
+
+**Problem: Material cache thrashing (many materials created)**
+
+- Materials use integer bucketing to group similar values
+- Small variations (e.g., opacity 0.999 vs 1.0) create separate materials
+- Use consistent values: prefer 1.0, 0.5, 0.25 instead of arbitrary floats
+- Check cache statistics: `materialManager.getCacheStats()`
+
+**Problem: Out of memory with large datasets**
+
+- Enable chunked loading in data loader
+- Reduce bloom mipmap levels
+- Disable SSAO (requires additional buffers)
+- Use lower SSAA multiplier
+- Consider using lower encoding mode (AGGRESSIVE)
 
 ---
 
@@ -582,6 +675,12 @@ The rendering system has been migrated from a custom post-processing implementat
 | `setChromaticAberration(enabled, strength)`               | Configure chromatic aberration         |
 | `setLensDistortionEnabled(enabled, ...params)`            | Configure lens distortion              |
 | `updateLensDistortion(params)`                            | Update lens distortion params          |
+| `setQualityPreset(preset)`                                | Set quality preset: 'low', 'medium', 'high', 'ultra' |
+| `setBloomLevels(levels)`                                  | Set bloom mipmap levels (1-12)         |
+| `setSSAAEnabled(enabled)`                                 | Toggle SSAA                            |
+| `setSSAAMultiplier(multiplier)`                           | Set SSAA multiplier (1.5-4.0)          |
+| `startDeferRebuild()` / `endDeferRebuild()`               | Defer rebuilds during bulk changes     |
+| `getPerformanceMetrics()`                                 | Get FPS, frame time, memory usage      |
 | `needsContinuousAnimation()`                              | Check if effects need animation        |
 | `resize(width, height)`                                   | Update render size                     |
 | `dispose()`                                               | Clean up resources                     |
@@ -596,7 +695,6 @@ The rendering system has been migrated from a custom post-processing implementat
 - Lens Flare
 - God Rays
 - Color Grading with LUTs
-- SSAA Re-implementation
 - Custom Effect API
 
 ---

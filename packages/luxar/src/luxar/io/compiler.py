@@ -544,15 +544,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Reorder per-vertex arrays (skip scalars and broadcasted)
             if isinstance(widths, np.ndarray) and widths.shape[0] > 1:
                 widths = widths[vertex_sort_order]
-            if colors is not None and isinstance(colors, np.ndarray) and colors.shape[0] > 1:
+            if (
+                colors is not None
+                and isinstance(colors, np.ndarray)
+                and colors.shape[0] > 1
+            ):
                 colors = colors[vertex_sort_order]
-            if sharpness is not None and isinstance(sharpness, np.ndarray) and sharpness.shape[0] > 1:
+            if (
+                sharpness is not None
+                and isinstance(sharpness, np.ndarray)
+                and sharpness.shape[0] > 1
+            ):
                 sharpness = sharpness[vertex_sort_order]
 
         # Write vertices using ArrayEncoder (COORDINATE)
         chunks_2d = _calculate_intelligent_chunks(
             (n_vertices, n_dims),
-            spatial_index_data=ordering_data.get("vertex_ordering") if ordering_data else None,
+            spatial_index_data=ordering_data.get("vertex_ordering")
+            if ordering_data
+            else None,
         )
         self._encoder.encode(
             data=vertices,
@@ -565,7 +575,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
 
         # Write segments array (always, not just for indexed type)
-        segment_chunk_size = ordering_data["segment_ordering"]["chunk_size"] if ordering_data else 2048
+        segment_chunk_size = (
+            ordering_data["segment_ordering"]["chunk_size"] if ordering_data else 2048
+        )
         self._encoder.encode(
             data=segments,
             zarr_group=group,
@@ -1553,7 +1565,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             sorted_segments,
             widths_expanded,
             segment_chunk_size,
-            slice_dims=ordering_metadata["vertex_ordering"]["slice_dims"],  # Use D-space dims
+            slice_dims=ordering_metadata["vertex_ordering"][
+                "slice_dims"
+            ],  # Use D-space dims
             dimensions=dimensions.dimensions,
         )
 
@@ -1641,7 +1655,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 hasher.update(dataset[:].tobytes())
 
             # 2. Hash metadata (excluding content_hash to avoid recursion)
-            attrs = {k: v for k, v in dict(group.attrs).items() if k != 'content_hash'}
+            attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
             hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
 
             # 3. Hash child groups (recursively, sorted for determinism)
@@ -1652,12 +1666,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             # Store hash in this node's attrs
             content_hash = hasher.hexdigest()
-            group.attrs['content_hash'] = content_hash
+            group.attrs["content_hash"] = content_hash
 
             return content_hash
 
         # Start from root (empty path)
-        root_hash = compute_hash_recursive('')
+        root_hash = compute_hash_recursive("")
         aprint(f"Scene content hash: {root_hash[:16]}...")
         return root_hash
 
@@ -1680,7 +1694,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Store scene-level position bounds (union of all node bounds)
             if self._scene_bounds is not None:
                 store.attrs["position_bounds"] = self._scene_bounds
-                aprint(f"📦 Scene bounds: min={self._scene_bounds['min']}, max={self._scene_bounds['max']}")
+                aprint(
+                    f"📦 Scene bounds: min={self._scene_bounds['min']}, max={self._scene_bounds['max']}"
+                )
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)

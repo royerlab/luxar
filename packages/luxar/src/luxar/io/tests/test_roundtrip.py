@@ -167,8 +167,12 @@ class TestSceneDimensions:
 
         dims = Dimensions(
             [
-                Dimension("time", unit="s", display=False, discrete=True, range=(0, 10)),
-                Dimension("channel", unit="ch", display=False, discrete=True, range=(0, 3)),
+                Dimension(
+                    "time", unit="s", display=False, discrete=True, range=(0, 10)
+                ),
+                Dimension(
+                    "channel", unit="ch", display=False, discrete=True, range=(0, 3)
+                ),
                 Dimension("x", unit="um"),
                 Dimension("y", unit="um"),
                 Dimension("z", unit="um"),
@@ -449,7 +453,9 @@ class TestSceneAPI:
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene_node.add_group("my_group")
-            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+            compiler.write_points(
+                "my_points", np.random.randn(10, 3).astype(np.float32)
+            )
 
         scene = LuxarScene.load(output_path)
 
@@ -836,7 +842,9 @@ class TestGSplatsRoundTrip:
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
-            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+            compiler.write_points(
+                "my_points", np.random.randn(10, 3).astype(np.float32)
+            )
 
         scene = LuxarScene.load(output_path)
 
@@ -941,7 +949,9 @@ class TestLinesRoundTrip:
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
-            compiler.write_points("my_points", np.random.randn(10, 3).astype(np.float32))
+            compiler.write_points(
+                "my_points", np.random.randn(10, 3).astype(np.float32)
+            )
 
         scene = LuxarScene.load(output_path)
 

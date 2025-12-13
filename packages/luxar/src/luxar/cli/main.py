@@ -333,9 +333,9 @@ def serve(
             if latency_ms:
                 aprint(f"   • Latency: {latency_ms:.0f} ms")
             if jitter_percent > 0:
-                aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+                aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
             if packet_loss_rate > 0:
-                aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
+                aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
             aprint(
                 "⚠️  [Luxar] Responses will be throttled - this is intentional for testing"
             )
@@ -395,7 +395,9 @@ def serve(
                 packet_loss_rate=packet_loss_rate,
             )
 
-        uvicorn.run(asgi_app, host=host, port=actual_port, reload=False, log_level="warning")
+        uvicorn.run(
+            asgi_app, host=host, port=actual_port, reload=False, log_level="warning"
+        )
     except Exception as e:
         aprint(f"❌ Error serving path: {e}")
         raise typer.Exit(1)
@@ -567,9 +569,9 @@ def viewer(
                 if latency_ms:
                     aprint(f"   • Latency: {latency_ms:.0f} ms")
                 if jitter_percent > 0:
-                    aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+                    aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
                 if packet_loss_rate > 0:
-                    aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
+                    aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
 
         # If data provided, serve it in background
         data_url = None
@@ -836,9 +838,9 @@ def demo(
             if latency_ms:
                 aprint(f"   • Latency: {latency_ms:.0f} ms")
             if jitter_percent > 0:
-                aprint(f"   • Jitter: {jitter_percent*100:.0f}%")
+                aprint(f"   • Jitter: {jitter_percent * 100:.0f}%")
             if packet_loss_rate > 0:
-                aprint(f"   • Packet loss: {packet_loss_rate*100:.1f}%")
+                aprint(f"   • Packet loss: {packet_loss_rate * 100:.1f}%")
 
         with asection("Viewer Setup and Port Management"):
             # Check viewer is built
@@ -1062,8 +1064,8 @@ def profiles() -> None:
         aprint(f"    Name: {profile['name']}")
         aprint(f"    Bandwidth: {profile['bandwidth']}")
         aprint(f"    Latency: {profile['latency']}")
-        aprint(f"    Jitter: {profile['jitter']*100:.0f}%")
-        aprint(f"    Packet Loss: {profile['packet_loss']*100:.1f}%")
+        aprint(f"    Jitter: {profile['jitter'] * 100:.0f}%")
+        aprint(f"    Packet Loss: {profile['packet_loss'] * 100:.1f}%")
         aprint(f"    Description: {profile['description']}")
         aprint("")
 

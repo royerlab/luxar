@@ -48,8 +48,9 @@ The `utils` package provides utility functions for array manipulation and demo s
    where σ=10, ρ=28, β=8/3, dt=0.01
    ```
 3. Generate n_points trajectory points
-4. Scale positions by 0.1 for comfortable viewing
-5. Center at center of mass
+4. Scale positions by 0.1 for initial normalization
+5. Center at center of mass (subtract mean position)
+6. Final scaling and offset: positions * 100.0 - 50.0 for optimal viewer framing
 
 **Color Generation** (Vectorized HSV→RGB):
 1. Create time parameter: t = linspace(0, 1, n_points)
@@ -67,7 +68,7 @@ The `utils` package provides utility functions for array manipulation and demo s
    ```
 4. Use boolean masks for vectorization (no loops)
 
-**Radii**: Linear progression from 0.01 to 0.02 (growing effect)
+**Radii**: Uniform radius 2.0 for consistent visibility
 
 **Output**: Zarr store with single "LorenzAttractor" points group
 

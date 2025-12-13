@@ -623,11 +623,11 @@ export class RenderingControls {
     // Override updateDisplay to show actual intensity value instead of log value
     // This is necessary because lil-gui doesn't support custom value formatters
     const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (hdrControl as any).updateDisplay = () => {
       originalUpdateDisplay();
       // After lil-gui updates the display, override the input value with formatted intensity
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const input = (hdrControl as any).$input as HTMLInputElement | undefined;
       if (input) {
         input.value = formatIntensity(this.hdrLogValue.log);

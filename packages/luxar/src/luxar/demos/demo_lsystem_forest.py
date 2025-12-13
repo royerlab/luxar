@@ -185,7 +185,7 @@ class LSystem:
             elif char == "]":
                 if stack:
                     state = stack.pop()
-                    current_length = self.length * (self.length_decay ** state.depth)
+                    current_length = self.length * (self.length_decay**state.depth)
 
         if not segments_start:
             return np.array([]).reshape(0, 3), np.array([]).reshape(0, 3), np.array([])
@@ -340,7 +340,10 @@ def create_tree(
             leaf_positions = tip_ends[leaf_indices]
 
             # Add slight random offset to each leaf
-            leaf_positions = leaf_positions + rng.uniform(-0.1, 0.1, size=leaf_positions.shape) * scale
+            leaf_positions = (
+                leaf_positions
+                + rng.uniform(-0.1, 0.1, size=leaf_positions.shape) * scale
+            )
 
             # Create leaf colors based on the tree's color scheme
             leaf_colors = create_tree_colors(
@@ -351,7 +354,9 @@ def create_tree(
             leaf_colors = np.clip(leaf_colors * brightness, 0.0, 1.0).astype(np.float32)
 
             # Leaf radii: small fluffy balls
-            leaf_radii = rng.uniform(0.08, 0.18, size=n_leaves).astype(np.float32) * scale
+            leaf_radii = (
+                rng.uniform(0.08, 0.18, size=n_leaves).astype(np.float32) * scale
+            )
 
             # Leaf sharpness: very soft/fluffy (low values = soft edges)
             leaf_sharpness = rng.uniform(0.5, 1.2, size=n_leaves).astype(np.float32)
@@ -436,7 +441,9 @@ TREE_RULES = {
 }
 
 
-def vary_lsystem(base: LSystem, rng: np.random.Generator, variation: float = 0.25) -> LSystem:
+def vary_lsystem(
+    base: LSystem, rng: np.random.Generator, variation: float = 0.25
+) -> LSystem:
     """Create a varied copy of an L-system with different parameters.
 
     This creates 'family resemblance' - trees of the same type look similar but not identical.
@@ -506,7 +513,7 @@ def poisson_disk_sampling(
                     idx = grid[nx, ny]
                     if idx >= 0:
                         px, py = points[idx]
-                        if (x - px) ** 2 + (y - py) ** 2 < min_dist ** 2:
+                        if (x - px) ** 2 + (y - py) ** 2 < min_dist**2:
                             return False
         return True
 
@@ -626,7 +633,9 @@ def generate_forest(
             )
 
             # Center positions around origin
-            positions = [(x - forest_size / 2, y - forest_size / 2) for x, y in raw_positions]
+            positions = [
+                (x - forest_size / 2, y - forest_size / 2) for x, y in raw_positions
+            ]
             aprint(f"  Placed {len(positions)} trees using Poisson disk sampling")
 
             # Collect all leaves for batch addition
@@ -643,16 +652,24 @@ def generate_forest(
                 # Color scheme - assign based on position for some clustering
                 # Trees near each other tend to be similar type/color
                 noise = rng.random() * 0.3
-                scheme_idx = int((x + forest_size / 2 + noise * 10) / (forest_size / len(base_schemes))) % len(base_schemes)
+                scheme_idx = int(
+                    (x + forest_size / 2 + noise * 10)
+                    / (forest_size / len(base_schemes))
+                ) % len(base_schemes)
                 scheme = base_schemes[scheme_idx]
 
                 # Tree type with some spatial clustering too
                 type_noise = rng.random() * 0.2
-                type_idx = int((y + forest_size / 2 + type_noise * 10) / (forest_size / len(tree_types))) % len(tree_types)
+                type_idx = int(
+                    (y + forest_size / 2 + type_noise * 10)
+                    / (forest_size / len(tree_types))
+                ) % len(tree_types)
                 tree_type = tree_types[type_idx]
 
                 # Create a varied version of the base L-system (family resemblance)
-                varied_lsystem = vary_lsystem(TREE_RULES[tree_type], rng, variation=0.18)
+                varied_lsystem = vary_lsystem(
+                    TREE_RULES[tree_type], rng, variation=0.18
+                )
 
                 rot = rng.uniform(0, 2 * np.pi)
 
@@ -697,7 +714,9 @@ def generate_forest(
 
                 n = len(vertices) // 2
                 if i % 100 == 0:
-                    aprint(f"  Tree {i:04d}/{len(positions)} ({scheme} {tree_type}): {n:,} segments")
+                    aprint(
+                        f"  Tree {i:04d}/{len(positions)} ({scheme} {tree_type}): {n:,} segments"
+                    )
                 total_segments += n
 
         # Add all leaves as a single points layer
@@ -806,7 +825,9 @@ def main() -> None:
             aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\nError: {e}")
-            aprint("Make sure the viewer is built: cd packages/luxar-viewer && pnpm build")
+            aprint(
+                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+            )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\nError: 'luxar' command not found")

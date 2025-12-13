@@ -22,6 +22,7 @@ The Luxar Input package provides a sophisticated input handling system that mana
 input/
 ├── input-handler.ts         # Main input event processing
 ├── input-context-manager.ts # Context-based input routing
+├── input-handler-utils.ts   # Pure utility functions (dimension nav, FOV, camera)
 └── README.md               # This documentation
 ```
 
@@ -47,7 +48,7 @@ The `InputHandler` class centralizes all input event processing and delegates to
 ```
 Browser Event
     ↓
-InputHandler.handleKeyDown/Up
+InputHandler.onKeyDown/Up
     ↓
 Check if typing in input field
     ↓
@@ -65,15 +66,14 @@ Execute action
 ```typescript
 class InputHandler {
   constructor(
-    container: HTMLElement,
-    controlsManager: ControlsManager,
-    contextManager: InputContextManager
+    sceneManager: SceneManager,
+    animationController: AnimationController
   );
 
   // Event handlers
-  private handleKeyDown(event: KeyboardEvent): void;
-  private handleKeyUp(event: KeyboardEvent): void;
-  private handleMouseDown(event: MouseEvent): void;
+  private onKeyDown(event: KeyboardEvent): void;
+  private onKeyUp(event: KeyboardEvent): void;
+  private onMouseDown(event: MouseEvent): void;
 
   // Context checks
   private isTypingInInput(): boolean;
@@ -132,12 +132,11 @@ The `InputContextManager` manages input contexts to prevent conflicts between di
 
 ```typescript
 enum InputContext {
-  NAVIGATION = 0, // Default 3D navigation
-  FLY_CONTROLS = 1, // Fly mode active
-  TYPING = 2, // Text input active
-  DIMENSION_NAV = 3, // nD dimension navigation
-  UI_OVERLAY = 4, // UI panels open
-  MODAL = 5, // Modal dialog active
+  NAVIGATION = 'navigation', // Default 3D navigation
+  FLY_CONTROLS = 'fly_controls', // Fly mode active
+  TYPING = 'typing', // Text input active
+  DIMENSION_NAV = 'dimension_nav', // nD dimension navigation
+  UI_INTERACTION = 'ui_interaction', // UI panels open
 }
 ```
 
@@ -175,15 +174,14 @@ class InputContextManager {
 
 ### Context Priority
 
-Contexts have implicit priority based on their enum value:
+Contexts have explicit priority values configured in the manager:
 
 ```
-MODAL (5)        ← Highest priority
-UI_OVERLAY (4)
-DIMENSION_NAV (3)
-TYPING (2)
+TYPING (10)            ← Highest priority
+UI_INTERACTION (5)
+DIMENSION_NAV (2)
 FLY_CONTROLS (1)
-NAVIGATION (0)   ← Lowest priority
+NAVIGATION (0)         ← Lowest priority
 ```
 
 Higher priority contexts override lower ones.
@@ -195,9 +193,9 @@ Support for nested contexts:
 ```typescript
 // Example: Opening a modal while in fly mode
 contextManager.setContext(InputContext.FLY_CONTROLS);
-// User opens settings modal
-contextManager.pushContext(InputContext.MODAL);
-// Modal captures all input
+// User opens settings panel
+contextManager.pushContext(InputContext.UI_INTERACTION);
+// UI interaction captures relevant input
 
 // User closes modal
 contextManager.popContext();
@@ -222,7 +220,7 @@ function getContextKeys(context: InputContext): string[] {
       return ['w', 'a', 's', 'd', 'q', 'e', 'shift'];
     case InputContext.DIMENSION_NAV:
       return ['1', '2', '3', '4', '5', '6', '7', '8', '9', '[', ']'];
-    case InputContext.MODAL:
+    case InputContext.UI_INTERACTION:
       return ['escape', 'enter'];
     default:
       return [];
@@ -239,7 +237,7 @@ function getContextKeys(context: InputContext): string[] {
 Complete keyboard event flow:
 
 ```typescript
-handleKeyDown(event: KeyboardEvent) {
+onKeyDown(event: KeyboardEvent) {
   // 1. Check if typing in input field
   if (this.isTypingInInput()) {
     return; // Let browser handle it
@@ -275,7 +273,7 @@ Mouse events with context awareness:
 handleMouseDown(event: MouseEvent) {
   // Check if clicking on UI element
   if (this.isUIElement(event.target)) {
-    contextManager.pushContext(InputContext.UI_OVERLAY);
+    contextManager.pushContext(InputContext.UI_INTERACTION);
     return;
   }
 
@@ -425,10 +423,10 @@ function enableOrbitMode() {
 ### UI Integration
 
 ```typescript
-// When opening a modal
-function openModal() {
-  contextManager.pushContext(InputContext.MODAL);
-  // Modal now captures all input
+// When opening a UI panel
+function openUIPanel() {
+  contextManager.pushContext(InputContext.UI_INTERACTION);
+  // UI panel now captures relevant input
 }
 
 // When closing
@@ -540,8 +538,8 @@ With debug mode enabled:
 [Input] Key down: 'w' (context: FLY_CONTROLS)
 [Input] Routing to fly controls handler
 [Input] Key up: 'w'
-[Input] Context pushed: MODAL
-[Input] Key filtered: 'w' (blocked by MODAL context)
+[Input] Context pushed: UI_INTERACTION
+[Input] Key filtered: 'w' (blocked by UI_INTERACTION context)
 ```
 
 ### Context Visualization
@@ -575,9 +573,9 @@ function showContextIndicator() {
 class InputHandler {
   dispose() {
     // Remove all event listeners
-    this.container.removeEventListener('keydown', this.handleKeyDown);
-    this.container.removeEventListener('keyup', this.handleKeyUp);
-    this.container.removeEventListener('mousedown', this.handleMouseDown);
+    this.container.removeEventListener('keydown', this.onKeyDown);
+    this.container.removeEventListener('keyup', this.onKeyUp);
+    this.container.removeEventListener('mousedown', this.onMouseDown);
 
     // Clear references
     this.controlsManager = null;
@@ -586,6 +584,117 @@ class InputHandler {
     // Clear key states
     this.keysPressed.clear();
   }
+}
+```
+
+---
+
+## Utility Functions (input-handler-utils.ts)
+
+The `input-handler-utils.ts` module provides pure utility functions for input processing. All functions are stateless and testable.
+
+### Dimension Navigation Utilities
+
+**`getNonDisplayedDimensions(dimensions, displayedDims)`**
+- Returns array of non-displayed dimension indices for nD navigation
+- Used to determine which dimensions can be navigated with keyboard shortcuts
+
+**`mapKeyToDimension(key, nonDisplayedDims)`**
+- Maps number keys (1-9) to dimension indices
+- Returns dimension index or `null` if key doesn't map to a dimension
+- Example: Key '1' → first non-displayed dimension
+
+**`isNavigationKey(key, nonDisplayedDims)`**
+- Checks if a key is valid for dimension navigation
+- Returns `true` for: number keys (1-9), bracket keys ([, ]), or arrow keys if non-displayed dimensions exist
+
+**`calculateStepSize(dimension, direction)`**
+- Calculates step size for dimension navigation based on dimension configuration
+- Uses dimension's `step` property if available
+- Falls back to range-based calculation: `(max - min) / 100`
+- `direction`: 1 for forward, -1 for backward
+
+**`calculateNextPosition(currentPos, dimension, direction, stepSize)`**
+- Calculates next slider position with proper clamping to dimension range
+- Handles categorical dimensions (snaps to category indices)
+- Clamps continuous dimensions to [min, max] range
+
+**`formatDimensionValue(value, dimension)`**
+- Formats dimension value for display
+- Categorical: returns category label at index
+- Continuous: returns number with appropriate precision
+- Handles edge cases (out of range, missing categories)
+
+**`generateNavigationHelp(dimensions, displayedDims)`**
+- Generates help text showing dimension navigation keyboard shortcuts
+- Returns formatted string like: "1: time [0-100], 2: channel [0-3]"
+- Only includes non-displayed dimensions
+
+### FOV (Field of View) Utilities
+
+**`calculateFovChange(currentFov, direction, speed = 1.0)`**
+- Calculates new FOV value for zoom operations
+- `direction`: 1 for zoom out, -1 for zoom in
+- `speed`: multiplier for zoom speed (default 1.0)
+- Returns new FOV clamped to [10°, 120°] range
+- Uses exponential scaling: 5° per step
+
+**Example**:
+```typescript
+const newFov = calculateFovChange(60, -1); // Zoom in: 60° → 55°
+```
+
+### Camera Control Utilities
+
+**`shouldBlockShortcut(key, modifiers)`**
+- Determines if a keyboard shortcut should be blocked based on context
+- Blocks shortcuts when typing in input fields, textareas, or contenteditable elements
+- `modifiers`: object with `ctrl`, `shift`, `alt`, `meta` booleans
+- Returns `true` if shortcut should be blocked
+
+**Example**:
+```typescript
+if (shouldBlockShortcut('v', { ctrl: false, shift: false })) {
+  return; // User is typing, don't trigger view mode switch
+}
+```
+
+### Design Principles
+
+1. **Pure Functions**: All utilities are pure functions with no side effects
+2. **Stateless**: No internal state, all data passed as parameters
+3. **Testable**: Easy to unit test with predictable inputs/outputs
+4. **Type-Safe**: Full TypeScript type annotations
+5. **Focused**: Each function has a single, clear responsibility
+
+### Usage Example
+
+```typescript
+import {
+  getNonDisplayedDimensions,
+  mapKeyToDimension,
+  calculateStepSize,
+  calculateNextPosition,
+  formatDimensionValue,
+} from './input-handler-utils';
+
+// Get dimensions available for keyboard navigation
+const nonDisplayed = getNonDisplayedDimensions(allDimensions, displayedDims);
+
+// Handle number key press
+const dimIndex = mapKeyToDimension('1', nonDisplayed); // Maps to first non-displayed dim
+
+if (dimIndex !== null) {
+  const dimension = allDimensions[dimIndex];
+  const stepSize = calculateStepSize(dimension, 1); // Forward direction
+  const currentPos = sliderPositions[dimIndex];
+  const nextPos = calculateNextPosition(currentPos, dimension, 1, stepSize);
+
+  // Update slider
+  updateSlider(dimIndex, nextPos);
+
+  // Show formatted value
+  console.log(`${dimension.name}: ${formatDimensionValue(nextPos, dimension)}`);
 }
 ```
 

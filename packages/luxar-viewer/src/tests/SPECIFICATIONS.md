@@ -1,7 +1,7 @@
 # luxar-viewer.tests - Test Suite Specification
 
-**Version**: 1.0.2
-**Last Updated**: 2025-12-09
+**Version**: 1.0.3
+**Last Updated**: 2025-12-11
 
 ## Purpose
 
@@ -29,7 +29,7 @@ The test suite ensures correctness, reliability, and maintainability of the Luxa
 
 ```
 tests/
-├── unit/              # Fast, isolated, mocked (757 tests, ~3s runtime)
+├── unit/              # Fast, isolated, mocked (931 tests, ~2.6s runtime)
 │   ├── data/          # Data loading, encoding, zarr compatibility
 │   ├── ndim/          # nD slicing, spatial queries, projections
 │   ├── cache/         # Memory management, LRU/OPFS caching
@@ -481,11 +481,11 @@ test('should render points correctly', async ({ page }) => {
 
 **Unit Tests**:
 
-- Total: 762 tests
-- Passing: 757 (99.3%)
+- Total: 936 tests
+- Passing: 931 (99.5%)
 - Skipped: 5 (intentional - require specific setup)
 - Failing: 0 ✅
-- Runtime: ~3 seconds
+- Runtime: ~2.6 seconds
 
 **E2E Tests**:
 
@@ -652,6 +652,12 @@ pnpm test --run
 ---
 
 ## Changelog
+
+### v1.0.3 (2025-12-11)
+- Updated unit test counts: 931 passing / 936 total (was 757/762) - reflects 174 new tests
+- Added lines rendering tests to documentation (55+ tests across rendering, data, types)
+- Added dimension initialization E2E test documentation
+- Updated runtime: ~2.6s (improved from ~3s despite more tests)
 
 ### v1.0.2 (2025-12-09)
 

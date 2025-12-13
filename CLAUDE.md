@@ -57,9 +57,10 @@ luxar profiles                   # Network simulation profiles
 
 /docs/                     # Documentation
   /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
+  /user-guides/            # User guides (HDR_GUIDE.md)
   E2E_TESTING_GUIDE.md     # E2E quick reference
   LUXAR_ZARR_FORMAT.md     # Data format spec
-  UI_DESIGN.md             # UI design system
+  CONSOLE_OUTPUT_STYLE.md  # Console logging style
   NETWORK_SIMULATION_SPEC.md  # Network simulation
 ```
 
@@ -208,6 +209,64 @@ result = result @ transform  # Correct
 
 ---
 
+## Common Pitfalls and Solutions
+
+### TypeScript: Event Listener Memory Leaks
+**Problem**: Creating new bound function references on each call prevents proper cleanup.
+
+```typescript
+// ❌ WRONG - Creates new reference, removeEventListener won't work
+addEventListener('resize', this.handleResize.bind(this));
+removeEventListener('resize', this.handleResize.bind(this));  // Different reference!
+
+// ✅ CORRECT - Store bound reference for cleanup
+this.boundHandleResize = this.handleResize.bind(this);
+addEventListener('resize', this.boundHandleResize);
+removeEventListener('resize', this.boundHandleResize);  // Same reference
+```
+
+### TypeScript: Async Initialization Race Conditions
+**Problem**: Multiple callers triggering async initialization concurrently.
+
+```typescript
+// ❌ WRONG - Non-atomic check
+if (!this.initPromise) {
+  this.initPromise = this.initialize();  // Race: two callers can both enter
+}
+
+// ✅ CORRECT - Atomic lock with cleanup
+if (this.initLock) return this.initPromise;  // Return existing promise
+this.initLock = true;
+try {
+  this.initPromise = this.initialize();
+  await this.initPromise;
+} finally {
+  this.initLock = false;  // Always clear lock
+}
+```
+
+### TypeScript: Over-Mocking in Tests
+**Problem**: Mocking entire classes defeats the purpose of testing.
+
+```typescript
+// ❌ WRONG - Tests verify mock behavior, not real code
+vi.mock('../rendering/point-material', () => ({
+  PointMaterial: vi.fn().mockImplementation(() => ({
+    uniforms: { fov: { value: 60 } },
+    dispose: vi.fn()
+  }))
+}));
+
+// ✅ CORRECT - Mock only external dependencies, test real code
+import { PointMaterial } from '../rendering/point-material';
+// Let PointMaterial run real shader generation code
+// Only mock THREE.ShaderMaterial if absolutely necessary
+```
+
+**Testing Principle**: Mock external dependencies (network, file system), not your own code. If code is hard to test without mocking, refactor for testability (dependency injection, pure functions).
+
+---
+
 ## Luxar Conventions
 
 ### Physical Units
@@ -275,7 +334,7 @@ Before PR/merge:
 | E2E Testing Quick Ref | `docs/E2E_TESTING_GUIDE.md` |
 | Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
 | Data Format Spec | `docs/LUXAR_ZARR_FORMAT.md` |
-| UI Design System | `docs/UI_DESIGN.md` |
+| HDR Color Guide | `docs/user-guides/HDR_GUIDE.md` |
 | Network Simulation | `docs/NETWORK_SIMULATION_SPEC.md` |
 | Console Logging Style | `docs/CONSOLE_OUTPUT_STYLE.md` |
 | Changelog | `CHANGELOG.md` |

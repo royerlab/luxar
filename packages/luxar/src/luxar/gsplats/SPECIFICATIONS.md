@@ -340,7 +340,7 @@ Dynamic operations address reconstruction deficiencies by analyzing the residual
 - `step_every=50`: Run operations every N iterations during optimization
 - `k_max_residuals=10`: Number of strongest residual peaks to analyze per iteration
 - `nms_radius_vox=2.0`: Minimum distance between detected residual peaks (non-maximum suppression)
-- `min_contribution_threshold=0.05`: Fixed threshold for influence detection in splitting decisions
+- `min_contribution_threshold=0.05`: Fixed threshold for influence detection in seeding/LR boosting decisions
 - `relative_contribution_factor=0.1`: Adaptive threshold factor for amplitude validation (threshold = local_residual × factor)
 
 **Adaptive Learning Rate Parameters**:
@@ -487,7 +487,7 @@ if len(removal_list) > 0 and (total_splats - len(removal_list)) >= min_splats_to
 1. **Every `step_every` iterations**:
    - Compute current residual image
    - Execute Step 1: Peak detection
-   - Execute Step 2: Seeding/Splitting decisions
+   - Execute Step 2: Seeding/LR Boosting decisions
    - Execute Step 3: Global pruning
    - Update model, optimizer, and scheduler states atomically
 
@@ -1159,7 +1159,7 @@ With proper iteration distribution (more iterations on coarse scales):
 **nD Algorithm Validation**:
 - **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) tested in 4D space
 - **Volume-proportional scaling**: Candidate density adapts to 4D volume size
-- **Dynamic operations**: Convergence-based seeding, splitting, pruning in 4D
+- **Dynamic operations**: Convergence-based seeding, LR boosting, pruning in 4D
 - **Parameter efficiency**: 4×4 covariance matrices (15 parameters per splat)
 
 ### Main Exports

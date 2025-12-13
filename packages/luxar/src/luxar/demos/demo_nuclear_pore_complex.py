@@ -344,7 +344,9 @@ def spoke_to_color(spoke_ids: np.ndarray, n_spokes: int = 8) -> np.ndarray:
     return colors
 
 
-def element_to_color(elements: np.ndarray, is_backbone: np.ndarray = None) -> np.ndarray:
+def element_to_color(
+    elements: np.ndarray, is_backbone: np.ndarray = None
+) -> np.ndarray:
     """Convert element types to CPK colors.
 
     Args:
@@ -377,7 +379,9 @@ def element_to_color(elements: np.ndarray, is_backbone: np.ndarray = None) -> np
     return colors
 
 
-def backbone_sidechain_color(elements: np.ndarray, is_backbone: np.ndarray) -> np.ndarray:
+def backbone_sidechain_color(
+    elements: np.ndarray, is_backbone: np.ndarray
+) -> np.ndarray:
     """Color atoms by backbone vs sidechain with element distinction.
 
     Args:
@@ -477,7 +481,9 @@ def generate_nuclear_pore_complex(
             else:
                 aprint("  All atoms")
 
-            aprint(f"  Coordinate range: {positions.min():.1f} to {positions.max():.1f} Å")
+            aprint(
+                f"  Coordinate range: {positions.min():.1f} to {positions.max():.1f} Å"
+            )
 
         # Center and scale
         with asection("Preparing structure"):
@@ -495,8 +501,10 @@ def generate_nuclear_pore_complex(
             # Real NPC: ~60 nm radius, ~40 nm central pore
             # Scaled down for visualization
             spoke_radius = 8.0  # nm - creates visible central pore
-            sym_positions, sym_elements, sym_is_backbone, spoke_ids = apply_rotational_symmetry(
-                positions, elements, is_backbone, n_fold, spoke_radius=spoke_radius
+            sym_positions, sym_elements, sym_is_backbone, spoke_ids = (
+                apply_rotational_symmetry(
+                    positions, elements, is_backbone, n_fold, spoke_radius=spoke_radius
+                )
             )
             aprint(f"✓ Created {len(sym_positions):,} atoms ({n_fold} copies)")
             aprint(f"  Perfect C{n_fold} symmetry applied")
@@ -571,10 +579,9 @@ def generate_nuclear_pore_complex(
                 )
 
             aprint(f"✓ Scene created with {len(sym_positions):,} atoms")
-            size_mb = (
-                sum(f.stat().st_size for f in output_path.rglob("*") if f.is_file())
-                / (1024 * 1024)
-            )
+            size_mb = sum(
+                f.stat().st_size for f in output_path.rglob("*") if f.is_file()
+            ) / (1024 * 1024)
             aprint(f"  Dataset size: {size_mb:.1f} MB")
 
     return len(sym_positions)

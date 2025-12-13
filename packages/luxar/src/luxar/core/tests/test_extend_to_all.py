@@ -45,7 +45,9 @@ class TestExtendToAll:
                 Dimension("X", display=True),
                 Dimension("Y", display=True),
                 Dimension("Z", display=True),
-                Dimension("Time", display=False, range=(0, 10)),  # Range larger than data
+                Dimension(
+                    "Time", display=False, range=(0, 10)
+                ),  # Range larger than data
             ]
         )
 

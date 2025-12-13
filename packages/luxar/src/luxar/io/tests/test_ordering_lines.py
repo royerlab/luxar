@@ -94,12 +94,11 @@ class TestMorton128Bit:
 
         # Morton order should be: 0, 1, 2, 3 (Z-order)
         assert low[0] == 0  # (0,0) -> 0
-        assert low[1] > 0   # Others should be non-zero
+        assert low[1] > 0  # Others should be non-zero
 
     def test_morton_128_high_bits_used(self) -> None:
         """Test that high bits are used for large enough coords."""
         # 6D coords with high values need 128 bits
-        n_dims = 6
         coords = np.array([[1000, 1000, 1000, 1000, 1000, 1000]], dtype=np.uint32)
         high, low = morton_encode_128bit(coords, bits_per_dim=16)
 
@@ -116,11 +115,14 @@ class TestSortSegmentsCompound:
         """Test segment sorting for 3D data."""
         # 3D vertices -> 6D segment space
         # Create segments at different positions
-        segment_coords_2d = np.array([
-            [10, 10, 10, 11, 11, 11],  # Segment in middle-right
-            [0, 0, 0, 1, 1, 1],         # Segment at origin
-            [5, 5, 5, 6, 6, 6],         # Segment in middle
-        ], dtype=np.float32)
+        segment_coords_2d = np.array(
+            [
+                [10, 10, 10, 11, 11, 11],  # Segment in middle-right
+                [0, 0, 0, 1, 1, 1],  # Segment at origin
+                [5, 5, 5, 6, 6, 6],  # Segment in middle
+            ],
+            dtype=np.float32,
+        )
 
         dimensions = [
             Dimension("x", unit="um"),
@@ -142,11 +144,14 @@ class TestSortSegmentsCompound:
         """Test segment sorting with discrete dimensions."""
         # 4D: [x, y, z, time] where time is discrete
         # Segments in (2×4) = 8D space
-        segment_coords_2d = np.array([
-            [0, 0, 0, 1, 1, 1, 1, 1],  # time=1
-            [0, 0, 0, 0, 1, 1, 1, 0],  # time=0
-            [5, 5, 5, 1, 6, 6, 6, 1],  # time=1
-        ], dtype=np.float32)
+        segment_coords_2d = np.array(
+            [
+                [0, 0, 0, 1, 1, 1, 1, 1],  # time=1
+                [0, 0, 0, 0, 1, 1, 1, 0],  # time=0
+                [5, 5, 5, 1, 6, 6, 6, 1],  # time=1
+            ],
+            dtype=np.float32,
+        )
 
         dimensions = [
             Dimension("x", unit="um"),
@@ -173,12 +178,15 @@ class TestOrderLinesSpatial:
 
     def test_order_lines_basic(self) -> None:
         """Test basic dual ordering."""
-        vertices = np.array([
-            [5, 5, 5],
-            [0, 0, 0],
-            [10, 10, 10],
-            [2, 2, 2],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [5, 5, 5],
+                [0, 0, 0],
+                [10, 10, 10],
+                [2, 2, 2],
+            ],
+            dtype=np.float32,
+        )
 
         # Polyline: (0,1), (1,2), (2,3)
         segments = convert_to_indexed(4, "polyline", None)
@@ -189,10 +197,13 @@ class TestOrderLinesSpatial:
             Dimension("z", unit="um"),
         ]
 
-        (sorted_vertices, sorted_segments, vertex_sort_indices,
-         segment_sort_indices, metadata) = order_lines_spatial(
-            vertices, segments, dimensions, method="morton"
-        )
+        (
+            sorted_vertices,
+            sorted_segments,
+            vertex_sort_indices,
+            segment_sort_indices,
+            metadata,
+        ) = order_lines_spatial(vertices, segments, dimensions, method="morton")
 
         # Check shapes
         assert sorted_vertices.shape == (4, 3)
@@ -213,30 +224,34 @@ class TestOrderLinesSpatial:
     def test_order_lines_preserves_connectivity(self) -> None:
         """Test that segment connectivity is preserved after reordering."""
         # Create a simple line
-        vertices = np.array([
-            [0, 0, 0],
-            [1, 0, 0],
-            [1, 1, 0],
-            [0, 1, 0],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [1, 1, 0],
+                [0, 1, 0],
+            ],
+            dtype=np.float32,
+        )
 
         # Loop: (0,1), (1,2), (2,3), (3,0)
         segments = convert_to_indexed(4, "loop", None)
 
-        dimensions = [
-            Dimension("x"), Dimension("y"), Dimension("z")
-        ]
+        dimensions = [Dimension("x"), Dimension("y"), Dimension("z")]
 
-        (sorted_vertices, sorted_segments, vertex_sort_indices,
-         segment_sort_indices, metadata) = order_lines_spatial(
-            vertices, segments, dimensions
-        )
+        (
+            sorted_vertices,
+            sorted_segments,
+            vertex_sort_indices,
+            segment_sort_indices,
+            metadata,
+        ) = order_lines_spatial(vertices, segments, dimensions)
 
         # For each segment, get the actual vertex positions
         for seg_idx in range(sorted_segments.shape[0]):
             v1_idx, v2_idx = sorted_segments[seg_idx]
-            v1 = sorted_vertices[v1_idx]
-            v2 = sorted_vertices[v2_idx]
+            _v1 = sorted_vertices[v1_idx]
+            _v2 = sorted_vertices[v2_idx]
 
             # The segment should connect two vertices that are neighbors in original
             # We can't check exact connectivity, but we can verify indices are valid
@@ -249,12 +264,15 @@ class TestComputeVertexChunkBounds:
 
     def test_vertex_bounds_basic(self) -> None:
         """Test basic vertex chunk bounds."""
-        vertices = np.array([
-            [0, 0, 0],
-            [1, 1, 1],
-            [5, 5, 5],
-            [6, 6, 6],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [1, 1, 1],
+                [5, 5, 5],
+                [6, 6, 6],
+            ],
+            dtype=np.float32,
+        )
 
         bounds = compute_vertex_chunk_bounds(vertices, chunk_size=2)
 
@@ -272,16 +290,17 @@ class TestComputeVertexChunkBounds:
     def test_vertex_bounds_discrete_dims(self) -> None:
         """Test vertex bounds with discrete dimensions."""
         # [time, x, y] where time is discrete
-        vertices = np.array([
-            [0, 5, 5],
-            [0, 6, 6],
-            [1, 5, 5],
-            [1, 6, 6],
-        ], dtype=np.float32)
-
-        bounds = compute_vertex_chunk_bounds(
-            vertices, chunk_size=2, slice_dims=[0]
+        vertices = np.array(
+            [
+                [0, 5, 5],
+                [0, 6, 6],
+                [1, 5, 5],
+                [1, 6, 6],
+            ],
+            dtype=np.float32,
         )
+
+        bounds = compute_vertex_chunk_bounds(vertices, chunk_size=2, slice_dims=[0])
 
         # First chunk (time=0): discrete bounds should be tight
         assert bounds[0, 0, 0] == pytest.approx(-0.5)
@@ -293,23 +312,27 @@ class TestComputeSegmentChunkBounds:
 
     def test_segment_bounds_with_width(self) -> None:
         """Test segment bounds include width extent."""
-        vertices = np.array([
-            [0, 0, 0],
-            [10, 0, 0],
-            [0, 10, 0],
-            [10, 10, 0],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [10, 0, 0],
+                [0, 10, 0],
+                [10, 10, 0],
+            ],
+            dtype=np.float32,
+        )
 
-        segments = np.array([
-            [0, 1],  # Horizontal line y=0
-            [2, 3],  # Horizontal line y=10
-        ], dtype=np.uint32)
+        segments = np.array(
+            [
+                [0, 1],  # Horizontal line y=0
+                [2, 3],  # Horizontal line y=10
+            ],
+            dtype=np.uint32,
+        )
 
         widths = np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32)
 
-        bounds = compute_segment_chunk_bounds(
-            vertices, segments, widths, chunk_size=1
-        )
+        bounds = compute_segment_chunk_bounds(vertices, segments, widths, chunk_size=1)
 
         # 2 chunks, one per segment
         assert bounds.shape == (2, 3, 2)
@@ -319,29 +342,35 @@ class TestComputeSegmentChunkBounds:
         assert bounds[0, 0, 0] == pytest.approx(-1.0)  # x min
         assert bounds[0, 0, 1] == pytest.approx(11.0)  # x max
         assert bounds[0, 1, 0] == pytest.approx(-1.0)  # y min
-        assert bounds[0, 1, 1] == pytest.approx(1.0)   # y max
+        assert bounds[0, 1, 1] == pytest.approx(1.0)  # y max
 
         # Second segment: x=[0,10], y=10, width=2
         # Bounds should be: x=[-2,12], y=[8,12]
         assert bounds[1, 0, 0] == pytest.approx(-2.0)  # x min
         assert bounds[1, 0, 1] == pytest.approx(12.0)  # x max
-        assert bounds[1, 1, 0] == pytest.approx(8.0)   # y min
+        assert bounds[1, 1, 0] == pytest.approx(8.0)  # y min
         assert bounds[1, 1, 1] == pytest.approx(12.0)  # y max
 
     def test_segment_bounds_discrete_no_width_expansion(self) -> None:
         """Test that discrete dimensions don't expand by width."""
         # [time, x, y]
-        vertices = np.array([
-            [0, 0, 0],
-            [0, 10, 10],
-            [1, 0, 0],
-            [1, 10, 10],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [0, 10, 10],
+                [1, 0, 0],
+                [1, 10, 10],
+            ],
+            dtype=np.float32,
+        )
 
-        segments = np.array([
-            [0, 1],  # time=0
-            [2, 3],  # time=1
-        ], dtype=np.uint32)
+        segments = np.array(
+            [
+                [0, 1],  # time=0
+                [2, 3],  # time=1
+            ],
+            dtype=np.uint32,
+        )
 
         widths = np.array([5.0, 5.0, 5.0, 5.0], dtype=np.float32)
 
@@ -365,17 +394,20 @@ class TestIntegration:
     def test_write_lines_creates_segments_array(self, tmp_path) -> None:
         """Test that write_lines creates the segments array."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=Dimensions([
-                    Dimension("x", unit="um"),
-                    Dimension("y", unit="um"),
-                    Dimension("z", unit="um"),
-                ])
+                dimensions=Dimensions(
+                    [
+                        Dimension("x", unit="um"),
+                        Dimension("y", unit="um"),
+                        Dimension("z", unit="um"),
+                    ]
+                )
             )
 
             vertices = np.random.rand(100, 3).astype(np.float32) * 10
@@ -391,17 +423,20 @@ class TestIntegration:
     def test_write_lines_creates_dual_chunk_bounds(self, tmp_path) -> None:
         """Test that write_lines creates both vertex and segment chunk bounds."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=Dimensions([
-                    Dimension("x", unit="um"),
-                    Dimension("y", unit="um"),
-                    Dimension("z", unit="um"),
-                ])
+                dimensions=Dimensions(
+                    [
+                        Dimension("x", unit="um"),
+                        Dimension("y", unit="um"),
+                        Dimension("z", unit="um"),
+                    ]
+                )
             )
 
             vertices = np.random.rand(1000, 3).astype(np.float32) * 10
@@ -424,17 +459,20 @@ class TestIntegration:
     def test_write_lines_stores_ordering_metadata(self, tmp_path) -> None:
         """Test that write_lines stores dual ordering metadata."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path, ordering_method="morton") as compiler:
             scene = compiler.create_scene(
-                dimensions=Dimensions([
-                    Dimension("x", unit="um"),
-                    Dimension("y", unit="um"),
-                    Dimension("z", unit="um"),
-                ])
+                dimensions=Dimensions(
+                    [
+                        Dimension("x", unit="um"),
+                        Dimension("y", unit="um"),
+                        Dimension("z", unit="um"),
+                    ]
+                )
             )
 
             vertices = np.random.rand(100, 3).astype(np.float32) * 10
@@ -463,12 +501,13 @@ class TestIntegration:
     def test_write_lines_all_line_types(self, tmp_path) -> None:
         """Test that all line types work with spatial indexing."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         line_types = {
-            "polyline": (10, 9),     # 10 verts -> 9 segs
-            "loop": (10, 10),        # 10 verts -> 10 segs
-            "segments": (10, 5),     # 10 verts -> 5 segs
+            "polyline": (10, 9),  # 10 verts -> 9 segs
+            "loop": (10, 10),  # 10 verts -> 10 segs
+            "segments": (10, 5),  # 10 verts -> 5 segs
         }
 
         store_path = tmp_path / "test.zarr"
@@ -492,6 +531,7 @@ class TestIntegration:
     def test_write_lines_indexed_type(self, tmp_path) -> None:
         """Test indexed line type with spatial indexing."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
@@ -501,15 +541,18 @@ class TestIntegration:
                 dimensions=Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             )
 
-            vertices = np.array([
-                [0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]
-            ], dtype=np.float32)
+            vertices = np.array(
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float32
+            )
 
             indices = np.array([0, 1, 0, 2, 1, 3, 2, 3], dtype=np.uint32)
 
             scene.add_lines(
-                "indexed_lines", vertices, widths=0.1,
-                line_type="indexed", indices=indices
+                "indexed_lines",
+                vertices,
+                widths=0.1,
+                line_type="indexed",
+                indices=indices,
             )
 
         store = zarr.open_group(store_path, mode="r")
@@ -521,6 +564,7 @@ class TestIntegration:
     def test_write_lines_no_spatial_index(self, tmp_path) -> None:
         """Test write_lines with spatial indexing disabled."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
@@ -548,6 +592,7 @@ class TestIntegration:
     def test_write_lines_zarr_attributes_match_spec(self, tmp_path) -> None:
         """Test that Zarr attributes match the specification (Section 6.6)."""
         import zarr
+
         from luxar import LuxarZarrCompiler
 
         store_path = tmp_path / "test.zarr"
@@ -563,9 +608,12 @@ class TestIntegration:
             sharpness = np.random.rand(100).astype(np.float32) * 5
 
             scene.add_lines(
-                "test_lines", vertices, widths,
-                colors=colors, sharpness=sharpness,
-                line_type="polyline"
+                "test_lines",
+                vertices,
+                widths,
+                colors=colors,
+                sharpness=sharpness,
+                line_type="polyline",
             )
 
         store = zarr.open_group(store_path, mode="r")

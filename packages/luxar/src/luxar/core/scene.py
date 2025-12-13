@@ -104,7 +104,7 @@ class Scene(Node):
             name: Name of the group
             **attrs: Additional attributes for the group. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
-                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                gamma: float (0.1-10.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", default "additive") - Blending mode for rendering
 
         Returns:
@@ -175,7 +175,7 @@ class Scene(Node):
             grid_shape: Optional tuple specifying the grid shape for structured data
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
-                gamma: float (0.2-2.0, default 1.0) - Gamma correction
+                gamma: float (0.1-10.0, default 1.0) - Gamma correction
                 blending_mode: str ("normal", "additive", default "additive") - Blending mode for rendering
 
         Returns:
@@ -543,7 +543,9 @@ class Scene(Node):
 
                 # If the range covers more than just this single value,
                 # it's a candidate for extension
-                if range_max > range_min and (value >= range_min and value <= range_max):
+                if range_max > range_min and (
+                    value >= range_min and value <= range_max
+                ):
                     if dim.name:
                         candidates.append(dim.name)
 

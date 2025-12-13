@@ -30,12 +30,40 @@ export const DEFAULT_NAV_CONFIG: NavigationConfig = {
 };
 
 /**
- * Calculates the next dimension index for selection
+ * Calculate the next dimension index for cyclic selection.
  *
- * @param currentDim - Currently selected dimension
- * @param direction - Direction to move (1 or -1)
- * @param dims - Dimension configuration
- * @returns Next dimension index to select
+ * Cycles through non-displayed dimensions in the given direction with
+ * wrap-around at boundaries. Used for Tab/Shift+Tab dimension selection.
+ * If the current dimension is not in the non-displayed list, jumps to
+ * the first (forward) or last (backward) non-displayed dimension.
+ *
+ * @param currentDim - Currently selected dimension index (0-based)
+ * @param direction - Navigation direction: 1 for next, -1 for previous
+ * @param dims - Complete dimension configuration from scene
+ * @returns Next dimension index to select, or -1 if no non-displayed dimensions exist
+ *
+ * @example
+ * ```typescript
+ * // 5D dataset with X, Y, Z displayed (dims 0, 1, 2)
+ * // Non-displayed: Time (dim 3), Channel (dim 4)
+ * const dims = { ndim: 5, displayed: [0, 1, 2], ... };
+ *
+ * // Navigate from Time to Channel
+ * const next = getNextDimensionIndex(3, 1, dims);
+ * console.log(next); // 4 (Channel)
+ *
+ * // Navigate from Channel (last), wraps to Time
+ * const wrapped = getNextDimensionIndex(4, 1, dims);
+ * console.log(wrapped); // 3 (wraps around)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Jump to first non-displayed dimension from displayed dimension
+ * const dims = { ndim: 4, displayed: [0, 1], ... };
+ * const next = getNextDimensionIndex(1, 1, dims); // 1 is displayed (Y)
+ * console.log(next); // 2 (first non-displayed)
+ * ```
  */
 export function getNextDimensionIndex(
   currentDim: number,
@@ -70,10 +98,36 @@ export function getNextDimensionIndex(
 }
 
 /**
- * Gets list of non-displayed dimension indices
+ * Get list of non-displayed dimension indices available for keyboard navigation.
  *
- * @param dims - Dimension configuration
- * @returns Array of non-displayed dimension indices
+ * Returns dimensions that are not part of the 3D spatial view (X, Y, Z).
+ * These are the dimensions that can be controlled with [ ] keys and appear
+ * in dimension sliders. For a 5D dataset with X, Y, Z displayed, returns
+ * the indices of Time and Channel dimensions.
+ *
+ * @param dims - Complete dimension configuration with display settings
+ * @returns Array of dimension indices not in the displayed list, sorted ascending.
+ *          Empty array if all dimensions are displayed (pure 3D dataset).
+ *
+ * @example
+ * ```typescript
+ * // 4D dataset: X, Y, Z, Time
+ * const dims = {
+ *   ndim: 4,
+ *   displayed: [0, 1, 2], // X, Y, Z displayed
+ *   currentStep: [0, 0, 0, 5.2],
+ * };
+ * const navigable = getNonDisplayedDimensions(dims);
+ * console.log(navigable); // [3] - Time dimension
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // 3D dataset: X, Y, Z only
+ * const dims3d = { ndim: 3, displayed: [0, 1, 2] };
+ * const navigable = getNonDisplayedDimensions(dims3d);
+ * console.log(navigable); // [] - No non-displayed dimensions
+ * ```
  */
 export function getNonDisplayedDimensions(dims: SimpleDims): number[] {
   const nonDisplayed: number[] = [];
@@ -88,13 +142,62 @@ export function getNonDisplayedDimensions(dims: SimpleDims): number[] {
 }
 
 /**
- * Calculates navigation step size for a dimension
+ * Calculate adaptive step size for dimension navigation.
  *
- * @param dimIndex - Dimension index
- * @param dims - Dimension configuration
- * @param modifiers - Keyboard modifiers
- * @param config - Navigation configuration
- * @returns Step size for navigation
+ * Computes the appropriate step size based on dimension metadata, keyboard
+ * modifiers, and navigation configuration. Step sizes adapt to:
+ * - Discrete dimensions (frames): Step by 1 or more whole units
+ * - Continuous dimensions (time): Step by 1% of range by default
+ * - Shift modifier: Fine control (10x smaller steps)
+ * - Ctrl modifier: Coarse control (10x larger steps)
+ *
+ * The adaptive strategy ensures smooth navigation regardless of data scale.
+ * For example, navigating through 1000 time points uses reasonable step sizes
+ * (10 by default, 1 with Shift, 100 with Ctrl).
+ *
+ * @param dimIndex - Zero-based index of dimension to navigate
+ * @param dims - Complete dimension configuration including metadata
+ * @param modifiers - Keyboard modifier state for fine/coarse control
+ * @param modifiers.shift - If true, divides step size by 10 (fine control)
+ * @param modifiers.ctrl - If true, multiplies step size by 10 (coarse control)
+ * @param config - Navigation configuration (step multipliers, etc.)
+ * @returns Step size for navigation, guaranteed positive and >= 1 for discrete dims
+ *
+ * @example
+ * ```typescript
+ * // Continuous time dimension: 0-100 seconds
+ * const dims = {
+ *   metadata: [{ name: 'time', range: [0, 100], step: undefined }],
+ * };
+ *
+ * // Normal navigation: 1% of range = 1 second
+ * const normal = calculateStepSize(0, dims);
+ * console.log(normal); // 1.0
+ *
+ * // Fine control with Shift: 0.1 second
+ * const fine = calculateStepSize(0, dims, { shift: true });
+ * console.log(fine); // 0.1
+ *
+ * // Coarse control with Ctrl: 10 seconds
+ * const coarse = calculateStepSize(0, dims, { ctrl: true });
+ * console.log(coarse); // 10.0
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Discrete frame dimension: 1000 frames
+ * const dims = {
+ *   metadata: [{ name: 'frame', range: [0, 999], discrete: true }],
+ * };
+ *
+ * // Default: step by 10 frames (1% of 1000, rounded up)
+ * const normal = calculateStepSize(0, dims);
+ * console.log(normal); // 10
+ *
+ * // With Shift: step by 1 frame (minimum for discrete)
+ * const fine = calculateStepSize(0, dims, { shift: true });
+ * console.log(fine); // 1
+ * ```
  */
 export function calculateStepSize(
   dimIndex: number,
@@ -135,15 +238,80 @@ export function calculateStepSize(
 }
 
 /**
- * Calculates the next position in a dimension after navigation
+ * Calculate the next position in a dimension after applying navigation step.
  *
- * @param currentPos - Current position in dimension
- * @param direction - Navigation direction (1 or -1)
- * @param stepSize - Size of navigation step
- * @param range - Valid range for dimension
- * @param discrete - Whether dimension is discrete
- * @param wrapAround - Whether to wrap at boundaries
- * @returns New position after navigation
+ * Handles dimension navigation with support for:
+ * - Discrete (frame-based) and continuous (time-based) dimensions
+ * - Boundary clamping or wrap-around behavior
+ * - Rounding for discrete dimensions
+ * - Min/max range enforcement
+ *
+ * This function is the core of keyboard navigation ([/] keys). It ensures
+ * positions stay within valid bounds and provides predictable stepping
+ * behavior for both discrete and continuous data.
+ *
+ * @param currentPos - Current position value in dimension coordinates
+ * @param direction - Navigation direction: 1 for forward (]), -1 for backward ([)
+ * @param stepSize - Step size to apply (from calculateStepSize)
+ * @param range - Valid [min, max] bounds for this dimension
+ * @param discrete - If true, rounds to nearest integer (for frame indices)
+ * @param wrapAround - If true, wraps at boundaries; if false, clamps to range
+ * @returns New position after navigation, guaranteed to be within range
+ *
+ * @example
+ * ```typescript
+ * // Continuous time dimension: navigate forward
+ * const newPos = calculateNextPosition(
+ *   5.2,        // current: 5.2 seconds
+ *   1,          // forward
+ *   1.0,        // step: 1 second
+ *   [0, 100],   // range: 0-100 seconds
+ *   false       // continuous
+ * );
+ * console.log(newPos); // 6.2 seconds
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Discrete frame dimension: navigate backward
+ * const newFrame = calculateNextPosition(
+ *   50,         // current: frame 50
+ *   -1,         // backward
+ *   10,         // step: 10 frames
+ *   [0, 999],   // range: 0-999 frames
+ *   true,       // discrete (will round)
+ *   false       // clamp at boundaries
+ * );
+ * console.log(newFrame); // 40 (integer)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Wrap-around at boundary (circular time loop)
+ * const wrapped = calculateNextPosition(
+ *   98,         // current: near end
+ *   1,          // forward
+ *   5,          // step: 5 units
+ *   [0, 100],   // range
+ *   false,      // continuous
+ *   true        // wrap-around enabled
+ * );
+ * console.log(wrapped); // 3 (wraps from 103 to 3)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Clamp at boundary (default behavior)
+ * const clamped = calculateNextPosition(
+ *   98,         // current: near end
+ *   1,          // forward
+ *   5,          // step: 5 units
+ *   [0, 100],   // range
+ *   false,      // continuous
+ *   false       // clamp at boundaries
+ * );
+ * console.log(clamped); // 100 (clamped to max)
+ * ```
  */
 export function calculateNextPosition(
   currentPos: number,
@@ -177,11 +345,48 @@ export function calculateNextPosition(
 }
 
 /**
- * Maps number key to dimension index
+ * Map number key (1-9) to navigable dimension index.
  *
- * @param key - Key pressed ('1' through '9')
- * @param dims - Dimension configuration
- * @returns Dimension index or -1 if invalid
+ * Converts keyboard number input to actual dimension indices, filtering
+ * out displayed dimensions. Number keys map to non-displayed dimensions
+ * only, allowing users to select which hidden dimension to control with
+ * [/] navigation keys.
+ *
+ * Key mapping is order-based: '1' maps to first non-displayed dimension,
+ * '2' to second, etc. For a 5D dataset with X,Y,Z displayed, '1' would
+ * map to Time (index 3) and '2' to Channel (index 4).
+ *
+ * @param key - String representation of number key pressed ('1' through '9')
+ * @param dims - Complete dimension configuration with display settings
+ * @returns Actual dimension index (0-based), or -1 if key is invalid,
+ *          out of range, or maps to a displayed dimension
+ *
+ * @example
+ * ```typescript
+ * // 5D dataset: X, Y, Z displayed (dims 0, 1, 2)
+ * // Non-displayed: Time (dim 3), Channel (dim 4)
+ * const dims = { ndim: 5, displayed: [0, 1, 2], ... };
+ *
+ * // Press '1' to select Time dimension
+ * const dimIndex = mapKeyToDimension('1', dims);
+ * console.log(dimIndex); // 3 (Time is first non-displayed)
+ *
+ * // Press '2' to select Channel dimension
+ * const dimIndex2 = mapKeyToDimension('2', dims);
+ * console.log(dimIndex2); // 4 (Channel is second non-displayed)
+ *
+ * // Press '3' when only 2 non-displayed dimensions exist
+ * const invalid = mapKeyToDimension('3', dims);
+ * console.log(invalid); // -1 (out of range)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // 3D dataset: no non-displayed dimensions
+ * const dims3d = { ndim: 3, displayed: [0, 1, 2] };
+ * const result = mapKeyToDimension('1', dims3d);
+ * console.log(result); // -1 (no non-displayed dimensions)
+ * ```
  */
 export function mapKeyToDimension(key: string, dims: SimpleDims): number {
   const num = parseInt(key);
@@ -202,12 +407,61 @@ export function mapKeyToDimension(key: string, dims: SimpleDims): number {
 }
 
 /**
- * Formats dimension value for display
+ * Format dimension value for user-friendly display in UI.
  *
- * @param value - Dimension value
- * @param dimIndex - Dimension index
- * @param dims - Dimension configuration
- * @returns Formatted string for display
+ * Converts raw dimension values to human-readable strings with appropriate
+ * precision and units. Handles:
+ * - Discrete dimensions: Rounded to nearest integer (e.g., "Frame 42")
+ * - Continuous dimensions: Adaptive decimal places based on step size
+ * - Unit suffixes: Appends unit if defined in metadata (e.g., "5.2s", "10μm")
+ *
+ * Used for dimension sliders, help overlays, and debug output. The adaptive
+ * precision ensures values are displayed with appropriate detail - large
+ * steps show fewer decimals, fine steps show more.
+ *
+ * @param value - Raw dimension value to format (e.g., 5.234)
+ * @param dimIndex - Zero-based dimension index for metadata lookup
+ * @param dims - Complete dimension configuration including metadata
+ * @returns Formatted string ready for display (e.g., "5.2s" or "Frame 42")
+ *
+ * @example
+ * ```typescript
+ * // Continuous time dimension with units
+ * const dims = {
+ *   metadata: [{
+ *     name: 'time',
+ *     unit: 's',
+ *     step: 0.1,  // Fine step = more decimals
+ *     discrete: false
+ *   }]
+ * };
+ * const formatted = formatDimensionValue(5.234, 0, dims);
+ * console.log(formatted); // "5.2s" (1 decimal for step=0.1)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Discrete frame dimension
+ * const dims = {
+ *   metadata: [{
+ *     name: 'frame',
+ *     discrete: true,
+ *     step: 1
+ *   }]
+ * };
+ * const formatted = formatDimensionValue(42.7, 0, dims);
+ * console.log(formatted); // "43" (rounded to integer)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Continuous without unit, default precision
+ * const dims = {
+ *   metadata: [{ name: 'channel' }]  // No step or unit
+ * };
+ * const formatted = formatDimensionValue(3.14159, 0, dims);
+ * console.log(formatted); // "3.14" (2 decimals default)
+ * ```
  */
 export function formatDimensionValue(value: number, dimIndex: number, dims: SimpleDims): string {
   const meta = dims.metadata?.[dimIndex];
@@ -231,11 +485,62 @@ export function formatDimensionValue(value: number, dimIndex: number, dims: Simp
 }
 
 /**
- * Generates help text for current dimension state
+ * Generate formatted help text displaying current dimension navigation state.
  *
- * @param selectedDim - Currently selected dimension
- * @param dims - Dimension configuration
- * @returns Help text array
+ * Creates a multi-line help display showing:
+ * - Currently selected dimension with current value
+ * - List of all non-displayed dimensions with values and key bindings
+ * - Navigation instructions for keyboard controls
+ *
+ * Used in help overlays and debug panels to show users which dimensions
+ * are available for navigation and how to control them. The output is
+ * formatted for monospace display with clear alignment and indicators.
+ *
+ * @param selectedDim - Index of currently selected dimension for [/] navigation
+ * @param dims - Complete dimension configuration with current positions
+ * @returns Array of formatted strings, one per line, ready for display.
+ *          Returns simplified message if no non-displayed dimensions exist.
+ *
+ * @example
+ * ```typescript
+ * // 5D dataset with Time selected
+ * const dims = {
+ *   ndim: 5,
+ *   displayed: [0, 1, 2],  // X, Y, Z
+ *   currentStep: [0, 0, 0, 5.2, 1],
+ *   metadata: [
+ *     { name: 'X' },
+ *     { name: 'Y' },
+ *     { name: 'Z' },
+ *     { name: 'Time', unit: 's', range: [0, 10] },
+ *     { name: 'Channel', discrete: true, range: [0, 3] }
+ *   ]
+ * };
+ *
+ * const help = generateNavigationHelp(3, dims);
+ * console.log(help.join('\n'));
+ * // Output:
+ * // Selected: Time = 5.2s
+ * //
+ * // Non-displayed dimensions:
+ * //   [1] Time: 5.2s ←
+ * //   [2] Channel: 1
+ * //
+ * // Navigation:
+ * //   [1-9] Select dimension
+ * //   [ ]   Navigate selected dimension
+ * //   Shift Hold for fine control
+ * //   Ctrl  Hold for coarse control
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // 3D dataset: no non-displayed dimensions
+ * const dims3d = { ndim: 3, displayed: [0, 1, 2], ... };
+ * const help = generateNavigationHelp(0, dims3d);
+ * console.log(help);
+ * // ['All dimensions are displayed (3D view)']
+ * ```
  */
 export function generateNavigationHelp(selectedDim: number, dims: SimpleDims): string[] {
   const help: string[] = [];
@@ -280,10 +585,46 @@ export function generateNavigationHelp(selectedDim: number, dims: SimpleDims): s
 }
 
 /**
- * Validates keyboard event for navigation
+ * Validate if keyboard event should trigger dimension navigation.
  *
- * @param event - Keyboard event
- * @returns True if event should be handled for navigation
+ * Checks if the pressed key is a navigation key ([, ], or number keys 1-9)
+ * and if the event context allows navigation (not typing in input field).
+ * This prevents navigation from interfering with text input.
+ *
+ * Used as a guard before processing navigation events to ensure they're
+ * appropriate for the current UI context. Returns false if user is typing
+ * in a form field, search box, or any other text input element.
+ *
+ * @param event - Keyboard event to validate
+ * @returns true if event should trigger navigation, false if it should be
+ *          ignored (e.g., user is typing in an input field)
+ *
+ * @example
+ * ```typescript
+ * document.addEventListener('keydown', (event) => {
+ *   if (isNavigationKey(event)) {
+ *     event.preventDefault();
+ *     handleDimensionNavigation(event);
+ *   }
+ *   // Otherwise, let event propagate normally (typing, etc.)
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Returns true for navigation keys when not typing
+ * const event1 = new KeyboardEvent('keydown', { key: '[' });
+ * console.log(isNavigationKey(event1)); // true
+ *
+ * // Returns false when focus is in text input
+ * const input = document.createElement('input');
+ * input.focus();
+ * const event2 = new KeyboardEvent('keydown', {
+ *   key: '[',
+ *   target: input
+ * });
+ * console.log(isNavigationKey(event2)); // false (typing in input)
+ * ```
  */
 export function isNavigationKey(event: KeyboardEvent): boolean {
   // Ignore if typing in input field
@@ -298,12 +639,50 @@ export function isNavigationKey(event: KeyboardEvent): boolean {
 }
 
 /**
- * Calculates field of view change
+ * Calculate field of view (FOV) change from mouse wheel input.
  *
- * @param currentFov - Current FOV in degrees
- * @param delta - Mouse wheel delta
- * @param sensitivity - Sensitivity multiplier
- * @returns New FOV value clamped to valid range
+ * Converts mouse wheel delta to FOV adjustment with configurable sensitivity.
+ * FOV is clamped to reasonable range (10°-120°) to prevent extreme distortion.
+ * Used for Shift+wheel FOV control, allowing users to adjust perspective
+ * from telephoto (narrow FOV) to wide-angle (wide FOV) views.
+ *
+ * Positive delta increases FOV (zoom out), negative delta decreases FOV
+ * (zoom in). The sensitivity parameter scales the change rate.
+ *
+ * @param currentFov - Current field of view in degrees (typically 50-75°)
+ * @param delta - Mouse wheel delta from WheelEvent.deltaY (typically -100 to 100)
+ * @param sensitivity - Sensitivity multiplier (default from config, typically 0.1)
+ * @returns New FOV value in degrees, clamped to [10°, 120°] range
+ *
+ * @example
+ * ```typescript
+ * // Zoom in (decrease FOV) with negative wheel delta
+ * const currentFov = 60; // degrees
+ * const newFov = calculateFovChange(
+ *   currentFov,
+ *   -100,  // scroll up
+ *   0.1    // default sensitivity
+ * );
+ * console.log(newFov); // 50° (decreased by 10°)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Zoom out (increase FOV) with positive wheel delta
+ * const wideAngle = calculateFovChange(60, 200, 0.1);
+ * console.log(wideAngle); // 80° (increased by 20°)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Clamping at minimum
+ * const minFov = calculateFovChange(15, -100, 0.1);
+ * console.log(minFov); // 10° (clamped to minimum)
+ *
+ * // Clamping at maximum
+ * const maxFov = calculateFovChange(110, 200, 0.1);
+ * console.log(maxFov); // 120° (clamped to maximum)
+ * ```
  */
 export function calculateFovChange(
   currentFov: number,
@@ -318,11 +697,58 @@ export function calculateFovChange(
 }
 
 /**
- * Determines if a keyboard shortcut should be blocked
+ * Determine if keyboard shortcut should be blocked in current UI context.
  *
- * @param event - Keyboard event
- * @param activeModals - List of active modal IDs
- * @returns True if shortcut should be blocked
+ * Checks various conditions that should prevent shortcut execution:
+ * - Active modals/dialogs (shortcuts should not leak through)
+ * - Text input focus (prevent navigation while typing)
+ * - Browser shortcuts (Ctrl/Cmd+S, etc. should pass through)
+ *
+ * Used as a guard before processing keyboard shortcuts to prevent conflicts
+ * and ensure predictable behavior. Returns true when shortcuts should be
+ * suppressed, false when they should execute normally.
+ *
+ * @param event - Keyboard event to check for blocking conditions
+ * @param activeModals - Array of modal IDs currently open (e.g., ['help-overlay', 'settings'])
+ * @returns true if shortcut should be blocked (don't execute), false if it
+ *          should proceed normally
+ *
+ * @example
+ * ```typescript
+ * // Block all shortcuts when modal is open
+ * const activeModals = ['settings-dialog'];
+ * const event = new KeyboardEvent('keydown', { key: 'p' });
+ * console.log(shouldBlockShortcut(event, activeModals)); // true
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Block shortcuts when typing in input field
+ * const input = document.createElement('input');
+ * input.focus();
+ * const event = new KeyboardEvent('keydown', {
+ *   key: 'r',
+ *   target: input
+ * });
+ * console.log(shouldBlockShortcut(event, [])); // true (typing)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Allow browser shortcuts (Ctrl+S for save)
+ * const saveEvent = new KeyboardEvent('keydown', {
+ *   key: 's',
+ *   ctrlKey: true
+ * });
+ * console.log(shouldBlockShortcut(saveEvent, [])); // false (browser handles)
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Allow shortcuts in normal view (no modals, not typing)
+ * const normalEvent = new KeyboardEvent('keydown', { key: 'p' });
+ * console.log(shouldBlockShortcut(normalEvent, [])); // false (OK to execute)
+ * ```
  */
 export function shouldBlockShortcut(event: KeyboardEvent, activeModals: string[] = []): boolean {
   // Block if modal is active

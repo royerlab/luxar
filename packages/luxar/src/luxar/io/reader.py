@@ -342,9 +342,7 @@ class LuxarScene:
             "metadata": metadata,
         }
 
-    def _decode_array(
-        self, group: zarr.Group, array_name: str
-    ) -> Optional[np.ndarray]:
+    def _decode_array(self, group: zarr.Group, array_name: str) -> Optional[np.ndarray]:
         """Decode an array from a group if it exists.
 
         Args:

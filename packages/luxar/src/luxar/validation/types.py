@@ -101,8 +101,12 @@ def validate_radii(radii: Any, n_points: int) -> np.ndarray[Any, np.dtype[np.flo
         raise ValueError("Radii must be a numpy array")
     if radii.ndim != 1:
         raise ValueError("Radii must have shape (N,)")
-    if radii.shape[0] != n_points:
-        raise ValueError(f"Radii shape {radii.shape} doesn't match positions")
+    # Allow broadcasting: either n_points or 1 element
+    if radii.shape[0] != n_points and radii.shape[0] != 1:
+        raise ValueError(
+            f"Radii shape {radii.shape} doesn't match positions. "
+            f"Expected {n_points} elements or 1 (broadcast), got {radii.shape[0]}"
+        )
     # Ensure all radii are positive
     if np.any(radii <= 0):
         raise ValueError("All radii must be positive values")
@@ -134,20 +138,19 @@ def validate_sharpness(
     if sharpness.ndim != 1:
         raise ValueError("Sharpness must have shape (N,)")
 
-    if sharpness.shape[0] != n_points:
-        raise ValueError(f"Sharpness shape {sharpness.shape} doesn't match positions")
+    # Allow broadcasting: either n_points or 1 element
+    if sharpness.shape[0] != n_points and sharpness.shape[0] != 1:
+        raise ValueError(
+            f"Sharpness shape {sharpness.shape} doesn't match positions. "
+            f"Expected {n_points} elements or 1 (broadcast), got {sharpness.shape[0]}"
+        )
 
     if np.any(sharpness <= 0):
         raise ValueError("All sharpness values must be positive")
 
-    # Warn if values are outside typical range
-    if np.any(sharpness < 0.5) or np.any(sharpness > 10.0):
-        import warnings
-
-        warnings.warn(
-            "Sharpness values outside typical range [0.5, 10.0] detected. "
-            "Very low values (<0.5) create uniform disks, very high values (>10) create hard edges."
-        )
+    # Note: Per SPECIFICATIONS.md v1.0.2, the "typical range" warning was removed as arbitrary.
+    # Valid sharpness range is [0, 31] enforced by base.validate_sharpness_for_writing().
+    # Basic validation here only checks positivity for type guards and runtime checks.
 
     return sharpness.astype(np.float32, copy=False)
 

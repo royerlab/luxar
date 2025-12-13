@@ -32,6 +32,7 @@ The `io` package implements progressive writing to Zarr stores and spatial index
 - `version`: Luxar format version (default: "0.1")
 - `enable_spatial_index`: Whether to build spatial indices (default: True)
 - `encoding_mode`: Encoding mode for array storage (default: AUTO) - see encoding/SPECIFICATIONS.md
+- `float16_allowed`: Enable float16 encoding in MEMORY mode (default: False) - For TypeScript/WebGL compatibility
 
 **Operations**:
 1. `create_scene(dimensions=None)` - Create scene with optional dimension specs

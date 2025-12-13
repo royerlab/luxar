@@ -28,6 +28,11 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
+**Browser Recommendations**:
+- **Firefox** (recommended for large datasets): 2× faster WebAssembly decompression (1 GB/s vs 500 MB/s)
+- **Chrome/Edge**: Excellent compatibility, good performance
+- **Safari**: Good support, slightly lower WASM performance
+
 ### Installation
 
 ```bash

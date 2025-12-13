@@ -210,8 +210,10 @@ def generate_bell_points(
         ring_height = jelly.size * height_factor * np.cos(ring_frac * np.pi / 2)
 
         # Add slight wobble
-        wobble = 0.02 * jelly.size * np.sin(
-            2 * np.pi * (t * 0.5 + jelly.wobble_phase + ring_frac * 0.3)
+        wobble = (
+            0.02
+            * jelly.size
+            * np.sin(2 * np.pi * (t * 0.5 + jelly.wobble_phase + ring_frac * 0.3))
         )
 
         for seg in range(BELL_SEGMENTS):
@@ -293,7 +295,6 @@ def generate_tentacles(
     pulse = 0.5 + 0.5 * np.sin(
         2 * np.pi * (frame * PULSE_FREQUENCY * jelly.pulse_speed + jelly.pulse_phase)
     )
-    height_factor = 0.6 + 0.3 * (1 - pulse)
     width_factor = 1.0 + 0.15 * pulse
 
     all_vertices = []
@@ -389,7 +390,7 @@ def generate_oral_arms(
         vertices, widths, colors, sharpness
     """
     t = frame / n_frames
-    pulse = 0.5 + 0.5 * np.sin(
+    _ = 0.5 + 0.5 * np.sin(
         2 * np.pi * (frame * PULSE_FREQUENCY * jelly.pulse_speed + jelly.pulse_phase)
     )
 
@@ -536,9 +537,9 @@ def generate_deep_particles(
         positions[i, 2] += 0.05 * np.cos(2 * np.pi * (t * 0.1 + phase))
 
     # Wrap around vertically
-    positions[:, 1] = np.mod(
-        positions[:, 1] + OCEAN_HEIGHT / 2, OCEAN_HEIGHT
-    ) - OCEAN_HEIGHT / 2
+    positions[:, 1] = (
+        np.mod(positions[:, 1] + OCEAN_HEIGHT / 2, OCEAN_HEIGHT) - OCEAN_HEIGHT / 2
+    )
 
     # Dim, blue-tinted colors
     colors = np.zeros((n_particles, 3), dtype=np.float32)
@@ -684,11 +685,6 @@ def generate_ocean_scene(
             all_tent_widths = []
             all_tent_colors = []
             all_tent_sharp = []
-
-            all_plankton_pos = []
-            all_plankton_colors = []
-            all_plankton_radii = []
-            all_plankton_sharp = []
 
             for frame in range(n_frames):
                 if frame % 50 == 0:

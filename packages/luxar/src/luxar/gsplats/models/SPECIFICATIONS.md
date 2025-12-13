@@ -284,45 +284,67 @@ Then shrink AABB radii to minimum of truncate-based and amplitude-based limits.
 
 ### 4. Rendering Wrappers (`gsplats/rendering_wrappers.py`)
 
-**Purpose**: User-friendly interfaces for numpy and torch tensors.
+**Purpose**: User-friendly interfaces for numpy and torch tensors using `GaussianSplatResult` objects.
+
+**API Change (v1.1.0, Nov 2025)**: Rendering wrappers now accept `GaussianSplatResult` dataclass instead of raw parameter arrays for type safety and clarity.
 
 **render_gaussians_numpy**:
 ```python
 def render_gaussians_numpy(
     shape: Sequence[int],
-    params_full: np.ndarray,  # (N, d + d*(d+1)//2 + 1) or (N, d + d*(d+1)//2)
-    amps: np.ndarray,         # (N,)
+    result: GaussianSplatResult,  # Gaussian splat parameters
     truncate: float = 3.0,
     chunk_size: Optional[int] = None
 ) -> np.ndarray:
     """
-    NumPy interface with auto-parameter extraction (no gradients).
-    
-    Automatically unpacks:
-    - Centers from first d columns
-    - Cholesky factors from next d*(d+1)//2 columns
-    - Sharpness from last column (if present, else defaults to s=2.0)
-    
-    Backward compatibility: Accepts params without sharpness column.
-    Returns: NumPy array on CPU
+    NumPy interface for rendering Gaussian splats.
+
+    Parameters:
+        shape: Output volume dimensions
+        result: GaussianSplatResult from fit_gaussian_splats() or loaded from disk
+        truncate: Truncation radius in standard deviations (default: 3σ)
+        chunk_size: Process in chunks for memory efficiency (default: auto)
+
+    Returns: NumPy array with shape `shape`, dtype float32
+
+    Example:
+        result = fit_gaussian_splats(volume)
+        reconstruction = render_gaussians_numpy(
+            shape=volume.shape,
+            result=result,
+            truncate=3.0
+        )
     """
 ```
 
-**render_gaussians_pytorch**:
+**render_gaussians_torch**:
 ```python
-def render_gaussians_pytorch(
+def render_gaussians_torch(
     shape: Sequence[int],
-    params_full: np.ndarray,  # Same format as numpy version
-    amps: np.ndarray,
+    result: GaussianSplatResult,  # Gaussian splat parameters
     truncate: float = 3.0,
-    device: str = "cpu",
+    device: Optional[torch.device] = None,
     chunk_size: Optional[int] = None
 ) -> torch.Tensor:
     """
-    PyTorch interface with auto-parameter extraction.
-    
-    Same unpacking logic as numpy version.
-    Returns: Torch tensor on specified device (supports gradients)
+    PyTorch interface for rendering Gaussian splats.
+
+    Parameters:
+        shape: Output volume dimensions
+        result: GaussianSplatResult object
+        truncate: Truncation radius in standard deviations
+        device: Target device (default: auto-detect CUDA→CPU)
+        chunk_size: Batch size for memory efficiency
+
+    Returns: Torch tensor on specified device
+
+    Example:
+        result = fit_gaussian_splats(volume)
+        reconstruction = render_gaussians_torch(
+            shape=(128, 128, 128),
+            result=result,
+            device=torch.device('cuda')
+        )
     """
 ```
 
@@ -330,25 +352,70 @@ def render_gaussians_pytorch(
 ```python
 def render_gaussians_batched(
     shape: Sequence[int],
-    centers: torch.Tensor,      # (N, d)
-    Ls: torch.Tensor,           # (N, d, d)
-    amps: torch.Tensor,         # (N,)
-    sharpness: Optional[torch.Tensor] = None,  # (N,) optional
+    result: GaussianSplatResult,  # Gaussian splat parameters
+    model: GaussianSplatModel,    # Pre-initialized model
     truncate: float = 3.0,
-    intensity_floor: float = 1e-5,
-    chunk_size: Optional[int] = None
+    batch_size: int = 100,
+    device: Optional[torch.device] = None
 ) -> torch.Tensor:
     """
-    Direct wrapper around render_gaussians (identical functionality).
-    
-    Defaults sharpness to 2.0 if not provided.
+    Batch rendering for large datasets (GPU memory constrained).
+
+    Parameters:
+        shape: Output volume dimensions
+        result: GaussianSplatResult object
+        model: Pre-constructed GaussianSplatModel (avoids recreation per batch)
+        truncate: Truncation radius in standard deviations
+        batch_size: Splats per batch (default: 100)
+        device: Target device
+
+    Returns: Torch tensor, accumulated across batches
+
+    Example:
+        from luxar.gsplats.models import GaussianSplatModel
+
+        model = GaussianSplatModel(n_splats=len(result.centers), d=result.centers.shape[1])
+        reconstruction = render_gaussians_batched(
+            shape=(256, 256, 256),
+            result=result,
+            model=model,
+            batch_size=100
+        )
+
+    Note: Requires pre-initialized model for efficiency.
     """
 ```
 
-**Parameter Format Detection**:
-- Computes expected sizes: `d + tril_size(d)` and `d + tril_size(d) + 1`
-- Auto-detects whether sharpness column is present
-- Raises `ValueError` with clear message if column count doesn't match either format
+**GaussianSplatResult Structure**:
+```python
+@dataclass
+class GaussianSplatResult:
+    centers: np.ndarray          # (N, d) float32 - Gaussian centers
+    amplitudes: np.ndarray       # (N,) float32 - Amplitudes
+    cholesky_factors: np.ndarray # (N, d*(d+1)/2) float32 - Packed Cholesky factors
+    sharpnesses: np.ndarray      # (N,) float32 - Sharpness values (generalized Gaussian)
+    stats: Dict[str, Any]        # Fitting statistics (loss history, convergence, etc.)
+```
+
+**Persistence** (see `fit_result.py:16-148`):
+```python
+# Save result
+result.save('fitted_splats.npz')
+
+# Load result
+from luxar.gsplats import GaussianSplatResult
+result = GaussianSplatResult.load('fitted_splats.npz')
+```
+
+**Migration from Old API** (deprecated Nov 2025):
+```python
+# OLD API (no longer supported):
+render_gaussians_numpy(shape, params_full, amps)
+
+# NEW API:
+result = fit_gaussian_splats(volume)  # Returns GaussianSplatResult
+render_gaussians_numpy(shape, result)
+```
 
 ### 5. Numerical Stability Utilities
 
