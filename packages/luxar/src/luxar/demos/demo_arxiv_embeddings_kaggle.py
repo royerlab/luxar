@@ -46,13 +46,24 @@ THIS IS WORTH IT:
 
 ================================================================================
 
+QUICK START:
+============
+1. Download the dataset (one-time, ~30GB, 10-15 min):
+   curl -L -o ~/Downloads/openai-arxiv-embeddings.zip \\
+     https://www.kaggle.com/api/v1/datasets/download/tomtum/openai-arxiv-embeddings
+
+2. Run the demo:
+   python demo_arxiv_embeddings_kaggle.py --sample=50000 --use-cache
+
+3. Subsequent runs are INSTANT (uses cached data + UMAP)!
+
 Usage:
     python demo_arxiv_embeddings_kaggle.py [--sample=N]
 
     Options:
     --sample=N       Number of papers to sample (default: 50000)
     --categories=X   Filter by arXiv category (e.g., cs.AI, physics.atom-ph)
-    --use-cache      Use cached UMAP coordinates
+    --use-cache      Use cached UMAP coordinates (RECOMMENDED!)
 
 Requirements:
     - Install: pip install mlcroissant umap-learn pandas
@@ -102,6 +113,83 @@ CATEGORY_COLORS = {
 # =============================================================================
 # Dataset Loading with MLCroissant
 # =============================================================================
+
+
+def load_arxiv_dataset_local(
+    zip_path: Path,
+    sample_size: int = 50000,
+) -> tuple[list, list, list, list]:
+    """Load arXiv embeddings from local ZIP file.
+
+    Args:
+        zip_path: Path to downloaded openai-arxiv-embeddings.zip
+        sample_size: Number of papers to load
+
+    Returns:
+        Tuple of (embeddings, titles, categories, years)
+    """
+    import zipfile
+
+    with asection("Loading arXiv embeddings from local ZIP"):
+        aprint(f"ZIP file: {zip_path}")
+        aprint(f"Size: {zip_path.stat().st_size / (1024**3):.1f} GB")
+
+        embeddings = []
+        titles = []
+        categories = []
+        years = []
+
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            # Find the data file (likely JSONL format)
+            data_files = [f for f in zf.namelist() if f.endswith(('.json', '.jsonl'))]
+
+            if not data_files:
+                raise FileNotFoundError(f"No JSON/JSONL files found in {zip_path}")
+
+            data_file = data_files[0]
+            aprint(f"Reading: {data_file}")
+            aprint(f"Sampling {sample_size:,} papers...")
+
+            with zf.open(data_file) as f:
+                import io
+                text_stream = io.TextIOWrapper(f, encoding='utf-8')
+
+                count = 0
+                for i, line in enumerate(text_stream):
+                    if count >= sample_size:
+                        break
+
+                    if i % 10000 == 0 and i > 0:
+                        aprint(f"  Processed {i:,} papers, sampled {count:,}")
+
+                    try:
+                        import json
+                        paper = json.loads(line)
+
+                        # Extract embedding
+                        emb = paper.get("embedding") or paper.get("embeddings")
+                        if emb and len(emb) > 0:
+                            embeddings.append(emb)
+                            titles.append(paper.get("title", "Unknown"))
+
+                            # Get primary category
+                            cats = paper.get("categories", "").split()
+                            primary_cat = cats[0].split(".")[0] if cats else "other"
+                            categories.append(primary_cat)
+
+                            # Get year
+                            update_date = paper.get("update_date", "2020-01-01")
+                            year = int(update_date[:4]) if update_date else 2020
+                            years.append(year)
+
+                            count += 1
+
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        continue
+
+        aprint(f"✓ Loaded {len(embeddings):,} papers with embeddings")
+
+    return embeddings, titles, categories, years
 
 
 def load_arxiv_dataset_croissant(
@@ -270,10 +358,24 @@ def generate_paper_landscape(
             years = list(cached["years"])
             aprint(f"✓ Loaded {len(positions):,} papers from cache")
     else:
-        # Load data using mlcroissant
-        embeddings_list, titles, categories, years = load_arxiv_dataset_croissant(
-            sample_size
-        )
+        # Check for local ZIP file first
+        local_zip = Path.home() / "Downloads" / "openai-arxiv-embeddings.zip"
+
+        if local_zip.exists():
+            aprint(f"✓ Found local dataset: {local_zip}")
+            embeddings_list, titles, categories, years = load_arxiv_dataset_local(
+                local_zip, sample_size
+            )
+        else:
+            aprint("No local ZIP found, using mlcroissant (will download ~30GB)...")
+            aprint("To avoid this, download manually:")
+            aprint("  curl -L -o ~/Downloads/openai-arxiv-embeddings.zip \\")
+            aprint("    https://www.kaggle.com/api/v1/datasets/download/tomtum/openai-arxiv-embeddings")
+            aprint("")
+            embeddings_list, titles, categories, years = load_arxiv_dataset_croissant(
+                sample_size
+            )
+
         embeddings = np.array(embeddings_list, dtype=np.float32)
 
         if len(embeddings) == 0:
