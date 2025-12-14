@@ -473,6 +473,52 @@ export async function assertConsoleDoesNotContain(
 }
 
 /**
+ * Wait for dimension system to be initialized
+ * Returns true if dimensions are initialized, false if no nD data
+ *
+ * @param page - Playwright page
+ * @param timeout - Maximum wait time in ms
+ */
+export async function waitForDimensionSystemReady(
+  page: Page,
+  timeout = 10000
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      const hasInitialized = await page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        if (!debug?.app?.inputHandler) return null;
+
+        // Check if sceneDimsManager exists and has dims
+        const dims = debug.app.inputHandler.sceneDimsManager?.getDims();
+        return dims !== null && dims !== undefined;
+      });
+
+      if (hasInitialized === true) {
+        return true;
+      } else if (hasInitialized === false) {
+        // No nD data in scene
+        return false;
+      }
+    } catch {
+      // Not ready yet
+    }
+
+    await page.waitForTimeout(100);
+  }
+
+  // Timeout - check final state
+  const finalState = await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    return debug?.app?.inputHandler?.sceneDimsManager?.getDims() !== null;
+  });
+
+  return finalState;
+}
+
+/**
  * Wait for navigation to complete by detecting loading state change
  *
  * This is more robust than waitForTimeout because it:

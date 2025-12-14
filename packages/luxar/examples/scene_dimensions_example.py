@@ -34,12 +34,13 @@ def main():
     aprint("Creating scene with explicit dimensions...")
 
     # Define scene dimensions with custom stepping
+    # IMPORTANT: Ranges must match where data actually exists
     dims = Dimensions(
         [
             # Time dimension with 0.5s steps
             Dimension("time", unit="s", range=(0, 10), step=0.5, display=False),
-            # Z dimension with fine 0.1um steps
-            Dimension("z", unit="um", range=(-50, 50), step=0.1, display=False),
+            # Z dimension with fine 0.1um steps - range matches actual data
+            Dimension("z", unit="um", range=(-40, 40), step=0.1, display=False),
             # X,Y dimensions displayed with default stepping
             Dimension("y", unit="um", range=(-100, 100), display=True),
             Dimension("x", unit="um", range=(-100, 100), display=True),

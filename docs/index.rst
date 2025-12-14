@@ -20,25 +20,25 @@ Welcome to Luxar's documentation! Luxar is a high-performance visualization syst
    :maxdepth: 2
    :caption: User Guides:
 
-   LUXAR_ZARR_FORMAT
-   user-guides/HDR_GUIDE
-   E2E_TESTING_GUIDE
+   guides/user/LUXAR_ZARR_FORMAT
+   guides/user/HDR_GUIDE
+   guides/user/E2E_TESTING_GUIDE
 
 .. toctree::
    :maxdepth: 2
    :caption: Developer Guides:
 
-   JSDOC_STYLE_GUIDE
-   CONSOLE_OUTPUT_STYLE
-   NETWORK_SIMULATION_SPEC
+   guides/developer/JSDOC_STYLE_GUIDE
+   guides/developer/CONSOLE_OUTPUT_STYLE
+   guides/developer/NETWORK_SIMULATION_SPEC
 
 .. toctree::
    :maxdepth: 2
    :caption: Technical Specifications:
 
-   CACHE_PREFETCHING_SPEC
-   DIMENSION_INITIALIZATION_FIX
-   LINES_SEGMENT_CHUNKING_BUG_FIX
+   guides/specs/CACHE_PREFETCHING_SPEC
+   guides/specs/DIMENSION_INITIALIZATION_FIX
+   guides/specs/LINES_SEGMENT_CHUNKING_BUG_FIX
 
 .. toctree::
    :maxdepth: 3
