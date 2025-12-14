@@ -111,6 +111,78 @@ CATEGORY_COLORS = {
 
 
 # =============================================================================
+# Dataset Download and Caching
+# =============================================================================
+
+
+def download_kaggle_dataset(
+    output_path: Path,
+    url: str = "https://www.kaggle.com/api/v1/datasets/download/tomtum/openai-arxiv-embeddings",
+) -> Path:
+    """Download Kaggle dataset with progress bar.
+
+    Args:
+        output_path: Where to save the ZIP file
+        url: Kaggle dataset download URL
+
+    Returns:
+        Path to downloaded file
+    """
+    import requests
+
+    with asection("Downloading Kaggle ArXiv Embeddings Dataset"):
+        aprint("URL: https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings")
+        aprint(f"Destination: {output_path}")
+        aprint("")
+        aprint("⏱️  This is a ONE-TIME download (~30 GB, 10-15 minutes)")
+        aprint("⏱️  Subsequent runs will use cached file instantly!")
+        aprint("")
+
+        try:
+            # Stream download with progress
+            response = requests.get(url, stream=True, timeout=300)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get("content-length", 0))
+            aprint(f"Dataset size: {total_size / (1024**3):.1f} GB")
+            aprint("Downloading...")
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            downloaded = 0
+            chunk_size = 8192 * 128  # 1MB chunks
+            last_progress = 0
+
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+
+                        # Progress update every 100MB
+                        progress_mb = downloaded / (1024 * 1024)
+                        if progress_mb - last_progress >= 100:
+                            percent = (downloaded / total_size * 100) if total_size > 0 else 0
+                            aprint(
+                                f"  Progress: {downloaded / (1024**3):.1f} GB / "
+                                f"{total_size / (1024**3):.1f} GB ({percent:.1f}%)"
+                            )
+                            last_progress = progress_mb
+
+            aprint("✓ Download complete!")
+            aprint(f"✓ Saved to: {output_path}")
+            aprint(f"  Size: {output_path.stat().st_size / (1024**3):.1f} GB")
+
+        except Exception as e:
+            aprint(f"❌ Download failed: {e}")
+            if output_path.exists():
+                output_path.unlink()  # Clean up partial download
+            raise
+
+    return output_path
+
+
+# =============================================================================
 # Dataset Loading with MLCroissant
 # =============================================================================
 
@@ -358,23 +430,20 @@ def generate_paper_landscape(
             years = list(cached["years"])
             aprint(f"✓ Loaded {len(positions):,} papers from cache")
     else:
-        # Check for local ZIP file first
-        local_zip = Path.home() / "Downloads" / "openai-arxiv-embeddings.zip"
+        # Check for cached dataset
+        dataset_cache = Path.home() / ".cache" / "luxar" / "arxiv_embeddings.zip"
 
-        if local_zip.exists():
-            aprint(f"✓ Found local dataset: {local_zip}")
-            embeddings_list, titles, categories, years = load_arxiv_dataset_local(
-                local_zip, sample_size
-            )
+        if not dataset_cache.exists():
+            aprint("Dataset not in cache, downloading...")
+            download_kaggle_dataset(dataset_cache)
         else:
-            aprint("No local ZIP found, using mlcroissant (will download ~30GB)...")
-            aprint("To avoid this, download manually:")
-            aprint("  curl -L -o ~/Downloads/openai-arxiv-embeddings.zip \\")
-            aprint("    https://www.kaggle.com/api/v1/datasets/download/tomtum/openai-arxiv-embeddings")
-            aprint("")
-            embeddings_list, titles, categories, years = load_arxiv_dataset_croissant(
-                sample_size
-            )
+            aprint(f"✓ Using cached dataset: {dataset_cache}")
+            aprint(f"  Size: {dataset_cache.stat().st_size / (1024**3):.1f} GB")
+
+        # Load from cached ZIP
+        embeddings_list, titles, categories, years = load_arxiv_dataset_local(
+            dataset_cache, sample_size
+        )
 
         embeddings = np.array(embeddings_list, dtype=np.float32)
 
