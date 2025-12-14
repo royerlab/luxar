@@ -104,7 +104,7 @@ Debug with AI assistance:
 pnpm agent:debug
 ```
 
-See [E2E_TESTING_GUIDE.md](E2E_TESTING_GUIDE.md) for complete guide.
+See [E2E_TESTING_GUIDE.md](guides/user/E2E_TESTING_GUIDE.md) for complete guide.
 ```
 
 ### 4. **Performance Baseline Management**

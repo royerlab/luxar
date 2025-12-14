@@ -894,8 +894,8 @@ When adding new tests:
 - [Main README](../../../README.md) - Project documentation
 - [CLAUDE.md](../../../../CLAUDE.md) - Development guidance for AI assistants
 - [PLAYWRIGHT_GUIDE.md](../../docs/PLAYWRIGHT_GUIDE.md) - Playwright testing guide
-- [LUXAR_ZARR_FORMAT.md](../../../../docs/LUXAR_ZARR_FORMAT.md) - Data format specification
-- [Console Output Style](../../../../docs/CONSOLE_OUTPUT_STYLE.md) - Logging style guide
+- [LUXAR_ZARR_FORMAT.md](../../../../docs/guides/user/LUXAR_ZARR_FORMAT.md) - Data format specification
+- [Console Output Style](../../../../docs/guides/developer/CONSOLE_OUTPUT_STYLE.md) - Logging style guide
 
 ---
 

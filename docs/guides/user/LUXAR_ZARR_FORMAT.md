@@ -482,6 +482,42 @@ Each dimension in `scene_dimensions` contains:
 - `discrete`: Whether dimension represents discrete values
 - `spatial`: Whether points extend through this dimension (auto-determined if not specified)
 - `step`: Navigation step size
+- `cyclic`: (Optional) Whether dimension wraps around (e.g., angles)
+- `scale`: (Optional) Physical scale factor
+- `categories`: (Optional) List of string labels for categorical dimensions
+- `description`: (Optional) Human-readable description
+
+#### Categorical Dimensions
+Categorical dimensions allow string labels instead of numeric coordinates, useful for channels, cell types, experimental conditions, or time-lapse phases.
+
+**Key Features:**
+- Define human-readable labels for dimension values
+- Automatically enforced as `discrete=True`
+- Range auto-set to `(0, len(categories)-1)` if not provided
+- Step auto-set to `1.0` if not provided
+- Categories must be unique, non-empty strings (max 1024 characters each)
+
+**Example:**
+```json
+{
+  "name": "channel",
+  "unit": "",
+  "categories": ["DAPI", "GFP", "mCherry", "Cy5"],
+  "display": false,
+  "discrete": true,
+  "range": [0, 3],
+  "step": 1.0
+}
+```
+
+In data arrays, use integer indices (0-based): 0='DAPI', 1='GFP', 2='mCherry', 3='Cy5'.
+
+**Validation Rules:**
+- Categories must be a non-empty list of strings
+- Each category label must be unique within the dimension
+- Category labels cannot be empty strings
+- Maximum label length: 1024 characters
+- When categories are provided, `discrete` is automatically set to `True`
 
 ### nD Point Cloud Support
 - Points can have arbitrary dimensionality (not limited to 3D)
