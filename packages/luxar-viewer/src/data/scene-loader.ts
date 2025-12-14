@@ -556,9 +556,10 @@ export class SceneLoader {
       const data = await loader.loadPoints(this.viewState);
 
       // Create THREE.js geometry even if empty (for future updates)
-      // Pass max_radius from node attributes for proper radii scaling
-      const maxRadius = node.attrs.max_radius ?? 1.0;
-      const geometry = this.createGeometry(data, maxRadius);
+      // Pass max_radius and max_sharpness from node attributes for proper scaling
+      const maxRadius = (node.attrs.max_radius as number | undefined) ?? 1.0;
+      const maxSharpness = (node.attrs.max_sharpness as number | undefined) ?? 31.0;
+      const geometry = this.createGeometry(data, maxRadius, maxSharpness);
 
       // Log if no initial points are visible (this is normal for nD slicing)
       if (data.metadata.loadedPoints === 0) {
@@ -838,8 +839,13 @@ export class SceneLoader {
    * Create THREE.js geometry from points data
    * @param data - Points data with positions, colors, radii, sharpness
    * @param maxRadius - Maximum radius from node attributes for scaling uint8 radii
+   * @param maxSharpness - Maximum sharpness from node attributes for scaling uint8 sharpness
    */
-  private createGeometry(data: PointsData, maxRadius: number = 1.0): THREE.BufferGeometry {
+  private createGeometry(
+    data: PointsData,
+    maxRadius: number = 1.0,
+    maxSharpness: number = 31.0
+  ): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     // VALIDATION: Check for edge cases and log detailed diagnostics
@@ -936,9 +942,9 @@ export class SceneLoader {
           new THREE.BufferAttribute(data.sharpness, 1, true) // true = normalize on GPU
         );
 
-        // GPU normalizes uint8 to [0,1], then scale to [0,31] range
-        // Must match SHARPNESS_MAX constant in Python (typing_utils/constants.py)
-        sharpnessScale = 31.0;
+        // GPU normalizes uint8 to [0,1], then scale to sharpness range
+        // Use max_sharpness passed from node attributes
+        sharpnessScale = maxSharpness;
       } else {
         // Float32 sharpness - no normalization or scaling needed
         geometry.setAttribute(

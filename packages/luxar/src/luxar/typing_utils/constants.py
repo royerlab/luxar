@@ -71,6 +71,7 @@ DEFAULT_DIMENSION_STEP_PERCENT: Final[float] = 0.01  # 1% of range for navigatio
 
 # Categorical dimension constants
 MIN_CATEGORIES: Final[int] = 1  # Minimum categories for categorical dimensions
+MAX_CATEGORY_LABEL_LENGTH: Final[int] = 1024  # Maximum length for category labels
 CATEGORICAL_STEP: Final[float] = 1.0  # Step size for categorical dimensions (always 1)
 
 # Decimal precision for display
