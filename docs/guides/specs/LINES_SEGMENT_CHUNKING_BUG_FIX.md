@@ -253,7 +253,7 @@ Efficiency: 92-99.6% (varies by frame)
 | `packages/luxar/src/luxar/io/SPECIFICATIONS.md` | Segment Spatial Ordering | Document discrete-aware chunking |
 | `packages/luxar/src/luxar/io/README.md` | Spatial Indexing | Mention discrete boundary alignment |
 | `packages/luxar-viewer/src/data/SPECIFICATIONS.md` | Section 7.9 Lines Dimension Extension | Update chunk behavior description |
-| `docs/LUXAR_ZARR_FORMAT.md` | Spatial Index Format | Document discrete-aware chunking guarantee |
+| `docs/guides/user/LUXAR_ZARR_FORMAT.md` | Spatial Index Format | Document discrete-aware chunking guarantee |
 
 ---
 
@@ -816,7 +816,7 @@ if slice_dims:
 - [ ] Update `io/SPECIFICATIONS.md` - discrete-aware chunking algorithm
 - [ ] Update `io/README.md` - mention performance benefit
 - [ ] Update `data/SPECIFICATIONS.md` (viewer) - chunk behavior
-- [ ] Update `LUXAR_ZARR_FORMAT.md` - spatial index format
+- [ ] Update `guides/user/LUXAR_ZARR_FORMAT.md` - spatial index format
 - [ ] Add entry to CHANGELOG.md
 
 ### Phase 5: Validation

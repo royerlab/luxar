@@ -107,7 +107,7 @@ const prefetcher = new ChunkPrefetcher(store, {
 store.setPrefetcher(prefetcher);
 ```
 
-For full details, see [`docs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/CACHE_PREFETCHING_SPEC.md).
+For full details, see [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/guides/specs/CACHE_PREFETCHING_SPEC.md).
 
 ## API Reference
 

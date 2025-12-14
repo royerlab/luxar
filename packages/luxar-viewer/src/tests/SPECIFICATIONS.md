@@ -688,4 +688,4 @@ pnpm test --run
 
 - `luxar.encoding` - Encoding specification (see `../../encoding/SPECIFICATIONS.md`)
 - `luxar.io` - I/O and zarr format (see `../../io/SPECIFICATIONS.md`)
-- Luxar Zarr Format - Data format spec (see `/docs/LUXAR_ZARR_FORMAT.md`)
+- Luxar Zarr Format - Data format spec (see `/docs/guides/user/LUXAR_ZARR_FORMAT.md`)
