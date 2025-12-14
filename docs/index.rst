@@ -8,10 +8,27 @@ Welcome to Luxar's documentation! Luxar is a high-performance visualization syst
    :caption: User Guides:
 
    LUXAR_ZARR_FORMAT
+   user-guides/HDR_GUIDE
    E2E_TESTING_GUIDE
 
 .. toctree::
    :maxdepth: 2
+   :caption: Developer Guides:
+
+   JSDOC_STYLE_GUIDE
+   CONSOLE_OUTPUT_STYLE
+   NETWORK_SIMULATION_SPEC
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Technical Specifications:
+
+   CACHE_PREFETCHING_SPEC
+   DIMENSION_INITIALIZATION_FIX
+   LINES_SEGMENT_CHUNKING_BUG_FIX
+
+.. toctree::
+   :maxdepth: 3
    :caption: API Reference:
 
    api/core
@@ -105,6 +122,6 @@ Gaussian Splatting
 Support
 -------
 
-* **Documentation**: https://luxar.readthedocs.io
-* **Issues**: https://github.com/your-org/luxar/issues
-* **Discussions**: https://github.com/your-org/luxar/discussions
+* **Documentation**: https://royerlab.github.io/luxar
+* **Issues**: https://github.com/royerlab/luxar/issues
+* **Repository**: https://github.com/royerlab/luxar

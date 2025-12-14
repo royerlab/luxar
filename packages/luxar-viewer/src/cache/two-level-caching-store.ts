@@ -110,7 +110,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * } catch (error) {
    *   console.error('Cache init failed:', error);
    *   // Fall back to direct HTTP (no caching)
-   *   store = new TwoLevelCachingStore(url, { /* options with ?no-cache */ });
+   *   store = new TwoLevelCachingStore(url, { cachingEnabled: false });
    * }
    * ```
    *

@@ -41,24 +41,35 @@ See: `ai-debugging-demo.spec.ts` for complete examples
 
 ## 🧪 Test Suite Organization
 
-### Test Files (130+ tests total)
+### Test Files (226 tests total across 23 test suites)
 
-| File | Tests | Purpose |
-|------|-------|---------|
-| **ai-debugging-demo.spec.ts** | 8 | AI debugging capabilities demo |
-| **basic-rendering.spec.ts** | 5 | Initialization, canvas, errors |
-| **controls-interaction.spec.ts** | 6 | Keyboard, mouse, camera |
-| **data-loading.spec.ts** | 5 | Points, attributes, cache |
-| **first-time-ux.spec.ts** | 9 | Browser, help, error messages |
-| **nd-navigation.spec.ts** | 12 | Core nD feature! |
-| **performance-benchmarks.spec.ts** | 8 | Load time, FPS, memory |
-| **real-dataset-loading.spec.ts** | 8 | Real .zarr files |
-| **spatial-index-accuracy.spec.ts** | 10 | Query accuracy, caching |
-| **visual-regression.spec.ts** | 10 | Screenshot comparison |
-| **python-typescript-integration.spec.ts** | 5 | ⭐ Cross-language E2E |
-| **transform-hierarchy.spec.ts** | 13 | ⭐ Transform correctness |
-| **error-recovery.spec.ts** | 17 | ⭐ Error handling |
-| **performance-tracking.spec.ts** | 5 | ⭐ Regression detection |
+Key test suites include:
+
+| File | Purpose |
+|------|---------|
+| **ai-debugging-demo.spec.ts** | AI debugging capabilities demo |
+| **all-examples-smoke-test.spec.ts** | Comprehensive smoke tests for all examples |
+| **basic-rendering.spec.ts** | Initialization, canvas, errors |
+| **cache-system.spec.ts** | OPFS caching functionality |
+| **controls-interaction.spec.ts** | Keyboard, mouse, camera |
+| **data-loading.spec.ts** | Points, attributes, cache |
+| **data-monitor-metrics.spec.ts** | Performance monitoring |
+| **demo-scripts-e2e.spec.ts** | Full Python → TypeScript pipeline |
+| **dimension-initialization.spec.ts** | nD dimension setup |
+| **error-recovery.spec.ts** | ⭐ Error handling |
+| **first-time-ux.spec.ts** | Browser, help, error messages |
+| **nd-navigation.spec.ts** | ⭐ Core nD feature! |
+| **performance-benchmarks.spec.ts** | Load time, FPS, memory |
+| **performance-tracking.spec.ts** | ⭐ Regression detection |
+| **position-bounds-clipping.spec.ts** | Boundary testing |
+| **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
+| **real-dataset-loading.spec.ts** | Real .zarr files |
+| **scene-integration.spec.ts** | Scene graph integration |
+| **spatial-index-accuracy.spec.ts** | Query accuracy, caching |
+| **test-fixtures-rendering.spec.ts** | Encoding/decoding compatibility |
+| **transform-hierarchy.spec.ts** | ⭐ Transform correctness |
+| **visual-regression.spec.ts** | Screenshot comparison |
+| **webgl-errors.spec.ts** | WebGL error detection |
 
 ---
 
@@ -341,13 +352,13 @@ await page.screenshot({
 ## 🎉 Summary
 
 The Luxar E2E test suite is now:
-- ✅ **Comprehensive** - 130+ tests covering all features
+- ✅ **Comprehensive** - 226 tests covering all features
 - ✅ **Reliable** - Condition-based waits, not arbitrary timeouts
 - ✅ **Fast** - Optimized waits save 40%+ test time
 - ✅ **Robust** - Error recovery prevents crashes
 - ✅ **Regression-Proof** - Performance tracking catches slowdowns
 - ✅ **AI-Ready** - Full console access for autonomous debugging
 
-**Test Pass Rate: ~100%** (all improvements applied)
+**Test Count**: 226 tests across 23 test suites
 
 **Ready for Production!** 🚀

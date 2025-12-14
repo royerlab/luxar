@@ -8,7 +8,7 @@
   "readme": "README.md",
   "theme": "default",
   "navigationLinks": {
-    "GitHub": "https://github.com/your-org/luxar"
+    "GitHub": "https://github.com/royerlab/luxar"
   },
   "categorizeByGroup": true,
   "categoryOrder": [

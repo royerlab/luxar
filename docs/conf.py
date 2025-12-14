@@ -47,6 +47,12 @@ autodoc_default_options = {
     'exclude-members': '__weakref__'
 }
 
+# Mock imports for packages that may not be installed (e.g., torch, optional deps)
+autodoc_mock_imports = ['torch', 'torchvision', 'pytorch3d']
+
+# Suppress warnings for missing references
+suppress_warnings = ['ref.any']
+
 # Autosummary settings
 autosummary_generate = True
 autosummary_imported_members = False
