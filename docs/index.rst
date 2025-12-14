@@ -5,6 +5,19 @@ Welcome to Luxar's documentation! Luxar is a high-performance visualization syst
 
 .. toctree::
    :maxdepth: 2
+   :caption: Concepts & Architecture:
+
+   concepts/architecture
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Tutorials:
+
+   tutorials/index
+   tutorials/basic_scene
+
+.. toctree::
+   :maxdepth: 2
    :caption: User Guides:
 
    LUXAR_ZARR_FORMAT

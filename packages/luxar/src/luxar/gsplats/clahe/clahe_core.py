@@ -24,12 +24,15 @@ def apply_clahe(
     tiles, then applying contrast limiting to prevent noise amplification.
 
     Algorithm:
+
     1. Divide volume into non-overlapping tiles of size tile_size^d
     2. For each tile:
+
        a. Compute local histogram (nbins bins)
        b. Apply contrast limiting (clip histogram peaks)
        c. Compute CDF mapping (local histogram equalization)
        d. Transform tile intensities
+
     3. Result: Volume with locally-equalized contrast
 
     Parameters
