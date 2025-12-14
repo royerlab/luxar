@@ -66,12 +66,12 @@ Usage:
     --use-cache      Use cached UMAP coordinates (RECOMMENDED!)
 
 Requirements:
-    - Install: pip install mlcroissant umap-learn pandas
+    - Install: pip install umap-learn
 
 NO AUTHENTICATION NEEDED!
-    Uses mlcroissant to download directly from Kaggle without API keys.
-    First run downloads data (may take time for large samples).
-    Subsequent runs use cached data.
+    Downloads directly from Kaggle API (no login required).
+    First run downloads 30GB dataset (~10-15 min).
+    Cached to ~/.cache/luxar/ for instant subsequent runs!
 
 Controls:
     - Explore clusters of related research
@@ -260,86 +260,6 @@ def load_arxiv_dataset_local(
                         continue
 
         aprint(f"✓ Loaded {len(embeddings):,} papers with embeddings")
-
-    return embeddings, titles, categories, years
-
-
-def load_arxiv_dataset_croissant(
-    sample_size: int = 50000,
-) -> tuple[list, list, list, list]:
-    """Load arXiv embeddings using mlcroissant (no auth needed!).
-
-    Args:
-        sample_size: Number of papers to load
-
-    Returns:
-        Tuple of (embeddings, titles, categories, years)
-    """
-    try:
-        import mlcroissant as mlc
-    except ImportError:
-        aprint("❌ Error: mlcroissant not installed")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install mlcroissant")
-        aprint("")
-        raise
-
-    with asection("Loading arXiv dataset via mlcroissant"):
-        aprint("Fetching Kaggle dataset (no authentication needed!)...")
-        aprint("Dataset: tomtum/openai-arxiv-embeddings")
-        aprint("")
-
-        try:
-            dataset = mlc.Dataset(
-                "https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings/croissant/download"
-            )
-
-            # Get record sets
-            record_sets = dataset.metadata.record_sets
-            aprint(f"✓ Found {len(record_sets)} record set(s)")
-
-            # Load records
-            aprint(f"Loading papers (will sample {sample_size:,})...")
-            embeddings = []
-            titles = []
-            categories = []
-            years = []
-
-            count = 0
-            for i, record in enumerate(dataset.records(record_set=record_sets[0].uuid)):
-                if count >= sample_size:
-                    break
-
-                if i % 10000 == 0 and i > 0:
-                    aprint(f"  Loaded {count:,}/{sample_size:,} papers...")
-
-                # Extract data from record
-                emb = record.get("embedding")
-                if emb and len(emb) > 0:
-                    embeddings.append(emb)
-                    titles.append(record.get("title", "Unknown"))
-
-                    # Get category
-                    cats = record.get("categories", "").split()
-                    primary_cat = cats[0].split(".")[0] if cats else "other"
-                    categories.append(primary_cat)
-
-                    # Get year
-                    update_date = record.get("update_date", "2020-01-01")
-                    year = int(update_date[:4]) if update_date else 2020
-                    years.append(year)
-
-                    count += 1
-
-            aprint(f"✓ Loaded {len(embeddings):,} papers with embeddings")
-
-        except Exception as e:
-            aprint(f"❌ Error loading dataset: {e}")
-            aprint("")
-            aprint("This dataset is very large (32.6 GB).")
-            aprint("First download may take significant time.")
-            raise
 
     return embeddings, titles, categories, years
 
@@ -560,13 +480,12 @@ def main() -> None:
 
     # Check dependencies
     try:
-        import mlcroissant  # noqa: F401
         import umap  # noqa: F401
-    except ImportError as e:
-        aprint(f"❌ Missing dependency: {e}")
+    except ImportError:
+        aprint("❌ Missing dependency: umap-learn")
         aprint("")
         aprint("Install with:")
-        aprint("  pip install umap-learn mlcroissant")
+        aprint("  pip install umap-learn")
         aprint("")
         sys.exit(1)
 
