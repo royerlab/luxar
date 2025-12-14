@@ -325,4 +325,124 @@ describe('SceneDimsManager', () => {
       expect(secondDims!.ndim).toBe(2);
     });
   });
+
+  describe('categorical dimensions', () => {
+    let categoricalScene: THREE.Scene;
+
+    beforeEach(() => {
+      categoricalScene = new THREE.Scene();
+      categoricalScene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: 'μm', range: [0, 100], step: 1, display: true },
+          { name: 'y', unit: 'μm', range: [0, 100], step: 1, display: true },
+          { name: 'z', unit: 'μm', range: [0, 50], step: 0.5, display: true },
+          {
+            name: 'channel',
+            unit: '',
+            range: [0, 2],
+            step: 1,
+            display: false,
+            discrete: true,
+            categories: ['DAPI', 'GFP', 'mCherry'],
+            description: 'Fluorescence channel',
+          },
+          {
+            name: 'condition',
+            unit: '',
+            range: [0, 1],
+            step: 1,
+            display: false,
+            discrete: true,
+            categories: ['Control', 'Treated'],
+            cyclic: false,
+          },
+        ],
+      };
+    });
+
+    it('should parse categorical dimensions from scene metadata', () => {
+      const initialized = manager.initFromScene(categoricalScene);
+      expect(initialized).toBe(true);
+
+      const dims = manager.getDims();
+      expect(dims).not.toBeNull();
+      expect(dims!.metadata).toBeDefined();
+      expect(dims!.metadata![3].categories).toEqual(['DAPI', 'GFP', 'mCherry']);
+      expect(dims!.metadata![4].categories).toEqual(['Control', 'Treated']);
+    });
+
+    it('should initialize categorical dimensions to first category (minimum)', () => {
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+
+      // Categorical dimensions should start at 0 (first category)
+      expect(dims!.currentStep[3]).toBe(0); // channel dimension
+      expect(dims!.currentStep[4]).toBe(0); // condition dimension
+    });
+
+    it('should preserve category metadata through initialization', () => {
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+      const channelDim = dims!.metadata![3];
+
+      expect(channelDim.name).toBe('channel');
+      expect(channelDim.categories).toEqual(['DAPI', 'GFP', 'mCherry']);
+      expect(channelDim.discrete).toBe(true);
+      expect(channelDim.description).toBe('Fluorescence channel');
+    });
+
+    it('should preserve cyclic flag for categorical dimensions', () => {
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+
+      expect(dims!.metadata![4].cyclic).toBe(false);
+    });
+
+    it('should handle categorical dimension with cyclic=true', () => {
+      categoricalScene.userData.sceneDimensions.dimensions[3].cyclic = true;
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+
+      expect(dims!.metadata![3].cyclic).toBe(true);
+    });
+
+    it('should quantize categorical dimension values to nearest integer', () => {
+      manager.initFromScene(categoricalScene);
+
+      // Set to non-integer value (should quantize)
+      manager.setDimensionValue(3, 1.7);
+      const dims = manager.getDims();
+
+      expect(dims!.currentStep[3]).toBe(2); // Rounded to nearest category index
+    });
+
+    it('should clamp categorical dimension values to valid range', () => {
+      manager.initFromScene(categoricalScene);
+
+      // Try to set beyond max category index
+      manager.setDimensionValue(3, 5);
+      let dims = manager.getDims();
+      expect(dims!.currentStep[3]).toBe(2); // Clamped to max index
+
+      // Try to set below min
+      manager.setDimensionValue(3, -1);
+      dims = manager.getDims();
+      expect(dims!.currentStep[3]).toBe(0); // Clamped to min index
+    });
+
+    it('should preserve description field in metadata', () => {
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+
+      expect(dims!.metadata![3].description).toBe('Fluorescence channel');
+    });
+
+    it('should handle spatial flag in categorical dimensions', () => {
+      categoricalScene.userData.sceneDimensions.dimensions[3].spatial = false;
+      manager.initFromScene(categoricalScene);
+      const dims = manager.getDims();
+
+      expect(dims!.metadata![3].spatial).toBe(false);
+    });
+  });
 });

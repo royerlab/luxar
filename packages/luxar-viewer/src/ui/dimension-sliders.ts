@@ -81,6 +81,9 @@ export class DimensionSliders {
   /** Map of dimension indices to their corresponding HTML slider elements */
   private sliders: Map<number, HTMLInputElement> = new Map();
 
+  /** Map of dimension indices to their corresponding dropdown select elements */
+  private dropdowns: Map<number, HTMLSelectElement> = new Map();
+
   /**
    * Create and initialize the dimension slider UI component.
    *
@@ -220,15 +223,15 @@ export class DimensionSliders {
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
 
-    // Create individual slider for each non-displayed dimension
+    // Create individual control (slider or dropdown) for each non-displayed dimension
     for (let i = 0; i < this.dims.ndim; i++) {
       if (!this.dims.displayed.includes(i)) {
-        this.createSlider(i);
+        this.createDimensionControl(i);
       }
     }
 
     // Handle edge case: no dimensions are navigable
-    if (this.sliders.size === 0) {
+    if (this.sliders.size === 0 && this.dropdowns.size === 0) {
       const message = document.createElement('div');
       message.textContent = 'All dimensions are displayed';
       message.style.color = '#888';
@@ -237,6 +240,157 @@ export class DimensionSliders {
       message.style.padding = '10px';
       this.slidersContainer.appendChild(message);
     }
+  }
+
+  /**
+   * Create appropriate control (dropdown or slider) for a dimension.
+   *
+   * Decision logic:
+   * - Categorical with < 10 categories → Dropdown
+   * - Categorical with ≥ 10 categories → Slider (with category labels)
+   * - Non-categorical → Slider
+   *
+   * @param dimIndex - Zero-based index of dimension to create control for
+   * @private
+   */
+  private createDimensionControl(dimIndex: number): void {
+    const dimMeta = this.dims.metadata?.[dimIndex];
+    const categories = dimMeta?.categories;
+
+    // Categorical dimension with few categories → use dropdown
+    if (categories && categories.length < 10) {
+      this.createDropdown(dimIndex);
+    }
+    // Otherwise use slider (works for many categories, continuous, or discrete)
+    else {
+      this.createSlider(dimIndex);
+    }
+  }
+
+  /**
+   * Create a dropdown control for a categorical dimension.
+   *
+   * Used for dimensions with < 10 categories for precise, easy selection.
+   * Provides:
+   * - Clean dropdown with category labels
+   * - Keyboard navigation (arrow keys, [ / ] keys)
+   * - Cyclic wrapping if dimension.cyclic = true
+   * - Tooltip with dimension description
+   *
+   * @param dimIndex - Zero-based index of dimension to create dropdown for
+   * @private
+   */
+  private createDropdown(dimIndex: number): void {
+    const dimMeta = this.dims.metadata?.[dimIndex];
+    const categories = dimMeta?.categories;
+    if (!categories) return;
+
+    const dropdownGroup = document.createElement('div');
+    dropdownGroup.style.marginBottom = '12px';
+
+    // Label with dimension name
+    const label = document.createElement('div');
+    label.style.marginBottom = '4px';
+    label.style.display = 'flex';
+    label.style.justifyContent = 'space-between';
+    label.style.alignItems = 'center';
+
+    const dimName = document.createElement('span');
+    const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
+    dimName.textContent = name;
+    dimName.style.fontWeight = '500';
+
+    // Add tooltip with description if available
+    if (dimMeta.description) {
+      dimName.title = dimMeta.description;
+      dimName.style.cursor = 'help';
+      dimName.style.textDecoration = 'underline dotted';
+    }
+
+    label.appendChild(dimName);
+
+    // Create dropdown
+    const dropdown = document.createElement('select');
+    dropdown.id = `dim-dropdown-${dimIndex}`;
+    dropdown.style.width = '100%';
+    dropdown.style.padding = '6px 8px';
+    dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+    dropdown.style.color = '#fff';
+    dropdown.style.border = '1px solid rgba(255, 255, 255, 0.3)';
+    dropdown.style.borderRadius = '4px';
+    dropdown.style.fontSize = '13px';
+    dropdown.style.cursor = 'pointer';
+    dropdown.style.outline = 'none';
+    dropdown.style.fontFamily = 'inherit';
+
+    // Style on hover/focus
+    dropdown.addEventListener('mouseenter', () => {
+      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+      dropdown.style.borderColor = 'rgba(76, 175, 80, 0.5)';
+    });
+    dropdown.addEventListener('mouseleave', () => {
+      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+      dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+    });
+    dropdown.addEventListener('focus', () => {
+      dropdown.style.borderColor = '#4CAF50';
+    });
+    dropdown.addEventListener('blur', () => {
+      dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+    });
+
+    // Populate dropdown with categories
+    categories.forEach((category, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = category;
+      option.title = `${category} (index: ${index})`; // Tooltip in dropdown
+      dropdown.appendChild(option);
+    });
+
+    // Set initial value
+    const currentValue = Math.round(this.dims.currentStep[dimIndex]);
+    dropdown.value = String(currentValue);
+
+    // Add change listener
+    dropdown.addEventListener('change', () => {
+      const value = parseInt(dropdown.value);
+      sceneDimsManager.setDimensionValue(dimIndex, value);
+    });
+
+    // Add keyboard navigation (arrow keys and [ / ] keys)
+    dropdown.addEventListener('keydown', (event) => {
+      const [min, max] = this.dimensionRanges[dimIndex];
+      const currentVal = parseInt(dropdown.value);
+      const isCyclic = dimMeta?.cyclic || false;
+
+      let newVal: number | null = null;
+
+      if (event.key === 'ArrowUp' || event.key === 'ArrowLeft' || event.key === '[') {
+        event.preventDefault();
+        newVal = currentVal - 1;
+        if (newVal < min) {
+          newVal = isCyclic ? max : min; // Wrap if cyclic
+        }
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === ']') {
+        event.preventDefault();
+        newVal = currentVal + 1;
+        if (newVal > max) {
+          newVal = isCyclic ? min : max; // Wrap if cyclic
+        }
+      }
+
+      if (newVal !== null) {
+        dropdown.value = String(newVal);
+        dropdown.dispatchEvent(new Event('change'));
+      }
+    });
+
+    dropdownGroup.appendChild(label);
+    dropdownGroup.appendChild(dropdown);
+
+    this.slidersContainer.appendChild(dropdownGroup);
+    this.dropdowns.set(dimIndex, dropdown);
   }
 
   /**
@@ -250,6 +404,7 @@ export class DimensionSliders {
    *
    * Handles both discrete (frame-based) and continuous (time-based) dimensions
    * with appropriate step sizes and value formatting.
+   * For categorical dimensions with many categories (≥10), displays category labels.
    *
    * @param dimIndex - Zero-based index of dimension to create slider for
    * @private
@@ -275,11 +430,19 @@ export class DimensionSliders {
     dimName.textContent = name;
     dimName.style.fontWeight = '500';
 
+    // Add tooltip with description if available
+    if (dimMeta?.description) {
+      dimName.title = dimMeta.description;
+      dimName.style.cursor = 'help';
+      dimName.style.textDecoration = 'underline dotted';
+    }
+
     const valueLabel = document.createElement('span');
     valueLabel.id = `dim-value-${dimIndex}`;
     valueLabel.style.fontFamily = 'monospace';
     valueLabel.style.fontSize = '12px';
     valueLabel.style.color = '#4CAF50';
+    valueLabel.style.cursor = 'help'; // Indicate tooltip available
 
     label.appendChild(dimName);
     label.appendChild(valueLabel);
@@ -372,25 +535,33 @@ export class DimensionSliders {
       // Visual update will happen via listener callback
     });
 
-    // Add keyboard navigation
+    // Add keyboard navigation with cyclic wrapping support
     slider.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
+        const isCyclic = dimMeta?.cyclic || false;
+
         if (isDiscrete) {
           const currentVal = parseFloat(slider.value);
           const sliderStep = parseFloat(slider.step);
-          const newVal =
-            event.key === 'ArrowLeft'
-              ? Math.max(min, currentVal - sliderStep)
-              : Math.min(max, currentVal + sliderStep);
+          let newVal =
+            event.key === 'ArrowLeft' ? currentVal - sliderStep : currentVal + sliderStep;
+
+          // Apply cyclic wrapping or clamping
+          if (newVal < min) {
+            newVal = isCyclic ? max : min;
+          } else if (newVal > max) {
+            newVal = isCyclic ? min : max;
+          }
+
           slider.value = String(newVal);
         } else {
           const stepSize = event.shiftKey ? 10 : 1;
           const currentVal = parseInt(slider.value);
-          const newVal =
-            event.key === 'ArrowLeft'
-              ? Math.max(0, currentVal - stepSize)
-              : Math.min(1000, currentVal + stepSize);
+          let newVal = event.key === 'ArrowLeft' ? currentVal - stepSize : currentVal + stepSize;
+
+          // Clamp to range (continuous dimensions don't typically use cyclic)
+          newVal = Math.max(0, Math.min(1000, newVal));
           slider.value = String(newVal);
         }
         slider.dispatchEvent(new Event('input'));
@@ -412,9 +583,10 @@ export class DimensionSliders {
    * Update visual elements of a slider to reflect current value.
    *
    * Synchronizes all visual components:
-   * - Value label text (formatted with units and appropriate precision)
+   * - Value label text (formatted with units, or category label for categorical dimensions)
    * - Progress bar width (fraction of full range)
    * - Thumb position (aligned with progress bar)
+   * - Tooltip with detailed information
    *
    * Called during slider creation and whenever dimension value changes
    * (from keyboard navigation or programmatic updates).
@@ -425,14 +597,39 @@ export class DimensionSliders {
    * @private
    */
   private updateSliderVisuals(dimIndex: number, value: number, isDiscrete: boolean): void {
-    // Update value label
+    const dimMeta = this.dims.metadata?.[dimIndex];
     const unit = this.dimensionUnits[dimIndex] || '';
     const valueLabel = document.getElementById(`dim-value-${dimIndex}`);
+
     if (valueLabel) {
-      if (isDiscrete) {
-        valueLabel.textContent = `${Math.round(value)}${unit ? ' ' + unit : ''}`;
+      const categories = dimMeta?.categories;
+
+      if (categories) {
+        // Categorical dimension: show category label
+        const index = Math.round(value);
+        const label = categories[index];
+
+        if (label !== undefined) {
+          valueLabel.textContent = label;
+          // Tooltip with more info: "DAPI (index: 0)"
+          valueLabel.title = `${label} (index: ${index})`;
+        } else {
+          // Handle invalid index gracefully
+          valueLabel.textContent = `Invalid (${index})`;
+          valueLabel.title = `Index ${index} is out of range [0, ${categories.length - 1}]`;
+          console.warn(
+            `Invalid category index ${index} for dimension ${dimMeta.name}, valid range: [0, ${categories.length - 1}]`
+          );
+        }
+      } else if (isDiscrete) {
+        // Discrete (numeric): show rounded value
+        const roundedValue = Math.round(value);
+        valueLabel.textContent = `${roundedValue}${unit ? ' ' + unit : ''}`;
+        valueLabel.title = `Value: ${roundedValue}${unit ? ' ' + unit : ''}`;
       } else {
+        // Continuous: show decimal value
         valueLabel.textContent = `${value.toFixed(2)}${unit ? ' ' + unit : ''}`;
+        valueLabel.title = `Value: ${value.toFixed(4)}${unit ? ' ' + unit : ''}`;
       }
     }
 
@@ -500,7 +697,9 @@ export class DimensionSliders {
    * showing both which dimensions are being displayed in 3D and the current
    * slice positions in all non-displayed dimensions.
    *
-   * Format: "Display: X, Y, Z | Time: 5.20s | Channel: 2"
+   * Format:
+   * - Categorical: "Display: X, Y, Z | Channel: DAPI | Time: 5.20s"
+   * - Numeric: "Display: X, Y, Z | Time: 5.20s | Index: 2"
    *
    * @public
    */
@@ -517,9 +716,23 @@ export class DimensionSliders {
     for (let i = 0; i < this.dims.ndim; i++) {
       if (!this.dims.displayed.includes(i)) {
         const name = this.dimensionNames[i] || `Dim ${i}`;
-        const value = this.dims.currentStep[i].toFixed(2);
-        const unit = this.dimensionUnits[i] || '';
-        parts.push(`${name}: ${value}${unit ? ' ' + unit : ''}`);
+        const dimMeta = this.dims.metadata?.[i];
+        const categories = dimMeta?.categories;
+
+        let valueStr: string;
+        if (categories) {
+          // Categorical: show category label
+          const index = Math.round(this.dims.currentStep[i]);
+          const label = categories[index];
+          valueStr = label !== undefined ? label : `Invalid(${index})`;
+        } else {
+          // Numeric: show value with unit
+          const value = this.dims.currentStep[i].toFixed(2);
+          const unit = this.dimensionUnits[i] || '';
+          valueStr = `${value}${unit ? ' ' + unit : ''}`;
+        }
+
+        parts.push(`${name}: ${valueStr}`);
       }
     }
 
@@ -533,11 +746,11 @@ export class DimensionSliders {
   }
 
   /**
-   * Synchronizes all slider visuals with the current dimension state.
+   * Synchronizes all controls (sliders and dropdowns) with the current dimension state.
    *
    * This method is called by the scene dimension manager's observer system
    * whenever dimensions change. It ensures the UI accurately reflects the
-   * current slice positions by updating slider positions, value labels,
+   * current slice positions by updating control positions, value labels,
    * and the status bar.
    *
    * Critical for maintaining UI consistency during:
@@ -565,6 +778,12 @@ export class DimensionSliders {
 
       // Update visual elements (progress bar, thumb, value label)
       this.updateSliderVisuals(dimIndex, currentValue, isDiscrete);
+    }
+
+    // Update each dropdown's selected value
+    for (const [dimIndex, dropdown] of this.dropdowns) {
+      const currentValue = Math.round(this.dims.currentStep[dimIndex]);
+      dropdown.value = String(currentValue);
     }
 
     // Refresh the status bar to show current state

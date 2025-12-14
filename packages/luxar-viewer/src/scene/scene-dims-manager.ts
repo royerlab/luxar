@@ -101,7 +101,11 @@ export class SceneDimsManager {
       range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
       display: dim.display,
       discrete: dim.discrete || false,
+      cyclic: dim.cyclic || false,
       step: dim.step || 1.0,
+      spatial: dim.spatial,
+      categories: dim.categories,
+      description: dim.description || '',
     }));
 
     const ndim = metadata.length;

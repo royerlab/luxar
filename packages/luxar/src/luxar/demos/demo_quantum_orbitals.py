@@ -35,8 +35,9 @@ Usage:
 
 Controls:
     - Press '1' to select ORBITAL TYPE
-    - Press '['/']' to switch between orbitals
-    - See different quantum states!
+    - Press '['/']' to cycle through orbitals (1s → 2s → 2pz → ... → 3dxy → 1s)
+    - Use dropdown to jump directly to any orbital
+    - See different quantum states with clear labels!
     - Ctrl+C to stop
 """
 
@@ -239,12 +240,11 @@ def generate_quantum_orbitals(
             [
                 Dimension(
                     "orbital",
-                    unit="state",
-                    range=(0, len(orbitals) - 1),
-                    step=1,
+                    unit="",
+                    categories=["1s", "2s", "2pz", "2px", "3pz", "3dz²", "3dxz", "3dxy"],
+                    cyclic=True,  # Enable wrap-around from 3dxy back to 1s
                     display=False,
-                    discrete=True,
-                    description="Quantum orbital (0=1s, 1=2s, 2=2pz, 3=2px, 4=3pz, 5=3dz², 6=3dxz, 7=3dxy)",
+                    description="Quantum orbital state - hydrogen atom wavefunctions",
                 ),
                 Dimension("x", unit="a₀", display=True),
                 Dimension("y", unit="a₀", display=True),

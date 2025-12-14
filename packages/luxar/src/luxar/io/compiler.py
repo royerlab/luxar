@@ -373,8 +373,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate arrays only (scalars validated by encoder)
             if isinstance(sharpness, np.ndarray):
                 validate_sharpness_for_writing(sharpness, n_points)
-            self._write_sharpness_dataset(group, sharpness, ordering_data)
+            max_sharpness = self._write_sharpness_dataset(group, sharpness, ordering_data)
+            metadata["max_sharpness"] = max_sharpness
             metadata["has_sharpness"] = True
+            group.attrs["max_sharpness"] = max_sharpness
 
         # 6. Process transform if present using centralized conversion
         if "transform" in attrs:
@@ -1386,21 +1388,28 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         sharpness: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
-    ) -> None:
+    ) -> float:
         """Write sharpness dataset to Zarr using ArrayEncoder.
 
         Args:
             group: Zarr group to write to
             sharpness: Sharpness array or scalar value
             spatial_index_data: Optional spatial index for chunk optimization
+
+        Returns:
+            Maximum sharpness value
         """
         # Handle scalar vs array
         if isinstance(sharpness, (int, float)):
+            max_sharpness = float(sharpness)
             n_elems = group["positions"].shape[0]
             sharp_chunks = None
         else:
+            max_sharpness = float(np.max(sharpness))
             n_elems = None
             sharp_chunks = _calculate_intelligent_chunks(sharpness.shape)
+
+        aprint(f"  ✓ Max sharpness: {max_sharpness:.3f}")
 
         # Use ArrayEncoder for sharpness (BOUNDED_SCALAR with [0, 31] range)
         self._encoder.encode(
@@ -1426,6 +1435,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint("  ✓ Wrote sharpness (uint8, quantized to [0, 31])")
         else:
             aprint(f"  ✓ Wrote sharpness ({enc_name})")
+
+        return max_sharpness
 
     def _write_spatial_ordering_to_zarr(
         self, group: zarr.Group, ordering_data: Dict[str, Any]
