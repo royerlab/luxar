@@ -164,14 +164,15 @@ class Scene(Node):
                 sharpness value to apply to all points
             parent: Parent node, defaults to scene root
             extend_to_all: Controls visibility across non-displayed dimensions.
-                - None (default): Points only visible at their defined dimension values.
-                  If candidates for extension are detected, a warning will suggest
-                  setting this parameter explicitly.
-                - List of dimension names: Extend visibility to all values of specified
-                  dimensions, e.g., ["Time", "Channel"] makes points visible at all
-                  times and channels regardless of the current slice position.
-                - "all": Extend to all non-displayed dimensions (points always visible).
-                - []: Explicitly no extension (silences the warning).
+
+              - None (default): Points only visible at their defined dimension values.
+                If candidates for extension are detected, a warning will suggest
+                setting this parameter explicitly.
+              - List of dimension names: Extend visibility to all values of specified
+                dimensions, e.g., ["Time", "Channel"] makes points visible at all
+                times and channels regardless of the current slice position.
+              - "all": Extend to all non-displayed dimensions (points always visible).
+              - []: Explicitly no extension (silences the warning).
             grid_shape: Optional tuple specifying the grid shape for structured data
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
@@ -317,13 +318,14 @@ class Scene(Node):
             line_type: Type of line connectivity ("segments", "polyline", "loop", "indexed")
             parent: Parent node, defaults to scene root
             extend_to_all: Controls visibility across non-displayed dimensions.
-                - None (default): Lines only visible at their defined dimension values.
-                  If candidates for extension are detected, a warning will suggest
-                  setting this parameter explicitly.
-                - List of dimension names: Extend visibility to all values of specified
-                  dimensions, e.g., ["Time"] makes lines visible at all times.
-                - "all": Extend to all non-displayed dimensions (lines always visible).
-                - []: Explicitly no extension (silences the warning).
+
+              - None (default): Lines only visible at their defined dimension values.
+                If candidates for extension are detected, a warning will suggest
+                setting this parameter explicitly.
+              - List of dimension names: Extend visibility to all values of specified
+                dimensions, e.g., ["Time"] makes lines visible at all times.
+              - "all": Extend to all non-displayed dimensions (lines always visible).
+              - []: Explicitly no extension (silences the warning).
             **attrs: Additional attributes for the node
 
         Returns:
