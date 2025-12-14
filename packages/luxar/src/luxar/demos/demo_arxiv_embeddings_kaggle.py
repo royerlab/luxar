@@ -335,6 +335,12 @@ def reduce_embeddings_umap(
         aprint(f"  Output: {reduced.shape}")
         aprint(f"  Range: [{reduced.min():.2f}, {reduced.max():.2f}]")
 
+        # Center at barycenter (center of mass) for easier exploration
+        centroid = reduced.mean(axis=0)
+        reduced = reduced - centroid
+        aprint("✓ Centered at barycenter")
+        aprint(f"  New range: [{reduced.min():.2f}, {reduced.max():.2f}]")
+
     return reduced.astype(np.float32)
 
 
