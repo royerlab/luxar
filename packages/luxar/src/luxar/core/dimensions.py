@@ -15,57 +15,9 @@ import numpy as np
 # Type alias (defined inline to avoid circular import with typing_utils)
 CategoryList = Optional[List[str]]
 
-# Constants (defined inline to avoid circular import with typing_utils)
-CATEGORICAL_STEP = 1.0
-MIN_CATEGORIES = 1
-MAX_CATEGORY_LABEL_LENGTH = 1024
-
-
-def _validate_categories(categories: CategoryList) -> CategoryList:
-    """Validate category list for categorical dimensions (inline to avoid circular import).
-
-    Args:
-        categories: List of category labels, or None for non-categorical
-
-    Returns:
-        Validated category list (or None)
-
-    Raises:
-        TypeError: If categories is not a list or None
-        ValueError: If categories is invalid
-    """
-    if categories is None:
-        return None
-
-    if not isinstance(categories, list):
-        raise TypeError(
-            f"categories must be a list or None, got {type(categories).__name__}"
-        )
-
-    if len(categories) < MIN_CATEGORIES:
-        raise ValueError(
-            f"categories must have at least {MIN_CATEGORIES} element, got {len(categories)}"
-        )
-
-    seen: dict[str, int] = {}
-    for i, cat in enumerate(categories):
-        if not isinstance(cat, str):
-            raise TypeError(
-                f"category at index {i} must be a string, got {type(cat).__name__}"
-            )
-        if len(cat) == 0:
-            raise ValueError(f"category at index {i} is empty string")
-        if len(cat) > MAX_CATEGORY_LABEL_LENGTH:
-            raise ValueError(
-                f"category at index {i} exceeds maximum length ({MAX_CATEGORY_LABEL_LENGTH} chars)"
-            )
-        if cat in seen:
-            raise ValueError(
-                f"duplicate category name: '{cat}' appears at indices {seen[cat]} and {i}"
-            )
-        seen[cat] = i
-
-    return categories
+# Import shared constants and validation (centralized to avoid duplication)
+from ..typing_utils.constants import CATEGORICAL_STEP
+from ..validation.category_validation import validate_categories as _validate_categories
 
 
 @dataclass

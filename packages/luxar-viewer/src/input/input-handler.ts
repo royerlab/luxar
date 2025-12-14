@@ -1021,13 +1021,14 @@ export class InputHandler {
 
     // Use utility functions for step calculation and navigation
     const stepSize = calculateStepSize(targetDim, dims);
+    const isCyclic = dimMeta?.cyclic || false; // Respect cyclic flag from metadata
     const newValue = calculateNextPosition(
       currentValue,
       direction,
       stepSize,
       [min, max],
       dimMeta?.discrete,
-      false // no wrap-around
+      isCyclic // Enable wrap-around for cyclic dimensions
     );
 
     // Update dimension state if value actually changed
