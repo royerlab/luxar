@@ -221,7 +221,7 @@ def compute_text_embeddings(texts: list[str]) -> np.ndarray:
     with asection("Computing text embeddings"):
         aprint("Loading Sentence-BERT model (all-MiniLM-L6-v2)...")
         model = SentenceTransformer("all-MiniLM-L6-v2")
-        aprint(f"✓ Model loaded (embedding dim: 384)")
+        aprint("✓ Model loaded (embedding dim: 384)")
 
         aprint(f"Encoding {len(texts)} texts...")
         embeddings = model.encode(
@@ -279,7 +279,7 @@ def reduce_embeddings_umap(
 
         reduced = reducer.fit_transform(embeddings)
 
-        aprint(f"✓ UMAP complete")
+        aprint("✓ UMAP complete")
         aprint(f"  Output shape: {reduced.shape}")
         aprint(f"  Range: [{reduced.min():.2f}, {reduced.max():.2f}]")
 
@@ -388,9 +388,11 @@ def generate_paper_landscape(
         with asection("Loading cached paper data"):
             with open(cache_file) as f:
                 cached = json.load(f)
-                papers = cached["papers"]
+                papers_data = cached["papers"]
                 embeddings_3d = np.array(cached["embeddings_3d"], dtype=np.float32)
-            aprint(f"✓ Loaded {len(papers)} papers from cache")
+                primary_fields = cached["fields"]
+                citation_counts = cached["citations"]
+            aprint(f"✓ Loaded {len(papers_data)} papers from cache")
             aprint(f"  Embeddings: {embeddings_3d.shape}")
     else:
         # Download papers
@@ -433,17 +435,16 @@ def generate_paper_landscape(
                     {
                         "papers": papers_clean,
                         "embeddings_3d": embeddings_3d.tolist(),
+                        "fields": primary_fields,
+                        "citations": citation_counts,
                     },
                     f,
                 )
             aprint(f"✓ Cached to {cache_file}")
 
-        papers = papers_clean
-        abstracts, primary_fields, citation_counts, years = prepare_paper_data(papers)
-
     # Generate colors and sizes
     with asection("Generating visualization attributes"):
-        n_papers = len(papers)
+        n_papers = len(embeddings_3d)
         positions = embeddings_3d
 
         # Colors by field
@@ -457,7 +458,7 @@ def generate_paper_landscape(
         for field in primary_fields:
             field_counts[field] = field_counts.get(field, 0) + 1
         for field, count in sorted(field_counts.items(), key=lambda x: -x[1])[:10]:
-            color_rgb = (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(
+            (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(
                 int
             )
             aprint(f"  {field}: {count} papers")
