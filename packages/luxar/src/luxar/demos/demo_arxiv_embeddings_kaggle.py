@@ -193,6 +193,10 @@ def load_arxiv_dataset_local(
 ) -> tuple[list, list, list, list]:
     """Load arXiv embeddings from local ZIP file.
 
+    The Kaggle dataset contains:
+    - papers.csv: metadata (id, title, categories, update_date)
+    - vectors.dat: binary embeddings (float32, 3072-dim per paper)
+
     Args:
         zip_path: Path to downloaded openai-arxiv-embeddings.zip
         sample_size: Number of papers to load
@@ -200,66 +204,86 @@ def load_arxiv_dataset_local(
     Returns:
         Tuple of (embeddings, titles, categories, years)
     """
+    import io
+    import struct
     import zipfile
+
+    import pandas as pd
 
     with asection("Loading arXiv embeddings from local ZIP"):
         aprint(f"ZIP file: {zip_path}")
         aprint(f"Size: {zip_path.stat().st_size / (1024**3):.1f} GB")
 
-        embeddings = []
-        titles = []
-        categories = []
-        years = []
-
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            # Find the data file (likely JSONL format)
-            data_files = [f for f in zf.namelist() if f.endswith(('.json', '.jsonl'))]
+            aprint(f"Files in ZIP: {', '.join(zf.namelist())}")
 
-            if not data_files:
-                raise FileNotFoundError(f"No JSON/JSONL files found in {zip_path}")
+            # Load metadata from CSV
+            aprint("Loading papers.csv...")
+            with zf.open('papers.csv') as f:
+                papers_df = pd.read_csv(f, nrows=sample_size)
 
-            data_file = data_files[0]
-            aprint(f"Reading: {data_file}")
-            aprint(f"Sampling {sample_size:,} papers...")
+            aprint(f"✓ Loaded {len(papers_df):,} paper metadata entries")
 
-            with zf.open(data_file) as f:
-                import io
-                text_stream = io.TextIOWrapper(f, encoding='utf-8')
+            # Load embeddings from binary file
+            aprint("Loading vectors.dat (binary embeddings)...")
+            with zf.open('vectors.dat') as f:
+                # Read binary data
+                # Format: each embedding is 3072 float32 values (12,288 bytes)
+                embedding_dim = 3072
+                bytes_per_embedding = embedding_dim * 4  # float32 = 4 bytes
 
-                count = 0
-                for i, line in enumerate(text_stream):
-                    if count >= sample_size:
+                embeddings = []
+                for i in range(min(sample_size, len(papers_df))):
+                    # Read one embedding
+                    emb_bytes = f.read(bytes_per_embedding)
+                    if len(emb_bytes) < bytes_per_embedding:
                         break
 
-                    if i % 10000 == 0 and i > 0:
-                        aprint(f"  Processed {i:,} papers, sampled {count:,}")
+                    # Unpack floats
+                    emb = struct.unpack(f'{embedding_dim}f', emb_bytes)
+                    embeddings.append(list(emb))
 
-                    try:
-                        import json
-                        paper = json.loads(line)
+                    if (i + 1) % 10000 == 0:
+                        aprint(f"  Loaded {i+1:,} embeddings...")
 
-                        # Extract embedding
-                        emb = paper.get("embedding") or paper.get("embeddings")
-                        if emb and len(emb) > 0:
-                            embeddings.append(emb)
-                            titles.append(paper.get("title", "Unknown"))
+            aprint(f"✓ Loaded {len(embeddings):,} embeddings")
 
-                            # Get primary category
-                            cats = paper.get("categories", "").split()
-                            primary_cat = cats[0].split(".")[0] if cats else "other"
-                            categories.append(primary_cat)
+        # Extract metadata (CSV only has: index, id, journal)
+        # Use paper ID as title
+        paper_ids = papers_df['id'].tolist()[:len(embeddings)]
+        titles = [f"arXiv:{pid}" for pid in paper_ids]
 
-                            # Get year
-                            update_date = paper.get("update_date", "2020-01-01")
-                            year = int(update_date[:4]) if update_date else 2020
-                            years.append(year)
+        # Infer category from arxiv ID pattern
+        # Old format: category/YYMMNNN (e.g., cs/0001234)
+        # New format: YYMM.NNNNN (e.g., 1501.00001)
+        categories = []
+        years = []
+        for pid in paper_ids:
+            pid_str = str(pid)
 
-                            count += 1
+            # Try to extract category
+            if '/' in pid_str:
+                # Old format with explicit category
+                cat = pid_str.split('/')[0]
+                categories.append(cat if cat else 'other')
+                # Year from old format is harder to determine
+                years.append(2010)  # Approximate for old IDs
+            else:
+                # New format - numeric ID
+                # Can't determine category from ID
+                categories.append('physics')  # Default category
+                # First 4 digits are YYMM, extract year
+                try:
+                    yymm = int(pid_str[:4])
+                    yy = yymm // 100
+                    year = 1900 + yy if yy > 90 else 2000 + yy
+                    years.append(year)
+                except (ValueError, IndexError):
+                    years.append(2015)  # Default year
 
-                    except (json.JSONDecodeError, KeyError, ValueError):
-                        continue
-
-        aprint(f"✓ Loaded {len(embeddings):,} papers with embeddings")
+        aprint(f"✓ Prepared {len(embeddings):,} papers")
+        aprint(f"  Categories: {len(set(categories))} unique")
+        aprint(f"  Year range: {min(years)} - {max(years)}")
 
     return embeddings, titles, categories, years
 
