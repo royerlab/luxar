@@ -11,6 +11,48 @@ This package handles the transformation of arrays between representations optimi
 
 The encoding system serves as a shared foundation for encoding arrays across all Luxar data types (points, Gaussian splats, future primitives), eliminating code duplication and ensuring consistency.
 
+## Quick Start
+
+Encode arrays for storage in 3 simple steps:
+
+```python
+from luxar.encoding import ArrayEncoder, SemanticType, EncodingMode
+import zarr
+import numpy as np
+
+# 1. Create encoder
+encoder = ArrayEncoder()
+store = zarr.DirectoryStore("output.zarr")
+root = zarr.group(store=store)
+
+# 2. Encode positions (automatic optimization!)
+positions = np.random.randn(1000, 3).astype(np.float32)
+encoder.encode(
+    data=positions,
+    zarr_group=root,
+    name="positions",
+    semantic_type=SemanticType.COORDINATE,
+    mode=EncodingMode.AUTO  # Automatically choose best encoding
+)
+
+# 3. Encode with scalar convenience (no intermediate arrays needed)
+encoder.encode(
+    data=(1.0, 0.0, 0.0),  # Uniform red color - stored once!
+    n_elements=1000,        # Applied to all 1000 points
+    zarr_group=root,
+    name="colors",
+    semantic_type=SemanticType.COLOR,
+    color_mode="sdr"
+)
+
+print(f"Encoded {positions.nbytes + 12} bytes → {root.store.getsize('positions')} bytes compressed")
+```
+
+**What Just Happened**:
+- Positions: Automatically quantized to uint16 (50% size reduction)
+- Colors: Broadcasting strategy (stored once, ~99.9% size reduction)
+- Both: Compressed with blosc/zstd for additional 2-3× reduction
+
 ## Purpose
 
 The encoding system provides:

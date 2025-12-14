@@ -2,6 +2,31 @@
 
 This package contains the command-line interface (CLI) for Luxar, providing tools for serving, viewing, and inspecting Luxar zarr datasets.
 
+## Quick Start
+
+Essential CLI commands in 3 steps:
+
+```bash
+# 1. Generate and view a demo (fastest way to see Luxar)
+luxar demo
+
+# 2. Serve your own dataset with the viewer
+luxar serve my_data.zarr --viewer
+
+# 3. Get dataset information and statistics
+luxar info my_data.zarr --stats
+```
+
+**What Each Does**:
+- `luxar demo` - Creates a demo dataset and opens it in the viewer automatically
+- `luxar serve --viewer` - Serves your data via HTTP and launches the viewer
+- `luxar info --stats` - Shows dataset structure, dimensions, and compression stats
+
+**Pro Tips**:
+- Add `--no-open` to any command to skip browser launch
+- Use `luxar profiles` to list network simulation profiles
+- Use `luxar serve --help` for all serving options
+
 ## Module Structure
 
 - `__init__.py` - Package initialization, exports the main app

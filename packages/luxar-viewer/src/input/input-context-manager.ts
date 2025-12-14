@@ -56,6 +56,36 @@ export interface ContextConfig {
  * Input Context Manager
  * Manages keyboard input routing based on application context
  */
+/**
+ * Manages context-aware keyboard input routing to prevent conflicts.
+ *
+ * Provides a hierarchical context system where different parts of the UI
+ * can register key bindings without conflicting. For example, WASD keys
+ * are blocked in navigation mode but enabled in fly control mode.
+ *
+ * Key features:
+ * - Priority-based context system (higher priority contexts take precedence)
+ * - Context stack for nested contexts (modal over main view)
+ * - Automatic typing detection (blocks shortcuts when typing in inputs)
+ * - Passthrough support (unhandled keys pass to lower priority contexts)
+ *
+ * @example
+ * ```typescript
+ * const manager = new InputContextManager();
+ *
+ * // Register a key binding for navigation context
+ * manager.registerBinding(InputContext.NAVIGATION, {
+ *   key: '[',
+ *   handler: () => navigateBackward(),
+ *   preventDefault: true,
+ *   description: 'Navigate backward in dimension'
+ * });
+ *
+ * // Switch to fly controls context
+ * manager.setContext(InputContext.FLY_CONTROLS);
+ * // Now WASD keys are enabled, [ ] keys still work via passthrough
+ * ```
+ */
 export class InputContextManager {
   private currentContext: InputContext = InputContext.NAVIGATION;
   private contextStack: InputContext[] = [];
@@ -63,12 +93,28 @@ export class InputContextManager {
   private contextConfigs = new Map<InputContext, ContextConfig>();
   private enabled = true;
 
+  /**
+   * Create a new input context manager with default context configurations.
+   *
+   * Initializes all predefined contexts (NAVIGATION, FLY_CONTROLS, TYPING,
+   * UI_INTERACTION, DIMENSION_NAV) with appropriate priorities and key filters.
+   * Starts in NAVIGATION context.
+   */
   constructor() {
     this.initializeContexts();
   }
 
   /**
-   * Initialize default context configurations
+   * Initialize default context configurations with priorities and key filters.
+   *
+   * Sets up five predefined contexts:
+   * - NAVIGATION (priority 0): Default mode, blocks WASD keys
+   * - FLY_CONTROLS (priority 1): Enables WASD + arrow keys for fly mode
+   * - TYPING (priority 10): Highest priority, blocks all shortcuts
+   * - UI_INTERACTION (priority 5): For UI panels
+   * - DIMENSION_NAV (priority 2): For dimension navigation keys
+   *
+   * @private
    */
   private initializeContexts(): void {
     // Navigation context - default mode
@@ -118,7 +164,24 @@ export class InputContextManager {
   }
 
   /**
-   * Push a new context onto the stack
+   * Push a new context onto the stack, saving current context.
+   *
+   * Used for nested contexts like modal dialogs over main view. The previous
+   * context is saved and will be restored when popContext() is called. If
+   * the new context is the same as current, does nothing.
+   *
+   * @param context - Context to activate and push onto stack
+   *
+   * @example
+   * ```typescript
+   * // Open modal dialog
+   * contextManager.pushContext(InputContext.UI_INTERACTION);
+   * // Now UI has higher priority
+   *
+   * // Close modal dialog
+   * contextManager.popContext();
+   * // Back to previous context
+   * ```
    */
   public pushContext(context: InputContext): void {
     if (this.currentContext !== context) {
@@ -128,7 +191,18 @@ export class InputContextManager {
   }
 
   /**
-   * Pop the current context and restore the previous one
+   * Pop the current context and restore the previous one from stack.
+   *
+   * Used to return to previous context after closing modal/dialog. If stack
+   * is empty, does nothing (stays in current context).
+   *
+   * @example
+   * ```typescript
+   * // Open settings dialog
+   * contextManager.pushContext(InputContext.UI_INTERACTION);
+   * // ... user interacts with settings ...
+   * contextManager.popContext();  // Back to NAVIGATION
+   * ```
    */
   public popContext(): void {
     const previous = this.contextStack.pop();
@@ -138,7 +212,25 @@ export class InputContextManager {
   }
 
   /**
-   * Set the current context (replaces current, doesn't push to stack)
+   * Set the current context, replacing current without saving to stack.
+   *
+   * Use this for mode switches (navigation → fly controls) rather than
+   * nested contexts. The previous context is NOT saved - use pushContext()
+   * if you need to restore the previous context later.
+   *
+   * Logs context change for debugging.
+   *
+   * @param context - Context to switch to
+   *
+   * @example
+   * ```typescript
+   * // Switch to fly control mode
+   * contextManager.setContext(InputContext.FLY_CONTROLS);
+   * // WASD keys now enabled, can't go back with popContext()
+   *
+   * // Switch back to navigation
+   * contextManager.setContext(InputContext.NAVIGATION);
+   * ```
    */
   public setContext(context: InputContext): void {
     const oldContext = this.currentContext;
@@ -153,14 +245,47 @@ export class InputContextManager {
   }
 
   /**
-   * Get the current context
+   * Get the currently active input context.
+   *
+   * @returns Current context enum value (NAVIGATION, FLY_CONTROLS, etc.)
    */
   public getContext(): InputContext {
     return this.currentContext;
   }
 
   /**
-   * Register a key binding for a specific context
+   * Register a key binding for a specific context.
+   *
+   * Associates a key (with optional modifiers) to a handler function within
+   * a specific context. The binding will only be active when that context is
+   * current. Warns if the binding conflicts with an existing binding.
+   *
+   * @param context - Context where this binding should be active
+   * @param binding - Key binding configuration with key, modifiers, and handler
+   * @param binding.key - Key to bind (e.g., '[', 'w', 'Escape')
+   * @param binding.modifiers - Optional modifiers (ctrl, shift, alt, meta)
+   * @param binding.handler - Function to call when key is pressed
+   * @param binding.preventDefault - If true, calls event.preventDefault()
+   * @param binding.description - Optional description for debugging/help
+   *
+   * @example
+   * ```typescript
+   * // Register [ key for backward navigation
+   * manager.registerBinding(InputContext.NAVIGATION, {
+   *   key: '[',
+   *   handler: () => navigateBackward(),
+   *   preventDefault: true,
+   *   description: 'Navigate backward'
+   * });
+   *
+   * // Register Ctrl+S for save (with modifier)
+   * manager.registerBinding(InputContext.UI_INTERACTION, {
+   *   key: 's',
+   *   modifiers: { ctrl: true },
+   *   handler: () => save(),
+   *   preventDefault: true
+   * });
+   * ```
    */
   public registerBinding(context: InputContext, binding: KeyBinding): void {
     const contextKey = context;
@@ -183,7 +308,27 @@ export class InputContextManager {
   }
 
   /**
-   * Unregister a key binding
+   * Unregister a previously registered key binding.
+   *
+   * Removes the binding for the specified key and modifiers in the given
+   * context. Has no effect if the binding doesn't exist.
+   *
+   * @param context - Context containing the binding to remove
+   * @param key - Key that was bound
+   * @param modifiers - Optional modifiers that were bound
+   *
+   * @example
+   * ```typescript
+   * // Remove [ key binding
+   * manager.unregisterBinding(InputContext.NAVIGATION, '[');
+   *
+   * // Remove Ctrl+S binding
+   * manager.unregisterBinding(
+   *   InputContext.UI_INTERACTION,
+   *   's',
+   *   { ctrl: true }
+   * );
+   * ```
    */
   public unregisterBinding(
     context: InputContext,
@@ -198,8 +343,35 @@ export class InputContextManager {
   }
 
   /**
-   * Handle a keyboard event
-   * Returns true if the event was handled
+   * Handle a keyboard event with context-aware routing.
+   *
+   * Routes the event through the context system to find and execute the
+   * appropriate handler. Processing order:
+   * 1. Check if manager is enabled
+   * 2. Check if in typing context (blocks most keys)
+   * 3. Check if key is allowed in current context
+   * 4. Look for registered binding in current context
+   * 5. If passthrough enabled, try lower priority contexts
+   *
+   * @param event - Keyboard event to handle
+   * @param type - Event type ('down' for keydown, 'up' for keyup)
+   * @returns true if event was handled by a binding, false if not handled
+   *          (return value indicates whether to prevent default behavior)
+   *
+   * @example
+   * ```typescript
+   * // In event listener
+   * document.addEventListener('keydown', (event) => {
+   *   const handled = contextManager.handleKeyEvent(event, 'down');
+   *   if (handled) {
+   *     // Event was handled by context system
+   *     console.log('Key handled by context manager');
+   *   } else {
+   *     // No handler found, let it propagate
+   *     console.log('Key not handled, continuing...');
+   *   }
+   * });
+   * ```
    */
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     if (!this.enabled) return false;
@@ -248,7 +420,17 @@ export class InputContextManager {
   }
 
   /**
-   * Check if a key is allowed in the given context
+   * Check if a key is allowed in the given context based on filters.
+   *
+   * Checks both blockedKeys and allowedKeys filters:
+   * - If key is in blockedKeys: returns false
+   * - If allowedKeys is defined and key is not in it: returns false
+   * - Otherwise: returns true
+   *
+   * @param key - Key to check (lowercase string)
+   * @param config - Context configuration with key filters
+   * @returns true if key is allowed in this context, false if blocked
+   * @private
    */
   private isKeyAllowedInContext(key: string, config: ContextConfig): boolean {
     // Check blocked keys
@@ -265,7 +447,18 @@ export class InputContextManager {
   }
 
   /**
-   * Try to handle the event in lower priority contexts
+   * Try to handle event in lower priority contexts (passthrough mechanism).
+   *
+   * When current context doesn't handle a key and has passthrough enabled,
+   * this method tries other contexts in descending priority order. Enables
+   * fallback behavior - e.g., [ ] keys work in FLY_CONTROLS context even
+   * though they're not registered there, because they fall through to
+   * DIMENSION_NAV context.
+   *
+   * @param event - Keyboard event to handle
+   * @param _type - Event type (unused but kept for future use)
+   * @returns true if any lower context handled the event, false otherwise
+   * @private
    */
   private tryLowerContexts(event: KeyboardEvent, _type: 'down' | 'up'): boolean {
     // Sort contexts by priority
@@ -295,7 +488,18 @@ export class InputContextManager {
   }
 
   /**
-   * Check if we're currently in a typing context
+   * Check if currently in a typing context (should block shortcuts).
+   *
+   * Returns true if:
+   * - Current context is explicitly set to TYPING
+   * - Focus is in a text input, textarea, select, or contenteditable element
+   *
+   * Used to prevent keyboard shortcuts from interfering with text entry.
+   * For example, prevents 'p' key from toggling performance stats while
+   * user is typing "apple" in a search box.
+   *
+   * @returns true if in typing context, false otherwise
+   * @private
    */
   private isTypingContext(): boolean {
     if (this.currentContext === InputContext.TYPING) {
@@ -320,7 +524,30 @@ export class InputContextManager {
   }
 
   /**
-   * Generate a unique key for a binding
+   * Generate unique string key for a key binding (for Map storage).
+   *
+   * Combines key and modifiers into a sorted string representation.
+   * Format: "key+mod1+mod2" (alphabetically sorted modifiers).
+   * Used as key in Map to store and lookup bindings.
+   *
+   * @param binding - Key binding configuration
+   * @returns Unique string key (e.g., "w", "[", "s+ctrl", "z+ctrl+shift")
+   * @private
+   *
+   * @example
+   * ```typescript
+   * // Simple key
+   * const key1 = getBindingKey({ key: '[', handler: () => {} });
+   * console.log(key1); // "["
+   *
+   * // Key with modifiers (always sorted)
+   * const key2 = getBindingKey({
+   *   key: 's',
+   *   modifiers: { ctrl: true, shift: true },
+   *   handler: () => {}
+   * });
+   * console.log(key2); // "ctrl+s+shift" (sorted alphabetically)
+   * ```
    */
   private getBindingKey(binding: KeyBinding): string {
     const parts = [binding.key.toLowerCase()];
@@ -336,7 +563,26 @@ export class InputContextManager {
   }
 
   /**
-   * Generate a binding key from a keyboard event
+   * Generate binding key from keyboard event for lookup.
+   *
+   * Converts KeyboardEvent to the same string format as getBindingKey()
+   * for Map lookup. Checks modifier properties (ctrlKey, shiftKey, etc.)
+   * and combines with key in sorted format.
+   *
+   * @param event - Keyboard event to convert
+   * @returns Unique string key matching getBindingKey() format
+   * @private
+   *
+   * @example
+   * ```typescript
+   * // Event with Ctrl+S
+   * const event = new KeyboardEvent('keydown', {
+   *   key: 's',
+   *   ctrlKey: true
+   * });
+   * const key = getBindingKeyFromEvent(event);
+   * console.log(key); // "ctrl+s"
+   * ```
    */
   private getBindingKeyFromEvent(event: KeyboardEvent): string {
     const parts = [event.key.toLowerCase()];
@@ -350,14 +596,42 @@ export class InputContextManager {
   }
 
   /**
-   * Enable/disable the context manager
+   * Enable or disable the entire context manager.
+   *
+   * When disabled, handleKeyEvent() immediately returns false without
+   * processing. Useful for temporarily suspending all context-based
+   * input handling (e.g., during initialization or modal dialogs that
+   * need to bypass the context system).
+   *
+   * @param enabled - true to enable context management, false to disable
    */
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
   }
 
   /**
-   * Get debug information about current state
+   * Get debug information about current context manager state.
+   *
+   * Returns snapshot of current state for debugging and diagnostics.
+   * Useful for understanding why a key isn't working or what context
+   * is active.
+   *
+   * @returns Object containing:
+   *          - currentContext: Active context
+   *          - contextStack: Stack of pushed contexts
+   *          - registeredBindings: Map of context → binding keys
+   *
+   * @example
+   * ```typescript
+   * const debug = contextManager.getDebugInfo();
+   * console.log('Current context:', debug.currentContext);
+   * console.log('Context stack:', debug.contextStack);
+   * console.log('Bindings in NAVIGATION:', debug.registeredBindings.get(InputContext.NAVIGATION));
+   * // Output:
+   * // Current context: navigation
+   * // Context stack: []
+   * // Bindings in NAVIGATION: ['[', ']', '1+ctrl', '2+ctrl']
+   * ```
    */
   public getDebugInfo(): {
     currentContext: InputContext;
@@ -378,14 +652,26 @@ export class InputContextManager {
   }
 
   /**
-   * Clear all bindings for a specific context
+   * Clear all registered key bindings for a specific context.
+   *
+   * Removes all bindings associated with the specified context. Useful
+   * when dynamically changing context configuration or cleaning up
+   * temporary bindings.
+   *
+   * @param context - Context whose bindings should be cleared
    */
   public clearContextBindings(context: InputContext): void {
     this.bindings.delete(context);
   }
 
   /**
-   * Reset to default state
+   * Reset context manager to initial state.
+   *
+   * Clears all registered bindings, empties context stack, and returns
+   * to NAVIGATION context. Useful when reinitializing the application
+   * or cleaning up for testing.
+   *
+   * Does NOT reset context configurations (those remain from initialization).
    */
   public reset(): void {
     this.currentContext = InputContext.NAVIGATION;

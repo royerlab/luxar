@@ -1,11 +1,30 @@
 /**
- * Manages switching between different camera control types
+ * Manages switching between different camera control types.
+ *
+ * Provides unified interface for three control modes:
+ * - Orbit: Traditional orbit camera with target-based rotation
+ * - Arcball: Quaternion-based trackball for free rotation without gimbal lock
+ * - Fly: First-person WASD movement for exploring inside datasets
  *
  * Handles:
- * - Switching between OrbitControls and LuxarFlyControls
- * - Preserving camera state during switches
- * - Proper cleanup of event listeners
- * - Configuration persistence
+ * - Seamless switching between control types (V key)
+ * - Camera state preservation during switches
+ * - Event listener lifecycle management
+ * - Configuration persistence and updates
+ * - Auto-rotation support (orbit/arcball only)
+ * - Physics-based movement (fly mode)
+ *
+ * @example
+ * ```typescript
+ * const controlsManager = new ControlsManager(camera, canvas);
+ *
+ * // Switch to fly mode
+ * controlsManager.setControlType('fly');
+ *
+ * // Enable auto-rotation (orbit/arcball)
+ * controlsManager.setControlType('orbit');
+ * controlsManager.setAutoRotate(true);
+ * ```
  */
 
 import * as THREE from 'three';
@@ -65,6 +84,16 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   // Delta time tracking for fly controls
   private clock = new THREE.Clock();
 
+  /**
+   * Create controls manager for camera interaction.
+   *
+   * Initializes with orbit controls by default. Starts Three.js Clock for
+   * frame-rate independent physics (fly mode).
+   *
+   * @param camera - Perspective camera to control
+   * @param domElement - DOM element for mouse/touch input (typically canvas)
+   * @param scene - Optional scene reference for advanced controls
+   */
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, scene?: THREE.Scene) {
     super();
 
@@ -77,8 +106,21 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Switch to a different control type
-   * @param type - The control type to switch to
+   * Switch to different camera control type.
+   *
+   * Saves current camera state, disposes old controls, creates new controls,
+   * and restores camera state. Emits 'change' event with new control type.
+   *
+   * @param type - Control type to switch to: 'orbit', 'arcball', or 'fly'
+   *
+   * @example
+   * ```typescript
+   * // Switch to fly mode for first-person exploration
+   * controlsManager.setControlType('fly');
+   *
+   * // Switch back to orbit for traditional viewing
+   * controlsManager.setControlType('orbit');
+   * ```
    */
   public setControlType(type: ControlType): void {
     if (type === this.currentType && this.currentControls) {
@@ -116,14 +158,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Get the current control type
+   * Get currently active control type.
+   *
+   * @returns 'orbit', 'arcball', or 'fly'
    */
   public getControlType(): ControlType {
     return this.currentType;
   }
 
   /**
-   * Get the current controls instance
+   * Get current controls instance for advanced manipulation.
+   *
+   * @returns Active controls instance, or null if not initialized
    */
   public getControls(): OrbitControls | ArcballControls | LuxarFlyControls | null {
     return this.currentControls;
@@ -319,7 +365,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Update controls - must be called in animation loop
+   * Update controls - must be called every frame in animation loop.
+   *
+   * Processes user input, applies damping, and updates camera. For fly
+   * controls, requires delta time from Clock for frame-rate independence.
    */
   public update(): void {
     if (!this.currentControls) return;
@@ -337,7 +386,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Enable/disable controls
+   * Enable or disable camera controls globally.
+   *
+   * @param enabled - true to allow user interaction, false to disable
    */
   public setEnabled(enabled: boolean): void {
     if (this.currentControls) {
@@ -346,7 +397,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set auto-rotation (for orbit controls only - not supported in arcball)
+   * Enable/disable auto-rotation (orbit controls only).
+   *
+   * Has no effect in arcball or fly modes.
+   *
+   * @param enabled - true to enable auto-rotation, false to disable
    */
   public setAutoRotate(enabled: boolean): void {
     this.config.autoRotate = enabled;
@@ -370,7 +425,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Get auto-rotation state
+   * Get auto-rotation state.
+   *
+   * @returns true if auto-rotation is enabled (orbit mode only), false otherwise
    */
   public getAutoRotate(): boolean {
     if (this.currentControls instanceof OrbitControls) {
@@ -381,7 +438,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set fly controls movement speed
+   * Set fly mode movement speed (WASD keys).
+   *
+   * @param speed - Movement speed in world units per second (default 10)
    */
   public setFlyMovementSpeed(speed: number): void {
     this.config.flyMovementSpeed = speed;
@@ -403,7 +462,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set fly controls inertial mode
+   * Enable/disable fly mode inertial physics (momentum).
+   *
+   * @param inertial - true for momentum (continues after key release), false for instant stop
    */
   public setFlyInertialMode(inertial: boolean): void {
     this.config.flyInertialMode = inertial;
@@ -436,7 +497,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Reset controls to default state
+   * Reset controls to saved state (position, rotation, target).
+   *
+   * Restores camera to last saved state (from saveState() or control initialization).
    */
   public reset(): void {
     if (this.currentControls) {
@@ -451,7 +514,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Save current state (for reset functionality)
+   * Save current camera state for reset() functionality.
+   *
+   * Captures current position, rotation, and target as new default state.
    */
   public saveState(): void {
     if (this.currentControls instanceof OrbitControls) {

@@ -82,12 +82,41 @@ export class DimensionSliders {
   private sliders: Map<number, HTMLInputElement> = new Map();
 
   /**
-   * Constructs and initializes the dimension slider UI.
+   * Create and initialize the dimension slider UI component.
    *
-   * This creates the complete UI including the styled containers, individual
-   * sliders for each non-displayed dimension, and the status bar.
+   * Builds the complete slider interface including styled containers, individual
+   * sliders for each non-displayed dimension, and status bar showing current
+   * slice positions. The UI follows napari-style aesthetics for scientific
+   * data visualization familiarity.
    *
-   * @param config - Slider configuration with dimensions and styling options
+   * The sliders are automatically synchronized with sceneDimsManager - moving
+   * a slider triggers dimension changes which update all nD objects in the scene.
+   *
+   * @param config - Configuration object for slider initialization
+   * @param config.container - DOM element to append sliders to (typically document.body)
+   * @param config.dims - Current dimension state from sceneDimsManager
+   * @param config.dimensionRanges - [min, max] bounds for each dimension
+   * @param config.dimensionNames - Human-readable names (e.g., ['X', 'Y', 'Z', 'Time'])
+   * @param config.dimensionUnits - Optional units (e.g., ['μm', 'μm', 'μm', 's'])
+   *
+   * @example
+   * ```typescript
+   * // After scene loads and dims are initialized
+   * const dims = sceneDimsManager.getDims();
+   * const ranges = sceneDimsManager.getDimensionRanges();
+   * const names = sceneDimsManager.getDimensionNames();
+   *
+   * const sliders = new DimensionSliders({
+   *   container: document.body,
+   *   dims,
+   *   dimensionRanges: ranges,
+   *   dimensionNames: names,
+   *   dimensionUnits: ['μm', 'μm', 'μm', 's', '']
+   * });
+   *
+   * // Sliders now appear at bottom of viewport
+   * // User can drag sliders or use arrow keys to navigate
+   * ```
    */
   constructor(config: SliderConfig) {
     this.container = config.container;
@@ -106,6 +135,18 @@ export class DimensionSliders {
     this.updateStatusBar();
   }
 
+  /**
+   * Create the main container element for sliders with napari-style styling.
+   *
+   * Builds a fixed-position panel at bottom-center of viewport with:
+   * - Semi-transparent dark background with blur
+   * - Rounded corners and subtle shadow
+   * - Responsive width (80% of viewport, max 800px, min 400px)
+   * - Scroll support if many dimensions
+   *
+   * @returns Container element ready to receive slider controls
+   * @private
+   */
   private createSlidersContainer(): HTMLElement {
     const container = document.createElement('div');
     container.id = 'dimension-sliders';
@@ -198,6 +239,21 @@ export class DimensionSliders {
     }
   }
 
+  /**
+   * Create an individual slider control for a specific dimension.
+   *
+   * Builds a complete slider UI with:
+   * - Dimension name label and current value display
+   * - Custom-styled range input with visual progress bar
+   * - Animated thumb indicator
+   * - Keyboard navigation support (arrow keys with Shift for fine control)
+   *
+   * Handles both discrete (frame-based) and continuous (time-based) dimensions
+   * with appropriate step sizes and value formatting.
+   *
+   * @param dimIndex - Zero-based index of dimension to create slider for
+   * @private
+   */
   private createSlider(dimIndex: number): void {
     const sliderGroup = document.createElement('div');
     sliderGroup.style.marginBottom = '12px'; // Reduced from 15px
@@ -352,6 +408,22 @@ export class DimensionSliders {
     this.sliders.set(dimIndex, slider);
   }
 
+  /**
+   * Update visual elements of a slider to reflect current value.
+   *
+   * Synchronizes all visual components:
+   * - Value label text (formatted with units and appropriate precision)
+   * - Progress bar width (fraction of full range)
+   * - Thumb position (aligned with progress bar)
+   *
+   * Called during slider creation and whenever dimension value changes
+   * (from keyboard navigation or programmatic updates).
+   *
+   * @param dimIndex - Dimension index to update visuals for
+   * @param value - Current dimension value to display
+   * @param isDiscrete - If true, rounds value to integer for display
+   * @private
+   */
   private updateSliderVisuals(dimIndex: number, value: number, isDiscrete: boolean): void {
     // Update value label
     const unit = this.dimensionUnits[dimIndex] || '';
@@ -385,7 +457,17 @@ export class DimensionSliders {
   }
 
   /**
-   * Toggle visibility of the dimension sliders
+   * Toggle dimension sliders visibility on/off.
+   *
+   * Switches between visible and hidden states. Triggered by N key.
+   * Does not destroy the sliders - they remain in DOM but hidden.
+   *
+   * @example
+   * ```typescript
+   * // User presses 'N' key
+   * dimensionSliders.toggle();
+   * // Sliders disappear if visible, appear if hidden
+   * ```
    */
   public toggle(): void {
     const isVisible = this.slidersContainer.style.display !== 'none';
@@ -393,14 +475,19 @@ export class DimensionSliders {
   }
 
   /**
-   * Get current visibility state
+   * Get current visibility state of sliders.
+   *
+   * @returns true if sliders are currently visible, false if hidden
    */
   public getIsVisible(): boolean {
     return this.slidersContainer.style.display !== 'none';
   }
 
   /**
-   * Hide the dimension sliders
+   * Hide the dimension sliders panel.
+   *
+   * Sets display to 'none'. Sliders remain in DOM for fast re-showing.
+   * Use when temporarily hiding UI or when dataset has no non-displayed dimensions.
    */
   public hide(): void {
     this.slidersContainer.style.display = 'none';
@@ -485,13 +572,20 @@ export class DimensionSliders {
   }
 
   /**
-   * Controls the visibility of the entire slider interface.
+   * Set visibility of slider interface (show or hide).
    *
-   * Used by the main application to show/hide dimension navigation
-   * controls based on user preferences or dataset characteristics.
+   * Used by main application to control slider display based on dataset
+   * characteristics (nD vs 3D) or user preferences. Affects both slider
+   * container and status bar.
    *
-   * @param visible - Whether to show or hide the slider UI
-   * @public
+   * @param visible - true to show sliders, false to hide them
+   *
+   * @example
+   * ```typescript
+   * // Show sliders only if dataset has non-displayed dimensions
+   * const hasNonDisplayed = sceneDimsManager.hasNonDisplayedDimensions();
+   * dimensionSliders.setVisible(hasNonDisplayed);
+   * ```
    */
   public setVisible(visible: boolean): void {
     this.slidersContainer.style.display = visible ? 'block' : 'none';
@@ -499,12 +593,24 @@ export class DimensionSliders {
   }
 
   /**
-   * Cleans up the slider UI and releases resources.
+   * Clean up slider UI and release resources.
    *
-   * Important for preventing memory leaks when the visualization
-   * component is destroyed or reinitialized with different data.
+   * Removes all DOM elements and clears internal state. Important for
+   * preventing memory leaks when visualization is destroyed or reinitialized
+   * with different dataset.
    *
-   * @public
+   * After calling dispose(), the DimensionSliders instance cannot be reused.
+   * Create a new instance if sliders are needed again.
+   *
+   * @example
+   * ```typescript
+   * // Before loading new scene
+   * dimensionSliders.dispose();
+   * dimensionSliders = null;
+   *
+   * // After new scene loads
+   * dimensionSliders = new DimensionSliders(newConfig);
+   * ```
    */
   public dispose(): void {
     this.slidersContainer.remove();

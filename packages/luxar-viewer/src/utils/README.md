@@ -36,8 +36,7 @@ utils/
 ├── console-interceptor.ts # Console output capture and buffering system
 ├── hdr-detection.ts      # HDR display capability detection
 ├── memory-detector.ts    # System memory detection for cache management
-├── log.ts               # Structured logging utility
-└── slicing.ts           # nD slicing algorithms (moved from dims-navigation)
+└── log.ts                # Structured logging utility
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
@@ -167,50 +166,11 @@ export function configureHDRRenderer(
 
 **Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
 
-## Dimension Navigation
+## Memory Detection
 
-### Intelligent Stepping
+Memory detection utilities help optimize cache sizing based on available system resources. See `memory-detector.ts` for implementation details.
 
-```typescript
-export function stepDimension(
-  dims: SimpleDims,
-  dimIndex: number,
-  direction: 1 | -1,
-  ranges: Array<[number, number]>,
-  options: NavigationOptions = {}
-): boolean;
-```
-
-**Features**:
-
-- **Adaptive Step Size**: 10% of dimension range by default
-- **Boundary Handling**: Wrapping or clamping at edges
-- **Absolute Steps**: Override with fixed step sizes
-- **Safety Checks**: Only non-displayed dimensions can be stepped
-
-### Navigation Options
-
-```typescript
-interface NavigationOptions {
-  stepSize?: number; // Fraction of range (0.1 = 10%)
-  wrap?: boolean; // Wrap at boundaries (periodic data)
-  absoluteStep?: number; // Fixed step size in data units
-}
-```
-
-### Real-time Updates
-
-The navigation system provides smooth, real-time updates:
-
-```typescript
-// Keyboard navigation typically uses first two non-displayed dimensions
-const [primaryDim, secondaryDim] = getNavigableDimensions(dims);
-
-// Step through dimension and update visualization if changed
-if (stepDimension(dims, primaryDim, direction, ranges)) {
-  updatePointsSlice(points, positions, colors, radii, sharpness, dims, numPoints);
-}
-```
+**Key Function**: `detectAvailableMemory()` - Returns estimated available memory for cache allocation using a three-tier fallback strategy (see SPECIFICATIONS.md Section 5).
 
 ## Usage Examples
 

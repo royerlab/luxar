@@ -368,23 +368,26 @@ const experimentMetadata: DimensionMetadata[] = [
 
 ### Navigation Through Dimensions
 
+**Note**: Navigation utilities are implemented in the `input` package. See `../input/README.md` for complete navigation API documentation.
+
 ```typescript
-import { stepDimension, jumpToDimension } from '../utils/dims-navigation';
+// Navigation is handled by the InputHandler class in the input package
+import { InputHandler } from '../input/input-handler';
 
-// Step through time dimension
-const timeIndex = 1;
-const didChange = stepDimension(dims, timeIndex, 1, ranges, {
-  stepSize: 0.1, // 10% of time range per step
-  wrap: true, // Loop back to start
-});
+// InputHandler provides dimension navigation methods:
+// - navigateDimension(dimIndex, direction): Navigate forward/backward
+// - setDimensionPosition(dimIndex, position): Jump to specific position
+// - getNonDisplayedDimensions(): Get list of navigable dimensions
 
-// Jump to specific Z position (50% through range)
-const zIndex = 2;
-jumpToDimension(dims, zIndex, 0.5, ranges);
+// Example: Create input handler for dimension navigation
+const inputHandler = new InputHandler(sceneManager, config);
+
+// Navigate forward in time dimension (typically first non-displayed dimension)
+const success = inputHandler.navigateDimension(0, 1);
 
 // Check which dimensions can be keyboard-navigated
-const [primaryDim, secondaryDim] = getNavigableDimensions(dims);
-// Typically returns first two non-displayed dimensions
+const navigableDims = inputHandler.getNonDisplayedDimensions();
+// Returns indices of dimensions not currently displayed (e.g., [0, 1, 4])
 ```
 
 ## Type Safety

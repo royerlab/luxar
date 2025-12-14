@@ -42,8 +42,34 @@ import {
 } from './postprocessing-types';
 
 /**
- * Manages post-processing effects using the pmndrs/postprocessing library
- * Features HDR rendering, bloom, depth of field, tone mapping, and various effects
+ * Manages HDR post-processing effects using pmndrs/postprocessing library.
+ *
+ * Coordinates the complete post-processing pipeline:
+ * - HDR rendering with 16-bit float buffers
+ * - Bloom effect with mipmap blur
+ * - ACES filmic tone mapping
+ * - Anti-aliasing (FXAA, SMAA, MSAA, SSAA)
+ * - Visual effects (DOF, chromatic aberration, vignette, lens distortion, detector noise)
+ * - Dynamic effect management with deferred rebuild
+ *
+ * The manager handles effect lifecycle, settings persistence, and optimized
+ * rebuilding to minimize performance impact when changing multiple settings.
+ *
+ * @example
+ * ```typescript
+ * const postProcessing = new PostProcessingManager(
+ *   renderer,
+ *   scene,
+ *   camera,
+ *   { width: window.innerWidth, height: window.innerHeight }
+ * );
+ *
+ * // Enable bloom
+ * postProcessing.updateBloomSettings(1.5, 0.4, 0.85);
+ *
+ * // Render each frame
+ * requestAnimationFrame(() => postProcessing.render());
+ * ```
  */
 export class PostProcessingManager {
   private composer: EffectComposer;
@@ -84,6 +110,18 @@ export class PostProcessingManager {
     frameCount: 0,
   };
 
+  /**
+   * Create post-processing manager with HDR pipeline.
+   *
+   * Initializes EffectComposer with 16-bit float buffers, sets up initial
+   * effects (bloom, tone mapping, AA), and configures renderer for linear
+   * workflow with sRGB output.
+   *
+   * @param renderer - THREE.js WebGL renderer (will be configured for post-processing)
+   * @param scene - THREE.js scene to render
+   * @param camera - Camera for rendering and depth-based effects
+   * @param size - Initial render size {width, height} in pixels
+   */
   constructor(
     private renderer: THREE.WebGLRenderer,
     private scene: THREE.Scene,
@@ -193,14 +231,30 @@ export class PostProcessingManager {
   }
 
   /**
-   * Starts deferred rebuild mode - prevents automatic rebuilds until endDeferRebuild()
+   * Start deferred rebuild mode (batch multiple effect changes).
+   *
+   * Prevents automatic effect pass rebuilding until endDeferRebuild().
+   * Use when changing multiple settings to avoid redundant rebuilds.
+   *
+   * @example
+   * ```typescript
+   * // Change multiple settings efficiently
+   * postProcessing.startDeferRebuild();
+   * postProcessing.updateBloomSettings(1.5);
+   * postProcessing.setVignetteEnabled(true);
+   * postProcessing.setChromaticAberration(true);
+   * postProcessing.endDeferRebuild();  // Single rebuild
+   * ```
    */
   startDeferRebuild(): void {
     this.deferRebuild = true;
   }
 
   /**
-   * Ends deferred rebuild mode and triggers a single rebuild
+   * End deferred rebuild mode and trigger single effect pass rebuild.
+   *
+   * Rebuilds effect pass with all changes applied. Always call after
+   * startDeferRebuild() to apply batched changes.
    */
   endDeferRebuild(): void {
     this.deferRebuild = false;
@@ -386,6 +440,16 @@ export class PostProcessingManager {
    * @param radius - Mipmap blur radius (0-1+ range typically)
    * @param threshold - Luminance threshold (0-1 range, higher = less bloom)
    */
+  /**
+   * Update bloom effect parameters.
+   *
+   * Controls HDR bloom glow intensity, spread, and brightness threshold.
+   * Omitted parameters retain current values.
+   *
+   * @param strength - Bloom intensity (0-5, default 1.0). Higher = more glow
+   * @param radius - Bloom spread radius (0-1, default 0.4). Higher = wider glow
+   * @param threshold - Luminance threshold (0-1, default 0.85). Higher = only brightest pixels bloom
+   */
   updateBloomSettings(strength?: number, radius?: number, threshold?: number): void {
     if (!this.bloomEffect) {
       log.warning(Modules.POST_PROCESSING, 'Bloom effect not initialized');
@@ -428,6 +492,15 @@ export class PostProcessingManager {
   /**
    * Sets the tone mapping mode
    */
+  /**
+   * Set HDR tone mapping algorithm.
+   *
+   * Converts HDR scene values to displayable LDR range. Different algorithms
+   * produce different aesthetic results.
+   *
+   * @param mode - Tone mapping mode (NoToneMapping, LinearToneMapping, ReinhardToneMapping,
+   *               CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping)
+   */
   setToneMapping(mode: THREE.ToneMapping): void {
     // Map THREE.js tone mapping constants to pmndrs ToneMappingMode
     const modeMap: Record<number, ToneMappingMode> = {
@@ -452,6 +525,11 @@ export class PostProcessingManager {
   /**
    * Gets the current tone mapping mode as THREE constant
    */
+  /**
+   * Get current tone mapping mode.
+   *
+   * @returns Active tone mapping algorithm
+   */
   getToneMapping(): THREE.ToneMapping {
     // Map back from pmndrs to THREE constants
     const reverseMap: Record<ToneMappingMode, THREE.ToneMapping> = {
@@ -468,6 +546,13 @@ export class PostProcessingManager {
 
   /**
    * Enables or disables FXAA anti-aliasing
+   */
+  /**
+   * Enable or disable FXAA (Fast Approximate Anti-Aliasing).
+   *
+   * FXAA is fast but lower quality. Good for performance-constrained scenarios.
+   *
+   * @param enabled - true to enable FXAA, false to disable
    */
   setFXAAEnabled(enabled: boolean): void {
     this.fxaaEnabled = enabled;
@@ -905,6 +990,14 @@ export class PostProcessingManager {
   /**
    * Check if any effects require continuous animation
    * @returns True if animation should continue running
+   */
+  /**
+   * Check if any active effects require continuous rendering.
+   *
+   * Returns true if detector noise or other time-varying effects are enabled.
+   * Used by animation controller to keep loop running.
+   *
+   * @returns true if continuous animation needed, false otherwise
    */
   needsContinuousAnimation(): boolean {
     // Detector noise always has temporal components that need continuous updates

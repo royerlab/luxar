@@ -2,6 +2,47 @@
 
 The `validation` package provides comprehensive validation functions for Luxar data structures with helpful error messages.
 
+## Quick Start
+
+Validate data before writing in 3 steps:
+
+```python
+from luxar.validation import validate_positions_for_writing, validate_colors_for_writing
+import numpy as np
+
+# 1. Create sample data
+positions = np.random.randn(1000, 3).astype(np.float32)
+colors = np.random.rand(1000, 3).astype(np.float32)
+
+# 2. Validate positions (catches NaN, Inf, shape issues)
+validated_pos = validate_positions_for_writing(
+    positions,
+    expected_shape=(1000, 3),
+    name="particle_positions"
+)
+
+# 3. Validate colors with mode checking
+validated_colors = validate_colors_for_writing(
+    colors,
+    expected_shape=(1000, 3),
+    color_mode="sdr",  # Ensures values in [0, 1]
+    name="particle_colors"
+)
+
+print("✓ Data validated and ready for writing")
+```
+
+**What Gets Checked**:
+- Shape validation - ensures correct dimensions
+- Type conversion - automatically converts to float32 if needed
+- Range validation - checks for NaN, Inf, out-of-bounds values
+- Helpful errors - messages tell you exactly what's wrong and how to fix it
+
+**When to Use**:
+- Before calling `scene.add_points()` or `scene.add_lines()`
+- When loading external data (user uploads, file imports)
+- In data processing pipelines to catch issues early
+
 ## Overview
 
 This package ensures data integrity throughout the Luxar pipeline by validating inputs at critical points, providing clear error messages that help users quickly identify and fix issues.
