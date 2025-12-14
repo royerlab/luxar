@@ -2,6 +2,39 @@
 
 The `utils` package provides utility functions for common operations in Luxar, including array manipulation and demo data generation.
 
+## Quick Start
+
+Common utility operations in 3 steps:
+
+```python
+from luxar.utils import ensure_float32, validate_array_shape
+from luxar.utils import create_lorenz_attractor  # Demo data generator
+import numpy as np
+
+# 1. Type-safe array conversion
+data = np.array([1, 2, 3], dtype=np.float64)
+data_f32 = ensure_float32(data)  # Now guaranteed float32
+print(f"Converted: {data.dtype} → {data_f32.dtype}")
+
+# 2. Shape validation with clear errors
+positions = np.random.rand(100, 3).astype(np.float32)
+validate_array_shape(positions, (100, 3), name="positions")  # ✓ Passes
+
+# 3. Generate demo data for testing
+create_lorenz_attractor(
+    'lorenz_demo.zarr',
+    n_points=10000,
+    color_mode='time_based',  # Color by time
+    seed=42  # Reproducible
+)
+print("✓ Demo scene created at lorenz_demo.zarr")
+```
+
+**Key Use Cases**:
+- Array conversion - ensure float32 before encoding
+- Shape validation - catch dimension mismatches early
+- Demo generation - create test data for examples and tutorials
+
 ## Overview
 
 This package contains helper functions that simplify common tasks and provide convenient demo data generators for testing and examples.

@@ -80,7 +80,68 @@ export class SceneLoader {
   }
 
   /**
-   * Load a complete scene from a zarr store
+   * Load a complete scene from a Zarr store using chunk-based spatial indexing.
+   *
+   * Orchestrates the loading of hierarchical scene graphs, managing spatial indices,
+   * attribute inheritance, and dimension metadata. Supports both points and lines
+   * with automatic fallback for datasets without spatial ordering.
+   *
+   * The loading process:
+   * 1. Opens Zarr store with optional two-level caching (L1 memory + L2 OPFS)
+   * 2. Loads scene metadata and initializes dimensions
+   * 3. Recursively constructs THREE.js scene graph from Zarr group hierarchy
+   * 4. Creates spatial index loaders for efficient nD queries
+   * 5. Connects loaders to data monitor for debugging
+   *
+   * @param url - Complete URL to the Zarr store. Can be:
+   *              - HTTP URL: 'https://example.com/data.zarr'
+   *              - Local path: '/path/to/data.zarr'
+   *              - With query params: 'https://example.com/data.zarr?no-cache'
+   *
+   * @returns Promise resolving to a THREE.Group containing the complete scene graph.
+   *          The group's userData contains:
+   *          - sceneDimensions: Dimension metadata if available
+   *          - bounds: AABB of all points
+   *          - nodeCount: Total number of leaf nodes
+   *
+   * @throws {Error} If the Zarr store cannot be opened or is invalid
+   * @throws {Error} If consolidated metadata (.zmetadata) is malformed
+   * @throws {Error} If required arrays (positions) are missing from point nodes
+   *
+   * @example
+   * ```typescript
+   * // Load a scene from HTTP URL
+   * const scene = await sceneLoader.loadScene('https://example.com/data.zarr');
+   * threeScene.add(scene);
+   * console.log(`Loaded ${scene.children.length} top-level nodes`);
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Load with error handling
+   * try {
+   *   const scene = await sceneLoader.loadScene(url);
+   *   if (scene.children.length === 0) {
+   *     console.warn('Scene is empty');
+   *   }
+   * } catch (error) {
+   *   console.error('Failed to load scene:', error);
+   *   // Fallback to default visualization
+   * }
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Access scene metadata after loading
+   * const scene = await sceneLoader.loadScene(url);
+   * const dims = scene.userData.sceneDimensions;
+   * if (dims) {
+   *   console.log(`${dims.length}D dataset:`, dims.map(d => d.name).join(', '));
+   * }
+   * ```
+   *
+   * @see {@link ../cache/two-level-caching-store.ts} for caching implementation
+   * @see {@link SPECIFICATIONS.md} Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
     log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);

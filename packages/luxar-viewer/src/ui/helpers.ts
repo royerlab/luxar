@@ -1,4 +1,18 @@
-// UI utility functions for the scene player
+/**
+ * UI utility functions for the Luxar viewer.
+ *
+ * Provides helper functions for common UI patterns:
+ * - Loading indicators (spinner during scene load)
+ * - Error messages (user-friendly error display with guidance)
+ * - Help overlay (keyboard shortcuts and controls)
+ * - UI cleanup (resource management)
+ *
+ * These utilities create temporary UI elements (overlays, dialogs) that
+ * exist outside the main component tree and are cleaned up automatically
+ * or explicitly via cleanupUI().
+ *
+ * @module ui/helpers
+ */
 
 import { config } from '../config';
 
@@ -16,7 +30,29 @@ function ensureSpinnerCSS() {
   }
 }
 
-// Function to create and show loading indicator
+/**
+ * Create and show animated loading indicator.
+ *
+ * Displays a centered loading spinner with "Loading scene..." text.
+ * Shown during initial scene loading or when switching datasets.
+ * Automatically positioned over viewport center with semi-transparent
+ * dark background.
+ *
+ * @returns The loading indicator element (for reference, can be removed
+ *          via hideLoadingIndicator() or by calling element.remove())
+ *
+ * @example
+ * ```typescript
+ * // Show loading spinner before fetch
+ * const loader = showLoadingIndicator();
+ *
+ * try {
+ *   await loadScene(url);
+ * } finally {
+ *   hideLoadingIndicator();  // Remove spinner
+ * }
+ * ```
+ */
 export function showLoadingIndicator(): HTMLElement {
   ensureSpinnerCSS();
 
@@ -56,7 +92,18 @@ export function showLoadingIndicator(): HTMLElement {
   return loadingDiv;
 }
 
-// Function to hide loading indicator
+/**
+ * Hide and remove loading indicator from DOM.
+ *
+ * Removes the loading spinner created by showLoadingIndicator().
+ * Safe to call multiple times or when no indicator exists (no-op).
+ *
+ * @example
+ * ```typescript
+ * // After scene loads successfully or fails
+ * hideLoadingIndicator();
+ * ```
+ */
 export function hideLoadingIndicator() {
   const loadingDiv = document.getElementById('loading-indicator');
   if (loadingDiv) {
@@ -64,7 +111,42 @@ export function hideLoadingIndicator() {
   }
 }
 
-// Function to display error message to user with dismiss functionality
+/**
+ * Display user-friendly error message with helpful guidance.
+ *
+ * Shows a styled error dialog with:
+ * - Error icon and title
+ * - Specific error message
+ * - Helpful instructions for loading datasets
+ * - Keyboard shortcuts reminder
+ * - Auto-dismiss after timeout
+ *
+ * The dialog is dismissible by clicking, pressing Escape/Enter/Space,
+ * or automatically after configured timeout (default 30 seconds).
+ *
+ * Replaces any existing error message to avoid cluttering the UI.
+ *
+ * @param message - Error message to display. Should be user-friendly and
+ *                  actionable (e.g., "Dataset not found" rather than "404 Error")
+ *
+ * @example
+ * ```typescript
+ * // Show error when scene fails to load
+ * try {
+ *   await loadScene(url);
+ * } catch (error) {
+ *   showError(`Failed to load dataset: ${error.message}`);
+ * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Custom error for missing URL parameter
+ * if (!url) {
+ *   showError('No dataset URL provided. Add ?src=... to the URL.');
+ * }
+ * ```
+ */
 export function showError(message: string) {
   // Remove any existing error messages first
   const existingError = document.getElementById('error-message');
@@ -205,7 +287,26 @@ export function showError(message: string) {
   document.body.appendChild(errorDiv);
 }
 
-// Function to clean up UI resources
+/**
+ * Clean up all temporary UI elements and resources.
+ *
+ * Removes all UI elements created by helper functions:
+ * - Loading indicators (spinners)
+ * - Error messages
+ * - Help overlays
+ * - Associated CSS styles
+ *
+ * Useful during application teardown or when resetting UI state.
+ * Safe to call even if no UI elements exist (no-op).
+ *
+ * @example
+ * ```typescript
+ * // During app teardown
+ * cleanupUI();
+ * sceneManager.dispose();
+ * inputHandler.dispose();
+ * ```
+ */
 export function cleanupUI() {
   // Remove spinner CSS styles
   const spinnerStyles = document.getElementById('spinner-styles');
@@ -232,7 +333,23 @@ export function cleanupUI() {
   }
 }
 
-// Function to create and show help overlay
+/**
+ * Create and show keyboard shortcuts help overlay.
+ *
+ * Displays comprehensive help panel with all available keyboard shortcuts
+ * organized by category (Basic Controls, Fly Mode, nD Navigation, etc.).
+ * Categories are collapsible for better organization.
+ *
+ * Triggered by H key. Dismissible by clicking anywhere, pressing Escape,
+ * or clicking the close button.
+ *
+ * @example
+ * ```typescript
+ * // User presses H key
+ * showHelpOverlay();
+ * // Help panel appears in top-right corner
+ * ```
+ */
 export function showHelpOverlay() {
   // Remove any existing help overlay first
   const existingHelp = document.getElementById('help-overlay');
@@ -484,7 +601,18 @@ export function showHelpOverlay() {
   }, UI_CONFIG.timings.helpClickDelayMs);
 }
 
-// Function to hide help overlay
+/**
+ * Hide and remove help overlay from DOM.
+ *
+ * Removes the keyboard shortcuts help panel. Safe to call multiple
+ * times or when no overlay exists (no-op).
+ *
+ * @example
+ * ```typescript
+ * // Close help programmatically
+ * hideHelpOverlay();
+ * ```
+ */
 export function hideHelpOverlay() {
   const helpDiv = document.getElementById('help-overlay');
   if (helpDiv) {
@@ -492,7 +620,12 @@ export function hideHelpOverlay() {
   }
 }
 
-// Function to clear any existing error messages
+/**
+ * Clear any existing error messages from display.
+ *
+ * Removes error dialog if present. Useful before showing new error
+ * or when dismissing errors programmatically.
+ */
 export function clearError() {
   const errorDiv = document.getElementById('error-message');
   if (errorDiv) {

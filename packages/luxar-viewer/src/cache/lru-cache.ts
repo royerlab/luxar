@@ -18,6 +18,29 @@ export class LRUCache<V> {
     this.getSize = getSize;
   }
 
+  /**
+   * Get value from cache with LRU promotion.
+   *
+   * On hit, moves item to end of Map (most recently used position).
+   * This ensures least recently used items are at the beginning for eviction.
+   *
+   * @param key - Cache key to lookup
+   * @returns Cached value if present, undefined if not found
+   *
+   * @example
+   * ```typescript
+   * const cache = new LRUCache<Uint8Array>(1024 * 1024, v => v.byteLength);
+   * const chunk = cache.get('positions/0.0.0');
+   * if (chunk) {
+   *   // Cache hit - chunk moved to MRU position
+   *   console.log(`Hit: ${chunk.byteLength} bytes`);
+   * } else {
+   *   // Cache miss - need to fetch
+   * }
+   * ```
+   *
+   * @performance O(1) - two Map operations (delete + set for reordering)
+   */
   get(key: string): V | undefined {
     const value = this.cache.get(key);
     if (value !== undefined) {
@@ -31,6 +54,41 @@ export class LRUCache<V> {
     return value;
   }
 
+  /**
+   * Set value in cache with automatic LRU eviction.
+   *
+   * If key exists, updates value and recalculates size.
+   * If cache is full, evicts least recently used items until space available.
+   * New item is always added at end (most recently used position).
+   *
+   * Eviction policy: Remove items from beginning of Map (oldest) until
+   * sufficient space. JavaScript Map maintains insertion order.
+   *
+   * @param key - Cache key
+   * @param value - Value to cache (size calculated via getSize function)
+   *
+   * @example
+   * ```typescript
+   * const cache = new LRUCache<Uint8Array>(64 * 1024, v => v.byteLength);
+   *
+   * // Add chunk (may trigger eviction if cache full)
+   * const chunk = new Uint8Array(32 * 1024); // 32KB
+   * cache.set('positions/0.0.0', chunk);
+   * console.log(`Cache: ${cache.count} items, ${cache.size} bytes`);
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Eviction demonstration
+   * cache.set('a', new Uint8Array(30 * 1024)); // 30KB
+   * cache.set('b', new Uint8Array(30 * 1024)); // 30KB, total 60KB
+   * cache.set('c', new Uint8Array(30 * 1024)); // 30KB, evicts 'a' (LRU)
+   * console.log(cache.has('a')); // false - evicted
+   * console.log(cache.has('b')); // true - still cached
+   * ```
+   *
+   * @performance O(k) where k = number of evictions needed (typically 0-2)
+   */
   set(key: string, value: V): void {
     // If exists, remove old
     if (this.cache.has(key)) {

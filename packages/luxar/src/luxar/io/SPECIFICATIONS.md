@@ -168,6 +168,79 @@ sorted_colors = colors[sort_indices]  # etc.
 
 **Fallback**: If no discrete dimensions exist, pure Hilbert ordering is used (equivalent to empty discrete key).
 
+**Visual Example - Compound Ordering Memory Layout**:
+
+```
+5D Dataset: (x, y, z, time, channel)
+Discrete dims: [time, channel] (not displayed, discrete values)
+Ordering dims: [x, y, z] (displayed, continuous space)
+
+Input: 12 points in random order
+Points with different (time, channel) combinations
+
+After Compound Ordering:
+┌──────────────────────────────────────────────────────────┐
+│ Chunk 0: time=0, channel=0                               │
+│ ┌────────────────────────────────────────────────────┐   │
+│ │ Morton/Hilbert-sorted by (x,y,z):                   │   │
+│ │ [pt_5, pt_12, pt_3, pt_9, pt_15]                    │   │
+│ │  ↑                                                  │   │
+│ │  Spatially coherent - adjacent in 3D space          │   │
+│ └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ Chunk 1: time=0, channel=1                               │
+│ ┌────────────────────────────────────────────────────┐   │
+│ │ Morton/Hilbert-sorted by (x,y,z):                   │   │
+│ │ [pt_1, pt_7, pt_11]                                 │   │
+│ └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ Chunk 2: time=1, channel=0                               │
+│ ┌────────────────────────────────────────────────────┐   │
+│ │ Morton/Hilbert-sorted by (x,y,z):                   │   │
+│ │ [pt_4, pt_8, pt_10, pt_6]                           │   │
+│ └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+
+Query Efficiency Examples:
+
+Query 1: "time=0, all channels, spatial region R"
+  → Loads chunks 0,1 (contiguous! good compression, single I/O)
+  → Within chunks: spatial locality via Morton ordering
+  → Result: Efficient for time-series animation
+
+Query 2: "all time, channel=0, spatial region R"
+  → Loads chunks 0,2,4,6,8... (strided access)
+  → Still benefits from spatial locality within each chunk
+  → Result: Less efficient but still better than random access
+
+Query 3: "time=0, channel=0, spatial region R"
+  → Loads chunk 0 only
+  → Morton ordering ensures adjacent points in space are adjacent in memory
+  → Result: Optimal - single chunk load with spatial locality
+
+Memory Layout Detail (positions array):
+┌─────────────────────────────────────────────────────────┐
+│ Chunk boundaries determined by (time, channel) values:  │
+│                                                          │
+│ Index:  0    1    2    3    4  │  5    6    7  │  8... │
+│         └────────┬─────────────┘  └─────┬──────┘        │
+│           time=0, chan=0         time=0, chan=1         │
+│                                                          │
+│ Within each chunk: Morton-sorted (x,y,z) coordinates    │
+└─────────────────────────────────────────────────────────┘
+
+Key Insight: Two-level hierarchy ensures:
+1. Points with same discrete values are contiguous (chunk-level)
+2. Points in same spatial region are nearby (Morton-level)
+```
+
+**Complexity**:
+- Sorting: O(N log N) standard comparison sort
+- Key generation per point: O(D) for D dimensions
+- Total: O(N × D + N log N) = O(N log N) for D << log N
+
 ---
 
 ### Space-Filling Curves: Morton and Hilbert

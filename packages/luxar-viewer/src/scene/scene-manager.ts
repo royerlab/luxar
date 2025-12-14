@@ -92,12 +92,47 @@ export class SceneManager extends THREE.EventDispatcher<{
   private smoothedFar: number = config.camera.far;
 
   /**
-   * Initialize the complete 3D scene setup
+   * Create a new scene manager instance.
+   *
+   * Sets up the EventDispatcher base class. Does not initialize Three.js
+   * components - call init() to set up renderer, scene, camera, and controls.
+   *
+   * @example
+   * ```typescript
+   * const sceneManager = new SceneManager();
+   * await sceneManager.init();  // Initialize Three.js components
+   * await sceneManager.loadSceneFromUrl(url);  // Load data
+   * ```
    */
   constructor() {
     super();
   }
 
+  /**
+   * Initialize complete Three.js rendering pipeline.
+   *
+   * Sets up all required components in order:
+   * 1. Canvas element validation
+   * 2. WebGL renderer with HDR support
+   * 3. WebGL context loss handling
+   * 4. Scene graph
+   * 5. Perspective camera
+   * 6. Camera controls (orbit/arcball/fly)
+   * 7. Post-processing (bloom, HDR tone mapping)
+   * 8. Initial canvas sizing
+   *
+   * Must be called once before using scene manager. Async because HDR
+   * detection and post-processing setup involve async operations.
+   *
+   * @returns Promise that resolves when initialization is complete
+   *
+   * @example
+   * ```typescript
+   * const sceneManager = new SceneManager();
+   * await sceneManager.init();
+   * // Now ready to load scenes and render
+   * ```
+   */
   async init(): Promise<void> {
     this.setupCanvas();
     this.setupRenderer();
@@ -494,7 +529,23 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Center camera on the bounding box of all visible objects
+   * Center camera on the bounding box of all visible objects in scene.
+   *
+   * Computes the bounding box of all Points and InstancedMesh objects,
+   * positions camera to view entire scene, and updates controls target.
+   * Skips centering if scene is too small (< 1.0 units) or has too few
+   * points (< 100) to avoid awkward positioning.
+   *
+   * Called automatically after scene loading if dataset has reasonable size.
+   * Can be called manually via F key to recenter after navigation.
+   *
+   * @example
+   * ```typescript
+   * // After loading scene
+   * await sceneManager.loadSceneFromUrl(url);
+   * sceneManager.centerCameraOnScene();
+   * // Camera now frames entire dataset
+   * ```
    */
   public centerCameraOnScene(): void {
     // Ensure world matrices are up to date before computing bounds
@@ -628,8 +679,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Get the current center point (either origin or bounding box center)
-   * @returns The current center as a Vector3
+   * Get current camera target center point.
+   *
+   * Returns either the bounding box center (if auto-centered) or origin
+   * (0,0,0) if using default positioning. The returned vector is a clone,
+   * safe to modify.
+   *
+   * @returns Current center as Vector3 (bounding box center or origin)
    */
   public getCurrentCenter(): THREE.Vector3 {
     if (this.isCenteredOnBoundingBox) {
@@ -639,15 +695,32 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Get the controls manager instance
-   * @returns The ControlsManager instance
+   * Get controls manager for camera interaction.
+   *
+   * Provides access to orbit, arcball, and fly controls for advanced
+   * camera manipulation.
+   *
+   * @returns ControlsManager instance managing camera controls
    */
   public getControlsManager(): ControlsManager {
     return this.controls;
   }
 
   /**
-   * Toggle between centering on origin (native) and bounding box center
+   * Toggle camera centering between origin and bounding box center.
+   *
+   * Switches between two centering modes:
+   * - Origin (0,0,0): Default Three.js behavior
+   * - Bounding box center: Computed from all visible objects
+   *
+   * Useful when dataset is not centered at origin or when you want to
+   * return to default camera position.
+   *
+   * @example
+   * ```typescript
+   * // Switch to origin centering
+   * sceneManager.toggleCentering();
+   * ```
    */
   public toggleCentering(): void {
     if (this.isCenteredOnBoundingBox) {
@@ -698,6 +771,25 @@ export class SceneManager extends THREE.EventDispatcher<{
    * This method debounces resize events using requestAnimationFrame to prevent
    * excessive WebGL buffer reallocations during window dragging. Multiple rapid
    * resize events are coalesced into a single update on the next frame.
+   */
+  /**
+   * Update canvas size and camera aspect ratio for window resize.
+   *
+   * Handles window resize events with debouncing via requestAnimationFrame.
+   * Updates:
+   * - Canvas dimensions to match window size
+   * - Camera aspect ratio to prevent distortion
+   * - Renderer viewport
+   * - Post-processing effect sizes
+   *
+   * Called automatically on window resize. Debouncing ensures smooth
+   * resize without excessive recomputations.
+   *
+   * @example
+   * ```typescript
+   * // Manual resize (usually not needed, window resize auto-triggers)
+   * sceneManager.updateSize();
+   * ```
    */
   updateSize(): void {
     // Store the latest dimensions
@@ -1105,6 +1197,26 @@ export class SceneManager extends THREE.EventDispatcher<{
    * 5. Materials: Free texture memory and shader programs
    *
    * Critical for preventing memory leaks in long-running applications.
+   */
+  /**
+   * Clean up all Three.js resources and prevent memory leaks.
+   *
+   * Disposes:
+   * - All geometries and materials in scene
+   * - Renderer and render targets
+   * - Post-processing effects
+   * - Camera controls
+   * - Event listeners (context loss, resize, etc.)
+   *
+   * Should be called when scene manager is no longer needed. After calling
+   * dispose(), the scene manager cannot be reused - create a new instance.
+   *
+   * @example
+   * ```typescript
+   * // During application teardown
+   * sceneManager.dispose();
+   * // All WebGL resources released
+   * ```
    */
   dispose(): void {
     // Cancel any pending resize operations to prevent memory leaks

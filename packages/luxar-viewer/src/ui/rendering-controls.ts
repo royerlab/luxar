@@ -21,15 +21,38 @@ import {
 import { log, Modules } from '../utils/log';
 
 /**
- * RenderingControls manages the advanced rendering parameters GUI
+ * Advanced rendering parameters GUI for real-time visual control.
+ *
+ * Provides comprehensive UI for controlling:
+ * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
+ * - HDR intensity and tone mapping
+ * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
+ * - Camera controls (orbit, arcball, fly modes with physics parameters)
+ * - Point rendering (base size, near/far size, sharpness, saturation)
+ * - Dynamic clipping planes for nD visualization
  *
  * Features:
- * - Real-time control of post-processing effects (bloom, noise, DOF, etc.)
- * - HDR intensity control
- * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
- * - Navigation controls (orbit, arcball, fly)
- * - Settings persistence per scene
- * - Clean, collapsible UI using lil-gui
+ * - Settings persistence per scene (localStorage)
+ * - Cinematic mode presets (C key for quick film-like look)
+ * - Real-time updates with deferred rebuild to prevent lag
+ * - Clean collapsible UI using lil-gui library
+ * - Auto-blur behavior to keep keyboard shortcuts working
+ *
+ * @example
+ * ```typescript
+ * const renderingControls = new RenderingControls(
+ *   postProcessingManager,
+ *   sceneManager
+ * );
+ *
+ * // Associate with input handler for R key toggle
+ * inputHandler.setRenderingControls(renderingControls);
+ *
+ * // Set animation controller for effects requiring continuous render
+ * renderingControls.setAnimationController(animController);
+ *
+ * // User can now press R to toggle controls panel
+ * ```
  */
 export class RenderingControls {
   /** The lil-gui instance */
@@ -63,6 +86,25 @@ export class RenderingControls {
   /** Shadow object for logarithmic HDR intensity slider */
   private hdrLogValue: { log: number } = { log: 0 };
 
+  /**
+   * Create rendering controls UI with complete parameter access.
+   *
+   * Initializes lil-gui with all post-processing and rendering controls
+   * organized in folders. Sets up auto-blur behavior and keyboard handling.
+   * Starts hidden - call show() or toggle() to display.
+   *
+   * @param postProcessing - Post-processing manager for bloom, noise, etc.
+   * @param sceneManager - Scene manager for camera and control access
+   *
+   * @example
+   * ```typescript
+   * const controls = new RenderingControls(
+   *   postProcessingManager,
+   *   sceneManager
+   * );
+   * controls.show();  // Display controls panel
+   * ```
+   */
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
@@ -2062,7 +2104,21 @@ export class RenderingControls {
   }
 
   /**
-   * Show the controls panel
+   * Show the rendering controls panel.
+   *
+   * Syncs current state from scene/post-processing managers before showing
+   * to ensure GUI displays accurate values. Adds click-outside handler for
+   * better focus management.
+   *
+   * Triggered by R key when controls are hidden.
+   *
+   * @example
+   * ```typescript
+   * // Show controls programmatically
+   * renderingControls.show();
+   *
+   * // Or user presses R key (handled by input handler)
+   * ```
    */
   show(): void {
     // Sync current state from scene manager before showing
@@ -2079,7 +2135,12 @@ export class RenderingControls {
   }
 
   /**
-   * Hide the controls panel
+   * Hide the rendering controls panel.
+   *
+   * Blurs any focused input element to return focus to canvas, ensuring
+   * keyboard shortcuts work after closing. Removes click-outside handler.
+   *
+   * Triggered by R key when controls are visible, or by Escape key.
    */
   hide(): void {
     // Blur any focused element to return focus to the main document
@@ -2100,7 +2161,15 @@ export class RenderingControls {
   }
 
   /**
-   * Toggle visibility
+   * Toggle rendering controls panel visibility (show ↔ hide).
+   *
+   * Primary method for R key binding. Syncs state before showing.
+   *
+   * @example
+   * ```typescript
+   * // User presses R key
+   * renderingControls.toggle();
+   * ```
    */
   toggle(): void {
     if (this.visible) {
@@ -2112,7 +2181,9 @@ export class RenderingControls {
   }
 
   /**
-   * Check if controls panel is visible
+   * Check if rendering controls panel is currently visible.
+   *
+   * @returns true if panel is shown, false if hidden
    */
   isVisible(): boolean {
     return this.visible;
@@ -2254,8 +2325,31 @@ export class RenderingControls {
   }
 
   /**
-   * Toggle cinematic mode - intelligently manages detector noise, vignette, chromatic aberration, and lens distortion
-   * Uses majority vote to determine whether to turn effects on or off
+   * Toggle cinematic mode (film-like visual preset).
+   *
+   * Triggered by C key. Uses intelligent majority-vote algorithm to determine
+   * whether to enable or disable effects:
+   * - If < 50% effects enabled: Turn ALL on
+   * - If >= 50% effects enabled: Turn ALL off
+   *
+   * Cinematic mode affects:
+   * - Detector noise (subtle film grain)
+   * - Vignette (darkened corners)
+   * - Chromatic aberration (color fringing)
+   * - Lens distortion (barrel/pincushion)
+   * - FOV (35mm wide-angle for cinematic, 50mm normal for regular)
+   *
+   * Uses deferred rebuild to apply all changes in single pass (performance).
+   *
+   * @example
+   * ```typescript
+   * // User presses C key
+   * renderingControls.toggleCinematicMode();
+   * // All cinematic effects either turn on or off together
+   *
+   * // Check resulting state
+   * console.log('Cinematic:', renderingControls.settings.detectorNoiseEnabled);
+   * ```
    */
   toggleCinematicMode(): void {
     // Get current state of cinematic effects
@@ -2384,7 +2478,12 @@ export class RenderingControls {
   }
 
   /**
-   * Clean up resources
+   * Clean up lil-gui resources and remove from DOM.
+   *
+   * Destroys the GUI instance. Should be called when rendering controls
+   * are no longer needed (e.g., application teardown).
+   *
+   * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
     this.gui.destroy();

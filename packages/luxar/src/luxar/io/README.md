@@ -2,6 +2,35 @@
 
 Progressive writing and reading of Luxar Zarr scenes with spatial ordering for memory-efficient processing of massive datasets.
 
+## Quick Start
+
+Write and read a scene in 3 steps:
+
+```python
+from luxar.io import LuxarZarrCompiler, LuxarScene
+import numpy as np
+
+# 1. Create sample data
+positions = np.random.randn(1000, 3).astype(np.float32)
+colors = np.random.rand(1000, 3).astype(np.float32)
+
+# 2. Write to zarr (progressive - data written immediately)
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene()
+    scene.add_points('cloud', positions, colors, radii=0.1)
+
+# 3. Read it back (memory-efficient lazy loading)
+scene = LuxarScene.load('scene.zarr')
+points = scene.get_points('cloud')
+print(f"Loaded {points['positions'].shape[0]} points")
+```
+
+**Key Benefits**:
+- Progressive writing - no intermediate caching, handle TB-scale data
+- Spatial ordering - better compression and viewer performance
+- Scalar convenience - pass uniform values directly: `radii=0.5` instead of `np.full(N, 0.5)`
+- Memory-efficient reading - lazy loading via zarrita
+
 ## Purpose
 
 This package provides infrastructure for:

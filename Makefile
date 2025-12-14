@@ -90,6 +90,55 @@ check:  ## Run all quality checks (Python and TypeScript)
 	fi
 	cd packages/luxar-viewer && pnpm run typecheck && pnpm run lint && pnpm test --run
 
+# Documentation checks (Phase 4 automation)
+check-docs:  ## Check documentation quality and coverage
+	@echo "📚 Checking Python documentation..."
+	hatch run python scripts/check_documentation.py
+	@echo "📚 Checking TypeScript JSDoc coverage..."
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70
+
+check-docs-verbose:  ## Check documentation with detailed output
+	@echo "📚 Checking documentation (verbose mode)..."
+	hatch run python scripts/check_documentation.py --verbose
+	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
+
+# Documentation generation (Phase 4)
+docs-build:  ## Build API documentation (Python + TypeScript)
+	@echo "📖 Building Python API documentation with Sphinx..."
+	@if ! command -v sphinx-build >/dev/null 2>&1; then \
+		echo "📦 Installing Sphinx..."; \
+		hatch run pip install sphinx sphinx-rtd-theme myst-parser; \
+	fi
+	hatch run sphinx-build -b html docs docs/_build/html
+	@echo "📖 Building TypeScript API documentation with TypeDoc..."
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm add -D typedoc && npx typedoc
+	@echo "✅ Documentation built!"
+	@echo "   Python docs: docs/_build/html/index.html"
+	@echo "   TypeScript docs: packages/luxar-viewer/docs/api/index.html"
+
+docs-serve:  ## Serve built documentation locally
+	@echo "🌐 Serving documentation at http://localhost:8080"
+	@echo "   Press Ctrl+C to stop"
+	@if [ ! -d "docs/_build/html" ]; then \
+		echo "📖 Building documentation first..."; \
+		make docs-build; \
+	fi
+	@python -m http.server 8080 -d docs/_build/html
+
+docs-clean:  ## Clean built documentation
+	@echo "🧹 Cleaning documentation build artifacts..."
+	rm -rf docs/_build/
+	rm -rf docs/_autosummary/
+	rm -rf packages/luxar-viewer/docs/api/
+	@echo "✅ Documentation artifacts cleaned"
+
 # Clean up
 clean:  ## Clean up temporary files and caches
 	@echo "🧹 Cleaning Python artifacts..."

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src"],
+  "entryPointStrategy": "expand",
+  "out": "docs/api",
+  "name": "Luxar Viewer API Documentation",
+  "includeVersion": true,
+  "readme": "README.md",
+  "theme": "default",
+  "navigationLinks": {
+    "GitHub": "https://github.com/your-org/luxar"
+  },
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Core",
+    "Data",
+    "Cache",
+    "Rendering",
+    "Scene",
+    "Controls",
+    "Input",
+    "UI",
+    "Config",
+    "Types",
+    "Utils",
+    "*"
+  ],
+  "sort": ["source-order"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/__tests__/**",
+    "**/node_modules/**"
+  ],
+  "excludePrivate": false,
+  "excludeProtected": false,
+  "excludeInternal": true,
+  "hideGenerator": false,
+  "searchInComments": true,
+  "searchInDocuments": true,
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": false
+  },
+  "commentStyle": "jsdoc",
+  "excludeTags": ["@internal"],
+  "plugin": [],
+  "jsDocCompatibility": {
+    "defaultTag": true,
+    "exampleTag": true,
+    "ignoreUnescapedBraces": true
+  }
+}
