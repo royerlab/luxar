@@ -20,7 +20,64 @@ export class LuxarApp {
   private boundCleanup: (() => void) | null = null;
 
   /**
-   * Initialize the complete application
+   * Initialize the complete Luxar application.
+   *
+   * Sets up the complete visualization pipeline including:
+   * - WebGL renderer and scene manager
+   * - Animation loop with post-processing
+   * - Input handling (keyboard/mouse)
+   * - UI controls (dimension sliders, rendering settings)
+   * - Data loading with spatial indexing
+   *
+   * The initialization sequence is carefully ordered to ensure the
+   * animation loop starts BEFORE data loading, providing visual feedback
+   * even during long load operations.
+   *
+   * @param src - URL or path to the Zarr dataset. Can be:
+   *              - HTTP URL: 'https://example.com/data.zarr'
+   *              - Directory path ending with '/': Shows dataset browser
+   *              - Omitted: Uses config.defaultZarrPath
+   *              - Query params supported: '?no-cache', '?debug', '?no-prefetch'
+   *
+   * @returns Promise that resolves when initialization is complete and
+   *          dataset loading has started (may still be loading in background).
+   *          Does NOT wait for all chunks to load.
+   *
+   * @throws {Error} If WebGL is not supported by browser
+   * @throws {Error} If scene manager initialization fails
+   * @throws {Error} Dataset loading errors are caught and displayed to user
+   *
+   * @example
+   * ```typescript
+   * // Basic initialization with URL
+   * const app = new LuxarApp();
+   * await app.init('https://example.com/cells.zarr');
+   * // App is now running, data loading in background
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // Show dataset browser
+   * const app = new LuxarApp();
+   * await app.init('https://example.com/datasets/');
+   * // User can browse and select datasets
+   * ```
+   *
+   * @example
+   * ```typescript
+   * // With error handling
+   * const app = new LuxarApp();
+   * try {
+   *   await app.init(datasetUrl);
+   *   console.log('✅ Luxar initialized successfully');
+   * } catch (error) {
+   *   console.error('❌ Initialization failed:', error);
+   *   // Fallback or retry logic
+   * }
+   * ```
+   *
+   * @see {@link SceneManager} for rendering pipeline setup
+   * @see {@link README.md#initialization-sequence} for detailed init flow
    */
   async init(src?: string): Promise<void> {
     try {

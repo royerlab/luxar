@@ -15,6 +15,130 @@ This document specifies the Zarr-based storage format used by Luxar for high-per
 
 The Luxar Zarr format is a hierarchical data structure designed for efficient storage and streaming of large-scale points data with support for arbitrary dimensionality, transformations, and rendering attributes.
 
+## End-to-End Data Flow
+
+This diagram shows how data flows from Python creation through storage to WebGL rendering:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ PYTHON LAYER (luxar packages)                                              │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  luxar.core                                                                 │
+│  ┌──────────────────┐                                                      │
+│  │ Scene, Points    │  Define scene graph with transforms                  │
+│  │ Dimensions       │  positions: float32[N, D]                            │
+│  └────────┬─────────┘  colors: float32[N, 3]                               │
+│           │            radii: float32[N]                                    │
+│           ↓                                                                 │
+│  luxar.validation                                                           │
+│  ┌──────────────────┐                                                      │
+│  │ Type checking    │  Validate shapes, ranges, semantic types             │
+│  │ Shape validation │  Ensure data consistency                             │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  luxar.encoding                                                             │
+│  ┌──────────────────┐                                                      │
+│  │ Semantic typing  │  COORDINATE → uint16 quantization                    │
+│  │ Quantization     │  COLOR → uint8/float32 (SDR/HDR)                     │
+│  │ Broadcasting     │  Uniform values → single scalar                      │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  luxar.io                                                                   │
+│  ┌──────────────────┐                                                      │
+│  │ Spatial ordering │  Morton/Hilbert space-filling curves                 │
+│  │ Compound sort    │  Discrete dims (time) → spatial (x,y,z)              │
+│  │ Chunking         │  Split into 32KB-1MB chunks                          │
+│  │ AABB calculation │  Per-chunk bounding boxes                            │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+└───────────┼─────────────────────────────────────────────────────────────────┘
+            │
+            ↓  Write
+┌───────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER (Zarr)                                                       │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  scene.zarr/                                                                │
+│  ├── .zattrs              Scene metadata (dimensions, units, transforms)   │
+│  ├── .zmetadata           Consolidated metadata                            │
+│  └── node_name/                                                            │
+│      ├── positions/       Blosc(zstd-3) compressed uint16 chunks           │
+│      ├── colors/          Blosc compressed uint8/float32                   │
+│      ├── radii/           Compressed or broadcast scalar                   │
+│      └── chunk_bounds/    AABB per chunk for spatial queries               │
+│                           [xmin,xmax, ymin,ymax, zmin,zmax, ...]           │
+│                                                                             │
+│  Compression: 2-10× (blosc/zstd) + quantization: 2-4× = 4-40× total       │
+│                                                                             │
+└───────────┬───────────────────────────────────────────────────────────────┘
+            │
+            ↓  HTTP/zarrita
+┌───────────────────────────────────────────────────────────────────────────┐
+│ TYPESCRIPT LAYER (luxar-viewer)                                            │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  cache/                                                                     │
+│  ┌──────────────────┐                                                      │
+│  │ L1: Memory LRU   │  ~100MB, ~1μs access                                 │
+│  │ L2: OPFS         │  ~2GB, ~1ms access                                   │
+│  │ L3: HTTP fetch   │  Unlimited, ~100ms access                            │
+│  │ Prefetcher       │  Adjacent chunks (±1 in each dimension)              │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  data/                                                                      │
+│  ┌──────────────────┐                                                      │
+│  │ Scene loader     │  Parse .zattrs, build THREE.js scene graph           │
+│  │ Spatial index    │  Query chunk_bounds for AABB intersection            │
+│  │ Array decoder    │  Dequantize uint16 → float32                         │
+│  │ nD slicer        │  Hypersphere visibility (effective radius)           │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  rendering/                                                                 │
+│  ┌──────────────────┐                                                      │
+│  │ Material manager │  Create shaders with world-space sizing              │
+│  │ Post-processing  │  Bloom, tone mapping, detector noise                 │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+└───────────┼─────────────────────────────────────────────────────────────────┘
+            │
+            ↓  BufferGeometry
+┌───────────────────────────────────────────────────────────────────────────┐
+│ WEBGL LAYER                                                                │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Vertex Shader                                                              │
+│  ┌──────────────────┐                                                      │
+│  │ Transform points │  Apply 4×4 matrices (scene, view, projection)        │
+│  │ Size calculation │  Angular diameter → pixel size                       │
+│  │ Color pass       │  Pass attributes to fragment shader                  │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  Fragment Shader                                                            │
+│  ┌──────────────────┐                                                      │
+│  │ Gaussian kernel  │  Smooth point splatting                              │
+│  │ HDR rendering    │  Float16 framebuffer for >1.0 colors                 │
+│  │ Alpha blending   │  Additive/premultiplied modes                        │
+│  └────────┬─────────┘                                                      │
+│           │                                                                 │
+│           ↓                                                                 │
+│  Display: 60 FPS interactive visualization of 100K-10M points              │
+│                                                                             │
+└───────────────────────────────────────────────────────────────────────────┘
+
+**Key Performance Characteristics:**
+- Python write: ~1-5M points/sec (spatial ordering overhead)
+- Compression ratio: 4-40× (quantization + blosc)
+- Network bandwidth: 50-500KB/sec for smooth navigation
+- Cache hit rate: 80-95% with prefetching
+- GPU rendering: 100K-10M points at 60 FPS
+```
+
 ## Format Structure
 
 ```

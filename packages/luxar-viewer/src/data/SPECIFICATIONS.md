@@ -165,6 +165,59 @@ function queryChunksForView(chunkIndex, slicePosition, tolerance):
 
 **Complexity**: O(num_chunks × ndim) where num_chunks is typically 100-1000
 
+**Visual Example - 3D Space with Chunks**:
+
+```
+3D Space divided into chunks (viewed from above, Z dimension shown as layers):
+
+Query: slicePosition=[5, 10, 15], tolerance=[2, 2, 2]
+Query box: X[3,7] Y[8,12] Z[13,17]
+
+┌─────────────────┬─────────────────┬─────────────────┐
+│ Chunk 0         │ Chunk 1         │ Chunk 2         │
+│ X[0,10] Y[0,10] │ X[10,20] Y[0,10]│ X[20,30] Y[0,10]│
+│ Z[0,10]         │ Z[0,10]         │ Z[0,10]         │
+│                 │                 │                 │
+│    ✓ Partial    │    ✗ No overlap │    ✗ Too far    │
+│    overlap      │                 │                 │
+├─────────────────┼─────────────────┼─────────────────┤
+│ Chunk 3         │ Chunk 4         │ Chunk 5         │
+│ X[0,10] Y[10,20]│ X[10,20] Y[10,20│ X[20,30] Y[10,20│
+│ Z[0,10]         │ Z[0,10]         │ Z[0,10]         │
+│                 │                 │                 │
+│    ✗ Wrong Y    │    ✗ Wrong Z    │    ✗ Too far    │
+├─────────────────┼─────────────────┼─────────────────┤
+│ Chunk 6         │ Chunk 7         │ Chunk 8         │
+│ X[0,10] Y[0,10] │ X[10,20] Y[0,10]│ X[20,30] Y[0,10]│
+│ Z[10,20]        │ Z[10,20]        │ Z[10,20]        │
+│                 │                 │                 │
+│    ✓ Overlaps   │    ✗ No overlap │    ✗ Too far    │
+│    in all dims  │    in X         │                 │
+└─────────────────┴─────────────────┴─────────────────┘
+
+Test Details for Chunk 0:
+  X: chunk[0,10] vs query[3,7]   → chunkMax(10) >= queryMin(3)  ✓
+                                    chunkMin(0)  <= queryMax(7)  ✓
+  Y: chunk[0,10] vs query[8,12]  → chunkMax(10) >= queryMin(8)  ✓
+                                    chunkMin(0)  <= queryMax(12) ✓
+  Z: chunk[0,10] vs query[13,17] → chunkMax(10) <  queryMin(13) ✗ FAIL
+
+  Result: Chunk 0 does NOT intersect (fails Z test)
+
+Test Details for Chunk 6:
+  X: chunk[0,10] vs query[3,7]   → Overlaps ✓
+  Y: chunk[0,10] vs query[8,12]  → Overlaps ✓
+  Z: chunk[10,20] vs query[13,17]→ Overlaps ✓
+
+  Result: Chunk 6 INTERSECTS (passes all dimensions)
+
+Result: Load chunks [6] (and any others that pass all dimension tests)
+```
+
+**AABB Intersection Logic**:
+Two axis-aligned bounding boxes intersect if they overlap in **ALL** dimensions.
+Boxes DON'T overlap if: `chunkMax < queryMin` OR `chunkMin > queryMax`
+
 **Convert to Point Ranges**:
 
 ```typescript
@@ -407,6 +460,70 @@ function calculateEffectiveRadius(point, radius, displayed, slicePosition, spati
 
     effectiveRadius = sqrt(effectiveRadius²)
     return effectiveRadius
+```
+
+**Visual Example - nD Hypersphere Slicing**:
+
+```
+5D Point at [x=5, y=10, z=15, time=5.0, channel=2] with radius=3.0
+
+Scenario 1: View at time=5.0, channel=2 (exact match)
+┌─────────────────────────────────────────────────────┐
+│ Non-displayed dimensions: time=5.0, channel=2        │
+│ Point location:           time=5.0, channel=2        │
+│                                                       │
+│ Distance in non-displayed: D = 0                     │
+│ Effective radius: R_eff = √(3² - 0²) = 3.0 (full)  │
+│                                                       │
+│ Result: Point visible with FULL radius in 3D view    │
+└─────────────────────────────────────────────────────┘
+
+Scenario 2: View at time=5.5, channel=2 (partial slice)
+┌─────────────────────────────────────────────────────┐
+│ Non-displayed dimensions: time=5.5, channel=2        │
+│ Point location:           time=5.0, channel=2        │
+│                                                       │
+│ Distance in time: D_time = |5.5 - 5.0| = 0.5        │
+│ Distance in channel: D_chan = |2 - 2| = 0            │
+│ Total distance²: D² = 0.5² + 0² = 0.25              │
+│                                                       │
+│ Effective radius: R_eff = √(3² - 0.25) = √8.75      │
+│                        = 2.96 (96% of original)      │
+│                                                       │
+│ Result: Point visible with REDUCED radius            │
+│                                                       │
+│ [Side View - Hypersphere Cross-Section]              │
+│                                                       │
+│      time dimension →                                │
+│   ◀────────3.0────────▶                              │
+│         ╱─────────╲                                  │
+│       ╱     ●     ╲        ● = point center          │
+│      ◀─2.96─┼─2.96─▶       │ = slice plane at t=5.5 │
+│      │      │      │        ┼ = 0.5 offset          │
+│      ╲      │      ╱                                 │
+│        ╲─────────╱                                   │
+│          ╲─────╱                                     │
+│            ─┬─   ← at t=6.5 or t=3.5 (edge)         │
+│             0    ← at t=8.0 (too far, invisible)     │
+└─────────────────────────────────────────────────────┘
+
+Scenario 3: View at time=8.0, channel=2 (too far)
+┌─────────────────────────────────────────────────────┐
+│ Distance in time: D_time = |8.0 - 5.0| = 3.0        │
+│ Distance in channel: D_chan = 0                      │
+│ Total distance²: D² = 3.0² = 9.0                    │
+│                                                       │
+│ Effective radius: R_eff = √(3² - 9.0)               │
+│                        = √(-0.0) = 0 (negative!)    │
+│                                                       │
+│ Result: Point NOT visible (outside hypersphere)      │
+└─────────────────────────────────────────────────────┘
+
+Key Insight: The hypersphere "shrinks" as you move away from the point's
+location in non-displayed dimensions. At distance = radius, effective
+radius becomes 0 and the point disappears.
+
+Formula: effective_radius = √(radius² - distance_in_nondisplayed_dims²)
 ```
 
 **Critical**: Distance is calculated in **NON-displayed spatial dimensions**, not displayed dimensions. This represents how much of the hypersphere "budget" remains for the non-displayed dimensions after accounting for distance from the slice plane.

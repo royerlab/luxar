@@ -44,6 +44,30 @@ export class AnimationController {
   /** Optional per-frame callback for additional updates (e.g., dynamic clipping) */
   private perFrameCallback: (() => void) | null = null;
 
+  /**
+   * Create animation controller for rendering loop management.
+   *
+   * Sets up performance monitoring and prepares animation loop. Does not
+   * start animation - call startAnimation() to begin rendering.
+   *
+   * @param _renderer - THREE.js WebGL renderer (unused, kept for API compatibility)
+   * @param _scene - THREE.js scene (unused, kept for API compatibility)
+   * @param _camera - THREE.js camera (unused, kept for API compatibility)
+   * @param controls - Controls manager for camera updates each frame
+   * @param postProcessing - Post-processing manager for HDR rendering
+   *
+   * @example
+   * ```typescript
+   * const animController = new AnimationController(
+   *   renderer,
+   *   scene,
+   *   camera,
+   *   controlsManager,
+   *   postProcessingManager
+   * );
+   * animController.startAnimation();  // Begin rendering loop
+   * ```
+   */
   constructor(
     _renderer: THREE.WebGLRenderer,
     _scene: THREE.Scene,
@@ -56,8 +80,27 @@ export class AnimationController {
   }
 
   /**
-   * Set a callback to be called every frame before rendering.
-   * Used for dynamic clipping plane updates and other per-frame operations.
+   * Set callback function to execute every frame before rendering.
+   *
+   * Useful for operations that need to run every frame:
+   * - Dynamic clipping plane adjustments
+   * - Camera-based LOD updates
+   * - Custom animations or effects
+   *
+   * The callback is executed after controls.update() but before rendering.
+   *
+   * @param callback - Function to call each frame, or null to clear callback
+   *
+   * @example
+   * ```typescript
+   * // Add dynamic clipping plane updates
+   * animController.setPerFrameCallback(() => {
+   *   sceneManager.updateDynamicClippingPlanes();
+   * });
+   *
+   * // Clear callback
+   * animController.setPerFrameCallback(null);
+   * ```
    */
   setPerFrameCallback(callback: (() => void) | null): void {
     this.perFrameCallback = callback;
@@ -206,21 +249,33 @@ export class AnimationController {
   };
 
   /**
-   * Get current animation state
+   * Get current animation loop state.
+   *
+   * @returns true if animation loop is running, false if paused
    */
   get isActive(): boolean {
     return this.isAnimating;
   }
 
   /**
-   * Get performance monitor instance
+   * Get performance monitor for FPS and timing metrics.
+   *
+   * Provides access to stats.js panel for toggling visibility (P key)
+   * and retrieving performance data.
+   *
+   * @returns PerformanceMonitor instance tracking FPS and frame time
    */
   get performanceStats(): PerformanceMonitor {
     return this.performanceMonitor;
   }
 
   /**
-   * Cleanup animation resources
+   * Stop animation loop and clean up resources.
+   *
+   * Stops rendering, cancels timers, and disposes performance monitor.
+   * Should be called during application teardown.
+   *
+   * After calling dispose(), the animation controller cannot be reused.
    */
   dispose(): void {
     this.stopAnimation();

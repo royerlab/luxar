@@ -740,7 +740,13 @@ export class InputHandler {
   }
 
   /**
-   * Toggle help overlay visibility
+   * Toggle help overlay visibility on/off.
+   *
+   * Shows or hides the keyboard shortcuts help overlay. Triggered by H key.
+   * The help overlay displays all available keyboard shortcuts organized
+   * by category (navigation, view controls, panels, etc.).
+   *
+   * @private
    */
   private toggleHelp(): void {
     const helpOverlay = document.getElementById('help-overlay');
@@ -752,7 +758,13 @@ export class InputHandler {
   }
 
   /**
-   * Toggle dimension sliders visibility
+   * Toggle dimension sliders panel visibility.
+   *
+   * Shows or hides the nD dimension navigation sliders. Triggered by N key.
+   * Only functional if dimension sliders have been initialized (nD dataset loaded).
+   * Has no effect for 3D-only datasets.
+   *
+   * @private
    */
   private toggleDimensionSliders(): void {
     if (this.dimensionSliders) {
@@ -761,14 +773,30 @@ export class InputHandler {
   }
 
   /**
-   * Toggle performance statistics display
+   * Toggle performance statistics (FPS, memory) display.
+   *
+   * Shows or hides the stats.js performance monitor in top-left corner.
+   * Triggered by P key. Displays:
+   * - FPS (frames per second)
+   * - Frame time in milliseconds
+   * - Memory usage (if available)
+   *
+   * @private
    */
   private togglePerformanceStats(): void {
     this.animationController.performanceStats.toggle();
   }
 
   /**
-   * Toggle fullscreen mode
+   * Toggle fullscreen mode on/off.
+   *
+   * Requests fullscreen for the document element (true fullscreen including
+   * browser chrome). Falls back to canvas-only fullscreen if document
+   * fullscreen fails. Triggered by Space key (when not focused on UI element).
+   *
+   * Fullscreen exit is also possible via browser's native ESC key handling.
+   *
+   * @private
    */
   private toggleFullscreen(): void {
     if (!document.fullscreenElement) {
@@ -789,21 +817,54 @@ export class InputHandler {
   }
 
   /**
-   * Toggle advanced rendering controls
+   * Toggle advanced rendering controls panel visibility.
+   *
+   * Shows or hides the rendering controls UI providing access to:
+   * - Post-processing effects (bloom, HDR, vignette, chromatic aberration)
+   * - Camera settings (FOV presets)
+   * - Control mode selection (orbit, arcball, fly)
+   * - Point rendering parameters
+   *
+   * Triggered by R key. Only functional if rendering controls have been
+   * associated via setRenderingControls().
+   *
+   * @private
    */
   private toggleRenderingControls(): void {
     this.renderingControls?.toggle();
   }
 
   /**
-   * Toggle cinematic mode - enables/disables noise, vignette, chromatic aberration, and lens distortion
+   * Toggle cinematic mode (film-like visual effects).
+   *
+   * Enables or disables a preset combination of effects:
+   * - Film grain noise
+   * - Vignette (darkened corners)
+   * - Chromatic aberration (color fringing)
+   * - Lens distortion
+   *
+   * Triggered by C key. Provides quick access to cinematic aesthetics without
+   * manually adjusting individual effects. Only functional if rendering controls
+   * have been associated.
+   *
+   * @private
    */
   private toggleCinematicMode(): void {
     this.renderingControls?.toggleCinematicMode();
   }
 
   /**
-   * Cycle through Orbit, Arcball, and Fly control modes
+   * Cycle through camera control modes: Orbit → Arcball → Fly → Orbit.
+   *
+   * Triggered by V key. Control modes provide different camera interaction styles:
+   * - Orbit: Traditional orbit camera (drag to rotate around target)
+   * - Arcball: Virtual trackball (more intuitive for scientific data)
+   * - Fly: First-person WASD movement (for exploring inside datasets)
+   *
+   * Updates input context when switching to fly mode to enable WASD keys.
+   * Syncs rendering controls display if active.
+   *
+   * @private
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
@@ -846,7 +907,18 @@ export class InputHandler {
   }
 
   /**
-   * Toggle inertial mode for fly controls
+   * Toggle inertial mode for fly controls (momentum-based movement).
+   *
+   * Triggered by I key. Only functional when in fly control mode.
+   *
+   * Inertial mode adds physics-based momentum:
+   * - ON: Movement continues after releasing keys (space-like float)
+   * - OFF: Movement stops immediately when keys released (FPS-like control)
+   *
+   * Syncs rendering controls display if active. Logs info message if called
+   * while not in fly mode.
+   *
+   * @private
    */
   private toggleInertialMode(): void {
     const controls = this.sceneManager.controls.getControls();
@@ -874,7 +946,14 @@ export class InputHandler {
   }
 
   /**
-   * Check if space key should trigger fullscreen
+   * Check if Space key should trigger fullscreen toggle.
+   *
+   * Returns true only if focus is on document body or canvas, preventing
+   * fullscreen toggle when user is interacting with UI elements (buttons,
+   * inputs, etc.) where Space might have other meanings (submit, type space).
+   *
+   * @returns true if Space key should toggle fullscreen, false otherwise
+   * @private
    */
   private shouldHandleSpaceKey(): boolean {
     const activeElement = document.activeElement;
@@ -884,7 +963,15 @@ export class InputHandler {
   }
 
   /**
-   * Check if user is typing in an input field
+   * Check if user is currently typing in a text input field.
+   *
+   * Checks if focus is in an input, textarea, select, or contenteditable
+   * element. Used to prevent navigation shortcuts from interfering with
+   * text entry. For example, prevents [ ] keys from navigating dimensions
+   * when user is typing in a search box.
+   *
+   * @returns true if user is typing in text field, false otherwise
+   * @private
    */
   private isTypingInInput(): boolean {
     const activeElement = document.activeElement;
@@ -987,17 +1074,31 @@ export class InputHandler {
   }
 
   /**
-   * Get list of navigable (non-displayed) dimensions.
-   * Delegates to the extracted utility function.
+   * Get list of navigable (non-displayed) dimension indices.
+   *
+   * Delegates to the extracted utility function getNonDisplayedDimensions.
+   * Returns dimensions that are not part of the 3D spatial view and can be
+   * controlled with keyboard navigation.
+   *
+   * @param dims - Dimension configuration
+   * @returns Array of non-displayed dimension indices
+   * @private
    */
   private getNavigableDimensionsList(dims: SimpleDims): number[] {
     return getNonDisplayedDimensions(dims);
   }
 
   /**
-   * Handle ESC key:
-   * - If in fullscreen: do nothing (browser handles fullscreen exit)
-   * - If not in fullscreen: close all panels
+   * Handle Escape key with context-aware behavior.
+   *
+   * Behavior depends on fullscreen state:
+   * - If IN fullscreen: Does nothing (browser handles fullscreen exit natively)
+   * - If NOT in fullscreen: Closes all open panels (help, controls, monitor, etc.)
+   *
+   * This ensures Escape behaves predictably - fullscreen exit takes priority,
+   * then panel closing.
+   *
+   * @private
    */
   private handleEscapeKey(): void {
     // Only close panels if we're NOT in fullscreen
@@ -1008,7 +1109,20 @@ export class InputHandler {
   }
 
   /**
-   * Close all open panels (helper for ESC key handling)
+   * Close all open UI panels and overlays.
+   *
+   * Closes in priority order (topmost first):
+   * 1. Help overlay
+   * 2. Dataset browser
+   * 3. Rendering controls
+   * 4. Data loading monitor
+   * 5. Dimension sliders
+   * 6. Debug console
+   * 7. Performance stats
+   *
+   * Used by Escape key handling to provide clean "exit all UI" behavior.
+   *
+   * @private
    */
   private closeAllPanels(): void {
     // Close all open panels (starting with topmost)
@@ -1056,8 +1170,17 @@ export class InputHandler {
   }
 
   /**
-   * Recenter/focus camera on the scene's bounding box center
-   * Uses smooth animation for fly controls, immediate for orbit/arcball controls
+   * Recenter camera on scene's bounding box center.
+   *
+   * Triggered by F key. Computes bounding box of all visible point clouds
+   * and repositions camera to look at the center. Behavior adapts to control mode:
+   * - Fly controls: Smooth animated transition over ~1 second
+   * - Orbit/Arcball: Immediate target update
+   *
+   * Useful for recovering from lost orientation or framing scene after loading
+   * new data. Falls back to origin (0,0,0) if no visible objects found.
+   *
+   * @private
    */
   private recenterCamera(): void {
     // Compute bounding box center of all visible objects
@@ -1128,7 +1251,23 @@ export class InputHandler {
   }
 
   /**
-   * Clean up all event listeners
+   * Clean up all event listeners and dispose of managed resources.
+   *
+   * Removes all registered event listeners from window, document, and canvas
+   * to prevent memory leaks. Disposes of dimension sliders and debug console.
+   * Should be called when the input handler is no longer needed (e.g., when
+   * destroying the application).
+   *
+   * After calling dispose(), the input handler cannot be reused - create a
+   * new instance if needed.
+   *
+   * @example
+   * ```typescript
+   * // During application teardown
+   * inputHandler.dispose();
+   * sceneManager.dispose();
+   * animationController.dispose();
+   * ```
    */
   dispose(): void {
     // Dispose dimension sliders

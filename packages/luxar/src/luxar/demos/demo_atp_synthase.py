@@ -287,9 +287,7 @@ def element_to_vdw_radius(elements: np.ndarray) -> np.ndarray:
     return radii
 
 
-def chain_to_color(
-    chain_ids: list[str], unique_chains: list[str]
-) -> np.ndarray:
+def chain_to_color(chain_ids: list[str], unique_chains: list[str]) -> np.ndarray:
     """Convert chain IDs to distinct colors.
 
     Each chain/subunit gets a different color to show the architecture.
@@ -411,7 +409,9 @@ def generate_atp_synthase(
             else:
                 aprint("  All atoms")
 
-            aprint(f"  Coordinate range: {positions.min():.1f} to {positions.max():.1f} Å")
+            aprint(
+                f"  Coordinate range: {positions.min():.1f} to {positions.max():.1f} Å"
+            )
 
         # Center and scale
         with asection("Preparing structure"):
@@ -481,10 +481,9 @@ def generate_atp_synthase(
                 )
 
             aprint(f"✓ Scene created with {len(positions):,} atoms")
-            size_mb = (
-                sum(f.stat().st_size for f in output_path.rglob("*") if f.is_file())
-                / (1024 * 1024)
-            )
+            size_mb = sum(
+                f.stat().st_size for f in output_path.rglob("*") if f.is_file()
+            ) / (1024 * 1024)
             aprint(f"  Dataset size: {size_mb:.1f} MB")
 
     return len(positions)

@@ -55,10 +55,67 @@ export interface ChunkSpatialIndex {
 }
 
 /**
- * Load chunk-based spatial index from zarr arrays
+ * Load chunk-based spatial index from Zarr arrays.
  *
- * Reads chunk_bounds array and metadata from node attributes.
- * Returns null if chunk_bounds not found (3D datasets without spatial ordering).
+ * Reads the `chunk_bounds` array (shape: num_chunks × ndim × 2) and extracts
+ * spatial ordering metadata from node attributes. This enables efficient nD
+ * queries by testing chunk bounding boxes instead of loading all points.
+ *
+ * The spatial index is optional - 3D datasets without Morton/Hilbert ordering
+ * won't have `chunk_bounds` and will return null (graceful fallback to full load).
+ *
+ * Validation performed:
+ * - chunk_bounds shape must be [..., 2] for [min, max]
+ * - Array length must match expected size (num_chunks × ndim × 2)
+ * - Dimensionality must match position array metadata
+ * - ordering_dims + slice_dims must cover all dimensions
+ *
+ * @param zarrLocation - Zarr location of the node containing chunk_bounds array.
+ *                       Typically a Points or Lines node location.
+ *
+ * @param nodeAttrs - Node attributes (from .zattrs) containing:
+ *                    - ordering: 'morton' or 'hilbert' (default: 'hilbert')
+ *                    - ordering_dims: Dimensions using space-filling curve
+ *                    - slice_dims: Dimensions using lexicographic ordering
+ *                    - ordering_bits_per_dim: Bits per dimension for encoding (default: 21)
+ *                    - chunk_size: Points per chunk
+ *                    - n_points: Total points in dataset
+ *                    - n_dims / ndim: Total dimensionality
+ *
+ * @returns Promise resolving to ChunkSpatialIndex with metadata and bounds,
+ *          or null if chunk_bounds doesn't exist (expected for 3D datasets).
+ *          Null is NOT an error - it indicates graceful fallback to full loading.
+ *
+ * @throws {Error} If chunk_bounds exists but has invalid shape
+ * @throws {Error} If chunk_bounds array cannot be decoded
+ *
+ * @example
+ * ```typescript
+ * // Load spatial index for nD points node
+ * const nodeLoc = rootLoc.resolve('cells/points');
+ * const nodeGroup = await zarr.open(nodeLoc, { kind: 'group' });
+ * const index = await loadChunkSpatialIndex(nodeLoc, nodeGroup.attrs);
+ *
+ * if (index) {
+ *   console.log(`Loaded ${index.metadata.total_chunks} chunks`);
+ *   // Use queryChunksForView for efficient queries
+ * } else {
+ *   console.log('No spatial index - loading full dataset');
+ *   // Fall back to loading all points
+ * }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Handle 404 gracefully (3D datasets)
+ * const index = await loadChunkSpatialIndex(nodeLoc, attrs);
+ * // index === null for 3D datasets without spatial ordering
+ * // This is expected and handled by loader
+ * ```
+ *
+ * @see {@link queryChunksForView} for querying the loaded index
+ * @see {@link SPECIFICATIONS.md} Section 2.1 for chunk spatial index format
+ * @see {@link ../../luxar/io/SPECIFICATIONS.md} for Python encoding details
  */
 export async function loadChunkSpatialIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
@@ -152,14 +209,63 @@ export async function loadChunkSpatialIndex(
 }
 
 /**
- * Query chunks for a given nD view state
+ * Query chunks whose bounding boxes intersect the view region.
  *
- * Returns indices of chunks whose bounding boxes intersect the query region.
+ * Uses AABB (axis-aligned bounding box) intersection test in nD space.
+ * A chunk intersects if its bounds overlap the query box in ALL dimensions.
+ * This is the core spatial query operation for efficient nD point loading.
  *
- * @param index - Chunk spatial index
- * @param slicePosition - Position in nD space
- * @param tolerance - Tolerance/radius in each dimension
- * @returns Array of chunk indices to load
+ * Algorithm:
+ * 1. For each chunk, test intersection in all dimensions
+ * 2. Chunk intersects if: chunkMax >= queryMin AND chunkMin <= queryMax (for every dimension)
+ * 3. Early exit on first non-intersecting dimension (optimization)
+ * 4. Return indices of all matching chunks
+ *
+ * @param index - Chunk spatial index containing:
+ *                - metadata: Chunk configuration (total_chunks, ndim, etc.)
+ *                - chunkBounds: Float32Array of bounding boxes, shape (num_chunks, ndim, 2) flattened
+ *                  Layout: [chunk0_dim0_min, chunk0_dim0_max, chunk0_dim1_min, ...]
+ *
+ * @param slicePosition - Current position in nD space, one value per dimension.
+ *                        Array length must equal index.metadata.ndim.
+ *                        Example: [0, 2.5, 1, 0, 0] for 5D dataset
+ *
+ * @param tolerance - Search radius per dimension in world units.
+ *                    Array length must equal index.metadata.ndim.
+ *                    For displayed dimensions, typically 0 (not used in query).
+ *                    For slice dimensions, defines "slice thickness".
+ *                    Example: [0, 1.0, 0, 0, 0] = ±1.0 units in dimension 1
+ *
+ * @returns Array of chunk indices that intersect the query region.
+ *          Indices are in range [0, total_chunks).
+ *          Returns empty array if no chunks intersect.
+ *          Typical result size: 1-20 chunks for well-distributed data.
+ *
+ * @example
+ * ```typescript
+ * // Query chunks at position [0, 5.0, 0] with tolerance [0, 2.0, 0]
+ * const chunks = queryChunksForView(
+ *   spatialIndex,
+ *   [0, 5.0, 0],
+ *   [0, 2.0, 0]
+ * );
+ * console.log(`Found ${chunks.length} intersecting chunks`);
+ * // Typical output: "Found 3 intersecting chunks"
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Query all chunks (infinite tolerance)
+ * const tolerance = Array(ndim).fill(Infinity);
+ * const allChunks = queryChunksForView(index, slicePosition, tolerance);
+ * console.log(`Total chunks: ${allChunks.length}`);
+ * ```
+ *
+ * @performance O(total_chunks × ndim), typically 500-5000 comparisons for standard datasets.
+ *              Fast due to early exit optimization and linear memory access pattern.
+ *
+ * @see {@link loadChunkSpatialIndex} for index creation
+ * @see {@link SPECIFICATIONS.md} Section 2.2 for AABB intersection algorithm
  */
 export function queryChunksForView(
   index: ChunkSpatialIndex,

@@ -1,0 +1,61 @@
+Core Package
+============
+
+The core package provides fundamental data structures for building Luxar scenes.
+
+.. automodule:: luxar.core
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Scene
+-----
+
+.. autoclass:: luxar.core.Scene
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Points
+------
+
+.. autoclass:: luxar.core.Points
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Lines
+-----
+
+.. autoclass:: luxar.core.Lines
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+GSplats
+-------
+
+.. autoclass:: luxar.core.GSplats
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Dimensions
+----------
+
+.. autoclass:: luxar.core.Dimensions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: luxar.core.Dimension
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Transforms
+----------
+
+.. automodule:: luxar.core.transforms
+   :members:
+   :undoc-members:

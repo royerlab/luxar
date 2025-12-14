@@ -1,9 +1,34 @@
 /**
- * Debug Console Panel
+ * In-app debug console panel for viewing browser console output.
  *
- * Displays browser console output in an in-app panel.
- * Uses the global console interceptor to ensure all messages are captured
- * from the very beginning of the application lifecycle.
+ * Displays all console.log(), console.warn(), console.error() messages in a
+ * draggable, resizable panel within the application. Uses the global console
+ * interceptor to capture ALL messages from app startup, including those that
+ * occurred before the panel was created.
+ *
+ * Key features:
+ * - Message history from app startup (ring buffer)
+ * - Syntax-highlighted output (objects, numbers, strings, etc.)
+ * - Filtering by keyword
+ * - Copy to clipboard
+ * - Auto-scroll option
+ * - Draggable and resizable
+ * - Toggle with Ctrl+L keyboard shortcut
+ *
+ * Useful for debugging WebGL issues, understanding data loading, and
+ * diagnosing problems without opening browser DevTools.
+ *
+ * @example
+ * ```typescript
+ * const debugConsole = new DebugConsole();
+ *
+ * // Toggle visibility with Ctrl+L
+ * // Or programmatically:
+ * debugConsole.show();  // Display with all buffered messages
+ * debugConsole.hide();  // Hide panel
+ * ```
+ *
+ * @module ui/debug-console
  */
 
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
@@ -22,6 +47,13 @@ export interface ConsoleMessage {
   stack?: string;
 }
 
+/**
+ * Debug console UI component with console message capture and display.
+ *
+ * Integrates with the global consoleInterceptor to show all browser console
+ * output in a styled panel. Messages are buffered globally, so opening the
+ * console shows full history from app startup.
+ */
 export class DebugConsole {
   private panel: HTMLElement;
   private contentArea: HTMLElement;
@@ -30,6 +62,24 @@ export class DebugConsole {
   private filter: string = '';
   private messageListenerCallback: ((message: BufferedMessage) => void) | null = null;
 
+  /**
+   * Create and initialize debug console panel.
+   *
+   * Builds UI, registers with global console interceptor, and adds to DOM.
+   * Starts hidden - use toggle() or show() to display.
+   *
+   * The console captures ALL messages logged since app startup, including
+   * those before this constructor was called (via global interceptor).
+   *
+   * @example
+   * ```typescript
+   * const debugConsole = new DebugConsole();
+   * // Panel created but hidden
+   *
+   * // Later, user presses Ctrl+L to show
+   * debugConsole.toggle();
+   * ```
+   */
   constructor() {
     // Create UI
     this.panel = this.createPanel();
@@ -649,7 +699,18 @@ export class DebugConsole {
   }
 
   /**
-   * Clear all messages
+   * Clear all console messages from display and buffer.
+   *
+   * Clears both the UI and the global console interceptor buffer. This is
+   * a destructive operation - messages cannot be recovered. The message
+   * count resets to 0.
+   *
+   * @example
+   * ```typescript
+   * // User clicks "Clear" button
+   * debugConsole.clear();
+   * // All messages removed, fresh start
+   * ```
    */
   clear(): void {
     // Clear the global buffer
@@ -683,7 +744,20 @@ export class DebugConsole {
   }
 
   /**
-   * Show the debug console
+   * Show debug console with complete message history.
+   *
+   * Displays all buffered messages from app startup, not just messages
+   * since last show(). This is key behavior - you can see what happened
+   * during initialization, data loading, etc. even if you open console later.
+   *
+   * Triggered by Ctrl+L keyboard shortcut when console is hidden.
+   *
+   * @example
+   * ```typescript
+   * // Open console after app has been running
+   * debugConsole.show();
+   * // See ALL messages since startup, not just recent ones
+   * ```
    */
   show(): void {
     this.panel.style.display = 'flex';
@@ -715,7 +789,12 @@ export class DebugConsole {
   }
 
   /**
-   * Hide the debug console
+   * Hide debug console panel.
+   *
+   * Messages continue to be buffered by the global interceptor while hidden.
+   * Next show() will display complete history.
+   *
+   * Triggered by Ctrl+L when console is visible, close button, or Escape key.
    */
   hide(): void {
     this.panel.style.display = 'none';
@@ -723,7 +802,15 @@ export class DebugConsole {
   }
 
   /**
-   * Toggle visibility
+   * Toggle debug console visibility (show ↔ hide).
+   *
+   * Primary method for Ctrl+L keyboard binding.
+   *
+   * @example
+   * ```typescript
+   * // User presses Ctrl+L
+   * debugConsole.toggle();
+   * ```
    */
   toggle(): void {
     if (this.isVisible) {
@@ -734,14 +821,21 @@ export class DebugConsole {
   }
 
   /**
-   * Check if console is visible
+   * Check if debug console is currently visible.
+   *
+   * @returns true if console panel is shown, false if hidden
    */
   getIsVisible(): boolean {
     return this.isVisible;
   }
 
   /**
-   * Clean up the debug console
+   * Clean up debug console resources and remove from DOM.
+   *
+   * Unregisters from global console interceptor, removes panel from DOM,
+   * and cleans up styles. Should be called during application teardown.
+   *
+   * After calling dispose(), the DebugConsole instance cannot be reused.
    */
   dispose(): void {
     // Remove listener from global interceptor
