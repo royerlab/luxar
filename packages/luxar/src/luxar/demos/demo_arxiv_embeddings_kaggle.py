@@ -352,13 +352,38 @@ def generate_paper_landscape(
     else:
         # Check for cached dataset
         dataset_cache = Path.home() / ".cache" / "luxar" / "arxiv_embeddings.zip"
+        expected_size_gb = 30  # Expected dataset size in GB
+        download_marker = dataset_cache.parent / ".arxiv_downloading"
+
+        # Check if download is in progress
+        if download_marker.exists():
+            aprint("⚠️  Download already in progress in another process!")
+            aprint("   Please wait for it to complete or delete the marker:")
+            aprint(f"   rm {download_marker}")
+            raise RuntimeError("Download in progress")
+
+        # Check if file exists and is complete
+        if dataset_cache.exists():
+            size_gb = dataset_cache.stat().st_size / (1024**3)
+            if size_gb < expected_size_gb * 0.9:  # Allow 10% variance
+                aprint(f"⚠️  Cached file is incomplete ({size_gb:.1f} GB / ~{expected_size_gb} GB)")
+                aprint("   Deleting and re-downloading...")
+                dataset_cache.unlink()
+            else:
+                aprint(f"✓ Using cached dataset: {dataset_cache}")
+                aprint(f"  Size: {size_gb:.1f} GB")
 
         if not dataset_cache.exists():
             aprint("Dataset not in cache, downloading...")
-            download_kaggle_dataset(dataset_cache)
-        else:
-            aprint(f"✓ Using cached dataset: {dataset_cache}")
-            aprint(f"  Size: {dataset_cache.stat().st_size / (1024**3):.1f} GB")
+            # Create marker file
+            download_marker.parent.mkdir(parents=True, exist_ok=True)
+            download_marker.touch()
+            try:
+                download_kaggle_dataset(dataset_cache)
+            finally:
+                # Remove marker when done (or on failure)
+                if download_marker.exists():
+                    download_marker.unlink()
 
         # Load from cached ZIP
         embeddings_list, titles, categories, years = load_arxiv_dataset_local(
