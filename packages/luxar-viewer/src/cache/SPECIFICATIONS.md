@@ -398,7 +398,7 @@ class ChunkPrefetcher:
 - Network: With max 4 concurrent, leaves bandwidth for normal requests (HTTP/1.1: 2/6 slots, HTTP/2: 4/100+ streams)
 - CPU: Minimal (Set operations are O(1))
 
-For complete details, see: [`docs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/CACHE_PREFETCHING_SPEC.md)
+For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../../../../docs/guides/specs/CACHE_PREFETCHING_SPEC.md)
 
 ---
 
@@ -831,7 +831,7 @@ An earlier architecture included a 4-layer cache system with an L0 "RangeCache" 
   - URL parameters: ?no-prefetch, ?prefetch-debug
   - Auto-enabled in scene loader by default
   - Comprehensive test suite (21 tests)
-  - See: `docs/CACHE_PREFETCHING_SPEC.md` for complete specification
+  - See: `docs/guides/specs/CACHE_PREFETCHING_SPEC.md` for complete specification
 
 - **v1.0.0** (2025-01-06): Initial specification
   - Two-level caching architecture (L1: memory, L2: OPFS)

@@ -323,7 +323,7 @@ Luxar validates HDR colors:
 
 ## Related Documentation
 
-- **Format Specification**: `docs/LUXAR_ZARR_FORMAT.md` - HDR data format details
+- **Format Specification**: `LUXAR_ZARR_FORMAT.md` - HDR data format details (in same directory)
 - **Encoding Specs**: `packages/luxar/src/luxar/encoding/SPECIFICATIONS.md` - Color encoding modes
 - **Rendering Specs**: `packages/luxar-viewer/src/rendering/SPECIFICATIONS.md` - HDR rendering pipeline
 

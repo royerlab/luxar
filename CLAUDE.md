@@ -56,12 +56,15 @@ luxar profiles                   # Network simulation profiles
   /docs/PLAYWRIGHT_GUIDE.md  # Comprehensive E2E testing guide
 
 /docs/                     # Documentation
+  /guides/                 # Organized guides by purpose
+    /user/                 # User guides (format, HDR, testing)
+    /developer/            # Developer guides (style, console, network)
+    /specs/                # Technical specs (cache, dimensions, lines)
   /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
-  /user-guides/            # User guides (HDR_GUIDE.md)
-  E2E_TESTING_GUIDE.md     # E2E quick reference
-  LUXAR_ZARR_FORMAT.md     # Data format spec
-  CONSOLE_OUTPUT_STYLE.md  # Console logging style
-  NETWORK_SIMULATION_SPEC.md  # Network simulation
+  /api/                    # Sphinx API reference files (.rst)
+  /concepts/               # Architecture and concepts (.rst)
+  /tutorials/              # Step-by-step tutorials (.rst)
+  index.rst, conf.py       # Sphinx configuration
 ```
 
 ### Documentation Requirements
@@ -134,7 +137,7 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
-- See `docs/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
+- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
 Python encoder and TypeScript decoder must stay in sync:
@@ -331,12 +334,12 @@ Before PR/merge:
 
 | Topic | Location |
 |-------|----------|
-| E2E Testing Quick Ref | `docs/E2E_TESTING_GUIDE.md` |
+| E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
 | Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
-| Data Format Spec | `docs/LUXAR_ZARR_FORMAT.md` |
-| HDR Color Guide | `docs/user-guides/HDR_GUIDE.md` |
-| Network Simulation | `docs/NETWORK_SIMULATION_SPEC.md` |
-| Console Logging Style | `docs/CONSOLE_OUTPUT_STYLE.md` |
+| Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |
+| HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
+| Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
+| Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
 | Changelog | `CHANGELOG.md` |
 | Spec Template | `docs/templates/SPECIFICATIONS_TEMPLATE.md` |
 

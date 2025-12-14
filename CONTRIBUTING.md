@@ -136,7 +136,7 @@ Maintainers review for:
 - ✅ All pre-commit hooks pass
 - ✅ Documentation updated for new features
 - ✅ Examples added for new functionality
-- ✅ LUXAR_ZARR_FORMAT.md updated (if data format changes)
+- ✅ docs/guides/user/LUXAR_ZARR_FORMAT.md updated (if data format changes)
 - ✅ CLAUDE.md updated (if significant learnings)
 - ✅ CHANGELOG.md updated (if applicable)
 
