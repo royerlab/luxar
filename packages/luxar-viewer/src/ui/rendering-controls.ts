@@ -19,6 +19,7 @@ import {
   deserializeSettings,
 } from './rendering-controls-utils';
 import { log, Modules } from '../utils/log';
+import { setupNavigationControls } from './rendering-controls/navigation-setup';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -151,225 +152,26 @@ export class RenderingControls {
     // Setup auto-blur for all controls
     this.setupAutoBlur();
 
-    // Navigation folder - for camera movement and rotation controls
-    const navigationFolder = this.gui.addFolder('Navigation');
-    navigationFolder.open();
+    // Navigation controls
+    const navigationResult = setupNavigationControls({
+      gui: this.gui,
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
+    });
 
-    // Control type selector
-    const controlTypeControl = navigationFolder
-      .add(this.settings, 'controlType', ['orbit', 'arcball', 'fly'])
-      .name('Control Type')
-      .onChange((value: 'orbit' | 'arcball' | 'fly') => {
-        this.sceneManager.setControlType(value);
-        this.saveSettings();
-        this.triggerAnimation();
+    // Store controller references
+    Object.assign(this.controllers, navigationResult.controllers);
 
-        // Show/hide relevant controls
-        this.updateNavigationControls(value);
-      });
-
-    // Store reference for updates
-    this.controllers.controlType = controlTypeControl;
-
-    // Set tooltip for control type
-    controlTypeControl.domElement.setAttribute(
-      'title',
-      'Camera Control Type\n' +
-        '• Orbit: Traditional 3D viewer controls with gimbal lock at poles\n' +
-        '• Arcball: Quaternion-based controls with unlimited rotation freedom\n' +
-        '• Fly: First-person flying controls (WASD to move, arrows to look)'
-    );
-
-    // Create sub-folders for each control type
-    const orbitFolder = navigationFolder.addFolder('Orbit Controls');
-    const flyFolder = navigationFolder.addFolder('Fly Controls');
-
-    // Store folder references for showing/hiding
-    this.orbitFolder = orbitFolder;
-    this.flyFolder = flyFolder;
-
-    // Auto-rotation controls (for orbit mode)
-    const autoRotateControl = orbitFolder
-      .add(this.settings, 'autoRotate')
-      .name('Auto Rotate')
-      .onChange((value: boolean) => {
-        this.sceneManager.setAutoRotate(value);
-        this.saveSettings();
-        // Need to keep animation running when auto-rotating
-        if (value) {
-          this.animationController?.startAnimation();
-        }
-      });
-
-    // Store reference
-    this.controllers.autoRotate = autoRotateControl;
-
-    // Set tooltip for auto-rotation
-    autoRotateControl.domElement.setAttribute(
-      'title',
-      'Auto Rotate: Continuously orbit camera around the scene\n' +
-        '• Creates cinematic rotating view\n' +
-        '• Useful for presentations and showcases\n' +
-        '• Click and drag to manually control camera'
-    );
-
-    const rotationSpeedControl = orbitFolder
-      .add(this.settings, 'autoRotateSpeed', 0.1, 5, 0.1)
-      .name('Rotation Speed')
-      .onChange((value: number) => {
-        this.sceneManager.setAutoRotateSpeed(value);
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    // Store reference
-    this.controllers.autoRotateSpeed = rotationSpeedControl;
-
-    // Set tooltip for rotation speed
-    rotationSpeedControl.domElement.setAttribute(
-      'title',
-      'Rotation Speed: How fast the camera orbits\n' +
-        '• 0.1 = Very slow (10 minutes per rotation)\n' +
-        '• 0.25 = Slow (4 minutes per rotation, default)\n' +
-        '• 1.0 = Medium (60 seconds per rotation)\n' +
-        '• 5.0 = Fast (12 seconds per rotation)'
-    );
-
-    // Fly controls settings - use ranges from config.controls.fly
-    const flyMovementConfig = config.controls.fly.movement.speed;
-    const flySpeedControl = flyFolder
-      .add(
-        this.settings,
-        'flyMovementSpeed',
-        flyMovementConfig.min,
-        flyMovementConfig.max,
-        flyMovementConfig.step || 0.1
-      )
-      .name('Movement Speed')
-      .onChange((value: number) => {
-        this.sceneManager.setFlyMovementSpeed(value);
-        this.saveSettings();
-      });
-
-    // Store reference
-    this.controllers.flyMovementSpeed = flySpeedControl;
-
-    flySpeedControl.domElement.setAttribute(
-      'title',
-      'Movement Speed: How fast you move in fly mode\n' +
-        '• Units per second (or acceleration in inertial mode)\n' +
-        '• Use WASD keys to move\n' +
-        '• Alt+W/S for vertical movement'
-    );
-
-    const flyRotationConfig = config.controls.fly.rotation.speed;
-    const flyRotationSpeedControl = flyFolder
-      .add(
-        this.settings,
-        'flyRotationSpeed',
-        flyRotationConfig.min,
-        flyRotationConfig.max,
-        flyRotationConfig.step || 0.1
-      )
-      .name('Rotation Speed')
-      .onChange((value: number) => {
-        this.sceneManager.setFlyRotationSpeed(value);
-        this.saveSettings();
-      });
-
-    // Store reference
-    this.controllers.flyRotationSpeed = flyRotationSpeedControl;
-
-    flyRotationSpeedControl.domElement.setAttribute(
-      'title',
-      'Rotation Speed: How fast the camera rotates\n' +
-        '• Radians per second (or acceleration in inertial mode)\n' +
-        '• Use arrow keys to rotate: ↑↓←→\n' +
-        '• Mouse drag also rotates camera'
-    );
-
-    const flyInertialControl = flyFolder
-      .add(this.settings, 'flyInertialMode')
-      .name('Inertial Mode')
-      .onChange((value: boolean) => {
-        this.sceneManager.setFlyInertialMode(value);
-        this.saveSettings();
-        // Show/hide damping controls
-        if (value) {
-          flyDampingControl.show();
-          flyRotationDampingControl.show();
-        } else {
-          flyDampingControl.hide();
-          flyRotationDampingControl.hide();
-        }
-      });
-
-    // Store reference
-    this.controllers.flyInertialMode = flyInertialControl;
-
-    flyInertialControl.domElement.setAttribute(
-      'title',
-      'Movement Mode\n' +
-        '• Direct: Immediate velocity control (stop when key released)\n' +
-        '• Inertial: Acceleration-based with momentum (drift to stop)'
-    );
-
-    const flyDampingConfig = config.controls.fly.movement.damping;
-    const flyDampingControl = flyFolder
-      .add(
-        this.settings,
-        'flyDamping',
-        flyDampingConfig.min,
-        flyDampingConfig.max,
-        flyDampingConfig.step || 0.0001
-      )
-      .name('Translation Damping')
-      .onChange((value: number) => {
-        this.sceneManager.setFlyDamping(value);
-        this.saveSettings();
-      });
-
-    // Store reference
-    this.controllers.flyDamping = flyDampingControl;
-
-    flyDampingControl.domElement.setAttribute(
-      'title',
-      'Translation Damping (Inertial Mode Only)\n' +
-        '• Controls how quickly movement slows down\n' +
-        '• 0.90 = Quick stop\n' +
-        '• 0.97 = Moderate drift\n' +
-        '• 0.999 = Long drift (default)\n' +
-        '• 0.9999 = Very long drift'
-    );
-
-    const flyRotationDampingControl = flyFolder
-      .add(this.settings, 'flyRotationDamping', 0.9, 0.9999, 0.0001)
-      .name('Rotation Damping')
-      .onChange((value: number) => {
-        this.sceneManager.setFlyRotationDamping(value);
-        this.saveSettings();
-      });
-
-    // Store reference
-    this.controllers.flyRotationDamping = flyRotationDampingControl;
-
-    flyRotationDampingControl.domElement.setAttribute(
-      'title',
-      'Rotation Damping (Inertial Mode Only)\n' +
-        '• Controls how quickly rotation slows down\n' +
-        '• 0.90 = Quick stop\n' +
-        '• 0.97 = Moderate drift\n' +
-        '• 0.999 = Long drift (default)\n' +
-        '• 0.9999 = Very long drift'
-    );
-
-    // Initially show/hide based on current control type
-    this.updateNavigationControls(this.settings.controlType);
-
-    // Hide damping controls if not in inertial mode
-    if (!this.settings.flyInertialMode) {
-      flyDampingControl.hide();
-      flyRotationDampingControl.hide();
+    // Store folder references
+    if (navigationResult.folders) {
+      this.orbitFolder = navigationResult.folders.orbitFolder;
+      this.flyFolder = navigationResult.folders.flyFolder;
     }
 
     // Camera folder - for camera-specific settings

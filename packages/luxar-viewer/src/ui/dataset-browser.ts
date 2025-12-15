@@ -160,6 +160,11 @@ export class DatasetBrowser {
       z-index: ${browserConfig.zIndex};
     `;
 
+    // ARIA attributes for accessibility
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'dataset-browser-title');
+
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
@@ -171,6 +176,7 @@ export class DatasetBrowser {
     `;
 
     const title = document.createElement('h2');
+    title.id = 'dataset-browser-title';
     title.textContent = 'Select Dataset';
     title.style.cssText = `
       margin: 0;

@@ -226,7 +226,7 @@ class TestSharpnessValidation:
 
         assert "must be positive" in str(exc_info.value)
         assert "Found minimum value: -1.000" in str(exc_info.value)
-        assert "between 0.0 and 31.0" in str(exc_info.value)  # Updated range per spec
+        assert "between 0.001 and 31.0" in str(exc_info.value)  # Matches SHARPNESS_MIN constant
 
     def test_out_of_range_sharpness_warning(self) -> None:
         """Test warning for out-of-range sharpness values."""
