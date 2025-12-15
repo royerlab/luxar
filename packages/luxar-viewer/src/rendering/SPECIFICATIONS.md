@@ -665,6 +665,30 @@ materialManager.updateGlobalParams(
 );
 ```
 
+**HDR Multiplier Initialization**:
+
+When HDR multiplier is updated via `updateHDRMultiplier()`, the MaterialManager stores the current value. New materials created after an HDR update automatically receive the current HDR multiplier value, ensuring consistent brightness across all materials regardless of creation order.
+
+```typescript
+// MaterialManager stores current HDR value
+private currentHDRMultiplier: number = config.shader.points.hdrMultiplier;
+
+updateHDRMultiplier(value: number): void {
+  this.currentHDRMultiplier = value;
+  // Update all existing materials
+  for (const material of this.registeredMaterials) {
+    material.uniforms.hdrMultiplier.value = value;
+  }
+}
+
+getPointMaterial(config: MaterialConfig): PointMaterial {
+  // New materials get current HDR value, not config default
+  const material = new PointMaterial(config);
+  material.uniforms.hdrMultiplier.value = this.currentHDRMultiplier;
+  return material;
+}
+```
+
 ---
 
 ## 6. Anti-Aliasing
@@ -694,6 +718,8 @@ effectPass.addEffect(fxaaEffect);
 - Better quality than FXAA
 - Moderate performance impact (1-2ms)
 - Compatible with additive blending
+
+**UI Behavior**: The rendering controls UI exposes SMAA as a simple on/off toggle using the HIGH preset. The pmndrs/postprocessing SMAAEffect only supports preset-based configuration, so custom threshold/searchSteps values are not available.
 
 **Setup**:
 
