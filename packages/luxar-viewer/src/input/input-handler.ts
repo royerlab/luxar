@@ -957,6 +957,8 @@ export class InputHandler {
     const currentType = this.sceneManager.controls.getControlType();
     let newType: 'orbit' | 'arcball' | 'fly';
 
+    log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
+
     // Cycle through: orbit -> arcball -> fly -> orbit
     switch (currentType) {
       case 'orbit':

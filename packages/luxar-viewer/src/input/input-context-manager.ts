@@ -410,17 +410,26 @@ export class InputContextManager {
       const binding = contextBindings.get(bindingKey);
 
       if (binding) {
-        if (binding.preventDefault) {
-          event.preventDefault();
-        }
-
-        // Use keyupHandler if provided and event type is 'up', otherwise use main handler
-        if (type === 'up' && binding.keyupHandler) {
-          binding.keyupHandler(event);
+        // Handle keydown and keyup separately
+        if (type === 'up') {
+          // On keyup: ONLY call keyupHandler if it exists
+          if (binding.keyupHandler) {
+            if (binding.preventDefault) {
+              event.preventDefault();
+            }
+            binding.keyupHandler(event);
+            return true;
+          }
+          // No keyupHandler = this binding doesn't handle keyup
+          return false;
         } else {
+          // On keydown: call main handler
+          if (binding.preventDefault) {
+            event.preventDefault();
+          }
           binding.handler(event);
+          return true;
         }
-        return true;
       }
     }
 
@@ -473,7 +482,7 @@ export class InputContextManager {
    * @returns true if any lower context handled the event, false otherwise
    * @private
    */
-  private tryLowerContexts(event: KeyboardEvent, _type: 'down' | 'up'): boolean {
+  private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     // Sort contexts by priority
     const sortedContexts = Array.from(this.contextConfigs.entries())
       .filter(([ctx]) => ctx !== this.currentContext)
@@ -487,11 +496,26 @@ export class InputContextManager {
           const binding = contextBindings.get(bindingKey);
 
           if (binding) {
-            if (binding.preventDefault) {
-              event.preventDefault();
+            // Same keyupHandler logic as main handleKeyEvent
+            if (type === 'up') {
+              // On keyup: only call keyupHandler if it exists
+              if (binding.keyupHandler) {
+                if (binding.preventDefault) {
+                  event.preventDefault();
+                }
+                binding.keyupHandler(event);
+                return true;
+              }
+              // No keyupHandler = doesn't handle keyup
+              return false;
+            } else {
+              // On keydown: call main handler
+              if (binding.preventDefault) {
+                event.preventDefault();
+              }
+              binding.handler(event);
+              return true;
             }
-            binding.handler(event);
-            return true;
           }
         }
       }
@@ -650,7 +674,7 @@ export class InputContextManager {
     currentContext: InputContext;
     contextStack: InputContext[];
     registeredBindings: Map<InputContext, string[]>;
-  } {
+    } {
     const registeredBindings = new Map<InputContext, string[]>();
 
     this.bindings.forEach((bindings, context) => {
