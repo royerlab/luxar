@@ -1,7 +1,7 @@
 Luxar Documentation
 ===================
 
-Welcome to Luxar's documentation! Luxar is a high-performance visualization system for massive nD point cloud data with real-time interaction and WebGL rendering.
+Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, surfaces, volumes, and more. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
 .. toctree::
    :maxdepth: 2

@@ -247,7 +247,7 @@ export function showError(message: string) {
     </div>
     <div style="margin-bottom: 8px;">
       <strong>3. Dataset format</strong><br/>
-      <span style="opacity: 0.8;">Luxar loads Zarr-format datasets with point cloud data</span>
+      <span style="opacity: 0.8;">Luxar loads Zarr-format datasets with points, lines, and other primitives
     </div>
     <div>
       <strong>4. Need help?</strong><br/>

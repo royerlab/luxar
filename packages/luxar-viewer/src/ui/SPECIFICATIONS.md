@@ -1008,7 +1008,7 @@ function showError(message: string): void {
       <div class="guidance-list">
         <div>1. Add dataset to URL: ?src=/path/to/dataset.zarr</div>
         <div>2. Or browse: Press O key</div>
-        <div>3. Dataset format: Zarr-format with point cloud data</div>
+        <div>3. Dataset format: Zarr-format with points, lines, and other primitives</div>
         <div>4. Need help? Press H for shortcuts</div>
       </div>
     </div>
