@@ -169,6 +169,9 @@ export class DataLoadingMonitor {
   // Cache stats provider for L1/L2 cache metrics
   private cacheStatsProvider: CacheStatsProvider | null = null;
 
+  // DOM element references for efficient updates (avoids full innerHTML replacement)
+  private contentContainer: HTMLElement | null = null;
+
   // Scene graph state
   private sceneGraphState: SceneGraphState = {
     root: null,
@@ -749,16 +752,10 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Update detailed view
+   * Build the detailed view structure once (called on expand or tab change)
    */
-  private updateDetailedView(): void {
+  private buildDetailedViewStructure(): void {
     if (!this.panel) return;
-
-    // Update metrics from all loaders first
-    for (const [path, loader] of this.loaders) {
-      const metrics = loader.getMetrics();
-      this.metrics.set(path, metrics);
-    }
 
     this.panel.innerHTML = `
       <div class="monitor-detailed" style="${this.getDetailedStyles()}">
@@ -796,26 +793,56 @@ export class DataLoadingMonitor {
             ">×</button>
           </div>
         </div>
-        
+
         <!-- Tabs -->
         <div class="monitor-tabs" style="${this.getTabStyles()}">
           ${this.renderTabs()}
         </div>
-        
-        <!-- Content -->
+
+        <!-- Content (updated frequently) -->
         <div class="monitor-content" style="${this.getContentStyles()}">
           ${this.renderTabContent()}
         </div>
       </div>
     `;
 
+    // Cache reference to content container for efficient updates
+    this.contentContainer = this.panel.querySelector('.monitor-content');
+
     // Reinitialize component canvases if needed
     if (this.uiState.activeTab === 'performance') {
       this.timeline.initializeCanvas('timeline-canvas');
     }
 
-    // Add hover effects to header buttons
+    // Add hover effects to header buttons (only once)
     this.addHeaderButtonHoverEffects();
+  }
+
+  /**
+   * Update detailed view (optimized to only update content, not structure)
+   */
+  private updateDetailedView(): void {
+    if (!this.panel) return;
+
+    // Update metrics from all loaders first
+    for (const [path, loader] of this.loaders) {
+      const metrics = loader.getMetrics();
+      this.metrics.set(path, metrics);
+    }
+
+    // If structure doesn't exist yet, build it
+    if (!this.contentContainer) {
+      this.buildDetailedViewStructure();
+      return;
+    }
+
+    // Only update the content area (much faster than rebuilding everything)
+    this.contentContainer.innerHTML = this.renderTabContent();
+
+    // Reinitialize canvas if on performance tab
+    if (this.uiState.activeTab === 'performance') {
+      this.timeline.initializeCanvas('timeline-canvas');
+    }
   }
 
   /**
@@ -1270,6 +1297,8 @@ export class DataLoadingMonitor {
     if (this.panel) {
       this.panel.style.cssText = this.getPanelStyles();
     }
+    // Force rebuild of structure when expanding
+    this.contentContainer = null;
     this.updateUI();
   }
 
@@ -1310,6 +1339,8 @@ export class DataLoadingMonitor {
     // Use type guard for proper validation
     if (isValidTab(tab)) {
       this.uiState.activeTab = tab;
+      // Rebuild structure when tab changes (tabs need to show active state)
+      this.contentContainer = null; // Force rebuild
       this.updateUI();
     } else {
       log.warning(Modules.DATA_MONITOR, `Invalid tab: ${tab}`);

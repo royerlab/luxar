@@ -11,6 +11,8 @@ import { config } from '../config';
 // Extract component configuration
 const browserConfig = config.ui.components.datasetBrowser;
 const spacingConfig = config.ui.styles.spacing;
+const effectsConfig = config.ui.styles.effects;
+const colorsConfig = config.ui.styles.colors;
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
@@ -149,14 +151,14 @@ export class DatasetBrowser {
       max-width: 90vw;
       height: 500px;
       max-height: 80vh;
-      background: rgba(30, 30, 30, 0.95);
-      backdrop-filter: blur(10px);
+      background: ${colorsConfig.panelBg};
+      backdrop-filter: ${effectsConfig.backdropBlur};
       border-radius: ${browserConfig.borderRadius.panel}px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      box-shadow: ${effectsConfig.boxShadowStrong};
       display: flex;
       flex-direction: column;
-      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      color: #e0e0e0;
+      font-family: ${config.ui.styles.typography.fontFamily};
+      color: ${colorsConfig.primaryText};
       z-index: ${browserConfig.zIndex};
     `;
 

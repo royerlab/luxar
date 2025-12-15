@@ -936,7 +936,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     } else if (isLUTEncoded) {
       await this.loadLUTRanges(array, arrayName, attrs, ranges, output as Float32Array, totalPoints, totalElements);
     } else if (isArrayRef) {
-      await this.loadArrayRefRanges(array, arrayName, attrs, ranges, output as Float32Array, totalPoints, actualElementsPerPoint);
     } else if (isEncoded) {
       await this.loadGenericEncodedRanges(array, arrayName, attrs, ranges, output as Float32Array, totalElements, actualElementsPerPoint);
     } else {
