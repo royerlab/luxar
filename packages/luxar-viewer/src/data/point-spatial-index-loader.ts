@@ -765,7 +765,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       );
     } else if (ArrayDecoder.isBroadcasted(targetAttrs)) {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'Array ref target is broadcasted');
-      await this.loadBroadcastedRanges(targetArray, arrayName, output, totalPoints, actualElementsPerPoint);
+      await this.loadBroadcastedRanges(
+        targetArray,
+        arrayName,
+        output,
+        totalPoints,
+        actualElementsPerPoint
+      );
       destOffset = output.length;
     } else {
       // Direct or unknown encoding
@@ -774,7 +780,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         `Array ref target is direct/unknown (${ArrayDecoder.getEncodingMode(targetAttrs)}) - full decode`
       );
 
-      const decoded = await this.decoder.decode(targetArray, targetAttrs, totalPoints * actualElementsPerPoint, zarrRootLoc);
+      const decoded = await this.decoder.decode(
+        targetArray,
+        targetAttrs,
+        totalPoints * actualElementsPerPoint,
+        zarrRootLoc
+      );
 
       for (const range of ranges) {
         const rangeSize = (range.end - range.start) * actualElementsPerPoint;
@@ -850,7 +861,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Update metrics and emit load event after successful load.
    */
   private recordLoadMetrics(arrayName: string, totalPoints: number, output: ArrayBufferView): void {
-    const loadTime = Date.now() - (this.activeQueries.values().next().value?.startTime || Date.now());
+    const loadTime =
+      Date.now() - (this.activeQueries.values().next().value?.startTime || Date.now());
     const bytes = output.byteLength;
 
     this.metrics.loads++;
@@ -930,15 +942,52 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Dispatch to appropriate loading strategy based on encoding type
     if (isBroadcasted) {
-      await this.loadBroadcastedRanges(array, arrayName, output as Float32Array, totalPoints, actualElementsPerPoint);
+      await this.loadBroadcastedRanges(
+        array,
+        arrayName,
+        output as Float32Array,
+        totalPoints,
+        actualElementsPerPoint
+      );
     } else if (isQuantized) {
-      await this.loadQuantizedRanges(array, arrayName, attrs, ranges, output as Float32Array, totalPoints);
+      await this.loadQuantizedRanges(
+        array,
+        arrayName,
+        attrs,
+        ranges,
+        output as Float32Array,
+        totalPoints
+      );
     } else if (isLUTEncoded) {
-      await this.loadLUTRanges(array, arrayName, attrs, ranges, output as Float32Array, totalPoints, totalElements);
+      await this.loadLUTRanges(
+        array,
+        arrayName,
+        attrs,
+        ranges,
+        output as Float32Array,
+        totalPoints,
+        totalElements
+      );
     } else if (isArrayRef) {
-      await this.loadArrayRefRanges(array, arrayName, attrs, ranges, output as Float32Array, totalPoints, actualElementsPerPoint);
+      await this.loadArrayRefRanges(
+        array,
+        arrayName,
+        attrs,
+        ranges,
+        output as Float32Array,
+        totalPoints,
+        actualElementsPerPoint
+      );
     } else if (isEncoded) {
-      await this.loadGenericEncodedRanges(array, arrayName, attrs, ranges, output as Float32Array, totalElements, actualElementsPerPoint);
+      await this.loadGenericEncodedRanges(
+        array,
+        arrayName,
+        attrs,
+        ranges,
+        output as Float32Array,
+        totalElements,
+        actualElementsPerPoint
+      );
     } else {
       await this.loadDirectRanges(array, ranges, output);
     }
