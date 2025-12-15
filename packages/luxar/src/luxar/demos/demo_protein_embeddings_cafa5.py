@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""Self-Contained Demo: Protein Function Landscape (ProtT5 Embeddings)
+
+Visualize 142k proteins in 3D embedding space, showing how proteins with
+similar functions cluster together.
+
+================================================================================
+PROTEIN FUNCTION PREDICTION & EMBEDDINGS
+================================================================================
+
+CAFA (Critical Assessment of Functional Annotation) is a community challenge
+for predicting protein function from sequence. The CAFA5 dataset contains
+142,246 proteins with known functional annotations.
+
+WHAT ARE PROTEIN EMBEDDINGS?
+-----------------------------
+Protein embeddings are learned vector representations that capture a protein's
+sequence, structure, and function in a high-dimensional space. Similar to how
+word embeddings (Word2Vec) place semantically similar words close together,
+protein embeddings place functionally similar proteins nearby.
+
+PROTT5 MODEL:
+-------------
+ProtT5 is a protein language model based on T5 (Text-To-Text Transfer Transformer)
+architecture, trained on billions of protein sequences. It learns to:
+- Understand amino acid patterns
+- Recognize functional motifs
+- Capture evolutionary relationships
+- Predict structural features
+
+The model generates 1,024-dimensional embeddings that encode a protein's
+characteristics.
+
+GENE ONTOLOGY (GO) ANNOTATIONS:
+--------------------------------
+Proteins are annotated with GO terms describing:
+- **Molecular Function**: What the protein does (e.g., "kinase activity")
+- **Biological Process**: What pathway it's involved in (e.g., "cell division")
+- **Cellular Component**: Where it's located (e.g., "mitochondrion")
+
+VISUALIZATION STRATEGY:
+-----------------------
+This demo:
+1. Loads 142k pre-computed ProtT5 embeddings (1,024D)
+2. Reduces to 3D using UMAP (preserves functional relationships)
+3. Colors proteins by function category
+4. Shows beautiful clusters of proteins with similar roles!
+
+WHAT YOU'LL SEE:
+- Enzymes (kinases, proteases, etc.) clustering together
+- Structural proteins in distinct regions
+- Membrane proteins separate from cytoplasmic ones
+- DNA-binding proteins grouped by function
+- Beautiful functional landscape of the proteome!
+
+DATASET: CAFA5 (Kaggle)
+-----------------------
+Source: https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5
+- 142,246 proteins with ProtT5-XL embeddings
+- 1,024 dimensions per protein
+- 540 MB download (compressed)
+- NumPy format (easy loading!)
+
+Usage:
+    python demo_protein_embeddings_cafa5.py [--sample=N]
+
+    Options:
+    --sample=N       Number of proteins to visualize (default: all 142k)
+    --no-serve       Generate dataset without launching viewer
+
+Requirements:
+    - pip install umap-learn pandas
+
+Controls:
+    - Explore clusters of functionally similar proteins
+    - Color = protein function category
+    - Size = sequence length or confidence
+    - Ctrl+C to stop
+"""
+
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+from arbol import aprint, asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+DEFAULT_SAMPLE_SIZE = None  # Use all 142k proteins by default
+
+# Protein function category colors
+# Based on broad functional categories
+FUNCTION_COLORS = {
+    "enzyme": np.array([1.0, 0.5, 0.2]),  # Orange
+    "transporter": np.array([0.3, 0.7, 1.0]),  # Blue
+    "receptor": np.array([0.9, 0.3, 0.9]),  # Magenta
+    "structural": np.array([0.5, 0.9, 0.5]),  # Green
+    "regulator": np.array([1.0, 0.8, 0.2]),  # Gold
+    "binding": np.array([0.6, 0.3, 1.0]),  # Purple
+    "signaling": np.array([1.0, 0.4, 0.4]),  # Red
+    "membrane": np.array([0.3, 0.9, 0.9]),  # Cyan
+    "nucleic_acid": np.array([0.9, 0.6, 0.3]),  # Tan
+    "catalytic": np.array([1.0, 0.7, 0.3]),  # Light Orange
+    "other": np.array([0.6, 0.6, 0.6]),  # Gray
+}
+
+
+# =============================================================================
+# Dataset Download
+# =============================================================================
+
+
+def download_cafa5_dataset(output_dir: Path) -> Path:
+    """Download CAFA5 ProtT5 embeddings from Kaggle.
+
+    Args:
+        output_dir: Where to save the dataset
+
+    Returns:
+        Path to downloaded/extracted dataset directory
+    """
+    import zipfile
+
+    import requests
+
+    dataset_zip = output_dir / "cafa5_prott5.zip"
+
+    with asection("Downloading CAFA5 ProtT5 Embeddings"):
+        aprint("Dataset: CAFA5 Protein Function Prediction")
+        aprint("URL: https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5")
+        aprint("")
+        aprint("Download: 540 MB (pre-computed embeddings)")
+        aprint("")
+
+        if dataset_zip.exists():
+            aprint(f"✓ Dataset already downloaded: {dataset_zip}")
+        else:
+            url = "https://www.kaggle.com/api/v1/datasets/download/horikitasaku/prott5-embedding-for-cafa5"
+
+            try:
+                aprint("Downloading...")
+                output_dir.mkdir(parents=True, exist_ok=True)  # Create directory first!
+
+                response = requests.get(url, stream=True, timeout=300)
+                response.raise_for_status()
+
+                total_size = int(response.headers.get("content-length", 0))
+                aprint(f"Size: {total_size / (1024**2):.0f} MB")
+
+                downloaded = 0
+                chunk_size = 8192 * 128
+
+                with open(dataset_zip, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            if downloaded % (50 * 1024 * 1024) == 0:  # Every 50MB
+                                percent = (downloaded / total_size * 100) if total_size > 0 else 0
+                                aprint(f"  Progress: {downloaded / (1024**2):.0f} MB ({percent:.0f}%)")
+
+                aprint(f"✓ Downloaded to {dataset_zip}")
+
+            except Exception as e:
+                aprint(f"❌ Download failed: {e}")
+                if dataset_zip.exists():
+                    dataset_zip.unlink()
+                raise
+
+        # Extract if needed
+        extracted_dir = output_dir / "cafa5_data"
+        if not extracted_dir.exists():
+            aprint("Extracting...")
+            with zipfile.ZipFile(dataset_zip, 'r') as zf:
+                zf.extractall(extracted_dir)
+            aprint(f"✓ Extracted to {extracted_dir}")
+
+    return extracted_dir
+
+
+# =============================================================================
+# Data Loading
+# =============================================================================
+
+
+def load_protein_embeddings(
+    data_dir: Path,
+    sample_size: int | None = None,
+) -> tuple[np.ndarray, list[str], list[str]]:
+    """Load ProtT5 embeddings and metadata from CAFA5 dataset.
+
+    Args:
+        data_dir: Directory containing extracted CAFA5 data
+        sample_size: Optional number of proteins to sample
+
+    Returns:
+        Tuple of (embeddings, protein_ids, functions)
+    """
+    import pandas as pd
+
+    with asection("Loading CAFA5 protein embeddings"):
+        # Find the embedding files
+        npy_files = list(data_dir.rglob("*.npy"))
+        csv_files = list(data_dir.rglob("*.csv"))
+
+        if not npy_files:
+            raise FileNotFoundError(f"No .npy files found in {data_dir}")
+
+        aprint(f"Found {len(npy_files)} .npy files")
+        aprint(f"Found {len(csv_files)} .csv files")
+
+        # Find the embeddings file (2D array with shape (n_proteins, embedding_dim))
+        embedding_file = None
+        for npy_file in npy_files:
+            data = np.load(npy_file)
+            aprint(f"  {npy_file.name}: shape={data.shape}")
+
+            # Look for 2D array (n_proteins, embedding_dim)
+            if len(data.shape) == 2 and data.shape[1] > 100:  # Embeddings have >100 dims
+                embedding_file = npy_file
+                embeddings = data
+                break
+
+        if embedding_file is None:
+            raise ValueError("Could not find embeddings file (2D array with embeddings)")
+
+        aprint(f"✓ Using embeddings from: {embedding_file.name}")
+        aprint(f"✓ Loaded {len(embeddings):,} protein embeddings")
+        aprint(f"  Dimensions: {embeddings.shape[1]}")
+
+        # Load metadata if available
+        protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
+        functions = ["other"] * len(embeddings)  # Default
+
+        if csv_files:
+            # Try to load protein IDs and functions
+            metadata_file = csv_files[0]
+            aprint(f"Loading metadata from: {metadata_file.name}")
+            try:
+                df = pd.read_csv(metadata_file)
+                aprint(f"  Metadata columns: {list(df.columns)}")
+
+                # Extract protein IDs if available
+                if 'EntryID' in df.columns:
+                    protein_ids = df['EntryID'].tolist()[:len(embeddings)]
+                elif 'protein_id' in df.columns:
+                    protein_ids = df['protein_id'].tolist()[:len(embeddings)]
+
+                # Classify proteins by GO terms or keywords
+                # This is a simplified categorization
+                if 'term' in df.columns or 'GO_term' in df.columns:
+                    term_col = 'term' if 'term' in df.columns else 'GO_term'
+                    for i, term in enumerate(df[term_col].tolist()[:len(embeddings)]):
+                        functions[i] = classify_protein_function(str(term))
+
+            except Exception as e:
+                aprint(f"  Warning: Could not load full metadata: {e}")
+
+        # Sample if requested
+        if sample_size and sample_size < len(embeddings):
+            aprint(f"Sampling {sample_size:,} proteins...")
+            indices = np.random.choice(len(embeddings), sample_size, replace=False)
+            embeddings = embeddings[indices]
+            protein_ids = [protein_ids[i] for i in indices]
+            functions = [functions[i] for i in indices]
+
+        aprint(f"✓ Final dataset: {len(embeddings):,} proteins")
+        aprint(f"  Function categories: {len(set(functions))} unique")
+
+    return embeddings, protein_ids, functions
+
+
+def classify_protein_function(go_term: str) -> str:
+    """Classify protein into broad functional category from GO term.
+
+    Args:
+        go_term: GO term or description
+
+    Returns:
+        Broad category name
+    """
+    term_lower = go_term.lower()
+
+    # Enzyme activities
+    if any(kw in term_lower for kw in ['kinase', 'protease', 'ligase', 'transferase', 'hydrolase', 'oxidoreductase', 'catalytic']):
+        return 'enzyme'
+
+    # Transporters
+    if any(kw in term_lower for kw in ['transport', 'channel', 'porter', 'pump']):
+        return 'transporter'
+
+    # Receptors
+    if 'receptor' in term_lower:
+        return 'receptor'
+
+    # Structural proteins
+    if any(kw in term_lower for kw in ['structural', 'cytoskeleton', 'collagen', 'keratin']):
+        return 'structural'
+
+    # Regulatory
+    if any(kw in term_lower for kw in ['regulator', 'transcription factor', 'repressor', 'activator']):
+        return 'regulator'
+
+    # Binding proteins
+    if 'binding' in term_lower and 'dna' not in term_lower and 'rna' not in term_lower:
+        return 'binding'
+
+    # Nucleic acid related
+    if any(kw in term_lower for kw in ['dna', 'rna', 'nucleic', 'polymerase', 'helicase']):
+        return 'nucleic_acid'
+
+    # Signaling
+    if any(kw in term_lower for kw in ['signal', 'hormone', 'growth factor']):
+        return 'signaling'
+
+    # Membrane proteins
+    if 'membrane' in term_lower:
+        return 'membrane'
+
+    return 'other'
+
+
+# =============================================================================
+# UMAP Dimensionality Reduction
+# =============================================================================
+
+
+def reduce_embeddings_umap(
+    embeddings: np.ndarray,
+    cache_path: Path | None = None,
+) -> np.ndarray:
+    """Reduce protein embeddings to 3D using UMAP.
+
+    Args:
+        embeddings: (n_proteins, n_features) array
+        cache_path: Optional path to cache UMAP results
+
+    Returns:
+        (n_proteins, 3) reduced coordinates
+    """
+    from umap import UMAP
+
+    # Check cache first
+    if cache_path and cache_path.exists():
+        with asection("Loading cached UMAP coordinates"):
+            aprint(f"Cache: {cache_path}")
+            cached = np.load(cache_path)
+            positions = cached["positions"]
+            aprint(f"✓ Loaded {len(positions):,} proteins from cache")
+            return positions
+
+    with asection(f"Reducing {embeddings.shape[1]}D → 3D with UMAP"):
+        aprint(f"Input: {embeddings.shape[0]:,} proteins × {embeddings.shape[1]} dimensions")
+        aprint("Parameters: n_neighbors=15, metric=cosine, all CPU cores")
+
+        reducer = UMAP(
+            n_components=3,
+            n_neighbors=15,
+            metric="cosine",
+            n_jobs=-1,  # All cores
+            low_memory=False,  # Speed optimization
+            verbose=True,
+        )
+
+        reduced = reducer.fit_transform(embeddings)
+
+        aprint("✓ UMAP complete")
+        aprint(f"  Output: {reduced.shape}")
+        aprint(f"  Range: [{reduced.min():.2f}, {reduced.max():.2f}]")
+
+        # Center at barycenter
+        centroid = reduced.mean(axis=0)
+        reduced = reduced - centroid
+        aprint("✓ Centered at barycenter")
+        aprint(f"  New range: [{reduced.min():.2f}, {reduced.max():.2f}]")
+
+        # Cache results
+        if cache_path:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez(cache_path, positions=reduced)
+            aprint(f"✓ Cached to {cache_path}")
+            aprint("  Future runs will load instantly!")
+
+    return reduced.astype(np.float32)
+
+
+# =============================================================================
+# Visualization Generation
+# =============================================================================
+
+
+def generate_protein_landscape(
+    output_path: Path,
+    sample_size: int | None = None,
+) -> int:
+    """Generate 3D protein function landscape.
+
+    Args:
+        output_path: Where to write zarr
+        sample_size: Optional number of proteins to sample
+
+    Returns:
+        Number of proteins visualized
+    """
+    # Setup caching
+    cache_dir = Path.home() / ".cache" / "luxar" / "protein_embeddings"
+    dataset_cache = cache_dir / "cafa5_data"
+    umap_cache = cache_dir / f"umap_{sample_size or 'all'}.npz"
+
+    # Download dataset if needed
+    if not dataset_cache.exists():
+        dataset_cache = download_cafa5_dataset(cache_dir)
+
+    # Load embeddings
+    embeddings, protein_ids, functions = load_protein_embeddings(
+        dataset_cache,
+        sample_size=sample_size,
+    )
+
+    if len(embeddings) == 0:
+        aprint("❌ No proteins loaded")
+        return 0
+
+    # Reduce to 3D with UMAP
+    positions = reduce_embeddings_umap(embeddings, cache_path=umap_cache)
+
+    # Generate visualization
+    with asection("Generating visualization"):
+        n_proteins = len(positions)
+
+        # Colors by function
+        colors = np.zeros((n_proteins, 3), dtype=np.float32)
+        for i, func in enumerate(functions):
+            colors[i] = FUNCTION_COLORS.get(func, FUNCTION_COLORS["other"])
+
+        # Count functions
+        func_counts = {}
+        for func in functions:
+            func_counts[func] = func_counts.get(func, 0) + 1
+
+        aprint("✓ Proteins by function:")
+        for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:10]:
+            aprint(f"  {func}: {count:,}")
+
+        # Size by embedding norm (proxy for sequence length/complexity)
+        norms = np.linalg.norm(embeddings, axis=1)
+        norm_normalized = (norms - norms.min()) / (norms.max() - norms.min() + 1e-10)
+        radii = (0.03 + 0.05 * norm_normalized).astype(np.float32)
+
+        aprint("✓ Sizes by embedding magnitude")
+
+    # Write to Zarr
+    with asection("Writing to Zarr"):
+        dims = Dimensions(
+            [
+                Dimension("x", unit="UMAP", display=True),
+                Dimension("y", unit="UMAP", display=True),
+                Dimension("z", unit="UMAP", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            sharpness = np.full(n_proteins, 3.0, dtype=np.float32)
+
+            scene.add_points(
+                "proteins",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                sharpness=sharpness,
+                opacity=0.9,
+            )
+
+        aprint(f"✓ Visualization created with {n_proteins:,} proteins")
+
+    return n_proteins
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+
+def main() -> None:
+    """Main demo entry point."""
+    sample_size = DEFAULT_SAMPLE_SIZE
+
+    for arg in sys.argv[1:]:
+        if arg.startswith("--sample="):
+            sample_size = int(arg.split("=")[1])
+
+    aprint("=" * 70)
+    aprint("PROTEIN FUNCTION LANDSCAPE - PROTT5 EMBEDDINGS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Dataset: CAFA5 Protein Function Prediction")
+    aprint("https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5")
+    aprint("")
+    aprint("What this shows:")
+    aprint("  • 142k proteins with ProtT5-XL embeddings (1,024D)")
+    aprint("  • 3D UMAP projection showing functional relationships")
+    aprint("  • Proteins with similar functions cluster together")
+    aprint("  • Color = protein function category")
+    aprint("  • Size = sequence complexity")
+    aprint("")
+    aprint("Parameters:")
+    aprint(f"  Proteins: {sample_size:,}" if sample_size else "  Proteins: All (142,246)")
+    aprint("")
+
+    # Check dependencies
+    try:
+        import pandas  # noqa: F401
+        import umap  # noqa: F401
+    except ImportError as e:
+        aprint(f"❌ Missing dependency: {e}")
+        aprint("")
+        aprint("Install with:")
+        aprint("  pip install umap-learn pandas")
+        sys.exit(1)
+
+    with tempfile.TemporaryDirectory(prefix="luxar_demo_proteins_") as tmpdir:
+        output_path = Path(tmpdir) / "protein_landscape.zarr"
+
+        try:
+            n_proteins = generate_protein_landscape(
+                output_path,
+                sample_size=sample_size,
+            )
+
+            if n_proteins == 0:
+                return
+
+        except Exception as e:
+            aprint(f"\n❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+        aprint("")
+        aprint("=" * 70)
+        aprint("VIEWING TIPS - EXPLORE THE PROTEOME")
+        aprint("=" * 70)
+        aprint("")
+        aprint("What to look for:")
+        aprint("  • Enzyme clusters (kinases, proteases, etc.)")
+        aprint("  • Structural protein regions")
+        aprint("  • Membrane protein groups")
+        aprint("  • DNA/RNA binding protein clusters")
+        aprint("  • Functional boundaries and overlaps")
+        aprint("")
+        aprint("Try this:")
+        aprint("  1. Zoom out: See overall functional organization")
+        aprint("  2. Zoom in: Explore specific protein families")
+        aprint("  3. Look for: Tight clusters = very similar function")
+        aprint("")
+        aprint(f"Total proteins: {n_proteins:,}")
+        aprint("")
+        aprint("=" * 70)
+        aprint("LAUNCHING VIEWER")
+        aprint("=" * 70)
+        aprint("Explore the landscape of protein function!")
+        aprint("Press Ctrl+C when done.")
+        aprint("")
+
+        if "--no-serve" in sys.argv:
+            aprint("✓ Dataset generated successfully (--no-serve mode)")
+            return
+
+        try:
+            subprocess.run(
+                ["luxar", "serve", str(output_path), "--viewer", "--open"],
+                check=True,
+            )
+        except KeyboardInterrupt:
+            aprint("\n🛑 Stopping demo...")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    aprint("✓ Cleanup complete")
+
+
+if __name__ == "__main__":
+    main()

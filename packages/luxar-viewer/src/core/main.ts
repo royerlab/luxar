@@ -13,12 +13,17 @@ import { LuxarApp } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { showError } from '../ui/helpers';
+import { ThemeManager } from '../themes/theme-manager';
 
 // Validate configuration at startup
 const configValid = validateAndLog(config);
 if (!configValid) {
   log.error(Modules.MAIN, 'Application starting with invalid configuration - errors may occur');
 }
+
+// Initialize theme system early (before any UI components are created)
+const themeManager = ThemeManager.getInstance();
+log.custom(LogEmoji.START, Modules.LUXAR, `Theme system initialized: ${themeManager.getCurrentTheme().name}`);
 
 // Parse URL parameters for scene source
 const params = new URLSearchParams(window.location.search);
