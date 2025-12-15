@@ -554,15 +554,20 @@ def generate_paper_landscape(
         # Reduce to 3D
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
-        # Cache UMAP results
-        if cache_file:
-            np.savez(
-                cache_file,
-                positions=positions,
-                categories=np.array(categories),
-                years=np.array(years),
-            )
-            aprint(f"✓ Cached UMAP to {cache_file}")
+        # Cache UMAP results for instant future runs
+        with asection("Saving UMAP cache"):
+            if cache_file:
+                aprint(f"Cache path: {cache_file}")
+                np.savez(
+                    cache_file,
+                    positions=positions,
+                    categories=np.array(categories),
+                    years=np.array(years),
+                )
+                aprint(f"✓ UMAP cached successfully!")
+                aprint(f"  Next run with same sample size will be INSTANT!")
+            else:
+                aprint("⚠️  Cache not enabled (--use-cache flag needed)")
 
     # Generate visualization
     with asection("Generating visualization"):
@@ -630,7 +635,7 @@ def main() -> None:
     """Main demo entry point."""
     sample_size = DEFAULT_SAMPLE_SIZE
     category_filter = None
-    use_cache = "--use-cache" in sys.argv
+    use_cache = True  # Caching is ALWAYS on by default!
 
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):
