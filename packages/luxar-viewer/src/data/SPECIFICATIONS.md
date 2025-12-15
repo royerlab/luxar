@@ -890,7 +890,7 @@ interface PointRange {
 
 ### 6.4 LoadedPointsData
 
-**Purpose**: Container for loaded point cloud data ready for rendering.
+**Purpose**: Container for loaded point data ready for rendering.
 
 ```
 interface LoadedPointsData {

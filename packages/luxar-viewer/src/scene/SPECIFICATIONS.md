@@ -1213,7 +1213,7 @@ async function updateLinesForDimensions(linesObject: THREE.Mesh, dims: SimpleDim
 
 ### 8.3 Multi-Object Synchronization
 
-**Invariant**: All point clouds in a scene share the **same** dimension system.
+**Invariant**: All primitives in a scene share the **same** dimension system.
 
 **Enforcement**:
 
@@ -1324,7 +1324,7 @@ interface SceneDimsManager {
   - **IMPROVED**: When inside, near plane is set to minimum (0.001) to avoid clipping nearby points
   - **UPDATED**: `calculateDistancesToBounds()` now returns `isInside` flag
   - **UPDATED**: `updateDynamicClippingPlanes()` uses `isInside` to skip margin calculation when inside
-  - Eliminates clipping artifacts when exploring inside point clouds
+  - Eliminates clipping artifacts when exploring inside dense datasets
 
 - **v1.3.0** (2025-12-09): Dynamic clipping planes
   - **ADDED**: Section 5 "Dynamic Clipping Planes" with exponential smoothing algorithm
