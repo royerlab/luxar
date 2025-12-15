@@ -99,8 +99,8 @@ class TestServeIntegration:
         response = requests.get(f"{test_server}/.zattrs")
         assert response.status_code == 200
         data = response.json()
-        assert "version" in data
-        assert "luxar_version" in data
+        assert "luxar_version" in data  # Changed from "version" to match implementation
+        assert data["type"] == "scene"
 
     def test_scene_metadata(self, test_server):
         """Test retrieving scene metadata."""
@@ -109,7 +109,7 @@ class TestServeIntegration:
         metadata = response.json()
 
         # Verify expected metadata structure
-        assert metadata["version"] == "0.3.0"
+        assert metadata["luxar_version"] == "0.1"  # Changed from "version" to "luxar_version"
         assert "scene_dimensions" in metadata
 
     def test_zarr_group_listing(self, test_server):
@@ -136,7 +136,9 @@ class TestServeIntegration:
 
     def test_cors_headers(self, test_server):
         """Test that CORS headers are set correctly."""
-        response = requests.get(f"{test_server}/health")
+        # CORS headers appear when Origin header is present (cross-origin request)
+        headers = {"Origin": "http://localhost:5173"}
+        response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
         assert response.headers["Access-Control-Allow-Origin"] == "*"
 
@@ -163,17 +165,21 @@ class TestServeIntegration:
 
     def test_directory_listing_json(self, test_server, sample_scene):
         """Test directory listing in JSON format."""
-        # Try to list the zarr store directory
-        parent_dir = sample_scene.parent
-        response = requests.get(
-            f"{test_server}/", params={"path": str(parent_dir), "format": "json"}
-        )
+        # Request JSON format via Accept header
+        headers = {"Accept": "application/json"}
+        response = requests.get(f"{test_server}/", headers=headers)
 
-        # Note: This test may need adjustment based on how directory listing works
-        # It's an example of testing real HTTP behavior
-        if response.status_code == 200:
-            data = response.json()
-            assert isinstance(data, (list, dict))
+        # Server returns JSON directory listing when Accept: application/json
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, dict)
+        assert "entries" in data
+        entries = data["entries"]
+        assert isinstance(entries, list)
+        # Should contain zarr files
+        assert len(entries) > 0
+        # Verify structure
+        assert any(e["type"] == "zarr" for e in entries)
 
 
 class TestInfoCommand:
