@@ -17,8 +17,15 @@ import type { SetupContext, SetupResult } from './types';
  * @returns Setup result with controller and folder references
  */
 export function setupNavigationControls(context: SetupContext): SetupResult {
-  const { gui, settings, sceneManager, animationController, saveSettings, triggerAnimation, updateNavigationControls } =
-    context;
+  const {
+    gui,
+    settings,
+    sceneManager,
+    animationController,
+    saveSettings,
+    triggerAnimation,
+    updateNavigationControls,
+  } = context;
 
   const controllers: SetupResult['controllers'] = {};
 
