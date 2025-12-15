@@ -94,7 +94,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 # Configuration
 # =============================================================================
 
-DEFAULT_SAMPLE_SIZE = 50000  # Sample 50k papers for reasonable performance
+DEFAULT_SAMPLE_SIZE = 1000000  # Sample 50k papers for reasonable performance
 
 # ArXiv category colors (major categories)
 CATEGORY_COLORS = {
@@ -182,29 +182,82 @@ def download_kaggle_dataset(
     return output_path
 
 
+def load_metadata_lookup(metadata_path: Path) -> dict:
+    """Load arXiv metadata and create ID lookup dictionary.
+
+    Args:
+        metadata_path: Path to arxiv-metadata-oai-snapshot.json
+
+    Returns:
+        Dictionary mapping paper_id -> {category, title, year}
+    """
+    import json
+
+    with asection("Loading arXiv metadata for category matching"):
+        aprint(f"Metadata file: {metadata_path}")
+        aprint(f"Size: {metadata_path.stat().st_size / (1024**3):.1f} GB")
+        aprint("Loading metadata (full 2M+ papers, may take 1-2 minutes)...")
+
+        metadata_by_id = {}
+
+        with open(metadata_path, 'r') as f:
+            for i, line in enumerate(f):
+                if i % 100000 == 0 and i > 0:
+                    aprint(f"  Loaded {i:,} papers...")
+
+                try:
+                    paper = json.loads(line)
+                    paper_id = paper['id']
+                    categories = paper.get('categories', '')
+
+                    # Get primary category
+                    primary_cat = categories.split()[0] if categories else 'unknown'
+
+                    meta_info = {
+                        'category': primary_cat,
+                        'title': paper.get('title', 'Unknown')[:100],
+                        'year': paper.get('update_date', '2020-01-01')[:4]
+                    }
+
+                    # Store with original ID
+                    metadata_by_id[paper_id] = meta_info
+
+                    # Also store variants (handle format differences)
+                    if paper_id.startswith('0'):
+                        metadata_by_id[paper_id.lstrip('0')] = meta_info
+
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+        aprint(f"✓ Loaded metadata for {len(metadata_by_id):,} papers")
+
+    return metadata_by_id
+
+
 # =============================================================================
-# Dataset Loading with MLCroissant
+# Dataset Loading
 # =============================================================================
 
 
 def load_arxiv_dataset_local(
     zip_path: Path,
+    metadata_lookup: dict,
     sample_size: int = 50000,
 ) -> tuple[list, list, list, list]:
-    """Load arXiv embeddings from local ZIP file.
+    """Load arXiv embeddings and match with metadata.
 
-    The Kaggle dataset contains:
-    - papers.csv: metadata (id, title, categories, update_date)
+    The Kaggle embeddings dataset contains:
+    - papers.csv: paper IDs
     - vectors.dat: binary embeddings (float32, 3072-dim per paper)
 
     Args:
         zip_path: Path to downloaded openai-arxiv-embeddings.zip
+        metadata_lookup: Dictionary mapping paper_id -> {category, title, year}
         sample_size: Number of papers to load
 
     Returns:
         Tuple of (embeddings, titles, categories, years)
     """
-    import io
     import struct
     import zipfile
 
@@ -248,42 +301,36 @@ def load_arxiv_dataset_local(
 
             aprint(f"✓ Loaded {len(embeddings):,} embeddings")
 
-        # Extract metadata (CSV only has: index, id, journal)
-        # Use paper ID as title
+        # Match paper IDs with metadata to get real categories
         paper_ids = papers_df['id'].tolist()[:len(embeddings)]
-        titles = [f"arXiv:{pid}" for pid in paper_ids]
 
-        # Infer category from arxiv ID pattern
-        # Old format: category/YYMMNNN (e.g., cs/0001234)
-        # New format: YYMM.NNNNN (e.g., 1501.00001)
+        aprint(f"Matching {len(paper_ids):,} paper IDs with metadata...")
+        titles = []
         categories = []
         years = []
+        matched = 0
+
         for pid in paper_ids:
             pid_str = str(pid)
 
-            # Try to extract category
-            if '/' in pid_str:
-                # Old format with explicit category
-                cat = pid_str.split('/')[0]
-                categories.append(cat if cat else 'other')
-                # Year from old format is harder to determine
-                years.append(2010)  # Approximate for old IDs
+            if pid_str in metadata_lookup:
+                meta = metadata_lookup[pid_str]
+                titles.append(meta['title'])
+                # Extract main category (e.g., "cs.AI" -> "cs")
+                cat = meta['category'].split('.')[0] if '.' in meta['category'] else meta['category']
+                categories.append(cat)
+                years.append(int(meta['year']))
+                matched += 1
             else:
-                # New format - numeric ID
-                # Can't determine category from ID
-                categories.append('physics')  # Default category
-                # First 4 digits are YYMM, extract year
-                try:
-                    yymm = int(pid_str[:4])
-                    yy = yymm // 100
-                    year = 1900 + yy if yy > 90 else 2000 + yy
-                    years.append(year)
-                except (ValueError, IndexError):
-                    years.append(2015)  # Default year
+                # Fallback for unmatched
+                titles.append(f"arXiv:{pid_str}")
+                categories.append('other')
+                years.append(2015)
 
-        aprint(f"✓ Prepared {len(embeddings):,} papers")
-        aprint(f"  Categories: {len(set(categories))} unique")
-        aprint(f"  Year range: {min(years)} - {max(years)}")
+        match_rate = matched / len(paper_ids) * 100 if paper_ids else 0
+        aprint(f"✓ Matched {matched:,}/{len(paper_ids):,} papers ({match_rate:.1f}%)")
+        aprint(f"✓ Found {len(set(categories))} unique categories")
+        aprint(f"✓ Year range: {min(years)} - {max(years)}")
 
     return embeddings, titles, categories, years
 
@@ -380,9 +427,10 @@ def generate_paper_landscape(
             years = list(cached["years"])
             aprint(f"✓ Loaded {len(positions):,} papers from cache")
     else:
-        # Check for cached dataset
+        # Check for cached embeddings dataset
         dataset_cache = Path.home() / ".cache" / "luxar" / "arxiv_embeddings.zip"
-        expected_size_gb = 30  # Expected dataset size in GB
+        metadata_cache = Path.home() / ".cache" / "luxar" / "arxiv_metadata.json"
+        expected_emb_size_gb = 30  # Expected embeddings size
         download_marker = dataset_cache.parent / ".arxiv_downloading"
 
         # Check if download is in progress
@@ -392,15 +440,15 @@ def generate_paper_landscape(
             aprint(f"   rm {download_marker}")
             raise RuntimeError("Download in progress")
 
-        # Check if file exists and is complete
+        # Check if embeddings file exists and is complete
         if dataset_cache.exists():
             size_gb = dataset_cache.stat().st_size / (1024**3)
-            if size_gb < expected_size_gb * 0.9:  # Allow 10% variance
-                aprint(f"⚠️  Cached file is incomplete ({size_gb:.1f} GB / ~{expected_size_gb} GB)")
+            if size_gb < expected_emb_size_gb * 0.9:  # Allow 10% variance
+                aprint(f"⚠️  Cached embeddings incomplete ({size_gb:.1f} GB / ~{expected_emb_size_gb} GB)")
                 aprint("   Deleting and re-downloading...")
                 dataset_cache.unlink()
             else:
-                aprint(f"✓ Using cached dataset: {dataset_cache}")
+                aprint(f"✓ Using cached embeddings: {dataset_cache}")
                 aprint(f"  Size: {size_gb:.1f} GB")
 
         if not dataset_cache.exists():
@@ -415,9 +463,35 @@ def generate_paper_landscape(
                 if download_marker.exists():
                     download_marker.unlink()
 
-        # Load from cached ZIP
+        # Download and load metadata
+        if not metadata_cache.exists():
+            aprint("Metadata not in cache, downloading...")
+            # First download to Downloads, then extract
+            meta_zip = Path.home() / "Downloads" / "arxiv-metadata.zip"
+            if not meta_zip.exists():
+                aprint("Downloading arXiv metadata (1.5GB compressed)...")
+                download_kaggle_dataset(
+                    meta_zip,
+                    url="https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv"
+                )
+
+            # Extract metadata
+            import zipfile
+            aprint("Extracting metadata...")
+            with zipfile.ZipFile(meta_zip, 'r') as zf:
+                zf.extract('arxiv-metadata-oai-snapshot.json', metadata_cache.parent)
+                # Rename to cache location
+                extracted = metadata_cache.parent / 'arxiv-metadata-oai-snapshot.json'
+                if extracted.exists():
+                    extracted.rename(metadata_cache)
+            aprint(f"✓ Metadata extracted to {metadata_cache}")
+
+        # Load metadata lookup
+        metadata_lookup = load_metadata_lookup(metadata_cache)
+
+        # Load from cached ZIP with metadata matching
         embeddings_list, titles, categories, years = load_arxiv_dataset_local(
-            dataset_cache, sample_size
+            dataset_cache, metadata_lookup, sample_size
         )
 
         embeddings = np.array(embeddings_list, dtype=np.float32)
