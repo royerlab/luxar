@@ -470,22 +470,24 @@ describe('InputContextManager', () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
-    it('should call handler on keyup if type is up', () => {
+    it('should NOT call handler on keyup if no keyupHandler provided', () => {
       const handler = vi.fn();
 
       manager.registerBinding(InputContext.NAVIGATION, {
         key: 'c',
         handler,
+        // No keyupHandler
       });
 
       const keyupEvent = new KeyboardEvent('keyup', { key: 'c' });
       const handled = manager.handleKeyEvent(keyupEvent, 'up');
 
-      expect(handled).toBe(true);
-      expect(handler).toHaveBeenCalledTimes(1);
+      // Should return false (not handled) because no keyupHandler
+      expect(handled).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
     });
 
-    it('should not double-call handler for same binding on keydown then keyup', () => {
+    it('should NOT double-call handler for toggle actions (correct behavior)', () => {
       let toggleState = false;
       const toggleHandler = vi.fn(() => {
         toggleState = !toggleState;
@@ -494,22 +496,23 @@ describe('InputContextManager', () => {
       manager.registerBinding(InputContext.NAVIGATION, {
         key: 'c',
         handler: toggleHandler,
+        // No keyupHandler - toggle actions only trigger on keydown
       });
 
       // Keydown - should toggle to true
       const keydownEvent = new KeyboardEvent('keydown', { key: 'c' });
       manager.handleKeyEvent(keydownEvent, 'down');
       expect(toggleState).toBe(true);
+      expect(toggleHandler).toHaveBeenCalledTimes(1);
 
-      // Keyup - would toggle back to false if called!
-      // This test documents that InputHandler should NOT route keyup through
-      // context manager for toggle actions - only keydown should trigger them
+      // Keyup - should NOT call handler (no keyupHandler provided)
       const keyupEvent = new KeyboardEvent('keyup', { key: 'c' });
-      manager.handleKeyEvent(keyupEvent, 'up');
+      const handled = manager.handleKeyEvent(keyupEvent, 'up');
 
-      // If this fails, it means keyup also called the handler (bug!)
-      expect(toggleHandler).toHaveBeenCalledTimes(2); // Called for both down and up
-      expect(toggleState).toBe(false); // Toggled back (this is the documented behavior)
+      // Handler should NOT be called on keyup
+      expect(handled).toBe(false);
+      expect(toggleHandler).toHaveBeenCalledTimes(1); // Still only once
+      expect(toggleState).toBe(true); // Stays ON (doesn't toggle back)
     });
   });
 });

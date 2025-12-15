@@ -16,9 +16,14 @@
 import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
+// Test datasets
+const DATASETS = {
+  sliders5D: 'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr',
+};
+
 test.describe('Keyboard Input System - Fly Controls', () => {
   test('should move forward with W key in fly mode', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug'); // Use default dataset
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -44,7 +49,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
   });
 
   test('should move faster with Shift+W (speed boost)', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -87,7 +92,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
   });
 
   test('should move vertically with Alt+W and Alt+S', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -131,7 +136,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
   });
 
   test('should stop movement when W key is released', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode with inertia OFF (immediate stop)
@@ -167,7 +172,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
   });
 
   test('should support strafe movement with A and D keys', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -195,7 +200,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
 
 test.describe('Keyboard Input System - keyupHandler Feature', () => {
   test('should not double-trigger toggle actions on key release', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Get initial cinematic mode state (should be off)
@@ -232,7 +237,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
   });
 
   test('Shift key should not toggle panels on release', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Get all panel states before
@@ -268,7 +273,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
 
 test.describe('Keyboard Input System - Toggle Shortcuts', () => {
   test('C key should toggle cinematic mode persistently', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Press C to toggle ON
@@ -298,7 +303,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
   });
 
   test('P key should toggle performance stats panel', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Check initial stats visibility
@@ -333,7 +338,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
   });
 
   test('I key should toggle inertial mode in fly mode', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -366,7 +371,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
   });
 
   test('F key should recenter camera on scene', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Move camera away from center
@@ -390,7 +395,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
   });
 
   test('N key should toggle dimension sliders (if nD dataset)', async ({ page }) => {
-    await page.goto('/?src=dimension_sliders_5d_example&debug');
+    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
 
     // Wait for dimension sliders to initialize
@@ -422,7 +427,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
 test.describe('Keyboard Input System - Context Passthrough', () => {
   test('H key should work in fly mode (passthrough)', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -452,7 +457,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
   });
 
   test('WASD keys should be blocked in orbit mode', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Ensure we're in orbit mode
@@ -492,7 +497,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
 
 test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
   test('Cmd+R should not be blocked by R key binding', async ({ page, browserName }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Listen for navigation (page reload)
@@ -523,7 +528,7 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
   });
 
   test('Ctrl+1 should not be blocked by 1 key binding', async ({ page }) => {
-    await page.goto('/?src=dimension_sliders_5d_example&debug');
+    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
     await page.waitForTimeout(1000);
 
@@ -549,7 +554,7 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
 
 test.describe('Keyboard Input System - Escape Key', () => {
   test('Escape should close help overlay', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Show help
@@ -576,7 +581,7 @@ test.describe('Keyboard Input System - Escape Key', () => {
 
 test.describe('Keyboard Input System - Modifier Combinations', () => {
   test('should handle Shift+Alt+W (fast vertical movement)', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -607,7 +612,7 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
   });
 
   test('Arrow keys should work in fly mode for camera rotation', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Switch to fly mode
@@ -639,7 +644,7 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
 
 test.describe('Keyboard Input System - Case Sensitivity', () => {
   test('uppercase H should work same as lowercase h', async ({ page }) => {
-    await page.goto('/?src=splats_3d_example&debug');
+    await page.goto('/?debug');
     await waitForLuxarReady(page);
 
     // Press uppercase H (Shift+h)
