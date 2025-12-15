@@ -1,11 +1,12 @@
 """Test reader node collection for potential duplicates.
 
-NOTE: During investigation, discovered that the reader works correctly with no duplicates.
-The original bug report was a misunderstanding. However, this investigation revealed a
-DIFFERENT bug: the write_points() parent parameter doesn't work as expected - points are
-written at root level regardless of parent parameter.
+INVESTIGATION RESULT: Reader works correctly with NO duplicates in any scenario.
+The original bug report was a misunderstanding of the code behavior.
 
-TODO: Fix writer parent parameter in separate ticket.
+Further investigation of writer hierarchy also found NO bugs - the API works correctly
+when used properly (see test_writer_parent_parameter.py).
+
+This test suite guards against future regressions in node collection.
 """
 
 import numpy as np
