@@ -90,6 +90,8 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
+
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -207,18 +209,29 @@ def download_kaggle_dataset(
     return output_path
 
 
-def load_metadata_lookup(metadata_path: Path) -> dict:
+def load_metadata_lookup(metadata_path: Path, cache_path: Path | None = None) -> dict:
     """Load arXiv metadata and create ID lookup dictionary.
 
     Args:
         metadata_path: Path to arxiv-metadata-oai-snapshot.json
+        cache_path: Optional path to cache the processed lookup dict
 
     Returns:
         Dictionary mapping paper_id -> {category, title, year}
     """
     import json
+    import pickle
 
-    with asection("Loading arXiv metadata for category matching"):
+    # Check cache first
+    if cache_path and cache_path.exists():
+        with asection("Loading cached metadata lookup"):
+            aprint(f"Cache: {cache_path}")
+            with open(cache_path, 'rb') as f:
+                metadata_by_id = pickle.load(f)
+            aprint(f"✓ Loaded {len(metadata_by_id):,} papers instantly!")
+        return metadata_by_id
+
+    with asection("Building metadata lookup (one-time, ~15 seconds)"):
         aprint(f"Metadata file: {metadata_path}")
         aprint(f"Size: {metadata_path.stat().st_size / (1024**3):.1f} GB")
         aprint("Loading metadata (full 2M+ papers, may take 1-2 minutes)...")
@@ -255,6 +268,15 @@ def load_metadata_lookup(metadata_path: Path) -> dict:
                     continue
 
         aprint(f"✓ Loaded metadata for {len(metadata_by_id):,} papers")
+
+        # Cache for future runs
+        if cache_path:
+            aprint("Saving to cache...")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'wb') as f:
+                pickle.dump(metadata_by_id, f)
+            aprint(f"✓ Cached to {cache_path}")
+            aprint("  Future runs will load instantly (<1 second)!")
 
     return metadata_by_id
 
@@ -511,8 +533,9 @@ def generate_paper_landscape(
                     extracted.rename(metadata_cache)
             aprint(f"✓ Metadata extracted to {metadata_cache}")
 
-        # Load metadata lookup
-        metadata_lookup = load_metadata_lookup(metadata_cache)
+        # Load metadata lookup (with caching!)
+        metadata_lookup_cache = Path.home() / ".cache" / "luxar" / "arxiv_metadata_lookup.pkl"
+        metadata_lookup = load_metadata_lookup(metadata_cache, cache_path=metadata_lookup_cache)
 
         # Load from cached ZIP with metadata matching
         embeddings_list, titles, categories, years = load_arxiv_dataset_local(
