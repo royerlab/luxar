@@ -1,13 +1,13 @@
 # luxar-viewer.scene - Technical Specification
 
 **Version**: 1.5.0
-**Last Updated**: 2025-12-11
+**Last Updated**: 2025-12-15
 
 ## Purpose
 
-The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loop, camera controls, and nD dimension coordination for point cloud and line visualization. It serves as the central orchestrator for all 3D rendering operations.
+The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loop, camera controls, and nD dimension coordination for n-dimensional scene visualization. It handles points, lines, Gaussian splats, and serves as the central orchestrator for all 3D rendering operations.
 
-**Core Responsibility**: Maintain the 3D scene state, coordinate camera and controls, manage the render loop with intelligent idle detection, and synchronize nD dimension navigation across all scene objects (Points and Lines).
+**Core Responsibility**: Maintain the 3D scene state, coordinate camera and controls, manage the render loop with intelligent idle detection, and synchronize nD dimension navigation across all scene objects (points, lines, splats, and future primitives).
 
 **Related Specifications**:
 
