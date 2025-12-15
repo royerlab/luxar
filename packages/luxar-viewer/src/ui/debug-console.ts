@@ -62,6 +62,12 @@ export class DebugConsole {
   private filter: string = '';
   private messageListenerCallback: ((message: BufferedMessage) => void) | null = null;
 
+  // Store bound resize handlers for cleanup
+  private boundDragMouseMove: ((e: MouseEvent) => void) | null = null;
+  private boundDragMouseUp: (() => void) | null = null;
+  private boundResizeMouseMove: ((e: MouseEvent) => void) | null = null;
+  private boundResizeMouseUp: (() => void) | null = null;
+
   /**
    * Create and initialize debug console panel.
    *
@@ -459,7 +465,8 @@ export class DebugConsole {
       e.preventDefault();
     });
 
-    document.addEventListener('mousemove', (e) => {
+    // Create bound handlers for cleanup
+    this.boundDragMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
 
       const deltaX = e.clientX - startX;
@@ -469,11 +476,14 @@ export class DebugConsole {
       panel.style.top = `${initialY + deltaY}px`;
       panel.style.right = 'auto';
       panel.style.bottom = 'auto';
-    });
+    };
 
-    document.addEventListener('mouseup', () => {
+    this.boundDragMouseUp = () => {
       isDragging = false;
-    });
+    };
+
+    document.addEventListener('mousemove', this.boundDragMouseMove);
+    document.addEventListener('mouseup', this.boundDragMouseUp);
   }
 
   /**
@@ -507,7 +517,8 @@ export class DebugConsole {
       }
     });
 
-    document.addEventListener('mousemove', (e) => {
+    // Create bound handlers for cleanup
+    this.boundResizeMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
 
       if (resizeDirection === 'n') {
@@ -525,12 +536,15 @@ export class DebugConsole {
         );
         panel.style.width = `${newWidth}px`;
       }
-    });
+    };
 
-    document.addEventListener('mouseup', () => {
+    this.boundResizeMouseUp = () => {
       isResizing = false;
       resizeDirection = '';
-    });
+    };
+
+    document.addEventListener('mousemove', this.boundResizeMouseMove);
+    document.addEventListener('mouseup', this.boundResizeMouseUp);
   }
 
   /**
@@ -586,16 +600,20 @@ export class DebugConsole {
       fractionalSecondDigits: 3,
     });
 
-    // Build message HTML
-    let html = `<span class="console-message-timestamp">${timestamp}</span>`;
+    // Create timestamp element safely (no innerHTML)
+    const timestampEl = document.createElement('span');
+    timestampEl.className = 'console-message-timestamp';
+    timestampEl.textContent = timestamp;
+    messageEl.appendChild(timestampEl);
 
-    // Format each argument with appropriate styling
+    // Format each argument with appropriate styling using DOM methods
     message.args.forEach((arg, index) => {
-      if (index > 0) html += ' ';
-      html += this.formatArgWithStyle(arg);
+      if (index > 0) {
+        messageEl.appendChild(document.createTextNode(' '));
+      }
+      const argEl = this.formatArgAsDOMElement(arg);
+      messageEl.appendChild(argEl);
     });
-
-    messageEl.innerHTML = html;
 
     // Add stack trace if present
     if (message.stack && message.type === 'error') {
@@ -614,7 +632,43 @@ export class DebugConsole {
   }
 
   /**
-   * Format an argument with appropriate styling
+   * Format an argument as a DOM element (safe, no XSS)
+   */
+  private formatArgAsDOMElement(arg: any): HTMLElement {
+    const span = document.createElement('span');
+
+    if (arg === undefined) {
+      span.className = 'console-message-undefined';
+      span.textContent = 'undefined';
+    } else if (arg === null) {
+      span.className = 'console-message-undefined';
+      span.textContent = 'null';
+    } else if (typeof arg === 'string') {
+      span.className = 'console-message-string';
+      span.textContent = `"${arg}"`;
+    } else if (typeof arg === 'number') {
+      span.className = 'console-message-number';
+      span.textContent = String(arg);
+    } else if (typeof arg === 'boolean') {
+      span.className = 'console-message-boolean';
+      span.textContent = String(arg);
+    } else if (typeof arg === 'object') {
+      span.className = 'console-message-object';
+      try {
+        const json = JSON.stringify(arg, null, 2);
+        span.textContent = json;
+      } catch {
+        span.textContent = arg.toString();
+      }
+    } else {
+      span.textContent = String(arg);
+    }
+
+    return span;
+  }
+
+  /**
+   * Format an argument with appropriate styling (legacy, kept for formatArgs)
    */
   private formatArgWithStyle(arg: any): string {
     if (arg === undefined) {
@@ -841,6 +895,24 @@ export class DebugConsole {
     // Remove listener from global interceptor
     if (this.messageListenerCallback) {
       consoleInterceptor.removeListener(this.messageListenerCallback);
+    }
+
+    // Remove global event listeners for dragging and resizing
+    if (this.boundDragMouseMove) {
+      document.removeEventListener('mousemove', this.boundDragMouseMove);
+      this.boundDragMouseMove = null;
+    }
+    if (this.boundDragMouseUp) {
+      document.removeEventListener('mouseup', this.boundDragMouseUp);
+      this.boundDragMouseUp = null;
+    }
+    if (this.boundResizeMouseMove) {
+      document.removeEventListener('mousemove', this.boundResizeMouseMove);
+      this.boundResizeMouseMove = null;
+    }
+    if (this.boundResizeMouseUp) {
+      document.removeEventListener('mouseup', this.boundResizeMouseUp);
+      this.boundResizeMouseUp = null;
     }
 
     // Remove panel from DOM

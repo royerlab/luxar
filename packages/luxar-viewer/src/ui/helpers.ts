@@ -177,6 +177,12 @@ export function showError(message: string) {
   errorDiv.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.4)';
   errorDiv.style.border = '1px solid rgba(255, 100, 100, 0.3)';
 
+  // ARIA attributes for accessibility
+  errorDiv.setAttribute('role', 'alertdialog');
+  errorDiv.setAttribute('aria-modal', 'true');
+  errorDiv.setAttribute('aria-labelledby', 'error-title');
+  errorDiv.setAttribute('aria-describedby', 'error-message-text');
+
   // Error icon + title
   const header = document.createElement('div');
   header.style.display = 'flex';
@@ -191,6 +197,7 @@ export function showError(message: string) {
   icon.style.marginRight = '12px';
 
   const title = document.createElement('div');
+  title.id = 'error-title';
   title.textContent = 'Unable to Load Dataset';
   title.style.fontSize = '16px';
   title.style.fontWeight = '600';
@@ -201,6 +208,7 @@ export function showError(message: string) {
 
   // Main error message
   const messageText = document.createElement('div');
+  messageText.id = 'error-message-text';
   messageText.textContent = message;
   messageText.style.marginBottom = '16px';
   messageText.style.color = '#ffcccc';
@@ -376,6 +384,9 @@ export function showHelpOverlay() {
   helpDiv.style.backdropFilter = 'blur(10px)';
   helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
   helpDiv.style.outline = 'none !important';
+  helpDiv.setAttribute('role', 'dialog');
+  helpDiv.setAttribute('aria-modal', 'true');
+  helpDiv.setAttribute('aria-labelledby', 'help-overlay-title');
 
   // Create header with title and close button
   const header = document.createElement('div');
@@ -387,6 +398,7 @@ export function showHelpOverlay() {
   header.style.paddingBottom = '6px';
 
   const title = document.createElement('h3');
+  title.id = 'help-overlay-title';
   title.textContent = 'Luxar Controls & Shortcuts';
   title.style.margin = '0';
   title.style.fontSize = '14px';
@@ -565,12 +577,21 @@ export function showHelpOverlay() {
   helpDiv.appendChild(controlsList);
   helpDiv.appendChild(footerNote);
 
+  // Track whether we're in the process of closing to prevent race conditions
+  let isClosing = false;
+
   // Function to close help overlay
   const closeHelp = () => {
+    // Guard against multiple simultaneous close calls
+    if (isClosing) return;
+    isClosing = true;
+
     const help = document.getElementById('help-overlay');
     if (help) {
-      help.remove();
+      // Remove global click listener first
       document.removeEventListener('click', handleDocumentClick);
+      // Then remove the panel
+      help.remove();
     }
   };
 
@@ -582,8 +603,9 @@ export function showHelpOverlay() {
     }
   };
 
-  // Add click handler within help panel to close
-  helpDiv.addEventListener('click', closeHelp);
+  // Add click handler within help panel - but NOT to close
+  // (clicking inside should not close, only clicking outside should)
+  // So we remove the helpDiv.addEventListener('click', closeHelp) line
 
   // Add keyboard navigation support
   helpDiv.addEventListener('keydown', (event) => {
@@ -597,7 +619,10 @@ export function showHelpOverlay() {
 
   // Add global click listener after a short delay to prevent immediate closure
   setTimeout(() => {
-    document.addEventListener('click', handleDocumentClick);
+    // Only add if the help div still exists and hasn't been closed
+    if (!isClosing && document.getElementById('help-overlay')) {
+      document.addEventListener('click', handleDocumentClick);
+    }
   }, UI_CONFIG.timings.helpClickDelayMs);
 }
 

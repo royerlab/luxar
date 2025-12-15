@@ -84,6 +84,9 @@ export class DimensionSliders {
   /** Map of dimension indices to their corresponding dropdown select elements */
   private dropdowns: Map<number, HTMLSelectElement> = new Map();
 
+  /** Map to store bound event handlers for cleanup */
+  private eventHandlers: Map<number, { input?: () => void; keydown?: (e: KeyboardEvent) => void; change?: () => void }> = new Map();
+
   /**
    * Create and initialize the dimension slider UI component.
    *
@@ -196,9 +199,37 @@ export class DimensionSliders {
    * @private
    */
   private createSliders(): void {
+    // Remove event listeners from existing sliders before clearing
+    for (const [dimIndex, slider] of this.sliders) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.input) {
+          slider.removeEventListener('input', handlers.input);
+        }
+        if (handlers.keydown) {
+          slider.removeEventListener('keydown', handlers.keydown);
+        }
+      }
+    }
+
+    // Remove event listeners from existing dropdowns
+    for (const [dimIndex, dropdown] of this.dropdowns) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.change) {
+          dropdown.removeEventListener('change', handlers.change);
+        }
+        if (handlers.keydown) {
+          dropdown.removeEventListener('keydown', handlers.keydown);
+        }
+      }
+    }
+
     // Clear any existing slider UI to prevent duplicates
     this.slidersContainer.innerHTML = '';
     this.sliders.clear();
+    this.dropdowns.clear();
+    this.eventHandlers.clear();
 
     // Add title section with status text
     const titleContainer = document.createElement('div');
@@ -372,14 +403,14 @@ export class DimensionSliders {
     const currentValue = Math.round(this.dims.currentStep[dimIndex]);
     dropdown.value = String(currentValue);
 
-    // Add change listener
-    dropdown.addEventListener('change', () => {
+    // Create bound handlers for cleanup
+    const changeHandler = () => {
       const value = parseInt(dropdown.value);
       sceneDimsManager.setDimensionValue(dimIndex, value);
-    });
+    };
 
     // Add keyboard navigation (arrow keys and [ / ] keys) with cyclic support
-    dropdown.addEventListener('keydown', (event) => {
+    const keydownHandler = (event: KeyboardEvent) => {
       const [min, max] = this.dimensionRanges[dimIndex];
       const currentVal = parseInt(dropdown.value);
       const isCyclic = dimMeta?.cyclic || false;
@@ -404,7 +435,14 @@ export class DimensionSliders {
         dropdown.value = String(newVal);
         dropdown.dispatchEvent(new Event('change'));
       }
-    });
+    };
+
+    // Add event listeners with bound handlers
+    dropdown.addEventListener('change', changeHandler);
+    dropdown.addEventListener('keydown', keydownHandler);
+
+    // Store handlers for cleanup
+    this.eventHandlers.set(dimIndex, { change: changeHandler, keydown: keydownHandler });
 
     dropdownItem.appendChild(label);
     dropdownItem.appendChild(dropdown);
@@ -540,8 +578,8 @@ export class DimensionSliders {
 
     this.updateSliderVisuals(dimIndex, currentValue, isDiscrete);
 
-    // Add event listeners
-    slider.addEventListener('input', () => {
+    // Create bound handlers for cleanup
+    const inputHandler = () => {
       let value: number;
       if (isDiscrete) {
         value = parseFloat(slider.value);
@@ -553,10 +591,10 @@ export class DimensionSliders {
 
       sceneDimsManager.setDimensionValue(dimIndex, value);
       // Visual update will happen via listener callback
-    });
+    };
 
     // Add keyboard navigation with cyclic wrapping support
-    slider.addEventListener('keydown', (event) => {
+    const keydownHandler = (event: KeyboardEvent) => {
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
         const isCyclic = dimMeta?.cyclic || false;
@@ -586,7 +624,14 @@ export class DimensionSliders {
         }
         slider.dispatchEvent(new Event('input'));
       }
-    });
+    };
+
+    // Add event listeners with bound handlers
+    slider.addEventListener('input', inputHandler);
+    slider.addEventListener('keydown', keydownHandler);
+
+    // Store handlers for cleanup
+    this.eventHandlers.set(dimIndex, { input: inputHandler, keydown: keydownHandler });
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);
@@ -852,8 +897,39 @@ export class DimensionSliders {
    * ```
    */
   public dispose(): void {
+    // Remove all event listeners from sliders
+    for (const [dimIndex, slider] of this.sliders) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.input) {
+          slider.removeEventListener('input', handlers.input);
+        }
+        if (handlers.keydown) {
+          slider.removeEventListener('keydown', handlers.keydown);
+        }
+      }
+    }
+
+    // Remove all event listeners from dropdowns
+    for (const [dimIndex, dropdown] of this.dropdowns) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers) {
+        if (handlers.change) {
+          dropdown.removeEventListener('change', handlers.change);
+        }
+        if (handlers.keydown) {
+          dropdown.removeEventListener('keydown', handlers.keydown);
+        }
+      }
+    }
+
+    // Clear all maps
+    this.eventHandlers.clear();
+    this.sliders.clear();
+    this.dropdowns.clear();
+
+    // Remove DOM elements
     this.slidersContainer.remove();
     this.statusBar.remove();
-    this.sliders.clear();
   }
 }
