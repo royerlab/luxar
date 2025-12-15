@@ -43,7 +43,6 @@ import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
-import { config } from '../config';
 import {
   getNonDisplayedDimensions,
   calculateStepSize,
@@ -364,8 +363,8 @@ export class InputHandler {
     window.addEventListener('keyup', onKeyUp);
     document.addEventListener('fullscreenchange', onFullscreenChange);
 
-    // Register context-specific key bindings
-    this.registerKeyBindings();
+    // Register all key bindings with context manager
+    this.registerAllKeyBindings();
 
     // Store cleanup functions
     this.eventListeners.push(
@@ -515,228 +514,316 @@ export class InputHandler {
   }
 
   /**
-   * Register context-specific key bindings with context manager.
+   * Handle cycling the data loading monitor (hidden → mini → expanded → hidden).
    *
-   * Currently a no-op placeholder. Fly control bindings are handled
-   * directly when fly mode is active. This method exists for future
-   * context-based key binding registration if needed.
+   * Extracted to a method to support binding registration.
+   * Uses dynamic import to avoid loading data module unless needed.
    *
    * @private
    */
-  private registerKeyBindings(): void {
-    // No need to register fly control bindings here
-    // They will be handled directly when fly mode is active
+  private handleDataMonitorCycle(): void {
+    import('../data')
+      .then(({ cycleDataMonitor }) => {
+        cycleDataMonitor();
+        log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
+      })
+      .catch((error) => {
+        log.error(Modules.INPUT, 'Failed to cycle data monitor:', error);
+      });
   }
 
   /**
-   * Handle key down events
+   * Register all key bindings with the context manager.
+   *
+   * This method registers all keyboard shortcuts using the binding registration
+   * system. Bindings are organized by input context:
+   * - NAVIGATION: Default orbit/arcball mode shortcuts
+   * - FLY_CONTROLS: WASD movement keys for fly mode
+   * - All contexts: Passthrough allows global shortcuts to work everywhere
+   *
+   * Called during init() to set up the complete keyboard interface.
+   *
+   * @private
    */
-  private onKeyDown(event: KeyboardEvent): void {
-    // Check if fly controls are active and should handle this key
-    const flyControls = this.sceneManager.controls.getFlyControls();
-    if (flyControls && flyControls.enabled) {
-      const flyKeys = [
-        ...config.input.keyboard.flyModeKeys,
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-      ];
-      const keyLower = event.key.toLowerCase();
+  private registerAllKeyBindings(): void {
+    // ===== NAVIGATION CONTEXT BINDINGS =====
+    // These work in the default orbit/arcball navigation mode
 
-      // Check if this is a fly control key (including Alt/Option modifier for W/S)
-      const isFlyKey =
-        flyKeys.some((k) => k.toLowerCase() === keyLower) || event.key.startsWith('Arrow');
+    // Shift key - dual purpose: zoom control + fly speed boost
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'Shift',
+      handler: () => this.sceneManager.controls.setEnableZoom(false),
+      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
+      description: 'Zoom control (hold to adjust FOV with wheel)',
+    });
 
-      if (isFlyKey) {
-        // Don't prevent default if typing in input
-        if (!this.isTypingInInput()) {
-          flyControls.handleKeyDown(event);
-          return;
-        }
-      }
+    // Dimension navigation
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: '[',
+      handler: () => this.handleDimensionNavigation(-1),
+      preventDefault: true,
+      description: 'Navigate dimension backward',
+    });
+
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: ']',
+      handler: () => this.handleDimensionNavigation(1),
+      preventDefault: true,
+      description: 'Navigate dimension forward',
+    });
+
+    // Dimension selection (keys 1-9, only without modifiers)
+    for (let i = 1; i <= 9; i++) {
+      this.contextManager.registerBinding(InputContext.NAVIGATION, {
+        key: String(i),
+        handler: (event) => {
+          if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            this.selectDimension(i - 1);
+          }
+        },
+        preventDefault: false,
+        description: `Select dimension ${i}`,
+      });
     }
 
-    // Handle remaining keys that aren't context-specific
-    switch (event.key) {
-      case 'Shift':
-        this.sceneManager.controls.setEnableZoom(false);
-        break;
+    // Help overlay
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'h',
+      handler: () => this.toggleHelp(),
+      preventDefault: true,
+      description: 'Toggle help overlay',
+    });
 
-      case 'h':
-      case 'H':
-        event.preventDefault();
-        this.toggleHelp();
-        break;
+    // Dimension sliders
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'n',
+      handler: () => this.toggleDimensionSliders(),
+      preventDefault: true,
+      description: 'Toggle dimension sliders',
+    });
 
-      case 'c':
-      case 'C':
-        // C key for cinematic mode toggle
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
-          event.preventDefault();
-          this.toggleCinematicMode();
-        }
-        break;
+    // Dataset browser
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'o',
+      handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      preventDefault: true,
+      description: 'Open dataset browser',
+    });
 
-      case 'n':
-      case 'N':
-        // N key for nD dimension sliders
-        event.preventDefault();
-        this.toggleDimensionSliders();
-        break;
+    // Performance stats
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'p',
+      handler: () => this.togglePerformanceStats(),
+      preventDefault: true,
+      description: 'Toggle performance stats',
+    });
 
-      case 'o':
-      case 'O':
-        // O key to open dataset browser
-        event.preventDefault();
-        window.dispatchEvent(new CustomEvent('open-dataset-browser'));
-        break;
-
-      case 'p':
-      case 'P':
-        // P key to toggle performance metrics
-        event.preventDefault();
-        this.togglePerformanceStats();
-        break;
-
-      case 'r':
-      case 'R':
-        // R key to toggle rendering controls (only when pressed alone)
-        // Ignore if Cmd/Ctrl or Shift are held to avoid conflicts with browser shortcuts
+    // Rendering controls (only without modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'r',
+      handler: (event) => {
         if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
           event.preventDefault();
           this.toggleRenderingControls();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Toggle rendering controls',
+    });
 
-        // 'C' key removed - use 'F' to recenter on bounding box instead
+    // Debug console (Ctrl+L)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'l',
+      modifiers: { ctrl: true },
+      handler: () => {
+        this.debugConsole.toggle();
+        log.info(
+          Modules.DEBUG_CONSOLE,
+          `Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
+        );
+      },
+      preventDefault: true,
+      description: 'Toggle debug console',
+    });
 
-      case 'l':
-      case 'L':
-        // Ctrl+L to toggle debug console
-        if (event.ctrlKey || event.metaKey) {
+    // Data loading monitor (M key, no modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'm',
+      handler: (event) => {
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
-          this.debugConsole.toggle();
-          log.info(
-            Modules.DEBUG_CONSOLE,
-            `Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
-          );
+          this.handleDataMonitorCycle();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Cycle data loading monitor',
+    });
 
-      case 'm':
-      case 'M':
-        // M key to cycle data loading monitor (hidden → mini → expanded → hidden)
-        // Only handle if not using modifiers and not typing in input
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
-          event.preventDefault();
-          import('../data')
-            .then(({ cycleDataMonitor }) => {
-              cycleDataMonitor();
-              log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
-            })
-            .catch((error) => {
-              log.error(Modules.INPUT, 'Failed to cycle data monitor:', error);
-            });
-        }
-        break;
-
-      case 'f':
-      case 'F':
-        // F key to recenter/focus camera on scene bounding box center
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+    // Recenter camera (F key, no modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'f',
+      handler: (event) => {
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
           this.recenterCamera();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Recenter camera on scene',
+    });
 
-      case 'v':
-      case 'V':
-        // V key to cycle through Orbit, Arcball, and Fly control modes
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+    // Toggle control mode (V key, no modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'v',
+      handler: (event) => {
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
           this.toggleControlMode();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Cycle control mode (orbit/arcball/fly)',
+    });
 
-      case 'i':
-      case 'I':
-        // I key to toggle inertial mode (when in fly mode)
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !this.isTypingInInput()) {
+    // Toggle inertial mode (I key, no modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'i',
+      handler: (event) => {
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
           this.toggleInertialMode();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Toggle inertial mode (fly controls)',
+    });
 
-      case ' ':
-        // Only toggle fullscreen if not focused on a UI element
+    // Toggle cinematic mode (C key, no modifiers)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'c',
+      handler: (event) => {
+        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+          event.preventDefault();
+          this.toggleCinematicMode();
+        }
+      },
+      preventDefault: false,
+      description: 'Toggle cinematic mode',
+    });
+
+    // Fullscreen toggle (Space, context-aware)
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: ' ',
+      handler: (event) => {
         if (this.shouldHandleSpaceKey()) {
           event.preventDefault();
           this.toggleFullscreen();
         }
-        break;
+      },
+      preventDefault: false,
+      description: 'Toggle fullscreen',
+    });
 
-      // Dimension navigation
-      case '[':
-      case ']':
-        event.preventDefault();
-        this.handleDimensionNavigation(event.key === '[' ? -1 : 1);
-        break;
+    // Escape key - context-aware panel closing
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'Escape',
+      handler: () => this.handleEscapeKey(),
+      preventDefault: true,
+      description: 'Close panels / Exit fullscreen',
+    });
 
-      // Number keys for dimension selection
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-      case '5':
-      case '6':
-      case '7':
-      case '8':
-      case '9':
-        // Only handle if not using modifiers
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-          event.preventDefault();
-          this.selectDimension(parseInt(event.key) - 1); // Convert to 0-based index
-        }
-        break;
+    // ===== FLY CONTROLS CONTEXT BINDINGS =====
+    // These are active when in fly mode (WASD movement)
+    // Fly controls must work with ANY modifiers:
+    // - Shift: Speed boost
+    // - Alt: Vertical movement (W/S only)
+    // - Shift+Alt: Fast vertical movement
 
-      case 'Escape':
-        // Handle ESC with priority: fullscreen first, then panels
-        event.preventDefault();
-        this.handleEscapeKey();
-        break;
-    }
-  }
+    // Get fly controls reference once
+    const getFlyControls = () => this.sceneManager.controls.getFlyControls();
 
-  /**
-   * Handle key up events
-   */
-  private onKeyUp(event: KeyboardEvent): void {
-    // Check fly controls first
-    const flyControls = this.sceneManager.controls.getFlyControls();
-    if (flyControls && flyControls.enabled) {
-      const flyKeys = [
-        ...config.input.keyboard.flyModeKeys,
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-      ];
-      const keyLower = event.key.toLowerCase();
+    // WASD movement keys - register with all relevant modifier combinations
+    // Need both keydown (start movement) and keyup (stop movement) handlers
+    const flyMovementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
+    const modifierCombinations = [
+      {}, // No modifiers
+      { shift: true }, // Shift only (speed boost)
+      { alt: true }, // Alt only (vertical for W/S)
+      { shift: true, alt: true }, // Shift+Alt (fast vertical)
+    ];
 
-      // Check if this is a fly control key
-      const isFlyKey =
-        flyKeys.some((k) => k.toLowerCase() === keyLower) || event.key.startsWith('Arrow');
-
-      if (isFlyKey) {
-        flyControls.handleKeyUp(event);
-        return;
+    for (const key of flyMovementKeys) {
+      for (const modifiers of modifierCombinations) {
+        this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+          key,
+          modifiers: Object.keys(modifiers).length > 0 ? modifiers : undefined,
+          handler: (event) => getFlyControls()?.handleKeyDown(event),
+          keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+          description: `Fly: ${key.toUpperCase()}${
+            modifiers.shift ? '+Shift' : ''
+          }${modifiers.alt ? '+Alt' : ''}`,
+        });
       }
     }
 
-    if (event.key === 'Shift') {
-      this.sceneManager.controls.setEnableZoom(true);
+    // Arrow keys for look direction (with and without Shift)
+    const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    for (const key of arrowKeys) {
+      // Base arrow key
+      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+        key,
+        handler: (event) => getFlyControls()?.handleKeyDown(event),
+        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+        description: `Fly look: ${key}`,
+      });
+
+      // Arrow + Shift (potentially faster look)
+      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+        key,
+        modifiers: { shift: true },
+        handler: (event) => getFlyControls()?.handleKeyDown(event),
+        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+        description: `Fly look: ${key}+Shift`,
+      });
     }
+
+    // Shift key in fly mode - also used for speed boost
+    this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+      key: 'Shift',
+      handler: () => this.sceneManager.controls.setEnableZoom(false),
+      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
+      description: 'Speed boost + zoom control',
+    });
+  }
+
+  /**
+   * Handle key down events.
+   *
+   * Routes ALL keyboard events through the context manager's binding system.
+   * No special cases - everything uses the unified binding system.
+   */
+  private onKeyDown(event: KeyboardEvent): void {
+    // Check if typing in input field (belt-and-suspenders with context manager)
+    if (this.isTypingInInput()) {
+      return;
+    }
+
+    // Route ALL keys through context manager (including Shift, fly controls, etc.)
+    this.contextManager.handleKeyEvent(event, 'down');
+  }
+
+  /**
+   * Handle key up events.
+   *
+   * Routes through context manager for keys that have keyupHandler registered.
+   * Keys without keyupHandler (most toggle actions) are ignored on keyup.
+   */
+  private onKeyUp(event: KeyboardEvent): void {
+    // Route through context manager
+    // Only bindings with keyupHandler will execute (Shift, fly controls)
+    // Toggle actions (C, R, etc.) don't have keyupHandler so they're ignored
+    this.contextManager.handleKeyEvent(event, 'up');
   }
 
   /**

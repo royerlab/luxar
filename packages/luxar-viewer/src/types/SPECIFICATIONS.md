@@ -604,6 +604,7 @@ function getDimensionRanges(positions, ndim, numPoints) {
 **Actual Implementation**: `src/input/input-handler-utils.ts`
 
 **Available Functions**:
+
 - `getNonDisplayedDimensions(dims)`: Returns list of non-displayed dimension indices
 - `calculateStepSize(dim, stepType, config)`: Computes step size for navigation
 - `calculateNextPosition(current, step, range, wrap)`: Calculates next position with wrapping
@@ -730,6 +731,7 @@ function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
 ## 5. Type Safety and Validation
 
 **Note**: The types package provides TypeScript interfaces for compile-time type safety. Runtime validation is handled by:
+
 - **TypeScript's type system** at compile time
 - **Python validation** on data encoding (see `luxar.validation` package)
 - **Implicit validation** in initialization functions (e.g., `initializeDims()` performs checks)
@@ -739,6 +741,7 @@ function stepDimension(dims, dimIndex, direction, ranges, options = {}) {
 **No Runtime Validation Functions**: The types package does NOT provide standalone validation functions like `validateDims()` or `validateDimensionMetadata()`.
 
 **Where Validation Happens**:
+
 1. **Compile-time**: TypeScript enforces interface structure
 2. **Initialization**: `initializeDims()` validates ndim > 0 and array lengths
 3. **Python encoding**: `luxar.validation` package performs comprehensive checks

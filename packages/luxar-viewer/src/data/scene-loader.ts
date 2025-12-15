@@ -296,7 +296,9 @@ export class SceneLoader {
         if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
           const dims = this.viewState.dimensions.metadata;
           const nonDisplayedDims = dims
-            .filter((_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx))
+            .filter(
+              (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
+            )
             .map((d: { name?: string }) => d.name)
             .filter((name: string | undefined): name is string => !!name);
 
@@ -649,8 +651,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-          .fill(0)
-          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions

@@ -30,8 +30,9 @@ Usage:
 
 Controls:
     - Rotate to explore UMAP structure
-    - Press '4' to navigate through timepoints
-    - Different cell types shown in different colors
+    - Use dropdown to switch between 7 biological attributes (Cell Type, Chromosome, etc.)
+    - Press '1' to select attribute dimension, then '['/']' to navigate
+    - Different values shown in different colors
     - Ctrl+C to stop
 """
 
@@ -232,12 +233,18 @@ def create_zebrahub_scene(
             [
                 Dimension(
                     "attribute",
-                    unit="view",
-                    range=(0, len(attr_types) - 1),
-                    step=1,
+                    unit="",
+                    categories=[
+                        "Cell Type",
+                        "Chromosome",
+                        "Leiden Coarse",
+                        "Leiden Fine",
+                        "Lineage",
+                        "Peak Type",
+                        "Timepoint",
+                    ],
                     display=False,
-                    discrete=True,
-                    description="Attribute visualization (0=celltype, 1=chromosome, 2=leiden_coarse, 3=leiden_fine, 4=lineage, 5=peak_type, 6=timepoint)",
+                    description="Biological attribute for color coding cells in UMAP space",
                 ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),

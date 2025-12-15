@@ -65,10 +65,7 @@ Execute action
 
 ```typescript
 class InputHandler {
-  constructor(
-    sceneManager: SceneManager,
-    animationController: AnimationController
-  );
+  constructor(sceneManager: SceneManager, animationController: AnimationController);
 
   // Event handlers
   private onKeyDown(event: KeyboardEvent): void;
@@ -83,7 +80,6 @@ class InputHandler {
   dispose(): void;
 }
 ```
-
 
 **Dimension Initialization Lifecycle:**
 
@@ -122,7 +118,6 @@ The `sceneDimsManager.initFromScene()` sets up dimension state but does NOT call
 - No race condition between initialization and listener registration
 
 See `input-handler.ts:191-194` for implementation and `scene-dims-manager.ts:157-160` for the rationale.
-
 
 ### 2. Input Context Manager
 
@@ -436,30 +431,117 @@ function closeModal() {
 }
 ```
 
-### Custom Input Handling
+### Adding New Keyboard Shortcuts
+
+**IMPORTANT**: All key handling uses the unified binding registration system. To add a new shortcut, register it in `InputHandler.registerAllKeyBindings()`.
+
+#### 1. Simple Binding (Keydown Only)
+
+Most shortcuts only need keydown handling:
 
 ```typescript
-// Add custom key handler
-class CustomHandler {
-  constructor(private contextManager: InputContextManager) {
-    document.addEventListener('keydown', this.handleKey.bind(this));
-  }
+this.contextManager.registerBinding(InputContext.NAVIGATION, {
+  key: 'g',
+  handler: () => this.myNewAction(),
+  preventDefault: true,
+  description: 'My new action',
+});
+```
 
-  handleKey(event: KeyboardEvent) {
-    // Only handle in specific context
-    if (this.contextManager.getCurrentContext() !== InputContext.CUSTOM) {
-      return;
-    }
+#### 2. With Modifiers
 
-    // Custom key handling
-    switch (event.key) {
-      case 'x':
-        this.customAction();
-        break;
+```typescript
+this.contextManager.registerBinding(InputContext.NAVIGATION, {
+  key: 's',
+  modifiers: { ctrl: true }, // Requires Ctrl+S
+  handler: () => this.saveScene(),
+  preventDefault: true,
+  description: 'Save scene',
+});
+```
+
+#### 3. With Keydown AND Keyup Handlers (NEW in v2.0)
+
+For keys that need different up/down behavior:
+
+```typescript
+this.contextManager.registerBinding(InputContext.NAVIGATION, {
+  key: 'Shift',
+  handler: () => this.disableZoom(), // Called on keydown
+  keyupHandler: () => this.enableZoom(), // Called on keyup
+  description: 'Zoom control',
+});
+
+// Fly controls example
+this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+  key: 'w',
+  handler: (e) => flyControls.handleKeyDown(e), // Start movement
+  keyupHandler: (e) => flyControls.handleKeyUp(e), // Stop movement
+  description: 'Fly forward',
+});
+```
+
+**When to use keyupHandler**:
+
+- ✅ Keys that toggle state on press/release (Shift, modifier keys)
+- ✅ Keys that start/stop continuous actions (fly movement)
+- ❌ Toggle actions (ON/OFF) - use keydown only, no keyupHandler
+
+#### 4. Context-Specific Bindings
+
+Only active in specific modes:
+
+```typescript
+this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+  key: 'b',
+  handler: () => this.boost(),
+  description: 'Speed boost',
+});
+```
+
+#### 5. Conditional preventDefault
+
+For keys that shouldn't block browser shortcuts:
+
+```typescript
+this.contextManager.registerBinding(InputContext.NAVIGATION, {
+  key: 'r',
+  preventDefault: false, // Don't always prevent
+  handler: (event) => {
+    // Only execute without modifiers (allows Cmd+R browser refresh)
+    if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      event.preventDefault(); // Prevent here conditionally
+      this.resetView();
     }
-  }
+  },
+});
+```
+
+#### 6. Multiple Modifier Combinations
+
+For keys that work with different modifier combinations:
+
+```typescript
+// Register w, Shift+w, Alt+w, Shift+Alt+w separately
+const modifierCombos = [{}, { shift: true }, { alt: true }, { shift: true, alt: true }];
+
+for (const mods of modifierCombos) {
+  this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
+    key: 'w',
+    modifiers: Object.keys(mods).length > 0 ? mods : undefined,
+    handler: (e) => this.handleMovement(e),
+    keyupHandler: (e) => this.stopMovement(e),
+  });
 }
 ```
+
+**Automatic Features**:
+
+- ✅ Context filtering (key only works in registered context)
+- ✅ Case-insensitive matching ('h' and 'H' both work)
+- ✅ Typing detection (shortcuts blocked when typing in inputs)
+- ✅ Passthrough (unhandled keys pass to lower-priority contexts)
+- ✅ keyupHandler called automatically on keyup events
 
 ---
 
@@ -596,36 +678,43 @@ The `input-handler-utils.ts` module provides pure utility functions for input pr
 ### Dimension Navigation Utilities
 
 **`getNonDisplayedDimensions(dimensions, displayedDims)`**
+
 - Returns array of non-displayed dimension indices for nD navigation
 - Used to determine which dimensions can be navigated with keyboard shortcuts
 
 **`mapKeyToDimension(key, nonDisplayedDims)`**
+
 - Maps number keys (1-9) to dimension indices
 - Returns dimension index or `null` if key doesn't map to a dimension
 - Example: Key '1' → first non-displayed dimension
 
 **`isNavigationKey(key, nonDisplayedDims)`**
+
 - Checks if a key is valid for dimension navigation
 - Returns `true` for: number keys (1-9), bracket keys ([, ]), or arrow keys if non-displayed dimensions exist
 
 **`calculateStepSize(dimension, direction)`**
+
 - Calculates step size for dimension navigation based on dimension configuration
 - Uses dimension's `step` property if available
 - Falls back to range-based calculation: `(max - min) / 100`
 - `direction`: 1 for forward, -1 for backward
 
 **`calculateNextPosition(currentPos, dimension, direction, stepSize)`**
+
 - Calculates next slider position with proper clamping to dimension range
 - Handles categorical dimensions (snaps to category indices)
 - Clamps continuous dimensions to [min, max] range
 
 **`formatDimensionValue(value, dimension)`**
+
 - Formats dimension value for display
 - Categorical: returns category label at index
 - Continuous: returns number with appropriate precision
 - Handles edge cases (out of range, missing categories)
 
 **`generateNavigationHelp(dimensions, displayedDims)`**
+
 - Generates help text showing dimension navigation keyboard shortcuts
 - Returns formatted string like: "1: time [0-100], 2: channel [0-3]"
 - Only includes non-displayed dimensions
@@ -633,6 +722,7 @@ The `input-handler-utils.ts` module provides pure utility functions for input pr
 ### FOV (Field of View) Utilities
 
 **`calculateFovChange(currentFov, direction, speed = 1.0)`**
+
 - Calculates new FOV value for zoom operations
 - `direction`: 1 for zoom out, -1 for zoom in
 - `speed`: multiplier for zoom speed (default 1.0)
@@ -640,6 +730,7 @@ The `input-handler-utils.ts` module provides pure utility functions for input pr
 - Uses exponential scaling: 5° per step
 
 **Example**:
+
 ```typescript
 const newFov = calculateFovChange(60, -1); // Zoom in: 60° → 55°
 ```
@@ -647,12 +738,14 @@ const newFov = calculateFovChange(60, -1); // Zoom in: 60° → 55°
 ### Camera Control Utilities
 
 **`shouldBlockShortcut(key, modifiers)`**
+
 - Determines if a keyboard shortcut should be blocked based on context
 - Blocks shortcuts when typing in input fields, textareas, or contenteditable elements
 - `modifiers`: object with `ctrl`, `shift`, `alt`, `meta` booleans
 - Returns `true` if shortcut should be blocked
 
 **Example**:
+
 ```typescript
 if (shouldBlockShortcut('v', { ctrl: false, shift: false })) {
   return; // User is typing, don't trigger view mode switch

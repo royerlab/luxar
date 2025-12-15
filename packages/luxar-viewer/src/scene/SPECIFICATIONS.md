@@ -1041,11 +1041,11 @@ class SceneDimsManager {
 
 When initializing non-displayed dimensions, the system uses a type-aware strategy:
 
-| Dimension Type | Initial Value | Rationale | Examples |
-|----------------|---------------|-----------|----------|
-| **Discrete/Categorical** | **Minimum (first position)** | Sequence data starts at beginning, not middle | Time series (t=0), channels (channel 0), frames (frame 0) |
-| **Continuous Spatial** | **Center** | No natural "first" position in spatial dimensions | 4th spatial dimension (W=0), hyperspatial coordinates |
-| **Displayed (X,Y,Z)** | **0** | Camera-controlled, not slice-controlled | Displayed X, Y, Z axes |
+| Dimension Type           | Initial Value                | Rationale                                         | Examples                                                  |
+| ------------------------ | ---------------------------- | ------------------------------------------------- | --------------------------------------------------------- |
+| **Discrete/Categorical** | **Minimum (first position)** | Sequence data starts at beginning, not middle     | Time series (t=0), channels (channel 0), frames (frame 0) |
+| **Continuous Spatial**   | **Center**                   | No natural "first" position in spatial dimensions | 4th spatial dimension (W=0), hyperspatial coordinates     |
+| **Displayed (X,Y,Z)**    | **0**                        | Camera-controlled, not slice-controlled           | Displayed X, Y, Z axes                                    |
 
 **Implementation** (simplified from actual code):
 
@@ -1059,10 +1059,10 @@ for (let i = 0; i < ndim; i++) {
 
     // Discrete/categorical: start at first position (minimum)
     if (metadata[i].discrete || metadata[i].categories) {
-      currentStep[i] = min;  // e.g., t=0, channel=0
+      currentStep[i] = min; // e.g., t=0, channel=0
     } else {
       // Continuous spatial: start at center
-      currentStep[i] = (min + max) / 2;  // e.g., W=0 for range [-100, 100]
+      currentStep[i] = (min + max) / 2; // e.g., W=0 for range [-100, 100]
     }
   }
   // Displayed dimensions start at 0 (camera controls actual view)
@@ -1114,14 +1114,14 @@ this.animationController.startAnimation();
 1. sceneDimsManager.initFromScene(scene)
    → Dimension state created with initial positions
    → Listeners list empty, so no notifications
-   
+
 2. sceneDimsManager.addListener(callback)
    → Listener registered for future updates
-   
+
 3. inputHandler.updateAllNDNodes()  ← INITIAL TRIGGER
    → Data loads at correct initial position
    → First render with proper slice
-   
+
 4. User changes slider
    → sceneDimsManager.setDimensionValue()
    → notifyListeners() → callback() → updateAllNDNodes()
@@ -1238,7 +1238,6 @@ function validateSceneDimensions(scene: THREE.Scene): boolean {
 }
 ```
 
-
 ---
 
 ## Data Structures
@@ -1319,7 +1318,6 @@ interface SceneDimsManager {
   - **IMPROVED**: Discrete/categorical dimensions now initialize to minimum (t=0, channel=0) not center
   - **IMPROVED**: Documentation now matches actual implementation in scene-dims-manager.ts:118-194 and input-handler.ts:191-194
   - Documents fixes from commits 3c548d5 and d619d82
-
 
 - **v1.4.0** (2025-12-10): Camera-inside-bounding-box handling
   - **IMPROVED**: Dynamic clipping now detects when camera is inside the bounding box

@@ -665,11 +665,11 @@ export class RenderingControls {
     // Override updateDisplay to show actual intensity value instead of log value
     // This is necessary because lil-gui doesn't support custom value formatters
     const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
-     
+
     (hdrControl as any).updateDisplay = () => {
       originalUpdateDisplay();
       // After lil-gui updates the display, override the input value with formatted intensity
-       
+
       const input = (hdrControl as any).$input as HTMLInputElement | undefined;
       if (input) {
         input.value = formatIntensity(this.hdrLogValue.log);
@@ -825,9 +825,7 @@ export class RenderingControls {
         this.triggerAnimation();
       });
 
-    // SMAA settings (collapsible)
-    const smaaFolder = aaFolder.addFolder('SMAA Settings');
-
+    // SMAA anti-aliasing (no subfolder needed - only on/off toggle)
     const smaaControl = aaFolder
       .add(this.settings, 'smaaEnabled')
       .name('SMAA Enabled')
@@ -835,14 +833,6 @@ export class RenderingControls {
         this.postProcessing.setSMAAEnabled(value);
         this.saveSettings();
         this.triggerAnimation();
-        // Show/hide SMAA settings folder
-        if (value) {
-          smaaFolder.show();
-          smaaFolder.open();
-        } else {
-          smaaFolder.close();
-          smaaFolder.hide();
-        }
       });
 
     // Set tooltip for SMAA
@@ -852,26 +842,13 @@ export class RenderingControls {
         '• Advanced edge detection anti-aliasing\n' +
         '• Better quality than FXAA, faster than SSAA\n' +
         '• Preserves sharpness while smoothing edges\n' +
-        '• Good balance of quality and performance'
+        '• Good balance of quality and performance\n' +
+        '• Uses HIGH preset (optimal quality/performance balance)'
     );
 
-    smaaFolder
-      .add(this.settings, 'smaaThreshold', 0.05, 0.2, 0.01)
-      .name('Edge Threshold')
-      .onChange((_value: number) => {
-        this.postProcessing.updateSMAASettings();
-        this.saveSettings();
-        this.triggerAnimation();
-      });
-
-    smaaFolder
-      .add(this.settings, 'smaaSearchSteps', [4, 8, 16, 32])
-      .name('Search Steps')
-      .onChange((_value: number) => {
-        this.postProcessing.updateSMAASettings();
-        this.saveSettings();
-        this.triggerAnimation();
-      });
+    // Note: SMAA threshold and search steps controls removed because pmndrs/postprocessing
+    // SMAAEffect only supports preset-based configuration (LOW/MEDIUM/HIGH/ULTRA).
+    // Fine-grained control is not available in the underlying library.
 
     // Initially show/hide folders based on settings
     if (this.settings.ssaaEnabled) {
@@ -883,10 +860,6 @@ export class RenderingControls {
 
     if (!this.settings.msaaEnabled) {
       msaaFolder.hide();
-    }
-
-    if (!this.settings.smaaEnabled) {
-      smaaFolder.hide();
     }
 
     // Post-Processing Effects folder
@@ -1477,10 +1450,41 @@ export class RenderingControls {
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
-    // Apply all settings to the rendering pipeline
+    // Sync logarithmic HDR slider shadow value
+    this.hdrLogValue.log = Math.log10(this.settings.hdrMultiplier);
+
+    // Clear saved settings for this scene (before applying, so user sees clean state)
+    if (this.sceneId) {
+      const key = generateSettingsKey(this.sceneId);
+      localStorage.removeItem(key);
+    }
+
+    // Apply camera settings to scene manager (before post-processing)
+    const currentFOV = this.sceneManager.camera.fov;
+    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
+      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
+      this.sceneManager.updateFOV(delta);
+    }
+
+    // Apply clipping planes (reset to defaults)
+    this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+
+    // Apply navigation control settings
+    // Use defaults object directly since we just assigned these concrete values
+    this.sceneManager.setControlType(this.settings.controlType);
+    this.sceneManager.setAutoRotate(this.settings.autoRotate);
+    this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setFlyMovementSpeed(defaults.flyMovementSpeed);
+    this.sceneManager.setFlyRotationSpeed(defaults.flyRotationSpeed);
+    this.sceneManager.setFlyInertialMode(defaults.flyInertialMode);
+    this.sceneManager.setFlyDamping(defaults.flyDamping);
+    this.sceneManager.setFlyRotationDamping(defaults.flyRotationDamping);
+
+    // Apply all post-processing settings to the rendering pipeline
+    // Note: applySettings() also applies dynamic clipping and triggers animation
     this.applySettings();
 
-    // Update all GUI controllers to reflect new values
+    // Update all GUI controllers to reflect new values (after all settings applied)
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
     });
@@ -1515,25 +1519,6 @@ export class RenderingControls {
         this.controllers.flyRotationDamping.hide();
       }
     }
-
-    // Clear saved settings for this scene
-    if (this.sceneId) {
-      const key = generateSettingsKey(this.sceneId);
-      localStorage.removeItem(key);
-    }
-
-    // Apply control type change to scene manager
-    this.sceneManager.setControlType(this.settings.controlType);
-
-    // Apply FOV change
-    const currentFOV = this.sceneManager.camera.fov;
-    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
-      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
-      this.sceneManager.updateFOV(delta);
-    }
-
-    // Trigger render
-    this.triggerAnimation();
 
     log.info(Modules.RENDERER, 'Rendering settings reset to defaults');
   }
@@ -1699,6 +1684,40 @@ export class RenderingControls {
 
     // Load settings for this scene (will apply if found)
     this.loadSettings();
+
+    // Apply camera settings after loading (fov, near, far)
+    // This ensures loaded settings are actually applied to the camera
+    // Note: Dynamic clipping is applied later via applySettings()
+    const currentFOV = this.sceneManager.camera.fov;
+    if (Math.abs(currentFOV - this.settings.fov) > 0.5) {
+      const delta = (this.settings.fov - currentFOV) / config.camera.fovSensitivity;
+      this.sceneManager.updateFOV(delta);
+    }
+
+    // Apply clipping planes
+    this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+
+    // Apply navigation control settings
+    this.sceneManager.setControlType(this.settings.controlType);
+    this.sceneManager.setAutoRotate(this.settings.autoRotate);
+    this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+
+    // Apply fly control settings (if they exist in loaded settings)
+    if (this.settings.flyMovementSpeed !== undefined) {
+      this.sceneManager.setFlyMovementSpeed(this.settings.flyMovementSpeed);
+    }
+    if (this.settings.flyRotationSpeed !== undefined) {
+      this.sceneManager.setFlyRotationSpeed(this.settings.flyRotationSpeed);
+    }
+    if (this.settings.flyInertialMode !== undefined) {
+      this.sceneManager.setFlyInertialMode(this.settings.flyInertialMode);
+    }
+    if (this.settings.flyDamping !== undefined) {
+      this.sceneManager.setFlyDamping(this.settings.flyDamping);
+    }
+    if (this.settings.flyRotationDamping !== undefined) {
+      this.sceneManager.setFlyRotationDamping(this.settings.flyRotationDamping);
+    }
 
     // Always apply current settings to ensure proper initialization
     // This is needed when no stored settings exist (first time loading)
@@ -1877,6 +1896,7 @@ export class RenderingControls {
     const flyConfig = this.sceneManager.controls.getFlyConfig();
     this.settings.flyInertialMode = flyConfig.inertialMode;
     this.settings.flyMovementSpeed = flyConfig.movementSpeed;
+    this.settings.flyRotationSpeed = flyConfig.rotationSpeed;
     this.settings.flyDamping = flyConfig.damping;
     this.settings.flyRotationDamping = flyConfig.rotationDamping;
 
@@ -1900,6 +1920,11 @@ export class RenderingControls {
     if (this.controllers.flyMovementSpeed) {
       this.controllers.flyMovementSpeed.setValue(this.settings.flyMovementSpeed);
       this.controllers.flyMovementSpeed.updateDisplay();
+    }
+
+    if (this.controllers.flyRotationSpeed) {
+      this.controllers.flyRotationSpeed.setValue(this.settings.flyRotationSpeed);
+      this.controllers.flyRotationSpeed.updateDisplay();
     }
 
     if (this.controllers.flyDamping) {
@@ -2085,10 +2110,8 @@ export class RenderingControls {
       this.settings.lensSkew
     );
 
-    // Apply ambient occlusion
-    if (this.settings.aoEnabled) {
-      this.postProcessing.setAOEnabled(true, this.settings.aoQuality);
-    }
+    // Apply ambient occlusion (always call to ensure proper enable/disable)
+    this.postProcessing.setAOEnabled(this.settings.aoEnabled, this.settings.aoQuality);
 
     // Apply dynamic clipping settings
     this.sceneManager.setDynamicClipping(

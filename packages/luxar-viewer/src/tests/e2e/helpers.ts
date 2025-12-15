@@ -479,10 +479,7 @@ export async function assertConsoleDoesNotContain(
  * @param page - Playwright page
  * @param timeout - Maximum wait time in ms
  */
-export async function waitForDimensionSystemReady(
-  page: Page,
-  timeout = 10000
-): Promise<boolean> {
+export async function waitForDimensionSystemReady(page: Page, timeout = 10000): Promise<boolean> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
