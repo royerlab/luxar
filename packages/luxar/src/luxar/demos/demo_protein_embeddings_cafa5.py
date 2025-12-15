@@ -250,18 +250,18 @@ def load_protein_embeddings(
         if not npy_files:
             raise FileNotFoundError(f"No .npy files found in {data_dir}")
 
-        # Find train_embeddings.npy and train_ids.npy
-        embedding_file = None
-        ids_file = None
+        # Find the LARGEST train_embeddings.npy (main dataset, not subsets)
+        embedding_candidates = [f for f in npy_files if 'embeddings' in f.name and 'train' in f.name]
+        ids_candidates = [f for f in npy_files if 'ids' in f.name and 'train' in f.name]
 
-        for npy_file in npy_files:
-            if 'embeddings' in npy_file.name and 'train' in npy_file.name:
-                embedding_file = npy_file
-            if 'ids' in npy_file.name and 'train' in npy_file.name:
-                ids_file = npy_file
-
-        if not embedding_file:
+        if not embedding_candidates:
             raise FileNotFoundError("Could not find train_embeddings.npy")
+
+        # Use the largest embedding file (full dataset)
+        embedding_file = max(embedding_candidates, key=lambda f: f.stat().st_size)
+        ids_file = max(ids_candidates, key=lambda f: f.stat().st_size) if ids_candidates else None
+
+        aprint(f"Selected embeddings file: {embedding_file.name} ({embedding_file.stat().st_size / (1024**2):.1f} MB)")
 
         aprint(f"Loading embeddings: {embedding_file.name}")
         embeddings = np.load(embedding_file)
