@@ -22,8 +22,15 @@ export function setupCameraControls(
   context: SetupContext,
   controllersRef: SetupResult['controllers']
 ): SetupResult {
-  const { gui, settings, sceneManager, postProcessing, saveSettings, triggerAnimation, updateClippingControlsState } =
-    context;
+  const {
+    gui,
+    settings,
+    sceneManager,
+    postProcessing,
+    saveSettings,
+    triggerAnimation,
+    updateClippingControlsState,
+  } = context;
 
   const controllers: SetupResult['controllers'] = {};
 
