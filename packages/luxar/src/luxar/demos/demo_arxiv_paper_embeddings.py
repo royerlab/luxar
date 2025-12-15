@@ -273,6 +273,8 @@ def reduce_embeddings_umap(
             n_components=n_components,
             n_neighbors=n_neighbors,
             metric="cosine",
+            n_jobs=-1,  # Use ALL CPU cores for massive speedup!
+            low_memory=False,  # Speed optimization (uses more RAM)
             random_state=42,
             verbose=True,
         )
