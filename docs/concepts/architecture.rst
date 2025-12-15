@@ -6,14 +6,17 @@ This guide explains the fundamental ideas, design philosophy, and architectural 
 Big Picture: What is Luxar?
 ----------------------------
 
-Luxar is a **visualization system for massive nD point cloud data** that enables:
+Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, surfaces, volumes, and more. It enables:
 
-* **Interactive exploration** of billion-point datasets at 60 FPS
+* **Interactive exploration** of billion-primitive datasets (points, lines, splats) at 60 FPS
 * **Arbitrary dimensionality** (3D, 4D, 5D, nD) with intuitive navigation
 * **Memory efficiency** through progressive loading and intelligent caching
 * **High quality rendering** with HDR support and post-processing effects
+* **Multi-primitive scenes**: Points, lines, Gaussian splats, with future support for meshes and volumes
 
 **Key Innovation**: Combine spatial indexing with nD hypersphere slicing to enable interactive exploration of datasets that don't fit in memory.
+
+Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
 Design Philosophy
 -----------------

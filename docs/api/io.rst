@@ -16,7 +16,7 @@ The I/O package provides two main classes:
 * **LuxarZarrCompiler**: Progressive writer for creating Zarr datasets
 * **LuxarScene**: Reader for loading and querying Zarr datasets
 
-Both classes work together to enable efficient streaming of massive point cloud datasets.
+Both classes work together to enable efficient streaming of massive n-dimensional scenes with points, lines, Gaussian splats, and other primitives.
 
 LuxarZarrCompiler
 -----------------
