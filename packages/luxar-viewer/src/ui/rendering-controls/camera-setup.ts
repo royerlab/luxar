@@ -1,0 +1,287 @@
+/**
+ * Camera controls setup for rendering controls UI.
+ *
+ * Creates controls for camera-specific settings:
+ * - FOV presets (28mm, 35mm, 50mm, 85mm, 135mm, Custom)
+ * - FOV slider
+ * - Clipping planes (near, far, dynamic clipping with adapt speed)
+ */
+
+import { config } from '../../config';
+import { log, Modules } from '../../utils/log';
+import type { SetupContext, SetupResult } from './types';
+
+/**
+ * Set up camera controls in the rendering controls GUI.
+ *
+ * @param context - Setup context with GUI, settings, and callbacks
+ * @param controllersRef - Reference to controllers object (needed for FOV preset lens distortion updates)
+ * @returns Setup result with controller references
+ */
+export function setupCameraControls(
+  context: SetupContext,
+  controllersRef: SetupResult['controllers']
+): SetupResult {
+  const { gui, settings, sceneManager, postProcessing, saveSettings, triggerAnimation, updateClippingControlsState } =
+    context;
+
+  const controllers: SetupResult['controllers'] = {};
+
+  // Camera folder - for camera-specific settings
+  const cameraFolder = gui.addFolder('Camera');
+  cameraFolder.open();
+
+  // FOV Preset dropdown
+  const presetOptions = Object.keys(config.camera.fovPresets);
+  const fovPresetControl = cameraFolder
+    .add(settings, 'fovPreset', presetOptions)
+    .name('FOV Preset')
+    .onChange((presetName: string) => {
+      const fovValue = config.camera.fovPresets[presetName];
+      if (fovValue > 0) {
+        // Apply preset FOV
+        settings.fov = fovValue;
+
+        // Calculate delta and apply to camera
+        const currentFOV = sceneManager.camera.fov;
+        const delta = (fovValue - currentFOV) / config.camera.fovSensitivity;
+        sceneManager.updateFOV(delta);
+
+        // Update FOV slider display
+        if (controllersRef.fov) {
+          controllersRef.fov.setValue(fovValue);
+          controllersRef.fov.updateDisplay();
+        }
+
+        // Apply corresponding lens distortion preset (if lens distortion is enabled)
+        const lensPreset = config.camera.lensDistortionPresets[presetName];
+        if (lensPreset && settings.lensDistortionEnabled) {
+          settings.lensDistortionX = lensPreset.distortionX;
+          settings.lensDistortionY = lensPreset.distortionY;
+          settings.lensPrincipalPointX = lensPreset.principalPointX;
+          settings.lensPrincipalPointY = lensPreset.principalPointY;
+          settings.lensFocalLengthX = lensPreset.focalLengthX;
+          settings.lensFocalLengthY = lensPreset.focalLengthY;
+          settings.lensSkew = lensPreset.skew;
+
+          // Apply lens distortion changes
+          postProcessing.updateLensDistortion({
+            distortionX: lensPreset.distortionX,
+            distortionY: lensPreset.distortionY,
+            principalPointX: lensPreset.principalPointX,
+            principalPointY: lensPreset.principalPointY,
+            focalLengthX: lensPreset.focalLengthX,
+            focalLengthY: lensPreset.focalLengthY,
+            skew: lensPreset.skew,
+          });
+
+          // Update lens distortion UI controllers to reflect new values
+          if (controllersRef.lensDistortionX) {
+            controllersRef.lensDistortionX.setValue(lensPreset.distortionX);
+            controllersRef.lensDistortionX.updateDisplay();
+          }
+          if (controllersRef.lensDistortionY) {
+            controllersRef.lensDistortionY.setValue(lensPreset.distortionY);
+            controllersRef.lensDistortionY.updateDisplay();
+          }
+          if (controllersRef.lensPrincipalPointX) {
+            controllersRef.lensPrincipalPointX.setValue(lensPreset.principalPointX);
+            controllersRef.lensPrincipalPointX.updateDisplay();
+          }
+          if (controllersRef.lensPrincipalPointY) {
+            controllersRef.lensPrincipalPointY.setValue(lensPreset.principalPointY);
+            controllersRef.lensPrincipalPointY.updateDisplay();
+          }
+          if (controllersRef.lensFocalLengthX) {
+            controllersRef.lensFocalLengthX.setValue(lensPreset.focalLengthX);
+            controllersRef.lensFocalLengthX.updateDisplay();
+          }
+          if (controllersRef.lensFocalLengthY) {
+            controllersRef.lensFocalLengthY.setValue(lensPreset.focalLengthY);
+            controllersRef.lensFocalLengthY.updateDisplay();
+          }
+          if (controllersRef.lensSkew) {
+            controllersRef.lensSkew.setValue(lensPreset.skew);
+            controllersRef.lensSkew.updateDisplay();
+          }
+        }
+      }
+
+      saveSettings();
+      triggerAnimation();
+    });
+
+  // Store reference for updates
+  controllers.fovPreset = fovPresetControl;
+
+  // Set tooltip for FOV presets
+  fovPresetControl.domElement.setAttribute(
+    'title',
+    'FOV Preset: Professional camera lens equivalents (horizontal FOV)\n' +
+      '• 28mm Wide (75°): Ultra-wide angle + barrel distortion\n' +
+      '• 35mm (63°): Wide angle + moderate barrel distortion\n' +
+      '• 50mm Normal (47°): Natural human vision + no distortion\n' +
+      '• 85mm Portrait (29°): Telephoto + slight pincushion\n' +
+      '• 135mm Tele (18°): Strong telephoto + pincushion distortion\n' +
+      '• Custom: Manual FOV control via slider or Shift+Wheel\n' +
+      '• Note: Also applies realistic lens distortion when enabled'
+  );
+
+  const fovControl = cameraFolder
+    .add(settings, 'fov', config.camera.fovMin, config.camera.fovMax, 1)
+    .name('Field of View')
+    .onChange((value: number) => {
+      // When FOV slider changes, switch to Custom preset
+      settings.fovPreset = 'Custom';
+      if (controllersRef.fovPreset) {
+        controllersRef.fovPreset.setValue('Custom');
+        controllersRef.fovPreset.updateDisplay();
+      }
+
+      // Calculate the delta needed to reach the target FOV
+      const currentFOV = sceneManager.camera.fov;
+      const targetFOV = value;
+      const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
+
+      // Use the existing updateFOV method which handles bounds checking and material updates
+      sceneManager.updateFOV(delta);
+
+      saveSettings();
+      triggerAnimation();
+    });
+
+  // Store reference for updates
+  controllers.fov = fovControl;
+
+  // Set tooltip for FOV control
+  fovControl.domElement.setAttribute(
+    'title',
+    'Field of View: Camera viewing angle in degrees\n' +
+      '• Lower values: Telephoto lens effect (narrow view)\n' +
+      '• Higher values: Wide-angle lens effect (broader view)\n' +
+      '• 47° (50mm Normal) provides natural human-like viewing angle\n' +
+      '• Also controllable with Shift+Wheel for fine adjustment\n' +
+      '• Maintains world-space point sizing (points stay same physical size)'
+  );
+
+  // Clipping Planes sub-folder
+  const clippingFolder = cameraFolder.addFolder('Clipping Planes');
+  clippingFolder.close(); // Collapsed by default (advanced setting)
+
+  const nearPlaneControl = clippingFolder
+    .add(settings, 'near', 0.001, 10.0, 0.001)
+    .name('Near Plane')
+    .onChange((value: number) => {
+      // Validate near plane is less than far plane
+      if (value >= settings.far) {
+        log.warning(Modules.RENDERER, 'Near plane must be less than far plane');
+        return;
+      }
+      sceneManager.updateClippingPlanes(value, settings.far);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  const farPlaneControl = clippingFolder
+    .add(settings, 'far', 10, 10000, 1)
+    .name('Far Plane')
+    .onChange((value: number) => {
+      // Validate far plane is greater than near plane
+      if (value <= settings.near) {
+        log.warning(Modules.RENDERER, 'Far plane must be greater than near plane');
+        return;
+      }
+      sceneManager.updateClippingPlanes(settings.near, value);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  // Store references for updates
+  controllers.nearPlane = nearPlaneControl;
+  controllers.farPlane = farPlaneControl;
+
+  // Set tooltips for clipping planes
+  nearPlaneControl.domElement.setAttribute(
+    'title',
+    'Near Clipping Plane: Closest visible distance\n' +
+      '• Objects closer than this are not rendered\n' +
+      '• Lower values: See objects very close to camera\n' +
+      '• Higher values: Better Z-buffer precision\n' +
+      '• Too low can cause Z-fighting artifacts'
+  );
+
+  farPlaneControl.domElement.setAttribute(
+    'title',
+    'Far Clipping Plane: Furthest visible distance\n' +
+      '• Objects further than this are not rendered\n' +
+      '• Higher values: See distant objects\n' +
+      '• Lower values: Better Z-buffer precision\n' +
+      '• Keep near/far ratio under 10,000:1 for best precision'
+  );
+
+  // Dynamic clipping checkbox - auto-adjusts clipping planes each frame
+  const dynamicClippingControl = clippingFolder
+    .add(settings, 'dynamicClippingEnabled')
+    .name('Dynamic Clipping')
+    .onChange((value: boolean) => {
+      sceneManager.setDynamicClipping(value, settings.clippingAdaptSpeed);
+      saveSettings();
+      triggerAnimation();
+
+      // Enable/disable manual near/far controls
+      updateClippingControlsState(value);
+
+      // Show/hide adapt speed slider
+      if (value) {
+        adaptSpeedControl.show();
+      } else {
+        adaptSpeedControl.hide();
+      }
+    });
+
+  // Store reference
+  controllers.dynamicClippingEnabled = dynamicClippingControl;
+
+  dynamicClippingControl.domElement.setAttribute(
+    'title',
+    'Dynamic Clipping: Auto-adjust clipping planes each frame\n' +
+      '• Smoothly adapts to camera position and scene bounds\n' +
+      '• Uses exponential smoothing for stable transitions\n' +
+      '• Maximizes Z-buffer precision at all times\n' +
+      '• When enabled, manual near/far controls are disabled'
+  );
+
+  // Adapt speed slider (only visible when dynamic clipping is enabled)
+  const adaptSpeedControl = clippingFolder
+    .add(settings, 'clippingAdaptSpeed', 0.01, 0.5, 0.01)
+    .name('Adapt Speed')
+    .onChange((value: number) => {
+      sceneManager.setDynamicClipping(settings.dynamicClippingEnabled, value);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  // Store reference
+  controllers.clippingAdaptSpeed = adaptSpeedControl;
+
+  adaptSpeedControl.domElement.setAttribute(
+    'title',
+    'Adapt Speed: How quickly clipping planes adjust\n' +
+      '• 0.01 = Very slow, smooth transitions\n' +
+      '• 0.1 = Balanced responsiveness (default)\n' +
+      '• 0.5 = Fast adaptation, may cause jitter\n' +
+      '• Lower values = smoother but slower response'
+  );
+
+  // Initially show/hide adapt speed based on dynamic clipping state
+  if (!settings.dynamicClippingEnabled) {
+    adaptSpeedControl.hide();
+  }
+
+  // Update manual controls state based on initial dynamic clipping setting
+  updateClippingControlsState(settings.dynamicClippingEnabled);
+
+  return {
+    controllers,
+  };
+}
