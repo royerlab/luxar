@@ -131,6 +131,42 @@ class DirectoryListingStaticFiles(StaticFiles):
         return await super().get_response(path, scope)
 
 
+def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
+    """Create a FastAPI server application for serving Zarr data.
+
+    This function is used by both the CLI and integration tests to create
+    a configured server instance.
+
+    Args:
+        path: Path to directory or Zarr dataset to serve
+        serve_viewer: Whether to include viewer static files (not used in basic tests)
+
+    Returns:
+        FastAPI application instance
+    """
+    api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
+
+    # Add CORS middleware to allow requests from the viewer
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for development
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add health check endpoint
+    @api.get("/health")
+    async def health():
+        """Health check endpoint."""
+        return {"status": "ok"}
+
+    # Mount the static files handler with directory listing
+    api.mount("/", DirectoryListingStaticFiles(directory=path, html=True))
+
+    return api
+
+
 app = typer.Typer(help="luxar – build and serve Zarr-backed 3-D scenes")
 
 
