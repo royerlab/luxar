@@ -85,7 +85,18 @@ export class DimensionSliders {
   private dropdowns: Map<number, HTMLSelectElement> = new Map();
 
   /** Map to store bound event handlers for cleanup */
-  private eventHandlers: Map<number, { input?: () => void; keydown?: (e: KeyboardEvent) => void; change?: () => void }> = new Map();
+  private eventHandlers: Map<
+    number,
+    {
+      input?: () => void;
+      keydown?: (e: KeyboardEvent) => void;
+      change?: () => void;
+      mouseenter?: () => void;
+      mouseleave?: () => void;
+      focus?: () => void;
+      blur?: () => void;
+    }
+  > = new Map();
 
   /**
    * Create and initialize the dimension slider UI component.
@@ -216,12 +227,12 @@ export class DimensionSliders {
     for (const [dimIndex, dropdown] of this.dropdowns) {
       const handlers = this.eventHandlers.get(dimIndex);
       if (handlers) {
-        if (handlers.change) {
-          dropdown.removeEventListener('change', handlers.change);
-        }
-        if (handlers.keydown) {
-          dropdown.removeEventListener('keydown', handlers.keydown);
-        }
+        if (handlers.change) dropdown.removeEventListener('change', handlers.change);
+        if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
+        if (handlers.mouseenter) dropdown.removeEventListener('mouseenter', handlers.mouseenter);
+        if (handlers.mouseleave) dropdown.removeEventListener('mouseleave', handlers.mouseleave);
+        if (handlers.focus) dropdown.removeEventListener('focus', handlers.focus);
+        if (handlers.blur) dropdown.removeEventListener('blur', handlers.blur);
       }
     }
 
@@ -372,23 +383,29 @@ export class DimensionSliders {
     dropdown.style.outline = 'none';
     dropdown.style.fontFamily = 'inherit';
 
-    // Hover/focus states matching Luxar style (green accent)
-    dropdown.addEventListener('mouseenter', () => {
+    // Create bound handlers for hover/focus states
+    const mouseenterHandler = () => {
       dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
       dropdown.style.borderColor = 'rgba(76, 175, 80, 0.5)';
-    });
-    dropdown.addEventListener('mouseleave', () => {
+    };
+    const mouseleaveHandler = () => {
       dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
       dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-    });
-    dropdown.addEventListener('focus', () => {
+    };
+    const focusHandler = () => {
       dropdown.style.borderColor = '#4CAF50';
       dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
-    });
-    dropdown.addEventListener('blur', () => {
+    };
+    const blurHandler = () => {
       dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
       dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-    });
+    };
+
+    // Add hover/focus state handlers
+    dropdown.addEventListener('mouseenter', mouseenterHandler);
+    dropdown.addEventListener('mouseleave', mouseleaveHandler);
+    dropdown.addEventListener('focus', focusHandler);
+    dropdown.addEventListener('blur', blurHandler);
 
     // Populate dropdown with categories
     categories.forEach((category, index) => {
@@ -441,8 +458,15 @@ export class DimensionSliders {
     dropdown.addEventListener('change', changeHandler);
     dropdown.addEventListener('keydown', keydownHandler);
 
-    // Store handlers for cleanup
-    this.eventHandlers.set(dimIndex, { change: changeHandler, keydown: keydownHandler });
+    // Store all handlers for cleanup
+    this.eventHandlers.set(dimIndex, {
+      change: changeHandler,
+      keydown: keydownHandler,
+      mouseenter: mouseenterHandler,
+      mouseleave: mouseleaveHandler,
+      focus: focusHandler,
+      blur: blurHandler,
+    });
 
     dropdownItem.appendChild(label);
     dropdownItem.appendChild(dropdown);
@@ -914,12 +938,12 @@ export class DimensionSliders {
     for (const [dimIndex, dropdown] of this.dropdowns) {
       const handlers = this.eventHandlers.get(dimIndex);
       if (handlers) {
-        if (handlers.change) {
-          dropdown.removeEventListener('change', handlers.change);
-        }
-        if (handlers.keydown) {
-          dropdown.removeEventListener('keydown', handlers.keydown);
-        }
+        if (handlers.change) dropdown.removeEventListener('change', handlers.change);
+        if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
+        if (handlers.mouseenter) dropdown.removeEventListener('mouseenter', handlers.mouseenter);
+        if (handlers.mouseleave) dropdown.removeEventListener('mouseleave', handlers.mouseleave);
+        if (handlers.focus) dropdown.removeEventListener('focus', handlers.focus);
+        if (handlers.blur) dropdown.removeEventListener('blur', handlers.blur);
       }
     }
 
