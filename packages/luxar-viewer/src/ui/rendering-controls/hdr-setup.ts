@@ -16,10 +16,7 @@ import type { SetupContext, SetupResult } from './types';
  * @param hdrLogValue - Shadow object for logarithmic HDR intensity slider
  * @returns Setup result with controller references and shadow object
  */
-export function setupHDRControls(
-  context: SetupContext,
-  hdrLogValue: { log: number }
-): SetupResult {
+export function setupHDRControls(context: SetupContext, hdrLogValue: { log: number }): SetupResult {
   const { gui, settings, sceneManager, postProcessing, saveSettings, triggerAnimation } = context;
 
   const controllers: SetupResult['controllers'] = {};

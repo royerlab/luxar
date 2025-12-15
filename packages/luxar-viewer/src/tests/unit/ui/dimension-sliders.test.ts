@@ -151,9 +151,8 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
         dimensionNames: ['X', 'Y', 'Z', 'Time', 'Channel'],
       });
 
-      // Get initial slider count
+      // Get initial sliders
       const initialSliders = document.querySelectorAll('input[type="range"]');
-      const initialCount = initialSliders.length;
 
       // Access private createSliders method to test cleanup
       const sliders_any = sliders as any;
@@ -178,5 +177,4 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
       sliders.dispose();
     });
   });
-
 });

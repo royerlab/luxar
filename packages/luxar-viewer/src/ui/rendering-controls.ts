@@ -197,7 +197,6 @@ export class RenderingControls {
     // Store controller references
     Object.assign(this.controllers, cameraResult.controllers);
 
-
     // HDR controls
     const hdrResult = setupHDRControls(
       {

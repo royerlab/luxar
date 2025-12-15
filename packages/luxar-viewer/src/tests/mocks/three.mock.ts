@@ -604,7 +604,7 @@ export class Object3D {
   add = vi.fn(function (this: any, ...objects: any[]) {
     for (const object of objects) {
       if (object === this) {
-        console.error('Object3D.add: object can\'t be added as a child of itself.', object);
+        console.error("Object3D.add: object can't be added as a child of itself.", object);
         continue;
       }
 

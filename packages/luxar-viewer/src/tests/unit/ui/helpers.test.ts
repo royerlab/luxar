@@ -63,7 +63,9 @@ describe('UI Helpers - Critical Fixes', () => {
       showHelpOverlay();
 
       // Find the close button
-      const closeBtn = document.querySelector('button[title="Close (Escape)"]') as HTMLButtonElement;
+      const closeBtn = document.querySelector(
+        'button[title="Close (Escape)"]'
+      ) as HTMLButtonElement;
       expect(closeBtn).toBeTruthy();
 
       // Wait for timeout to add global listener
