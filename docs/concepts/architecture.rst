@@ -516,7 +516,7 @@ When to Use Luxar
 Luxar is Ideal For:
 ~~~~~~~~~~~~~~~~~~~
 
-* ✅ **Large point clouds** (>100K points, up to billions)
+* ✅ **Large datasets** (>100K primitives, up to billions of points/lines/splats)
 * ✅ **nD scientific data** (microscopy time-series, multi-channel imaging)
 * ✅ **Interactive exploration** (need to navigate/inspect data)
 * ✅ **Remote visualization** (data on server, view in browser)
