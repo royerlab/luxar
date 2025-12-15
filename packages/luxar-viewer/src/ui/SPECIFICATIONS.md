@@ -406,8 +406,21 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 - Deferred rebuild pattern to batch multiple effect changes
 - Auto-blur inputs to return focus to canvas
 - Tooltips on all controls for discoverability
+- **Modular setup functions**: Each control category in separate file (maintainability)
 
-**Key Components**:
+**Modular Structure**:
+
+The `RenderingControls` class delegates GUI creation to specialized setup modules in `./rendering-controls/`:
+
+1. **navigation-setup.ts**: Control type selector + orbit/fly mode settings
+2. **camera-setup.ts**: FOV presets + manual FOV slider + clipping planes
+3. **hdr-setup.ts**: Intensity (logarithmic slider) + tone mapping type
+4. **anti-aliasing-setup.ts**: SSAA, FXAA, MSAA, SMAA with settings
+5. **post-processing-setup.ts**: Bloom, noise, DoF, chromatic aberration, vignette, lens distortion, AO
+
+Each setup function takes a `SetupContext` (dependencies + callbacks) and returns a `SetupResult` (controller references). This reduces the main file from 2,514 to 1,350 lines while maintaining identical functionality. See [`./rendering-controls/README.md`](./rendering-controls/README.md) and [`./rendering-controls/SPECIFICATIONS.md`](./rendering-controls/SPECIFICATIONS.md) for details.
+
+**Key Control Categories**:
 
 1. **Navigation Folder**: Control type selector + mode-specific settings
 2. **Camera Folder**: FOV presets + manual FOV slider + clipping planes

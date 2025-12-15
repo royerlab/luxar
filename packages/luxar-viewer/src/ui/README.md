@@ -22,7 +22,14 @@ The Luxar UI package provides a comprehensive set of user interface components f
 ```
 ui/
 ├── dimension-sliders.ts         # nD navigation controls
-├── rendering-controls.ts        # Visual parameter adjustments
+├── rendering-controls.ts        # Visual parameter adjustments (main class)
+├── rendering-controls/          # Modular setup functions
+│   ├── types.ts                 # Shared types (SetupContext, SetupResult)
+│   ├── navigation-setup.ts      # Navigation controls (orbit, arcball, fly)
+│   ├── camera-setup.ts          # Camera settings (FOV, clipping)
+│   ├── hdr-setup.ts             # HDR intensity & tone mapping
+│   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, SMAA, MSAA, SSAA)
+│   └── post-processing-setup.ts # Effects (bloom, noise, DoF, etc.)
 ├── dataset-browser.ts           # Zarr dataset navigation
 ├── performance-monitor.ts       # FPS and performance stats
 ├── data-loading-monitor.ts      # Data loading performance monitoring
@@ -84,7 +91,7 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 - **Visual Effects**: Bloom, tone mapping, noise, DOF, vignette, chromatic aberration, lens distortion
 - **HDR**: Intensity control with **logarithmic slider** (0.01-100, equal slider distance per order of magnitude)
-- **Anti-Aliasing**: FXAA, SMAA, MSAA, SSAA toggles
+- **Anti-Aliasing**: FXAA, SMAA (HIGH preset), MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
 - **Camera**: FOV presets (28mm-135mm equivalents), manual FOV control, clipping plane adjustments
 - **Materials**: Opacity, gamma, blending modes
@@ -787,6 +794,8 @@ Override default styles:
 | `setToneMapping(type)`                  | Set tone mapping     |
 | `setAntiAliasing(type, enabled)`        | Toggle AA methods    |
 | `getState()`                            | Get current settings |
+
+**Architecture**: RenderingControls uses a modular setup architecture where each category of controls (navigation, camera, HDR, anti-aliasing, post-processing) is initialized by a dedicated setup module in `./rendering-controls/`. This improves maintainability and keeps files under token limits. See [`./rendering-controls/README.md`](./rendering-controls/README.md) for details.
 
 ### PerformanceMonitor
 
