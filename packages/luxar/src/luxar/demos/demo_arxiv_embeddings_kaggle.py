@@ -94,19 +94,44 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 # Configuration
 # =============================================================================
 
-DEFAULT_SAMPLE_SIZE = 1000000  # Sample 50k papers for reasonable performance
+DEFAULT_SAMPLE_SIZE = 500000  # 500k papers
 
-# ArXiv category colors (major categories)
+# ArXiv category colors (comprehensive coverage of all major categories)
 CATEGORY_COLORS = {
-    "cs": np.array([0.3, 0.9, 0.9]),  # Computer Science - Cyan
-    "physics": np.array([0.3, 0.5, 1.0]),  # Physics - Blue
-    "math": np.array([0.3, 1.0, 0.5]),  # Mathematics - Green
-    "q-bio": np.array([1.0, 0.4, 0.4]),  # Quantitative Biology - Red
-    "q-fin": np.array([1.0, 0.6, 0.2]),  # Quantitative Finance - Orange
-    "stat": np.array([0.9, 0.3, 0.9]),  # Statistics - Magenta
-    "eess": np.array([0.9, 0.9, 0.3]),  # Electrical Engineering - Yellow
-    "econ": np.array([0.5, 1.0, 0.8]),  # Economics - Teal
-    "other": np.array([0.7, 0.7, 0.7]),  # Other - Gray
+    # Computer Science
+    "cs": np.array([0.3, 0.9, 0.9]),  # Cyan
+    # Mathematics
+    "math": np.array([0.3, 1.0, 0.5]),  # Green
+    # Physics - Astrophysics & Cosmology
+    "astro-ph": np.array([0.2, 0.4, 1.0]),  # Deep Blue
+    # Physics - Condensed Matter
+    "cond-mat": np.array([0.7, 0.3, 0.9]),  # Purple
+    # Physics - General Relativity
+    "gr-qc": np.array([0.4, 0.6, 0.9]),  # Light Blue
+    # Physics - High Energy Physics
+    "hep-ph": np.array([1.0, 0.5, 0.2]),  # Orange (Phenomenology)
+    "hep-th": np.array([1.0, 0.7, 0.3]),  # Light Orange (Theory)
+    "hep-ex": np.array([0.9, 0.4, 0.1]),  # Dark Orange (Experiment)
+    "hep-lat": np.array([0.8, 0.6, 0.3]),  # Tan (Lattice)
+    # Physics - Nuclear
+    "nucl-th": np.array([0.8, 0.4, 0.6]),  # Mauve (Theory)
+    "nucl-ex": np.array([0.9, 0.3, 0.5]),  # Pink (Experiment)
+    # Physics - Quantum
+    "quant-ph": np.array([0.6, 0.3, 1.0]),  # Violet
+    # Physics - General
+    "physics": np.array([0.5, 0.7, 1.0]),  # Pale Blue
+    # Nonlinear Sciences
+    "nlin": np.array([0.4, 0.9, 0.7]),  # Teal
+    # Biology
+    "q-bio": np.array([1.0, 0.3, 0.3]),  # Red
+    # Statistics & Finance
+    "stat": np.array([0.9, 0.3, 0.9]),  # Magenta
+    "q-fin": np.array([1.0, 0.8, 0.2]),  # Gold
+    "econ": np.array([0.9, 0.9, 0.4]),  # Yellow
+    # Engineering
+    "eess": np.array([0.8, 0.9, 0.5]),  # Pale Yellow
+    # Other/Unmatched
+    "other": np.array([0.5, 0.5, 0.5]),  # Dark Gray (not white!)
 }
 
 
