@@ -6,7 +6,7 @@ Visualize 95k integrated single cells from zebrafish with categorical attribute 
 Data: CZ Biohub Zebrahub - https://zebrahub.org
 Paper: https://www.biorxiv.org/content/10.1101/2024.10.18.618987v1
 
-Navigate between Cell Type and Timepoint views!
+Navigate between Cell Type and Timepoint views using the categorical dimension dropdown!
 """
 
 import subprocess
@@ -107,11 +107,9 @@ def main() -> None:
                     Dimension(
                         "view",
                         unit="",
-                        range=(0, 1),
-                        step=1,
+                        categories=["Cell Type", "Timepoint"],
                         display=False,
-                        discrete=True,
-                        description="0=CellType, 1=Timepoint",
+                        description="Categorical view: color by cell type or developmental timepoint",
                     ),
                     Dimension("x", unit="UMAP", display=True),
                     Dimension("y", unit="UMAP", display=True),

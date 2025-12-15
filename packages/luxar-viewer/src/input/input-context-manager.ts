@@ -37,6 +37,7 @@ export interface KeyBinding {
     meta?: boolean;
   };
   handler: (event: KeyboardEvent) => void;
+  keyupHandler?: (event: KeyboardEvent) => void; // Optional separate handler for keyup events
   preventDefault?: boolean;
   description?: string;
 }
@@ -118,11 +119,14 @@ export class InputContextManager {
    */
   private initializeContexts(): void {
     // Navigation context - default mode
+    // Block WASD keys but NOT Shift (Shift needed for FOV control in orbit mode)
+    const flyModeKeysWithoutShift = config.input.keyboard.flyModeKeys.filter((k) => k !== 'Shift');
+
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
       passthrough: true,
-      blockedKeys: [...config.input.keyboard.flyModeKeys], // Block WASD in orbit mode
+      blockedKeys: [...flyModeKeysWithoutShift], // Block WASD but allow Shift
     });
 
     // Fly controls context - WASD movement active
@@ -392,6 +396,10 @@ export class InputContextManager {
 
     // Check if this key is allowed in the current context
     if (!this.isKeyAllowedInContext(event.key, config)) {
+      // Key not allowed in this context - try passthrough if enabled
+      if (config.passthrough) {
+        return this.tryLowerContexts(event, type);
+      }
       return false;
     }
 
@@ -405,14 +413,19 @@ export class InputContextManager {
         if (binding.preventDefault) {
           event.preventDefault();
         }
-        binding.handler(event);
+
+        // Use keyupHandler if provided and event type is 'up', otherwise use main handler
+        if (type === 'up' && binding.keyupHandler) {
+          binding.keyupHandler(event);
+        } else {
+          binding.handler(event);
+        }
         return true;
       }
     }
 
-    // Check if we should pass through to lower contexts
+    // Key is allowed but no binding found - try passthrough if enabled
     if (config.passthrough) {
-      // Try lower priority contexts
       return this.tryLowerContexts(event, type);
     }
 
@@ -637,7 +650,7 @@ export class InputContextManager {
     currentContext: InputContext;
     contextStack: InputContext[];
     registeredBindings: Map<InputContext, string[]>;
-    } {
+  } {
     const registeredBindings = new Map<InputContext, string[]>();
 
     this.bindings.forEach((bindings, context) => {

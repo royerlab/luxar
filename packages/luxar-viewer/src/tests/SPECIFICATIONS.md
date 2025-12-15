@@ -654,6 +654,7 @@ pnpm test --run
 ## Changelog
 
 ### v1.0.3 (2025-12-11)
+
 - Updated unit test counts: 931 passing / 936 total (was 757/762) - reflects 174 new tests
 - Added lines rendering tests to documentation (55+ tests across rendering, data, types)
 - Added dimension initialization E2E test documentation

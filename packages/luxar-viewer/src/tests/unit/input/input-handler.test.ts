@@ -1,430 +1,340 @@
 /**
- * Unit tests for InputHandler - keyboard interaction and dimension navigation
+ * Unit tests for InputHandler utilities and helper functions
  *
- * Tests verify keyboard shortcuts, dimension selection, navigation, and event cleanup
- * WITHOUT mocking internal modules (following TESTING_GUIDELINES.md).
+ * The InputHandler class has many complex dependencies (THREE.js, DOM, multiple managers).
+ * Full integration testing is done via E2E tests. These unit tests focus on:
+ * - Pure utility functions that can be tested in isolation
+ * - Basic construction and type verification
+ *
+ * For full keyboard interaction testing, see:
+ * - src/tests/e2e/controls-interaction.spec.ts
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { InputHandler } from '../../../input/input-handler';
-import type { SceneManager } from '../../../scene/scene-manager';
+import { describe, it, expect } from 'vitest';
+import type { SimpleDims } from '../../../types/dims';
+import {
+  getNonDisplayedDimensions,
+  calculateStepSize,
+  calculateNextPosition,
+  mapKeyToDimension,
+  isNavigationKey,
+  calculateFovChange,
+  shouldBlockShortcut,
+  getNextDimensionIndex,
+  formatDimensionValue,
+} from '../../../input/input-handler-utils';
 
-// Mock only external DOM APIs that aren't available in test environment
-const createMockElement = () => ({
-  className: '',
-  innerHTML: '',
-  style: {},
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
-  appendChild: vi.fn(),
-  remove: vi.fn(),
-  contains: vi.fn(() => false),
-});
+// Helper to create SimpleDims test objects
+function createDims(ndim: number, displayed: number[], metadata?: any[]): SimpleDims {
+  return {
+    ndim,
+    displayed,
+    currentStep: new Array(ndim).fill(0),
+    metadata: metadata || new Array(ndim).fill(null).map((_, i) => ({ name: `dim${i}` })),
+  };
+}
 
-const mockDocument = {
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
-  createElement: vi.fn(() => createMockElement()),
-  getElementById: vi.fn(() => null),
-  body: {
-    appendChild: vi.fn(),
-    removeChild: vi.fn(),
-  },
-  head: {
-    appendChild: vi.fn(),
-    removeChild: vi.fn(),
-  },
-};
-
-vi.stubGlobal('document', mockDocument);
-
-describe('InputHandler', () => {
-  let inputHandler: InputHandler;
-  let mockSceneDimsManager: SceneDimsManager;
-  let mockCommandHandler: (command: InputCommand) => void;
-  let mockViewState: ViewState;
-
-  beforeEach(() => {
-    // Reset mocks
-    vi.clearAllMocks();
-
-    // Create mock dependencies (minimal mocking - only what InputHandler needs)
-    mockViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 0, 0],
-      ndim: 5,
-    } as ViewState;
-
-    mockSceneDimsManager = {
-      getViewState: () => mockViewState,
-      updateSlicePosition: vi.fn(),
-      setDisplayDims: vi.fn(),
-      getDimensionInfo: vi.fn((dim: number) => ({
-        name: `dim${dim}`,
-        range: [0, 10],
-        discrete: false,
-        categories: null,
-      })),
-    } as unknown as SceneDimsManager;
-
-    mockCommandHandler = vi.fn();
-
-    // Create InputHandler with real implementation
-    inputHandler = new InputHandler(mockSceneDimsManager, mockCommandHandler);
-  });
-
-  afterEach(() => {
-    if (inputHandler) {
-      inputHandler.dispose();
-    }
-  });
-
-  describe('initialization', () => {
-    it('should register keyboard event listeners on init', () => {
-      inputHandler.init();
-
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith('keyup', expect.any(Function));
+describe('InputHandler Utilities', () => {
+  describe('getNonDisplayedDimensions', () => {
+    it('should return empty array for 3D datasets (all displayed)', () => {
+      const dims = createDims(3, [0, 1, 2]);
+      const result = getNonDisplayedDimensions(dims);
+      expect(result).toEqual([]);
     });
 
-    it('should not register listeners before init', () => {
-      expect(mockDocument.addEventListener).not.toHaveBeenCalled();
+    it('should return non-displayed dimensions for 4D dataset', () => {
+      const dims = createDims(4, [0, 1, 2]);
+      const result = getNonDisplayedDimensions(dims);
+      expect(result).toEqual([3]);
     });
 
-    it('should allow multiple init calls safely', () => {
-      inputHandler.init();
-      inputHandler.init();
+    it('should return non-displayed dimensions for 5D dataset', () => {
+      const dims = createDims(5, [0, 1, 2]);
+      const result = getNonDisplayedDimensions(dims);
+      expect(result).toEqual([3, 4]);
+    });
 
-      // Should only register once
-      expect(mockDocument.addEventListener).toHaveBeenCalledTimes(2);
+    it('should handle custom display dims', () => {
+      const dims = createDims(5, [1, 2, 3]);
+      const result = getNonDisplayedDimensions(dims);
+      expect(result).toEqual([0, 4]);
+    });
+
+    it('should handle no displayed dims', () => {
+      const dims = createDims(3, []);
+      const result = getNonDisplayedDimensions(dims);
+      expect(result).toEqual([0, 1, 2]);
     });
   });
 
-  describe('cleanup and disposal', () => {
-    it('should remove event listeners on dispose', () => {
-      inputHandler.init();
-      const keydownHandler = mockDocument.addEventListener.mock.calls[0][1];
-      const keyupHandler = mockDocument.addEventListener.mock.calls[1][1];
-
-      inputHandler.dispose();
-
-      expect(mockDocument.removeEventListener).toHaveBeenCalledWith('keydown', keydownHandler);
-      expect(mockDocument.removeEventListener).toHaveBeenCalledWith('keyup', keyupHandler);
-    });
-
-    it('should handle dispose without init gracefully', () => {
-      expect(() => inputHandler.dispose()).not.toThrow();
-    });
-
-    it('should handle multiple dispose calls gracefully', () => {
-      inputHandler.init();
-      inputHandler.dispose();
-      expect(() => inputHandler.dispose()).not.toThrow();
-    });
-  });
-
-  describe('dimension selection (1-9 keys)', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should select dimension 0 when pressing "1"', () => {
-      const event = new KeyboardEvent('keydown', { key: '1' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'selectDimension',
-          dimension: 0,
-        })
+  describe('calculateStepSize', () => {
+    it('should use step from metadata', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 0.5 }]
       );
+      const result = calculateStepSize(3, dims);
+      expect(result).toBe(0.5);
     });
 
-    it('should select dimension 4 when pressing "5"', () => {
-      const event = new KeyboardEvent('keydown', { key: '5' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'selectDimension',
-          dimension: 4,
-        })
+    it('should calculate 1% of range when no step provided', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', range: [0, 100] }]
       );
+      const result = calculateStepSize(3, dims);
+      expect(result).toBe(1); // 1% of 100
     });
 
-    it('should select dimension 8 when pressing "9"', () => {
-      const event = new KeyboardEvent('keydown', { key: '9' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'selectDimension',
-          dimension: 8,
-        })
+    it('should apply shift modifier (fine control)', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 10 }]
       );
+      const result = calculateStepSize(3, dims, { shift: true });
+      expect(result).toBe(1); // 10 / 10
     });
 
-    it('should not select dimension for "0" key', () => {
-      const event = new KeyboardEvent('keydown', { key: '0' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'selectDimension',
-        })
+    it('should apply ctrl modifier (coarse control)', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 1 }]
       );
+      const result = calculateStepSize(3, dims, { ctrl: true });
+      expect(result).toBe(10); // 1 * 10
+    });
+
+    it('should return at least 1 for discrete dimensions', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'frame', step: 0.1, discrete: true }]
+      );
+      const result = calculateStepSize(3, dims, { shift: true });
+      expect(result).toBe(1); // Minimum 1 for discrete
+    });
+
+    it('should default to 1.0 when no metadata', () => {
+      const dims = createDims(4, [0, 1, 2]);
+      dims.metadata = undefined;
+      const result = calculateStepSize(3, dims);
+      expect(result).toBe(1);
     });
   });
 
-  describe('dimension navigation ([ ] keys)', () => {
-    beforeEach(() => {
-      inputHandler.init();
-      // Simulate dimension 3 being selected
-      const selectEvent = new KeyboardEvent('keydown', { key: '4' });
-      mockDocument.addEventListener.mock.calls[0][1](selectEvent);
+  describe('calculateNextPosition', () => {
+    it('should move forward by step size', () => {
+      const result = calculateNextPosition(5, 1, 1, [0, 10]);
+      expect(result).toBe(6);
     });
 
-    it('should navigate backward with "[" key', () => {
+    it('should move backward by step size', () => {
+      const result = calculateNextPosition(5, -1, 1, [0, 10]);
+      expect(result).toBe(4);
+    });
+
+    it('should clamp to maximum', () => {
+      const result = calculateNextPosition(9, 1, 2, [0, 10]);
+      expect(result).toBe(10);
+    });
+
+    it('should clamp to minimum', () => {
+      const result = calculateNextPosition(1, -1, 2, [0, 10]);
+      expect(result).toBe(0);
+    });
+
+    it('should round for discrete dimensions', () => {
+      const result = calculateNextPosition(5.3, 1, 1.7, [0, 10], true);
+      expect(result).toBe(7); // 5.3 + 1.7 = 7 (rounded)
+    });
+
+    it('should wrap around when enabled', () => {
+      const result = calculateNextPosition(9, 1, 3, [0, 10], false, true);
+      // 9 + 3 = 12, wraps to 0 + (12 - 10) % 10 = 2
+      expect(result).toBe(2);
+    });
+  });
+
+  describe('mapKeyToDimension', () => {
+    it('should map "1" to dimension 0 if not displayed', () => {
+      const dims = createDims(5, [1, 2, 3]); // 0 is not displayed
+      expect(mapKeyToDimension('1', dims)).toBe(0);
+    });
+
+    it('should return -1 for "1" if dimension 0 is displayed', () => {
+      const dims = createDims(5, [0, 1, 2]); // 0 is displayed
+      expect(mapKeyToDimension('1', dims)).toBe(-1);
+    });
+
+    it('should map "9" to dimension 8', () => {
+      const dims = createDims(10, [0, 1, 2]); // 8 is not displayed
+      expect(mapKeyToDimension('9', dims)).toBe(8);
+    });
+
+    it('should return -1 for "0"', () => {
+      const dims = createDims(5, [0, 1, 2]);
+      expect(mapKeyToDimension('0', dims)).toBe(-1);
+    });
+
+    it('should return -1 for non-numeric keys', () => {
+      const dims = createDims(5, [0, 1, 2]);
+      expect(mapKeyToDimension('a', dims)).toBe(-1);
+      expect(mapKeyToDimension('[', dims)).toBe(-1);
+      expect(mapKeyToDimension(' ', dims)).toBe(-1);
+    });
+
+    it('should return -1 for dimension out of range', () => {
+      const dims = createDims(3, [0, 1, 2]);
+      expect(mapKeyToDimension('5', dims)).toBe(-1); // Dimension 4 doesn't exist
+    });
+
+    it('should return -1 for empty string', () => {
+      const dims = createDims(5, [0, 1, 2]);
+      expect(mapKeyToDimension('', dims)).toBe(-1);
+    });
+  });
+
+  describe('getNextDimensionIndex', () => {
+    it('should cycle to next non-displayed dimension', () => {
+      const dims = createDims(5, [0, 1, 2]); // Non-displayed: 3, 4
+      const result = getNextDimensionIndex(3, 1, dims);
+      expect(result).toBe(4);
+    });
+
+    it('should wrap around at end', () => {
+      const dims = createDims(5, [0, 1, 2]); // Non-displayed: 3, 4
+      const result = getNextDimensionIndex(4, 1, dims);
+      expect(result).toBe(3); // Wraps to first
+    });
+
+    it('should cycle backward', () => {
+      const dims = createDims(5, [0, 1, 2]); // Non-displayed: 3, 4
+      const result = getNextDimensionIndex(4, -1, dims);
+      expect(result).toBe(3);
+    });
+
+    it('should return -1 when no non-displayed dimensions', () => {
+      const dims = createDims(3, [0, 1, 2]);
+      const result = getNextDimensionIndex(0, 1, dims);
+      expect(result).toBe(-1);
+    });
+  });
+
+  describe('isNavigationKey', () => {
+    it('should return true for [ key', () => {
       const event = new KeyboardEvent('keydown', { key: '[' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockSceneDimsManager.updateSlicePosition).toHaveBeenCalled();
-      const callArgs = (mockSceneDimsManager.updateSlicePosition as any).mock.calls[0];
-      expect(callArgs[0]).toBe(3); // dimension
-      expect(callArgs[1]).toBeLessThan(0); // negative delta
+      expect(isNavigationKey(event)).toBe(true);
     });
 
-    it('should navigate forward with "]" key', () => {
+    it('should return true for ] key', () => {
       const event = new KeyboardEvent('keydown', { key: ']' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockSceneDimsManager.updateSlicePosition).toHaveBeenCalled();
-      const callArgs = (mockSceneDimsManager.updateSlicePosition as any).mock.calls[0];
-      expect(callArgs[0]).toBe(3); // dimension
-      expect(callArgs[1]).toBeGreaterThan(0); // positive delta
+      expect(isNavigationKey(event)).toBe(true);
     });
 
-    it('should navigate with Shift+[ for larger steps', () => {
-      const event = new KeyboardEvent('keydown', { key: '[', shiftKey: true });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockSceneDimsManager.updateSlicePosition).toHaveBeenCalled();
-      const callArgs = (mockSceneDimsManager.updateSlicePosition as any).mock.calls[0];
-      // With shift, step should be larger (multiplied by 10)
-      expect(Math.abs(callArgs[1])).toBeGreaterThan(1);
-    });
-  });
-
-  describe('help overlay (H key)', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should toggle help overlay when pressing "h"', () => {
-      const event = new KeyboardEvent('keydown', { key: 'h' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'toggleHelp',
-        })
-      );
-    });
-
-    it('should toggle help overlay when pressing "H" (uppercase)', () => {
-      const event = new KeyboardEvent('keydown', { key: 'H' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'toggleHelp',
-        })
-      );
-    });
-  });
-
-  describe('panel toggles', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should toggle performance panel when pressing "p"', () => {
-      const event = new KeyboardEvent('keydown', { key: 'p' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'togglePerformance',
-        })
-      );
-    });
-
-    it('should toggle rendering controls when pressing "m"', () => {
-      const event = new KeyboardEvent('keydown', { key: 'm' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'toggleRenderingControls',
-        })
-      );
-    });
-
-    it('should toggle dataset browser when pressing "r"', () => {
-      const event = new KeyboardEvent('keydown', { key: 'r' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'toggleDatasetBrowser',
-        })
-      );
-    });
-  });
-
-  describe('fullscreen toggle', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should toggle fullscreen when pressing Space', () => {
-      const event = new KeyboardEvent('keydown', { key: ' ' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'toggleFullscreen',
-        })
-      );
-    });
-
-    it('should prevent default Space behavior', () => {
-      const event = new KeyboardEvent('keydown', { key: ' ' });
-      const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(preventDefaultSpy).toHaveBeenCalled();
-    });
-  });
-
-  describe('input context awareness', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should not process keys when input element is focused', () => {
-      const mockInput = document.createElement('input');
-      const event = new KeyboardEvent('keydown', {
-        key: 'h',
-        target: mockInput as any,
-      });
-
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      // Should not trigger help toggle
-      expect(mockCommandHandler).not.toHaveBeenCalled();
-    });
-
-    it('should not process keys when textarea is focused', () => {
-      const mockTextarea = document.createElement('textarea');
-      const event = new KeyboardEvent('keydown', {
-        key: 'h',
-        target: mockTextarea as any,
-      });
-
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).not.toHaveBeenCalled();
-    });
-
-    it('should process keys when canvas is focused', () => {
-      const mockCanvas = document.createElement('canvas');
-      const event = new KeyboardEvent('keydown', {
-        key: 'h',
-        target: mockCanvas as any,
-      });
-
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalled();
-    });
-  });
-
-  describe('modifier key handling', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should detect Shift key press', () => {
-      const event = new KeyboardEvent('keydown', { key: 'Shift' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      // Shift key press should be recorded for next navigation
-      const navEvent = new KeyboardEvent('keydown', { key: ']', shiftKey: true });
-      mockDocument.addEventListener.mock.calls[0][1](navEvent);
-
-      expect(mockSceneDimsManager.updateSlicePosition).toHaveBeenCalled();
-    });
-
-    it('should detect Ctrl key combinations', () => {
-      const event = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'clearConsole',
-        })
-      );
-    });
-  });
-
-  describe('edge cases', () => {
-    beforeEach(() => {
-      inputHandler.init();
-    });
-
-    it('should handle undefined key gracefully', () => {
-      const event = new KeyboardEvent('keydown', { key: undefined as any });
-      expect(() => mockDocument.addEventListener.mock.calls[0][1](event)).not.toThrow();
-    });
-
-    it('should handle numeric keys beyond 9', () => {
-      // Keys like F1-F12 have numeric codes but shouldn't select dimensions
-      const event = new KeyboardEvent('keydown', { key: 'F1' });
-      mockDocument.addEventListener.mock.calls[0][1](event);
-
-      expect(mockCommandHandler).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'selectDimension',
-        })
-      );
-    });
-
-    it('should handle rapid key presses without errors', () => {
-      for (let i = 0; i < 100; i++) {
-        const event = new KeyboardEvent('keydown', { key: 'h' });
-        expect(() => mockDocument.addEventListener.mock.calls[0][1](event)).not.toThrow();
+    it('should return true for number keys 1-9', () => {
+      for (let i = 1; i <= 9; i++) {
+        const event = new KeyboardEvent('keydown', { key: String(i) });
+        expect(isNavigationKey(event)).toBe(true);
       }
     });
+
+    it('should return false for other keys', () => {
+      const event = new KeyboardEvent('keydown', { key: 'a' });
+      expect(isNavigationKey(event)).toBe(false);
+    });
+
+    it('should return false when target is input element', () => {
+      const input = document.createElement('input');
+      const event = new KeyboardEvent('keydown', { key: '[' });
+      Object.defineProperty(event, 'target', { value: input });
+      expect(isNavigationKey(event)).toBe(false);
+    });
   });
 
-  describe('memory management', () => {
-    it('should not leak event listeners after dispose', () => {
-      inputHandler.init();
-      const initialListenerCount = mockDocument.addEventListener.mock.calls.length;
-
-      inputHandler.dispose();
-
-      // Create new handler
-      const newHandler = new InputHandler(mockSceneDimsManager, mockCommandHandler);
-      newHandler.init();
-
-      // Should register same number of listeners
-      const newListenerCount =
-        mockDocument.addEventListener.mock.calls.length - initialListenerCount;
-      expect(newListenerCount).toBe(2); // keydown and keyup
-
-      newHandler.dispose();
+  describe('calculateFovChange', () => {
+    it('should increase FOV with positive delta', () => {
+      const result = calculateFovChange(60, 10, 0.1);
+      expect(result).toBe(61);
     });
+
+    it('should decrease FOV with negative delta', () => {
+      const result = calculateFovChange(60, -10, 0.1);
+      expect(result).toBe(59);
+    });
+
+    it('should clamp to minimum FOV (10)', () => {
+      const result = calculateFovChange(15, -100, 0.1);
+      expect(result).toBe(10);
+    });
+
+    it('should clamp to maximum FOV (120)', () => {
+      const result = calculateFovChange(110, 200, 0.1);
+      expect(result).toBe(120);
+    });
+  });
+
+  describe('shouldBlockShortcut', () => {
+    it('should block when modal is active', () => {
+      const event = new KeyboardEvent('keydown', { key: 'p' });
+      expect(shouldBlockShortcut(event, ['settings-modal'])).toBe(true);
+    });
+
+    it('should block when typing in input', () => {
+      const input = document.createElement('input');
+      const event = new KeyboardEvent('keydown', { key: 'p' });
+      Object.defineProperty(event, 'target', { value: input });
+      expect(shouldBlockShortcut(event, [])).toBe(true);
+    });
+
+    it('should not block in normal context', () => {
+      const event = new KeyboardEvent('keydown', { key: 'p' });
+      expect(shouldBlockShortcut(event, [])).toBe(false);
+    });
+  });
+
+  describe('formatDimensionValue', () => {
+    it('should format discrete values as integers', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'frame', discrete: true }]
+      );
+      dims.currentStep[3] = 42.7;
+      const result = formatDimensionValue(42.7, 3, dims);
+      expect(result).toBe('43');
+    });
+
+    it('should add unit suffix when present', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', unit: 's' }]
+      );
+      const result = formatDimensionValue(5.0, 3, dims);
+      expect(result).toBe('5.00s');
+    });
+
+    it('should use adaptive precision based on step', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 0.01 }]
+      );
+      const result = formatDimensionValue(5.234, 3, dims);
+      expect(result).toBe('5.23');
+    });
+  });
+});
+
+describe('InputHandler Type Definitions', () => {
+  it('should export InputHandler class', async () => {
+    // Dynamic import to avoid triggering complex dependencies
+    const module = await import('../../../input/input-handler');
+    expect(module.InputHandler).toBeDefined();
+    expect(typeof module.InputHandler).toBe('function');
   });
 });

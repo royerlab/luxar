@@ -475,6 +475,7 @@ vec3 normal3_fixed(vec2 seed) {
 **Purpose**: Screen edge darkening effect that handles additive blending artifacts.
 
 **Problem Solved**: The standard pmndrs `VignetteEffect` preserves alpha channel values, which causes rendering artifacts when:
+
 - Using additive blending (`THREE.AdditiveBlending`) with many overlapping points/lines
 - Alpha values accumulate and can exceed 1.0 or even overflow to `Infinity` in Float16 HDR buffers
 - Subsequent effects receive problematic alpha values causing brightness artifacts
@@ -482,17 +483,19 @@ vec3 normal3_fixed(vec2 seed) {
 **Solution**: `RobustVignetteEffect` forces output alpha to 1.0, preventing alpha overflow artifacts while maintaining identical visual output.
 
 **Implementation**:
+
 ```typescript
 // Drop-in replacement for VignetteEffect
 import { RobustVignetteEffect } from '../rendering/robust-vignette-effect';
 
 const vignetteEffect = new RobustVignetteEffect({
-  darkness: 0.5,    // Edge darkening amount [0, 1]
-  offset: 0.5,      // Vignette start distance [0, 1]
+  darkness: 0.5, // Edge darkening amount [0, 1]
+  offset: 0.5, // Vignette start distance [0, 1]
 });
 ```
 
 **Key Differences from Standard VignetteEffect**:
+
 - ✅ Identical parameters and visual output
 - ✅ Compatible with additive blending
 - ✅ Prevents alpha overflow in Float16 HDR buffers
@@ -501,6 +504,7 @@ const vignetteEffect = new RobustVignetteEffect({
 **Technical Detail**: The fix is simple but critical - the fragment shader's final line sets `gl_FragColor.a = 1.0;` instead of preserving the input alpha. This prevents accumulated alpha from additive blending from propagating through the effect pipeline.
 
 **Use Case**: Always use `RobustVignetteEffect` instead of pmndrs `VignetteEffect` when:
+
 - Using additive blending for points or lines
 - Using Float16 HDR render targets
 - Rendering many overlapping transparent objects
@@ -510,6 +514,7 @@ const vignetteEffect = new RobustVignetteEffect({
 **Purpose**: Converts between different depth representations for effects that need depth information (e.g., DOF, SSAO).
 
 **Problem**: THREE.js stores depth in various formats:
+
 - **View-space depth**: Linear distance from camera in world units (negative Z in view space)
 - **NDC depth**: Non-linear depth in [0, 1] stored in depth buffer
 - **Camera-relative depth**: Distance from camera origin
@@ -518,36 +523,43 @@ const vignetteEffect = new RobustVignetteEffect({
 Effects like DOF need specific depth representations, requiring conversions between these formats.
 
 **Implementation**:
+
 ```typescript
 import { PerspectiveDepthMapper } from '../rendering/postprocessing-types';
 
 const mapper = new PerspectiveDepthMapper(camera);
 
 // Four conversion methods:
-const viewZ = mapper.getViewZ(ndc);           // NDC → view-space Z
-const ndcDepth = mapper.getNDC(viewZ);        // view-space Z → NDC
-const linearDepth = mapper.getLinear(ndc);    // NDC → normalized linear
-const orthoDepth = mapper.getOrtho(viewZ);    // view-space Z → orthographic
+const viewZ = mapper.getViewZ(ndc); // NDC → view-space Z
+const ndcDepth = mapper.getNDC(viewZ); // view-space Z → NDC
+const linearDepth = mapper.getLinear(ndc); // NDC → normalized linear
+const orthoDepth = mapper.getOrtho(viewZ); // view-space Z → orthographic
 ```
 
 **Conversion Formulas**:
 
 1. **NDC to View-Space Z**: `getViewZ(ndc)`
+
    ```glsl
    viewZ = (near * far) / (far - ndc * (far - near))
    ```
+
    Converts non-linear depth buffer value to linear view-space distance.
 
 2. **View-Space Z to NDC**: `getNDC(viewZ)`
+
    ```glsl
    ndc = (far * (viewZ - near)) / (viewZ * (far - near))
    ```
+
    Inverse of the above transformation.
 
 3. **NDC to Normalized Linear**: `getLinear(ndc)`
+
    ```glsl
    linear = (viewZ - near) / (far - near)
    ```
+
    Linear depth in [0, 1] where 0 = near plane, 1 = far plane.
 
 4. **View-Space Z to Orthographic**: `getOrtho(viewZ)`
@@ -557,6 +569,7 @@ const orthoDepth = mapper.getOrtho(viewZ);    // view-space Z → orthographic
    Used for orthographic projections (less common).
 
 **Usage with DOF Effect**:
+
 ```typescript
 const mapper = new PerspectiveDepthMapper(camera);
 const dofEffect = new DepthOfFieldEffect(camera, {
@@ -566,12 +579,14 @@ const dofEffect = new DepthOfFieldEffect(camera, {
 ```
 
 **Key Properties**:
+
 - `near`: Camera near plane distance
 - `far`: Camera far plane distance
 - All methods handle perspective projection math correctly
 - Thread-safe (pure functions based on camera parameters)
 
 **When to Use**:
+
 - Setting DOF focus distances from screen-space depth
 - Converting depth buffer values for custom shaders
 - Debugging depth-based effects
@@ -1076,6 +1091,7 @@ void main() {
 ### 7.5a Anti-Aliasing for Thin Lines
 
 **Problem**: When lines are very thin (sub-pixel or only a few pixels wide), two issues cause severe aliasing:
+
 1. **Rasterization gaps**: Sub-pixel quads may not cover every pixel along the line
 2. **Hard edge discard**: The `discard` at `p >= 1.0` creates jagged edges
 
@@ -1111,11 +1127,13 @@ float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
 ```
 
 **Behavior**:
+
 - **Wide lines (10+ pixels)**: Rendered at actual width, full intensity, small AA region
 - **Thin lines (1.5+ pixels)**: Rendered at actual width, smooth edges
 - **Sub-pixel lines (<1.5 pixels)**: Rendered at 1.5px but with reduced intensity proportional to actual width
 
 **Visual Effect**:
+
 - Eliminates "dashed/stippled" appearance from rasterization gaps
 - Smooth edges instead of jagged discard boundaries
 - Sub-pixel lines appear as expected thin/faint lines rather than broken segments

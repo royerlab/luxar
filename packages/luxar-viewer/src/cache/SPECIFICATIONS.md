@@ -729,6 +729,7 @@ Prevents metadata thrashing:
 An earlier architecture included a 4-layer cache system with an L0 "RangeCache" that cached decoded Float32Array data. This was **removed** for the following reasons:
 
 **Problems with L0 Cache:**
+
 1. **Memory inefficiency**: 10× worse coverage per MB vs L1
    - L1 (compressed): ~100MB caches 1GB of decoded data (10× compression)
    - L0 (decoded): 100MB caches only 100MB of data
@@ -753,6 +754,7 @@ An earlier architecture included a 4-layer cache system with an L0 "RangeCache" 
    - Reduced code clarity
 
 **Decision**: Use 3-layer architecture (L1 Memory + L2 OPFS + L3 Network)
+
 - ChunkPrefetcher at L1 provides better latency hiding
 - Simpler, more efficient, easier to maintain
 - Measured impact: 0.7ms slower queries but 36% better memory coverage

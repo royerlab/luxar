@@ -226,12 +226,17 @@ def generate_turing_patterns(
             [
                 Dimension(
                     "pattern",
-                    unit="type",
-                    range=(0, len(patterns) - 1),
-                    step=1,
+                    unit="",
+                    categories=[
+                        "Spots",
+                        "Stripes",
+                        "Spirals",
+                        "Mitosis",
+                        "Coral",
+                        "Labyrinth",
+                    ],
                     display=False,
-                    discrete=True,
-                    description="Pattern type (0=Spots, 1=Stripes, 2=Spirals, 3=Mitosis, 4=Coral, 5=Labyrinth)",
+                    description="Reaction-diffusion pattern type (different F,k parameters)",
                 ),
                 Dimension(
                     "time",

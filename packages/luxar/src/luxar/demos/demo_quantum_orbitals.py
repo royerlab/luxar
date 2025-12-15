@@ -241,7 +241,16 @@ def generate_quantum_orbitals(
                 Dimension(
                     "orbital",
                     unit="",
-                    categories=["1s", "2s", "2pz", "2px", "3pz", "3dz²", "3dxz", "3dxy"],
+                    categories=[
+                        "1s",
+                        "2s",
+                        "2pz",
+                        "2px",
+                        "3pz",
+                        "3dz²",
+                        "3dxz",
+                        "3dxy",
+                    ],
                     cyclic=True,  # Enable wrap-around from 3dxy back to 1s
                     display=False,
                     description="Quantum orbital state - hydrogen atom wavefunctions",

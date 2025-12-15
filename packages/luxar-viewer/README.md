@@ -201,7 +201,7 @@ The advanced rendering controls panel (located on the left side) provides real-t
 ### Anti-Aliasing Options
 - **FXAA**: Fast approximate anti-aliasing (recommended for additive blending)
 - **MSAA**: Multi-sample anti-aliasing with sample count selection (2x, 4x, 8x)
-- **SMAA**: Subpixel morphological anti-aliasing with threshold and search steps
+- **SMAA**: Subpixel morphological anti-aliasing with preset quality levels
 - **SSAA**: Super-sample anti-aliasing with resolution multipliers (1.5x, 2x, 4x)
 
 ### Performance Features
@@ -388,7 +388,7 @@ renderingControls: {
 - **FXAA**: Recommended for additive blending - no brightness issues
 - **MSAA**: Causes brightness increase with additive blending due to sample accumulation
 - **SSAA**: Causes dimming due to downsampling averaging bright additive contributions
-- **SMAA**: Advanced technique with configurable edge detection thresholds
+- **SMAA**: Advanced technique with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
 
 ### Performance Optimization
 

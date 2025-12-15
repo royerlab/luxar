@@ -92,6 +92,7 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 **Logarithmic HDR Intensity Slider:**
 
 The HDR intensity slider uses a logarithmic scale to provide equal perceptual control across its entire range:
+
 - **Left edge**: 0.01 (very dim)
 - **Center**: 1.0 (neutral)
 - **Right edge**: 100 (very bright)
@@ -124,7 +125,7 @@ Rendering Controls
 ├── Anti-Aliasing
 │   ├── SSAA □ (with resolution multiplier)
 │   ├── FXAA □
-│   ├── SMAA □ (with settings)
+│   ├── SMAA □ (toggle only - preset-based)
 │   └── MSAA □ (with samples)
 └── Post-Processing Effects
     ├── Bloom

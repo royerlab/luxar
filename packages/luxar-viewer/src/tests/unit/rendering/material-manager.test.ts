@@ -332,6 +332,47 @@ describe('MaterialManager', () => {
       expect(material.uniforms.resolution.value.x).toBe(2560);
       expect(material.uniforms.resolution.value.y).toBe(1440);
     });
+
+    it('should store current HDR multiplier for new materials (Bug Fix #11)', () => {
+      // This tests the critical bug fix: materials created AFTER updateHDRMultiplier()
+      // must receive the updated HDR value, not the config default.
+      // This is essential for settings loaded from localStorage before scene loading.
+
+      // Update HDR multiplier BEFORE creating material (simulates settings loaded from localStorage)
+      manager.updateHDRMultiplier(25.0);
+
+      // Create new material AFTER HDR update
+      const material = manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      // Material should have the updated HDR value, not the config default (16.0)
+      expect(material.uniforms.hdrMultiplier.value).toBe(25.0);
+    });
+
+    it('should apply stored HDR multiplier to multiple new materials', () => {
+      // Update HDR multiplier
+      manager.updateHDRMultiplier(50.0);
+
+      // Create multiple materials after HDR update
+      const material1 = manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      const material2 = manager.getPointMaterial({
+        blendingMode: 'normal',
+        opacity: 0.5,
+        gamma: 2.2,
+      });
+
+      // Both materials should have the updated HDR value
+      expect(material1.uniforms.hdrMultiplier.value).toBe(50.0);
+      expect(material2.uniforms.hdrMultiplier.value).toBe(50.0);
+    });
   });
 
   // =========================================================================

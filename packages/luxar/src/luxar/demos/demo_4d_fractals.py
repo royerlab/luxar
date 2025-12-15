@@ -441,12 +441,17 @@ def generate_4d_fractal_dataset(
             [
                 Dimension(
                     "fractal",
-                    unit="type",
-                    range=(0, 5),
-                    step=1,
+                    unit="",
+                    categories=[
+                        "Mandelbrot",
+                        "Julia c=-0.4+0.6i",
+                        "Julia c=0.285+0.01i",
+                        "Julia c=-0.8+0.156i",
+                        "Julia c=-0.7269+0.1889i",
+                        "Julia c=0.45+0.1428i",
+                    ],
                     display=False,
-                    discrete=True,
-                    description="Fractal type (0=Mandelbrot, 1-5=Julia variants)",
+                    description="Fractal type in 4D complex space - different Julia set parameters",
                 ),
                 Dimension(
                     "w",

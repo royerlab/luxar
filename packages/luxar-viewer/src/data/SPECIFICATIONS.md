@@ -1366,9 +1366,7 @@ function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
        .map((d) => d.name)
        .filter((name) => !!name);
 
-     const isFullyExtended = nonDisplayedDims.every((dimName) =>
-       extendDims.includes(dimName)
-     );
+     const isFullyExtended = nonDisplayedDims.every((dimName) => extendDims.includes(dimName));
 
      if (isFullyExtended) {
        // Skip update - geometry is unchanged
