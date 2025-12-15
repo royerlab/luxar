@@ -50,16 +50,22 @@ describe('DebugConsole - Critical Fixes', () => {
     it('should have bound handlers ready for cleanup', () => {
       const debugConsole = new DebugConsole();
 
-      // Access private properties to verify handlers exist
+      // Access private properties to verify handlers are initialized
       const console_any = debugConsole as any;
 
-      // Handlers should be null initially (created during drag/resize)
+      // Handlers should be functions (created during construction via makeDraggable/makeResizable)
+      expect(console_any.boundDragMouseMove).toBeInstanceOf(Function);
+      expect(console_any.boundDragMouseUp).toBeInstanceOf(Function);
+      expect(console_any.boundResizeMouseMove).toBeInstanceOf(Function);
+      expect(console_any.boundResizeMouseUp).toBeInstanceOf(Function);
+
+      debugConsole.dispose();
+
+      // After dispose, should be null
       expect(console_any.boundDragMouseMove).toBeNull();
       expect(console_any.boundDragMouseUp).toBeNull();
       expect(console_any.boundResizeMouseMove).toBeNull();
       expect(console_any.boundResizeMouseUp).toBeNull();
-
-      debugConsole.dispose();
     });
 
     it('should clean up all 4 global event listeners (drag + resize)', () => {

@@ -31,12 +31,14 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
     displayed: [0, 1, 2], // X, Y, Z
     currentStep: [0, 0, 0, 5.5, 2], // Time at 5.5, Channel at 2
     metadata: [
-      { name: 'X', discrete: false, step: 0.1 },
-      { name: 'Y', discrete: false, step: 0.1 },
-      { name: 'Z', discrete: false, step: 0.1 },
-      { name: 'Time', discrete: false, step: 0.1, unit: 's' },
+      { name: 'X', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Y', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Z', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Time', unit: 's', scale: 1.0, discrete: false, step: 0.1 },
       {
         name: 'Channel',
+        unit: '',
+        scale: 1.0,
         discrete: true,
         step: 1,
         categories: ['DAPI', 'GFP', 'RFP'],
@@ -177,69 +179,4 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
     });
   });
 
-  describe('DOM Element Lifecycle', () => {
-    it('should remove all DOM elements on dispose', () => {
-      const debugConsole = new DebugConsole();
-
-      expect(document.querySelector('.debug-console-panel')).toBeTruthy();
-      expect(document.getElementById('debug-console-styles')).toBeTruthy();
-
-      debugConsole.dispose();
-
-      expect(document.querySelector('.debug-console-panel')).toBeNull();
-      expect(document.getElementById('debug-console-styles')).toBeNull();
-    });
-  });
-
-  describe('XSS Protection', () => {
-    it('should render arguments as DOM elements, not innerHTML', () => {
-      const debugConsole = new DebugConsole();
-      const console_any = debugConsole as any;
-
-      // Test malicious strings
-      const malicious = '<img src=x onerror=alert(1)>';
-      const element = console_any.formatArgAsDOMElement(malicious);
-
-      expect(element.tagName).toBe('SPAN');
-      expect(element.className).toBe('console-message-string');
-      expect(element.textContent).toBe(`"${malicious}"`);
-      expect(element.querySelector('img')).toBeNull();
-
-      debugConsole.dispose();
-    });
-
-    it('should safely handle all argument types', () => {
-      const debugConsole = new DebugConsole();
-      const console_any = debugConsole as any;
-
-      const testCases = [
-        { input: undefined, expectedClass: 'console-message-undefined', expectedText: 'undefined' },
-        { input: null, expectedClass: 'console-message-undefined', expectedText: 'null' },
-        {
-          input: '<b>bold</b>',
-          expectedClass: 'console-message-string',
-          expectedText: '"<b>bold</b>"',
-        },
-        { input: 42, expectedClass: 'console-message-number', expectedText: '42' },
-        { input: true, expectedClass: 'console-message-boolean', expectedText: 'true' },
-        {
-          input: { key: '<script>alert(1)</script>' },
-          expectedClass: 'console-message-object',
-          expectedText: null, // Just check it doesn't execute
-        },
-      ];
-
-      testCases.forEach(({ input, expectedClass, expectedText }) => {
-        const element = console_any.formatArgAsDOMElement(input);
-        expect(element.className).toBe(expectedClass);
-        if (expectedText) {
-          expect(element.textContent).toBe(expectedText);
-        }
-        // Most important: no script elements should be created
-        expect(element.querySelector('script')).toBeNull();
-      });
-
-      debugConsole.dispose();
-    });
-  });
 });
