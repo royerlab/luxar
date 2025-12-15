@@ -374,27 +374,33 @@ def classify_go_term(go_id: str) -> str:
 
 def reduce_embeddings_umap(
     embeddings: np.ndarray,
+    functions: list[str],
     cache_path: Path | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, list[str]]:
     """Reduce protein embeddings to 3D using UMAP.
 
     Args:
         embeddings: (n_proteins, n_features) array
+        functions: List of function categories for each protein
         cache_path: Optional path to cache UMAP results
 
     Returns:
-        (n_proteins, 3) reduced coordinates
+        Tuple of (positions, functions) - both cached together!
     """
     from umap import UMAP
 
-    # Check cache first
+    # Check cache first (loads positions AND functions together!)
     if cache_path and cache_path.exists():
         with asection("Loading cached UMAP coordinates"):
             aprint(f"Cache: {cache_path}")
-            cached = np.load(cache_path)
+            cached = np.load(cache_path, allow_pickle=True)
             positions = cached["positions"]
-            aprint(f"✓ Loaded {len(positions):,} proteins from cache")
-            return positions
+            functions = list(cached["functions"])
+            aprint(f"✓ Loaded {len(positions):,} proteins from cache (INSTANT!)")
+            return positions, functions
+
+    if embeddings is None:
+        raise ValueError("Embeddings required when not loading from cache")
 
     with asection(f"Reducing {embeddings.shape[1]}D → 3D with UMAP"):
         aprint(f"Input: {embeddings.shape[0]:,} proteins × {embeddings.shape[1]} dimensions")
@@ -421,14 +427,18 @@ def reduce_embeddings_umap(
         aprint("✓ Centered at barycenter")
         aprint(f"  New range: [{reduced.min():.2f}, {reduced.max():.2f}]")
 
-        # Cache results
+        # Cache results (positions AND functions together!)
         if cache_path:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez(cache_path, positions=reduced)
-            aprint(f"✓ Cached to {cache_path}")
+            np.savez(
+                cache_path,
+                positions=reduced,
+                functions=np.array(functions, dtype=object)  # Store functions too!
+            )
+            aprint(f"✓ Cached UMAP + functions to {cache_path}")
             aprint("  Future runs will load instantly!")
 
-    return reduced.astype(np.float32)
+    return reduced.astype(np.float32), functions
 
 
 # =============================================================================
@@ -458,18 +468,22 @@ def generate_protein_landscape(
     if not dataset_cache.exists():
         dataset_cache = download_cafa5_dataset(cache_dir)
 
-    # Load embeddings
-    embeddings, protein_ids, functions = load_protein_embeddings(
-        dataset_cache,
-        sample_size=sample_size,
-    )
+    # Check UMAP cache first (complete early exit if cached!)
+    if umap_cache.exists():
+        positions, functions = reduce_embeddings_umap(None, None, cache_path=umap_cache)
+    else:
+        # Load embeddings (only if UMAP not cached)
+        embeddings, protein_ids, functions = load_protein_embeddings(
+            dataset_cache,
+            sample_size=sample_size,
+        )
 
-    if len(embeddings) == 0:
-        aprint("❌ No proteins loaded")
-        return 0
+        if len(embeddings) == 0:
+            aprint("❌ No proteins loaded")
+            return 0
 
-    # Reduce to 3D with UMAP
-    positions = reduce_embeddings_umap(embeddings, cache_path=umap_cache)
+        # Reduce to 3D with UMAP and cache
+        positions, functions = reduce_embeddings_umap(embeddings, functions, cache_path=umap_cache)
 
     # Generate visualization
     with asection("Generating visualization"):
@@ -489,12 +503,16 @@ def generate_protein_landscape(
         for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:10]:
             aprint(f"  {func}: {count:,}")
 
-        # Size by embedding norm (proxy for sequence length/complexity)
-        norms = np.linalg.norm(embeddings, axis=1)
-        norm_normalized = (norms - norms.min()) / (norms.max() - norms.min() + 1e-10)
-        radii = (0.03 + 0.05 * norm_normalized).astype(np.float32)
+        # Size: annotated proteins are 3x larger to stand out!
+        radii = np.zeros(n_proteins, dtype=np.float32)
+        for i, func in enumerate(functions):
+            if func == 'other':
+                radii[i] = 0.02  # Small gray background points
+            else:
+                radii[i] = 0.06  # 3x larger for annotated proteins!
 
-        aprint("✓ Sizes by embedding magnitude")
+        n_annotated = sum(1 for f in functions if f != 'other')
+        aprint(f"✓ Radii: {n_annotated:,} annotated (large), {n_proteins - n_annotated:,} unannotated (small)")
 
     # Write to Zarr
     with asection("Writing to Zarr"):
