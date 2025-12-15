@@ -77,7 +77,7 @@ Installation
 Basic Usage
 ~~~~~~~~~~~
 
-Create and visualize a point cloud:
+Create and visualize a scene with points:
 
 .. code-block:: python
 
