@@ -555,6 +555,7 @@ def generate_paper_landscape(
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
         # Cache UMAP results for instant future runs
+        aprint(f"[DEBUG] About to cache. cache_file={cache_file}, cache_dir={cache_dir}")
         with asection("Saving UMAP cache"):
             if cache_file:
                 aprint(f"Cache path: {cache_file}")
@@ -677,9 +678,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_kaggle_") as tmpdir:
         output_path = Path(tmpdir) / "arxiv_papers.zarr"
 
-        cache_dir = None
-        if use_cache:
-            cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
+        # ALWAYS use cache (no conditional!)
+        cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
 
         try:
             n_papers = generate_paper_landscape(
