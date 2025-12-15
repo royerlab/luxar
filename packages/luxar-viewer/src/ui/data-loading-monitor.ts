@@ -742,11 +742,11 @@ export class DataLoadingMonitor {
         </div>
 
         ${
-          hasSpatialIndex && this.config.showSpatialGrid
-            ? `
+  hasSpatialIndex && this.config.showSpatialGrid
+    ? `
         `
-            : ''
-        }
+    : ''
+}
       </div>
     `;
   }

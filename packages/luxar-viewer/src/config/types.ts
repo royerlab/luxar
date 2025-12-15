@@ -230,13 +230,20 @@ export interface UITypography {
 export interface UISpacing {
   // Panel spacing
   panelPadding: number;
+  panelPaddingLarge: number;
+  panelPaddingXL: number;
   panelMargin: number;
   // Section spacing
   sectionPadding: number;
+  sectionPaddingLarge: number;
   sectionGap: number;
+  sectionGapLarge: number;
   // Element spacing
   elementGap: number;
+  elementGapLarge: number;
+  elementGapXL: number;
   compactGap: number;
+  compactGapLarge: number;
   tinyGap: number;
   // Border and separator spacing
   borderPadding: number;
