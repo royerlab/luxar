@@ -190,6 +190,46 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 # =============================================================================
 
 
+def load_go_annotations(data_dir: Path) -> dict:
+    """Load GO term annotations from TSV file.
+
+    Args:
+        data_dir: CAFA5 data directory
+
+    Returns:
+        Dictionary mapping protein_id -> list of GO terms
+    """
+    import pandas as pd
+
+    tsv_files = list(data_dir.rglob("*terms.tsv"))
+
+    if not tsv_files:
+        aprint("⚠️  No GO annotation files found")
+        return {}
+
+    with asection("Loading GO term annotations"):
+        go_file = tsv_files[0]
+        aprint(f"File: {go_file.name}")
+
+        df = pd.read_csv(go_file, sep='\t')
+        aprint(f"✓ Loaded {len(df):,} GO annotations")
+        aprint(f"  Columns: {list(df.columns)}")
+
+        # Group by protein ID
+        protein_to_go = {}
+        for _, row in df.iterrows():
+            protein_id = row['EntryID']
+            go_term = row['term']
+
+            if protein_id not in protein_to_go:
+                protein_to_go[protein_id] = []
+            protein_to_go[protein_id].append(go_term)
+
+        aprint(f"✓ Annotations for {len(protein_to_go):,} unique proteins")
+
+    return protein_to_go
+
+
 def load_protein_embeddings(
     data_dir: Path,
     sample_size: int | None = None,
@@ -203,65 +243,59 @@ def load_protein_embeddings(
     Returns:
         Tuple of (embeddings, protein_ids, functions)
     """
-    import pandas as pd
-
     with asection("Loading CAFA5 protein embeddings"):
         # Find the embedding files
         npy_files = list(data_dir.rglob("*.npy"))
-        csv_files = list(data_dir.rglob("*.csv"))
 
         if not npy_files:
             raise FileNotFoundError(f"No .npy files found in {data_dir}")
 
-        aprint(f"Found {len(npy_files)} .npy files")
-        aprint(f"Found {len(csv_files)} .csv files")
-
-        # Find the embeddings file (2D array with shape (n_proteins, embedding_dim))
+        # Find train_embeddings.npy and train_ids.npy
         embedding_file = None
+        ids_file = None
+
         for npy_file in npy_files:
-            data = np.load(npy_file)
-            aprint(f"  {npy_file.name}: shape={data.shape}")
-
-            # Look for 2D array (n_proteins, embedding_dim)
-            if len(data.shape) == 2 and data.shape[1] > 100:  # Embeddings have >100 dims
+            if 'embeddings' in npy_file.name and 'train' in npy_file.name:
                 embedding_file = npy_file
-                embeddings = data
-                break
+            if 'ids' in npy_file.name and 'train' in npy_file.name:
+                ids_file = npy_file
 
-        if embedding_file is None:
-            raise ValueError("Could not find embeddings file (2D array with embeddings)")
+        if not embedding_file:
+            raise FileNotFoundError("Could not find train_embeddings.npy")
 
-        aprint(f"✓ Using embeddings from: {embedding_file.name}")
-        aprint(f"✓ Loaded {len(embeddings):,} protein embeddings")
-        aprint(f"  Dimensions: {embeddings.shape[1]}")
+        aprint(f"Loading embeddings: {embedding_file.name}")
+        embeddings = np.load(embedding_file)
+        aprint(f"✓ Loaded {len(embeddings):,} embeddings (shape: {embeddings.shape})")
 
-        # Load metadata if available
-        protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
-        functions = ["other"] * len(embeddings)  # Default
+        # Load protein IDs
+        if ids_file:
+            aprint(f"Loading protein IDs: {ids_file.name}")
+            protein_ids = np.load(ids_file).tolist()
+            aprint(f"✓ Loaded {len(protein_ids):,} protein IDs")
+        else:
+            protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
 
-        if csv_files:
-            # Try to load protein IDs and functions
-            metadata_file = csv_files[0]
-            aprint(f"Loading metadata from: {metadata_file.name}")
-            try:
-                df = pd.read_csv(metadata_file)
-                aprint(f"  Metadata columns: {list(df.columns)}")
+        # Load GO annotations
+        protein_to_go = load_go_annotations(data_dir)
 
-                # Extract protein IDs if available
-                if 'EntryID' in df.columns:
-                    protein_ids = df['EntryID'].tolist()[:len(embeddings)]
-                elif 'protein_id' in df.columns:
-                    protein_ids = df['protein_id'].tolist()[:len(embeddings)]
+        # Classify each protein by its GO terms
+        aprint("Classifying proteins by function...")
+        functions = []
+        for pid in protein_ids:
+            if pid in protein_to_go:
+                go_terms = protein_to_go[pid]
+                # Use first GO term to classify
+                func = classify_go_term(go_terms[0]) if go_terms else 'other'
+            else:
+                func = 'other'
+            functions.append(func)
 
-                # Classify proteins by GO terms or keywords
-                # This is a simplified categorization
-                if 'term' in df.columns or 'GO_term' in df.columns:
-                    term_col = 'term' if 'term' in df.columns else 'GO_term'
-                    for i, term in enumerate(df[term_col].tolist()[:len(embeddings)]):
-                        functions[i] = classify_protein_function(str(term))
-
-            except Exception as e:
-                aprint(f"  Warning: Could not load full metadata: {e}")
+        func_counts = {}
+        for f in functions:
+            func_counts[f] = func_counts.get(f, 0) + 1
+        aprint(f"✓ Function distribution: {len(func_counts)} categories")
+        for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:5]:
+            aprint(f"  {func}: {count:,}")
 
         # Sample if requested
         if sample_size and sample_size < len(embeddings):
@@ -277,54 +311,60 @@ def load_protein_embeddings(
     return embeddings, protein_ids, functions
 
 
-def classify_protein_function(go_term: str) -> str:
-    """Classify protein into broad functional category from GO term.
+def classify_go_term(go_id: str) -> str:
+    """Classify GO term ID into broad functional category.
+
+    Uses GO term number ranges to classify:
+    - GO:0003xxx: Molecular Function
+    - GO:0008xxx: Biological Process
+    - GO:0005xxx: Cellular Component
 
     Args:
-        go_term: GO term or description
+        go_id: GO term ID (e.g., "GO:0003700")
 
     Returns:
         Broad category name
     """
-    term_lower = go_term.lower()
+    try:
+        # Extract numeric part
+        go_num = int(go_id.split(':')[1])
 
-    # Enzyme activities
-    if any(kw in term_lower for kw in ['kinase', 'protease', 'ligase', 'transferase', 'hydrolase', 'oxidoreductase', 'catalytic']):
-        return 'enzyme'
+        # Molecular Functions (catalytic activities, binding)
+        if 3000 <= go_num < 6000:
+            if 3700 <= go_num < 3800:  # Transcription factors
+                return 'regulator'
+            elif 4000 <= go_num < 5000:  # Enzyme activities
+                return 'enzyme'
+            elif 5000 <= go_num < 6000:  # Binding
+                return 'binding'
+            else:
+                return 'catalytic'
 
-    # Transporters
-    if any(kw in term_lower for kw in ['transport', 'channel', 'porter', 'pump']):
-        return 'transporter'
+        # Biological Processes
+        elif 6000 <= go_num < 9000 or 40000 <= go_num < 100000:
+            if 6350 <= go_num < 6400:  # DNA/RNA processes
+                return 'nucleic_acid'
+            elif 6800 <= go_num < 7000:  # Signal transduction
+                return 'signaling'
+            elif 6900 <= go_num < 7000:  # Transport
+                return 'transporter'
+            else:
+                return 'binding'  # General biological process
 
-    # Receptors
-    if 'receptor' in term_lower:
-        return 'receptor'
+        # Cellular Components (location-based)
+        elif 5000 <= go_num < 6000 or 9000 <= go_num < 10000:
+            if 5886 == go_num:  # Membrane
+                return 'membrane'
+            elif 5840 <= go_num < 5850:  # Ribosome
+                return 'structural'
+            else:
+                return 'membrane'
 
-    # Structural proteins
-    if any(kw in term_lower for kw in ['structural', 'cytoskeleton', 'collagen', 'keratin']):
-        return 'structural'
+        else:
+            return 'other'
 
-    # Regulatory
-    if any(kw in term_lower for kw in ['regulator', 'transcription factor', 'repressor', 'activator']):
-        return 'regulator'
-
-    # Binding proteins
-    if 'binding' in term_lower and 'dna' not in term_lower and 'rna' not in term_lower:
-        return 'binding'
-
-    # Nucleic acid related
-    if any(kw in term_lower for kw in ['dna', 'rna', 'nucleic', 'polymerase', 'helicase']):
-        return 'nucleic_acid'
-
-    # Signaling
-    if any(kw in term_lower for kw in ['signal', 'hormone', 'growth factor']):
-        return 'signaling'
-
-    # Membrane proteins
-    if 'membrane' in term_lower:
-        return 'membrane'
-
-    return 'other'
+    except (ValueError, IndexError):
+        return 'other'
 
 
 # =============================================================================
