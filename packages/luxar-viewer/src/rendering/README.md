@@ -56,9 +56,9 @@ function animate() {
 
 ```typescript
 postProcessing.updateBloomSettings(
-  0.3,   // strength: how intense the glow (0-1)
-  0.85,  // radius: how far it spreads (0-1)
-  0.01   // threshold: HDR values above this glow
+  0.3, // strength: how intense the glow (0-1)
+  0.85, // radius: how far it spreads (0-1)
+  0.01 // threshold: HDR values above this glow
 );
 ```
 
@@ -88,9 +88,9 @@ postProcessing.setFXAAEnabled(true);
 
 ```typescript
 // Quick setup for different performance targets
-postProcessing.setQualityPreset('high');   // All effects, high settings
+postProcessing.setQualityPreset('high'); // All effects, high settings
 postProcessing.setQualityPreset('medium'); // Balanced
-postProcessing.setQualityPreset('low');    // Performance priority
+postProcessing.setQualityPreset('low'); // Performance priority
 ```
 
 **You're done!** Your scene now has professional HDR rendering with bloom, tone mapping, and anti-aliasing.
@@ -660,30 +660,30 @@ function animate() {
 
 ### PostProcessingManager
 
-| Method                                                    | Description                            |
-| --------------------------------------------------------- | -------------------------------------- |
-| `render()`                                                | Execute rendering pipeline             |
-| `updateBloomSettings(strength, radius, threshold)`        | Configure bloom                        |
-| `setToneMapping(type)`                                    | Set tone mapping operator              |
-| `setDetectorNoiseEnabled(enabled, sigma, gain, fpnSigma)` | Configure physics-based detector noise |
-| `updateDetectorNoiseSettings(params)`                     | Update detector noise parameters       |
-| `setFXAAEnabled(enabled)`                                 | Toggle FXAA                            |
-| `setSMAAEnabled(enabled)`                                 | Toggle SMAA                            |
-| `setAOEnabled(enabled, quality)`                          | Configure ambient occlusion            |
-| `setDOF(enabled, focus, strength)`                        | Configure depth of field               |
-| `setVignetteEnabled(enabled, darkness, offset)`           | Configure vignette                     |
-| `setChromaticAberration(enabled, strength)`               | Configure chromatic aberration         |
-| `setLensDistortionEnabled(enabled, ...params)`            | Configure lens distortion              |
-| `updateLensDistortion(params)`                            | Update lens distortion params          |
+| Method                                                    | Description                                          |
+| --------------------------------------------------------- | ---------------------------------------------------- |
+| `render()`                                                | Execute rendering pipeline                           |
+| `updateBloomSettings(strength, radius, threshold)`        | Configure bloom                                      |
+| `setToneMapping(type)`                                    | Set tone mapping operator                            |
+| `setDetectorNoiseEnabled(enabled, sigma, gain, fpnSigma)` | Configure physics-based detector noise               |
+| `updateDetectorNoiseSettings(params)`                     | Update detector noise parameters                     |
+| `setFXAAEnabled(enabled)`                                 | Toggle FXAA                                          |
+| `setSMAAEnabled(enabled)`                                 | Toggle SMAA                                          |
+| `setAOEnabled(enabled, quality)`                          | Configure ambient occlusion                          |
+| `setDOF(enabled, focus, strength)`                        | Configure depth of field                             |
+| `setVignetteEnabled(enabled, darkness, offset)`           | Configure vignette                                   |
+| `setChromaticAberration(enabled, strength)`               | Configure chromatic aberration                       |
+| `setLensDistortionEnabled(enabled, ...params)`            | Configure lens distortion                            |
+| `updateLensDistortion(params)`                            | Update lens distortion params                        |
 | `setQualityPreset(preset)`                                | Set quality preset: 'low', 'medium', 'high', 'ultra' |
-| `setBloomLevels(levels)`                                  | Set bloom mipmap levels (1-12)         |
-| `setSSAAEnabled(enabled)`                                 | Toggle SSAA                            |
-| `setSSAAMultiplier(multiplier)`                           | Set SSAA multiplier (1.5-4.0)          |
-| `startDeferRebuild()` / `endDeferRebuild()`               | Defer rebuilds during bulk changes     |
-| `getPerformanceMetrics()`                                 | Get FPS, frame time, memory usage      |
-| `needsContinuousAnimation()`                              | Check if effects need animation        |
-| `resize(width, height)`                                   | Update render size                     |
-| `dispose()`                                               | Clean up resources                     |
+| `setBloomLevels(levels)`                                  | Set bloom mipmap levels (1-12)                       |
+| `setSSAAEnabled(enabled)`                                 | Toggle SSAA                                          |
+| `setSSAAMultiplier(multiplier)`                           | Set SSAA multiplier (1.5-4.0)                        |
+| `startDeferRebuild()` / `endDeferRebuild()`               | Defer rebuilds during bulk changes                   |
+| `getPerformanceMetrics()`                                 | Get FPS, frame time, memory usage                    |
+| `needsContinuousAnimation()`                              | Check if effects need animation                      |
+| `resize(width, height)`                                   | Update render size                                   |
+| `dispose()`                                               | Clean up resources                                   |
 
 ---
 

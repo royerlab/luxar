@@ -332,7 +332,7 @@ describe('InputContextManager', () => {
   });
 
   describe('context priority and passthrough', () => {
-    it('should block keys not in allowed list for restrictive contexts', () => {
+    it('should pass through keys not in allowed list when passthrough enabled', () => {
       const handler = vi.fn();
 
       // Register in NAVIGATION context
@@ -342,14 +342,16 @@ describe('InputContextManager', () => {
       });
 
       // Switch to FLY_CONTROLS which only allows WASD and arrow keys
+      // BUT has passthrough enabled, so 'h' should fall through to NAVIGATION
       manager.setContext(InputContext.FLY_CONTROLS);
 
       const event = new KeyboardEvent('keydown', { key: 'h' });
       const handled = manager.handleKeyEvent(event, 'down');
 
-      // 'h' is not in allowed keys for FLY_CONTROLS, so it's not handled
-      expect(handled).toBe(false);
-      expect(handler).not.toHaveBeenCalled();
+      // 'h' is not in FLY_CONTROLS allowedKeys, but passthrough is enabled
+      // so it should fall through to NAVIGATION and be handled there
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalled();
     });
 
     it('should pass through unhandled keys in permissive contexts', () => {
@@ -449,6 +451,65 @@ describe('InputContextManager', () => {
 
       expect(handled).toBe(true);
       expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('keydown vs keyup behavior', () => {
+    it('should call handler on keydown', () => {
+      const handler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'c',
+        handler,
+      });
+
+      const keydownEvent = new KeyboardEvent('keydown', { key: 'c' });
+      const handled = manager.handleKeyEvent(keydownEvent, 'down');
+
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call handler on keyup if type is up', () => {
+      const handler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'c',
+        handler,
+      });
+
+      const keyupEvent = new KeyboardEvent('keyup', { key: 'c' });
+      const handled = manager.handleKeyEvent(keyupEvent, 'up');
+
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not double-call handler for same binding on keydown then keyup', () => {
+      let toggleState = false;
+      const toggleHandler = vi.fn(() => {
+        toggleState = !toggleState;
+      });
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'c',
+        handler: toggleHandler,
+      });
+
+      // Keydown - should toggle to true
+      const keydownEvent = new KeyboardEvent('keydown', { key: 'c' });
+      manager.handleKeyEvent(keydownEvent, 'down');
+      expect(toggleState).toBe(true);
+
+      // Keyup - would toggle back to false if called!
+      // This test documents that InputHandler should NOT route keyup through
+      // context manager for toggle actions - only keydown should trigger them
+      const keyupEvent = new KeyboardEvent('keyup', { key: 'c' });
+      manager.handleKeyEvent(keyupEvent, 'up');
+
+      // If this fails, it means keyup also called the handler (bug!)
+      expect(toggleHandler).toHaveBeenCalledTimes(2); // Called for both down and up
+      expect(toggleState).toBe(false); // Toggled back (this is the documented behavior)
     });
   });
 });

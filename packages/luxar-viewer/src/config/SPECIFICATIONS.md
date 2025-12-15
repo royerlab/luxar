@@ -1200,8 +1200,8 @@ interface RenderingSettings {
 - **msaaEnabled**: false (incompatible with additive blending)
 - **msaaSamples**: 4
 - **smaaEnabled**: false
-- **smaaThreshold**: 0.1
-- **smaaSearchSteps**: 8
+- **smaaThreshold**: 0.1 (not exposed in UI - library uses presets only)
+- **smaaSearchSteps**: 8 (not exposed in UI - library uses presets only)
 - **ssaaEnabled**: false (brightness issues with additive)
 - **ssaaMultiplier**: 2.0
 

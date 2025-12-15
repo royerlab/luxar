@@ -187,10 +187,9 @@ def generate_5d_spiral_galaxy(
                 Dimension(
                     name="Channel",
                     unit="",
-                    range=(0, n_channels - 1),
+                    categories=["Young Stars", "Intermediate", "Old Stars"],
                     display=False,
-                    discrete=True,
-                    step=1.0,
+                    description="Stellar population age - young (blue), intermediate (yellow), old (red)",
                 ),
             ]
         )

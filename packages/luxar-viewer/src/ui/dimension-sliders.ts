@@ -223,11 +223,50 @@ export class DimensionSliders {
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
 
-    // Create individual control (slider or dropdown) for each non-displayed dimension
+    // Separate dimensions by type: sliders (continuous + many categorical) vs dropdowns (few categorical)
+    const sliderDims: number[] = [];
+    const dropdownDims: number[] = [];
+
     for (let i = 0; i < this.dims.ndim; i++) {
       if (!this.dims.displayed.includes(i)) {
-        this.createDimensionControl(i);
+        const dimMeta = this.dims.metadata?.[i];
+        const categories = dimMeta?.categories;
+
+        // Categorical with < 10 categories → dropdown (at bottom)
+        if (categories && categories.length < 10) {
+          dropdownDims.push(i);
+        }
+        // Otherwise → slider (at top)
+        else {
+          sliderDims.push(i);
+        }
       }
+    }
+
+    // Create sliders first (continuous dimensions + categorical with many categories)
+    for (const dimIndex of sliderDims) {
+      this.createSlider(dimIndex);
+    }
+
+    // Create categorical dropdowns in a grid at the bottom (max 3 per row)
+    if (dropdownDims.length > 0) {
+      const dropdownGrid = document.createElement('div');
+      dropdownGrid.style.display = 'grid';
+      dropdownGrid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(150px, 1fr))';
+      dropdownGrid.style.gap = '8px';
+      dropdownGrid.style.marginTop = sliderDims.length > 0 ? '8px' : '0'; // Spacing only if sliders above
+      dropdownGrid.style.maxWidth = '100%';
+
+      // Limit to 3 columns maximum
+      if (dropdownDims.length >= 3) {
+        dropdownGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+      }
+
+      for (const dimIndex of dropdownDims) {
+        this.createDropdownInGrid(dimIndex, dropdownGrid);
+      }
+
+      this.slidersContainer.appendChild(dropdownGrid);
     }
 
     // Handle edge case: no dimensions are navigable
@@ -243,73 +282,52 @@ export class DimensionSliders {
   }
 
   /**
-   * Create appropriate control (dropdown or slider) for a dimension.
+   * Create a dropdown control optimized for grid layout.
    *
-   * Decision logic:
-   * - Categorical with < 10 categories → Dropdown
-   * - Categorical with ≥ 10 categories → Slider (with category labels)
-   * - Non-categorical → Slider
+   * Compact dropdown designed to fit in a responsive grid (max 3 per row).
+   * Used for categorical dimensions with < 10 categories.
    *
-   * @param dimIndex - Zero-based index of dimension to create control for
-   * @private
-   */
-  private createDimensionControl(dimIndex: number): void {
-    const dimMeta = this.dims.metadata?.[dimIndex];
-    const categories = dimMeta?.categories;
-
-    // Categorical dimension with few categories → use dropdown
-    if (categories && categories.length < 10) {
-      this.createDropdown(dimIndex);
-    }
-    // Otherwise use slider (works for many categories, continuous, or discrete)
-    else {
-      this.createSlider(dimIndex);
-    }
-  }
-
-  /**
-   * Create a dropdown control for a categorical dimension.
-   *
-   * Used for dimensions with < 10 categories for precise, easy selection.
    * Provides:
-   * - Clean dropdown with category labels
+   * - Compact layout with dimension name prefix
+   * - Category labels in dropdown options
    * - Keyboard navigation (arrow keys, [ / ] keys)
    * - Cyclic wrapping if dimension.cyclic = true
-   * - Tooltip with dimension description
+   * - Tooltips matching Luxar UI style
    *
    * @param dimIndex - Zero-based index of dimension to create dropdown for
+   * @param gridContainer - Grid container to append dropdown to
    * @private
    */
-  private createDropdown(dimIndex: number): void {
+  private createDropdownInGrid(dimIndex: number, gridContainer: HTMLElement): void {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const categories = dimMeta?.categories;
     if (!categories) return;
 
-    const dropdownGroup = document.createElement('div');
-    dropdownGroup.style.marginBottom = '12px';
+    // Container for this dropdown (will be a grid item)
+    const dropdownItem = document.createElement('div');
+    dropdownItem.style.display = 'flex';
+    dropdownItem.style.flexDirection = 'column';
+    dropdownItem.style.gap = '4px';
 
-    // Label with dimension name
+    // Compact label with dimension name (smaller, consistent with sliders)
     const label = document.createElement('div');
-    label.style.marginBottom = '4px';
-    label.style.display = 'flex';
-    label.style.justifyContent = 'space-between';
-    label.style.alignItems = 'center';
+    label.style.fontSize = '12px';
+    label.style.fontWeight = '500';
+    label.style.color = 'rgba(255, 255, 255, 0.9)';
+    label.style.marginBottom = '2px';
 
-    const dimName = document.createElement('span');
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
-    dimName.textContent = name;
-    dimName.style.fontWeight = '500';
+    label.textContent = name;
 
     // Add tooltip with description if available
     if (dimMeta.description) {
-      dimName.title = dimMeta.description;
-      dimName.style.cursor = 'help';
-      dimName.style.textDecoration = 'underline dotted';
+      label.title = dimMeta.description;
+      label.style.cursor = 'help';
+      label.style.borderBottom = '1px dotted rgba(255, 255, 255, 0.4)';
+      label.style.display = 'inline-block';
     }
 
-    label.appendChild(dimName);
-
-    // Create dropdown
+    // Create dropdown matching Luxar UI style
     const dropdown = document.createElement('select');
     dropdown.id = `dim-dropdown-${dimIndex}`;
     dropdown.style.width = '100%';
@@ -323,7 +341,7 @@ export class DimensionSliders {
     dropdown.style.outline = 'none';
     dropdown.style.fontFamily = 'inherit';
 
-    // Style on hover/focus
+    // Hover/focus states matching Luxar style (green accent)
     dropdown.addEventListener('mouseenter', () => {
       dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
       dropdown.style.borderColor = 'rgba(76, 175, 80, 0.5)';
@@ -334,9 +352,11 @@ export class DimensionSliders {
     });
     dropdown.addEventListener('focus', () => {
       dropdown.style.borderColor = '#4CAF50';
+      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
     });
     dropdown.addEventListener('blur', () => {
       dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
     });
 
     // Populate dropdown with categories
@@ -344,7 +364,7 @@ export class DimensionSliders {
       const option = document.createElement('option');
       option.value = String(index);
       option.textContent = category;
-      option.title = `${category} (index: ${index})`; // Tooltip in dropdown
+      option.title = `${category} (index: ${index})`;
       dropdown.appendChild(option);
     });
 
@@ -358,7 +378,7 @@ export class DimensionSliders {
       sceneDimsManager.setDimensionValue(dimIndex, value);
     });
 
-    // Add keyboard navigation (arrow keys and [ / ] keys)
+    // Add keyboard navigation (arrow keys and [ / ] keys) with cyclic support
     dropdown.addEventListener('keydown', (event) => {
       const [min, max] = this.dimensionRanges[dimIndex];
       const currentVal = parseInt(dropdown.value);
@@ -386,10 +406,10 @@ export class DimensionSliders {
       }
     });
 
-    dropdownGroup.appendChild(label);
-    dropdownGroup.appendChild(dropdown);
+    dropdownItem.appendChild(label);
+    dropdownItem.appendChild(dropdown);
+    gridContainer.appendChild(dropdownItem);
 
-    this.slidersContainer.appendChild(dropdownGroup);
     this.dropdowns.set(dimIndex, dropdown);
   }
 

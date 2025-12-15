@@ -205,13 +205,16 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     if (mergedVertexRanges.length <= 10) {
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `  Ranges: ${mergedVertexRanges.map(r => `[${r.start}-${r.end})`).join(', ')}`
+        `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
       );
     } else {
-      const first5 = mergedVertexRanges.slice(0, 5).map(r => `[${r.start}-${r.end})`).join(', ');
+      const first5 = mergedVertexRanges
+        .slice(0, 5)
+        .map((r) => `[${r.start}-${r.end})`)
+        .join(', ');
       const last5 = mergedVertexRanges
         .slice(-5)
-        .map(r => `[${r.start}-${r.end})`)
+        .map((r) => `[${r.start}-${r.end})`)
         .join(', ');
       log.info(Modules.SPATIAL_INDEX_LOADER, `  First 5 ranges: ${first5}`);
       log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);

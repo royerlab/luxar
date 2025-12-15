@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
 
 // Supported blending modes
 export type BlendingMode = 'normal' | 'additive';
@@ -40,6 +41,7 @@ export class MaterialManager {
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
+  private currentHdrMultiplier = config.shader.points.hdrMultiplier; // Current HDR multiplier (default 16.0)
 
   /**
    * Get or create a point material with caching
@@ -81,6 +83,9 @@ export class MaterialManager {
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution);
 
+    // Update with current HDR multiplier (critical for settings loaded before material creation)
+    material.updateHDRMultiplier(this.currentHdrMultiplier);
+
     // Debug log the camera params being set
     log.info(
       Modules.RENDERER,
@@ -115,7 +120,7 @@ export class MaterialManager {
     material = new LineMaterial({
       opacity: props.opacity,
       blendingMode: props.blendingMode,
-      hdrMultiplier: props.hdrMultiplier,
+      hdrMultiplier: props.hdrMultiplier ?? this.currentHdrMultiplier, // Use current if not provided
     });
 
     // Register for global updates
@@ -148,8 +153,13 @@ export class MaterialManager {
 
   /**
    * Update HDR multiplier globally
+   * Stores the value so new materials created after this call will use the updated multiplier
    */
   updateHDRMultiplier(multiplier: number): void {
+    // Store current value for future material creation
+    this.currentHdrMultiplier = multiplier;
+
+    // Update all existing materials
     this.registeredMaterials.forEach((material) => {
       if (material instanceof PointMaterial) {
         material.updateHDRMultiplier(multiplier);
@@ -224,7 +234,7 @@ export class MaterialManager {
     lineMaterials: number;
     totalRegistered: number;
     keys: string[];
-    } {
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

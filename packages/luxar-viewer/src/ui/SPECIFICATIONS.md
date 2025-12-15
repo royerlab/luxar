@@ -427,8 +427,8 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 
 ```typescript
 // Define range in log space
-const logMin = Math.log10(0.01);  // -2 (maps to slider left)
-const logMax = Math.log10(100);   // +2 (maps to slider right)
+const logMin = Math.log10(0.01); // -2 (maps to slider left)
+const logMax = Math.log10(100); // +2 (maps to slider right)
 
 // Shadow object holds log value for lil-gui binding
 const hdrLogValue = { log: Math.log10(this.settings.hdrMultiplier) };
@@ -475,10 +475,10 @@ Since lil-gui doesn't support custom value formatters, we override the controlle
 // Helper to format the actual intensity value for display
 const formatIntensity = (logValue: number): string => {
   const actual = Math.pow(10, logValue);
-  if (actual >= 10) return actual.toFixed(0);    // "15"
-  if (actual >= 1) return actual.toFixed(1);     // "1.5"
-  if (actual >= 0.1) return actual.toFixed(2);   // "0.15"
-  return actual.toFixed(3);                       // "0.015"
+  if (actual >= 10) return actual.toFixed(0); // "15"
+  if (actual >= 1) return actual.toFixed(1); // "1.5"
+  if (actual >= 0.1) return actual.toFixed(2); // "0.15"
+  return actual.toFixed(3); // "0.015"
 };
 
 // Override updateDisplay to show actual intensity value
@@ -497,11 +497,13 @@ const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
 This ensures users see meaningful values like "0.08" or "1.5" instead of "-1.12" or "0.18". The override approach is necessary because lil-gui's `updateDisplay()` always sets `$input.value` from the bound property.
 
 **Slider Position to Value Mapping**:
+
 - **Left edge** (log=-2): displays "0.01" (very dim)
 - **Center** (log=0): displays "1.0" (neutral)
 - **Right edge** (log=+2): displays "100" (very bright)
 
 **Perceptual Benefits**:
+
 - Equal slider distance for equal perceptual change
 - Easy to select 0.1, 1.0, 10.0 (each one slider-width apart)
 - Fine control at both low and high ends of range
@@ -1928,8 +1930,9 @@ interface RenderingSettings {
   msaaEnabled: boolean;
   msaaSamples: number;
   smaaEnabled: boolean;
-  smaaThreshold: number;
-  smaaSearchSteps: number;
+  // Note: smaaThreshold and smaaSearchSteps exist in config but are not exposed
+  // in the UI because pmndrs/postprocessing SMAAEffect only supports preset-based
+  // configuration (LOW/MEDIUM/HIGH/ULTRA). The UI shows only an on/off toggle.
 
   // Effects
   bloomStrength: number;
