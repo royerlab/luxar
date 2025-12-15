@@ -421,7 +421,8 @@ def reduce_embeddings_umap(
             metric="cosine",
             n_jobs=-1,  # Use ALL CPU cores for massive speedup!
             low_memory=False,  # Speed optimization (uses more RAM)
-            random_state=42,
+            # Note: random_state removed to enable parallel processing
+            # Results will vary slightly between runs but be much faster!
             verbose=True,
         )
 
