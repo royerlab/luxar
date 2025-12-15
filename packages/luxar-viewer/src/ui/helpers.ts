@@ -359,10 +359,10 @@ export function cleanupUI() {
  * ```
  */
 export function showHelpOverlay() {
-  // Remove any existing help overlay first
+  // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('help-overlay');
   if (existingHelp) {
-    existingHelp.remove();
+    return; // Don't create a new one, just return
   }
 
   const helpDiv = document.createElement('div');
@@ -421,7 +421,6 @@ export function showHelpOverlay() {
   `;
   closeBtn.onmouseover = () => (closeBtn.style.color = '#fff');
   closeBtn.onmouseout = () => (closeBtn.style.color = '#999');
-  closeBtn.onclick = () => hideHelpOverlay();
   closeBtn.title = 'Close (Escape)';
 
   header.appendChild(title);
@@ -602,6 +601,9 @@ export function showHelpOverlay() {
       closeHelp();
     }
   };
+
+  // Wire up close button to use the proper cleanup function
+  closeBtn.onclick = () => closeHelp();
 
   // Add click handler within help panel - but NOT to close
   // (clicking inside should not close, only clicking outside should)

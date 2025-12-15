@@ -668,45 +668,6 @@ export class DebugConsole {
   }
 
   /**
-   * Format an argument with appropriate styling (legacy, kept for formatArgs)
-   */
-  private formatArgWithStyle(arg: any): string {
-    if (arg === undefined) {
-      return '<span class="console-message-undefined">undefined</span>';
-    }
-    if (arg === null) {
-      return '<span class="console-message-undefined">null</span>';
-    }
-    if (typeof arg === 'string') {
-      return `<span class="console-message-string">"${this.escapeHtml(arg)}"</span>`;
-    }
-    if (typeof arg === 'number') {
-      return `<span class="console-message-number">${arg}</span>`;
-    }
-    if (typeof arg === 'boolean') {
-      return `<span class="console-message-boolean">${arg}</span>`;
-    }
-    if (typeof arg === 'object') {
-      try {
-        const json = JSON.stringify(arg, null, 2);
-        return `<span class="console-message-object">${this.escapeHtml(json)}</span>`;
-      } catch {
-        return `<span class="console-message-object">${this.escapeHtml(arg.toString())}</span>`;
-      }
-    }
-    return this.escapeHtml(String(arg));
-  }
-
-  /**
-   * Escape HTML for safe display
-   */
-  private escapeHtml(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  /**
    * Apply filter to existing messages
    */
   private applyFilter(): void {

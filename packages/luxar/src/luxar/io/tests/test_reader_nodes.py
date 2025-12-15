@@ -1,0 +1,130 @@
+"""Test reader node collection for potential duplicates.
+
+NOTE: During investigation, discovered that the reader works correctly with no duplicates.
+The original bug report was a misunderstanding. However, this investigation revealed a
+DIFFERENT bug: the write_points() parent parameter doesn't work as expected - points are
+written at root level regardless of parent parameter.
+
+TODO: Fix writer parent parameter in separate ticket.
+"""
+
+import numpy as np
+import pytest
+from pathlib import Path
+
+from luxar.core.dimensions import Dimensions
+from luxar.io.compiler import LuxarZarrCompiler
+from luxar.io.reader import LuxarScene
+
+
+class TestReaderNodeCollection:
+    """Test that reader correctly collects nodes without duplicates.
+
+    VERDICT: Reader works correctly. No duplicates found in any scenario.
+    """
+
+    def test_nested_groups_no_duplicates(self, tmp_path: Path) -> None:
+        """Test that nested groups don't cause duplicate node entries."""
+        output_path = tmp_path / "nested_groups.zarr"
+
+        # Create nested structure: Root -> GroupA -> GroupB -> Points
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # Add root level points
+            compiler.write_points("RootPoints", np.array([[0, 0, 0]], dtype=np.float32))
+
+            # Create nested groups
+            group_a = scene_node.add_group("GroupA")
+            compiler.write_points("GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32), parent="GroupA")
+
+            # Create nested group under GroupA
+            group_b = group_a.add_group("GroupB")
+            compiler.write_points("GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="GroupA/GroupB")
+
+        # Load and verify
+        scene = LuxarScene.load(output_path)
+        nodes = scene.nodes
+
+        # Check total count
+        print(f"\n📊 Total nodes found: {len(nodes)}")
+        for node in nodes:
+            print(f"  - {node['name']} ({node['type']})")
+
+        # Check for duplicates
+        names = [n['name'] for n in nodes]
+        duplicates = [name for name in set(names) if names.count(name) > 1]
+
+        # Assertion: No duplicates should exist
+        assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"
+
+        # Verify expected nodes are present
+        # NOTE: Due to writer bug, points are at root level, not under parents
+        # This test verifies reader works correctly for the actual structure written
+        assert "RootPoints" in names
+        assert "GroupA" in names
+        assert "GroupAPoints" in names  # Currently at root (writer bug)
+        assert "GroupA/GroupB" in names
+        assert "GroupBPoints" in names  # Currently at root (writer bug)
+
+        # Verify each node appears exactly once
+        for name in names:
+            assert names.count(name) == 1, f"Node '{name}' appears {names.count(name)} times"
+
+        # Verify list methods return correct results
+        assert len(scene.list_points()) == 3  # RootPoints, GroupAPoints, GroupBPoints
+        assert len(scene.list_groups()) == 2  # GroupA, GroupB
+
+    def test_flat_structure_no_duplicates(self, tmp_path: Path) -> None:
+        """Test that flat structure (no nesting) works correctly."""
+        output_path = tmp_path / "flat_structure.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # Add multiple points at root level
+            for i in range(5):
+                compiler.write_points(f"Points{i}", np.random.randn(10, 3).astype(np.float32))
+
+        scene = LuxarScene.load(output_path)
+        nodes = scene.nodes
+
+        # Check for duplicates
+        names = [n['name'] for n in nodes]
+        duplicates = [name for name in set(names) if names.count(name) > 1]
+
+        assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"
+        assert len(scene.list_points()) == 5
+
+    def test_mixed_types_no_duplicates(self, tmp_path: Path) -> None:
+        """Test mixed node types (groups, points, lines) without duplicates."""
+        output_path = tmp_path / "mixed_types.zarr"
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # Root level: points, lines, group
+            compiler.write_points("RootPoints", np.array([[0, 0, 0]], dtype=np.float32))
+
+            # Add lines
+            vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+            widths = np.array([0.1, 0.1], dtype=np.float32)
+            compiler.write_lines("RootLines", vertices, widths, line_type="segments")
+
+            # Add group with nested content
+            group = scene_node.add_group("MyGroup")
+            compiler.write_points("GroupPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="MyGroup")
+
+        scene = LuxarScene.load(output_path)
+        nodes = scene.nodes
+
+        # Check for duplicates
+        names = [n['name'] for n in nodes]
+        duplicates = [name for name in set(names) if names.count(name) > 1]
+
+        assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"
+
+        # Verify counts
+        assert len(scene.list_points()) == 2
+        assert len(scene.list_lines()) == 1
+        assert len(scene.list_groups()) == 1
