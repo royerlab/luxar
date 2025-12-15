@@ -54,14 +54,14 @@ test.describe('AI Debugging Capabilities', () => {
         // Renderer capabilities
         renderer: debug.renderer
           ? {
-            pixelRatio: debug.renderer.getPixelRatio(),
-            // Get canvas size directly (getSize requires proper Vector2 instance)
-            size: {
-              width: debug.renderer.domElement.width,
-              height: debug.renderer.domElement.height,
-            },
-            maxTextureSize: debug.renderer.capabilities.maxTextureSize,
-          }
+              pixelRatio: debug.renderer.getPixelRatio(),
+              // Get canvas size directly (getSize requires proper Vector2 instance)
+              size: {
+                width: debug.renderer.domElement.width,
+                height: debug.renderer.domElement.height,
+              },
+              maxTextureSize: debug.renderer.capabilities.maxTextureSize,
+            }
           : null,
       };
     });

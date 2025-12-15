@@ -63,6 +63,80 @@ Architectural Layers
 
 Luxar consists of four distinct layers:
 
+Server Layer (FastAPI)
+~~~~~~~~~~~~~~~~~~~~~~
+
+**Purpose**: Serve Zarr datasets over HTTP for browser-based visualization
+
+**Key Components**:
+
+* ``create_server_app()``: Factory function for FastAPI applications
+* ``DirectoryListingStaticFiles``: Custom static file handler with Zarr support
+* ``NetworkSimulationMiddleware``: Test performance under realistic network conditions
+* CORS middleware: Enable cross-origin requests from viewer
+
+**Architecture**:
+
+The server layer sits between storage and viewer, providing:
+
+1. **Static File Serving**: Zarr chunks and metadata served as static files
+2. **Directory Listing**: JSON directory listing for Zarr structure discovery
+3. **Health Checks**: ``/health`` endpoint for monitoring
+4. **Network Simulation**: Optional middleware to simulate bandwidth, latency, packet loss
+
+**Design Decisions**:
+
+*Why FastAPI?*
+
+* Modern async framework (handles many concurrent requests efficiently)
+* Automatic OpenAPI documentation
+* Type hints for request/response validation
+* Easy middleware integration
+
+*Why static file serving?*
+
+* Zarr is designed for HTTP range requests
+* No need for complex query API - chunks are addressed directly
+* Browser can cache chunks efficiently
+* CDN-friendly for production deployments
+
+*Why directory listing?*
+
+* Viewer needs to discover Zarr structure
+* Standard HTTP directory indices don not work for all browsers
+* JSON format enables programmatic access
+
+**Server Creation Example**::
+
+   from luxar.cli.main import create_server_app
+   import uvicorn
+   
+   # Create configured FastAPI app
+   app = create_server_app("/path/to/data.zarr", serve_viewer=False)
+   
+   # Run server
+   uvicorn.run(app, host="127.0.0.1", port=8000)
+
+The server automatically:
+
+* Serves ``.zmetadata`` for fast initialization
+* Provides directory listings for Zarr groups
+* Handles CORS for cross-origin viewer access
+* Includes health check at ``/health``
+
+**Integration Testing**:
+
+The server is designed for testing without mocking:
+
+* Create real server instances in tests
+* Make actual HTTP requests
+* Verify end-to-end behavior
+* Test with real Zarr data
+
+See :doc:`../tutorials/programmatic_server` for detailed examples.
+
+
+
 Python Layer (Data Creation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
