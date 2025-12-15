@@ -18,9 +18,9 @@ The `luxar-viewer.input` package provides context-aware keyboard and mouse input
 ## Table of Contents
 
 1. [Input Context System](#input-context-system)
-2. [Event Routing](#event-routing)
+2. [Key Binding System](#key-binding-system)
 3. [Typing Detection](#typing-detection)
-4. [Key Filtering](#key-filtering)
+4. [Integration with InputHandler](#integration-with-inputhandler)
 
 ---
 
@@ -837,11 +837,12 @@ export class InputHandler {
   dispose(): void;
 
   // Private - Event Handlers
-  private onKeyDown(event: KeyboardEvent): void; // Main key handling (175 lines)
-  private onKeyUp(event: KeyboardEvent): void;
+  private onKeyDown(event: KeyboardEvent): void; // Routes to context manager (8 lines)
+  private onKeyUp(event: KeyboardEvent): void; // Routes to context manager (5 lines)
   private isTypingInInput(): boolean; // Typing detection
+  private registerAllKeyBindings(): void; // Registers all 58 bindings (228 lines)
   private selectDimension(index: number): void;
-  private stepDimension(direction: 1 | -1): void;
+  private handleDimensionNavigation(direction: 1 | -1): void;
   // ... many other private methods for specific actions
 }
 ```
