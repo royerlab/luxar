@@ -54,7 +54,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       expect(keydownHandler).not.toHaveBeenCalled();
     });
 
-    it('should call main handler for keyup if keyupHandler not provided', () => {
+    it('should NOT call handler on keyup if keyupHandler not provided', () => {
       const handler = vi.fn();
 
       manager.registerBinding(InputContext.NAVIGATION, {
@@ -64,11 +64,11 @@ describe('InputContextManager - keyupHandler Feature', () => {
       });
 
       const keyupEvent = new KeyboardEvent('keyup', { key: 'h' });
-      manager.handleKeyEvent(keyupEvent, 'up');
+      const handled = manager.handleKeyEvent(keyupEvent, 'up');
 
-      // Falls back to main handler
-      expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(keyupEvent);
+      // Should NOT handle keyup without keyupHandler
+      expect(handled).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 
@@ -169,17 +169,14 @@ describe('InputContextManager - keyupHandler Feature', () => {
       expect(cinematicMode).toBe(true);
       expect(toggleHandler).toHaveBeenCalledTimes(1);
 
-      // Release C - should NOT toggle (no keyupHandler means handler called again)
+      // Release C - should NOT call handler (no keyupHandler)
       const keyupEvent = new KeyboardEvent('keyup', { key: 'c' });
-      manager.handleKeyEvent(keyupEvent, 'up');
+      const handled = manager.handleKeyEvent(keyupEvent, 'up');
 
-      // Handler WAS called (because no keyupHandler, so it falls back to handler)
-      expect(toggleHandler).toHaveBeenCalledTimes(2);
-      expect(cinematicMode).toBe(false); // Toggled back!
-
-      // This test documents that toggle actions WILL double-trigger if
-      // keyup is routed through context manager. The solution is to NOT
-      // route keyup for toggle actions (InputHandler.onKeyUp should skip them).
+      // Keyup should NOT be handled (returns false) - CORRECT behavior
+      expect(handled).toBe(false);
+      expect(toggleHandler).toHaveBeenCalledTimes(1); // Only called once
+      expect(cinematicMode).toBe(true); // Stays ON (doesn't toggle back)
     });
   });
 });
