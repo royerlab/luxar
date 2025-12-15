@@ -248,7 +248,7 @@ Points nodes contain the actual point data.
 - **Chunks:** `(min(N, 32768),)` for 1D chunking
 - **Compression:** Blosc with zstd, level 3, bit-shuffle
 - **Description:** Point radii in scene units
-- **Default:** 0.1 if not provided
+- **Default:** 0.5 if not provided (see `DEFAULT_POINT_RADIUS` in `core/scene.py`)
 - **Validation:** All values must be positive
 
 #### sharpness/ (Optional)

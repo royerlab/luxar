@@ -347,29 +347,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading colors for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading radii for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading sharpness for ${ranges.length} ranges`
+        ),
+        await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -1024,18 +1024,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (finalRadii && effectiveRadiusConfig) {
       // Check if we should apply effective radius
       if (shouldApplyEffectiveRadius(effectiveRadiusConfig, viewState.displayDims, true)) {
-        // DEBUG: Uncomment for troubleshooting effective radius issues
-        // const sampleRadii = [finalRadii[0], finalRadii[Math.floor(numPoints / 2)], finalRadii[numPoints - 1]];
-        // log.info(
-        //   Modules.SPATIAL_INDEX_LOADER,
-        //   `Applying effective radius with config: spatialExtendDims=[${effectiveRadiusConfig.spatialExtendDims.join(', ')}], ` +
-        //     `displayDims=[${viewState.displayDims.join(', ')}], ` +
-        //     `slicePosition=[${viewState.slicePosition.map((v) => v?.toFixed(2) ?? 'null').join(', ')}]`
-        // );
-        // console.log(
-        //   `[DEBUG] Original radii (first, middle, last): [${sampleRadii.join(', ')}], ` +
-        //     `maxRadius=${effectiveRadiusConfig.maxRadius}`
-        // );
+        // To debug effective radius calculation, add log statements here with:
+        // log.info(Modules.SPATIAL_INDEX_LOADER, `Effective radius config: ...`)
 
         finalRadii = calculateEffectiveRadii(
           positions, // Original nD positions (any typed array)

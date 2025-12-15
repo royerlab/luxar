@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, cast
 
 from arbol import aprint
 
@@ -97,7 +97,7 @@ class Lines(DataNode):
         result = self._metadata.get(
             "original_line_type", self._metadata.get("line_type", "polyline")
         )
-        return result  # type: ignore[return-value]
+        return cast(LineType, result)
 
     @property
     def has_colors(self) -> bool:
