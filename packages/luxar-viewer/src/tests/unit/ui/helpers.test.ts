@@ -9,11 +9,26 @@ import { showHelpOverlay, hideHelpOverlay, showError, clearError } from '../../.
 // Mock DOM environment
 beforeEach(() => {
   document.body.innerHTML = '';
-  // Clean up any existing event listeners
-  document.removeEventListener('click', () => {});
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  // Clean up any help overlays
+  const helpOverlay = document.getElementById('help-overlay');
+  if (helpOverlay) {
+    helpOverlay.remove();
+  }
+
+  // Clean up error messages
+  const errorMessage = document.getElementById('error-message');
+  if (errorMessage) {
+    errorMessage.remove();
+  }
+
+  // Clear all pending timers before teardown
+  vi.clearAllTimers();
+  vi.useRealTimers();
+
   document.body.innerHTML = '';
 });
 
@@ -33,15 +48,15 @@ describe('UI Helpers - Critical Fixes', () => {
       expect(document.getElementById('help-overlay')).toBe(firstOverlay);
     });
 
-    it('should properly clean up global click listener when closed via keyboard', async () => {
+    it('should properly clean up global click listener when closed via keyboard', () => {
       const removeEventSpy = vi.spyOn(document, 'removeEventListener');
 
       showHelpOverlay();
       const overlay = document.getElementById('help-overlay');
       expect(overlay).toBeTruthy();
 
-      // Wait for the global click listener to be added
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Advance timers to trigger the click listener addition
+      vi.advanceTimersByTime(150);
 
       // Simulate Escape key
       const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
@@ -57,7 +72,7 @@ describe('UI Helpers - Critical Fixes', () => {
       removeEventSpy.mockRestore();
     });
 
-    it('should properly clean up when close button is clicked', async () => {
+    it('should properly clean up when close button is clicked', () => {
       const removeEventSpy = vi.spyOn(document, 'removeEventListener');
 
       showHelpOverlay();
@@ -68,8 +83,8 @@ describe('UI Helpers - Critical Fixes', () => {
       ) as HTMLButtonElement;
       expect(closeBtn).toBeTruthy();
 
-      // Wait for timeout to add global listener
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Advance timers to trigger the click listener addition
+      vi.advanceTimersByTime(150);
 
       // Click close button
       closeBtn?.click();

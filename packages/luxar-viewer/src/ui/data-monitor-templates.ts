@@ -265,6 +265,49 @@ function clearButtonStyle(): string {
 }
 
 /**
+ * Reusable cache section component (reduces duplication between L1/L2)
+ */
+function renderCacheSection(
+  title: string,
+  titleTooltip: string | undefined,
+  clearAction: string,
+  clearTooltip: string,
+  metrics: Array<{
+    label: string;
+    value: string;
+    subtitle: string;
+    tooltip: string;
+    color?: string;
+  }>
+): string {
+  return `
+    <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.default}px; border-radius: ${monitorConfig.borderRadius.section}px; margin-bottom: ${spacingConfig.sectionPaddingLarge}px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: ${spacingConfig.sectionPadding}px;">
+        <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;"${titleTooltip ? ` title="${titleTooltip}"` : ''}>${title}</span>
+        <button data-action="${clearAction}" style="${clearButtonStyle()}" title="${clearTooltip}">Clear</button>
+      </div>
+      <div style="display: grid; grid-template-columns: ${metrics.length === 2 ? '1fr 1fr' : '1fr 1fr 1fr'}; gap: ${spacingConfig.sectionPadding}px;">
+        ${metrics
+    .map(
+      (metric) => `
+          <div${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
+            <div style="font-size: 10px; color: ${MonitorColors.muted};">${metric.label}</div>
+            <div style="font-size: ${metrics.length === 2 ? '18px' : '16px'}; font-weight: bold; color: ${metric.color || MonitorColors.primaryText};">
+              ${metric.value}
+            </div>
+            <div style="font-size: 10px; color: ${MonitorColors.dimmed};">
+              ${metric.subtitle}
+            </div>
+          </div>
+        `
+    )
+    .join('')}
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Template for cache tab content with L1/L2 breakdown
  */
 export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
@@ -320,69 +363,59 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   return `
     <div class="cache-content">
       <!-- L1 Memory Cache Section -->
-      <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;">L1 MEMORY CACHE</span>
-          <button data-action="clearL1" style="${clearButtonStyle()}" title="Clear L1 cache">Clear</button>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-          <div title="L1 memory cache: fast in-memory storage for recently accessed chunks">
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">SIZE</div>
-            <div style="font-size: 16px; font-weight: bold; color: ${MonitorColors.success};" title="${cacheMetrics.l1!.size.toLocaleString()} bytes">
-              ${formatBytes(cacheMetrics.l1!.size)}
-            </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l1!.count} cached entries in memory">
-              ${cacheMetrics.l1!.count} entries
-            </div>
-          </div>
-          <div title="Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses">
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">HIT RATE</div>
-            <div style="font-size: 16px; font-weight: bold; color: ${l1HitRate > 80 ? MonitorColors.success : l1HitRate > 50 ? MonitorColors.warning : MonitorColors.error};">
-              ${l1HitRate.toFixed(1)}%
-            </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l1!.hits.toLocaleString()} cache hits / ${cacheMetrics.l1!.misses.toLocaleString()} cache misses">
-              ${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss
-            </div>
-          </div>
-          <div title="Entries removed from cache when memory limit reached (LRU = Least Recently Used)">
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">EVICTIONS</div>
-            <div style="font-size: 16px; font-weight: bold; color: ${cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed};" title="${cacheMetrics.l1!.evictions.toLocaleString()} entries evicted">
-              ${formatNumber(cacheMetrics.l1!.evictions)}
-            </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};">
-              LRU removed
-            </div>
-          </div>
-        </div>
-      </div>
+      ${renderCacheSection('L1 MEMORY CACHE', undefined, 'clearL1', 'Clear L1 cache', [
+    {
+      label: 'SIZE',
+      value: formatBytes(cacheMetrics.l1!.size),
+      subtitle: `${cacheMetrics.l1!.count} entries`,
+      tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+      color: MonitorColors.success,
+    },
+    {
+      label: 'HIT RATE',
+      value: `${l1HitRate.toFixed(1)}%`,
+      subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
+      tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+      color:
+            l1HitRate > 80
+              ? MonitorColors.success
+              : l1HitRate > 50
+                ? MonitorColors.warning
+                : MonitorColors.error,
+    },
+    {
+      label: 'EVICTIONS',
+      value: formatNumber(cacheMetrics.l1!.evictions),
+      subtitle: 'LRU removed',
+      tooltip:
+            'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
+      color: cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed,
+    },
+  ])}
 
       <!-- L2 OPFS Cache Section -->
-      <div style="background: ${MonitorColors.sectionBg}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;" title="Origin Private File System: persistent browser storage for cached data">L2 OPFS CACHE</span>
-          <button data-action="clearL2" style="${clearButtonStyle()}" title="Clear L2 persistent cache (data will need to be re-downloaded)">Clear</button>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div title="L2 persistent cache: stored in browser's Origin Private File System, survives page reloads">
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">SIZE</div>
-            <div style="font-size: 18px; font-weight: bold; color: ${MonitorColors.info};" title="${cacheMetrics.l2!.size.toLocaleString()} bytes">
-              ${formatBytes(cacheMetrics.l2!.size)}
-            </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l2!.count} entries stored on disk">
-              ${cacheMetrics.l2!.count} entries
-            </div>
-          </div>
-          <div title="Disk I/O operations: reads from cache, writes to cache">
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">I/O</div>
-            <div style="font-size: 18px; font-weight: bold; color: ${MonitorColors.primaryText};" title="${cacheMetrics.l2!.reads.toLocaleString()} read operations from disk">
-              ${formatNumber(cacheMetrics.l2!.reads)} reads
-            </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};" title="${cacheMetrics.l2!.writes.toLocaleString()} write operations to disk">
-              ${formatNumber(cacheMetrics.l2!.writes)} writes
-            </div>
-          </div>
-        </div>
-      </div>
+      ${renderCacheSection(
+    'L2 OPFS CACHE',
+    'Origin Private File System: persistent browser storage for cached data',
+    'clearL2',
+    'Clear L2 persistent cache (data will need to be re-downloaded)',
+    [
+      {
+        label: 'SIZE',
+        value: formatBytes(cacheMetrics.l2!.size),
+        subtitle: `${cacheMetrics.l2!.count} entries`,
+        tooltip:
+              'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
+        color: MonitorColors.info,
+      },
+      {
+        label: 'I/O',
+        value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
+        subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+        tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+      },
+    ]
+  )}
 
       <!-- Combined Stats + Clear All -->
       <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px;">
