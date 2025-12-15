@@ -19,6 +19,10 @@ test.describe('Rendering Controls Panel', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
+    // Click on body to dismiss any modal and ensure no input has focus
+    await page.click('body', { position: { x: 10, y: 10 } });
+    await page.waitForTimeout(100);
+
     // Initially panel should be hidden
     const initiallyVisible = await page.evaluate(() => {
       const panel = document.querySelector('.lil-gui');
@@ -52,6 +56,10 @@ test.describe('Rendering Controls Panel', () => {
   test('should have rendering controls panel with expected title', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
+
+    // Click on body to dismiss any modal and ensure no input has focus
+    await page.click('body', { position: { x: 10, y: 10 } });
+    await page.waitForTimeout(100);
 
     // Show panel
     await page.keyboard.press('r');
