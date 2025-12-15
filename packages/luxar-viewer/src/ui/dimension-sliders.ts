@@ -2,6 +2,11 @@ import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { config } from '../config';
 
+// Extract commonly used config values
+const SPACING = config.ui.styles.spacing;
+const EFFECTS = config.ui.styles.effects;
+const COLORS = config.ui.styles.colors;
+
 /**
  * Configuration interface for initializing dimension sliders.
  *
@@ -170,21 +175,20 @@ export class DimensionSliders {
     container.style.position = 'fixed';
     container.style.left = '50%';
     container.style.transform = 'translateX(-50%)';
-    container.style.bottom = '20px'; // Lower since no status bar
+    container.style.bottom = `${SPACING.panelMargin}px`;
     container.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
-    container.style.borderRadius = '8px';
-    container.style.padding = '15px'; // Reduced from 20px
+    container.style.borderRadius = `${EFFECTS.borderRadius}px`;
+    container.style.padding = `${SPACING.panelPadding}px`;
     container.style.width = '80%';
     container.style.maxWidth = '800px';
     container.style.minWidth = '400px';
-    container.style.maxHeight = '240px'; // Add max height for compression
-    container.style.overflowY = 'auto'; // Allow scrolling if needed
-    container.style.fontFamily =
-      '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
-    container.style.fontSize = '12px'; // Slightly smaller
-    container.style.color = '#e0e0e0';
-    container.style.backdropFilter = 'blur(10px)';
-    container.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+    container.style.maxHeight = '240px';
+    container.style.overflowY = 'auto';
+    container.style.fontFamily = config.ui.styles.typography.fontFamily;
+    container.style.fontSize = config.ui.styles.typography.body.fontSize;
+    container.style.color = COLORS.primaryText;
+    container.style.backdropFilter = EFFECTS.backdropBlur;
+    container.style.boxShadow = EFFECTS.boxShadow;
     container.style.zIndex = String(config.ui.zIndex.dimensionSliders);
     container.style.userSelect = 'none';
 

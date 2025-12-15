@@ -18,6 +18,9 @@ import { config } from '../config';
 
 // UI Configuration constants
 const UI_CONFIG = config.ui;
+const SPACING = config.ui.styles.spacing;
+const EFFECTS = config.ui.styles.effects;
+const TYPOGRAPHY = config.ui.styles.typography;
 
 // Ensure spinner CSS is only injected once
 function ensureSpinnerCSS() {
@@ -63,11 +66,10 @@ export function showLoadingIndicator(): HTMLElement {
   loadingDiv.style.left = '50%';
   loadingDiv.style.transform = 'translate(-50%, -50%)';
   loadingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-  loadingDiv.style.color = '#e0e0e0';
-  loadingDiv.style.padding = '20px';
-  loadingDiv.style.borderRadius = '8px';
-  loadingDiv.style.fontFamily =
-    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
+  loadingDiv.style.color = config.ui.styles.colors.primaryText;
+  loadingDiv.style.padding = `${SPACING.panelPaddingLarge}px`;
+  loadingDiv.style.borderRadius = `${EFFECTS.borderRadius}px`;
+  loadingDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
   loadingDiv.style.fontSize = '16px';
   loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
   loadingDiv.style.textAlign = 'center';
@@ -162,19 +164,18 @@ export function showError(message: string) {
   errorDiv.style.top = '50%';
   errorDiv.style.left = '50%';
   errorDiv.style.transform = 'translate(-50%, -50%)';
-  errorDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.95)';
-  errorDiv.style.color = '#e0e0e0';
-  errorDiv.style.padding = '24px';
-  errorDiv.style.borderRadius = '12px';
-  errorDiv.style.fontFamily =
-    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
-  errorDiv.style.fontSize = '14px';
+  errorDiv.style.backgroundColor = config.ui.styles.colors.panelBg;
+  errorDiv.style.color = config.ui.styles.colors.primaryText;
+  errorDiv.style.padding = `${SPACING.panelPaddingXL}px`;
+  errorDiv.style.borderRadius = `${EFFECTS.borderRadiusLarge}px`;
+  errorDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
+  errorDiv.style.fontSize = TYPOGRAPHY.title.fontSize;
   errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
   errorDiv.style.maxWidth = '520px';
   errorDiv.style.textAlign = 'left';
   errorDiv.style.cursor = 'pointer';
-  errorDiv.style.backdropFilter = 'blur(10px)';
-  errorDiv.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.4)';
+  errorDiv.style.backdropFilter = EFFECTS.backdropBlur;
+  errorDiv.style.boxShadow = EFFECTS.boxShadowStrong;
   errorDiv.style.border = '1px solid rgba(255, 100, 100, 0.3)';
 
   // ARIA attributes for accessibility
@@ -187,14 +188,14 @@ export function showError(message: string) {
   const header = document.createElement('div');
   header.style.display = 'flex';
   header.style.alignItems = 'center';
-  header.style.marginBottom = '16px';
-  header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-  header.style.paddingBottom = '12px';
+  header.style.marginBottom = `${SPACING.sectionGapLarge}px`;
+  header.style.borderBottom = `1px solid ${config.ui.styles.colors.separator}`;
+  header.style.paddingBottom = `${SPACING.sectionPaddingLarge}px`;
 
   const icon = document.createElement('div');
   icon.textContent = '⚠️';
   icon.style.fontSize = '24px';
-  icon.style.marginRight = '12px';
+  icon.style.marginRight = `${SPACING.elementGapXL}px`;
 
   const title = document.createElement('div');
   title.id = 'error-title';
@@ -210,28 +211,28 @@ export function showError(message: string) {
   const messageText = document.createElement('div');
   messageText.id = 'error-message-text';
   messageText.textContent = message;
-  messageText.style.marginBottom = '16px';
+  messageText.style.marginBottom = `${SPACING.sectionGapLarge}px`;
   messageText.style.color = '#ffcccc';
-  messageText.style.lineHeight = '1.5';
+  messageText.style.lineHeight = TYPOGRAPHY.relaxed.lineHeight.toString();
 
   // Helpful guidance section
   const guidance = document.createElement('div');
-  guidance.style.marginTop = '16px';
-  guidance.style.padding = '12px';
+  guidance.style.marginTop = `${SPACING.sectionGapLarge}px`;
+  guidance.style.padding = `${SPACING.sectionPaddingLarge}px`;
   guidance.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-  guidance.style.borderRadius = '6px';
+  guidance.style.borderRadius = `${EFFECTS.borderRadiusSmall + 2}px`;
   guidance.style.borderLeft = '3px solid rgba(76, 175, 80, 0.5)';
 
   const guidanceTitle = document.createElement('div');
   guidanceTitle.textContent = '💡 How to Load a Dataset:';
   guidanceTitle.style.fontWeight = '600';
-  guidanceTitle.style.marginBottom = '8px';
+  guidanceTitle.style.marginBottom = `${SPACING.elementGap}px`;
   guidanceTitle.style.color = '#88cc88';
 
   const guidanceList = document.createElement('div');
   guidanceList.style.fontSize = '13px';
   guidanceList.style.color = '#cccccc';
-  guidanceList.style.lineHeight = '1.6';
+  guidanceList.style.lineHeight = TYPOGRAPHY.relaxed.lineHeight.toString();
 
   guidanceList.innerHTML = `
     <div style="margin-bottom: 8px;">
@@ -368,21 +369,20 @@ export function showHelpOverlay() {
   const helpDiv = document.createElement('div');
   helpDiv.id = 'help-overlay';
   helpDiv.style.position = 'fixed';
-  helpDiv.style.top = '20px';
-  helpDiv.style.right = '20px';
-  helpDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.95)';
-  helpDiv.style.color = '#e0e0e0';
-  helpDiv.style.padding = '15px';
-  helpDiv.style.borderRadius = '8px';
-  helpDiv.style.fontFamily =
-    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif';
-  helpDiv.style.fontSize = '12px';
+  helpDiv.style.top = `${SPACING.panelMargin}px`;
+  helpDiv.style.right = `${SPACING.panelMargin}px`;
+  helpDiv.style.backgroundColor = config.ui.styles.colors.panelBg;
+  helpDiv.style.color = config.ui.styles.colors.primaryText;
+  helpDiv.style.padding = `${SPACING.panelPadding}px`;
+  helpDiv.style.borderRadius = `${EFFECTS.borderRadius}px`;
+  helpDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
+  helpDiv.style.fontSize = TYPOGRAPHY.body.fontSize;
   helpDiv.style.zIndex = String(UI_CONFIG.zIndex.help);
   helpDiv.style.width = '380px';
   helpDiv.style.maxHeight = '80vh';
   helpDiv.style.overflowY = 'auto';
-  helpDiv.style.backdropFilter = 'blur(10px)';
-  helpDiv.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+  helpDiv.style.backdropFilter = EFFECTS.backdropBlur;
+  helpDiv.style.boxShadow = EFFECTS.boxShadow;
   helpDiv.style.outline = 'none !important';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-modal', 'true');
@@ -393,9 +393,9 @@ export function showHelpOverlay() {
   header.style.display = 'flex';
   header.style.justifyContent = 'space-between';
   header.style.alignItems = 'center';
-  header.style.marginBottom = '10px';
-  header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
-  header.style.paddingBottom = '6px';
+  header.style.marginBottom = `${SPACING.sectionPadding}px`;
+  header.style.borderBottom = `1px solid ${config.ui.styles.colors.separatorStrong}`;
+  header.style.paddingBottom = `${SPACING.borderPadding}px`;
 
   const title = document.createElement('h3');
   title.id = 'help-overlay-title';

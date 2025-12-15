@@ -194,13 +194,20 @@ export const config: AppConfig = {
       spacing: {
         // Panel spacing
         panelPadding: 15,
+        panelPaddingLarge: 20, // For modals and prominent panels
+        panelPaddingXL: 24, // For error dialogs and major alerts
         panelMargin: 20,
         // Section spacing
         sectionPadding: 10,
+        sectionPaddingLarge: 12,
         sectionGap: 15,
+        sectionGapLarge: 16,
         // Element spacing
         elementGap: 8,
+        elementGapLarge: 10,
+        elementGapXL: 12,
         compactGap: 5,
+        compactGapLarge: 6,
         tinyGap: 2,
         // Border and separator spacing
         borderPadding: 6,
