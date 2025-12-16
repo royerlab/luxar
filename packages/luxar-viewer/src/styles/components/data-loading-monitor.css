@@ -249,7 +249,7 @@
 /* ========== Metric Cards ========== */
 
 .luxar-metric-card {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
   border-radius: var(--luxar-radius-sm);
   text-align: center;
 }
@@ -339,7 +339,7 @@
 }
 
 .luxar-stat-grid__item {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
   padding: var(--luxar-spacing-4);
   border-radius: var(--luxar-radius-sm);
   text-align: center;
@@ -359,7 +359,7 @@
 /* ========== Loader List ========== */
 
 .luxar-loader-item {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
   padding: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-3);
   border-radius: var(--luxar-radius-sm);
@@ -391,7 +391,7 @@
 /* ========== Cache Section ========== */
 
 .luxar-cache-section {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
   padding: var(--luxar-spacing-5);
   border-radius: var(--luxar-radius-sm);
   margin-bottom: var(--luxar-spacing-6);
@@ -492,7 +492,7 @@
   width: 100%;
   height: 200px;
   border-radius: var(--luxar-radius-sm);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
 }
 
 /* ========== Secondary Metrics Bar ========== */
@@ -501,7 +501,7 @@
   display: flex;
   gap: var(--luxar-spacing-10);
   padding: var(--luxar-spacing-5);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--luxar-bg-tertiary);
   border-radius: var(--luxar-radius-sm);
   margin-bottom: var(--luxar-spacing-8);
 }
