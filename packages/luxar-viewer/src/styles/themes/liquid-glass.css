@@ -15,20 +15,8 @@
   isolation: isolate; /* Create stacking context without changing position */
 }
 
-/* For lil-gui: Disable any isolation to prevent nested stacking */
-[data-theme='liquid-glass'] body > .lil-gui {
-  isolation: isolate;
-}
-
-[data-theme='liquid-glass'] .lil-gui *,
-[data-theme='liquid-glass'] .lil-gui .folder,
-[data-theme='liquid-glass'] .lil-gui .children {
-  isolation: auto !important; /* Force disable nested isolation */
-  transform: none !important; /* Prevent stacking context from transforms */
-}
-
 /* Distorted background layer (BEHIND content) */
-/* IMPORTANT: Only apply to ROOT level panels */
+/* Note: Glass distortion NOT applied to lil-gui due to nested structure issues */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
 [data-theme='liquid-glass'] .luxar-error-dialog::before,
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
@@ -50,17 +38,11 @@
   will-change: filter;
 }
 
-/* For lil-gui: Only apply to the ROOT container, not ANY .lil-gui */
-[data-theme='liquid-glass'] body > .lil-gui::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  backdrop-filter: blur(var(--luxar-blur-sm));
-  filter: url(#luxar-liquid-glass-full);
-  transform: translateZ(0);
-  will-change: filter;
+/* Rendering controls (lil-gui): Use simple blur without distortion */
+/* Complex nested structure doesn't work well with SVG filters */
+[data-theme='liquid-glass'] body > .lil-gui {
+  /* Just use backdrop blur, no distortion filter */
+  backdrop-filter: blur(var(--luxar-blur-md)) !important;
 }
 
 /* Note: Adjust filter parameters in src/themes/glass-filters.ts */
