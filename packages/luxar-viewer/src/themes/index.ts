@@ -14,3 +14,4 @@ export { ThemeManager } from './theme-manager';
 export { darkTheme } from './themes/dark.theme';
 export { lightTheme } from './themes/light.theme';
 export { frostedGlassTheme } from './themes/frosted-glass.theme';
+export { liquidGlassTheme } from './themes/liquid-glass.theme';
