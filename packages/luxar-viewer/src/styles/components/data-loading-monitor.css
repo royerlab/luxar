@@ -12,37 +12,66 @@
   z-index: var(--luxar-z-base);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-base);
-  user-select: none;
-}
-
-/* Mini view (top-right corner) */
-.luxar-data-monitor--mini {
-  top: var(--luxar-spacing-10);
-  right: var(--luxar-spacing-10);
-  min-width: 280px;
+  color: var(--luxar-text-primary);
   background: var(--luxar-bg-secondary);
   backdrop-filter: var(--luxar-blur-md);
   border-radius: var(--luxar-radius-md);
-  padding: var(--luxar-spacing-5);
   box-shadow: var(--luxar-shadow-md);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: auto;
+  box-sizing: border-box;
 }
 
-/* Expanded view (centered) */
+/* Position variants */
+.luxar-data-monitor--top-left {
+  top: var(--luxar-spacing-10);
+  left: var(--luxar-spacing-10);
+}
+
+.luxar-data-monitor--top-right {
+  top: var(--luxar-spacing-10);
+  right: var(--luxar-spacing-10);
+}
+
+.luxar-data-monitor--bottom-left {
+  bottom: var(--luxar-spacing-10);
+  left: var(--luxar-spacing-10);
+}
+
+.luxar-data-monitor--bottom-right {
+  bottom: var(--luxar-spacing-10);
+  right: var(--luxar-spacing-10);
+}
+
+/* Size variants */
+.luxar-data-monitor--compact {
+  width: 300px;
+  padding: var(--luxar-spacing-5);
+}
+
 .luxar-data-monitor--expanded {
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 700px;
-  max-width: 90vw;
-  height: 600px;
-  max-height: 85vh;
-  background: var(--luxar-bg-secondary);
-  backdrop-filter: var(--luxar-blur-md);
-  border-radius: var(--luxar-radius-lg);
+  width: 600px;
+  max-height: 80vh;
   padding: var(--luxar-spacing-10);
-  box-shadow: var(--luxar-shadow-xl);
   display: flex;
   flex-direction: column;
+}
+
+/* Compact view */
+.luxar-monitor-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-6);
+  font-size: var(--luxar-text-sm);
+}
+
+/* Detailed/Expanded view */
+.luxar-monitor-detailed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 /* ========== Header ========== */
