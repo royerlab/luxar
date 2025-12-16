@@ -308,7 +308,8 @@ export class RenderingControls {
       'Switch between visual themes\n' +
         '• Dark: Default scientific visualization theme\n' +
         '• Light: Bright theme for well-lit environments\n' +
-        '• Frosted Glass: Modern Apple-inspired frosted glass design'
+        '• Frosted Glass: Subtle translucent glassmorphism\n' +
+        '• Liquid Glass: True glass effect with inner glow and tint'
     );
 
     // Close folder by default
