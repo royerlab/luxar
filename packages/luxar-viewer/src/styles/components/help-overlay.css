@@ -36,18 +36,7 @@
 
   /* Animation */
   opacity: 0;
-  animation: luxar-slide-in 0.2s ease forwards;
-}
-
-@keyframes luxar-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  animation: luxar-fade-in 0.15s ease forwards;
 }
 
 /* Header */

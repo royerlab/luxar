@@ -22,6 +22,10 @@
   -webkit-user-select: none;
   pointer-events: auto;
   box-sizing: border-box;
+
+  /* Animation */
+  opacity: 0;
+  animation: luxar-fade-in 0.15s ease forwards;
 }
 
 /* Position variants */
