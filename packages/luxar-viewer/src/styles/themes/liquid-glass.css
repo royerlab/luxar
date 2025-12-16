@@ -6,24 +6,32 @@
  */
 
 /* Enable stacking context for pseudo-elements (without changing position) */
+/* Only apply to root panels, not nested folders/controllers */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
-[data-theme='liquid-glass'] .lil-gui {
+[data-theme='liquid-glass'] .lil-gui.root {
   isolation: isolate; /* Create stacking context without changing position */
 }
 
+/* Prevent nested lil-gui elements from getting glass effect */
+[data-theme='liquid-glass'] .lil-gui .folder,
+[data-theme='liquid-glass'] .lil-gui .controller {
+  isolation: auto; /* Disable for nested elements */
+}
+
 /* Distorted background layer (BEHIND content) */
+/* IMPORTANT: Only apply to root panels, not nested elements */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
 [data-theme='liquid-glass'] .luxar-error-dialog::before,
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::before,
-[data-theme='liquid-glass'] .lil-gui::before {
+[data-theme='liquid-glass'] .lil-gui.root::before {
   content: '';
   position: absolute;
   inset: 0;
