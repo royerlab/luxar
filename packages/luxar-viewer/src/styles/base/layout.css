@@ -1,0 +1,76 @@
+/**
+ * Luxar Layout Styles
+ *
+ * Base layout and structural styles.
+ */
+
+/* Full viewport */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--luxar-bg-primary);
+}
+
+/* Ensure canvas fills viewport */
+#app {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Container utility */
+.luxar-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--luxar-spacing-8);
+}
+
+/* Grid system */
+.luxar-grid {
+  display: grid;
+  gap: var(--luxar-spacing-8);
+}
+
+.luxar-grid-cols-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.luxar-grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.luxar-grid-cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.luxar-grid-cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--luxar-bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--luxar-interactive-default);
+  border-radius: var(--luxar-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--luxar-interactive-default) var(--luxar-bg-tertiary);
+}

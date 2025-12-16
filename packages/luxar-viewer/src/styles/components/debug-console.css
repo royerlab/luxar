@@ -1,0 +1,290 @@
+/**
+ * Debug Console Component Styles
+ *
+ * In-app developer console for viewing browser console output.
+ * Used by DebugConsole class in ui/debug-console.ts
+ */
+
+.debug-console-panel {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  width: 600px;
+  height: 400px;
+  background: var(--luxar-bg-secondary);
+  border-radius: var(--luxar-radius-md);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-md);
+  z-index: 150;
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+}
+
+/* Resize handles */
+.debug-console-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.debug-console-panel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+/* Header */
+.debug-console-header {
+  padding: var(--luxar-spacing-8);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: var(--luxar-radius-md) var(--luxar-radius-md) 0 0;
+}
+
+.debug-console-title {
+  color: var(--luxar-text-primary);
+  font-weight: var(--luxar-font-bold);
+  font-size: var(--luxar-text-lg);
+}
+
+.debug-console-controls {
+  display: flex;
+  gap: var(--luxar-spacing-5);
+  align-items: center;
+}
+
+.debug-console-filter {
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
+  background: rgba(0, 0, 0, 0.3);
+  border: none;
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
+  width: 150px;
+  font-family: inherit;
+  font-size: var(--luxar-text-xs);
+}
+
+.debug-console-clear,
+.debug-console-copy {
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-6);
+  background: none;
+  border: none;
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-muted);
+  cursor: pointer;
+  transition: var(--luxar-transition-normal);
+  font-size: var(--luxar-text-xs);
+}
+
+.debug-console-close {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: var(--luxar-text-3xl);
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--luxar-transition-normal);
+}
+
+.debug-console-clear:hover,
+.debug-console-copy:hover {
+  color: var(--luxar-text-primary);
+}
+
+.debug-console-close:hover {
+  color: #fff;
+}
+
+.debug-console-autoscroll {
+  color: var(--luxar-text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+  cursor: pointer;
+}
+
+.debug-console-autoscroll input {
+  cursor: pointer;
+}
+
+/* Content area */
+.debug-console-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: var(--luxar-spacing-5);
+  background: rgba(0, 0, 0, 0.3);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+}
+
+/* Scrollbar styling */
+.debug-console-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.debug-console-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.debug-console-content::-webkit-scrollbar-thumb {
+  background: var(--luxar-interactive-default);
+  border-radius: var(--luxar-radius-sm);
+}
+
+.debug-console-content::-webkit-scrollbar-thumb:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+/* Status bar */
+.debug-console-status {
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-8);
+  border-top: 1px solid var(--luxar-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  color: var(--luxar-text-disabled);
+  font-size: var(--luxar-text-xs);
+  border-radius: 0 0 var(--luxar-radius-md) var(--luxar-radius-md);
+}
+
+/* Console messages */
+.console-message {
+  margin: 2px 0;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
+  border-radius: var(--luxar-radius-sm);
+  word-wrap: break-word;
+  font-family: inherit;
+  line-height: var(--luxar-line-normal);
+  position: relative;
+  transition: var(--luxar-transition-fast);
+}
+
+.console-message:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.console-message-timestamp {
+  color: #606060;
+  margin-right: var(--luxar-spacing-4);
+  font-size: var(--luxar-text-xs);
+}
+
+/* Message types */
+.console-message-log {
+  color: var(--luxar-text-primary);
+}
+
+.console-message-info {
+  color: var(--luxar-success);
+}
+
+.console-message-warn {
+  color: var(--luxar-warning);
+  background: rgba(255, 193, 7, 0.1);
+}
+
+.console-message-error {
+  color: var(--luxar-error);
+  background: rgba(244, 67, 54, 0.1);
+}
+
+.console-message-debug {
+  color: #9E9E9E;
+  font-style: italic;
+}
+
+.console-message-stack {
+  margin-top: var(--luxar-spacing-2);
+  padding-left: var(--luxar-spacing-10);
+  color: #808080;
+  font-size: var(--luxar-text-xs);
+  white-space: pre-wrap;
+}
+
+/* Syntax highlighting for different types */
+.console-message-object {
+  color: #64B5F6;
+}
+
+.console-message-number {
+  color: #FF9800;
+}
+
+.console-message-boolean {
+  color: #E91E63;
+}
+
+.console-message-string {
+  color: #8BC34A;
+}
+
+.console-message-undefined {
+  color: #9E9E9E;
+  font-style: italic;
+}
+
+/* Theme overrides */
+[data-theme='light'] .debug-console-panel {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='light'] .debug-console-content {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='light'] .debug-console-filter {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme='light'] .debug-console-close {
+  color: #666;
+}
+
+[data-theme='light'] .debug-console-close:hover {
+  color: #000;
+}
+
+[data-theme='light'] .console-message:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='high-contrast'] .debug-console-panel {
+  background: #000000;
+  border: 2px solid var(--luxar-border-default);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .debug-console-content {
+  background: #000000;
+}
+
+[data-theme='high-contrast'] .debug-console-close {
+  border: 1px solid var(--luxar-border-default);
+  color: var(--luxar-text-primary);
+}
+
+[data-theme='high-contrast'] .debug-console-close:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+[data-theme='high-contrast'] .console-message:hover {
+  background: var(--luxar-interactive-hover);
+}

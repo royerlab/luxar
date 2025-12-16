@@ -1,0 +1,201 @@
+/**
+ * Help Overlay Component Styles
+ *
+ * Keyboard shortcuts and controls reference panel.
+ * Used by showHelpOverlay() in ui/helpers.ts
+ */
+
+.luxar-help-overlay {
+  /* Positioning */
+  position: fixed;
+  top: var(--luxar-spacing-10);
+  right: var(--luxar-spacing-10);
+
+  /* Sizing */
+  width: 380px;
+  max-height: 80vh;
+
+  /* Theming */
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-primary);
+  border-radius: var(--luxar-radius-md);
+  padding: var(--luxar-spacing-8);
+
+  /* Typography */
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base);
+
+  /* Effects */
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+  z-index: var(--luxar-z-modal);
+
+  /* Behavior */
+  overflow-y: auto;
+  outline: none !important;
+
+  /* Animation */
+  opacity: 0;
+  animation: luxar-slide-in 0.2s ease forwards;
+}
+
+@keyframes luxar-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Header */
+.luxar-help-overlay__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-strong);
+  padding-bottom: var(--luxar-spacing-3);
+}
+
+.luxar-help-overlay__title {
+  margin: 0;
+  font-size: var(--luxar-text-lg);
+  font-weight: var(--luxar-font-bold);
+}
+
+.luxar-help-overlay__close-btn {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: var(--luxar-text-3xl);
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-help-overlay__close-btn:hover {
+  color: #fff;
+}
+
+/* Categories */
+.luxar-help-overlay__category-header {
+  font-weight: var(--luxar-font-bold);
+  margin-top: var(--luxar-spacing-6);
+  margin-bottom: var(--luxar-spacing-4);
+  color: var(--luxar-success);
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.luxar-help-overlay__category-header:first-of-type {
+  margin-top: var(--luxar-spacing-4);
+}
+
+.luxar-help-overlay__category-arrow {
+  font-size: var(--luxar-text-xs);
+  margin-right: var(--luxar-spacing-2);
+  transition: transform 0.2s;
+  display: inline-block;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-help-overlay__category-arrow--expanded {
+  transform: rotate(90deg);
+}
+
+.luxar-help-overlay__category-content {
+  margin-bottom: var(--luxar-spacing-2);
+  border-left: 2px solid rgba(76, 175, 80, 0.2);
+  margin-left: var(--luxar-spacing-4);
+  padding-left: var(--luxar-spacing-6);
+}
+
+.luxar-help-overlay__category-content--collapsed {
+  display: none;
+}
+
+/* Items */
+.luxar-help-overlay__item {
+  margin-bottom: var(--luxar-spacing-3);
+  line-height: var(--luxar-line-normal);
+  color: var(--luxar-text-primary);
+}
+
+.luxar-help-overlay__item--tip {
+  color: #aaa;
+  font-size: var(--luxar-text-xs);
+}
+
+.luxar-help-overlay__item--note {
+  color: #ff9800;
+  font-size: var(--luxar-text-xs);
+  font-style: italic;
+}
+
+/* Footer */
+.luxar-help-overlay__footer {
+  margin-top: var(--luxar-spacing-6);
+  padding-top: var(--luxar-spacing-4);
+  border-top: 1px solid var(--luxar-border-subtle);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-secondary);
+  text-align: center;
+}
+
+/* Theme-specific overrides */
+[data-theme='light'] .luxar-help-overlay {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='light'] .luxar-help-overlay__close-btn {
+  color: #666;
+}
+
+[data-theme='light'] .luxar-help-overlay__close-btn:hover {
+  color: #000;
+}
+
+[data-theme='light'] .luxar-help-overlay__category-header {
+  color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-help-overlay__item--tip {
+  color: #666;
+}
+
+[data-theme='light'] .luxar-help-overlay__item--note {
+  color: #f57c00;
+}
+
+[data-theme='high-contrast'] .luxar-help-overlay {
+  border: 2px solid var(--luxar-border-default);
+  border-radius: 0;
+  background: #000000;
+}
+
+[data-theme='high-contrast'] .luxar-help-overlay__close-btn {
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-default);
+}
+
+[data-theme='high-contrast'] .luxar-help-overlay__close-btn:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+[data-theme='high-contrast'] .luxar-help-overlay__category-header {
+  color: var(--luxar-success);
+}
+
+[data-theme='high-contrast'] .luxar-help-overlay__category-content {
+  border-left-color: var(--luxar-success);
+}

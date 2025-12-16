@@ -1,0 +1,423 @@
+/**
+ * Luxar Utility Classes
+ *
+ * Utility classes for common patterns following Tailwind-like convention
+ * but with Luxar prefix to avoid conflicts.
+ */
+
+/* ========== Flexbox Utilities ========== */
+
+.luxar-flex {
+  display: flex;
+}
+
+.luxar-flex-col {
+  flex-direction: column;
+}
+
+.luxar-flex-row {
+  flex-direction: row;
+}
+
+.luxar-items-start {
+  align-items: flex-start;
+}
+
+.luxar-items-center {
+  align-items: center;
+}
+
+.luxar-items-end {
+  align-items: flex-end;
+}
+
+.luxar-items-stretch {
+  align-items: stretch;
+}
+
+.luxar-justify-start {
+  justify-content: flex-start;
+}
+
+.luxar-justify-center {
+  justify-content: center;
+}
+
+.luxar-justify-end {
+  justify-content: flex-end;
+}
+
+.luxar-justify-between {
+  justify-content: space-between;
+}
+
+.luxar-justify-around {
+  justify-content: space-around;
+}
+
+.luxar-gap-0 {
+  gap: var(--luxar-spacing-0);
+}
+.luxar-gap-1 {
+  gap: var(--luxar-spacing-1);
+}
+.luxar-gap-2 {
+  gap: var(--luxar-spacing-2);
+}
+.luxar-gap-3 {
+  gap: var(--luxar-spacing-3);
+}
+.luxar-gap-4 {
+  gap: var(--luxar-spacing-4);
+}
+.luxar-gap-5 {
+  gap: var(--luxar-spacing-5);
+}
+.luxar-gap-6 {
+  gap: var(--luxar-spacing-6);
+}
+.luxar-gap-8 {
+  gap: var(--luxar-spacing-8);
+}
+.luxar-gap-10 {
+  gap: var(--luxar-spacing-10);
+}
+.luxar-gap-12 {
+  gap: var(--luxar-spacing-12);
+}
+
+/* ========== Spacing Utilities (Padding) ========== */
+
+.luxar-p-0 {
+  padding: var(--luxar-spacing-0);
+}
+.luxar-p-1 {
+  padding: var(--luxar-spacing-1);
+}
+.luxar-p-2 {
+  padding: var(--luxar-spacing-2);
+}
+.luxar-p-3 {
+  padding: var(--luxar-spacing-3);
+}
+.luxar-p-4 {
+  padding: var(--luxar-spacing-4);
+}
+.luxar-p-5 {
+  padding: var(--luxar-spacing-5);
+}
+.luxar-p-6 {
+  padding: var(--luxar-spacing-6);
+}
+.luxar-p-8 {
+  padding: var(--luxar-spacing-8);
+}
+.luxar-p-10 {
+  padding: var(--luxar-spacing-10);
+}
+.luxar-p-12 {
+  padding: var(--luxar-spacing-12);
+}
+
+/* ========== Spacing Utilities (Margin) ========== */
+
+.luxar-m-0 {
+  margin: var(--luxar-spacing-0);
+}
+.luxar-m-2 {
+  margin: var(--luxar-spacing-2);
+}
+.luxar-m-4 {
+  margin: var(--luxar-spacing-4);
+}
+.luxar-m-6 {
+  margin: var(--luxar-spacing-6);
+}
+.luxar-m-8 {
+  margin: var(--luxar-spacing-8);
+}
+
+.luxar-mb-0 {
+  margin-bottom: var(--luxar-spacing-0);
+}
+.luxar-mb-2 {
+  margin-bottom: var(--luxar-spacing-2);
+}
+.luxar-mb-4 {
+  margin-bottom: var(--luxar-spacing-4);
+}
+.luxar-mb-6 {
+  margin-bottom: var(--luxar-spacing-6);
+}
+.luxar-mb-8 {
+  margin-bottom: var(--luxar-spacing-8);
+}
+.luxar-mb-12 {
+  margin-bottom: var(--luxar-spacing-12);
+}
+
+/* ========== Text Utilities ========== */
+
+.luxar-text-primary {
+  color: var(--luxar-text-primary);
+}
+
+.luxar-text-secondary {
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-text-muted {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-text-disabled {
+  color: var(--luxar-text-disabled);
+}
+
+.luxar-text-success {
+  color: var(--luxar-success);
+}
+
+.luxar-text-warning {
+  color: var(--luxar-warning);
+}
+
+.luxar-text-error {
+  color: var(--luxar-error);
+}
+
+.luxar-text-info {
+  color: var(--luxar-info);
+}
+
+/* Font sizes */
+.luxar-text-xs {
+  font-size: var(--luxar-text-xs);
+}
+.luxar-text-sm {
+  font-size: var(--luxar-text-sm);
+}
+.luxar-text-base {
+  font-size: var(--luxar-text-base);
+}
+.luxar-text-md {
+  font-size: var(--luxar-text-md);
+}
+.luxar-text-lg {
+  font-size: var(--luxar-text-lg);
+}
+.luxar-text-xl {
+  font-size: var(--luxar-text-xl);
+}
+.luxar-text-2xl {
+  font-size: var(--luxar-text-2xl);
+}
+.luxar-text-3xl {
+  font-size: var(--luxar-text-3xl);
+}
+
+/* Font weights */
+.luxar-text-normal {
+  font-weight: var(--luxar-font-normal);
+}
+.luxar-text-medium {
+  font-weight: var(--luxar-font-medium);
+}
+.luxar-text-semibold {
+  font-weight: var(--luxar-font-semibold);
+}
+.luxar-text-bold {
+  font-weight: var(--luxar-font-bold);
+}
+
+/* Text alignment */
+.luxar-text-left {
+  text-align: left;
+}
+.luxar-text-center {
+  text-align: center;
+}
+.luxar-text-right {
+  text-align: right;
+}
+
+/* Font families */
+.luxar-font-base {
+  font-family: var(--luxar-font-base);
+}
+.luxar-font-mono {
+  font-family: var(--luxar-font-mono);
+}
+
+/* ========== Surface Utilities ========== */
+
+.luxar-surface-primary {
+  background: var(--luxar-bg-primary);
+}
+
+.luxar-surface-secondary {
+  background: var(--luxar-bg-secondary);
+}
+
+.luxar-surface-tertiary {
+  background: var(--luxar-bg-tertiary);
+}
+
+.luxar-surface-elevated {
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+}
+
+/* ========== Border Utilities ========== */
+
+.luxar-border {
+  border: 1px solid var(--luxar-border-default);
+}
+
+.luxar-border-subtle {
+  border: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-border-strong {
+  border: 1px solid var(--luxar-border-strong);
+}
+
+/* Border radius */
+.luxar-rounded-none {
+  border-radius: var(--luxar-radius-none);
+}
+.luxar-rounded-sm {
+  border-radius: var(--luxar-radius-sm);
+}
+.luxar-rounded-md {
+  border-radius: var(--luxar-radius-md);
+}
+.luxar-rounded-lg {
+  border-radius: var(--luxar-radius-lg);
+}
+.luxar-rounded-full {
+  border-radius: var(--luxar-radius-full);
+}
+
+/* ========== Effect Utilities ========== */
+
+.luxar-shadow-sm {
+  box-shadow: var(--luxar-shadow-sm);
+}
+.luxar-shadow-md {
+  box-shadow: var(--luxar-shadow-md);
+}
+.luxar-shadow-lg {
+  box-shadow: var(--luxar-shadow-lg);
+}
+.luxar-shadow-xl {
+  box-shadow: var(--luxar-shadow-xl);
+}
+
+.luxar-blur-sm {
+  backdrop-filter: var(--luxar-blur-sm);
+}
+.luxar-blur-md {
+  backdrop-filter: var(--luxar-blur-md);
+}
+.luxar-blur-lg {
+  backdrop-filter: var(--luxar-blur-lg);
+}
+
+/* ========== Transition Utilities ========== */
+
+.luxar-transition {
+  transition: var(--luxar-transition-normal);
+}
+.luxar-transition-fast {
+  transition: var(--luxar-transition-fast);
+}
+.luxar-transition-slow {
+  transition: var(--luxar-transition-slow);
+}
+
+/* ========== Display Utilities ========== */
+
+.luxar-hidden {
+  display: none;
+}
+
+.luxar-block {
+  display: block;
+}
+
+.luxar-inline-block {
+  display: inline-block;
+}
+
+/* ========== Position Utilities ========== */
+
+.luxar-relative {
+  position: relative;
+}
+
+.luxar-absolute {
+  position: absolute;
+}
+
+.luxar-fixed {
+  position: fixed;
+}
+
+/* ========== Overflow Utilities ========== */
+
+.luxar-overflow-hidden {
+  overflow: hidden;
+}
+
+.luxar-overflow-auto {
+  overflow: auto;
+}
+
+.luxar-overflow-y-auto {
+  overflow-y: auto;
+}
+
+/* ========== Cursor Utilities ========== */
+
+.luxar-cursor-pointer {
+  cursor: pointer;
+}
+
+.luxar-cursor-default {
+  cursor: default;
+}
+
+/* ========== Opacity Utilities ========== */
+
+.luxar-opacity-disabled {
+  opacity: var(--luxar-opacity-disabled);
+}
+.luxar-opacity-secondary {
+  opacity: var(--luxar-opacity-secondary);
+}
+.luxar-opacity-hover {
+  opacity: var(--luxar-opacity-hover);
+}
+.luxar-opacity-full {
+  opacity: var(--luxar-opacity-full);
+}
+
+/* ========== Z-Index Utilities ========== */
+
+.luxar-z-base {
+  z-index: var(--luxar-z-base);
+}
+.luxar-z-dropdown {
+  z-index: var(--luxar-z-dropdown);
+}
+.luxar-z-modal {
+  z-index: var(--luxar-z-modal);
+}
+.luxar-z-popover {
+  z-index: var(--luxar-z-popover);
+}
+.luxar-z-tooltip {
+  z-index: var(--luxar-z-tooltip);
+}

@@ -1,6 +1,9 @@
 // Luxar - A web viewer for arbitrarily large 3D scenes
 // Copyright (c) 2024 The Luxar Authors
 
+// Import CSS styles FIRST (before any JavaScript runs)
+import '../styles/index.css';
+
 // CRITICAL: Import console interceptor FIRST before any other code
 // This ensures we capture ALL console output from the very beginning
 import { consoleInterceptor } from '../utils/console-interceptor';
