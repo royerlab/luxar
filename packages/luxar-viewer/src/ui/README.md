@@ -382,48 +382,142 @@ Context-sensitive help and keyboard shortcuts.
 
 ---
 
-## Styling System
+## Theming System
+
+### Overview
+
+Luxar viewer now features a **modular theming system** with runtime theme switching. Styles are separated into external CSS files with CSS custom properties (variables) for easy customization.
+
+### Available Themes
+
+1. **Dark Theme** (default) - Optimized for scientific visualization with subdued colors and good contrast
+2. **Light Theme** - Bright theme for well-lit environments, WCAG AA compliant
+3. **High Contrast** - Maximum accessibility theme with WCAG AAA compliance, pure colors
+
+### Using Themes
+
+**Programmatically**:
+```typescript
+import { ThemeManager } from '../themes';
+
+// Switch themes
+ThemeManager.getInstance().setTheme('light');
+ThemeManager.getInstance().setTheme('dark');
+ThemeManager.getInstance().setTheme('high-contrast');
+
+// Get current theme
+const current = ThemeManager.getInstance().getCurrentTheme();
+console.log(current.name); // "Dark Theme"
+
+// Subscribe to theme changes
+ThemeManager.getInstance().onChange((theme) => {
+  console.log('Theme changed to:', theme.name);
+});
+```
+
+**Via UI**:
+- Press `R` to open Rendering Controls
+- Expand "🎨 Theme" folder
+- Select theme from dropdown
+
+**Via URL**:
+```
+http://localhost:5173/?theme=light
+http://localhost:5173/?theme=dark
+http://localhost:5173/?theme=high-contrast
+```
 
 ### CSS Architecture
 
+**Three-Layer System**:
+```
+Theme System (CSS variables)
+    ↓
+Component Styles (CSS files, BEM classes)
+    ↓
+Component Logic (TypeScript, no styling)
+```
+
+**File Structure**:
+```
+src/styles/
+├── index.css           # Main entry point
+├── reset.css           # CSS reset
+├── base/               # Base styles
+│   ├── typography.css
+│   ├── layout.css
+│   └── utilities.css   # 80+ utility classes
+└── components/         # Component-specific styles
+    ├── error-dialog.css
+    ├── help-overlay.css
+    ├── dimension-sliders.css
+    ├── debug-console.css
+    ├── dataset-browser.css
+    └── data-loading-monitor.css
+```
+
+**BEM Naming Convention**:
 ```css
-/* Component namespacing */
-.luxar-ui-panel {
-}
-.luxar-ui-slider {
-}
-.luxar-ui-button {
-}
+/* Component */
+.luxar-error-dialog { }
 
-/* Theme variables */
-:root {
-  --luxar-bg: #1a1a1a;
-  --luxar-fg: #ffffff;
-  --luxar-accent: #00a0ff;
-  --luxar-border: #333333;
-}
+/* Element */
+.luxar-error-dialog__header { }
+.luxar-error-dialog__title { }
 
-/* Responsive breakpoints */
-@media (max-width: 768px) {
-  /* Mobile layout */
-}
+/* Modifier */
+.luxar-error-dialog--visible { }
+```
+
+**CSS Custom Properties**:
+```css
+/* Colors */
+--luxar-bg-primary, --luxar-bg-secondary, --luxar-bg-tertiary
+--luxar-text-primary, --luxar-text-secondary, --luxar-text-muted
+--luxar-success, --luxar-warning, --luxar-error, --luxar-info
+
+/* Spacing (8px grid) */
+--luxar-spacing-0 through --luxar-spacing-20
+
+/* Typography */
+--luxar-font-base, --luxar-font-mono
+--luxar-text-xs through --luxar-text-3xl
+--luxar-font-normal, --luxar-font-medium, --luxar-font-semibold, --luxar-font-bold
+
+/* Effects */
+--luxar-radius-sm, --luxar-radius-md, --luxar-radius-lg
+--luxar-shadow-sm, --luxar-shadow-md, --luxar-shadow-lg
+--luxar-blur-sm, --luxar-blur-md, --luxar-blur-lg
 ```
 
 ### Component Styling
 
-Each UI component uses CSS-in-JS for encapsulation:
+Components now use **CSS classes** instead of inline styles:
 
+**Before**:
 ```typescript
-const styles = `
-  .panel {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-`;
+element.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+element.style.padding = '15px';
+element.style.borderRadius = '8px';
+// ... 50 more inline styles
 ```
+
+**After**:
+```typescript
+element.className = 'luxar-dimension-sliders';
+// All styling in CSS file
+```
+
+### Migrated Components
+
+These components fully support theming:
+- ✅ Error Dialog (helpers.ts)
+- ✅ Help Overlay (helpers.ts)
+- ✅ Loading Indicator (helpers.ts)
+- ✅ Dimension Sliders (dimension-sliders.ts)
+- ✅ Debug Console (debug-console.ts)
+- ✅ Dataset Browser (dataset-browser.ts)
+- ⏳ Data Loading Monitor (partially - CSS created, templates in progress)
 
 ---
 

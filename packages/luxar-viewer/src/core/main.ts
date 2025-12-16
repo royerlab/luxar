@@ -26,10 +26,24 @@ if (!configValid) {
 
 // Initialize theme system early (before any UI components are created)
 const themeManager = ThemeManager.getInstance();
-log.custom(LogEmoji.START, Modules.LUXAR, `Theme system initialized: ${themeManager.getCurrentTheme().name}`);
 
-// Parse URL parameters for scene source
+// Parse URL parameters
 const params = new URLSearchParams(window.location.search);
+
+// Support ?theme=light URL parameter
+const themeParam = params.get('theme');
+if (themeParam) {
+  try {
+    themeManager.setTheme(themeParam);
+    log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${themeParam}`);
+  } catch (error) {
+    log.warning(Modules.LUXAR, `Invalid theme in URL: ${themeParam}, using default`);
+  }
+} else {
+  log.custom(LogEmoji.START, Modules.LUXAR, `Theme system initialized: ${themeManager.getCurrentTheme().name}`);
+}
+
+// Parse scene source parameter
 const src = params.get('src') ?? config.defaultZarrPath;
 
 // Initialize and start the application
