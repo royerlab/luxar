@@ -13,4 +13,4 @@ export { ThemeManager } from './theme-manager';
 // Export built-in themes
 export { darkTheme } from './themes/dark.theme';
 export { lightTheme } from './themes/light.theme';
-export { highContrastTheme } from './themes/high-contrast.theme';
+export { liquidGlassTheme } from './themes/liquid-glass.theme';

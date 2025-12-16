@@ -13,7 +13,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Themes to test
-const THEMES = ['dark', 'light', 'high-contrast'] as const;
+const THEMES = ['dark', 'light', 'liquid-glass'] as const;
 
 // Helper to wait for theme application
 async function waitForTheme(page: Page, themeId: string): Promise<void> {
@@ -265,18 +265,18 @@ test('theme persists across page reloads', async ({ page }) => {
  * Test URL parameter theme override
  */
 test('URL parameter sets initial theme', async ({ page }) => {
-  await page.goto('/?theme=high-contrast&debug');
+  await page.goto('/?theme=liquid-glass&debug');
 
   // Wait for theme to be applied
-  await waitForTheme(page, 'high-contrast');
+  await waitForTheme(page, 'liquid-glass');
 
   // Verify theme is set via data-theme attribute
   const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  expect(theme).toBe('high-contrast');
+  expect(theme).toBe('liquid-glass');
 
   // Verify CSS variable
   const bgColor = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
   );
-  expect(bgColor.trim()).toBe('#000000');
+  expect(bgColor.trim()).toBe('rgba(245, 245, 247, 0.72)');
 });

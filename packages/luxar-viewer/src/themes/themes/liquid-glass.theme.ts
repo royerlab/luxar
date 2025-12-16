@@ -1,0 +1,160 @@
+/**
+ * Liquid Glass Theme - Apple-inspired Modern Design
+ *
+ * Inspired by Apple's frosted glass design language with translucent
+ * panels, soft shadows, and modern aesthetics.
+ *
+ * Key characteristics:
+ * - Heavy blur for frosted glass effect
+ * - Translucent backgrounds (high opacity backdrop-filter)
+ * - Soft, diffused shadows
+ * - Modern color palette with subtle tints
+ * - Rounded corners throughout
+ * - Smooth, fluid animations
+ */
+
+import type { Theme } from '../types';
+
+export const liquidGlassTheme: Theme = {
+  id: 'liquid-glass',
+  name: 'Liquid Glass',
+  description: 'Apple-inspired frosted glass design with modern aesthetics',
+
+  colors: {
+    background: {
+      // Translucent backgrounds with high blur
+      primary: 'rgba(245, 245, 247, 0.72)', // Light with transparency
+      secondary: 'rgba(255, 255, 255, 0.7)', // White with transparency
+      tertiary: 'rgba(242, 242, 247, 0.8)', // Very light gray
+      overlay: 'rgba(0, 0, 0, 0.4)', // Soft dark overlay
+    },
+    text: {
+      // Subtle, modern text colors
+      primary: 'rgba(0, 0, 0, 0.85)', // Near-black with slight transparency
+      secondary: 'rgba(60, 60, 67, 0.6)', // Gray with transparency
+      muted: 'rgba(60, 60, 67, 0.3)', // Very subtle gray
+      disabled: 'rgba(60, 60, 67, 0.2)', // Even more subtle
+      inverse: 'rgba(255, 255, 255, 0.95)', // For dark backgrounds
+    },
+    semantic: {
+      // Modern, vibrant but subtle semantic colors
+      success: 'rgba(52, 199, 89, 1)', // Apple green
+      warning: 'rgba(255, 149, 0, 1)', // Apple orange
+      error: 'rgba(255, 59, 48, 1)', // Apple red
+      info: 'rgba(0, 122, 255, 1)', // Apple blue
+      highlight: 'rgba(88, 86, 214, 1)', // Apple purple
+    },
+    interactive: {
+      // Subtle interactive states with glassmorphism
+      default: 'rgba(120, 120, 128, 0.16)', // Apple fill color
+      hover: 'rgba(120, 120, 128, 0.24)', // Slightly more opaque
+      active: 'rgba(120, 120, 128, 0.32)', // More visible when pressed
+      focus: 'rgba(0, 122, 255, 0.15)', // Blue tint on focus
+      disabled: 'rgba(120, 120, 128, 0.08)', // Very subtle
+    },
+    border: {
+      // Soft, subtle borders
+      default: 'rgba(0, 0, 0, 0.1)', // Subtle dark border
+      subtle: 'rgba(0, 0, 0, 0.04)', // Almost invisible
+      strong: 'rgba(0, 0, 0, 0.15)', // More visible
+      focus: 'rgba(0, 122, 255, 0.4)', // Blue focus ring
+    },
+    visualization: {
+      // Vibrant but sophisticated visualization colors
+      hot: 'rgba(255, 59, 48, 1)', // Red
+      warm: 'rgba(255, 149, 0, 1)', // Orange
+      cold: 'rgba(52, 199, 89, 1)', // Green
+      neutral: 'rgba(142, 142, 147, 1)', // Gray
+    },
+  },
+
+  typography: {
+    fontFamily: {
+      // San Francisco-inspired fonts (Apple's system font)
+      base: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif',
+      mono: '"SF Mono", "Monaco", "Menlo", "Courier New", monospace',
+      display: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
+    },
+    fontSize: {
+      xs: '10px',
+      sm: '11px',
+      base: '13px', // Slightly larger for better readability
+      md: '14px',
+      lg: '16px',
+      xl: '18px',
+      '2xl': '20px',
+      '3xl': '28px',
+    },
+    fontWeight: {
+      normal: 400,
+      medium: 500,
+      semibold: 600,
+      bold: 700,
+    },
+    lineHeight: {
+      tight: 1.2,
+      normal: 1.5, // Slightly more spacious
+      relaxed: 1.7,
+    },
+  },
+
+  spacing: {
+    0: '0px',
+    1: '2px',
+    2: '4px',
+    3: '6px',
+    4: '8px',
+    5: '10px',
+    6: '12px',
+    8: '16px',
+    10: '20px',
+    12: '24px',
+    16: '32px',
+    20: '40px',
+  },
+
+  effects: {
+    borderRadius: {
+      // Apple's characteristic rounded corners
+      none: '0px',
+      sm: '8px', // More rounded than default
+      md: '12px', // Apple-like roundness
+      lg: '18px', // Large, soft corners
+      full: '9999px', // Perfect circles
+    },
+    shadow: {
+      // Soft, diffused shadows (Apple style)
+      sm: '0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
+      md: '0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.05)',
+      lg: '0 10px 20px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.05)',
+      xl: '0 20px 40px rgba(0, 0, 0, 0.1), 0 5px 10px rgba(0, 0, 0, 0.06)',
+    },
+    blur: {
+      // Heavy blur for frosted glass effect
+      none: 'none',
+      sm: 'blur(8px)',
+      md: 'blur(20px)', // Significant blur for glass effect
+      lg: 'blur(40px)', // Heavy blur for strong frosted effect
+    },
+    opacity: {
+      disabled: 0.3,
+      secondary: 0.6,
+      hover: 0.8,
+      full: 1.0,
+    },
+    transition: {
+      // Smooth, fluid transitions (Apple style)
+      fast: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', // Ease-in-out
+      normal: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      slow: 'all 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
+    },
+  },
+
+  zIndex: {
+    base: 100,
+    dropdown: 1000,
+    modal: 2000,
+    popover: 3000,
+    tooltip: 4000,
+  },
+};
