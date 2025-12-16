@@ -575,7 +575,7 @@ describe('DataLoadingMonitor', () => {
   });
 
   describe('panel width stability', () => {
-    it('should maintain fixed width when switching tabs in expanded mode', () => {
+    it('should maintain expanded class when switching tabs in expanded mode', () => {
       monitor.show();
       monitor.expand();
 
@@ -583,24 +583,18 @@ describe('DataLoadingMonitor', () => {
       const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
       expect(panel).toBeDefined();
 
-      // Check that panel has fixed width in expanded mode
-      const style = panel.style.cssText;
-      expect(style).toContain('width: 480px');
-      expect(style).toContain('min-width: 480px');
-      expect(style).toContain('max-width: 480px');
+      // Check that panel has expanded class (width defined in CSS)
+      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
 
-      // Switch through all tabs and verify width remains constant
+      // Switch through all tabs and verify expanded class remains
       const tabs = ['overview', 'cache', 'performance', 'insights'];
       tabs.forEach((tab) => {
         monitor.setActiveTab(tab);
-        const currentStyle = panel.style.cssText;
-        expect(currentStyle).toContain('width: 480px');
-        expect(currentStyle).toContain('min-width: 480px');
-        expect(currentStyle).toContain('max-width: 480px');
+        expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
       });
     });
 
-    it('should not have fixed width in compact mode', () => {
+    it('should have compact class in compact mode', () => {
       monitor.show();
       monitor.minimize();
 
@@ -608,13 +602,12 @@ describe('DataLoadingMonitor', () => {
       const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
       expect(panel).toBeDefined();
 
-      // Check that panel has auto width in compact mode
-      const style = panel.style.cssText;
-      expect(style).toContain('width: auto');
-      expect(style).not.toContain('width: 480px');
+      // Check that panel has compact class (width defined in CSS)
+      expect(panel.classList.contains('luxar-data-monitor--compact')).toBe(true);
+      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(false);
     });
 
-    it('should update panel width when transitioning between states', () => {
+    it('should update panel classes when transitioning between states', () => {
       const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
       expect(panel).toBeDefined();
 
@@ -623,15 +616,15 @@ describe('DataLoadingMonitor', () => {
 
       // Hidden → Mini (compact mode)
       monitor.cycleState();
-      expect(panel.style.cssText).toContain('width: auto');
+      expect(panel.classList.contains('luxar-data-monitor--compact')).toBe(true);
 
       // Mini → Expanded
       monitor.cycleState();
-      expect(panel.style.cssText).toContain('width: 480px');
+      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
 
       // Expanded → Hidden
       monitor.cycleState();
-      // Panel style should still have the width set (even if hidden)
+      // Panel classes should still be set (even if hidden)
       // because isExpanded is still true internally
     });
   });
