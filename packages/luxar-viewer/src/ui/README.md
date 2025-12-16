@@ -392,7 +392,7 @@ Luxar viewer now features a **modular theming system** with runtime theme switch
 
 1. **Dark Theme** (default) - Optimized for scientific visualization with subdued colors
 2. **Light Theme** - Bright theme for well-lit environments, WCAG AA compliant
-3. **Liquid Glass** - Apple-inspired frosted glass design with translucent panels and heavy blur
+3. **Frosted Glass** - Apple-inspired frosted glass design with translucent panels and heavy blur
 
 ### Using Themes
 
