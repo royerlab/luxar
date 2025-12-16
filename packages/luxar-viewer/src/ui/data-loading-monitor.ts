@@ -647,15 +647,7 @@ export class DataLoadingMonitor {
           ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
           ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
 
-          <button class="expand-btn" data-action="expand" title="Show details" style="
-            background: none;
-            border: none;
-            color: #999;
-            font-size: 18px;
-            cursor: pointer;
-            padding: 0 4px;
-            transition: color 0.2s;
-          ">
+          <button class="expand-btn" data-action="expand" title="Show details">
             ⊞
           </button>
         </div>
@@ -682,34 +674,8 @@ export class DataLoadingMonitor {
         <div class="luxar-data-monitor__header">
           <h3 style="margin: 0; font-size: 14px;">Data Loading Monitor</h3>
           <div class="header-actions" style="display: flex; gap: 8px;">
-            <button class="header-btn minimize-btn" data-action="minimize" title="Minimize" style="
-              background: none;
-              border: none;
-              color: #999;
-              font-size: 20px;
-              cursor: pointer;
-              padding: 0;
-              width: 30px;
-              height: 30px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              transition: color 0.2s;
-            ">—</button>
-            <button class="header-btn close-btn" data-action="hide" title="Close" style="
-              background: none;
-              border: none;
-              color: #999;
-              font-size: 24px;
-              cursor: pointer;
-              padding: 0;
-              width: 30px;
-              height: 30px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              transition: color 0.2s;
-            ">×</button>
+            <button class="header-btn minimize-btn" data-action="minimize" title="Minimize">—</button>
+            <button class="header-btn close-btn" data-action="hide" title="Close">×</button>
           </div>
         </div>
 
@@ -770,16 +736,7 @@ export class DataLoadingMonitor {
   private addHeaderButtonHoverEffects(): void {
     if (!this.panel) return;
 
-    const headerButtons = this.panel.querySelectorAll('.header-btn');
-    headerButtons.forEach((btn) => {
-      const button = btn as HTMLButtonElement;
-      button.addEventListener('mouseenter', () => {
-        button.style.color = '#fff';
-      });
-      button.addEventListener('mouseleave', () => {
-        button.style.color = '#999';
-      });
-    });
+    // Button hover effects now handled by CSS :hover pseudo-class
   }
 
   /**

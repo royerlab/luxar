@@ -158,6 +158,88 @@
   overflow-x: hidden;
 }
 
+/* Tab content containers */
+.overview-content,
+.cache-content,
+.performance-content,
+.insights-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-8);
+}
+
+.scene-or-loaders {
+  margin-top: var(--luxar-spacing-8);
+}
+
+/* Compact view elements */
+.loader-type {
+  font-size: var(--luxar-text-lg);
+}
+
+.points,
+.memory,
+.qps {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-sm);
+}
+
+.alert {
+  color: var(--luxar-warning);
+  font-size: var(--luxar-text-lg);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Header action buttons */
+.header-btn,
+.minimize-btn,
+.expand-btn {
+  background: none;
+  border: none;
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-2xl);
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--luxar-transition-fast);
+}
+
+.header-btn:hover,
+.minimize-btn:hover,
+.expand-btn:hover {
+  color: var(--luxar-text-primary);
+}
+
+.timeline-controls {
+  display: flex;
+  gap: var(--luxar-spacing-4);
+  margin-top: var(--luxar-spacing-4);
+  align-items: center;
+}
+
+.message-count,
+.filter-status {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+}
+
 /* ========== Metric Cards ========== */
 
 .luxar-metric-card {

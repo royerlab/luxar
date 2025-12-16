@@ -31,15 +31,23 @@ export class PerformanceTimeline {
   private minRenderInterval = MonitorTimings.minRenderInterval;
   private needsRender = false;
 
-  // Colors
-  private colors = {
-    background: 'rgba(0, 0, 0, 0.5)',
-    grid: 'rgba(255, 255, 255, 0.1)',
-    queryTime: '#2196F3',
-    loadTime: '#4CAF50',
-    cacheRate: '#FFC107',
-    error: '#F44336',
-  };
+  // Colors - use method to get current theme colors dynamically
+  private getColors() {
+    const root = document.documentElement;
+    const getVar = (name: string, fallback: string) => {
+      const value = getComputedStyle(root).getPropertyValue(name).trim();
+      return value || fallback;
+    };
+
+    return {
+      background: 'rgba(0, 0, 0, 0.5)',
+      grid: 'rgba(255, 255, 255, 0.1)',
+      queryTime: getVar('--luxar-info', '#2196F3'),
+      loadTime: getVar('--luxar-success', '#4CAF50'),
+      cacheRate: getVar('--luxar-warning', '#FFC107'),
+      error: getVar('--luxar-error', '#F44336'),
+    };
+  }
 
   /**
    * Add event to timeline
@@ -208,7 +216,7 @@ export class PerformanceTimeline {
     ctx.clearRect(0, 0, width, height);
 
     // Draw background
-    ctx.fillStyle = this.colors.background;
+    ctx.fillStyle = this.getColors().background;
     ctx.fillRect(0, 0, width, height);
 
     // Draw grid
@@ -229,8 +237,8 @@ export class PerformanceTimeline {
     }
 
     // Draw metrics
-    this.drawMetric(ctx, width, height, visiblePoints, 'queryTime', this.colors.queryTime, 100);
-    this.drawMetric(ctx, width, height, visiblePoints, 'loadTime', this.colors.loadTime, 100);
+    this.drawMetric(ctx, width, height, visiblePoints, 'queryTime', this.getColors().queryTime, 100);
+    this.drawMetric(ctx, width, height, visiblePoints, 'loadTime', this.getColors().loadTime, 100);
 
     // Draw events
     this.drawEvents(ctx, width, height, visiblePoints);
@@ -243,7 +251,7 @@ export class PerformanceTimeline {
    * Draw grid lines
    */
   private drawGrid(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-    ctx.strokeStyle = this.colors.grid;
+    ctx.strokeStyle = this.getColors().grid;
     ctx.lineWidth = 1;
 
     // Horizontal lines (every 25%)
@@ -332,7 +340,7 @@ export class PerformanceTimeline {
         const x = ((point.timestamp - (now - timeSpan)) / timeSpan) * width;
 
         // Draw error marker
-        ctx.strokeStyle = this.colors.error;
+        ctx.strokeStyle = this.getColors().error;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -347,8 +355,8 @@ export class PerformanceTimeline {
    */
   private drawLegend(ctx: CanvasRenderingContext2D, _width: number, height: number): void {
     const legends = [
-      { label: 'Query', color: this.colors.queryTime },
-      { label: 'Load', color: this.colors.loadTime },
+      { label: 'Query', color: this.getColors().queryTime },
+      { label: 'Load', color: this.getColors().loadTime },
     ];
 
     ctx.font = '10px sans-serif';
