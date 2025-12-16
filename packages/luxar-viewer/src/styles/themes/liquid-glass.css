@@ -29,8 +29,13 @@
   z-index: -1; /* BEHIND the content! */
   border-radius: inherit;
 
-  /* Apply geometry-aware refraction to background */
-  backdrop-filter: url(#luxar-liquid-refraction);
+  /* Apply geometry-aware refraction */
+  /* Note: backdrop-filter: url() has limited browser support */
+  /* Using filter on ::before element instead for better compatibility */
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: blur(2px);
+  filter: url(#luxar-liquid-refraction);
+  -webkit-filter: url(#luxar-liquid-refraction);
 
   /* Performance optimization */
   transform: translateZ(0);

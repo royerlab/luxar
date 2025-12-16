@@ -25,8 +25,8 @@ export interface GlassFilterParams {
  * EASILY ADJUSTABLE - Change these to customize the glass effect!
  */
 export const defaultGlassParams: GlassFilterParams = {
-  blurRadius: 15, // Soft, thick edge curve
-  refractionScale: 30, // Strong but not extreme refraction
+  blurRadius: 25, // Soft, thick edge curve
+  refractionScale: 40, // Strong but not extreme refraction
   chromaticStrength: 2, // Visible color splitting (rainbow edges)
   specularIntensity: 0.3, // Subtle rim light (optional, set to 0 to disable)
 };
