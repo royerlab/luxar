@@ -16,10 +16,8 @@ import type {
 } from './data-monitor-types';
 import { config } from '../config';
 
-// Extract config values (will be gradually migrated to CSS)
+// Extract MonitorColors for dynamic color values (runtime-determined)
 const MonitorColors = config.ui.styles.colors;
-const monitorConfig = config.ui.components.dataMonitor;
-const spacingConfig = config.ui.styles.spacing;
 
 /**
  * Template for metric card component
@@ -127,31 +125,31 @@ export function renderSecondaryMetrics(
   const memoryPercent = memory.limit > 0 ? (memory.used / memory.limit) * 100 : 0;
 
   return `
-    <div style="display: flex; gap: ${spacingConfig.panelMargin}px; padding: ${monitorConfig.padding.default}px; background: ${MonitorColors.sectionBg}; border-radius: ${monitorConfig.borderRadius.card}px; margin-bottom: ${spacingConfig.sectionGap}px;">
-      <div style="flex: 1;">
-        <span style="color: ${MonitorColors.muted}; font-size: 10px;">MEMORY</span>
-        <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+    <div class="luxar-secondary-metrics">
+      <div class="luxar-secondary-metrics__item">
+        <span class="luxar-secondary-metrics__label">MEMORY</span>
+        <div class="luxar-secondary-metrics__value">
           ${formatBytes(memory.used)}
         </div>
         ${renderProgressBar(memoryPercent, getCacheMemoryColor(memoryPercent), '', 2)}
       </div>
 
-      <div style="flex: 1;">
-        <span style="color: ${MonitorColors.muted}; font-size: 10px;">QUERY SPEED</span>
-        <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+      <div class="luxar-secondary-metrics__item">
+        <span class="luxar-secondary-metrics__label">QUERY SPEED</span>
+        <div class="luxar-secondary-metrics__value">
           ${querySpeed.avgTime.toFixed(0)}ms
         </div>
-        <div style="color: ${MonitorColors.dimmed}; font-size: 10px;">
+        <div class="luxar-secondary-metrics__subtitle">
           ${querySpeed.perSec.toFixed(1)}/sec
         </div>
       </div>
 
-      <div style="flex: 1;">
-        <span style="color: ${MonitorColors.muted}; font-size: 10px;">NETWORK I/O</span>
-        <div style="color: ${MonitorColors.primaryText}; font-size: 14px; font-weight: 600;">
+      <div class="luxar-secondary-metrics__item">
+        <span class="luxar-secondary-metrics__label">NETWORK I/O</span>
+        <div class="luxar-secondary-metrics__value">
           ${network ? formatBytes(network.bytesTransferred) : '0B'}
         </div>
-        <div style="color: ${MonitorColors.dimmed}; font-size: 10px;">
+        <div class="luxar-secondary-metrics__subtitle">
           ${network ? `${network.requestCount} req · ${formatBytes(network.bandwidth)}/s` : '0 req'}
         </div>
       </div>
@@ -183,7 +181,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   if (showBoth) {
     // Show both side by side
     primaryMetrics = `
-      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div class="luxar-overview-grid luxar-overview-grid--cols-2">
         ${renderMetricCard(
           'VISIBLE POINTS',
           formatNumber(stats.visiblePoints),
@@ -203,7 +201,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   } else if (hasPoints) {
     // Show only points (large)
     primaryMetrics = `
-      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
           'VISIBLE POINTS',
           formatNumber(stats.visiblePoints),
@@ -216,7 +214,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   } else if (hasLines) {
     // Show only lines (large)
     primaryMetrics = `
-      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
           'VISIBLE LINES',
           formatNumber(stats.visibleSegments),
@@ -229,7 +227,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   } else {
     // No data yet
     primaryMetrics = `
-      <div style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 15px; margin-bottom: 20px;">
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard('LOADING', '...', 'Waiting for data', MonitorColors.muted, 'large')}
       </div>
     `;
@@ -256,22 +254,6 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 }
 
 /**
- * Small clear button style
- */
-function clearButtonStyle(): string {
-  return `
-    background: rgba(255,255,255,0.1);
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 4px;
-    color: ${MonitorColors.muted};
-    font-size: 9px;
-    padding: 2px 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  `;
-}
-
-/**
  * Reusable cache section component (reduces duplication between L1/L2)
  */
 function renderCacheSection(
@@ -287,26 +269,32 @@ function renderCacheSection(
     color?: string;
   }>
 ): string {
+  const cols = metrics.length === 2 ? 'cols-2' : 'cols-3';
+
   return `
-    <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.default}px; border-radius: ${monitorConfig.borderRadius.section}px; margin-bottom: ${spacingConfig.sectionPaddingLarge}px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: ${spacingConfig.sectionPadding}px;">
-        <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;"${titleTooltip ? ` title="${titleTooltip}"` : ''}>${title}</span>
-        <button data-action="${clearAction}" style="${clearButtonStyle()}" title="${clearTooltip}">Clear</button>
+    <div class="luxar-cache-section">
+      <div class="luxar-cache-section__header">
+        <span class="luxar-cache-section__title"${titleTooltip ? ` title="${titleTooltip}"` : ''}>${title}</span>
+        <button data-action="${clearAction}" class="luxar-cache-section__clear-btn" title="${clearTooltip}">Clear</button>
       </div>
-      <div style="display: grid; grid-template-columns: ${metrics.length === 2 ? '1fr 1fr' : '1fr 1fr 1fr'}; gap: ${spacingConfig.sectionPadding}px;">
+      <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
         ${metrics
           .map(
-            (metric) => `
-          <div${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
-            <div style="font-size: 10px; color: ${MonitorColors.muted};">${metric.label}</div>
-            <div style="font-size: ${metrics.length === 2 ? '18px' : '16px'}; font-weight: bold; color: ${metric.color || MonitorColors.primaryText};">
+            (metric) => {
+              const colorStyle = metric.color ? ` style="color: ${metric.color}"` : '';
+              const sizeClass = metrics.length === 2 ? 'luxar-metric-card__value--medium' : 'luxar-metric-card__value--small';
+              return `
+          <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
+            <div class="luxar-metric-card__title">${metric.label}</div>
+            <div class="luxar-metric-card__value ${sizeClass}"${colorStyle}>
               ${metric.value}
             </div>
-            <div style="font-size: 10px; color: ${MonitorColors.dimmed};">
+            <div class="luxar-metric-card__subtitle">
               ${metric.subtitle}
             </div>
           </div>
-        `
+        `;
+            }
           )
           .join('')}
       </div>
@@ -322,10 +310,10 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   if (cacheMetrics.enabled === false) {
     return `
       <div class="cache-content">
-        <div style="text-align: center; padding: 30px; color: ${MonitorColors.muted};">
+        <div class="luxar-data-monitor__empty">
           <div style="font-size: 32px; margin-bottom: 10px;">🚫</div>
-          <div style="font-size: 14px;">Caching is disabled</div>
-          <div style="font-size: 11px; margin-top: 8px; opacity: 0.6;">
+          <div>Caching is disabled</div>
+          <div class="luxar-metric-card__subtitle" style="margin-top: 8px;">
             Remove ?no-cache from URL to enable
           </div>
         </div>
@@ -428,7 +416,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;" title="Combined L1 + L2 cache usage">TOTAL</span>
-          <button data-action="clearAll" style="${clearButtonStyle()}" title="Clear both L1 and L2 caches (all cached data will be removed)">Clear All</button>
+          <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Clear both L1 and L2 caches (all cached data will be removed)">Clear All</button>
         </div>
         <div style="font-size: 14px; font-weight: bold; color: ${MonitorColors.primaryText}; margin-bottom: 6px;" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
@@ -477,7 +465,7 @@ export function renderRecommendation(rec: Recommendation): string {
 export function renderInsightsContent(recommendations: Recommendation[]): string {
   if (recommendations.length === 0) {
     return `
-      <div style="text-align: center; padding: ${spacingConfig.panelMargin}px; opacity: 0.5;">
+      <div class="luxar-data-monitor__empty" style="opacity: 0.5;">
         ✅ No issues detected
       </div>
     `;
