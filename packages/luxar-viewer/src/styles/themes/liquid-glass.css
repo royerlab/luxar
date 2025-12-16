@@ -18,14 +18,13 @@
 }
 
 /* Distorted background layer (BEHIND content) */
-/* IMPORTANT: Only apply to root panels, not nested elements */
+/* IMPORTANT: Only apply to ROOT level panels */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
 [data-theme='liquid-glass'] .luxar-error-dialog::before,
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
-[data-theme='liquid-glass'] .lil-gui::before {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -37,6 +36,19 @@
   filter: url(#luxar-liquid-glass-full);
 
   /* Performance optimization */
+  transform: translateZ(0);
+  will-change: filter;
+}
+
+/* For lil-gui: Only apply to the ROOT container, not ANY .lil-gui */
+[data-theme='liquid-glass'] body > .lil-gui::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  backdrop-filter: blur(var(--luxar-blur-sm));
+  filter: url(#luxar-liquid-glass-full);
   transform: translateZ(0);
   will-change: filter;
 }
