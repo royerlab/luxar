@@ -21,7 +21,7 @@
   max-height: 240px;
 
   /* Theming */
-  background: rgba(30, 30, 30, 0.9);
+  background: var(--luxar-bg-secondary);
   border-radius: var(--luxar-radius-md);
   padding: var(--luxar-spacing-8);
   backdrop-filter: var(--luxar-blur-md);
