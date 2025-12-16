@@ -38,12 +38,12 @@ export const liquidGlassTheme: Theme = {
       overlay: 'rgba(0, 0, 0, 0.6)', // Modal overlay
     },
     text: {
-      // Dark text for light glass tint
-      primary: 'rgba(0, 0, 0, 0.85)', // Strong dark text
-      secondary: 'rgba(0, 0, 0, 0.6)', // Medium gray
-      muted: 'rgba(0, 0, 0, 0.4)', // Subtle
-      disabled: 'rgba(0, 0, 0, 0.25)', // Very subtle
-      inverse: 'rgba(255, 255, 255, 0.95)', // For dark backgrounds
+      // Light text for translucent glass on dark backgrounds
+      primary: 'rgba(255, 255, 255, 0.95)', // Bright white
+      secondary: 'rgba(255, 255, 255, 0.75)', // Translucent white
+      muted: 'rgba(255, 255, 255, 0.5)', // Subtle white
+      disabled: 'rgba(255, 255, 255, 0.3)', // Very subtle
+      inverse: 'rgba(0, 0, 0, 0.85)', // For light backgrounds
     },
     semantic: {
       // Vibrant, modern colors
