@@ -515,9 +515,10 @@ These components fully support theming:
 - ✅ Help Overlay (helpers.ts)
 - ✅ Loading Indicator (helpers.ts)
 - ✅ Dimension Sliders (dimension-sliders.ts)
-- ✅ Debug Console (debug-console.ts)
+- ✅ Debug Console (debug-console.ts) - proper BEM naming (.luxar-debug-console)
 - ✅ Dataset Browser (dataset-browser.ts)
 - ✅ Data Loading Monitor (data-loading-monitor.ts) - CSS complete, core templates refactored
+- ✅ Rendering Controls (rendering-controls.ts) - lil-gui theme integration via CSS variables
 
 ---
 

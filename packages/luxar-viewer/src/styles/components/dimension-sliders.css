@@ -83,6 +83,12 @@
   text-decoration: underline dotted;
 }
 
+.luxar-dimension-dropdown__label--with-tooltip {
+  cursor: help;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.4);
+  display: inline-block;
+}
+
 .luxar-dimension-slider__value {
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
@@ -145,6 +151,10 @@
 
 .luxar-dimension-dropdown-grid--three-cols {
   grid-template-columns: repeat(3, 1fr);
+}
+
+.luxar-dimension-dropdown-grid--with-spacing {
+  margin-top: var(--luxar-spacing-4);
 }
 
 .luxar-dimension-dropdown-grid--with-spacing {
