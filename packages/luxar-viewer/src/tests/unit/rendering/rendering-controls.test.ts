@@ -183,9 +183,9 @@ describe('RenderingControls', () => {
       // Action: Reset to defaults
       controls.resetToDefaults();
 
-      // Verify: HDR shadow value should be synced to default (16.0)
-      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(16.0), 5);
-      expect(controls.settings.hdrMultiplier).toBe(16.0);
+      // Verify: HDR shadow value should be synced to default (1.0)
+      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(1.0), 5);
+      expect(controls.settings.hdrMultiplier).toBe(1.0);
     });
 
     it('should sync HDR shadow value when loading settings', () => {
@@ -451,8 +451,8 @@ describe('RenderingControls', () => {
       expect(controls.settings.vignetteEnabled).toBe(false);
       expect(controls.settings.controlType).toBe('orbit');
 
-      // Verify: HDR shadow synced to default (16.0)
-      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(16.0), 5);
+      // Verify: HDR shadow synced to default (1.0)
+      expect(controls.hdrLogValue.log).toBeCloseTo(Math.log10(1.0), 5);
 
       // Verify: Camera settings applied
       expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.1, 1000);
