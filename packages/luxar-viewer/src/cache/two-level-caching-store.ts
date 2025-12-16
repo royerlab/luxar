@@ -294,7 +294,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
       // Compare hashes
       if (cachedHash && remoteHash !== cachedHash) {
-        console.log('[Cache] Dataset content changed, clearing cache');
+        this.log('Dataset content changed, clearing cache');
         this.log(`Old: ${cachedHash.slice(0, 16)}...`);
         this.log(`New: ${remoteHash.slice(0, 16)}...`);
         await this.clearL2();
@@ -393,7 +393,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
     };
     l2: { size: number; count: number; reads: number; writes: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
-  } {
+    } {
     // Calculate average bandwidth (bytes per second since start)
     const elapsedSeconds = Math.max(1, (Date.now() - this.networkStartTime) / 1000);
     const bandwidth = this.networkBytesTransferred / elapsedSeconds;
