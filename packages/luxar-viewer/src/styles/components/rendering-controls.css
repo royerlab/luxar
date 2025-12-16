@@ -124,7 +124,8 @@
   border: none !important;
   outline: none !important;
   border-radius: var(--luxar-radius-sm) !important;
-  margin: 2px 0 !important;
+  margin: 0 !important;
+  padding: 2px 0 !important;
 }
 
 .lil-gui .controller:hover {
@@ -147,27 +148,27 @@
 /* Folder styling */
 .lil-gui .children {
   border: none !important;
-  margin-left: 20px !important;
+  margin-left: 12px !important;
 }
 
 .lil-gui .folder {
   border: none !important;
-  margin-bottom: 2px !important;
+  margin-bottom: 0 !important;
 }
 
 .lil-gui .folder > .title {
   border: none !important;
-  background: rgba(255, 255, 255, 0.05) !important;
-  padding: var(--luxar-spacing-2) !important;
-  border-radius: var(--luxar-radius-sm) var(--luxar-radius-sm) 0 0 !important;
+  background: transparent !important;
+  padding: 4px 0 !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
 }
 
 .lil-gui > .title {
   background: transparent !important;
   border: none !important;
-  border-bottom: 1px solid var(--luxar-border-subtle) !important;
-  padding-bottom: var(--luxar-spacing-3) !important;
-  margin-bottom: var(--luxar-spacing-5) !important;
+  padding-bottom: var(--luxar-spacing-2) !important;
+  margin-bottom: var(--luxar-spacing-3) !important;
 }
 
 /* Light theme overrides */
