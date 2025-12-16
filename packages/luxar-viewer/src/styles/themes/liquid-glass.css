@@ -13,14 +13,8 @@
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
-[data-theme='liquid-glass'] .lil-gui.root {
+[data-theme='liquid-glass'] .lil-gui {
   isolation: isolate; /* Create stacking context without changing position */
-}
-
-/* Prevent nested lil-gui elements from getting glass effect */
-[data-theme='liquid-glass'] .lil-gui .folder,
-[data-theme='liquid-glass'] .lil-gui .controller {
-  isolation: auto; /* Disable for nested elements */
 }
 
 /* Distorted background layer (BEHIND content) */
@@ -31,7 +25,7 @@
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::before,
-[data-theme='liquid-glass'] .lil-gui.root::before {
+[data-theme='liquid-glass'] .lil-gui::before {
   content: '';
   position: absolute;
   inset: 0;
