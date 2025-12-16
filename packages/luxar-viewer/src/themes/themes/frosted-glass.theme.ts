@@ -1,24 +1,24 @@
 /**
- * Liquid Glass Theme - Apple-inspired Modern Design
+ * Frosted Glass Theme - Modern Glassmorphism Design
  *
- * Inspired by Apple's frosted glass design language with translucent
- * panels, soft shadows, and modern aesthetics.
+ * Features translucent panels with heavy blur for an elegant frosted
+ * glass effect. Works beautifully on any background.
  *
  * Key characteristics:
- * - Heavy blur for frosted glass effect
- * - Translucent backgrounds (high opacity backdrop-filter)
- * - Soft, diffused shadows
- * - Modern color palette with subtle tints
- * - Rounded corners throughout
- * - Smooth, fluid animations
+ * - Heavy blur for authentic frosted glass effect
+ * - Subtle translucent backgrounds with high backdrop-filter
+ * - Soft, diffused multi-layer shadows
+ * - Modern color palette
+ * - Generous rounded corners
+ * - Smooth cubic-bezier transitions
  */
 
 import type { Theme } from '../types';
 
-export const liquidGlassTheme: Theme = {
-  id: 'liquid-glass',
-  name: 'Liquid Glass',
-  description: 'Apple-inspired frosted glass design with modern aesthetics',
+export const frostedGlassTheme: Theme = {
+  id: 'frosted-glass',
+  name: 'Frosted Glass',
+  description: 'Modern frosted glass design with translucent panels and heavy blur',
 
   colors: {
     background: {
@@ -38,11 +38,11 @@ export const liquidGlassTheme: Theme = {
     },
     semantic: {
       // Modern, vibrant but subtle semantic colors
-      success: 'rgba(52, 199, 89, 1)', // Apple green
-      warning: 'rgba(255, 149, 0, 1)', // Apple orange
-      error: 'rgba(255, 59, 48, 1)', // Apple red
-      info: 'rgba(0, 122, 255, 1)', // Apple blue
-      highlight: 'rgba(88, 86, 214, 1)', // Apple purple
+      success: 'rgba(52, 199, 89, 1)', // Modern green
+      warning: 'rgba(255, 149, 0, 1)', // Modern orange
+      error: 'rgba(255, 59, 48, 1)', // Modern red
+      info: 'rgba(0, 122, 255, 1)', // Modern blue
+      highlight: 'rgba(88, 86, 214, 1)', // Modern purple
     },
     interactive: {
       // Subtle interactive states with glassmorphism
@@ -123,7 +123,7 @@ export const liquidGlassTheme: Theme = {
       full: '9999px', // Perfect circles
     },
     shadow: {
-      // Soft, diffused shadows (Apple style)
+      // Soft, diffused shadows (style)
       sm: '0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
       md: '0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.05)',
       lg: '0 10px 20px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.05)',
@@ -143,7 +143,7 @@ export const liquidGlassTheme: Theme = {
       full: 1.0,
     },
     transition: {
-      // Smooth, fluid transitions (Apple style)
+      // Smooth, fluid transitions (style)
       fast: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', // Ease-in-out
       normal: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       slow: 'all 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
