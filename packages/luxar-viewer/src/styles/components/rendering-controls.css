@@ -42,6 +42,11 @@
   border: 1px solid var(--luxar-border-subtle) !important;
 }
 
+/* Dark theme - use subtle glow instead of dark shadow */
+[data-theme='dark'] .lil-gui {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+}
+
 /* Title styling */
 .lil-gui .title {
   background-color: transparent !important;
