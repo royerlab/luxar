@@ -13,6 +13,7 @@ import { darkTheme } from './themes/dark.theme';
 import { lightTheme } from './themes/light.theme';
 import { frostedGlassTheme } from './themes/frosted-glass.theme';
 import { liquidGlassTheme } from './themes/liquid-glass.theme';
+import { injectGlassFilters, removeGlassFilters } from './glass-filters';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -214,8 +215,16 @@ export class ThemeManager {
     // Clear old theme CSS variables (remove all --luxar-* variables)
     this.clearThemeVariables();
 
+    // Remove any existing glass filters
+    removeGlassFilters();
+
     // Set data-theme attribute for theme-specific CSS overrides
     root.setAttribute('data-theme', theme.id);
+
+    // Inject glass distortion filters for Liquid Glass theme
+    if (theme.id === 'liquid-glass') {
+      injectGlassFilters(); // Uses default params, adjustable in glass-filters.ts
+    }
 
     // Inject CSS custom properties
     this.setCSSVariables(root, theme);

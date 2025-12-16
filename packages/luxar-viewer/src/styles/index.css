@@ -25,7 +25,4 @@
 /* @import './components/performance-monitor.css'; */
 
 /* 4. Theme Overrides - theme-specific adjustments */
-/* (Will be added for light/high-contrast themes) */
-/* @import './themes/dark.css'; */
-/* @import './themes/light.css'; */
-/* @import './themes/high-contrast.css'; */
+@import './themes/liquid-glass.css';

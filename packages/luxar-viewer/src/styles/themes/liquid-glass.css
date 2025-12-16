@@ -1,0 +1,41 @@
+/**
+ * Liquid Glass Theme Overrides
+ *
+ * Applies SVG filters for true glass refraction effect.
+ * Filters are injected by ThemeManager when theme is active.
+ */
+
+/* Apply glass distortion filter to all panels */
+[data-theme='liquid-glass'] .luxar-help-overlay,
+[data-theme='liquid-glass'] .luxar-error-dialog,
+[data-theme='liquid-glass'] .luxar-dataset-browser,
+[data-theme='liquid-glass'] .luxar-debug-console,
+[data-theme='liquid-glass'] .luxar-data-monitor,
+[data-theme='liquid-glass'] .luxar-dimension-sliders,
+[data-theme='liquid-glass'] .lil-gui {
+  /* Apply the combined glass distortion filter */
+  filter: url(#luxar-liquid-glass-full);
+
+  /* Ensure filter region is large enough */
+  transform: translateZ(0); /* Force GPU rendering */
+  will-change: filter; /* Optimize filter performance */
+}
+
+/* Optional: Apply chromatic aberration only to edges for performance */
+[data-theme='liquid-glass'] .luxar-help-overlay::before,
+[data-theme='liquid-glass'] .luxar-error-dialog::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  filter: url(#luxar-glass-chromatic);
+  opacity: 0.5; /* Subtle chromatic effect */
+}
+
+/* Note: Adjust filter parameters in src/themes/glass-filters.ts */
+/* Default values:
+ * - noiseFrequency: 0.012
+ * - displacementScale: 60
+ * - chromaticStrength: 1.5
+ * - blurAmount: 2.5
+ */
