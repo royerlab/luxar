@@ -22,19 +22,19 @@ export const liquidGlassTheme: Theme = {
 
   colors: {
     background: {
-      // Translucent backgrounds with high blur
-      primary: 'rgba(245, 245, 247, 0.72)', // Light with transparency
-      secondary: 'rgba(255, 255, 255, 0.7)', // White with transparency
-      tertiary: 'rgba(242, 242, 247, 0.8)', // Very light gray
-      overlay: 'rgba(0, 0, 0, 0.4)', // Soft dark overlay
+      // Translucent backgrounds with strong blur for frosted effect
+      primary: 'rgba(255, 255, 255, 0.25)', // Very translucent white
+      secondary: 'rgba(255, 255, 255, 0.18)', // Even more translucent
+      tertiary: 'rgba(255, 255, 255, 0.12)', // Subtle glass layer
+      overlay: 'rgba(0, 0, 0, 0.3)', // Soft overlay
     },
     text: {
-      // Subtle, modern text colors
-      primary: 'rgba(0, 0, 0, 0.85)', // Near-black with slight transparency
-      secondary: 'rgba(60, 60, 67, 0.6)', // Gray with transparency
-      muted: 'rgba(60, 60, 67, 0.3)', // Very subtle gray
-      disabled: 'rgba(60, 60, 67, 0.2)', // Even more subtle
-      inverse: 'rgba(255, 255, 255, 0.95)', // For dark backgrounds
+      // High contrast text for readability on translucent backgrounds
+      primary: 'rgba(0, 0, 0, 0.9)', // Strong black
+      secondary: 'rgba(0, 0, 0, 0.65)', // Medium gray
+      muted: 'rgba(0, 0, 0, 0.4)', // Subtle gray
+      disabled: 'rgba(0, 0, 0, 0.25)', // Very subtle
+      inverse: 'rgba(255, 255, 255, 0.95)', // For dark content
     },
     semantic: {
       // Modern, vibrant but subtle semantic colors
