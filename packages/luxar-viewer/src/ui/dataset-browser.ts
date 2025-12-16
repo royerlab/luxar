@@ -209,7 +209,7 @@ export class DatasetBrowser {
     const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
 
     // Show loading state
-    content.innerHTML = `<div class="luxar-dataset-browser__loading">Loading...</div>`;
+    content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
     statusBar.textContent = 'Fetching directory contents...';
 
     try {
@@ -318,7 +318,7 @@ export class DatasetBrowser {
     content.innerHTML = '';
 
     if (entries.length === 0) {
-      content.innerHTML = `<div class="luxar-dataset-browser__empty">Empty directory</div>`;
+      content.innerHTML = '<div class="luxar-dataset-browser__empty">Empty directory</div>';
       return;
     }
 

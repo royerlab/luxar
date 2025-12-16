@@ -174,9 +174,9 @@ export class ChunkPrefetcher {
 
     // Debug logging for troubleshooting
     if (this.debug) {
-      console.log(`[Prefetch Debug] key: ${key}`);
-      console.log(`[Prefetch Debug] indices: [${indices.join(', ')}]`);
-      console.log(`[Prefetch Debug] isV3: ${isV3}, basePath: ${basePath}`);
+      this.log(`Debug - key: ${key}`);
+      this.log(`Debug - indices: [${indices.join(', ')}]`);
+      this.log(`Debug - isV3: ${isV3}, basePath: ${basePath}`);
     }
 
     const adjacent: string[] = [];
@@ -194,7 +194,7 @@ export class ChunkPrefetcher {
         const adjacentKey = `${basePath}/${indexStr}`;
 
         if (this.debug) {
-          console.log(`[Prefetch Debug] dim ${dim}, delta ${delta}: ${adjacentKey}`);
+          this.log(`Debug - dim ${dim}, delta ${delta}: ${adjacentKey}`);
         }
 
         adjacent.push(adjacentKey);

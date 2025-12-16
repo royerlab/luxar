@@ -61,13 +61,18 @@ export const highContrastTheme: Theme = {
     },
   },
 
-  // Typography - same as dark theme
-  typography: darkTheme.typography,
+  // Typography - copied from dark theme for immutability
+  typography: {
+    fontFamily: { ...darkTheme.typography.fontFamily },
+    fontSize: { ...darkTheme.typography.fontSize },
+    fontWeight: { ...darkTheme.typography.fontWeight },
+    lineHeight: { ...darkTheme.typography.lineHeight },
+  },
 
-  // Spacing - same as dark theme
-  spacing: darkTheme.spacing,
+  // Spacing - copied from dark theme
+  spacing: { ...darkTheme.spacing },
 
-  // Effects - modified for high contrast
+  // Effects - modified for high contrast (no rounded corners, no blur)
   effects: {
     // No rounded corners for clarity
     borderRadius: {
@@ -77,12 +82,12 @@ export const highContrastTheme: Theme = {
       lg: '0px',
       full: '0px',
     },
-    // Stronger, more visible shadows (borders instead of shadows)
+    // Stronger, more visible shadows (outline-style for maximum visibility)
     shadow: {
-      sm: '0 0 0 2px rgba(255, 255, 255, 0.5)',
-      md: '0 0 0 3px rgba(255, 255, 255, 0.5)',
-      lg: '0 0 0 4px rgba(255, 255, 255, 0.5)',
-      xl: '0 0 0 5px rgba(255, 255, 255, 0.5)',
+      sm: '0 0 0 2px rgba(255, 255, 255, 0.8)',
+      md: '0 0 0 3px rgba(255, 255, 255, 0.8)',
+      lg: '0 0 0 4px rgba(255, 255, 255, 0.8)',
+      xl: '0 0 0 5px rgba(255, 255, 255, 0.8)',
     },
     // No blur effects for clarity
     blur: {
@@ -91,12 +96,12 @@ export const highContrastTheme: Theme = {
       md: 'none',
       lg: 'none',
     },
-    // Same opacity scale
-    opacity: darkTheme.effects.opacity,
-    // Same transitions
-    transition: darkTheme.effects.transition,
+    // Copied from dark theme
+    opacity: { ...darkTheme.effects.opacity },
+    // Copied from dark theme
+    transition: { ...darkTheme.effects.transition },
   },
 
-  // Z-index - same as dark theme
-  zIndex: darkTheme.zIndex,
+  // Z-index - copied from dark theme
+  zIndex: { ...darkTheme.zIndex },
 };

@@ -67,8 +67,9 @@ export function detectMemory(): MemoryInfo {
     // Ensure minimum useful cache size
     recommendedCacheMB = Math.max(128, recommendedCacheMB);
 
-    console.log(
-      `[Device Memory] RAM: ${deviceGB}GB, Estimated heap: ${estimatedHeapMB}MB → Cache: ${recommendedCacheMB}MB`
+    log.info(
+      Modules.MEMORY,
+      `Device Memory - RAM: ${deviceGB}GB, Estimated heap: ${estimatedHeapMB}MB → Cache: ${recommendedCacheMB}MB`
     );
 
     return {
@@ -133,8 +134,9 @@ export class MemoryMonitor {
         if (this.callback) {
           this.callback(this.currentSizeMB);
         }
-        console.log(
-          `💾 [Luxar] Adjusted cache to ${this.currentSizeMB}MB (memory pressure: ${(usagePercent * 100).toFixed(0)}%)`
+        log.warning(
+          Modules.MEMORY,
+          `Adjusted cache to ${this.currentSizeMB}MB (memory pressure: ${(usagePercent * 100).toFixed(0)}%)`
         );
       }
     }, 10000); // Check every 10 seconds

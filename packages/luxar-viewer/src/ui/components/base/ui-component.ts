@@ -126,15 +126,27 @@ export abstract class UIComponent<TConfig = any> {
    * Add an event listener with automatic cleanup tracking.
    * Prevents memory leaks - all listeners removed on dispose()!
    *
+   * IMPORTANT: Use arrow functions for event handlers to maintain component context:
+   * ```typescript
+   * private handleClick = (ev: MouseEvent) => {
+   *   // 'this' refers to component instance
+   *   this.someMethod();
+   * };
+   *
+   * protected attachEventListeners(): void {
+   *   this.addEventListener(this.element, 'click', this.handleClick);
+   * }
+   * ```
+   *
    * @param target - Event target (element, window, document, etc.)
    * @param type - Event type ('click', 'keydown', etc.)
-   * @param listener - Event listener function
+   * @param listener - Event listener function (should be arrow function)
    * @param options - Optional event listener options
    */
   protected addEventListener<K extends keyof HTMLElementEventMap>(
     target: EventTarget,
     type: K,
-    listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any,
+    listener: (ev: HTMLElementEventMap[K]) => void,
     options?: AddEventListenerOptions
   ): void {
     // Store for cleanup
@@ -142,12 +154,16 @@ export abstract class UIComponent<TConfig = any> {
       this.eventListeners.set(target, new Map());
     }
 
-    // Bind listener to component (not element!)
-    const boundListener = listener.bind(this.element) as EventListener;
+    // Remove existing listener if present (prevent duplicates)
+    const existingListener = this.eventListeners.get(target)?.get(type);
+    if (existingListener) {
+      target.removeEventListener(type, existingListener);
+    }
 
-    // Store and add listener
-    this.eventListeners.get(target)!.set(type, boundListener);
-    target.addEventListener(type, boundListener, options);
+    // Store listener directly (no binding needed for arrow functions)
+    const listenerFn = listener as EventListener;
+    this.eventListeners.get(target)!.set(type, listenerFn);
+    target.addEventListener(type, listenerFn, options);
   }
 
   /**

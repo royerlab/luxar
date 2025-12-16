@@ -302,6 +302,9 @@ export class RenderingControls {
         themeManager.setTheme(themeId);
         // Theme is persisted automatically by ThemeManager
         log.info(Modules.RENDERER, `Theme changed to: ${themeId}`);
+
+        // Trigger re-render to apply theme changes immediately
+        this.triggerAnimation();
       });
 
     themeControl.domElement.setAttribute(

@@ -95,8 +95,9 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 DEFAULT_SAMPLE_SIZE = None  # Use all 142k proteins by default
 
 # Protein function category colors
-# Based on broad functional categories
+# Based on broad functional categories OR k-means clusters
 FUNCTION_COLORS = {
+    # GO-based categories
     "enzyme": np.array([1.0, 0.5, 0.2]),  # Orange
     "transporter": np.array([0.3, 0.7, 1.0]),  # Blue
     "receptor": np.array([0.9, 0.3, 0.9]),  # Magenta
@@ -107,7 +108,19 @@ FUNCTION_COLORS = {
     "membrane": np.array([0.3, 0.9, 0.9]),  # Cyan
     "nucleic_acid": np.array([0.9, 0.6, 0.3]),  # Tan
     "catalytic": np.array([1.0, 0.7, 0.3]),  # Light Orange
-    "other": np.array([0.6, 0.6, 0.6]),  # Gray
+    # K-means clusters (rainbow)
+    "cluster_0": np.array([1.0, 0.3, 0.3]),  # Red
+    "cluster_1": np.array([1.0, 0.6, 0.2]),  # Orange
+    "cluster_2": np.array([1.0, 0.9, 0.2]),  # Yellow
+    "cluster_3": np.array([0.5, 1.0, 0.3]),  # Lime
+    "cluster_4": np.array([0.2, 1.0, 0.5]),  # Green
+    "cluster_5": np.array([0.2, 0.9, 0.9]),  # Cyan
+    "cluster_6": np.array([0.3, 0.5, 1.0]),  # Blue
+    "cluster_7": np.array([0.6, 0.3, 1.0]),  # Purple
+    "cluster_8": np.array([0.9, 0.3, 0.8]),  # Magenta
+    "cluster_9": np.array([1.0, 0.4, 0.6]),  # Pink
+    # Fallback
+    "other": np.array([0.5, 0.5, 0.5]),  # Gray
 }
 
 
@@ -278,24 +291,48 @@ def load_protein_embeddings(
         # Load GO annotations
         protein_to_go = load_go_annotations(data_dir)
 
-        # Classify each protein by its GO terms
-        aprint("Classifying proteins by function...")
+        # Try GO-based classification
+        aprint("Attempting GO-based classification...")
         functions = []
+        matched_go = 0
         for pid in protein_ids:
             if pid in protein_to_go:
                 go_terms = protein_to_go[pid]
-                # Use first GO term to classify
                 func = classify_go_term(go_terms[0]) if go_terms else 'other'
+                matched_go += 1
             else:
                 func = 'other'
             functions.append(func)
 
-        func_counts = {}
-        for f in functions:
-            func_counts[f] = func_counts.get(f, 0) + 1
-        aprint(f"✓ Function distribution: {len(func_counts)} categories")
-        for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:5]:
-            aprint(f"  {func}: {count:,}")
+        aprint(f"  GO matches: {matched_go}/{len(protein_ids)} ({matched_go/len(protein_ids)*100:.1f}%)")
+
+        # If no GO matches, use k-means clustering for coloring!
+        if matched_go < len(protein_ids) * 0.01:  # Less than 1% annotated
+            aprint("⚠️  Very few GO annotations, using k-means clustering instead!")
+            from sklearn.cluster import KMeans
+
+            with asection("Clustering proteins by embedding similarity"):
+                n_clusters = 10  # 10 functional groups
+                aprint(f"Running k-means with {n_clusters} clusters...")
+
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                cluster_labels = kmeans.fit_predict(embeddings)
+
+                # Map cluster labels to function names
+                cluster_names = [f"cluster_{i}" for i in range(n_clusters)]
+                functions = [cluster_names[label] for label in cluster_labels]
+
+                aprint(f"✓ Created {n_clusters} functional clusters")
+                for i in range(min(5, n_clusters)):
+                    count = sum(1 for l in cluster_labels if l == i)
+                    aprint(f"  Cluster {i}: {count:,} proteins")
+        else:
+            func_counts = {}
+            for f in functions:
+                func_counts[f] = func_counts.get(f, 0) + 1
+            aprint(f"✓ Function distribution: {len(func_counts)} categories")
+            for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:5]:
+                aprint(f"  {func}: {count:,}")
 
         # Sample if requested
         if sample_size and sample_size < len(embeddings):

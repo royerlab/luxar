@@ -393,10 +393,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-                ndim: dims.ndim,
-                displayed: dims.displayed,
-                currentStep: dims.currentStep,
-              }
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
             : null,
           cameraPosition: {
             x: this.sceneManager.camera.position.x,
@@ -450,11 +450,11 @@ export class LuxarApp {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
-            console.warn('[Cache] No active cache found');
+            log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
           (loader as any).cachingStore.clearL1();
-          console.log('[Cache] L1 cache cleared');
+          log.info(Modules.CACHE, 'L1 cache cleared');
         },
 
         // Clear L2 cache only
@@ -463,11 +463,11 @@ export class LuxarApp {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
-            console.warn('[Cache] No active cache found');
+            log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
           await (loader as any).cachingStore.clearL2();
-          console.log('[Cache] L2 cache cleared');
+          log.info(Modules.CACHE, 'L2 cache cleared');
         },
 
         // Clear all caches
@@ -476,11 +476,11 @@ export class LuxarApp {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
-            console.warn('[Cache] No active cache found');
+            log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
           await (loader as any).cachingStore.clearAll();
-          console.log('[Cache] All caches cleared');
+          log.info(Modules.CACHE, 'All caches cleared');
         },
       },
 
