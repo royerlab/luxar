@@ -20,6 +20,7 @@ All notable changes to Luxar are documented in this file.
   - 130+ CSS utility classes with BEM naming
   - 80+ CSS custom properties (`--luxar-*`)
   - Zero hardcoded colors in components
+  - Consistent 0.15s fade-in animation across all UI panels
 - **Benefits**:
   - 400+ inline styles removed (-90% inline styling)
   - CSS bundle: 48KB (6.77KB gzipped) - cacheable separately
@@ -27,7 +28,7 @@ All notable changes to Luxar are documented in this file.
   - Better accessibility (WCAG AAA high-contrast theme)
   - Easier maintenance (single source of truth for colors)
 - **Testing**: 1074 unit tests + 21 E2E visual regression tests
-- **Implementation**: 8 commits, 4,114 lines added, 100% complete
+- **Implementation**: 15 commits, 4,114 lines added, 100% complete with final polish
 - **Location**: `src/themes/`, `src/styles/`, UI components
 - **Documentation**: Complete implementation plan in `docs/guides/developer/THEMING_IMPLEMENTATION_PLAN.md`
 
