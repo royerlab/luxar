@@ -626,38 +626,28 @@ export class DataLoadingMonitor {
 
     this.panel.innerHTML = `
       <div class="luxar-monitor-compact">
-        <!-- Metrics bar -->
-        <div class="luxar-secondary-metrics__item">
-          <span class="loader-type" title="Loading mode">
-            ${hasSpatialIndex ? '🔍' : '📦'}
-          </span>
+        <span class="loader-type" title="Loading mode">
+          ${hasSpatialIndex ? '🔍' : '📦'}
+        </span>
 
-          <span class="points" title="Visible points">
-            ${this.formatNumber(stats.visiblePoints)}
-          </span>
+        <span class="points" title="Visible points">
+          ${this.formatNumber(stats.visiblePoints)}
+        </span>
 
-          <span class="memory" title="Memory usage">
-            ${this.formatBytes(stats.totalMemory)}
-          </span>
+        <span class="memory" title="Memory usage">
+          ${this.formatBytes(stats.totalMemory)}
+        </span>
 
-          <span class="qps" title="Queries per second">
-            ${stats.queriesPerSecond.toFixed(1)}/s
-          </span>
+        <span class="qps" title="Queries per second">
+          ${stats.queriesPerSecond.toFixed(1)}/s
+        </span>
 
-          ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
-          ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
+        ${hasErrors ? '<span class="alert" title="Errors detected">🔴</span>' : ''}
+        ${hasWarnings ? '<span class="alert" title="Warnings">🟡</span>' : ''}
 
-          <button class="expand-btn" data-action="expand" title="Show details">
-            ⊞
-          </button>
-        </div>
-
-        ${
-  hasSpatialIndex && this.config.showSpatialGrid
-    ? `
-        `
-    : ''
-}
+        <button class="expand-btn" data-action="expand" title="Show details">
+          ⊞
+        </button>
       </div>
     `;
   }
