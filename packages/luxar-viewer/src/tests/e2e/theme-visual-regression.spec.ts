@@ -202,8 +202,8 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   // Check dark theme variables
   await page.evaluate(() => {
     // Access ThemeManager via window (it's imported in main.ts)
-    const themeManager = (window as any).ThemeManager?.getInstance?.() ||
-      (window as any).__luxarDebug?.app;
+    const themeManager =
+      (window as any).ThemeManager?.getInstance?.() || (window as any).__luxarDebug?.app;
     if (themeManager) themeManager.setTheme?.('dark');
   });
 
@@ -257,9 +257,7 @@ test('theme persists across page reloads', async ({ page }) => {
   await page.waitForTimeout(1000);
 
   // Check that light theme is still active via data-theme attribute
-  const theme = await page.evaluate(() =>
-    document.documentElement.getAttribute('data-theme')
-  );
+  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   expect(theme).toBe('light');
 });
 
@@ -273,9 +271,7 @@ test('URL parameter sets initial theme', async ({ page }) => {
   await waitForTheme(page, 'high-contrast');
 
   // Verify theme is set via data-theme attribute
-  const theme = await page.evaluate(() =>
-    document.documentElement.getAttribute('data-theme')
-  );
+  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   expect(theme).toBe('high-contrast');
 
   // Verify CSS variable

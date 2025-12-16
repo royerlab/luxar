@@ -76,10 +76,9 @@ export function renderStatGrid(
   return `
     <div class="luxar-stat-grid luxar-stat-grid--cols-${cols}">
       ${stats
-    .map(
-      (stat) => {
-        const colorStyle = stat.color ? `style="color: ${stat.color}"` : '';
-        return `
+        .map((stat) => {
+          const colorStyle = stat.color ? `style="color: ${stat.color}"` : '';
+          return `
         <div class="luxar-stat-grid__item">
           <div class="luxar-stat-grid__value" ${colorStyle}>
             ${stat.value}
@@ -87,9 +86,8 @@ export function renderStatGrid(
           <div class="luxar-stat-grid__label">${stat.label}</div>
         </div>
       `;
-      }
-    )
-    .join('')}
+        })
+        .join('')}
     </div>
   `;
 }
@@ -183,19 +181,19 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-2">
         ${renderMetricCard(
-    'VISIBLE POINTS',
-    formatNumber(stats.visiblePoints),
-    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-    MonitorColors.success,
-    'medium'
-  )}
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+          MonitorColors.success,
+          'medium'
+        )}
         ${renderMetricCard(
-    'VISIBLE LINES',
-    formatNumber(stats.visibleSegments),
-    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-    MonitorColors.warning,
-    'medium'
-  )}
+          'VISIBLE LINES',
+          formatNumber(stats.visibleSegments),
+          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+          MonitorColors.warning,
+          'medium'
+        )}
       </div>
     `;
   } else if (hasPoints) {
@@ -203,12 +201,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-    'VISIBLE POINTS',
-    formatNumber(stats.visiblePoints),
-    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-    MonitorColors.success,
-    'large'
-  )}
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+          MonitorColors.success,
+          'large'
+        )}
       </div>
     `;
   } else if (hasLines) {
@@ -216,12 +214,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-    'VISIBLE LINES',
-    formatNumber(stats.visibleSegments),
-    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-    MonitorColors.warning,
-    'large'
-  )}
+          'VISIBLE LINES',
+          formatNumber(stats.visibleSegments),
+          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+          MonitorColors.warning,
+          'large'
+        )}
       </div>
     `;
   } else {
@@ -240,10 +238,10 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-    { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
-    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-    cacheMetrics.network
-  )}
+        { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
+        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+        cacheMetrics.network
+      )}
 
       <!-- Scene graph or loader list (injected by monitor) -->
       <div class="scene-or-loaders">
@@ -279,11 +277,13 @@ function renderCacheSection(
       </div>
       <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
         ${metrics
-    .map(
-      (metric) => {
-        const colorStyle = metric.color ? ` style="color: ${metric.color}"` : '';
-        const sizeClass = metrics.length === 2 ? 'luxar-metric-card__value--medium' : 'luxar-metric-card__value--small';
-        return `
+          .map((metric) => {
+            const colorStyle = metric.color ? ` style="color: ${metric.color}"` : '';
+            const sizeClass =
+              metrics.length === 2
+                ? 'luxar-metric-card__value--medium'
+                : 'luxar-metric-card__value--small';
+            return `
           <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
             <div class="luxar-metric-card__title">${metric.label}</div>
             <div class="luxar-metric-card__value ${sizeClass}"${colorStyle}>
@@ -294,9 +294,8 @@ function renderCacheSection(
             </div>
           </div>
         `;
-      }
-    )
-    .join('')}
+          })
+          .join('')}
       </div>
     </div>
   `;
@@ -330,19 +329,19 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <div class="cache-content">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
           ${renderMetricCard(
-    'CACHE MEMORY',
-    formatBytes(cacheMetrics.totalCacheMemory),
-    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-    MonitorColors.success,
-    'medium'
-  )}
+            'CACHE MEMORY',
+            formatBytes(cacheMetrics.totalCacheMemory),
+            `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+            MonitorColors.success,
+            'medium'
+          )}
           ${renderMetricCard(
-    'CACHED ENTRIES',
-    cacheMetrics.totalEntries.toString(),
-    '',
-    MonitorColors.primaryText,
-    'medium'
-  )}
+            'CACHED ENTRIES',
+            cacheMetrics.totalEntries.toString(),
+            '',
+            MonitorColors.primaryText,
+            'medium'
+          )}
         </div>
         <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
           Loading cache statistics...
@@ -359,58 +358,58 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
     <div class="cache-content">
       <!-- L1 Memory Cache Section -->
       ${renderCacheSection('L1 MEMORY CACHE', undefined, 'clearL1', 'Clear L1 cache', [
-    {
-      label: 'SIZE',
-      value: formatBytes(cacheMetrics.l1!.size),
-      subtitle: `${cacheMetrics.l1!.count} entries`,
-      tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
-      color: MonitorColors.success,
-    },
-    {
-      label: 'HIT RATE',
-      value: `${l1HitRate.toFixed(1)}%`,
-      subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
-      tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
-      color:
+        {
+          label: 'SIZE',
+          value: formatBytes(cacheMetrics.l1!.size),
+          subtitle: `${cacheMetrics.l1!.count} entries`,
+          tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+          color: MonitorColors.success,
+        },
+        {
+          label: 'HIT RATE',
+          value: `${l1HitRate.toFixed(1)}%`,
+          subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
+          tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+          color:
             l1HitRate > 80
               ? MonitorColors.success
               : l1HitRate > 50
                 ? MonitorColors.warning
                 : MonitorColors.error,
-    },
-    {
-      label: 'EVICTIONS',
-      value: formatNumber(cacheMetrics.l1!.evictions),
-      subtitle: 'LRU removed',
-      tooltip:
+        },
+        {
+          label: 'EVICTIONS',
+          value: formatNumber(cacheMetrics.l1!.evictions),
+          subtitle: 'LRU removed',
+          tooltip:
             'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
-      color: cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed,
-    },
-  ])}
+          color: cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed,
+        },
+      ])}
 
       <!-- L2 OPFS Cache Section -->
       ${renderCacheSection(
-    'L2 OPFS CACHE',
-    'Origin Private File System: persistent browser storage for cached data',
-    'clearL2',
-    'Clear L2 persistent cache (data will need to be re-downloaded)',
-    [
-      {
-        label: 'SIZE',
-        value: formatBytes(cacheMetrics.l2!.size),
-        subtitle: `${cacheMetrics.l2!.count} entries`,
-        tooltip:
-              'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
-        color: MonitorColors.info,
-      },
-      {
-        label: 'I/O',
-        value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-        subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
-        tooltip: 'Disk I/O operations: reads from cache, writes to cache',
-      },
-    ]
-  )}
+        'L2 OPFS CACHE',
+        'Origin Private File System: persistent browser storage for cached data',
+        'clearL2',
+        'Clear L2 persistent cache (data will need to be re-downloaded)',
+        [
+          {
+            label: 'SIZE',
+            value: formatBytes(cacheMetrics.l2!.size),
+            subtitle: `${cacheMetrics.l2!.count} entries`,
+            tooltip:
+              "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
+            color: MonitorColors.info,
+          },
+          {
+            label: 'I/O',
+            value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
+            subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+            tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+          },
+        ]
+      )}
 
       <!-- Combined Stats + Clear All -->
       <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px;">
@@ -447,14 +446,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-  rec.suggestion
-    ? `
+        rec.suggestion
+          ? `
         <div class="luxar-recommendation__message" style="margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `
-    : ''
-}
+          : ''
+      }
     </div>
   `;
 }
@@ -600,10 +599,10 @@ function renderSceneGraphNode(
 
         <!-- Stats badge -->
         ${
-  statsText
-    ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
-    : ''
-}
+          statsText
+            ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
+            : ''
+        }
 
         <!-- Loading indicator -->
         ${node.isLoading ? '<span style="font-size: 9px; margin-left: 4px;" title="Loading data...">⏳</span>' : ''}
@@ -611,12 +610,12 @@ function renderSceneGraphNode(
 
       <!-- Children (if expanded) -->
       ${
-  isExpanded && hasChildren
-    ? node.children
-      .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
-      .join('')
-    : ''
-}
+        isExpanded && hasChildren
+          ? node.children
+              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+              .join('')
+          : ''
+      }
     </div>
   `;
 }
@@ -646,10 +645,10 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
         <h4 style="margin: 0; font-size: 11px; color: ${MonitorColors.muted};">SCENE GRAPH</h4>
         ${
-  headerStats
-    ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
-    : ''
-}
+          headerStats
+            ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
+            : ''
+        }
       </div>
       <div style="max-height: 180px; overflow-y: auto; background: ${MonitorColors.sectionBg}; border-radius: 4px; padding: 4px;">
         ${renderSceneGraphNode(state.root, expandedNodes)}
