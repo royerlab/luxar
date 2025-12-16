@@ -77,7 +77,7 @@
   color: var(--luxar-text-primary);
   width: 150px;
   font-family: inherit;
-  font-size: var(--luxar-text-xs);
+  font-size: var(--luxar-text-sm);
 }
 
 .luxar-debug-console__clear-btn,
@@ -89,22 +89,26 @@
   color: var(--luxar-text-muted);
   cursor: pointer;
   transition: var(--luxar-transition-normal);
-  font-size: var(--luxar-text-xs);
+  font-size: var(--luxar-text-sm);
 }
 
 .luxar-debug-console__close-btn {
   background: none;
   border: none;
-  color: #999;
-  font-size: var(--luxar-text-3xl);
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-2xl);
   cursor: pointer;
   padding: 0;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: var(--luxar-transition-normal);
+}
+
+.luxar-debug-console__close-btn:hover {
+  color: var(--luxar-text-primary);
 }
 
 .luxar-debug-console__clear-btn:hover,
