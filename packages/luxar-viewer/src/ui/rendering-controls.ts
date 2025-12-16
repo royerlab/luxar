@@ -308,7 +308,7 @@ export class RenderingControls {
       'Switch between visual themes\n' +
         '• Dark: Default scientific visualization theme\n' +
         '• Light: Bright theme for well-lit environments\n' +
-        '• High Contrast: Maximum accessibility (WCAG AAA)'
+        '• Liquid Glass: Modern Apple-inspired frosted glass design'
     );
 
     // Close folder by default

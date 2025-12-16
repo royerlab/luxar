@@ -45,7 +45,7 @@ describe('ThemeManager', () => {
       expect(themes.length).toBeGreaterThanOrEqual(3);
       expect(themes.some((t) => t.id === 'dark')).toBe(true);
       expect(themes.some((t) => t.id === 'light')).toBe(true);
-      expect(themes.some((t) => t.id === 'high-contrast')).toBe(true);
+      expect(themes.some((t) => t.id === 'liquid-glass')).toBe(true);
     });
 
     it('should retrieve theme by ID', () => {
@@ -99,10 +99,10 @@ describe('ThemeManager', () => {
       bgColor = getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary');
       expect(bgColor.trim()).toBe('#ffffff');
 
-      // Switch to high-contrast theme
-      manager.setTheme('high-contrast');
+      // Switch to liquid-glass theme
+      manager.setTheme('liquid-glass');
       bgColor = getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary');
-      expect(bgColor.trim()).toBe('#000000');
+      expect(bgColor.trim()).toBe('rgba(245, 245, 247, 0.72)');
     });
 
     it('should throw error for invalid theme ID', () => {
@@ -190,12 +190,12 @@ describe('ThemeManager', () => {
 
     it('should load saved theme on initialization', () => {
       // Set theme in localStorage before creating manager
-      localStorage.setItem('luxar-theme', 'high-contrast');
+      localStorage.setItem('luxar-theme', 'liquid-glass');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
 
-      expect(current.id).toBe('high-contrast');
+      expect(current.id).toBe('liquid-glass');
     });
 
     it('should fallback to dark theme if saved theme is invalid', () => {
