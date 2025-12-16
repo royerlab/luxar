@@ -29,9 +29,8 @@
   z-index: -1; /* BEHIND the content! */
   border-radius: inherit;
 
-  /* Apply distortion to background, not content */
-  backdrop-filter: blur(var(--luxar-blur-sm));
-  filter: url(#luxar-liquid-glass-full);
+  /* Apply geometry-aware refraction to background */
+  backdrop-filter: url(#luxar-liquid-refraction);
 
   /* Performance optimization */
   transform: translateZ(0);
