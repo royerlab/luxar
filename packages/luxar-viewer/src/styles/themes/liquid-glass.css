@@ -5,7 +5,7 @@
  * Filters distort what's BEHIND the panel, not the panel content.
  */
 
-/* Enable positioning context for pseudo-elements */
+/* Enable stacking context for pseudo-elements (without changing position) */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
@@ -13,8 +13,7 @@
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
 [data-theme='liquid-glass'] .lil-gui {
-  position: relative;
-  isolation: isolate; /* Create stacking context */
+  isolation: isolate; /* Create stacking context without changing position */
 }
 
 /* Distorted background layer (BEHIND content) */
