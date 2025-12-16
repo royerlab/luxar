@@ -651,8 +651,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -770,7 +770,7 @@ export class SceneLoader {
     const pointCount = data.positions.length / 3;
 
     // Log data summary for debugging
-    console.log('[SceneLoader] Points Data Validation:', {
+    log.info(Modules.SCENE_LOADER, 'Points Data Validation:', {
       pointCount,
       positionsLength: data.positions.length,
       positionsType: data.positions.constructor.name,
@@ -787,8 +787,7 @@ export class SceneLoader {
 
     // EDGE CASE: Empty dataset
     if (pointCount === 0) {
-      log.info(Modules.SCENE_LOADER, 'Empty point dataset (0 points) - creating empty geometry');
-      console.warn('[SceneLoader] Empty dataset detected - no points to render');
+      log.warning(Modules.SCENE_LOADER, 'Empty dataset detected - no points to render');
       return;
     }
 
@@ -796,7 +795,6 @@ export class SceneLoader {
     if (data.positions.length % 3 !== 0) {
       const error = `Malformed positions array: length ${data.positions.length} is not divisible by 3`;
       log.error(Modules.SCENE_LOADER, error);
-      console.error('[SceneLoader]', error);
       throw new Error(error);
     }
 
@@ -806,9 +804,9 @@ export class SceneLoader {
       const actual = data.colors.length;
       log.warning(
         Modules.SCENE_LOADER,
-        `Colors length mismatch: expected ${expected}, got ${actual}`
+        `Colors length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
       );
-      console.warn('[SceneLoader] Colors length mismatch:', { expected, actual });
     }
 
     // VALIDATION: Radii length consistency
@@ -817,9 +815,9 @@ export class SceneLoader {
       const actual = data.radii.length;
       log.warning(
         Modules.SCENE_LOADER,
-        `Radii length mismatch: expected ${expected}, got ${actual}`
+        `Radii length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
       );
-      console.warn('[SceneLoader] Radii length mismatch:', { expected, actual });
     }
 
     // VALIDATION: Sharpness length consistency
@@ -828,13 +826,13 @@ export class SceneLoader {
       const actual = data.sharpness.length;
       log.warning(
         Modules.SCENE_LOADER,
-        `Sharpness length mismatch: expected ${expected}, got ${actual}`
+        `Sharpness length mismatch: expected ${expected}, got ${actual}`,
+        { expected, actual }
       );
-      console.warn('[SceneLoader] Sharpness length mismatch:', { expected, actual });
     }
 
     // Log successful validation
-    console.log(`[SceneLoader] ✅ Points data validated: ${pointCount} points`);
+    log.success(Modules.SCENE_LOADER, `Points data validated: ${pointCount} points`);
   }
 
   /**

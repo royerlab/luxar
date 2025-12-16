@@ -1149,7 +1149,10 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Colors length mismatch'));
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Colors length mismatch'),
+        expect.any(Object)
+      );
     });
 
     it('should detect radii length mismatch', () => {
@@ -1169,7 +1172,10 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Radii length mismatch'));
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Radii length mismatch'),
+        expect.any(Object)
+      );
     });
 
     it('should detect sharpness length mismatch', () => {
@@ -1189,7 +1195,10 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).validatePointsData(data);
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Sharpness length mismatch'));
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Sharpness length mismatch'),
+        expect.any(Object)
+      );
     });
 
     it('should validate correct data without warnings', () => {

@@ -12,6 +12,7 @@ import type { Theme, ThemeChangeHandler } from './types';
 import { darkTheme } from './themes/dark.theme';
 import { lightTheme } from './themes/light.theme';
 import { highContrastTheme } from './themes/high-contrast.theme';
+import { log, Modules } from '../utils/log';
 
 /**
  * ThemeManager singleton class
@@ -55,6 +56,49 @@ export class ThemeManager {
       ThemeManager.instance = new ThemeManager();
     }
     return ThemeManager.instance;
+  }
+
+  /**
+   * Reset the singleton instance (for testing only)
+   *
+   * WARNING: This should only be used in test environments to reset state
+   * between tests. Never call this in production code.
+   *
+   * @internal
+   */
+  public static resetInstance(): void {
+    if (ThemeManager.instance) {
+      ThemeManager.instance.dispose();
+      ThemeManager.instance = null;
+    }
+  }
+
+  /**
+   * Dispose the theme manager and clean up all resources
+   *
+   * This method:
+   * - Clears all theme change observers
+   * - Clears all registered themes
+   * - Removes all CSS variables
+   * - Removes data-theme attribute
+   *
+   * After calling dispose(), the ThemeManager instance cannot be reused.
+   */
+  public dispose(): void {
+    // Clear all observers
+    this.observers.clear();
+
+    // Clear themes
+    this.themes.clear();
+
+    // Clear CSS variables
+    this.clearThemeVariables();
+
+    // Remove data-theme attribute
+    document.documentElement.removeAttribute('data-theme');
+
+    // Clear current theme
+    this.currentTheme = null;
   }
 
   /**
@@ -125,7 +169,7 @@ export class ThemeManager {
     // Notify observers
     this.notifyObservers(theme);
 
-    console.log(`[ThemeManager] Theme switched to "${theme.name}" (${theme.id})`);
+    log.info(Modules.UI, `Theme switched to "${theme.name}" (${theme.id})`);
   }
 
   /**

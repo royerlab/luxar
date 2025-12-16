@@ -60,9 +60,20 @@ export const lightTheme: Theme = {
     },
   },
 
-  // Typography, spacing, effects, and zIndex inherit from dark theme
-  typography: darkTheme.typography,
-  spacing: darkTheme.spacing,
-  effects: darkTheme.effects,
-  zIndex: darkTheme.zIndex,
+  // Typography, spacing, effects, and zIndex inherit from dark theme (copied for immutability)
+  typography: {
+    fontFamily: { ...darkTheme.typography.fontFamily },
+    fontSize: { ...darkTheme.typography.fontSize },
+    fontWeight: { ...darkTheme.typography.fontWeight },
+    lineHeight: { ...darkTheme.typography.lineHeight },
+  },
+  spacing: { ...darkTheme.spacing },
+  effects: {
+    borderRadius: { ...darkTheme.effects.borderRadius },
+    shadow: { ...darkTheme.effects.shadow },
+    blur: { ...darkTheme.effects.blur },
+    opacity: { ...darkTheme.effects.opacity },
+    transition: { ...darkTheme.effects.transition },
+  },
+  zIndex: { ...darkTheme.zIndex },
 };

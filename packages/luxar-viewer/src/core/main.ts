@@ -36,7 +36,7 @@ if (themeParam) {
   try {
     themeManager.setTheme(themeParam);
     log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${themeParam}`);
-  } catch (error) {
+  } catch {
     log.warning(Modules.LUXAR, `Invalid theme in URL: ${themeParam}, using default`);
   }
 } else {
