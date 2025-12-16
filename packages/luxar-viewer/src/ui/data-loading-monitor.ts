@@ -32,72 +32,10 @@ import { config } from '../config';
 const MonitorColors = config.ui.styles.colors;
 const MonitorTypography = config.ui.styles.typography;
 const MonitorSpacing = config.ui.styles.spacing;
-const MonitorEffects = config.ui.styles.effects;
 const MonitorTimings = config.dataLoading.monitor.timings;
 const MonitorLimits = config.dataLoading.monitor.limits;
 
-// MonitorStyles - CSS-in-JS styles
-const MonitorStyles = {
-  panel: {
-    base: `
-      font-family: ${MonitorTypography.fontFamily};
-      font-size: ${MonitorTypography.body.fontSize};
-      color: ${MonitorColors.primaryText};
-      background: ${MonitorColors.panelBg};
-      backdrop-filter: ${MonitorEffects.backdropBlur};
-      border-radius: ${MonitorEffects.borderRadius}px;
-      box-shadow: ${MonitorEffects.boxShadow};
-      overflow: hidden;
-      user-select: none;
-      -webkit-user-select: none;
-    `,
-    compact: `
-      width: 300px;
-      padding: ${MonitorSpacing.sectionPadding}px;
-    `,
-    expanded: `
-      width: 600px;
-      max-height: 80vh;
-      display: flex;
-      flex-direction: column;
-    `,
-  },
-  header: `
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: ${MonitorSpacing.sectionPadding}px;
-    border-bottom: 1px solid ${MonitorColors.separator};
-    background: ${MonitorColors.sectionBg};
-  `,
-  button: {
-    tab: {
-      base: `
-        padding: ${MonitorSpacing.elementGap}px ${MonitorSpacing.sectionPadding}px;
-        background: transparent;
-        border: none;
-        color: ${MonitorColors.secondaryText};
-        cursor: pointer;
-        font-size: ${MonitorTypography.body.fontSize};
-        font-family: ${MonitorTypography.fontFamily};
-        transition: ${MonitorEffects.transitionFast};
-        outline: none;
-        border-radius: ${MonitorEffects.borderRadiusSmall}px;
-      `,
-      active: `
-        background: ${MonitorColors.sectionBg};
-        color: ${MonitorColors.primaryText};
-        font-weight: 600;
-      `,
-      inactive: `
-        &:hover {
-          background: ${MonitorColors.hoverBg};
-          color: ${MonitorColors.primaryText};
-        }
-      `,
-    },
-  },
-};
+// MonitorStyles removed - all styling now in CSS files
 
 // Helper functions
 const VALID_TABS = ['overview', 'cache', 'performance', 'insights'] as const;
@@ -629,25 +567,11 @@ export class DataLoadingMonitor {
    * Create UI elements
    */
   private createUI(): void {
-    // Add global styles for the monitor if not already added
-    if (!document.getElementById('luxar-monitor-styles')) {
-      const style = document.createElement('style');
-      style.id = 'luxar-monitor-styles';
-      style.textContent = `
-        .luxar-data-monitor .header-btn:hover {
-          color: #fff !important;
-        }
-        .luxar-data-monitor .expand-btn:hover {
-          color: #fff !important;
-        }
-      `;
-      document.head.appendChild(style);
-    }
+    // Styles now in src/styles/components/data-loading-monitor.css
 
     // Create main panel
     this.panel = document.createElement('div');
-    this.panel.className = 'luxar-data-monitor';
-    this.panel.style.cssText = this.getPanelStyles();
+    this.updatePanelClasses();
 
     // Add event delegation listeners
     this.panel.addEventListener('click', this.uiEventHandler);
@@ -661,30 +585,25 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Get panel styles based on config
+   * Update panel CSS classes based on current state
    */
-  private getPanelStyles(): string {
-    const positions: Record<string, string> = {
-      'top-left': `top: ${MonitorSpacing.panelMargin}px; left: ${MonitorSpacing.panelMargin}px;`,
-      'top-right': `top: ${MonitorSpacing.panelMargin}px; right: ${MonitorSpacing.panelMargin}px;`,
-      'bottom-left': `bottom: ${MonitorSpacing.panelMargin}px; left: ${MonitorSpacing.panelMargin}px;`,
-      'bottom-right': `bottom: ${MonitorSpacing.panelMargin}px; right: ${MonitorSpacing.panelMargin}px;`,
-    };
+  private updatePanelClasses(): void {
+    if (!this.panel) return;
 
-    // Set fixed width for expanded mode, auto for compact mode
-    const widthStyle = this.uiState.isExpanded
-      ? 'width: 480px; min-width: 480px; max-width: 480px;'
-      : 'width: auto;';
+    // Base class
+    const classes = ['luxar-data-monitor'];
 
-    return `
-      position: fixed;
-      ${positions[this.config.position]}
-      ${MonitorStyles.panel.base}
-      ${widthStyle}
-      user-select: none;
-      pointer-events: auto;
-      box-sizing: border-box;
-    `;
+    // Position class
+    classes.push(`luxar-data-monitor--${this.config.position}`);
+
+    // Size class
+    if (this.uiState.isExpanded) {
+      classes.push('luxar-data-monitor--expanded');
+    } else {
+      classes.push('luxar-data-monitor--compact');
+    }
+
+    this.panel.className = classes.join(' ');
   }
 
   /**
@@ -706,9 +625,9 @@ export class DataLoadingMonitor {
     const hasErrors = recommendations.some((r) => r.severity === 'error');
 
     this.panel.innerHTML = `
-      <div class="monitor-compact" style="${this.getCompactStyles()}">
+      <div class="luxar-monitor-compact">
         <!-- Metrics bar -->
-        <div class="metrics-bar" style="${this.getMetricsBarStyles()}">
+        <div class="luxar-secondary-metrics__item">
           <span class="loader-type" title="Loading mode">
             ${hasSpatialIndex ? '🔍' : '📦'}
           </span>
@@ -758,9 +677,9 @@ export class DataLoadingMonitor {
     if (!this.panel) return;
 
     this.panel.innerHTML = `
-      <div class="monitor-detailed" style="${this.getDetailedStyles()}">
+      <div class="luxar-monitor-detailed">
         <!-- Header -->
-        <div class="monitor-header" style="${this.getHeaderStyles()}">
+        <div class="luxar-data-monitor__header">
           <h3 style="margin: 0; font-size: 14px;">Data Loading Monitor</h3>
           <div class="header-actions" style="display: flex; gap: 8px;">
             <button class="header-btn minimize-btn" data-action="minimize" title="Minimize" style="
@@ -795,19 +714,19 @@ export class DataLoadingMonitor {
         </div>
 
         <!-- Tabs -->
-        <div class="monitor-tabs" style="${this.getTabStyles()}">
+        <div class="luxar-data-monitor__tabs">
           ${this.renderTabs()}
         </div>
 
         <!-- Content (updated frequently) -->
-        <div class="monitor-content" style="${this.getContentStyles()}">
+        <div class="luxar-data-monitor__content">
           ${this.renderTabContent()}
         </div>
       </div>
     `;
 
     // Cache reference to content container for efficient updates
-    this.contentContainer = this.panel.querySelector('.monitor-content');
+    this.contentContainer = this.panel.querySelector('.luxar-data-monitor__content');
 
     // Reinitialize component canvases if needed
     if (this.uiState.activeTab === 'performance') {
@@ -877,10 +796,9 @@ export class DataLoadingMonitor {
     return tabs
       .map(
         (tab) => `
-      <button 
-        class="tab ${this.uiState.activeTab === tab.id ? 'active' : ''}"
+      <button
+        class="luxar-data-monitor__tab ${this.uiState.activeTab === tab.id ? 'luxar-data-monitor__tab--active' : ''}"
         data-action="setTab" data-tab-id="${tab.id}"
-        style="${this.getTabButtonStyles(this.uiState.activeTab === tab.id)}; white-space: nowrap;"
       >
         ${tab.icon}&nbsp;${tab.label}
       </button>
@@ -1277,7 +1195,7 @@ export class DataLoadingMonitor {
       this.show();
       // Update panel styles for compact mode
       if (this.panel) {
-        this.panel.style.cssText = this.getPanelStyles();
+        this.updatePanelClasses();
       }
       log.info(Modules.DATA_MONITOR, 'Monitor state: Mini view');
     } else if (!this.uiState.isExpanded) {
@@ -1295,7 +1213,7 @@ export class DataLoadingMonitor {
     this.uiState.isExpanded = true;
     // Update panel styles to apply fixed width
     if (this.panel) {
-      this.panel.style.cssText = this.getPanelStyles();
+      this.updatePanelClasses();
     }
     // Force rebuild of structure when expanding
     this.contentContainer = null;
@@ -1306,7 +1224,7 @@ export class DataLoadingMonitor {
     this.uiState.isExpanded = false;
     // Update panel styles to remove fixed width
     if (this.panel) {
-      this.panel.style.cssText = this.getPanelStyles();
+      this.updatePanelClasses();
     }
     this.updateUI();
   }
@@ -1425,63 +1343,7 @@ export class DataLoadingMonitor {
 
   // Styles
 
-  private getCompactStyles(): string {
-    return `
-      ${MonitorStyles.panel.base}
-      ${MonitorStyles.panel.compact}
-      border-radius: ${MonitorEffects.borderRadiusSmall}px;
-    `;
-  }
-
-  private getMetricsBarStyles(): string {
-    return `
-      display: flex;
-      align-items: center;
-      gap: ${MonitorSpacing.elementGap}px;
-      color: ${MonitorColors.primaryText};
-      font-size: ${MonitorTypography.body.fontSize};
-      font-weight: 500;
-    `;
-  }
-
-  private getDetailedStyles(): string {
-    return `
-      ${MonitorStyles.panel.base}
-      ${MonitorStyles.panel.expanded}
-      max-height: 600px;
-      box-shadow: ${MonitorEffects.boxShadowStrong};
-    `;
-  }
-
-  private getHeaderStyles(): string {
-    return MonitorStyles.header;
-  }
-
-  private getTabStyles(): string {
-    return `
-      display: flex;
-      border-bottom: 1px solid ${MonitorColors.separator};
-      background: ${MonitorColors.sectionBg};
-    `;
-  }
-
-  private getTabButtonStyles(active: boolean): string {
-    return `
-      ${MonitorStyles.button.tab.base}
-      ${active ? MonitorStyles.button.tab.active : MonitorStyles.button.tab.inactive}
-    `;
-  }
-
-  private getContentStyles(): string {
-    return `
-      padding: ${MonitorSpacing.panelPadding}px;
-      max-height: 500px;
-      overflow-y: auto;
-      color: ${MonitorColors.primaryText};
-    `;
-  }
-
-  // Removed unused getLoaderItemStyles - styles inlined where needed
+  // All style getter methods removed - styling now in CSS files
 
   private getEventItemStyles(): string {
     return `
