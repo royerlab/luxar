@@ -1,11 +1,11 @@
 /**
  * Liquid Glass Theme Overrides
  *
- * Applies SVG filters for true glass refraction effect.
- * Filters are injected by ThemeManager when theme is active.
+ * Applies SVG filters to BACKGROUND behind panels for true glass refraction.
+ * Filters distort what's BEHIND the panel, not the panel content.
  */
 
-/* Apply glass distortion filter to all panels */
+/* Enable positioning context for pseudo-elements */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
@@ -13,23 +13,31 @@
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
 [data-theme='liquid-glass'] .lil-gui {
-  /* Apply the combined glass distortion filter */
-  filter: url(#luxar-liquid-glass-full);
-
-  /* Ensure filter region is large enough */
-  transform: translateZ(0); /* Force GPU rendering */
-  will-change: filter; /* Optimize filter performance */
+  position: relative;
+  isolation: isolate; /* Create stacking context */
 }
 
-/* Optional: Apply chromatic aberration only to edges for performance */
+/* Distorted background layer (BEHIND content) */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
-[data-theme='liquid-glass'] .luxar-error-dialog::before {
+[data-theme='liquid-glass'] .luxar-error-dialog::before,
+[data-theme='liquid-glass'] .luxar-dataset-browser::before,
+[data-theme='liquid-glass'] .luxar-debug-console::before,
+[data-theme='liquid-glass'] .luxar-data-monitor::before,
+[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
+[data-theme='liquid-glass'] .lil-gui::before {
   content: '';
   position: absolute;
   inset: 0;
-  pointer-events: none;
-  filter: url(#luxar-glass-chromatic);
-  opacity: 0.5; /* Subtle chromatic effect */
+  z-index: -1; /* BEHIND the content! */
+  border-radius: inherit;
+
+  /* Apply distortion to background, not content */
+  backdrop-filter: blur(var(--luxar-blur-sm));
+  filter: url(#luxar-liquid-glass-full);
+
+  /* Performance optimization */
+  transform: translateZ(0);
+  will-change: filter;
 }
 
 /* Note: Adjust filter parameters in src/themes/glass-filters.ts */
