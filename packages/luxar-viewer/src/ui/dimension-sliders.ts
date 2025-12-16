@@ -1,11 +1,5 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { config } from '../config';
-
-// Extract commonly used config values
-const SPACING = config.ui.styles.spacing;
-const EFFECTS = config.ui.styles.effects;
-const COLORS = config.ui.styles.colors;
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -172,25 +166,7 @@ export class DimensionSliders {
   private createSlidersContainer(): HTMLElement {
     const container = document.createElement('div');
     container.id = 'dimension-sliders';
-    container.style.position = 'fixed';
-    container.style.left = '50%';
-    container.style.transform = 'translateX(-50%)';
-    container.style.bottom = `${SPACING.panelMargin}px`;
-    container.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
-    container.style.borderRadius = `${EFFECTS.borderRadius}px`;
-    container.style.padding = `${SPACING.panelPadding}px`;
-    container.style.width = '80%';
-    container.style.maxWidth = '800px';
-    container.style.minWidth = '400px';
-    container.style.maxHeight = '240px';
-    container.style.overflowY = 'auto';
-    container.style.fontFamily = config.ui.styles.typography.fontFamily;
-    container.style.fontSize = config.ui.styles.typography.body.fontSize;
-    container.style.color = COLORS.primaryText;
-    container.style.backdropFilter = EFFECTS.backdropBlur;
-    container.style.boxShadow = EFFECTS.boxShadow;
-    container.style.zIndex = String(config.ui.zIndex.dimensionSliders);
-    container.style.userSelect = 'none';
+    container.className = 'luxar-dimension-sliders';
 
     this.container.appendChild(container);
     return container;
@@ -233,10 +209,7 @@ export class DimensionSliders {
       if (handlers) {
         if (handlers.change) dropdown.removeEventListener('change', handlers.change);
         if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
-        if (handlers.mouseenter) dropdown.removeEventListener('mouseenter', handlers.mouseenter);
-        if (handlers.mouseleave) dropdown.removeEventListener('mouseleave', handlers.mouseleave);
-        if (handlers.focus) dropdown.removeEventListener('focus', handlers.focus);
-        if (handlers.blur) dropdown.removeEventListener('blur', handlers.blur);
+        // Hover/focus handlers removed - now handled by CSS
       }
     }
 
@@ -248,22 +221,14 @@ export class DimensionSliders {
 
     // Add title section with status text
     const titleContainer = document.createElement('div');
-    titleContainer.style.display = 'flex';
-    titleContainer.style.justifyContent = 'space-between';
-    titleContainer.style.alignItems = 'center';
-    titleContainer.style.marginBottom = '10px'; // Reduced from 12px
-    titleContainer.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
-    titleContainer.style.paddingBottom = '6px'; // Reduced from 8px
+    titleContainer.className = 'luxar-dimension-sliders__header';
 
     const title = document.createElement('div');
+    title.className = 'luxar-dimension-sliders__title';
     title.textContent = 'Dimension Navigation';
-    title.style.fontWeight = 'bold';
-    title.style.fontSize = '14px';
 
     this.statusText = document.createElement('div');
-    this.statusText.style.fontFamily = 'monospace';
-    this.statusText.style.fontSize = '12px';
-    this.statusText.style.color = 'rgba(255, 255, 255, 0.8)';
+    this.statusText.className = 'luxar-dimension-sliders__status';
 
     titleContainer.appendChild(title);
     titleContainer.appendChild(this.statusText);
@@ -297,16 +262,7 @@ export class DimensionSliders {
     // Create categorical dropdowns in a grid at the bottom (max 3 per row)
     if (dropdownDims.length > 0) {
       const dropdownGrid = document.createElement('div');
-      dropdownGrid.style.display = 'grid';
-      dropdownGrid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(150px, 1fr))';
-      dropdownGrid.style.gap = '8px';
-      dropdownGrid.style.marginTop = sliderDims.length > 0 ? '8px' : '0'; // Spacing only if sliders above
-      dropdownGrid.style.maxWidth = '100%';
-
-      // Limit to 3 columns maximum
-      if (dropdownDims.length >= 3) {
-        dropdownGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
-      }
+      dropdownGrid.className = `luxar-dimension-dropdown-grid ${dropdownDims.length >= 3 ? 'luxar-dimension-dropdown-grid--three-cols' : ''} ${sliderDims.length > 0 ? 'luxar-dimension-dropdown-grid--with-spacing' : ''}`.trim();
 
       for (const dimIndex of dropdownDims) {
         this.createDropdownInGrid(dimIndex, dropdownGrid);
@@ -318,11 +274,8 @@ export class DimensionSliders {
     // Handle edge case: no dimensions are navigable
     if (this.sliders.size === 0 && this.dropdowns.size === 0) {
       const message = document.createElement('div');
+      message.className = 'luxar-dimension-sliders__empty';
       message.textContent = 'All dimensions are displayed';
-      message.style.color = '#888';
-      message.style.fontStyle = 'italic';
-      message.style.textAlign = 'center';
-      message.style.padding = '10px';
       this.slidersContainer.appendChild(message);
     }
   }
@@ -351,16 +304,13 @@ export class DimensionSliders {
 
     // Container for this dropdown (will be a grid item)
     const dropdownItem = document.createElement('div');
-    dropdownItem.style.display = 'flex';
-    dropdownItem.style.flexDirection = 'column';
-    dropdownItem.style.gap = '4px';
+    dropdownItem.className = 'luxar-dimension-dropdown';
 
     // Compact label with dimension name (smaller, consistent with sliders)
     const label = document.createElement('div');
-    label.style.fontSize = '12px';
-    label.style.fontWeight = '500';
-    label.style.color = 'rgba(255, 255, 255, 0.9)';
-    label.style.marginBottom = '2px';
+    label.className = dimMeta.description
+      ? 'luxar-dimension-dropdown__label luxar-dimension-dropdown__label--with-tooltip'
+      : 'luxar-dimension-dropdown__label';
 
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
     label.textContent = name;
@@ -368,48 +318,15 @@ export class DimensionSliders {
     // Add tooltip with description if available
     if (dimMeta.description) {
       label.title = dimMeta.description;
-      label.style.cursor = 'help';
-      label.style.borderBottom = '1px dotted rgba(255, 255, 255, 0.4)';
-      label.style.display = 'inline-block';
     }
 
     // Create dropdown matching Luxar UI style
     const dropdown = document.createElement('select');
     dropdown.id = `dim-dropdown-${dimIndex}`;
-    dropdown.style.width = '100%';
-    dropdown.style.padding = '6px 8px';
-    dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-    dropdown.style.color = '#fff';
-    dropdown.style.border = '1px solid rgba(255, 255, 255, 0.3)';
-    dropdown.style.borderRadius = '4px';
-    dropdown.style.fontSize = '13px';
-    dropdown.style.cursor = 'pointer';
-    dropdown.style.outline = 'none';
-    dropdown.style.fontFamily = 'inherit';
+    dropdown.className = 'luxar-dimension-dropdown__select';
 
-    // Create bound handlers for hover/focus states
-    const mouseenterHandler = () => {
-      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
-      dropdown.style.borderColor = 'rgba(76, 175, 80, 0.5)';
-    };
-    const mouseleaveHandler = () => {
-      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-      dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-    };
-    const focusHandler = () => {
-      dropdown.style.borderColor = '#4CAF50';
-      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
-    };
-    const blurHandler = () => {
-      dropdown.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-      dropdown.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-    };
-
-    // Add hover/focus state handlers
-    dropdown.addEventListener('mouseenter', mouseenterHandler);
-    dropdown.addEventListener('mouseleave', mouseleaveHandler);
-    dropdown.addEventListener('focus', focusHandler);
-    dropdown.addEventListener('blur', blurHandler);
+    // Note: Hover/focus states now handled by CSS :hover and :focus pseudo-classes
+    // No need for JavaScript event handlers for styling!
 
     // Populate dropdown with categories
     categories.forEach((category, index) => {
@@ -462,14 +379,10 @@ export class DimensionSliders {
     dropdown.addEventListener('change', changeHandler);
     dropdown.addEventListener('keydown', keydownHandler);
 
-    // Store all handlers for cleanup
+    // Store handlers for cleanup (hover/focus handled by CSS now)
     this.eventHandlers.set(dimIndex, {
       change: changeHandler,
       keydown: keydownHandler,
-      mouseenter: mouseenterHandler,
-      mouseleave: mouseleaveHandler,
-      focus: focusHandler,
-      blur: blurHandler,
     });
 
     dropdownItem.appendChild(label);
@@ -497,7 +410,7 @@ export class DimensionSliders {
    */
   private createSlider(dimIndex: number): void {
     const sliderGroup = document.createElement('div');
-    sliderGroup.style.marginBottom = '12px'; // Reduced from 15px
+    sliderGroup.className = 'luxar-dimension-slider';
 
     // Get dimension metadata
     const dimMeta = this.dims.metadata?.[dimIndex];
@@ -506,56 +419,41 @@ export class DimensionSliders {
 
     // Label with dimension name and current value
     const label = document.createElement('div');
-    label.style.marginBottom = '4px'; // Reduced from 5px
-    label.style.display = 'flex';
-    label.style.justifyContent = 'space-between';
-    label.style.alignItems = 'center';
+    label.className = 'luxar-dimension-slider__label';
 
     const dimName = document.createElement('span');
+    dimName.className = dimMeta?.description
+      ? 'luxar-dimension-slider__name luxar-dimension-slider__name--with-tooltip'
+      : 'luxar-dimension-slider__name';
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
     dimName.textContent = name;
-    dimName.style.fontWeight = '500';
 
     // Add tooltip with description if available
     if (dimMeta?.description) {
       dimName.title = dimMeta.description;
-      dimName.style.cursor = 'help';
-      dimName.style.textDecoration = 'underline dotted';
     }
 
     const valueLabel = document.createElement('span');
     valueLabel.id = `dim-value-${dimIndex}`;
-    valueLabel.style.fontFamily = 'monospace';
-    valueLabel.style.fontSize = '12px';
-    valueLabel.style.color = '#4CAF50';
-    valueLabel.style.cursor = 'help'; // Indicate tooltip available
+    valueLabel.className = 'luxar-dimension-slider__value';
 
     label.appendChild(dimName);
     label.appendChild(valueLabel);
 
     // Create slider container with napari-like styling
     const sliderContainer = document.createElement('div');
-    sliderContainer.style.position = 'relative';
-    sliderContainer.style.height = '20px';
-    sliderContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-    sliderContainer.style.borderRadius = '10px';
-    sliderContainer.style.overflow = 'hidden';
+    sliderContainer.className = 'luxar-dimension-slider__track';
 
     // Progress bar background
     const progressBar = document.createElement('div');
     progressBar.id = `progress-${dimIndex}`;
-    progressBar.style.position = 'absolute';
-    progressBar.style.left = '0';
-    progressBar.style.top = '0';
-    progressBar.style.height = '100%';
-    progressBar.style.backgroundColor = 'rgba(76, 175, 80, 0.3)';
-    progressBar.style.transition = 'width 0.003s ease-out';
-    progressBar.style.pointerEvents = 'none';
+    progressBar.className = 'luxar-dimension-slider__progress';
 
     // Create range input
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.id = `dim-slider-${dimIndex}`;
+    slider.className = 'luxar-dimension-slider__input';
 
     // Configure slider based on discrete/continuous
     const [min, max] = this.dimensionRanges[dimIndex];
@@ -571,29 +469,10 @@ export class DimensionSliders {
       slider.step = '1';
     }
 
-    // Style the slider to be invisible but functional
-    slider.style.position = 'absolute';
-    slider.style.width = '100%';
-    slider.style.height = '100%';
-    slider.style.margin = '0';
-    slider.style.padding = '0';
-    slider.style.opacity = '0';
-    slider.style.cursor = 'pointer';
-    slider.style.zIndex = '10';
-
     // Custom thumb indicator
     const thumb = document.createElement('div');
     thumb.id = `thumb-${dimIndex}`;
-    thumb.style.position = 'absolute';
-    thumb.style.width = '16px';
-    thumb.style.height = '16px';
-    thumb.style.backgroundColor = '#4CAF50';
-    thumb.style.borderRadius = '50%';
-    thumb.style.top = '50%';
-    thumb.style.transform = 'translateY(-50%)';
-    thumb.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)';
-    thumb.style.pointerEvents = 'none';
-    thumb.style.transition = 'left 0.003s ease-out';
+    thumb.className = 'luxar-dimension-slider__thumb';
 
     // Set initial value
     const currentValue = this.dims.currentStep[dimIndex];
@@ -944,10 +823,7 @@ export class DimensionSliders {
       if (handlers) {
         if (handlers.change) dropdown.removeEventListener('change', handlers.change);
         if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
-        if (handlers.mouseenter) dropdown.removeEventListener('mouseenter', handlers.mouseenter);
-        if (handlers.mouseleave) dropdown.removeEventListener('mouseleave', handlers.mouseleave);
-        if (handlers.focus) dropdown.removeEventListener('focus', handlers.focus);
-        if (handlers.blur) dropdown.removeEventListener('blur', handlers.blur);
+        // Hover/focus handlers removed - now handled by CSS
       }
     }
 

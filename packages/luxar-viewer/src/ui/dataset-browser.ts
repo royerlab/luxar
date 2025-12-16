@@ -6,13 +6,6 @@
  */
 
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
-import { config } from '../config';
-
-// Extract component configuration
-const browserConfig = config.ui.components.datasetBrowser;
-const spacingConfig = config.ui.styles.spacing;
-const effectsConfig = config.ui.styles.effects;
-const colorsConfig = config.ui.styles.colors;
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
@@ -141,26 +134,7 @@ export class DatasetBrowser {
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
     panel.id = 'dataset-browser';
-    panel.className = 'dataset-browser'; // Add class for E2E tests
-    panel.style.cssText = `
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 600px;
-      max-width: 90vw;
-      height: 500px;
-      max-height: 80vh;
-      background: ${colorsConfig.panelBg};
-      backdrop-filter: ${effectsConfig.backdropBlur};
-      border-radius: ${browserConfig.borderRadius.panel}px;
-      box-shadow: ${effectsConfig.boxShadowStrong};
-      display: flex;
-      flex-direction: column;
-      font-family: ${config.ui.styles.typography.fontFamily};
-      color: ${colorsConfig.primaryText};
-      z-index: ${browserConfig.zIndex};
-    `;
+    panel.className = 'luxar-dataset-browser dataset-browser'; // luxar-dataset-browser for styling, dataset-browser for E2E tests
 
     // ARIA attributes for accessibility
     panel.setAttribute('role', 'dialog');
@@ -169,40 +143,16 @@ export class DatasetBrowser {
 
     // Header
     const header = document.createElement('div');
-    header.style.cssText = `
-      padding: ${browserConfig.padding.panel}px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    `;
+    header.className = 'luxar-dataset-browser__header';
 
     const title = document.createElement('h2');
     title.id = 'dataset-browser-title';
+    title.className = 'luxar-dataset-browser__title';
     title.textContent = 'Select Dataset';
-    title.style.cssText = `
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-    `;
 
     const closeBtn = document.createElement('button');
+    closeBtn.className = 'luxar-dataset-browser__close-btn';
     closeBtn.textContent = '×';
-    closeBtn.style.cssText = `
-      background: none;
-      border: none;
-      color: #999;
-      font-size: 24px;
-      cursor: pointer;
-      padding: 0;
-      width: 30px;
-      height: 30px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    `;
-    closeBtn.onmouseover = () => (closeBtn.style.color = '#fff');
-    closeBtn.onmouseout = () => (closeBtn.style.color = '#999');
     closeBtn.onclick = () => this.close();
 
     header.appendChild(title);
@@ -211,24 +161,17 @@ export class DatasetBrowser {
     // Compact help banner with essential guidance
     const welcomeBanner = document.createElement('div');
     welcomeBanner.id = 'browser-welcome';
-    welcomeBanner.style.cssText = `
-      padding: 10px ${browserConfig.padding.panel}px;
-      background: rgba(76, 175, 80, 0.08);
-      border-bottom: 1px solid rgba(76, 175, 80, 0.2);
-      font-size: 12px;
-      line-height: 1.4;
-      color: #aaaaaa;
-    `;
+    welcomeBanner.className = 'luxar-dataset-browser__banner';
 
     welcomeBanner.innerHTML = `
-      <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div class="luxar-dataset-browser__banner-content">
         <div>
-          <strong style="color: #88cc88;">Luxar</strong> - Interactive Scientific Data Visualization
-          <span style="opacity: 0.7; margin-left: 8px;">•</span>
-          <span style="opacity: 0.7; margin-left: 8px;">Browse for <code style="background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 2px; font-size: 11px;">.zarr</code> or enter path manually</span>
+          <strong class="luxar-dataset-browser__banner-title">Luxar</strong> - Interactive Scientific Data Visualization
+          <span class="luxar-dataset-browser__banner-description">•</span>
+          <span class="luxar-dataset-browser__banner-description">Browse for <code class="luxar-dataset-browser__banner-code">.zarr</code> or enter path manually</span>
         </div>
-        <div style="font-size: 11px; opacity: 0.6;">
-          <kbd style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 2px; font-family: monospace;">H</kbd> Help
+        <div class="luxar-dataset-browser__banner-help">
+          <kbd class="luxar-dataset-browser__banner-kbd">H</kbd> Help
         </div>
       </div>
     `;
@@ -236,37 +179,17 @@ export class DatasetBrowser {
     // Breadcrumb navigation
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'breadcrumb';
-    breadcrumb.style.cssText = `
-      padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
-      background: rgba(255, 255, 255, 0.05);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      overflow-x: auto;
-    `;
+    breadcrumb.className = 'luxar-dataset-browser__breadcrumb';
 
     // Content area
     const content = document.createElement('div');
     content.id = 'browser-content';
-    content.style.cssText = `
-      flex: 1;
-      overflow-y: auto;
-      padding: ${browserConfig.padding.panel}px;
-    `;
+    content.className = 'luxar-dataset-browser__content';
 
     // Status bar
     const statusBar = document.createElement('div');
     statusBar.id = 'browser-status';
-    statusBar.style.cssText = `
-      padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-      font-size: 12px;
-      color: #888;
-      display: flex;
-      justify-content: space-between;
-    `;
+    statusBar.className = 'luxar-dataset-browser__status';
 
     panel.appendChild(header);
     panel.appendChild(welcomeBanner);
@@ -286,7 +209,7 @@ export class DatasetBrowser {
     const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
 
     // Show loading state
-    content.innerHTML = `<div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px;">Loading...</div>`;
+    content.innerHTML = `<div class="luxar-dataset-browser__loading">Loading...</div>`;
     statusBar.textContent = 'Fetching directory contents...';
 
     try {
@@ -331,9 +254,9 @@ export class DatasetBrowser {
       }
     } catch (error) {
       content.innerHTML = `
-        <div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px; color: #f44336;">
+        <div class="luxar-dataset-browser__error">
           <p>Failed to load directory</p>
-          <p style="font-size: 12px; margin-top: 10px;">${error}</p>
+          <p class="luxar-dataset-browser__error-details">${error}</p>
         </div>
       `;
       statusBar.textContent = 'Error loading directory';
@@ -349,12 +272,8 @@ export class DatasetBrowser {
 
     // Root link
     const rootLink = document.createElement('a');
+    rootLink.className = 'luxar-dataset-browser__breadcrumb-link';
     rootLink.textContent = 'Root';
-    rootLink.style.cssText = `
-      color: #4CAF50;
-      text-decoration: none;
-      cursor: pointer;
-    `;
     rootLink.onclick = () => this.navigate('');
     breadcrumb.appendChild(rootLink);
 
@@ -366,8 +285,8 @@ export class DatasetBrowser {
       parts.forEach((part, index) => {
         // Separator
         const sep = document.createElement('span');
+        sep.className = 'luxar-dataset-browser__breadcrumb-separator';
         sep.textContent = '›';
-        sep.style.color = '#666';
         breadcrumb.appendChild(sep);
 
         accumulated += (accumulated ? '/' : '') + part;
@@ -376,17 +295,14 @@ export class DatasetBrowser {
         if (index === parts.length - 1) {
           // Current location (not clickable)
           const current = document.createElement('span');
+          current.className = 'luxar-dataset-browser__breadcrumb-current';
           current.textContent = part;
           breadcrumb.appendChild(current);
         } else {
           // Clickable parent
           const link = document.createElement('a');
+          link.className = 'luxar-dataset-browser__breadcrumb-link';
           link.textContent = part;
-          link.style.cssText = `
-            color: #4CAF50;
-            text-decoration: none;
-            cursor: pointer;
-          `;
           link.onclick = () => this.navigate(pathToNavigate);
           breadcrumb.appendChild(link);
         }
@@ -402,7 +318,7 @@ export class DatasetBrowser {
     content.innerHTML = '';
 
     if (entries.length === 0) {
-      content.innerHTML = `<div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px; color: #888;">Empty directory</div>`;
+      content.innerHTML = `<div class="luxar-dataset-browser__empty">Empty directory</div>`;
       return;
     }
 
@@ -418,11 +334,7 @@ export class DatasetBrowser {
 
     // Create entry list
     const list = document.createElement('div');
-    list.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    `;
+    list.className = 'luxar-dataset-browser__file-list';
 
     sorted.forEach((entry) => {
       const item = document.createElement('div');
@@ -430,30 +342,11 @@ export class DatasetBrowser {
       // Check if this is the currently selected dataset
       const isCurrentDataset = this.currentDataset && entry.name === this.currentDataset;
 
-      item.style.cssText = `
-        padding: ${Math.floor(browserConfig.padding.element * 1.2)}px ${Math.floor(browserConfig.padding.element * 1.6)}px;
-        background: ${isCurrentDataset ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)'};
-        border-radius: ${browserConfig.borderRadius.section}px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        transition: background 0.2s;
-        ${isCurrentDataset ? 'border: 1px solid rgba(76, 175, 80, 0.4);' : ''}
-      `;
-
-      item.onmouseover = () => {
-        item.style.background = 'rgba(76, 175, 80, 0.2)';
-      };
-      item.onmouseout = () => {
-        item.style.background = isCurrentDataset
-          ? 'rgba(76, 175, 80, 0.15)'
-          : 'rgba(255, 255, 255, 0.05)';
-      };
+      item.className = `luxar-dataset-browser__file-item ${isCurrentDataset ? 'luxar-dataset-browser__file-item--current' : ''}`;
 
       // Icon
       const icon = document.createElement('span');
-      icon.style.fontSize = '18px';
+      icon.className = 'luxar-dataset-browser__file-icon';
       if (entry.type === 'zarr') {
         // Use the Luxar emoji icon
         icon.textContent = '🌌';
@@ -468,43 +361,25 @@ export class DatasetBrowser {
 
       // Name
       const name = document.createElement('span');
+      name.className = 'luxar-dataset-browser__file-name';
       name.textContent = entry.name;
-      name.style.flex = '1';
 
       // Type badge and current indicator
       if (entry.type === 'zarr') {
         const badgeContainer = document.createElement('div');
-        badgeContainer.style.cssText = `
-          display: flex;
-          gap: 6px;
-          align-items: center;
-        `;
+        badgeContainer.className = 'luxar-dataset-browser__badges';
 
         // ZARR badge
         const badge = document.createElement('span');
+        badge.className = 'luxar-dataset-browser__badge';
         badge.textContent = 'ZARR';
-        badge.style.cssText = `
-          background: #4CAF50;
-          color: white;
-          padding: ${spacingConfig.tinyGap}px ${browserConfig.borderRadius.section}px;
-          border-radius: ${browserConfig.borderRadius.element}px;
-          font-size: 10px;
-          font-weight: 600;
-        `;
         badgeContainer.appendChild(badge);
 
         // Current dataset indicator
         if (isCurrentDataset) {
           const currentBadge = document.createElement('span');
+          currentBadge.className = 'luxar-dataset-browser__badge luxar-dataset-browser__badge--loaded';
           currentBadge.textContent = 'LOADED';
-          currentBadge.style.cssText = `
-            background: #2196F3;
-            color: white;
-            padding: ${spacingConfig.tinyGap}px ${browserConfig.borderRadius.section}px;
-            border-radius: ${browserConfig.borderRadius.element}px;
-            font-size: 10px;
-            font-weight: 600;
-          `;
           badgeContainer.appendChild(currentBadge);
         }
 
@@ -539,51 +414,18 @@ export class DatasetBrowser {
     const content = this.panel.querySelector('#browser-content') as HTMLElement;
 
     content.innerHTML = `
-      <div style="text-align: center; padding: ${browserConfig.padding.panel * 2}px;">
-        <p style="margin-bottom: 20px;">Directory listing not available. Enter dataset path manually:</p>
-        <input 
-          type="text" 
-          id="manual-path" 
+      <div class="luxar-dataset-browser__manual-entry">
+        <p class="luxar-dataset-browser__manual-entry-title">Directory listing not available. Enter dataset path manually:</p>
+        <input
+          type="text"
+          id="manual-path"
+          class="luxar-dataset-browser__manual-entry-input"
           placeholder="e.g., datasets/example.zarr"
-          style="
-            width: 100%;
-            max-width: 400px;
-            padding: ${browserConfig.padding.element}px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: ${browserConfig.borderRadius.section}px;
-            color: white;
-            font-size: 14px;
-          "
         />
-        <div style="margin-top: 20px;">
-          <button 
-            id="manual-load"
-            style="
-              background: #4CAF50;
-              color: white;
-              border: none;
-              padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
-              border-radius: ${browserConfig.borderRadius.section}px;
-              cursor: pointer;
-              font-size: 14px;
-              margin-right: 10px;
-            "
-          >Load Dataset</button>
-          <button 
-            id="manual-cancel"
-            style="
-              background: rgba(255, 255, 255, 0.1);
-              color: white;
-              border: 1px solid rgba(255, 255, 255, 0.2);
-              padding: ${spacingConfig.compactGap}px ${browserConfig.padding.panel}px;
-              border-radius: ${browserConfig.borderRadius.section}px;
-              cursor: pointer;
-              font-size: 14px;
-            "
-          >Cancel</button>
+        <div>
+          <button id="manual-load" class="luxar-dataset-browser__manual-entry-btn">Load Dataset</button>
         </div>
-        <p style="margin-top: 20px; font-size: 12px; color: #888;">
+        <p class="luxar-dataset-browser__manual-entry-tip">
           Tip: Ask your server administrator to enable directory listing or WebDAV
         </p>
       </div>
@@ -591,7 +433,6 @@ export class DatasetBrowser {
 
     const input = content.querySelector('#manual-path') as HTMLInputElement;
     const loadBtn = content.querySelector('#manual-load') as HTMLButtonElement;
-    const cancelBtn = content.querySelector('#manual-cancel') as HTMLButtonElement;
 
     loadBtn.onclick = () => {
       const path = input.value.trim();
@@ -600,8 +441,6 @@ export class DatasetBrowser {
         this.close();
       }
     };
-
-    cancelBtn.onclick = () => this.close();
 
     // Enter key support
     input.onkeydown = (e) => {

@@ -16,7 +16,7 @@ import type {
 } from './data-monitor-types';
 import { config } from '../config';
 
-// Extract MonitorColors and component config from config
+// Extract config values (will be gradually migrated to CSS)
 const MonitorColors = config.ui.styles.colors;
 const monitorConfig = config.ui.components.dataMonitor;
 const spacingConfig = config.ui.styles.spacing;
@@ -28,18 +28,18 @@ export function renderMetricCard(
   title: string,
   value: string | number,
   subtitle?: string,
-  color: string = MonitorColors.primaryText,
+  color: string = '',
   size: 'small' | 'medium' | 'large' = 'medium'
 ): string {
-  const fontSize = size === 'large' ? '32px' : size === 'medium' ? '24px' : '16px';
+  const colorStyle = color ? `style="color: ${color}"` : '';
 
   return `
-    <div style="background: ${MonitorColors.sectionBg}; padding: ${size === 'large' ? spacingConfig.panelPadding : spacingConfig.sectionPadding + 2}px; border-radius: ${size === 'large' ? monitorConfig.borderRadius.section : monitorConfig.borderRadius.card}px;">
-      ${title ? `<div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">${title}</div>` : ''}
-      <div style="font-size: ${fontSize}; font-weight: bold; color: ${color};">
+    <div class="luxar-metric-card luxar-metric-card--${size}">
+      ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
+      <div class="luxar-metric-card__value luxar-metric-card__value--${size}" ${colorStyle}>
         ${value}
       </div>
-      ${subtitle ? `<div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 4px;">${subtitle}</div>` : ''}
+      ${subtitle ? `<div class="luxar-metric-card__subtitle">${subtitle}</div>` : ''}
     </div>
   `;
 }
@@ -54,13 +54,15 @@ export function renderProgressBar(
   height: number = 4
 ): string {
   const barColor = color || getProgressColor(percent);
+  const trackStyle = `style="height: ${height}px; border-radius: ${height / 2}px;"`;
+  const fillStyle = `style="background: ${barColor}; width: ${Math.min(100, percent)}%; border-radius: ${height / 2}px;"`;
 
   return `
-    <div style="margin-top: ${label ? 6 : 0}px;">
-      <div style="height: ${height}px; background: rgba(255,255,255,0.1); border-radius: ${height / 2}px;">
-        <div style="height: 100%; background: ${barColor}; width: ${Math.min(100, percent)}%; border-radius: ${height / 2}px;"></div>
+    <div class="luxar-progress-bar__container">
+      <div class="luxar-progress-bar__track" ${trackStyle}>
+        <div class="luxar-progress-bar__fill" ${fillStyle}></div>
       </div>
-      ${label ? `<div style="font-size: 9px; color: ${MonitorColors.dimmed}; margin-top: 2px;">${label}</div>` : ''}
+      ${label ? `<div class="luxar-progress-bar__label">${label}</div>` : ''}
     </div>
   `;
 }
@@ -71,18 +73,23 @@ export function renderProgressBar(
 export function renderStatGrid(
   stats: Array<{ label: string; value: string | number; color?: string }>
 ): string {
+  const cols = Math.min(3, stats.length);
+
   return `
-    <div style="display: grid; grid-template-columns: repeat(${Math.min(3, stats.length)}, 1fr); gap: 8px;">
+    <div class="luxar-stat-grid luxar-stat-grid--cols-${cols}">
       ${stats
         .map(
-          (stat) => `
-        <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; border-radius: ${monitorConfig.borderRadius.card}px; text-align: center;">
-          <div style="font-size: 16px; font-weight: bold; color: ${stat.color || MonitorColors.info};">
+          (stat) => {
+            const colorStyle = stat.color ? `style="color: ${stat.color}"` : '';
+            return `
+        <div class="luxar-stat-grid__item">
+          <div class="luxar-stat-grid__value" ${colorStyle}>
             ${stat.value}
           </div>
-          <div style="font-size: 9px; color: ${MonitorColors.muted};">${stat.label}</div>
+          <div class="luxar-stat-grid__label">${stat.label}</div>
         </div>
-      `
+      `;
+          }
         )
         .join('')}
     </div>

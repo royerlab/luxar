@@ -1,0 +1,267 @@
+/**
+ * Dimension Sliders Component Styles
+ *
+ * Napari-inspired slider controls for nD dataset navigation.
+ * Used by DimensionSliders class in ui/dimension-sliders.ts
+ */
+
+/* ========== Main Container ========== */
+
+.luxar-dimension-sliders {
+  /* Positioning */
+  position: fixed;
+  left: 50%;
+  bottom: var(--luxar-spacing-10);
+  transform: translateX(-50%);
+
+  /* Sizing */
+  width: 80%;
+  max-width: 800px;
+  min-width: 400px;
+  max-height: 240px;
+
+  /* Theming */
+  background: rgba(30, 30, 30, 0.9);
+  border-radius: var(--luxar-radius-md);
+  padding: var(--luxar-spacing-8);
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-lg);
+  z-index: var(--luxar-z-base);
+
+  /* Typography */
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base);
+  color: var(--luxar-text-primary);
+
+  /* Behavior */
+  user-select: none;
+  overflow-y: auto;
+}
+
+/* ========== Header ========== */
+
+.luxar-dimension-sliders__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--luxar-spacing-5);
+  padding-bottom: var(--luxar-spacing-3);
+  border-bottom: 1px solid var(--luxar-border-strong);
+}
+
+.luxar-dimension-sliders__title {
+  font-weight: var(--luxar-font-bold);
+  font-size: var(--luxar-text-lg);
+}
+
+.luxar-dimension-sliders__status {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-md);
+  color: var(--luxar-text-primary);
+  opacity: 0.8;
+}
+
+/* ========== Individual Slider ========== */
+
+.luxar-dimension-slider {
+  margin-bottom: var(--luxar-spacing-6);
+}
+
+.luxar-dimension-slider__label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--luxar-spacing-2);
+}
+
+.luxar-dimension-slider__name {
+  font-weight: var(--luxar-font-medium);
+}
+
+.luxar-dimension-slider__name--with-tooltip {
+  cursor: help;
+  text-decoration: underline dotted;
+}
+
+.luxar-dimension-slider__value {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-md);
+  color: var(--luxar-success);
+  cursor: help;
+}
+
+/* ========== Custom Slider Track ========== */
+
+.luxar-dimension-slider__track {
+  position: relative;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.luxar-dimension-slider__progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: rgba(76, 175, 80, 0.3);
+  transition: width 3ms ease-out;
+  pointer-events: none;
+}
+
+.luxar-dimension-slider__input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.luxar-dimension-slider__thumb {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: var(--luxar-success);
+  border-radius: 50%;
+  top: 50%;
+  transform: translateY(-50%);
+  box-shadow: var(--luxar-shadow-sm);
+  pointer-events: none;
+  transition: left 3ms ease-out;
+}
+
+/* ========== Categorical Dropdowns ========== */
+
+.luxar-dimension-dropdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--luxar-spacing-4);
+  max-width: 100%;
+}
+
+.luxar-dimension-dropdown-grid--three-cols {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.luxar-dimension-dropdown-grid--with-spacing {
+  margin-top: var(--luxar-spacing-4);
+}
+
+.luxar-dimension-dropdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-dimension-dropdown__label {
+  font-size: var(--luxar-text-md);
+  font-weight: var(--luxar-font-medium);
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: var(--luxar-spacing-1);
+}
+
+.luxar-dimension-dropdown__label--with-tooltip {
+  cursor: help;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.4);
+  display: inline-block;
+}
+
+.luxar-dimension-dropdown__select {
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--luxar-text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--luxar-radius-sm);
+  font-size: var(--luxar-text-sm);
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dimension-dropdown__select:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(76, 175, 80, 0.5);
+}
+
+.luxar-dimension-dropdown__select:focus {
+  border-color: var(--luxar-success);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ========== Empty State ========== */
+
+.luxar-dimension-sliders__empty {
+  color: var(--luxar-text-secondary);
+  font-style: italic;
+  text-align: center;
+  padding: var(--luxar-spacing-5);
+}
+
+/* ========== Theme Overrides ========== */
+
+/* Light Theme */
+[data-theme='light'] .luxar-dimension-sliders {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='light'] .luxar-dimension-slider__track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='light'] .luxar-dimension-slider__progress {
+  background: rgba(46, 125, 50, 0.3);
+}
+
+[data-theme='light'] .luxar-dimension-dropdown__select {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--luxar-text-primary);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme='light'] .luxar-dimension-dropdown__select:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-dimension-dropdown__select:focus {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* High Contrast Theme */
+[data-theme='high-contrast'] .luxar-dimension-sliders {
+  background: #000000;
+  border: 2px solid var(--luxar-border-default);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-dimension-slider__track {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-dimension-slider__progress {
+  background: var(--luxar-success);
+}
+
+[data-theme='high-contrast'] .luxar-dimension-slider__thumb {
+  background: var(--luxar-success);
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+[data-theme='high-contrast'] .luxar-dimension-dropdown__select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid var(--luxar-border-default);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-dimension-dropdown__select:hover,
+[data-theme='high-contrast'] .luxar-dimension-dropdown__select:focus {
+  border-color: var(--luxar-success);
+  background: rgba(255, 255, 255, 0.15);
+}

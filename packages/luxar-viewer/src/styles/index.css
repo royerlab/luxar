@@ -1,0 +1,31 @@
+/**
+ * Luxar Styles - Main Entry Point
+ *
+ * This file imports all CSS modules in the correct order.
+ * CSS custom properties (--luxar-*) are injected by ThemeManager.
+ */
+
+/* 1. CSS Reset - normalize browser defaults */
+@import './reset.css';
+
+/* 2. Base Styles - typography, layout, utilities */
+@import './base/typography.css';
+@import './base/layout.css';
+@import './base/utilities.css';
+
+/* 3. Component Styles - individual UI components */
+@import './components/error-dialog.css';
+@import './components/help-overlay.css';
+@import './components/dimension-sliders.css';
+@import './components/debug-console.css';
+@import './components/dataset-browser.css';
+@import './components/data-loading-monitor.css';
+/* (More components will be added as they are migrated) */
+/* @import './components/performance-monitor.css'; */
+/* @import './components/rendering-controls.css'; */
+
+/* 4. Theme Overrides - theme-specific adjustments */
+/* (Will be added for light/high-contrast themes) */
+/* @import './themes/dark.css'; */
+/* @import './themes/light.css'; */
+/* @import './themes/high-contrast.css'; */

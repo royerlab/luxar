@@ -1,0 +1,441 @@
+/**
+ * Data Loading Monitor Component Styles
+ *
+ * Real-time data loading performance monitor with multi-state UI.
+ * Used by DataLoadingMonitor class and template functions.
+ */
+
+/* ========== Main Container States ========== */
+
+.luxar-data-monitor {
+  position: fixed;
+  z-index: var(--luxar-z-base);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base);
+  user-select: none;
+}
+
+/* Mini view (top-right corner) */
+.luxar-data-monitor--mini {
+  top: var(--luxar-spacing-10);
+  right: var(--luxar-spacing-10);
+  min-width: 280px;
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md);
+  border-radius: var(--luxar-radius-md);
+  padding: var(--luxar-spacing-5);
+  box-shadow: var(--luxar-shadow-md);
+}
+
+/* Expanded view (centered) */
+.luxar-data-monitor--expanded {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 700px;
+  max-width: 90vw;
+  height: 600px;
+  max-height: 85vh;
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md);
+  border-radius: var(--luxar-radius-lg);
+  padding: var(--luxar-spacing-10);
+  box-shadow: var(--luxar-shadow-xl);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ========== Header ========== */
+
+.luxar-data-monitor__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--luxar-spacing-5);
+  padding-bottom: var(--luxar-spacing-3);
+  border-bottom: 1px solid var(--luxar-border-strong);
+}
+
+.luxar-data-monitor__title {
+  font-size: var(--luxar-text-lg);
+  font-weight: var(--luxar-font-bold);
+  color: var(--luxar-text-primary);
+}
+
+.luxar-data-monitor__controls {
+  display: flex;
+  gap: var(--luxar-spacing-4);
+  align-items: center;
+}
+
+.luxar-data-monitor__btn {
+  background: none;
+  border: none;
+  color: var(--luxar-text-muted);
+  cursor: pointer;
+  padding: var(--luxar-spacing-2);
+  font-size: var(--luxar-text-md);
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-data-monitor__btn:hover {
+  color: var(--luxar-text-primary);
+}
+
+.luxar-data-monitor__close-btn {
+  font-size: var(--luxar-text-2xl);
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ========== Tabs ========== */
+
+.luxar-data-monitor__tabs {
+  display: flex;
+  gap: var(--luxar-spacing-2);
+  margin-bottom: var(--luxar-spacing-6);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-data-monitor__tab {
+  background: none;
+  border: none;
+  color: var(--luxar-text-muted);
+  cursor: pointer;
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-6);
+  font-size: var(--luxar-text-sm);
+  font-weight: var(--luxar-font-medium);
+  border-bottom: 2px solid transparent;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-data-monitor__tab:hover {
+  color: var(--luxar-text-primary);
+}
+
+.luxar-data-monitor__tab--active {
+  color: var(--luxar-success);
+  border-bottom-color: var(--luxar-success);
+}
+
+/* ========== Content Area ========== */
+
+.luxar-data-monitor__content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ========== Metric Cards ========== */
+
+.luxar-metric-card {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--luxar-radius-sm);
+  text-align: center;
+}
+
+.luxar-metric-card--small {
+  padding: var(--luxar-spacing-4);
+}
+
+.luxar-metric-card--medium {
+  padding: var(--luxar-spacing-5);
+}
+
+.luxar-metric-card--large {
+  padding: var(--luxar-spacing-8);
+}
+
+.luxar-metric-card__title {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  margin-bottom: var(--luxar-spacing-2);
+}
+
+.luxar-metric-card__value {
+  font-weight: var(--luxar-font-bold);
+}
+
+.luxar-metric-card__value--small {
+  font-size: var(--luxar-text-xl);
+}
+
+.luxar-metric-card__value--medium {
+  font-size: var(--luxar-text-3xl);
+}
+
+.luxar-metric-card__value--large {
+  font-size: 32px;
+}
+
+.luxar-metric-card__subtitle {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-disabled);
+  margin-top: var(--luxar-spacing-2);
+}
+
+/* ========== Progress Bars ========== */
+
+.luxar-progress-bar__container {
+  margin-top: var(--luxar-spacing-3);
+}
+
+.luxar-progress-bar__track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.luxar-progress-bar__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.luxar-progress-bar__label {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-disabled);
+  margin-top: var(--luxar-spacing-1);
+}
+
+/* ========== Stat Grid ========== */
+
+.luxar-stat-grid {
+  display: grid;
+  gap: var(--luxar-spacing-4);
+}
+
+.luxar-stat-grid--cols-1 {
+  grid-template-columns: 1fr;
+}
+
+.luxar-stat-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.luxar-stat-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.luxar-stat-grid__item {
+  background: rgba(0, 0, 0, 0.3);
+  padding: var(--luxar-spacing-4);
+  border-radius: var(--luxar-radius-sm);
+  text-align: center;
+}
+
+.luxar-stat-grid__value {
+  font-size: var(--luxar-text-xl);
+  font-weight: var(--luxar-font-bold);
+}
+
+.luxar-stat-grid__label {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  margin-top: var(--luxar-spacing-1);
+}
+
+/* ========== Loader List ========== */
+
+.luxar-loader-item {
+  background: rgba(0, 0, 0, 0.3);
+  padding: var(--luxar-spacing-4);
+  margin-bottom: var(--luxar-spacing-3);
+  border-radius: var(--luxar-radius-sm);
+}
+
+.luxar-loader-item__header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--luxar-spacing-2);
+}
+
+.luxar-loader-item__path {
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-primary);
+}
+
+.luxar-loader-item__status {
+  font-size: var(--luxar-text-xs);
+}
+
+.luxar-loader-item__metrics {
+  display: flex;
+  gap: var(--luxar-spacing-6);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-secondary);
+}
+
+/* ========== Cache Section ========== */
+
+.luxar-cache-section {
+  background: rgba(0, 0, 0, 0.3);
+  padding: var(--luxar-spacing-5);
+  border-radius: var(--luxar-radius-sm);
+  margin-bottom: var(--luxar-spacing-6);
+}
+
+.luxar-cache-section__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--luxar-spacing-5);
+}
+
+.luxar-cache-section__title {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  font-weight: var(--luxar-font-semibold);
+}
+
+.luxar-cache-section__clear-btn {
+  background: none;
+  border: 1px solid var(--luxar-border-default);
+  color: var(--luxar-text-muted);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-3);
+  border-radius: var(--luxar-radius-sm);
+  font-size: var(--luxar-text-xs);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-cache-section__clear-btn:hover {
+  background: var(--luxar-interactive-hover);
+  color: var(--luxar-text-primary);
+  border-color: var(--luxar-border-strong);
+}
+
+.luxar-cache-section__metrics {
+  display: grid;
+  gap: var(--luxar-spacing-5);
+}
+
+.luxar-cache-section__metrics--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.luxar-cache-section__metrics--cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* ========== Recommendations ========== */
+
+.luxar-recommendation {
+  padding: var(--luxar-spacing-5);
+  border-radius: var(--luxar-radius-sm);
+  margin-bottom: var(--luxar-spacing-4);
+  border-left: 3px solid;
+}
+
+.luxar-recommendation--error {
+  background: rgba(244, 67, 54, 0.1);
+  border-left-color: var(--luxar-error);
+}
+
+.luxar-recommendation--warning {
+  background: rgba(255, 193, 7, 0.1);
+  border-left-color: var(--luxar-warning);
+}
+
+.luxar-recommendation--info {
+  background: rgba(33, 150, 243, 0.1);
+  border-left-color: var(--luxar-info);
+}
+
+.luxar-recommendation__header {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-3);
+}
+
+.luxar-recommendation__icon {
+  font-size: var(--luxar-text-lg);
+}
+
+.luxar-recommendation__title {
+  font-weight: var(--luxar-font-semibold);
+  font-size: var(--luxar-text-sm);
+}
+
+.luxar-recommendation__message {
+  font-size: var(--luxar-text-xs);
+  line-height: var(--luxar-line-relaxed);
+  color: var(--luxar-text-secondary);
+}
+
+/* ========== Performance Timeline ========== */
+
+.luxar-timeline-canvas {
+  width: 100%;
+  height: 200px;
+  border-radius: var(--luxar-radius-sm);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ========== Empty States ========== */
+
+.luxar-data-monitor__empty {
+  text-align: center;
+  padding: var(--luxar-spacing-16);
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-sm);
+}
+
+/* ========== Tooltips ========== */
+
+.luxar-tooltip {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dotted var(--luxar-border-default);
+}
+
+/* ========== Theme Overrides ========== */
+
+[data-theme='light'] .luxar-data-monitor--mini,
+[data-theme='light'] .luxar-data-monitor--expanded {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='light'] .luxar-metric-card,
+[data-theme='light'] .luxar-stat-grid__item,
+[data-theme='light'] .luxar-loader-item,
+[data-theme='light'] .luxar-cache-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='light'] .luxar-progress-bar__track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='light'] .luxar-timeline-canvas {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='high-contrast'] .luxar-data-monitor--mini,
+[data-theme='high-contrast'] .luxar-data-monitor--expanded {
+  background: #000000;
+  border: 2px solid var(--luxar-border-default);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-metric-card,
+[data-theme='high-contrast'] .luxar-stat-grid__item,
+[data-theme='high-contrast'] .luxar-loader-item,
+[data-theme='high-contrast'] .luxar-cache-section {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-data-monitor__tab--active {
+  border-bottom-width: 3px;
+}
+
+[data-theme='high-contrast'] .luxar-recommendation {
+  border-left-width: 4px;
+}

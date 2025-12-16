@@ -18,20 +18,6 @@ import { config } from '../config';
 
 // UI Configuration constants
 const UI_CONFIG = config.ui;
-const SPACING = config.ui.styles.spacing;
-const EFFECTS = config.ui.styles.effects;
-const TYPOGRAPHY = config.ui.styles.typography;
-
-// Ensure spinner CSS is only injected once
-function ensureSpinnerCSS() {
-  if (!document.getElementById('spinner-styles')) {
-    const style = document.createElement('style');
-    style.id = 'spinner-styles';
-    style.textContent =
-      '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-    document.head.appendChild(style);
-  }
-}
 
 /**
  * Create and show animated loading indicator.
@@ -57,33 +43,15 @@ function ensureSpinnerCSS() {
  * ```
  */
 export function showLoadingIndicator(): HTMLElement {
-  ensureSpinnerCSS();
-
   const loadingDiv = document.createElement('div');
   loadingDiv.id = 'loading-indicator';
-  loadingDiv.style.position = 'fixed';
-  loadingDiv.style.top = '50%';
-  loadingDiv.style.left = '50%';
-  loadingDiv.style.transform = 'translate(-50%, -50%)';
-  loadingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-  loadingDiv.style.color = config.ui.styles.colors.primaryText;
-  loadingDiv.style.padding = `${SPACING.panelPaddingLarge}px`;
-  loadingDiv.style.borderRadius = `${EFFECTS.borderRadius}px`;
-  loadingDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
-  loadingDiv.style.fontSize = '16px';
-  loadingDiv.style.zIndex = String(UI_CONFIG.zIndex.loading);
-  loadingDiv.style.textAlign = 'center';
+  loadingDiv.className = 'luxar-loading-indicator';
 
   const spinner = document.createElement('div');
-  spinner.style.border = '3px solid rgba(255, 255, 255, 0.3)';
-  spinner.style.borderTop = '3px solid white';
-  spinner.style.borderRadius = '50%';
-  spinner.style.width = '24px';
-  spinner.style.height = '24px';
-  spinner.style.animation = 'spin 1s linear infinite';
-  spinner.style.margin = '0 auto 10px auto';
+  spinner.className = 'luxar-loading-indicator__spinner';
 
   const text = document.createElement('div');
+  text.className = 'luxar-loading-indicator__text';
   text.textContent = 'Loading scene...';
   text.id = 'loading-text';
 
@@ -156,27 +124,10 @@ export function showError(message: string) {
     existingError.remove();
   }
 
+  // Create error dialog with CSS classes
   const errorDiv = document.createElement('div');
   errorDiv.id = 'error-message';
-  errorDiv.className = 'error-message'; // Add class for E2E tests
-  errorDiv.style.outline = 'none';
-  errorDiv.style.position = 'fixed';
-  errorDiv.style.top = '50%';
-  errorDiv.style.left = '50%';
-  errorDiv.style.transform = 'translate(-50%, -50%)';
-  errorDiv.style.backgroundColor = config.ui.styles.colors.panelBg;
-  errorDiv.style.color = config.ui.styles.colors.primaryText;
-  errorDiv.style.padding = `${SPACING.panelPaddingXL}px`;
-  errorDiv.style.borderRadius = `${EFFECTS.borderRadiusLarge}px`;
-  errorDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
-  errorDiv.style.fontSize = TYPOGRAPHY.title.fontSize;
-  errorDiv.style.zIndex = String(UI_CONFIG.zIndex.error);
-  errorDiv.style.maxWidth = '520px';
-  errorDiv.style.textAlign = 'left';
-  errorDiv.style.cursor = 'pointer';
-  errorDiv.style.backdropFilter = EFFECTS.backdropBlur;
-  errorDiv.style.boxShadow = EFFECTS.boxShadowStrong;
-  errorDiv.style.border = '1px solid rgba(255, 100, 100, 0.3)';
+  errorDiv.className = 'luxar-error-dialog error-message'; // luxar-error-dialog for styling, error-message for E2E tests
 
   // ARIA attributes for accessibility
   errorDiv.setAttribute('role', 'alertdialog');
@@ -186,23 +137,16 @@ export function showError(message: string) {
 
   // Error icon + title
   const header = document.createElement('div');
-  header.style.display = 'flex';
-  header.style.alignItems = 'center';
-  header.style.marginBottom = `${SPACING.sectionGapLarge}px`;
-  header.style.borderBottom = `1px solid ${config.ui.styles.colors.separator}`;
-  header.style.paddingBottom = `${SPACING.sectionPaddingLarge}px`;
+  header.className = 'luxar-error-dialog__header';
 
   const icon = document.createElement('div');
+  icon.className = 'luxar-error-dialog__icon';
   icon.textContent = '⚠️';
-  icon.style.fontSize = '24px';
-  icon.style.marginRight = `${SPACING.elementGapXL}px`;
 
   const title = document.createElement('div');
   title.id = 'error-title';
+  title.className = 'luxar-error-dialog__title';
   title.textContent = 'Unable to Load Dataset';
-  title.style.fontSize = '16px';
-  title.style.fontWeight = '600';
-  title.style.color = '#ff9999';
 
   header.appendChild(icon);
   header.appendChild(title);
@@ -210,48 +154,37 @@ export function showError(message: string) {
   // Main error message
   const messageText = document.createElement('div');
   messageText.id = 'error-message-text';
+  messageText.className = 'luxar-error-dialog__message';
   messageText.textContent = message;
-  messageText.style.marginBottom = `${SPACING.sectionGapLarge}px`;
-  messageText.style.color = '#ffcccc';
-  messageText.style.lineHeight = TYPOGRAPHY.relaxed.lineHeight.toString();
 
   // Helpful guidance section
   const guidance = document.createElement('div');
-  guidance.style.marginTop = `${SPACING.sectionGapLarge}px`;
-  guidance.style.padding = `${SPACING.sectionPaddingLarge}px`;
-  guidance.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-  guidance.style.borderRadius = `${EFFECTS.borderRadiusSmall + 2}px`;
-  guidance.style.borderLeft = '3px solid rgba(76, 175, 80, 0.5)';
+  guidance.className = 'luxar-error-dialog__guidance';
 
   const guidanceTitle = document.createElement('div');
+  guidanceTitle.className = 'luxar-error-dialog__guidance-title';
   guidanceTitle.textContent = '💡 How to Load a Dataset:';
-  guidanceTitle.style.fontWeight = '600';
-  guidanceTitle.style.marginBottom = `${SPACING.elementGap}px`;
-  guidanceTitle.style.color = '#88cc88';
 
   const guidanceList = document.createElement('div');
-  guidanceList.style.fontSize = '13px';
-  guidanceList.style.color = '#cccccc';
-  guidanceList.style.lineHeight = TYPOGRAPHY.relaxed.lineHeight.toString();
-
+  guidanceList.className = 'luxar-error-dialog__guidance-content';
   guidanceList.innerHTML = `
-    <div style="margin-bottom: 8px;">
+    <div class="luxar-error-dialog__guidance-item">
       <strong>1. Add dataset to URL</strong><br/>
-      <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-size: 12px;">
+      <code class="luxar-error-dialog__guidance-code">
         http://localhost:5173/?src=/path/to/dataset.zarr
       </code>
     </div>
-    <div style="margin-bottom: 8px;">
+    <div class="luxar-error-dialog__guidance-item">
       <strong>2. Or browse available datasets</strong><br/>
-      <span style="opacity: 0.8;">Press <kbd style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; font-family: monospace;">O</kbd> key to open dataset browser</span>
+      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">O</kbd> key to open dataset browser</span>
     </div>
-    <div style="margin-bottom: 8px;">
+    <div class="luxar-error-dialog__guidance-item">
       <strong>3. Dataset format</strong><br/>
-      <span style="opacity: 0.8;">Luxar loads Zarr-format datasets with points, lines, and other primitives
+      <span class="luxar-error-dialog__guidance-description">Luxar loads Zarr-format datasets with points, lines, and other primitives</span>
     </div>
-    <div>
+    <div class="luxar-error-dialog__guidance-item">
       <strong>4. Need help?</strong><br/>
-      <span style="opacity: 0.8;">Press <kbd style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; font-family: monospace;">H</kbd> to see all keyboard shortcuts</span>
+      <span class="luxar-error-dialog__guidance-description">Press <kbd class="luxar-error-dialog__guidance-kbd">H</kbd> to see all keyboard shortcuts</span>
     </div>
   `;
 
@@ -260,13 +193,8 @@ export function showError(message: string) {
 
   // Dismiss instructions
   const dismissText = document.createElement('div');
+  dismissText.className = 'luxar-error-dialog__dismiss';
   dismissText.textContent = 'Click anywhere or press Escape to dismiss';
-  dismissText.style.marginTop = '16px';
-  dismissText.style.fontSize = '11px';
-  dismissText.style.opacity = '0.5';
-  dismissText.style.color = 'rgba(255, 255, 255, 0.6)';
-  dismissText.style.textAlign = 'center';
-  dismissText.style.fontStyle = 'italic';
 
   errorDiv.appendChild(header);
   errorDiv.appendChild(messageText);
@@ -368,59 +296,23 @@ export function showHelpOverlay() {
 
   const helpDiv = document.createElement('div');
   helpDiv.id = 'help-overlay';
-  helpDiv.style.position = 'fixed';
-  helpDiv.style.top = `${SPACING.panelMargin}px`;
-  helpDiv.style.right = `${SPACING.panelMargin}px`;
-  helpDiv.style.backgroundColor = config.ui.styles.colors.panelBg;
-  helpDiv.style.color = config.ui.styles.colors.primaryText;
-  helpDiv.style.padding = `${SPACING.panelPadding}px`;
-  helpDiv.style.borderRadius = `${EFFECTS.borderRadius}px`;
-  helpDiv.style.fontFamily = TYPOGRAPHY.fontFamily;
-  helpDiv.style.fontSize = TYPOGRAPHY.body.fontSize;
-  helpDiv.style.zIndex = String(UI_CONFIG.zIndex.help);
-  helpDiv.style.width = '380px';
-  helpDiv.style.maxHeight = '80vh';
-  helpDiv.style.overflowY = 'auto';
-  helpDiv.style.backdropFilter = EFFECTS.backdropBlur;
-  helpDiv.style.boxShadow = EFFECTS.boxShadow;
-  helpDiv.style.outline = 'none !important';
+  helpDiv.className = 'luxar-help-overlay';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-modal', 'true');
   helpDiv.setAttribute('aria-labelledby', 'help-overlay-title');
 
   // Create header with title and close button
   const header = document.createElement('div');
-  header.style.display = 'flex';
-  header.style.justifyContent = 'space-between';
-  header.style.alignItems = 'center';
-  header.style.marginBottom = `${SPACING.sectionPadding}px`;
-  header.style.borderBottom = `1px solid ${config.ui.styles.colors.separatorStrong}`;
-  header.style.paddingBottom = `${SPACING.borderPadding}px`;
+  header.className = 'luxar-help-overlay__header';
 
   const title = document.createElement('h3');
   title.id = 'help-overlay-title';
+  title.className = 'luxar-help-overlay__title';
   title.textContent = 'Luxar Controls & Shortcuts';
-  title.style.margin = '0';
-  title.style.fontSize = '14px';
-  title.style.fontWeight = 'bold';
 
   const closeBtn = document.createElement('button');
+  closeBtn.className = 'luxar-help-overlay__close-btn';
   closeBtn.textContent = '×';
-  closeBtn.style.cssText = `
-    background: none;
-    border: none;
-    color: #999;
-    font-size: 24px;
-    cursor: pointer;
-    padding: 0;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
-  closeBtn.onmouseover = () => (closeBtn.style.color = '#fff');
-  closeBtn.onmouseout = () => (closeBtn.style.color = '#999');
   closeBtn.title = 'Close (Escape)';
 
   header.appendChild(title);
@@ -493,26 +385,14 @@ export function showHelpOverlay() {
   const controlsList = document.createElement('div');
 
   // Create collapsible categories
-  helpCategories.forEach((category, categoryIndex) => {
+  helpCategories.forEach((category) => {
     // Category header (clickable)
     const categoryHeader = document.createElement('div');
-    categoryHeader.style.fontWeight = 'bold';
-    categoryHeader.style.marginTop = categoryIndex > 0 ? '12px' : '8px';
-    categoryHeader.style.marginBottom = '8px';
-    categoryHeader.style.color = '#4CAF50';
-    categoryHeader.style.cursor = 'pointer';
-    categoryHeader.style.userSelect = 'none';
-    categoryHeader.style.display = 'flex';
-    categoryHeader.style.alignItems = 'center';
+    categoryHeader.className = 'luxar-help-overlay__category-header';
 
     const categoryArrow = document.createElement('span');
+    categoryArrow.className = `luxar-help-overlay__category-arrow ${category.expanded ? 'luxar-help-overlay__category-arrow--expanded' : ''}`;
     categoryArrow.textContent = '▶';
-    categoryArrow.style.fontSize = '10px';
-    categoryArrow.style.marginRight = '5px';
-    categoryArrow.style.transition = 'transform 0.2s';
-    categoryArrow.style.display = 'inline-block';
-    categoryArrow.style.transform = category.expanded ? 'rotate(90deg)' : 'rotate(0deg)';
-    categoryArrow.style.color = 'rgba(255, 255, 255, 0.6)';
 
     const categoryTitle = document.createElement('span');
     categoryTitle.textContent = category.title;
@@ -522,29 +402,20 @@ export function showHelpOverlay() {
 
     // Category content container
     const categoryContent = document.createElement('div');
-    categoryContent.style.display = category.expanded ? 'block' : 'none';
-    categoryContent.style.marginBottom = '4px';
-    categoryContent.style.borderLeft = '2px solid rgba(76, 175, 80, 0.2)';
-    categoryContent.style.marginLeft = '8px';
-    categoryContent.style.paddingLeft = '12px';
+    categoryContent.className = `luxar-help-overlay__category-content ${category.expanded ? '' : 'luxar-help-overlay__category-content--collapsed'}`;
 
     // Add items to category
     category.items.forEach((item) => {
       const itemDiv = document.createElement('div');
       itemDiv.textContent = item;
-      itemDiv.style.marginBottom = '6px';
-      itemDiv.style.lineHeight = '1.4';
 
       // Special styling for certain items
       if (item.startsWith('•')) {
-        itemDiv.style.color = '#aaa';
-        itemDiv.style.fontSize = '11px';
+        itemDiv.className = 'luxar-help-overlay__item luxar-help-overlay__item--tip';
       } else if (item.startsWith('Note:')) {
-        itemDiv.style.color = '#ff9800';
-        itemDiv.style.fontSize = '11px';
-        itemDiv.style.fontStyle = 'italic';
+        itemDiv.className = 'luxar-help-overlay__item luxar-help-overlay__item--note';
       } else {
-        itemDiv.style.color = '#e0e0e0';
+        itemDiv.className = 'luxar-help-overlay__item';
       }
 
       categoryContent.appendChild(itemDiv);
@@ -553,9 +424,17 @@ export function showHelpOverlay() {
     // Toggle functionality
     categoryHeader.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isExpanded = categoryContent.style.display !== 'none';
-      categoryContent.style.display = isExpanded ? 'none' : 'block';
-      categoryArrow.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(90deg)';
+      const isExpanded = !categoryContent.classList.contains(
+        'luxar-help-overlay__category-content--collapsed'
+      );
+
+      if (isExpanded) {
+        categoryContent.classList.add('luxar-help-overlay__category-content--collapsed');
+        categoryArrow.classList.remove('luxar-help-overlay__category-arrow--expanded');
+      } else {
+        categoryContent.classList.remove('luxar-help-overlay__category-content--collapsed');
+        categoryArrow.classList.add('luxar-help-overlay__category-arrow--expanded');
+      }
     });
 
     controlsList.appendChild(categoryHeader);
@@ -564,13 +443,8 @@ export function showHelpOverlay() {
 
   // Add footer note
   const footerNote = document.createElement('div');
+  footerNote.className = 'luxar-help-overlay__footer';
   footerNote.textContent = 'Click anywhere or press Esc to close';
-  footerNote.style.marginTop = '12px';
-  footerNote.style.paddingTop = '8px';
-  footerNote.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
-  footerNote.style.fontSize = '11px';
-  footerNote.style.color = '#888';
-  footerNote.style.textAlign = 'center';
 
   helpDiv.appendChild(header);
   helpDiv.appendChild(controlsList);
