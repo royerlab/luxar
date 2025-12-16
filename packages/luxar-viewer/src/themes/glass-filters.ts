@@ -29,20 +29,20 @@ export interface GlassFilterParams {
  * Adjust these for different glass effects!
  */
 export const defaultGlassParams: GlassFilterParams = {
-  // Subtle noise for glass texture
-  noiseFrequency: 0.012, // Medium frequency for fine texture
-  noiseOctaves: 3, // Good detail without being too busy
+  // Very fine noise for subtle glass texture
+  noiseFrequency: 0.025, // Higher frequency = finer texture
+  noiseOctaves: 2, // Less detail = subtler
   noiseSeed: 42, // Random seed for texture pattern
 
-  // Moderate refraction
-  displacementScale: 60, // Visible but not extreme distortion
-  blurAmount: 2.5, // Smooth, glass-like distortion
+  // VERY subtle refraction (barely noticeable)
+  displacementScale: 3, // Much lower for subtle effect (was 60!)
+  blurAmount: 5, // More blur = smoother, less visible
 
-  // Subtle chromatic aberration
-  chromaticStrength: 1.5, // Slight color splitting at edges
+  // Minimal chromatic aberration
+  chromaticStrength: 0.5, // Very slight color splitting
 
-  // Edge-aware distortion
-  edgeDistortionMultiplier: 2.0, // 2x stronger at panel edges
+  // Subtle edge enhancement
+  edgeDistortionMultiplier: 1.2, // Barely stronger at edges
 };
 
 /**
