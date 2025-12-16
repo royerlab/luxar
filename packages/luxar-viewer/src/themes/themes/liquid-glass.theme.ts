@@ -142,9 +142,9 @@ export const liquidGlassTheme: Theme = {
       // Light blur for background (not heavy blur on panel)
       // Example uses blur(2px) on backdrop
       none: 'none',
-      sm: 'blur(2px)', // Like example
-      md: 'blur(8px)', // Light blur
-      lg: 'blur(16px)', // Medium blur
+      sm: 'blur(1px)', // Like example
+      md: 'blur(2px)', // Light blur
+      lg: 'blur(3px)', // Medium blur
     },
     opacity: {
       disabled: 0.3,
