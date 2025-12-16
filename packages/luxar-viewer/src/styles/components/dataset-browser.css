@@ -34,6 +34,10 @@
 
   /* Layering */
   z-index: var(--luxar-z-modal);
+
+  /* Animation */
+  opacity: 0;
+  animation: luxar-fade-in 0.15s ease forwards;
 }
 
 /* Header */

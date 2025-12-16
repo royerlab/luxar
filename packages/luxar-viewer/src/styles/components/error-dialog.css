@@ -81,13 +81,7 @@
 
   /* Animation */
   opacity: 0;
-  animation: luxar-fade-in 0.2s ease forwards;
-}
-
-@keyframes luxar-fade-in {
-  to {
-    opacity: 1;
-  }
+  animation: luxar-fade-in 0.15s ease forwards;
 }
 
 /* Header section */

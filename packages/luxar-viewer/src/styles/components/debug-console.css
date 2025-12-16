@@ -20,6 +20,10 @@
   z-index: 150;
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
+
+  /* Animation */
+  opacity: 0;
+  animation: luxar-fade-in 0.15s ease forwards;
 }
 
 /* Resize handles */
