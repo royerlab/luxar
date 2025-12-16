@@ -1,0 +1,63 @@
+/**
+ * Luxar Typography Styles
+ *
+ * Base typography and text styles.
+ */
+
+body {
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base);
+  line-height: var(--luxar-line-normal);
+  color: var(--luxar-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: var(--luxar-font-semibold);
+  line-height: var(--luxar-line-tight);
+}
+
+h1 {
+  font-size: var(--luxar-text-3xl);
+}
+
+h2 {
+  font-size: var(--luxar-text-2xl);
+}
+
+h3 {
+  font-size: var(--luxar-text-xl);
+}
+
+h4 {
+  font-size: var(--luxar-text-lg);
+}
+
+h5 {
+  font-size: var(--luxar-text-md);
+}
+
+h6 {
+  font-size: var(--luxar-text-base);
+}
+
+/* Monospace elements */
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--luxar-font-mono);
+}
+
+/* Selection */
+::selection {
+  background: var(--luxar-interactive-focus);
+  color: var(--luxar-text-primary);
+}

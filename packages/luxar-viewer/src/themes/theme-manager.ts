@@ -10,6 +10,8 @@
 
 import type { Theme, ThemeChangeHandler } from './types';
 import { darkTheme } from './themes/dark.theme';
+import { lightTheme } from './themes/light.theme';
+import { highContrastTheme } from './themes/high-contrast.theme';
 
 /**
  * ThemeManager singleton class
@@ -36,8 +38,10 @@ export class ThemeManager {
    * Private constructor (singleton pattern)
    */
   private constructor() {
-    // Register default themes
+    // Register all built-in themes
     this.registerTheme(darkTheme);
+    this.registerTheme(lightTheme);
+    this.registerTheme(highContrastTheme);
 
     // Load saved theme or use default
     this.initializeTheme();

@@ -124,14 +124,16 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
       // Dispose
       sliders.dispose();
 
-      // Should remove: change, keydown, mouseenter, mouseleave, focus, blur
+      // Should remove: change, keydown
+      // Note: mouseenter, mouseleave, focus, blur are now handled by CSS :hover and :focus
       const eventTypes = removeEventSpy.mock.calls.map((call) => call[0]);
       expect(eventTypes).toContain('change');
       expect(eventTypes).toContain('keydown');
-      expect(eventTypes).toContain('mouseenter');
-      expect(eventTypes).toContain('mouseleave');
-      expect(eventTypes).toContain('focus');
-      expect(eventTypes).toContain('blur');
+      // Hover/focus handlers no longer needed - CSS handles these states
+      expect(eventTypes).not.toContain('mouseenter');
+      expect(eventTypes).not.toContain('mouseleave');
+      expect(eventTypes).not.toContain('focus');
+      expect(eventTypes).not.toContain('blur');
     });
 
     it('should clean up event listeners when rebuilding sliders (createSliders)', () => {

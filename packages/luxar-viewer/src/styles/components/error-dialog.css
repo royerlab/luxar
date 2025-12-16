@@ -1,0 +1,232 @@
+/**
+ * Error Dialog and Loading Indicator Component Styles
+ *
+ * Styled error messages with guidance and loading spinners.
+ * Used by showError() and showLoadingIndicator() in ui/helpers.ts
+ */
+
+/* ========== Loading Indicator ========== */
+
+@keyframes luxar-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.luxar-loading-indicator {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: var(--luxar-text-primary);
+  padding: var(--luxar-spacing-10);
+  border-radius: var(--luxar-radius-md);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-xl);
+  z-index: var(--luxar-z-modal);
+  text-align: center;
+}
+
+.luxar-loading-indicator__spinner {
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top: 3px solid white;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  animation: luxar-spin 1s linear infinite;
+  margin: 0 auto 10px auto;
+}
+
+.luxar-loading-indicator__text {
+  color: var(--luxar-text-primary);
+}
+
+/* ========== Error Dialog ========== */
+
+.luxar-error-dialog {
+  /* Positioning */
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  /* Sizing */
+  max-width: 520px;
+  width: 90%;
+
+  /* Theming */
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-primary);
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: var(--luxar-radius-lg);
+  padding: var(--luxar-spacing-12);
+
+  /* Typography */
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-md);
+  text-align: left;
+
+  /* Effects */
+  backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-xl);
+  z-index: var(--luxar-z-modal);
+
+  /* Behavior */
+  cursor: pointer;
+  outline: none;
+
+  /* Animation */
+  opacity: 0;
+  animation: luxar-fade-in 0.2s ease forwards;
+}
+
+@keyframes luxar-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+/* Header section */
+.luxar-error-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-6);
+  margin-bottom: var(--luxar-spacing-8);
+  padding-bottom: var(--luxar-spacing-6);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-error-dialog__icon {
+  font-size: var(--luxar-text-3xl);
+  line-height: 1;
+}
+
+.luxar-error-dialog__title {
+  margin: 0;
+  font-size: var(--luxar-text-xl);
+  font-weight: var(--luxar-font-semibold);
+  color: #ff9999;
+}
+
+/* Message section */
+.luxar-error-dialog__message {
+  margin-bottom: var(--luxar-spacing-8);
+  line-height: var(--luxar-line-relaxed);
+  color: #ffcccc;
+}
+
+/* Guidance section */
+.luxar-error-dialog__guidance {
+  margin-top: var(--luxar-spacing-8);
+  padding: var(--luxar-spacing-6);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--luxar-radius-sm);
+  border-left: 3px solid rgba(76, 175, 80, 0.5);
+}
+
+.luxar-error-dialog__guidance-title {
+  font-weight: var(--luxar-font-semibold);
+  margin-bottom: var(--luxar-spacing-4);
+  color: #88cc88;
+}
+
+.luxar-error-dialog__guidance-content {
+  font-size: var(--luxar-text-sm);
+  color: #cccccc;
+  line-height: var(--luxar-line-relaxed);
+}
+
+.luxar-error-dialog__guidance-item {
+  margin-bottom: var(--luxar-spacing-4);
+}
+
+.luxar-error-dialog__guidance-item:last-child {
+  margin-bottom: 0;
+}
+
+.luxar-error-dialog__guidance-item strong {
+  display: block;
+  margin-bottom: var(--luxar-spacing-1);
+}
+
+.luxar-error-dialog__guidance-code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: var(--luxar-text-sm);
+  font-family: var(--luxar-font-mono);
+}
+
+.luxar-error-dialog__guidance-kbd {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--luxar-font-mono);
+}
+
+.luxar-error-dialog__guidance-description {
+  opacity: 0.8;
+}
+
+/* Dismiss instructions */
+.luxar-error-dialog__dismiss {
+  margin-top: var(--luxar-spacing-8);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
+/* Theme-specific overrides */
+[data-theme='light'] .luxar-error-dialog {
+  border-color: #ffcccc;
+  background: rgba(255, 255, 255, 0.98);
+}
+
+[data-theme='light'] .luxar-error-dialog__title {
+  color: #cc0000;
+}
+
+[data-theme='light'] .luxar-error-dialog__message {
+  color: #990000;
+}
+
+[data-theme='light'] .luxar-error-dialog__guidance {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='light'] .luxar-error-dialog__guidance-title {
+  color: #2e7d32;
+}
+
+[data-theme='light'] .luxar-error-dialog__guidance-content {
+  color: #333333;
+}
+
+[data-theme='high-contrast'] .luxar-error-dialog {
+  border: 3px solid var(--luxar-error);
+  border-radius: 0;
+  background: #000000;
+}
+
+[data-theme='high-contrast'] .luxar-error-dialog__title {
+  color: var(--luxar-error);
+}
+
+[data-theme='high-contrast'] .luxar-error-dialog__message {
+  color: var(--luxar-text-primary);
+}
+
+[data-theme='high-contrast'] .luxar-error-dialog__guidance {
+  background: rgba(255, 255, 255, 0.1);
+  border-left-color: var(--luxar-success);
+  border-radius: 0;
+}
+
+[data-theme='high-contrast'] .luxar-error-dialog__guidance-title {
+  color: var(--luxar-success);
+}
