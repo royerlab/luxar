@@ -11,7 +11,7 @@
 import type { Theme, ThemeChangeHandler } from './types';
 import { darkTheme } from './themes/dark.theme';
 import { lightTheme } from './themes/light.theme';
-import { liquidGlassTheme } from './themes/liquid-glass.theme';
+import { frostedGlassTheme } from './themes/frosted-glass.theme';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -42,7 +42,7 @@ export class ThemeManager {
     // Register all built-in themes
     this.registerTheme(darkTheme);
     this.registerTheme(lightTheme);
-    this.registerTheme(liquidGlassTheme);
+    this.registerTheme(frostedGlassTheme);
 
     // Load saved theme or use default
     this.initializeTheme();
