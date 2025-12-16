@@ -438,6 +438,8 @@ Component Styles (CSS files, BEM classes)
 Component Logic (TypeScript, no styling)
 ```
 
+**Animation Consistency**: All UI panels use a consistent 0.15s fade-in animation for smooth, professional transitions.
+
 **File Structure**:
 ```
 src/styles/
