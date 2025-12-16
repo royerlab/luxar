@@ -315,7 +315,10 @@ export class ThemeManager {
     // Typography - Font weights
     root.style.setProperty('--luxar-font-normal', theme.typography.fontWeight.normal.toString());
     root.style.setProperty('--luxar-font-medium', theme.typography.fontWeight.medium.toString());
-    root.style.setProperty('--luxar-font-semibold', theme.typography.fontWeight.semibold.toString());
+    root.style.setProperty(
+      '--luxar-font-semibold',
+      theme.typography.fontWeight.semibold.toString()
+    );
     root.style.setProperty('--luxar-font-bold', theme.typography.fontWeight.bold.toString());
 
     // Typography - Line heights
