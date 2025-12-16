@@ -378,6 +378,68 @@
   background: rgba(0, 0, 0, 0.3);
 }
 
+/* ========== Secondary Metrics Bar ========== */
+
+.luxar-secondary-metrics {
+  display: flex;
+  gap: var(--luxar-spacing-10);
+  padding: var(--luxar-spacing-5);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--luxar-radius-sm);
+  margin-bottom: var(--luxar-spacing-8);
+}
+
+.luxar-secondary-metrics__item {
+  flex: 1;
+}
+
+.luxar-secondary-metrics__label {
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.luxar-secondary-metrics__value {
+  color: var(--luxar-text-primary);
+  font-size: var(--luxar-text-lg);
+  font-weight: var(--luxar-font-semibold);
+  margin-top: var(--luxar-spacing-1);
+}
+
+.luxar-secondary-metrics__subtitle {
+  color: var(--luxar-text-disabled);
+  font-size: var(--luxar-text-xs);
+  margin-top: var(--luxar-spacing-1);
+}
+
+/* ========== Overview Tab ========== */
+
+.luxar-overview-grid {
+  display: grid;
+  gap: var(--luxar-spacing-8);
+  margin-bottom: var(--luxar-spacing-10);
+}
+
+.luxar-overview-grid--cols-1 {
+  grid-template-columns: 1fr;
+}
+
+.luxar-overview-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* ========== Section Titles ========== */
+
+.luxar-section-title {
+  font-size: var(--luxar-text-sm);
+  font-weight: var(--luxar-font-semibold);
+  color: var(--luxar-text-muted);
+  margin-bottom: var(--luxar-spacing-5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 /* ========== Empty States ========== */
 
 .luxar-data-monitor__empty {
@@ -385,6 +447,13 @@
   padding: var(--luxar-spacing-16);
   color: var(--luxar-text-muted);
   font-size: var(--luxar-text-sm);
+}
+
+.luxar-data-monitor__no-data {
+  text-align: center;
+  padding: var(--luxar-spacing-20);
+  color: var(--luxar-text-secondary);
+  font-style: italic;
 }
 
 /* ========== Tooltips ========== */
