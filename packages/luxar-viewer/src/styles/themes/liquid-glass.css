@@ -29,12 +29,11 @@
   z-index: -1; /* BEHIND the content! */
   border-radius: inherit;
 
-  /* Apply geometry-aware refraction */
-  /* Note: backdrop-filter: url() has limited browser support */
-  /* Using filter on ::before element instead for better compatibility */
-  background: var(--luxar-bg-secondary);
-  backdrop-filter: blur(2px);
-  filter: url(#luxar-liquid-refraction);
+  /* Apply geometry-aware refraction to backdrop */
+  /* backdrop-filter captures what's BEHIND, filter distorts it */
+  backdrop-filter: blur(2px); /* Captures background first */
+  filter: url(#luxar-liquid-refraction); /* Then distorts the capture */
+  -webkit-backdrop-filter: blur(2px);
   -webkit-filter: url(#luxar-liquid-refraction);
 
   /* Performance optimization */
