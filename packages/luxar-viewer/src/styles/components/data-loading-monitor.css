@@ -48,7 +48,6 @@
 /* Size variants */
 .luxar-data-monitor--compact {
   width: auto;
-  min-width: 280px;
   padding: var(--luxar-spacing-3) var(--luxar-spacing-5);
 }
 
@@ -64,9 +63,10 @@
 .luxar-monitor-compact {
   display: flex;
   align-items: center;
-  gap: var(--luxar-spacing-6);
+  gap: var(--luxar-spacing-5);
   font-size: var(--luxar-text-sm);
   line-height: 1;
+  white-space: nowrap;
 }
 
 /* Detailed/Expanded view */
