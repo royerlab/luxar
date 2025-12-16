@@ -9,8 +9,8 @@ All notable changes to Luxar are documented in this file.
 #### Major Features
 
 **Modular Theming System** 🎨
-- **What**: Complete theming system with runtime theme switching, CSS-based architecture, and accessibility support
-- **Themes**: 3 production-ready themes (Dark, Light, High Contrast WCAG AAA)
+- **What**: Complete theming system with runtime theme switching, CSS-based architecture, and modern aesthetics
+- **Themes**: 3 production-ready themes (Dark, Light, Liquid Glass)
 - **Components**: All 8 UI components fully themed (error dialogs, help overlay, dimension sliders, debug console, dataset browser, data loading monitor, rendering controls)
 - **Architecture**: Three-layer system (Theme definitions → CSS files → Component logic)
 - **Features**:
@@ -28,7 +28,8 @@ All notable changes to Luxar are documented in this file.
   - Better accessibility (WCAG AAA high-contrast theme)
   - Easier maintenance (single source of truth for colors)
 - **Testing**: 1074 unit tests + 21 E2E visual regression tests
-- **Implementation**: 15 commits, 4,114 lines added, 100% complete with final polish
+- **Polish**: Liquid Glass theme with Apple-inspired frosted glass design, HDR default 1.0
+- **Implementation**: 22 commits, 4,200+ lines added, 100% complete with final polish
 - **Location**: `src/themes/`, `src/styles/`, UI components
 - **Documentation**: Complete implementation plan in `docs/guides/developer/THEMING_IMPLEMENTATION_PLAN.md`
 
