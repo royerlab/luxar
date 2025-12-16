@@ -262,7 +262,8 @@ export class DimensionSliders {
     // Create categorical dropdowns in a grid at the bottom (max 3 per row)
     if (dropdownDims.length > 0) {
       const dropdownGrid = document.createElement('div');
-      dropdownGrid.className = `luxar-dimension-dropdown-grid ${dropdownDims.length >= 3 ? 'luxar-dimension-dropdown-grid--three-cols' : ''} ${sliderDims.length > 0 ? 'luxar-dimension-dropdown-grid--with-spacing' : ''}`.trim();
+      dropdownGrid.className =
+        `luxar-dimension-dropdown-grid ${dropdownDims.length >= 3 ? 'luxar-dimension-dropdown-grid--three-cols' : ''} ${sliderDims.length > 0 ? 'luxar-dimension-dropdown-grid--with-spacing' : ''}`.trim();
 
       for (const dimIndex of dropdownDims) {
         this.createDropdownInGrid(dimIndex, dropdownGrid);

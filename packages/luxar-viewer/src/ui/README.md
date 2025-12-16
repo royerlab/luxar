@@ -397,6 +397,7 @@ Luxar viewer now features a **modular theming system** with runtime theme switch
 ### Using Themes
 
 **Programmatically**:
+
 ```typescript
 import { ThemeManager } from '../themes';
 
@@ -416,11 +417,13 @@ ThemeManager.getInstance().onChange((theme) => {
 ```
 
 **Via UI**:
+
 - Press `R` to open Rendering Controls
 - Expand "🎨 Theme" folder
 - Select theme from dropdown
 
 **Via URL**:
+
 ```
 http://localhost:5173/?theme=light
 http://localhost:5173/?theme=dark
@@ -430,6 +433,7 @@ http://localhost:5173/?theme=high-contrast
 ### CSS Architecture
 
 **Three-Layer System**:
+
 ```
 Theme System (CSS variables)
     ↓
@@ -441,6 +445,7 @@ Component Logic (TypeScript, no styling)
 **Animation Consistency**: All UI panels use a consistent 0.15s fade-in animation for smooth, professional transitions.
 
 **File Structure**:
+
 ```
 src/styles/
 ├── index.css           # Main entry point
@@ -459,19 +464,25 @@ src/styles/
 ```
 
 **BEM Naming Convention**:
+
 ```css
 /* Component */
-.luxar-error-dialog { }
+.luxar-error-dialog {
+}
 
 /* Element */
-.luxar-error-dialog__header { }
-.luxar-error-dialog__title { }
+.luxar-error-dialog__header {
+}
+.luxar-error-dialog__title {
+}
 
 /* Modifier */
-.luxar-error-dialog--visible { }
+.luxar-error-dialog--visible {
+}
 ```
 
 **CSS Custom Properties**:
+
 ```css
 /* Colors */
 --luxar-bg-primary, --luxar-bg-secondary, --luxar-bg-tertiary
@@ -497,6 +508,7 @@ src/styles/
 Components now use **CSS classes** instead of inline styles:
 
 **Before**:
+
 ```typescript
 element.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
 element.style.padding = '15px';
@@ -505,6 +517,7 @@ element.style.borderRadius = '8px';
 ```
 
 **After**:
+
 ```typescript
 element.className = 'luxar-dimension-sliders';
 // All styling in CSS file
@@ -513,6 +526,7 @@ element.className = 'luxar-dimension-sliders';
 ### Migrated Components
 
 These components fully support theming:
+
 - ✅ Error Dialog (helpers.ts)
 - ✅ Help Overlay (helpers.ts)
 - ✅ Loading Indicator (helpers.ts)

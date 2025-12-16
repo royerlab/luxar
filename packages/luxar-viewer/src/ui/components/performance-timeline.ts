@@ -237,7 +237,15 @@ export class PerformanceTimeline {
     }
 
     // Draw metrics
-    this.drawMetric(ctx, width, height, visiblePoints, 'queryTime', this.getColors().queryTime, 100);
+    this.drawMetric(
+      ctx,
+      width,
+      height,
+      visiblePoints,
+      'queryTime',
+      this.getColors().queryTime,
+      100
+    );
     this.drawMetric(ctx, width, height, visiblePoints, 'loadTime', this.getColors().loadTime, 100);
 
     // Draw events
@@ -408,7 +416,7 @@ export class PerformanceTimeline {
   getStats(): {
     avgQueryTime: number;
     avgLoadTime: number;
-    } {
+  } {
     if (this.points.length === 0) {
       return { avgQueryTime: 0, avgLoadTime: 0 };
     }

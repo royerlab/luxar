@@ -40,7 +40,11 @@ if (themeParam) {
     log.warning(Modules.LUXAR, `Invalid theme in URL: ${themeParam}, using default`);
   }
 } else {
-  log.custom(LogEmoji.START, Modules.LUXAR, `Theme system initialized: ${themeManager.getCurrentTheme().name}`);
+  log.custom(
+    LogEmoji.START,
+    Modules.LUXAR,
+    `Theme system initialized: ${themeManager.getCurrentTheme().name}`
+  );
 }
 
 // Parse scene source parameter

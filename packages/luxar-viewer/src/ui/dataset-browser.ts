@@ -378,7 +378,8 @@ export class DatasetBrowser {
         // Current dataset indicator
         if (isCurrentDataset) {
           const currentBadge = document.createElement('span');
-          currentBadge.className = 'luxar-dataset-browser__badge luxar-dataset-browser__badge--loaded';
+          currentBadge.className =
+            'luxar-dataset-browser__badge luxar-dataset-browser__badge--loaded';
           currentBadge.textContent = 'LOADED';
           badgeContainer.appendChild(currentBadge);
         }
