@@ -5,7 +5,7 @@
  * Used by DebugConsole class in ui/debug-console.ts
  */
 
-.debug-console-panel {
+.luxar-debug-console {
   position: fixed;
   bottom: 20px;
   left: 20px;
@@ -23,7 +23,7 @@
 }
 
 /* Resize handles */
-.debug-console-panel::before {
+.luxar-debug-console::before {
   content: '';
   position: absolute;
   top: 0;
@@ -33,7 +33,7 @@
   cursor: ns-resize;
 }
 
-.debug-console-panel::after {
+.luxar-debug-console::after {
   content: '';
   position: absolute;
   top: 0;
@@ -44,7 +44,7 @@
 }
 
 /* Header */
-.debug-console-header {
+.luxar-debug-console__header {
   padding: var(--luxar-spacing-8);
   border-bottom: 1px solid var(--luxar-border-subtle);
   display: flex;
@@ -53,19 +53,19 @@
   border-radius: var(--luxar-radius-md) var(--luxar-radius-md) 0 0;
 }
 
-.debug-console-title {
+.luxar-debug-console__title {
   color: var(--luxar-text-primary);
   font-weight: var(--luxar-font-bold);
   font-size: var(--luxar-text-lg);
 }
 
-.debug-console-controls {
+.luxar-debug-console__controls {
   display: flex;
   gap: var(--luxar-spacing-5);
   align-items: center;
 }
 
-.debug-console-filter {
+.luxar-debug-console__filter {
   padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
   background: rgba(0, 0, 0, 0.3);
   border: none;
@@ -76,8 +76,8 @@
   font-size: var(--luxar-text-xs);
 }
 
-.debug-console-clear,
-.debug-console-copy {
+.luxar-debug-console__clear-btn,
+.luxar-debug-console__copy-btn {
   padding: var(--luxar-spacing-2) var(--luxar-spacing-6);
   background: none;
   border: none;
@@ -88,7 +88,7 @@
   font-size: var(--luxar-text-xs);
 }
 
-.debug-console-close {
+.luxar-debug-console__close-btn {
   background: none;
   border: none;
   color: #999;
@@ -103,16 +103,16 @@
   transition: var(--luxar-transition-normal);
 }
 
-.debug-console-clear:hover,
-.debug-console-copy:hover {
+.luxar-debug-console__clear-btn:hover,
+.luxar-debug-console__copy-btn:hover {
   color: var(--luxar-text-primary);
 }
 
-.debug-console-close:hover {
+.luxar-debug-console__close-btn:hover {
   color: #fff;
 }
 
-.debug-console-autoscroll {
+.luxar-debug-console__autoscroll {
   color: var(--luxar-text-primary);
   display: flex;
   align-items: center;
@@ -120,12 +120,12 @@
   cursor: pointer;
 }
 
-.debug-console-autoscroll input {
+.luxar-debug-console__autoscroll input {
   cursor: pointer;
 }
 
 /* Content area */
-.debug-console-content {
+.luxar-debug-console__content {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
@@ -136,26 +136,26 @@
 }
 
 /* Scrollbar styling */
-.debug-console-content::-webkit-scrollbar {
+.luxar-debug-console__content::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-.debug-console-content::-webkit-scrollbar-track {
+.luxar-debug-console__content::-webkit-scrollbar-track {
   background: rgba(0, 0, 0, 0.2);
 }
 
-.debug-console-content::-webkit-scrollbar-thumb {
+.luxar-debug-console__content::-webkit-scrollbar-thumb {
   background: var(--luxar-interactive-default);
   border-radius: var(--luxar-radius-sm);
 }
 
-.debug-console-content::-webkit-scrollbar-thumb:hover {
+.luxar-debug-console__content::-webkit-scrollbar-thumb:hover {
   background: var(--luxar-interactive-hover);
 }
 
 /* Status bar */
-.debug-console-status {
+.luxar-debug-console__status {
   padding: var(--luxar-spacing-4) var(--luxar-spacing-8);
   border-top: 1px solid var(--luxar-border-subtle);
   display: flex;
@@ -166,7 +166,7 @@
 }
 
 /* Console messages */
-.console-message {
+.luxar-console-message {
   margin: 2px 0;
   padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
   border-radius: var(--luxar-radius-sm);
@@ -177,41 +177,41 @@
   transition: var(--luxar-transition-fast);
 }
 
-.console-message:hover {
+.luxar-console-message:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.console-message-timestamp {
+.luxar-console-message-timestamp {
   color: #606060;
   margin-right: var(--luxar-spacing-4);
   font-size: var(--luxar-text-xs);
 }
 
 /* Message types */
-.console-message-log {
+.luxar-console-message-log {
   color: var(--luxar-text-primary);
 }
 
-.console-message-info {
+.luxar-console-message-info {
   color: var(--luxar-success);
 }
 
-.console-message-warn {
+.luxar-console-message-warn {
   color: var(--luxar-warning);
   background: rgba(255, 193, 7, 0.1);
 }
 
-.console-message-error {
+.luxar-console-message-error {
   color: var(--luxar-error);
   background: rgba(244, 67, 54, 0.1);
 }
 
-.console-message-debug {
+.luxar-console-message-debug {
   color: #9E9E9E;
   font-style: italic;
 }
 
-.console-message-stack {
+.luxar-console-message-stack {
   margin-top: var(--luxar-spacing-2);
   padding-left: var(--luxar-spacing-10);
   color: #808080;
@@ -220,71 +220,71 @@
 }
 
 /* Syntax highlighting for different types */
-.console-message-object {
+.luxar-console-message-object {
   color: #64B5F6;
 }
 
-.console-message-number {
+.luxar-console-message-number {
   color: #FF9800;
 }
 
-.console-message-boolean {
+.luxar-console-message-boolean {
   color: #E91E63;
 }
 
-.console-message-string {
+.luxar-console-message-string {
   color: #8BC34A;
 }
 
-.console-message-undefined {
+.luxar-console-message-undefined {
   color: #9E9E9E;
   font-style: italic;
 }
 
 /* Theme overrides */
-[data-theme='light'] .debug-console-panel {
+[data-theme='light'] .luxar-debug-console {
   background: rgba(255, 255, 255, 0.95);
 }
 
-[data-theme='light'] .debug-console-content {
+[data-theme='light'] .luxar-debug-console__content {
   background: rgba(0, 0, 0, 0.03);
 }
 
-[data-theme='light'] .debug-console-filter {
+[data-theme='light'] .luxar-debug-console__filter {
   background: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme='light'] .debug-console-close {
+[data-theme='light'] .luxar-debug-console__close-btn {
   color: #666;
 }
 
-[data-theme='light'] .debug-console-close:hover {
+[data-theme='light'] .luxar-debug-console__close-btn:hover {
   color: #000;
 }
 
-[data-theme='light'] .console-message:hover {
+[data-theme='light'] .luxar-console-message:hover {
   background: rgba(0, 0, 0, 0.03);
 }
 
-[data-theme='high-contrast'] .debug-console-panel {
+[data-theme='high-contrast'] .luxar-debug-console {
   background: #000000;
   border: 2px solid var(--luxar-border-default);
   border-radius: 0;
 }
 
-[data-theme='high-contrast'] .debug-console-content {
+[data-theme='high-contrast'] .luxar-debug-console__content {
   background: #000000;
 }
 
-[data-theme='high-contrast'] .debug-console-close {
+[data-theme='high-contrast'] .luxar-debug-console__close-btn {
   border: 1px solid var(--luxar-border-default);
   color: var(--luxar-text-primary);
 }
 
-[data-theme='high-contrast'] .debug-console-close:hover {
+[data-theme='high-contrast'] .luxar-debug-console__close-btn:hover {
   background: var(--luxar-interactive-hover);
 }
 
-[data-theme='high-contrast'] .console-message:hover {
+[data-theme='high-contrast'] .luxar-console-message:hover {
   background: var(--luxar-interactive-hover);
 }

@@ -85,7 +85,7 @@ export class DebugConsole {
   constructor() {
     // Create UI
     this.panel = this.createPanel();
-    this.contentArea = this.panel.querySelector('.debug-console-content') as HTMLElement;
+    this.contentArea = this.panel.querySelector('.luxar-debug-console__content') as HTMLElement;
 
     // Set up listener for new messages from the global interceptor
     this.messageListenerCallback = (message: BufferedMessage) => {
@@ -116,22 +116,22 @@ export class DebugConsole {
    */
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
-    panel.className = 'debug-console-panel';
+    panel.className = 'luxar-debug-console';
     panel.innerHTML = `
-      <div class="debug-console-header">
-        <div class="debug-console-title">🔧 Debug Console</div>
-        <div class="debug-console-controls">
-          <input type="text" class="debug-console-filter" placeholder="Filter..." />
-          <button class="debug-console-clear" title="Clear console">Clear</button>
-          <button class="debug-console-copy" title="Copy all to clipboard">Copy</button>
-          <label class="debug-console-autoscroll">
+      <div class="luxar-debug-console__header">
+        <div class="luxar-debug-console__title">🔧 Debug Console</div>
+        <div class="luxar-debug-console__controls">
+          <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." />
+          <button class="luxar-debug-console__clear-btn" title="Clear console">Clear</button>
+          <button class="luxar-debug-console__copy-btn" title="Copy all to clipboard">Copy</button>
+          <label class="luxar-debug-console__autoscroll">
             <input type="checkbox" checked /> Auto-scroll
           </label>
-          <button class="debug-console-close" title="Close (Ctrl+L)">✕</button>
+          <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">✕</button>
         </div>
       </div>
-      <div class="debug-console-content"></div>
-      <div class="debug-console-status">
+      <div class="luxar-debug-console__content"></div>
+      <div class="luxar-debug-console__status">
         <span class="message-count">0 messages</span>
         <span class="filter-status"></span>
       </div>
@@ -150,22 +150,22 @@ export class DebugConsole {
    */
   private setupEventHandlers(panel: HTMLElement): void {
     // Close button
-    panel.querySelector('.debug-console-close')?.addEventListener('click', () => {
+    panel.querySelector('.luxar-debug-console__close-btn')?.addEventListener('click', () => {
       this.hide();
     });
 
     // Clear button
-    panel.querySelector('.debug-console-clear')?.addEventListener('click', () => {
+    panel.querySelector('.luxar-debug-console__clear-btn')?.addEventListener('click', () => {
       this.clear();
     });
 
     // Copy button
-    panel.querySelector('.debug-console-copy')?.addEventListener('click', () => {
+    panel.querySelector('.luxar-debug-console__copy-btn')?.addEventListener('click', () => {
       this.copyToClipboard();
     });
 
     // Filter input
-    const filterInput = panel.querySelector('.debug-console-filter') as HTMLInputElement;
+    const filterInput = panel.querySelector('.luxar-debug-console__filter') as HTMLInputElement;
     filterInput?.addEventListener('input', (e) => {
       this.filter = (e.target as HTMLInputElement).value;
       this.applyFilter();
@@ -173,7 +173,7 @@ export class DebugConsole {
 
     // Auto-scroll checkbox
     const autoScrollCheckbox = panel.querySelector(
-      '.debug-console-autoscroll input'
+      '.luxar-debug-console__autoscroll input'
     ) as HTMLInputElement;
     autoScrollCheckbox?.addEventListener('change', (e) => {
       this.autoScroll = (e.target as HTMLInputElement).checked;
@@ -190,7 +190,7 @@ export class DebugConsole {
    * Make the panel draggable
    */
   private makeDraggable(panel: HTMLElement): void {
-    const header = panel.querySelector('.debug-console-header') as HTMLElement;
+    const header = panel.querySelector('.luxar-debug-console__header') as HTMLElement;
     let isDragging = false;
     let startX = 0;
     let startY = 0;
@@ -340,7 +340,7 @@ export class DebugConsole {
    */
   private renderMessage(message: ConsoleMessage): void {
     const messageEl = document.createElement('div');
-    messageEl.className = `console-message console-message-${message.type}`;
+    messageEl.className = `luxar-console-message luxar-console-message-${message.type}`;
 
     // Format timestamp
     const timestamp = message.timestamp.toLocaleTimeString('en-US', {
@@ -353,7 +353,7 @@ export class DebugConsole {
 
     // Create timestamp element safely (no innerHTML)
     const timestampEl = document.createElement('span');
-    timestampEl.className = 'console-message-timestamp';
+    timestampEl.className = 'luxar-console-message-timestamp';
     timestampEl.textContent = timestamp;
     messageEl.appendChild(timestampEl);
 
@@ -369,7 +369,7 @@ export class DebugConsole {
     // Add stack trace if present
     if (message.stack && message.type === 'error') {
       const stackEl = document.createElement('div');
-      stackEl.className = 'console-message-stack';
+      stackEl.className = 'luxar-console-message-stack';
       stackEl.textContent = message.stack;
       messageEl.appendChild(stackEl);
     }
@@ -389,22 +389,22 @@ export class DebugConsole {
     const span = document.createElement('span');
 
     if (arg === undefined) {
-      span.className = 'console-message-undefined';
+      span.className = 'luxar-console-message-undefined';
       span.textContent = 'undefined';
     } else if (arg === null) {
-      span.className = 'console-message-undefined';
+      span.className = 'luxar-console-message-undefined';
       span.textContent = 'null';
     } else if (typeof arg === 'string') {
-      span.className = 'console-message-string';
+      span.className = 'luxar-console-message-string';
       span.textContent = `"${arg}"`;
     } else if (typeof arg === 'number') {
-      span.className = 'console-message-number';
+      span.className = 'luxar-console-message-number';
       span.textContent = String(arg);
     } else if (typeof arg === 'boolean') {
-      span.className = 'console-message-boolean';
+      span.className = 'luxar-console-message-boolean';
       span.textContent = String(arg);
     } else if (typeof arg === 'object') {
-      span.className = 'console-message-object';
+      span.className = 'luxar-console-message-object';
       try {
         const json = JSON.stringify(arg, null, 2);
         span.textContent = json;
@@ -422,7 +422,7 @@ export class DebugConsole {
    * Apply filter to existing messages
    */
   private applyFilter(): void {
-    const messages = this.contentArea.querySelectorAll('.console-message');
+    const messages = this.contentArea.querySelectorAll('.luxar-console-message');
     messages.forEach((el) => {
       const messageEl = el as HTMLElement;
       const text = messageEl.textContent || '';
@@ -444,7 +444,7 @@ export class DebugConsole {
 
     if (countEl) {
       const visibleCount = this.contentArea.querySelectorAll(
-        '.console-message:not([style*="display: none"])'
+        '.luxar-console-message:not([style*="display: none"])'
       ).length;
       const stats = consoleInterceptor.getStats();
       countEl.textContent = this.filter
