@@ -22,19 +22,19 @@ export const liquidGlassTheme: Theme = {
 
   colors: {
     background: {
-      // Translucent backgrounds with strong blur for frosted effect
-      primary: 'rgba(255, 255, 255, 0.25)', // Very translucent white
-      secondary: 'rgba(255, 255, 255, 0.18)', // Even more translucent
-      tertiary: 'rgba(255, 255, 255, 0.12)', // Subtle glass layer
-      overlay: 'rgba(0, 0, 0, 0.3)', // Soft overlay
+      // Bright frosted glass with high opacity and heavy blur
+      primary: 'rgba(255, 255, 255, 0.15)', // Subtle white tint
+      secondary: 'rgba(255, 255, 255, 0.12)', // Even more subtle
+      tertiary: 'rgba(255, 255, 255, 0.08)', // Very subtle glass layer
+      overlay: 'rgba(0, 0, 0, 0.6)', // Darker overlay for modals
     },
     text: {
-      // High contrast text for readability on translucent backgrounds
-      primary: 'rgba(0, 0, 0, 0.9)', // Strong black
-      secondary: 'rgba(0, 0, 0, 0.65)', // Medium gray
-      muted: 'rgba(0, 0, 0, 0.4)', // Subtle gray
-      disabled: 'rgba(0, 0, 0, 0.25)', // Very subtle
-      inverse: 'rgba(255, 255, 255, 0.95)', // For dark content
+      // Light text for dark backgrounds with glass effect
+      primary: 'rgba(255, 255, 255, 0.95)', // Bright white
+      secondary: 'rgba(255, 255, 255, 0.75)', // Translucent white
+      muted: 'rgba(255, 255, 255, 0.5)', // More subtle
+      disabled: 'rgba(255, 255, 255, 0.3)', // Very subtle
+      inverse: 'rgba(0, 0, 0, 0.9)', // For light backgrounds
     },
     semantic: {
       // Modern, vibrant but subtle semantic colors
@@ -46,18 +46,18 @@ export const liquidGlassTheme: Theme = {
     },
     interactive: {
       // Subtle interactive states with glassmorphism
-      default: 'rgba(120, 120, 128, 0.16)', // Apple fill color
-      hover: 'rgba(120, 120, 128, 0.24)', // Slightly more opaque
-      active: 'rgba(120, 120, 128, 0.32)', // More visible when pressed
-      focus: 'rgba(0, 122, 255, 0.15)', // Blue tint on focus
-      disabled: 'rgba(120, 120, 128, 0.08)', // Very subtle
+      default: 'rgba(255, 255, 255, 0.15)', // Subtle white
+      hover: 'rgba(255, 255, 255, 0.22)', // Brighter on hover
+      active: 'rgba(255, 255, 255, 0.3)', // Even brighter when pressed
+      focus: 'rgba(0, 122, 255, 0.25)', // Blue tint on focus
+      disabled: 'rgba(255, 255, 255, 0.08)', // Very subtle
     },
     border: {
-      // Soft, subtle borders
-      default: 'rgba(0, 0, 0, 0.1)', // Subtle dark border
-      subtle: 'rgba(0, 0, 0, 0.04)', // Almost invisible
-      strong: 'rgba(0, 0, 0, 0.15)', // More visible
-      focus: 'rgba(0, 122, 255, 0.4)', // Blue focus ring
+      // Subtle glass borders with slight luminosity
+      default: 'rgba(255, 255, 255, 0.18)', // Subtle white border
+      subtle: 'rgba(255, 255, 255, 0.1)', // Very subtle
+      strong: 'rgba(255, 255, 255, 0.25)', // More visible
+      focus: 'rgba(0, 122, 255, 0.6)', // Bright blue focus ring
     },
     visualization: {
       // Vibrant but sophisticated visualization colors
@@ -130,11 +130,11 @@ export const liquidGlassTheme: Theme = {
       xl: '0 20px 40px rgba(0, 0, 0, 0.1), 0 5px 10px rgba(0, 0, 0, 0.06)',
     },
     blur: {
-      // Heavy blur for frosted glass effect
+      // Very heavy blur for authentic frosted glass
       none: 'none',
-      sm: 'blur(8px)',
-      md: 'blur(20px)', // Significant blur for glass effect
-      lg: 'blur(40px)', // Heavy blur for strong frosted effect
+      sm: 'blur(12px)',
+      md: 'blur(32px)', // Strong blur for frosted glass
+      lg: 'blur(64px)', // Extreme blur for heavy frosted effect
     },
     opacity: {
       disabled: 0.3,

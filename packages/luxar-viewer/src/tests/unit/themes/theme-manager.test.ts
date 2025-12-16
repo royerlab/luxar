@@ -102,7 +102,7 @@ describe('ThemeManager', () => {
       // Switch to liquid-glass theme
       manager.setTheme('liquid-glass');
       bgColor = getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary');
-      expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.25)');
+      expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.15)');
     });
 
     it('should throw error for invalid theme ID', () => {
