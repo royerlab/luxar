@@ -31,10 +31,10 @@ export const liquidGlassTheme: Theme = {
 
   colors: {
     background: {
-      // Higher opacity for visible glass tint (per liquid-glass example)
-      primary: 'rgba(255, 255, 255, 0.35)', // Visible glass tint
-      secondary: 'rgba(255, 255, 255, 0.4)', // Main glass panels (example uses 0.4)
-      tertiary: 'rgba(255, 255, 255, 0.3)', // Inner elements
+      // More transparent for liquid, flowing appearance
+      primary: 'rgba(255, 255, 255, 0.18)', // Subtle glass tint
+      secondary: 'rgba(255, 255, 255, 0.15)', // Main glass panels
+      tertiary: 'rgba(255, 255, 255, 0.1)', // Very subtle inner elements
       overlay: 'rgba(0, 0, 0, 0.6)', // Modal overlay
     },
     text: {
