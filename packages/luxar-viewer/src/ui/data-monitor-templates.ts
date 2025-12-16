@@ -103,12 +103,12 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
   const statusColor = metrics.queries > 0 ? MonitorColors.success : MonitorColors.muted;
 
   return `
-    <div style="background: ${MonitorColors.sectionBg}; padding: ${monitorConfig.padding.compact}px; margin-bottom: ${spacingConfig.borderPadding}px; border-radius: ${monitorConfig.borderRadius.card}px;">
-      <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-        <span style="font-size: 10px; color: ${statusColor}; font-family: monospace;">${path}</span>
-        <span style="font-size: 9px; color: ${MonitorColors.muted};">${metrics.type}</span>
+    <div class="luxar-loader-item">
+      <div class="luxar-loader-item__header">
+        <span class="luxar-loader-item__path" style="color: ${statusColor}">${path}</span>
+        <span class="luxar-loader-item__status">${metrics.type}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; font-size: 9px; color: ${MonitorColors.dimmed};">
+      <div class="luxar-loader-item__metrics">
         <span>${metrics.visiblePoints.toLocaleString()} pts</span>
         <span>${formatBytes(metrics.memoryUsed)}</span>
       </div>
@@ -449,25 +449,19 @@ export function renderRecommendation(rec: Recommendation): string {
     info: 'ℹ️',
   };
 
-  const severityColors = {
-    error: MonitorColors.error,
-    warning: MonitorColors.warning,
-    info: MonitorColors.info,
-  };
-
   return `
-    <div style="background: rgba(255,255,255,0.05); padding: ${monitorConfig.padding.default}px; margin-bottom: ${spacingConfig.elementGap}px; border-radius: ${monitorConfig.borderRadius.card}px; border-left: 3px solid ${severityColors[rec.severity]};">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-        ${severityIcons[rec.severity]}
-        <strong style="font-size: 11px;">${rec.title}</strong>
+    <div class="luxar-recommendation luxar-recommendation--${rec.severity}">
+      <div class="luxar-recommendation__header">
+        <span class="luxar-recommendation__icon">${severityIcons[rec.severity]}</span>
+        <strong class="luxar-recommendation__title">${rec.title}</strong>
       </div>
-      <div style="font-size: 10px; color: ${MonitorColors.primaryText}; opacity: 0.9;">
+      <div class="luxar-recommendation__message">
         ${rec.message}
       </div>
       ${
         rec.suggestion
           ? `
-        <div style="font-size: 10px; color: ${MonitorColors.muted}; margin-top: 4px;">
+        <div class="luxar-recommendation__message" style="margin-top: 4px;">
           💡 ${rec.suggestion}
         </div>
       `

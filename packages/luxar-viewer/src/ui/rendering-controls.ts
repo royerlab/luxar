@@ -7,6 +7,7 @@ import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
+import { ThemeManager } from '../themes/theme-manager';
 
 // Extract component configuration
 const controlsConfig = config.ui.components.renderingControls;
@@ -250,6 +251,10 @@ export class RenderingControls {
 
     // Store controller references
     Object.assign(this.controllers, ppResult.controllers);
+
+    // Theme selector
+    this.setupThemeControls();
+
     // Reset to Defaults button at root level
     const resetButton = {
       'Reset to Defaults': () => {
@@ -266,6 +271,49 @@ export class RenderingControls {
         '• Resets navigation controls\n' +
         '• Clears saved settings for this scene'
     );
+  }
+
+  /**
+   * Setup theme controls
+   */
+  private setupThemeControls(): void {
+    const themeFolder = this.gui.addFolder('🎨 Theme');
+
+    const themeManager = ThemeManager.getInstance();
+    const themes = themeManager.getAllThemes();
+
+    // Create theme options object { 'Dark Theme': 'dark', 'Light Theme': 'light', ... }
+    const themeOptions = themes.reduce(
+      (acc, theme) => {
+        acc[theme.name] = theme.id;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+
+    const themeSettings = {
+      theme: themeManager.getCurrentTheme().id,
+    };
+
+    const themeControl = themeFolder
+      .add(themeSettings, 'theme', themeOptions)
+      .name('Active Theme')
+      .onChange((themeId: string) => {
+        themeManager.setTheme(themeId);
+        // Theme is persisted automatically by ThemeManager
+        log.info(Modules.RENDERER, `Theme changed to: ${themeId}`);
+      });
+
+    themeControl.domElement.setAttribute(
+      'title',
+      'Switch between visual themes\n' +
+        '• Dark: Default scientific visualization theme\n' +
+        '• Light: Bright theme for well-lit environments\n' +
+        '• High Contrast: Maximum accessibility (WCAG AAA)'
+    );
+
+    // Close folder by default
+    themeFolder.close();
   }
 
   /**
