@@ -278,5 +278,5 @@ test('URL parameter sets initial theme', async ({ page }) => {
   const bgColor = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
   );
-  expect(bgColor.trim()).toBe('rgba(245, 245, 247, 0.72)');
+  expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.25)');
 });
