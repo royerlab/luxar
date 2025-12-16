@@ -1,55 +1,41 @@
 /**
- * SVG Filter Definitions for Glass Effects
+ * SVG Filter Definitions for Liquid Glass (Geometry-Aware Refraction)
  *
- * Provides reusable SVG filters for creating authentic glass refraction,
- * chromatic aberration, and distance-based distortion effects.
+ * Creates authentic glass refraction based on element geometry, not random noise.
+ * Technique: Convert SourceAlpha → Height Map → Normal Map → Displacement
  *
- * Usage: Call injectGlassFilters() when theme is applied
+ * Key concept: Element acts like convex lens - thick in center, thin at edges.
+ * Refraction is strongest at edges where curvature is highest.
+ *
+ * Based on advanced glassmorphism techniques with Sobel edge detection.
  */
 
 export interface GlassFilterParams {
-  // Noise/texture parameters
-  noiseFrequency: number; // Base frequency for turbulence (0.005-0.02)
-  noiseOctaves: number; // Detail level (1-4)
-  noiseSeed: number; // Random seed
+  // Geometry parameters
+  blurRadius: number; // Edge curve width - larger = thicker glass feel (10-30)
+  refractionScale: number; // Lens strength - how much light bends (10-50)
 
-  // Distortion parameters
-  displacementScale: number; // Refraction strength (20-150)
-  blurAmount: number; // Smoothness of distortion (1-5)
-
-  // Chromatic aberration
-  chromaticStrength: number; // Color separation (0-3)
-
-  // Edge enhancement
-  edgeDistortionMultiplier: number; // Stronger distortion at edges (1-3)
+  // Visual enhancements
+  chromaticStrength: number; // RGB separation at edges (0-5)
+  specularIntensity?: number; // Rim light brightness (0-1, optional)
 }
 
 /**
  * Default glass filter parameters
- * Adjust these for different glass effects!
+ * EASILY ADJUSTABLE - Change these to customize the glass effect!
  */
 export const defaultGlassParams: GlassFilterParams = {
-  // Very fine noise for subtle glass texture
-  noiseFrequency: 0.025, // Higher frequency = finer texture
-  noiseOctaves: 2, // Less detail = subtler
-  noiseSeed: 42, // Random seed for texture pattern
-
-  // VERY subtle refraction (barely noticeable)
-  displacementScale: 3, // Much lower for subtle effect (was 60!)
-  blurAmount: 5, // More blur = smoother, less visible
-
-  // Minimal chromatic aberration
-  chromaticStrength: 0.5, // Very slight color splitting
-
-  // Subtle edge enhancement
-  edgeDistortionMultiplier: 1.2, // Barely stronger at edges
+  blurRadius: 15, // Soft, thick edge curve
+  refractionScale: 30, // Strong but not extreme refraction
+  chromaticStrength: 2, // Visible color splitting (rainbow edges)
+  specularIntensity: 0.3, // Subtle rim light (optional, set to 0 to disable)
 };
 
 /**
- * Inject SVG filter definitions into the DOM
+ * Inject geometry-aware glass filters into DOM
  *
- * Call this when applying Liquid Glass theme to add the necessary
- * SVG filters for refraction effects.
+ * Creates filters that refract based on element shape, not random noise.
+ * Thicker glass in center → no refraction. Edges curve → strong refraction.
  */
 export function injectGlassFilters(params: GlassFilterParams = defaultGlassParams): void {
   // Check if already injected
@@ -64,100 +50,168 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
   svg.style.position = 'absolute';
   svg.style.overflow = 'hidden';
 
+  // Sobel kernels for gradient detection (edge detection)
+  // These detect the slope/curvature of the glass surface
+  const sobelX = '-1 0 1 -2 0 2 -1 0 1'; // Horizontal gradient
+  const sobelY = '-1 -2 -1 0 0 0 1 2 1'; // Vertical gradient
+
   svg.innerHTML = `
     <defs>
-      <!-- Main Glass Distortion Filter -->
-      <filter id="luxar-glass-distortion" x="-50%" y="-50%" width="200%" height="200%">
-        <!-- Turbulence for glass texture/imperfections -->
-        <feTurbulence
-          type="fractalNoise"
-          baseFrequency="${params.noiseFrequency} ${params.noiseFrequency}"
-          numOctaves="${params.noiseOctaves}"
-          seed="${params.noiseSeed}"
-          result="noise"/>
+      <!-- Main Liquid Glass Filter: Geometry-Aware Refraction -->
+      <filter id="luxar-liquid-refraction" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
 
-        <!-- Blur the noise for smoother glass -->
+        <!-- STEP 1: Create Height Map from element shape -->
+        <!-- Blur SourceAlpha = "hill" shape (thick center, thin edges) -->
         <feGaussianBlur
-          in="noise"
-          stdDeviation="${params.blurAmount}"
-          result="smoothNoise"/>
+          in="SourceAlpha"
+          stdDeviation="${params.blurRadius}"
+          result="heightMap"/>
 
-        <!-- Displace pixels = refraction effect -->
+        <!-- STEP 2: Calculate Gradients (Sobel Edge Detection) -->
+        <!-- X-gradient: How fast height changes horizontally -->
+        <feConvolveMatrix
+          in="heightMap"
+          order="3"
+          kernelMatrix="${sobelX}"
+          preserveAlpha="false"
+          bias="0.5"
+          result="gradX"/>
+
+        <!-- Y-gradient: How fast height changes vertically -->
+        <feConvolveMatrix
+          in="heightMap"
+          order="3"
+          kernelMatrix="${sobelY}"
+          preserveAlpha="false"
+          bias="0.5"
+          result="gradY"/>
+
+        <!-- STEP 3: Build Normal Map (slope directions) -->
+        <!-- Map X-gradient to Red channel -->
+        <feColorMatrix
+          in="gradX"
+          type="matrix"
+          values="0 0 0 1 0
+                  0 0 0 0 0
+                  0 0 0 0 0
+                  0 0 0 1 0"
+          result="normalR"/>
+
+        <!-- Map Y-gradient to Green channel -->
+        <feColorMatrix
+          in="gradY"
+          type="matrix"
+          values="0 0 0 0 0
+                  0 0 0 1 0
+                  0 0 0 0 0
+                  0 0 0 1 0"
+          result="normalG"/>
+
+        <!-- Combine into single normal map -->
+        <feBlend
+          in="normalR"
+          in2="normalG"
+          mode="screen"
+          result="normalMap"/>
+
+        <!-- STEP 4: Apply Displacement (Refraction) -->
+        <!-- Center (flat) = no displacement. Edges (curved) = strong displacement -->
         <feDisplacementMap
           in="SourceGraphic"
-          in2="smoothNoise"
-          scale="${params.displacementScale}"
+          in2="normalMap"
+          scale="${params.refractionScale}"
           xChannelSelector="R"
           yChannelSelector="G"
-          result="distorted"/>
-      </filter>
+          result="refracted"/>
 
-      <!-- Chromatic Aberration Filter (color splitting like thick glass) -->
-      <filter id="luxar-glass-chromatic" x="-20%" y="-20%" width="140%" height="140%">
-        <!-- Red channel offset -->
-        <feOffset in="SourceGraphic" dx="${params.chromaticStrength}" dy="0" result="offsetR"/>
-        <feColorMatrix in="offsetR" type="matrix"
+        <!-- STEP 5: Chromatic Aberration (RGB splitting) -->
+        <!-- Red channel (shifted right) -->
+        <feOffset
+          in="refracted"
+          dx="${params.chromaticStrength}"
+          dy="0"
+          result="redShift"/>
+        <feColorMatrix
+          in="redShift"
+          type="matrix"
           values="1 0 0 0 0
                   0 0 0 0 0
                   0 0 0 0 0
-                  0 0 0 1 0" result="redChannel"/>
+                  0 0 0 1 0"
+          result="redChannel"/>
 
-        <!-- Blue channel offset (opposite direction) -->
-        <feOffset in="SourceGraphic" dx="${-params.chromaticStrength}" dy="0" result="offsetB"/>
-        <feColorMatrix in="offsetB" type="matrix"
-          values="0 0 0 0 0
-                  0 0 0 0 0
-                  0 0 1 0 0
-                  0 0 0 1 0" result="blueChannel"/>
-
-        <!-- Green channel (no offset) -->
-        <feColorMatrix in="SourceGraphic" type="matrix"
+        <!-- Green channel (no shift) -->
+        <feColorMatrix
+          in="refracted"
+          type="matrix"
           values="0 0 0 0 0
                   0 1 0 0 0
                   0 0 0 0 0
-                  0 0 0 1 0" result="greenChannel"/>
+                  0 0 0 1 0"
+          result="greenChannel"/>
 
-        <!-- Combine all channels -->
-        <feComposite in="redChannel" in2="greenChannel" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="rg"/>
-        <feComposite in="rg" in2="blueChannel" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
-      </filter>
-
-      <!-- Combined: Distortion + Chromatic Aberration -->
-      <filter id="luxar-liquid-glass-full" x="-50%" y="-50%" width="200%" height="200%">
-        <!-- First apply displacement -->
-        <feTurbulence
-          type="fractalNoise"
-          baseFrequency="${params.noiseFrequency} ${params.noiseFrequency}"
-          numOctaves="${params.noiseOctaves}"
-          seed="${params.noiseSeed}"
-          result="noise"/>
-        <feGaussianBlur in="noise" stdDeviation="${params.blurAmount}" result="smoothNoise"/>
-        <feDisplacementMap
-          in="SourceGraphic"
-          in2="smoothNoise"
-          scale="${params.displacementScale}"
-          xChannelSelector="R"
-          yChannelSelector="G"
-          result="displaced"/>
-
-        <!-- Then add subtle chromatic aberration -->
-        <feOffset in="displaced" dx="${params.chromaticStrength * 0.5}" dy="0" result="r"/>
-        <feOffset in="displaced" dx="${-params.chromaticStrength * 0.5}" dy="0" result="b"/>
-
-        <!-- Blend channels -->
-        <feBlend in="r" in2="displaced" mode="screen" result="rb"/>
-        <feBlend in="rb" in2="b" mode="screen"/>
-      </filter>
-
-      <!-- Edge-Aware Gradient Mask (for stronger distortion at edges) -->
-      <filter id="luxar-glass-edge-mask">
-        <!-- Create radial gradient from center -->
-        <feGaussianBlur in="SourceAlpha" stdDeviation="40" result="blur"/>
-        <feColorMatrix in="blur" type="matrix"
-          values="1 0 0 0 0
-                  0 1 0 0 0
+        <!-- Blue channel (shifted left) -->
+        <feOffset
+          in="refracted"
+          dx="${-params.chromaticStrength}"
+          dy="0"
+          result="blueShift"/>
+        <feColorMatrix
+          in="blueShift"
+          type="matrix"
+          values="0 0 0 0 0
+                  0 0 0 0 0
                   0 0 1 0 0
-                  0 0 0 ${params.edgeDistortionMultiplier} 0" result="edgeMask"/>
+                  0 0 0 1 0"
+          result="blueChannel"/>
+
+        <!-- Combine RGB channels -->
+        <feComposite
+          in="redChannel"
+          in2="greenChannel"
+          operator="arithmetic"
+          k2="1" k3="1"
+          result="rg"/>
+        <feComposite
+          in="rg"
+          in2="blueChannel"
+          operator="arithmetic"
+          k2="1" k3="1"
+          result="rgb"/>
+
+        <!-- STEP 6: Mask to element shape -->
+        <feComposite
+          in="rgb"
+          in2="SourceAlpha"
+          operator="in"
+          result="final"/>
+
+        ${
+          params.specularIntensity && params.specularIntensity > 0
+            ? `
+        <!-- OPTIONAL: Specular Rim Light (glossy highlight) -->
+        <feGaussianBlur in="heightMap" stdDeviation="5" result="specMap"/>
+        <feColorMatrix
+          in="specMap"
+          type="matrix"
+          values="0 0 0 0 ${params.specularIntensity}
+                  0 0 0 0 ${params.specularIntensity}
+                  0 0 0 0 ${params.specularIntensity}
+                  0 0 0 1 0"
+          result="specular"/>
+        <feBlend
+          in="final"
+          in2="specular"
+          mode="screen"
+          result="withSpecular"/>
+        <feComposite
+          in="withSpecular"
+          in2="SourceAlpha"
+          operator="in"/>
+        `
+            : ''
+        }
+
       </filter>
     </defs>
   `;
@@ -177,6 +231,7 @@ export function removeGlassFilters(): void {
 
 /**
  * Update glass filter parameters dynamically
+ * Call this to adjust the glass effect in real-time
  */
 export function updateGlassFilters(params: Partial<GlassFilterParams>): void {
   removeGlassFilters();
