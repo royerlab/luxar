@@ -28,25 +28,20 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
   await page.waitForTimeout(200);
 }
 
-// Helper to trigger error dialog
-async function showErrorDialog(page: Page): Promise<void> {
-  // Trigger error by loading invalid dataset
-  await page.goto(`/?src=invalid-dataset.zarr&theme=${await page.evaluate(() => document.documentElement.getAttribute('data-theme') || 'dark')}`);
-
-  // Wait for error dialog to appear
-  await page.waitForSelector('.luxar-error-dialog', { timeout: 5000 });
-}
-
 /**
  * Test error dialog in all themes
  */
 for (const theme of THEMES) {
   test(`error dialog - ${theme} theme`, async ({ page }) => {
-    await showErrorDialog(page);
+    // Navigate with theme and invalid dataset to trigger error
+    await page.goto(`/?src=invalid-dataset.zarr&theme=${theme}`);
+
+    // Wait for theme to be applied
     await waitForTheme(page, theme);
 
+    // Wait for error dialog to appear
     const errorDialog = page.locator('.luxar-error-dialog');
-    await expect(errorDialog).toBeVisible();
+    await expect(errorDialog).toBeVisible({ timeout: 5000 });
 
     // Take screenshot for visual regression
     await expect(errorDialog).toHaveScreenshot(`error-dialog-${theme}.png`);
