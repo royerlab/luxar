@@ -173,17 +173,92 @@
 /* Light theme overrides */
 [data-theme='light'] .lil-gui {
   --background-color: rgba(255, 255, 255, 0.95) !important;
+  --title-text-color: var(--luxar-text-primary) !important;
   --widget-color: rgba(0, 0, 0, 0.08) !important;
   --hover-color: rgba(0, 0, 0, 0.12) !important;
+  --focus-color: var(--luxar-success) !important;
+  --number-color: var(--luxar-success) !important;
+  --string-color: var(--luxar-info) !important;
+  color: var(--luxar-text-primary) !important;
+}
+
+[data-theme='light'] .lil-gui .controller {
+  color: var(--luxar-text-primary) !important;
+}
+
+[data-theme='light'] .lil-gui .controller:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme='light'] .lil-gui input[type='number'],
+[data-theme='light'] .lil-gui input[type='text'] {
+  background: rgba(0, 0, 0, 0.05) !important;
+  color: var(--luxar-success) !important;
+}
+
+[data-theme='light'] .lil-gui select {
+  background: rgba(0, 0, 0, 0.05) !important;
+  color: var(--luxar-text-primary) !important;
+}
+
+[data-theme='light'] .lil-gui button {
+  background: rgba(0, 0, 0, 0.08) !important;
+  color: var(--luxar-text-primary) !important;
+  border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme='light'] .lil-gui button:hover {
+  background: rgba(0, 0, 0, 0.12) !important;
+  border-color: rgba(0, 0, 0, 0.25) !important;
+}
+
+[data-theme='light'] .lil-gui .folder > .title {
+  background: rgba(0, 0, 0, 0.03) !important;
+  color: var(--luxar-text-primary) !important;
+}
+
+[data-theme='light'] .lil-gui > .title {
+  color: var(--luxar-text-primary) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme='light'] .lil-gui .controller.number .slider {
+  background: rgba(0, 0, 0, 0.1) !important;
 }
 
 /* High contrast theme overrides */
 [data-theme='high-contrast'] .lil-gui {
   --background-color: #000000 !important;
+  --title-text-color: #ffffff !important;
   --widget-color: rgba(255, 255, 255, 0.15) !important;
   --hover-color: rgba(255, 255, 255, 0.25) !important;
   --focus-color: #00ff00 !important;
   --number-color: #00ff00 !important;
+  --string-color: #00ffff !important;
   border: 2px solid var(--luxar-border-default) !important;
   border-radius: 0 !important;
+  color: #ffffff !important;
+}
+
+[data-theme='high-contrast'] .lil-gui .controller {
+  color: #ffffff !important;
+  border-radius: 0 !important;
+}
+
+[data-theme='high-contrast'] .lil-gui input,
+[data-theme='high-contrast'] .lil-gui select,
+[data-theme='high-contrast'] .lil-gui button {
+  border-radius: 0 !important;
+  border: 1px solid var(--luxar-border-default) !important;
+}
+
+[data-theme='high-contrast'] .lil-gui .folder > .title {
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+}
+
+[data-theme='high-contrast'] .lil-gui > .title {
+  color: #ffffff !important;
+  border-bottom: 2px solid var(--luxar-border-default) !important;
 }
