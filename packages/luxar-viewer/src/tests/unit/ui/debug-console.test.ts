@@ -130,7 +130,7 @@ describe('DebugConsole - Critical Fixes', () => {
       const debugConsole = new DebugConsole();
       debugConsole.show();
 
-      const contentArea = document.querySelector('.debug-console-content');
+      const contentArea = document.querySelector('.luxar-debug-console__content');
       expect(contentArea).toBeTruthy();
 
       // Verify no innerHTML is set on message rendering
@@ -145,7 +145,7 @@ describe('DebugConsole - Critical Fixes', () => {
       console_any.renderMessage(message);
 
       // The malicious content should be escaped as text
-      const messageElements = document.querySelectorAll('.console-message');
+      const messageElements = document.querySelectorAll('.luxar-console-message');
       expect(messageElements.length).toBe(1);
 
       const messageText = messageElements[0].textContent || '';
@@ -153,8 +153,8 @@ describe('DebugConsole - Critical Fixes', () => {
       expect(messageText).toContain('<script>evil()</script>');
 
       // Should NOT have actual script or bold elements
-      expect(document.querySelector('.console-message script')).toBeNull();
-      expect(document.querySelector('.console-message b')).toBeNull();
+      expect(document.querySelector('.luxar-console-message script')).toBeNull();
+      expect(document.querySelector('.luxar-console-message b')).toBeNull();
 
       debugConsole.dispose();
     });
@@ -164,16 +164,16 @@ describe('DebugConsole - Critical Fixes', () => {
     it('should fully dispose debug console without leaks', () => {
       const debugConsole = new DebugConsole();
 
-      const panel = document.querySelector('.debug-console-panel');
+      const panel = document.querySelector('.luxar-debug-console');
       expect(panel).toBeTruthy();
 
       debugConsole.dispose();
 
       // Panel should be removed
-      expect(document.querySelector('.debug-console-panel')).toBeNull();
+      expect(document.querySelector('.luxar-debug-console')).toBeNull();
 
       // Styles should be removed
-      expect(document.getElementById('debug-console-styles')).toBeNull();
+      expect(document.getElementById('luxar-debug-console-styles')).toBeNull();
     });
   });
 });

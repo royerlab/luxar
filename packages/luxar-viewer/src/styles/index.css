@@ -20,9 +20,9 @@
 @import './components/debug-console.css';
 @import './components/dataset-browser.css';
 @import './components/data-loading-monitor.css';
+@import './components/rendering-controls.css';
 /* (More components will be added as they are migrated) */
 /* @import './components/performance-monitor.css'; */
-/* @import './components/rendering-controls.css'; */
 
 /* 4. Theme Overrides - theme-specific adjustments */
 /* (Will be added for light/high-contrast themes) */
