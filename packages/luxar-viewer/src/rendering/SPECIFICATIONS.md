@@ -485,20 +485,26 @@ When rendering at reduced resolution (DPR < 1.0) for performance, noise paramete
 
 **Problem**: At lower DPR, each rendered pixel represents multiple screen pixels. When the image is upscaled, the noise becomes visually coarser/grainier than intended.
 
-**Solution**: Scale noise parameters proportionally to DPR:
+**Solution**: Scale noise parameters to maintain equivalent perceived noise:
 
 ```typescript
 // Mathematical basis:
 // When DPR < 1, each rendered pixel covers 1/DPR² screen pixels
-// Averaging N noisy samples reduces sigma by √N
-// So noise should scale linearly with DPR for perceptual consistency
+// Averaging N noisy samples reduces σ by √N
+// So for Gaussian noise: σ_effective = σ × DPR
+//
+// For shot noise (Poisson via Anscombe), the output σ ∝ √photonGain
+// To scale σ by DPR: photonGain_effective = photonGain × DPR²
 
 private applyScaledNoiseSettings(): void {
   const scale = this.currentDPRScale; // e.g., 0.5 for 50% resolution
 
+  // Gaussian noise: σ scales linearly with DPR
   this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
-  this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale;
   this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
+
+  // Shot noise: σ ∝ √photonGain, so photonGain scales by DPR²
+  this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale * scale;
 }
 
 setDPRScale(dpr: number): void {
@@ -510,14 +516,14 @@ setDPRScale(dpr: number): void {
 }
 ```
 
-**Behavior**:
+**Behavior** (base values: readoutSigma=0.002, photonGain=0.002, fpnSigma=0.001):
 
-| DPR  | Effective readoutSigma | Effective photonGain | Effective fpnSigma |
-| ---- | ---------------------- | -------------------- | ------------------ |
-| 1.0  | 0.002 (base)           | 0.002 (base)         | 0.001 (base)       |
-| 0.75 | 0.0015                 | 0.0015               | 0.00075            |
-| 0.5  | 0.001                  | 0.001                | 0.0005             |
-| 0.25 | 0.0005                 | 0.0005               | 0.00025            |
+| DPR  | Effective readoutSigma | Effective photonGain | Effective fpnSigma | Noise σ Reduction |
+| ---- | ---------------------- | -------------------- | ------------------ | ----------------- |
+| 1.0  | 0.002 (×1.0)           | 0.002 (×1.0)         | 0.001 (×1.0)       | 100%              |
+| 0.75 | 0.0015 (×0.75)         | 0.001125 (×0.5625)   | 0.00075 (×0.75)    | 75%               |
+| 0.5  | 0.001 (×0.5)           | 0.0005 (×0.25)       | 0.0005 (×0.5)      | 50%               |
+| 0.25 | 0.0005 (×0.25)         | 0.000125 (×0.0625)   | 0.00025 (×0.25)    | 25%               |
 
 **Integration**: Called from `SceneManager.setAdaptivePixelRatio()` when DPR changes:
 
