@@ -93,6 +93,9 @@ export class RenderingControls {
   /** Reference to adaptive DPR manager for performance controls */
   private adaptiveDPRManager?: AdaptiveDPRManager;
 
+  /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
+  private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
+
   /**
    * Create rendering controls UI with complete parameter access.
    *
@@ -511,6 +514,12 @@ export class RenderingControls {
         manualDPRControl.hide();
         dprRow.style.display = '';
         fpsRow.style.display = '';
+        // Update display values immediately
+        if (this.adaptiveDPRManager) {
+          const state = this.adaptiveDPRManager.getState();
+          dprValue.textContent = state.currentDPR.toFixed(2);
+          fpsValue.textContent = Math.round(state.currentFPS).toString();
+        }
       } else {
         // Adaptive OFF: show manual control, hide display rows
         manualDPRControl.show();
@@ -522,7 +531,14 @@ export class RenderingControls {
       }
     };
 
-    // Set initial visibility
+    // Store visibility update callback for use by loadSettings
+    this.updateAdaptiveDPRVisibility = updateControlVisibility;
+
+    // Sync initial state from manager BEFORE setting visibility
+    this.settings.adaptiveDPREnabled = manager.isActive();
+    adaptiveToggle.updateDisplay();
+
+    // Set initial visibility based on synced state
     updateControlVisibility(this.settings.adaptiveDPREnabled);
 
     // Register onChange handler for adaptive toggle
@@ -550,9 +566,6 @@ export class RenderingControls {
       clearInterval(updateInterval);
       originalDispose();
     };
-
-    // Sync initial state
-    this.settings.adaptiveDPREnabled = manager.isActive();
 
     // Close folder by default
     performanceFolder.close();
@@ -764,6 +777,12 @@ export class RenderingControls {
         this.gui.controllersRecursive().forEach((controller) => {
           controller.updateDisplay();
         });
+
+        // Sync adaptive DPR manager state and update visibility
+        if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
+          this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
+          this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
+        }
 
         log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
       } else {

@@ -813,6 +813,11 @@ export class PostProcessingManager {
    * covers 1/DPR² screen pixels. To maintain perceptual consistency, noise sigma
    * should be scaled by DPR (since averaging N noisy samples reduces sigma by √N,
    * and here each sample covers 1/DPR² pixels, so sigma_effective = sigma × DPR).
+   *
+   * For Gaussian noise (readoutSigma, fpnSigma): σ_effective = σ × DPR
+   *
+   * For shot noise (photonGain): The output σ ∝ √photonGain, so to scale σ by DPR,
+   * we need photonGain_effective = photonGain × DPR²
    */
   private applyScaledNoiseSettings(): void {
     if (!this.detectorNoiseEffect || !isDetectorNoiseEffect(this.detectorNoiseEffect)) {
@@ -820,9 +825,11 @@ export class PostProcessingManager {
     }
 
     const scale = this.currentDPRScale;
+    // Gaussian noise: σ scales linearly with DPR
     this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
-    this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale;
     this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
+    // Shot noise: σ ∝ √photonGain, so photonGain must scale by DPR² for σ to scale by DPR
+    this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale * scale;
   }
 
   /**
