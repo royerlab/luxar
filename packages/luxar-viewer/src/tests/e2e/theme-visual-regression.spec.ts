@@ -224,17 +224,31 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   );
   expect(lightBg.trim()).toBe('#ffffff');
 
-  // Switch to high-contrast theme
+  // Switch to frosted-glass theme
   await page.evaluate(() => {
     const themeManager = (window as any).ThemeManager?.getInstance?.();
-    if (themeManager) themeManager.setTheme('high-contrast');
+    if (themeManager) themeManager.setTheme('frosted-glass');
   });
-  await waitForTheme(page, 'high-contrast');
+  await waitForTheme(page, 'frosted-glass');
 
-  const hcBg = await page.evaluate(() =>
+  const frostedBg = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
   );
-  expect(hcBg.trim()).toBe('#000000');
+  // Frosted glass uses rgba(255, 255, 255, 0.15) for subtle glass tint
+  expect(frostedBg.trim()).toBe('rgba(255, 255, 255, 0.15)');
+
+  // Switch to liquid-glass theme
+  await page.evaluate(() => {
+    const themeManager = (window as any).ThemeManager?.getInstance?.();
+    if (themeManager) themeManager.setTheme('liquid-glass');
+  });
+  await waitForTheme(page, 'liquid-glass');
+
+  const liquidBg = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
+  );
+  // Liquid glass uses rgba(255, 255, 255, 0.18) for subtle glass tint
+  expect(liquidBg.trim()).toBe('rgba(255, 255, 255, 0.18)');
 });
 
 /**

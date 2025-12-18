@@ -1,0 +1,61 @@
+/**
+ * Folder Styles
+ */
+
+.luxar-gui__folder {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+/**
+ * Folder Title (clickable)
+ */
+.luxar-gui__folder-title {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-2);
+  color: var(--luxar-text-primary);
+  font-weight: var(--luxar-font-medium);
+  font-size: var(--luxar-text-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+  border-radius: var(--luxar-radius-sm);
+  margin-top: var(--luxar-spacing-1);
+}
+
+.luxar-gui__folder-title:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+/**
+ * Folder Caret (expand/collapse icon)
+ */
+.luxar-gui__folder-caret {
+  display: inline-block;
+  width: 8px;
+  color: var(--luxar-text-secondary);
+  font-size: var(--luxar-text-xs);
+  transition: var(--luxar-transition-fast);
+}
+
+/**
+ * Folder Children (nested indentation)
+ */
+.luxar-gui__folder > .luxar-gui__children {
+  padding-left: 12px;
+  border-left: 1px solid var(--luxar-border-subtle);
+}
+
+/**
+ * Open/Closed States
+ */
+.luxar-gui__folder--open > .luxar-gui__children {
+  display: flex;
+}
+
+.luxar-gui__folder--closed > .luxar-gui__children {
+  display: none;
+}

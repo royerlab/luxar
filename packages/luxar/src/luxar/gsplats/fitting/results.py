@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.config import (
     FitConfig,
     OptimizationResults,
@@ -20,9 +20,9 @@ def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
     preprocessed_data: PreprocessedData,
-) -> GaussianSplatResult:
+) -> GSplatData:
     """
-    Finalize optimization results and return as GaussianSplatResult.
+    Finalize optimization results and return as GSplatData.
 
     Parameters
     ----------
@@ -35,7 +35,7 @@ def finalize_results(
 
     Returns
     -------
-    GaussianSplatResult
+    GSplatData
         Dataclass containing centers, amplitudes, cholesky_factors, sharpnesses, and stats
     """
     # Extract parameters from optimization results
@@ -86,7 +86,7 @@ def finalize_results(
     else:
         stats["movie_frames"] = None
 
-    return GaussianSplatResult(
+    return GSplatData(
         centers=centers_np.astype(np.float32),
         amplitudes=amps_np.astype(np.float32),
         cholesky_factors=cholesky_packed.astype(np.float32),

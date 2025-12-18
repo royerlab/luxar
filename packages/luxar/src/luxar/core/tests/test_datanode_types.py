@@ -268,6 +268,83 @@ class TestGSplatsNode:
 
             assert gsplats.n_splats == 3
 
+    def test_add_gsplats_from_data(self, tmp_path) -> None:
+        """Test adding gsplats from GSplatData."""
+        from luxar.gsplats.fit_result import GSplatData
+
+        # Create a result object
+        centers = np.array([[0, 0], [1, 1]], dtype=np.float32)
+        amplitudes = np.array([1.0, 2.0], dtype=np.float32)
+        cholesky = np.array([[1, 0, 1], [1, 0.5, 1]], dtype=np.float32)
+        sharpnesses = np.array([2.0, 2.0], dtype=np.float32)
+        colors = np.array([[1.0, 0, 0], [0, 1.0, 0]], dtype=np.float32)
+
+        result = GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            sharpnesses=sharpnesses,
+            colors=colors,
+            stats={"test": "value"},
+        )
+
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            gsplats = scene.add_gsplats_from_data("from_result", result)
+
+            assert gsplats.n_splats == 2
+            assert gsplats.ndim == 2
+            assert gsplats.has_colors is True
+            assert gsplats.has_sharpness is True
+
+    def test_add_gsplats_from_file(self, tmp_path) -> None:
+        """Test adding gsplats from .gsplats.zarr file."""
+        from luxar.gsplats.fit_result import GSplatData
+
+        # Create and save a result
+        centers = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+        amplitudes = np.array([1.0, 1.5], dtype=np.float32)
+        cholesky = np.array([[1, 0, 1, 0, 0, 1], [1, 0, 1, 0, 0, 1]], dtype=np.float32)
+        sharpnesses = np.array([2.0, 2.0], dtype=np.float32)
+
+        result = GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            sharpnesses=sharpnesses,
+            stats={},
+        )
+
+        # Save to file
+        gsplats_path = tmp_path / "fitted.gsplats.zarr"
+        result.save(gsplats_path, ordering="none")
+
+        # Load into scene
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            gsplats = scene.add_gsplats_from_file("from_file", gsplats_path)
+
+            assert gsplats.n_splats == 2
+            assert gsplats.ndim == 3
+            assert gsplats.has_colors is False
+            assert gsplats.has_sharpness is True
+
+    def test_add_gsplats_from_file_not_found(self, tmp_path) -> None:
+        """Test error when file doesn't exist."""
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(FileNotFoundError):
+                scene.add_gsplats_from_file("missing", tmp_path / "nonexistent.gsplats.zarr")
+
+    def test_add_gsplats_from_data_invalid_type(self, tmp_path) -> None:
+        """Test error when passing wrong type to add_gsplats_from_data."""
+        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(TypeError, match="Expected GSplatData"):
+                scene.add_gsplats_from_data("invalid", "not_a_result")
+
 
 class TestDataNodeAbstraction:
     """Test DataNode abstract base class."""
@@ -315,3 +392,10 @@ class TestDataNodeAbstraction:
             )  # Note: it's "dims" not "ndim" in Points metadata
             assert points.metadata["n_points"] == 1
             assert points.metadata["dims"] == 3
+
+    def test_add_gsplats_from_data(self, tmp_path) -> None:
+        """Test adding gsplats from GSplatData."""
+        from luxar.gsplats.fit_result import GSplatData
+
+        # Create a result object
+        centers = np.array([[0, 0], [1, 1]], dtype=np.float32)

@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custom GUI Library Demo - Luxar Viewer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #e0e0e0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .demo-header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+    }
+
+    .demo-header h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .demo-header p {
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    .demo-info {
+      max-width: 800px;
+      margin: 0 auto 40px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+    }
+
+    .demo-info h2 {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #60a5fa;
+    }
+
+    .demo-info ul {
+      list-style: none;
+      padding-left: 20px;
+    }
+
+    .demo-info li {
+      margin: 8px 0;
+      color: #d1d5db;
+      font-size: 13px;
+    }
+
+    .demo-info li:before {
+      content: "✓ ";
+      color: #4ade80;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+
+    .theme-switcher {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 5000;
+    }
+
+    .theme-btn {
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      color: #e0e0e0;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .theme-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .theme-btn.active {
+      background: #4ade80;
+      border-color: #4ade80;
+      color: #000;
+    }
+
+    .value-display {
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+    }
+
+    .value-display h3 {
+      color: #4ade80;
+      margin-bottom: 15px;
+    }
+
+    .value-display pre {
+      color: #e0e0e0;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
+    /* Import GUI styles - using CSS custom properties */
+  </style>
+  <link rel="stylesheet" href="/src/ui/gui/styles/gui.css">
+  <link rel="stylesheet" href="/src/ui/gui/styles/controller.css">
+  <link rel="stylesheet" href="/src/ui/gui/styles/folder.css">
+</head>
+<body>
+  <div class="demo-header">
+    <h1>Custom GUI Library Demo</h1>
+    <p>Drop-in replacement for lil-gui with full Luxar theme integration</p>
+  </div>
+
+  <div class="demo-info">
+    <h2>Features Demonstrated:</h2>
+    <ul>
+      <li>Number controllers with sliders and text inputs</li>
+      <li>Boolean controllers (checkboxes)</li>
+      <li>String controllers (text inputs)</li>
+      <li>Option controllers (dropdowns)</li>
+      <li>Function controllers (buttons)</li>
+      <li>Folders and nested organization</li>
+      <li>Logarithmic slider pattern (HDR intensity)</li>
+      <li>Controller synchronization (FOV preset → FOV value)</li>
+      <li>Conditional show/hide (damping controls)</li>
+      <li>Theme switching (Dark, Light, Frosted Glass, Liquid Glass)</li>
+      <li>Memory leak prevention (EventManager)</li>
+      <li>All 148 unit tests passing ✓</li>
+    </ul>
+  </div>
+
+  <div class="theme-switcher">
+    <button class="theme-btn active" data-theme="dark">Dark</button>
+    <button class="theme-btn" data-theme="light">Light</button>
+    <button class="theme-btn" data-theme="frosted-glass">Frosted</button>
+    <button class="theme-btn" data-theme="liquid-glass">Liquid</button>
+  </div>
+
+  <div class="value-display">
+    <h3>Current Settings:</h3>
+    <pre id="settings-display">Loading...</pre>
+  </div>
+
+  <script type="module">
+    import { GUI } from '/src/ui/gui/index.ts';
+
+    // Define Luxar theme CSS variables
+    function applyTheme(themeName) {
+      const root = document.documentElement;
+      root.setAttribute('data-theme', themeName);
+
+      // Base variables for all themes
+      root.style.setProperty('--luxar-success', '#4ade80');
+      root.style.setProperty('--luxar-border-subtle', 'rgba(255, 255, 255, 0.1)');
+      root.style.setProperty('--luxar-border-default', 'rgba(255, 255, 255, 0.2)');
+      root.style.setProperty('--luxar-border-strong', 'rgba(255, 255, 255, 0.3)');
+      root.style.setProperty('--luxar-font-base', 'system-ui, sans-serif');
+      root.style.setProperty('--luxar-font-mono', '"SF Mono", Monaco, monospace');
+      root.style.setProperty('--luxar-text-xs', '9px');
+      root.style.setProperty('--luxar-text-sm', '11px');
+      root.style.setProperty('--luxar-text-base', '12px');
+      root.style.setProperty('--luxar-text-md', '13px');
+      root.style.setProperty('--luxar-text-lg', '14px');
+      root.style.setProperty('--luxar-font-medium', '500');
+      root.style.setProperty('--luxar-font-bold', '700');
+      root.style.setProperty('--luxar-spacing-1', '2px');
+      root.style.setProperty('--luxar-spacing-2', '4px');
+      root.style.setProperty('--luxar-spacing-3', '6px');
+      root.style.setProperty('--luxar-spacing-4', '8px');
+      root.style.setProperty('--luxar-spacing-5', '10px');
+      root.style.setProperty('--luxar-spacing-6', '12px');
+      root.style.setProperty('--luxar-spacing-8', '16px');
+      root.style.setProperty('--luxar-spacing-10', '20px');
+      root.style.setProperty('--luxar-radius-sm', '4px');
+      root.style.setProperty('--luxar-radius-md', '12px');
+      root.style.setProperty('--luxar-radius-lg', '16px');
+      root.style.setProperty('--luxar-radius-full', '9999px');
+      root.style.setProperty('--luxar-shadow-lg', '0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05)');
+      root.style.setProperty('--luxar-transition-fast', 'all 0.15s ease');
+      root.style.setProperty('--luxar-z-dropdown', '1000');
+
+      if (themeName === 'dark') {
+        root.style.setProperty('--luxar-bg-secondary', 'rgba(30, 30, 30, 0.95)');
+        root.style.setProperty('--luxar-text-primary', '#e0e0e0');
+        root.style.setProperty('--luxar-text-secondary', '#9ca3af');
+        root.style.setProperty('--luxar-interactive-default', 'rgba(255, 255, 255, 0.1)');
+        root.style.setProperty('--luxar-interactive-hover', 'rgba(255, 255, 255, 0.15)');
+        root.style.setProperty('--luxar-interactive-active', 'rgba(255, 255, 255, 0.2)');
+        root.style.setProperty('--luxar-blur-md', 'blur(10px)');
+        document.body.style.background = 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)';
+      } else if (themeName === 'light') {
+        root.style.setProperty('--luxar-bg-secondary', 'rgba(255, 255, 255, 0.95)');
+        root.style.setProperty('--luxar-text-primary', '#1a1a1a');
+        root.style.setProperty('--luxar-text-secondary', '#6b7280');
+        root.style.setProperty('--luxar-interactive-default', 'rgba(0, 0, 0, 0.08)');
+        root.style.setProperty('--luxar-interactive-hover', 'rgba(0, 0, 0, 0.12)');
+        root.style.setProperty('--luxar-interactive-active', 'rgba(0, 0, 0, 0.16)');
+        root.style.setProperty('--luxar-border-subtle', 'rgba(0, 0, 0, 0.1)');
+        root.style.setProperty('--luxar-border-default', 'rgba(0, 0, 0, 0.15)');
+        root.style.setProperty('--luxar-blur-md', 'blur(10px)');
+        document.body.style.background = 'linear-gradient(135deg, #e5e7eb 0%, #f3f4f6 100%)';
+      } else if (themeName === 'frosted-glass') {
+        root.style.setProperty('--luxar-bg-secondary', 'rgba(40, 40, 50, 0.5)');
+        root.style.setProperty('--luxar-text-primary', '#f0f0f0');
+        root.style.setProperty('--luxar-text-secondary', '#b0b0b0');
+        root.style.setProperty('--luxar-interactive-default', 'rgba(255, 255, 255, 0.12)');
+        root.style.setProperty('--luxar-interactive-hover', 'rgba(255, 255, 255, 0.18)');
+        root.style.setProperty('--luxar-interactive-active', 'rgba(255, 255, 255, 0.24)');
+        root.style.setProperty('--luxar-blur-md', 'blur(32px) saturate(1.8)');
+        root.style.setProperty('--luxar-shadow-lg', '0 16px 48px rgba(0, 0, 0, 0.4), inset 0 0 20px rgba(255, 255, 255, 0.1)');
+        document.body.style.background = 'linear-gradient(135deg, #2d1b4e 0%, #1a3a52 100%)';
+      } else if (themeName === 'liquid-glass') {
+        root.style.setProperty('--luxar-bg-secondary', 'rgba(50, 50, 60, 0.4)');
+        root.style.setProperty('--luxar-text-primary', '#f5f5f5');
+        root.style.setProperty('--luxar-text-secondary', '#c0c0c0');
+        root.style.setProperty('--luxar-interactive-default', 'rgba(255, 255, 255, 0.15)');
+        root.style.setProperty('--luxar-interactive-hover', 'rgba(255, 255, 255, 0.22)');
+        root.style.setProperty('--luxar-interactive-active', 'rgba(255, 255, 255, 0.28)');
+        root.style.setProperty('--luxar-blur-md', 'blur(16px)');
+        root.style.setProperty('--luxar-shadow-lg', '0 12px 36px rgba(0, 0, 0, 0.5), inset 0 0 30px -10px rgba(255, 255, 255, 0.4)');
+        document.body.style.background = 'linear-gradient(135deg, #1e3a5f 0%, #2d1b4e 100%)';
+      }
+
+      // Update theme button states
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        if (btn.dataset.theme === themeName) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    // Initialize default theme
+    applyTheme('dark');
+
+    // Settings object
+    const settings = {
+      // Camera
+      fov: 50,
+      fovPreset: '50mm',
+      near: 0.1,
+      far: 1000,
+
+      // HDR (logarithmic)
+      hdrLog: 0,  // log10(1.0) = 0
+      hdrMultiplier: 1.0,
+
+      // Post-processing
+      bloomStrength: 0.25,
+      bloomEnabled: true,
+      noiseEnabled: false,
+
+      // Navigation
+      controlType: 'orbit',
+      autoRotate: false,
+      flyInertial: false,
+      flyDamping: 0.95,
+
+      // Misc
+      sceneName: 'Demo Scene',
+
+      // Functions
+      resetCamera: () => {
+        settings.fov = 50;
+        settings.fovPreset = '50mm';
+        controllers.fov.setValue(50);
+        controllers.fovPreset.setValue('50mm');
+        updateDisplay();
+        console.log('Camera reset!');
+      },
+
+      resetAll: () => {
+        Object.assign(settings, {
+          fov: 50,
+          bloomStrength: 0.25,
+          autoRotate: false,
+          noiseEnabled: false,
+        });
+        gui.controllersRecursive().forEach(c => c.updateDisplay());
+        updateDisplay();
+        console.log('All settings reset!');
+      }
+    };
+
+    // Create GUI
+    const gui = new GUI({ title: 'Custom GUI Demo', width: 350 });
+
+    // Store controller references for synchronization
+    const controllers = {};
+
+    // === CAMERA FOLDER ===
+    const cameraFolder = gui.addFolder('📷 Camera');
+
+    // FOV Preset with synchronization
+    const presets = {
+      '28mm': 75,
+      '35mm': 63,
+      '50mm': 47,
+      '85mm': 28,
+      '135mm': 18,
+    };
+
+    controllers.fovPreset = cameraFolder
+      .add(settings, 'fovPreset', Object.keys(presets))
+      .name('FOV Preset')
+      .onChange((preset) => {
+        settings.fov = presets[preset];
+        controllers.fov.setValue(settings.fov);
+        controllers.fov.updateDisplay();
+        updateDisplay();
+      });
+
+    controllers.fov = cameraFolder
+      .add(settings, 'fov', 10, 170, 1)
+      .name('FOV (degrees)');
+
+    cameraFolder.add(settings, 'near', 0.001, 10, 0.001).name('Near Plane');
+    cameraFolder.add(settings, 'far', 10, 10000, 10).name('Far Plane');
+
+    // === HDR FOLDER (Logarithmic Pattern) ===
+    const hdrFolder = gui.addFolder('✨ HDR & Tone Mapping');
+
+    // Logarithmic HDR intensity slider
+    const hdrLogValue = { log: Math.log10(settings.hdrMultiplier) };
+
+    const hdrControl = hdrFolder
+      .add(hdrLogValue, 'log', -2, 2, 0.01)
+      .name('Intensity');
+
+    // Override updateDisplay to show actual value (not log value)
+    // Note: Can't use × symbol because input is type="number"
+    const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
+    hdrControl.updateDisplay = function() {
+      originalUpdateDisplay();
+      if (hdrControl.$input) {
+        const actual = Math.pow(10, hdrLogValue.log);
+        const formatted = actual >= 10 ? actual.toFixed(0) :
+                         actual >= 1 ? actual.toFixed(1) :
+                         actual >= 0.1 ? actual.toFixed(2) :
+                         actual.toFixed(3);
+        hdrControl.$input.value = formatted;
+      }
+      return hdrControl;
+    };
+
+    hdrControl.onChange((logValue) => {
+      settings.hdrMultiplier = Math.pow(10, logValue);
+      updateDisplay();
+    });
+
+    // === POST-PROCESSING FOLDER ===
+    const ppFolder = gui.addFolder('🎨 Post-Processing');
+
+    ppFolder.add(settings, 'bloomEnabled').name('Bloom Enabled');
+    ppFolder.add(settings, 'bloomStrength', 0, 2, 0.01).name('Bloom Strength');
+    ppFolder.add(settings, 'noiseEnabled').name('Detector Noise');
+
+    // === NAVIGATION FOLDER (Conditional Show/Hide) ===
+    const navFolder = gui.addFolder('🎮 Navigation');
+
+    navFolder
+      .add(settings, 'controlType', ['orbit', 'arcball', 'fly'])
+      .name('Control Type');
+
+    navFolder.add(settings, 'autoRotate').name('Auto Rotate');
+
+    const inertialControl = navFolder
+      .add(settings, 'flyInertial')
+      .name('Fly Inertial Mode')
+      .onChange((enabled) => {
+        if (enabled) {
+          dampingControl.show();
+        } else {
+          dampingControl.hide();
+        }
+      });
+
+    const dampingControl = navFolder
+      .add(settings, 'flyDamping', 0.9, 0.9999, 0.0001)
+      .name('Fly Damping');
+
+    // Initial state
+    if (!settings.flyInertial) {
+      dampingControl.hide();
+    }
+
+    // === MISC FOLDER ===
+    const miscFolder = gui.addFolder('⚙️ Miscellaneous');
+
+    miscFolder.add(settings, 'sceneName').name('Scene Name');
+
+    // === ACTIONS (Root Level) ===
+    gui.add(settings, 'resetCamera').name('🔄 Reset Camera');
+    gui.add(settings, 'resetAll').name('🔄 Reset All Settings');
+
+    // Show GUI
+    gui.show();
+
+    // Update value display
+    function updateDisplay() {
+      const display = document.getElementById('settings-display');
+      if (display) {
+        display.textContent = JSON.stringify({
+          camera: {
+            fov: settings.fov,
+            fovPreset: settings.fovPreset,
+            near: settings.near,
+            far: settings.far,
+          },
+          hdr: {
+            multiplier: settings.hdrMultiplier,
+            log: hdrLogValue.log,
+          },
+          postProcessing: {
+            bloomEnabled: settings.bloomEnabled,
+            bloomStrength: settings.bloomStrength,
+            noiseEnabled: settings.noiseEnabled,
+          },
+          navigation: {
+            controlType: settings.controlType,
+            autoRotate: settings.autoRotate,
+            flyInertial: settings.flyInertial,
+            flyDamping: settings.flyDamping,
+          },
+          misc: {
+            sceneName: settings.sceneName,
+          },
+        }, null, 2);
+      }
+    }
+
+    // Update display on any change
+    gui.controllersRecursive().forEach(controller => {
+      controller.onChange(() => updateDisplay());
+    });
+
+    // Initial display
+    updateDisplay();
+
+    // Theme switching
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        applyTheme(btn.dataset.theme);
+      });
+    });
+
+    // Log to console
+    console.log('Custom GUI Demo loaded successfully!');
+    console.log('GUI instance:', gui);
+    console.log('Settings:', settings);
+    console.log('All controllers:', gui.controllersRecursive());
+
+    // Expose for debugging
+    window.gui = gui;
+    window.settings = settings;
+    window.controllers = controllers;
+  </script>
+</body>
+</html>

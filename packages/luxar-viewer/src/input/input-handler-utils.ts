@@ -675,13 +675,13 @@ export function isNavigationKey(event: KeyboardEvent): boolean {
  *
  * @example
  * ```typescript
- * // Clamping at minimum
+ * // Clamping at minimum (fovMin from config)
  * const minFov = calculateFovChange(15, -100, 0.1);
  * console.log(minFov); // 10° (clamped to minimum)
  *
- * // Clamping at maximum
- * const maxFov = calculateFovChange(110, 200, 0.1);
- * console.log(maxFov); // 120° (clamped to maximum)
+ * // Clamping at maximum (fovMax from config = 170°)
+ * const maxFov = calculateFovChange(160, 200, 0.1);
+ * console.log(maxFov); // 170° (clamped to maximum)
  * ```
  */
 export function calculateFovChange(
@@ -692,8 +692,8 @@ export function calculateFovChange(
   const change = delta * sensitivity;
   const newFov = currentFov + change;
 
-  // Clamp to reasonable range
-  return Math.max(10, Math.min(120, newFov));
+  // Clamp to config-defined FOV range
+  return Math.max(config.camera.fovMin, Math.min(config.camera.fovMax, newFov));
 }
 
 /**

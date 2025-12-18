@@ -4,6 +4,9 @@
  * This module provides template functions for generating HTML content
  * in the Data Loading Monitor. It extracts the HTML generation logic
  * from the main monitor class to improve code organization and maintainability.
+ *
+ * STYLING: All styles are now in CSS classes (data-loading-monitor.css).
+ * Dynamic colors use CSS modifier classes (luxar-color--success, etc.)
  */
 
 import type {
@@ -14,27 +17,35 @@ import type {
   SceneGraphNode,
   SceneGraphState,
 } from './data-monitor-types';
-import { config } from '../config';
 
-// Extract MonitorColors for dynamic color values (runtime-determined)
-const MonitorColors = config.ui.styles.colors;
+/**
+ * Semantic color names mapped to CSS class modifiers.
+ * These are used with the luxar-color--{name} classes.
+ */
+type SemanticColor = 'success' | 'warning' | 'error' | 'info' | 'muted' | 'dimmed' | 'primary';
+
+/**
+ * Get CSS class for a semantic color.
+ */
+function getColorClass(color: SemanticColor): string {
+  return `luxar-color--${color}`;
+}
 
 /**
  * Template for metric card component
+ * @param colorClass - CSS class for color (e.g., 'luxar-color--success')
  */
 export function renderMetricCard(
   title: string,
   value: string | number,
   subtitle?: string,
-  color: string = '',
+  colorClass: string = '',
   size: 'small' | 'medium' | 'large' = 'medium'
 ): string {
-  const colorStyle = color ? `style="color: ${color}"` : '';
-
   return `
     <div class="luxar-metric-card luxar-metric-card--${size}">
       ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
-      <div class="luxar-metric-card__value luxar-metric-card__value--${size}" ${colorStyle}>
+      <div class="luxar-metric-card__value luxar-metric-card__value--${size} ${colorClass}">
         ${value}
       </div>
       ${subtitle ? `<div class="luxar-metric-card__subtitle">${subtitle}</div>` : ''}
@@ -44,21 +55,24 @@ export function renderMetricCard(
 
 /**
  * Template for progress bar component
+ * Note: Uses CSS custom properties for dynamic sizing
+ * @param colorClass - CSS color class (e.g., 'luxar-color--success')
  */
 export function renderProgressBar(
   percent: number,
-  color?: string,
+  colorClass?: string,
   label?: string,
   height: number = 4
 ): string {
-  const barColor = color || getProgressColor(percent);
-  const trackStyle = `style="height: ${height}px; border-radius: ${height / 2}px;"`;
-  const fillStyle = `style="background: ${barColor}; width: ${Math.min(100, percent)}%; border-radius: ${height / 2}px;"`;
+  const barColorClass = colorClass || getProgressColorClass(percent);
+  // Using CSS custom properties for dynamic values that can't be pure CSS
+  const trackStyle = `style="--bar-height: ${height}px; height: var(--bar-height); border-radius: calc(var(--bar-height) / 2);"`;
+  const fillStyle = `style="width: ${Math.min(100, percent)}%; border-radius: calc(var(--bar-height, 4px) / 2);"`;
 
   return `
     <div class="luxar-progress-bar__container">
       <div class="luxar-progress-bar__track" ${trackStyle}>
-        <div class="luxar-progress-bar__fill" ${fillStyle}></div>
+        <div class="luxar-progress-bar__fill ${barColorClass}" ${fillStyle}></div>
       </div>
       ${label ? `<div class="luxar-progress-bar__label">${label}</div>` : ''}
     </div>
@@ -67,27 +81,27 @@ export function renderProgressBar(
 
 /**
  * Template for stat grid component
+ * @param stats - Array of stats with colorClass for CSS class-based coloring
  */
 export function renderStatGrid(
-  stats: Array<{ label: string; value: string | number; color?: string }>
+  stats: Array<{ label: string; value: string | number; colorClass?: string }>
 ): string {
   const cols = Math.min(3, stats.length);
 
   return `
     <div class="luxar-stat-grid luxar-stat-grid--cols-${cols}">
       ${stats
-        .map((stat) => {
-          const colorStyle = stat.color ? `style="color: ${stat.color}"` : '';
-          return `
+    .map((stat) => {
+      return `
         <div class="luxar-stat-grid__item">
-          <div class="luxar-stat-grid__value" ${colorStyle}>
+          <div class="luxar-stat-grid__value ${stat.colorClass || ''}">
             ${stat.value}
           </div>
           <div class="luxar-stat-grid__label">${stat.label}</div>
         </div>
       `;
-        })
-        .join('')}
+    })
+    .join('')}
     </div>
   `;
 }
@@ -96,12 +110,12 @@ export function renderStatGrid(
  * Template for loader list item
  */
 export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
-  const statusColor = metrics.queries > 0 ? MonitorColors.success : MonitorColors.muted;
+  const statusColorClass = metrics.queries > 0 ? getColorClass('success') : getColorClass('muted');
 
   return `
     <div class="luxar-loader-item">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path" style="color: ${statusColor}">${path}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}">${path}</span>
         <span class="luxar-loader-item__status">${metrics.type}</span>
       </div>
       <div class="luxar-loader-item__metrics">
@@ -129,7 +143,7 @@ export function renderSecondaryMetrics(
         <div class="luxar-secondary-metrics__value">
           ${formatBytes(memory.used)}
         </div>
-        ${renderProgressBar(memoryPercent, getCacheMemoryColor(memoryPercent), '', 2)}
+        ${renderProgressBar(memoryPercent, getCacheMemoryColorClass(memoryPercent), '', 2)}
       </div>
 
       <div class="luxar-secondary-metrics__item">
@@ -181,19 +195,19 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-2">
         ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-          MonitorColors.success,
-          'medium'
-        )}
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+    getColorClass('success'),
+    'medium'
+  )}
         ${renderMetricCard(
-          'VISIBLE LINES',
-          formatNumber(stats.visibleSegments),
-          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-          MonitorColors.warning,
-          'medium'
-        )}
+    'VISIBLE LINES',
+    formatNumber(stats.visibleSegments),
+    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+    getColorClass('warning'),
+    'medium'
+  )}
       </div>
     `;
   } else if (hasPoints) {
@@ -201,12 +215,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-          MonitorColors.success,
-          'large'
-        )}
+    'VISIBLE POINTS',
+    formatNumber(stats.visiblePoints),
+    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+    getColorClass('success'),
+    'large'
+  )}
       </div>
     `;
   } else if (hasLines) {
@@ -214,19 +228,19 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-          'VISIBLE LINES',
-          formatNumber(stats.visibleSegments),
-          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-          MonitorColors.warning,
-          'large'
-        )}
+    'VISIBLE LINES',
+    formatNumber(stats.visibleSegments),
+    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+    getColorClass('warning'),
+    'large'
+  )}
       </div>
     `;
   } else {
     // No data yet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
-        ${renderMetricCard('LOADING', '...', 'Waiting for data', MonitorColors.muted, 'large')}
+        ${renderMetricCard('LOADING', '...', 'Waiting for data', getColorClass('muted'), 'large')}
       </div>
     `;
   }
@@ -238,10 +252,10 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-        { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
-        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-        cacheMetrics.network
-      )}
+    { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
+    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+    cacheMetrics.network
+  )}
 
       <!-- Scene graph or loader list (injected by monitor) -->
       <div class="scene-or-loaders">
@@ -253,6 +267,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
 /**
  * Reusable cache section component (reduces duplication between L1/L2)
+ * @param metrics - Each metric can have a colorClass for CSS class-based coloring
  */
 function renderCacheSection(
   title: string,
@@ -264,7 +279,7 @@ function renderCacheSection(
     value: string;
     subtitle: string;
     tooltip: string;
-    color?: string;
+    colorClass?: string;
   }>
 ): string {
   const cols = metrics.length === 2 ? 'cols-2' : 'cols-3';
@@ -277,16 +292,15 @@ function renderCacheSection(
       </div>
       <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
         ${metrics
-          .map((metric) => {
-            const colorStyle = metric.color ? ` style="color: ${metric.color}"` : '';
-            const sizeClass =
+    .map((metric) => {
+      const sizeClass =
               metrics.length === 2
                 ? 'luxar-metric-card__value--medium'
                 : 'luxar-metric-card__value--small';
-            return `
+      return `
           <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
             <div class="luxar-metric-card__title">${metric.label}</div>
-            <div class="luxar-metric-card__value ${sizeClass}"${colorStyle}>
+            <div class="luxar-metric-card__value ${sizeClass} ${metric.colorClass || ''}">
               ${metric.value}
             </div>
             <div class="luxar-metric-card__subtitle">
@@ -294,8 +308,8 @@ function renderCacheSection(
             </div>
           </div>
         `;
-          })
-          .join('')}
+    })
+    .join('')}
       </div>
     </div>
   `;
@@ -309,10 +323,10 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   if (cacheMetrics.enabled === false) {
     return `
       <div class="cache-content">
-        <div class="luxar-data-monitor__empty">
-          <div style="font-size: 32px; margin-bottom: 10px;">🚫</div>
-          <div>Caching is disabled</div>
-          <div class="luxar-metric-card__subtitle" style="margin-top: 8px;">
+        <div class="luxar-cache-disabled">
+          <div class="luxar-cache-disabled__icon">🚫</div>
+          <div class="luxar-cache-disabled__message">Caching is disabled</div>
+          <div class="luxar-cache-disabled__hint">
             Remove ?no-cache from URL to enable
           </div>
         </div>
@@ -327,23 +341,23 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
     // Fallback to basic view if no cache stats provider connected
     return `
       <div class="cache-content">
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
+        <div class="luxar-grid-2">
           ${renderMetricCard(
-            'CACHE MEMORY',
-            formatBytes(cacheMetrics.totalCacheMemory),
-            `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-            MonitorColors.success,
-            'medium'
-          )}
+    'CACHE MEMORY',
+    formatBytes(cacheMetrics.totalCacheMemory),
+    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+    getColorClass('success'),
+    'medium'
+  )}
           ${renderMetricCard(
-            'CACHED ENTRIES',
-            cacheMetrics.totalEntries.toString(),
-            '',
-            MonitorColors.primaryText,
-            'medium'
-          )}
+    'CACHED ENTRIES',
+    cacheMetrics.totalEntries.toString(),
+    '',
+    getColorClass('primary'),
+    'medium'
+  )}
         </div>
-        <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 4px; color: ${MonitorColors.muted}; font-size: 11px;">
+        <div class="luxar-cache-loading">
           Loading cache statistics...
         </div>
       </div>
@@ -354,73 +368,77 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   const l1Total = cacheMetrics.l1!.hits + cacheMetrics.l1!.misses;
   const l1HitRate = l1Total > 0 ? (cacheMetrics.l1!.hits / l1Total) * 100 : 0;
 
+  // Determine hit rate color class
+  const hitRateColorClass =
+    l1HitRate > 80
+      ? getColorClass('success')
+      : l1HitRate > 50
+        ? getColorClass('warning')
+        : getColorClass('error');
+
   return `
     <div class="cache-content">
       <!-- L1 Memory Cache Section -->
       ${renderCacheSection('L1 MEMORY CACHE', undefined, 'clearL1', 'Clear L1 cache', [
-        {
-          label: 'SIZE',
-          value: formatBytes(cacheMetrics.l1!.size),
-          subtitle: `${cacheMetrics.l1!.count} entries`,
-          tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
-          color: MonitorColors.success,
-        },
-        {
-          label: 'HIT RATE',
-          value: `${l1HitRate.toFixed(1)}%`,
-          subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
-          tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
-          color:
-            l1HitRate > 80
-              ? MonitorColors.success
-              : l1HitRate > 50
-                ? MonitorColors.warning
-                : MonitorColors.error,
-        },
-        {
-          label: 'EVICTIONS',
-          value: formatNumber(cacheMetrics.l1!.evictions),
-          subtitle: 'LRU removed',
-          tooltip:
+    {
+      label: 'SIZE',
+      value: formatBytes(cacheMetrics.l1!.size),
+      subtitle: `${cacheMetrics.l1!.count} entries`,
+      tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+      colorClass: getColorClass('success'),
+    },
+    {
+      label: 'HIT RATE',
+      value: `${l1HitRate.toFixed(1)}%`,
+      subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
+      tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+      colorClass: hitRateColorClass,
+    },
+    {
+      label: 'EVICTIONS',
+      value: formatNumber(cacheMetrics.l1!.evictions),
+      subtitle: 'LRU removed',
+      tooltip:
             'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
-          color: cacheMetrics.l1!.evictions > 0 ? MonitorColors.warning : MonitorColors.dimmed,
-        },
-      ])}
+      colorClass:
+            cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
+    },
+  ])}
 
       <!-- L2 OPFS Cache Section -->
       ${renderCacheSection(
-        'L2 OPFS CACHE',
-        'Origin Private File System: persistent browser storage for cached data',
-        'clearL2',
-        'Clear L2 persistent cache (data will need to be re-downloaded)',
-        [
-          {
-            label: 'SIZE',
-            value: formatBytes(cacheMetrics.l2!.size),
-            subtitle: `${cacheMetrics.l2!.count} entries`,
-            tooltip:
-              "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
-            color: MonitorColors.info,
-          },
-          {
-            label: 'I/O',
-            value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-            subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
-            tooltip: 'Disk I/O operations: reads from cache, writes to cache',
-          },
-        ]
-      )}
+    'L2 OPFS CACHE',
+    'Origin Private File System: persistent browser storage for cached data',
+    'clearL2',
+    'Clear L2 persistent cache (data will need to be re-downloaded)',
+    [
+      {
+        label: 'SIZE',
+        value: formatBytes(cacheMetrics.l2!.size),
+        subtitle: `${cacheMetrics.l2!.count} entries`,
+        tooltip:
+              'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
+        colorClass: getColorClass('info'),
+      },
+      {
+        label: 'I/O',
+        value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
+        subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+        tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+      },
+    ]
+  )}
 
       <!-- Combined Stats + Clear All -->
-      <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: 6px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-size: 11px; color: ${MonitorColors.muted}; font-weight: 600;" title="Combined L1 + L2 cache usage">TOTAL</span>
+      <div class="luxar-cache-total">
+        <div class="luxar-cache-total__header">
+          <span class="luxar-cache-total__label" title="Combined L1 + L2 cache usage">TOTAL</span>
           <button data-action="clearAll" class="luxar-cache-section__clear-btn" title="Clear both L1 and L2 caches (all cached data will be removed)">Clear All</button>
         </div>
-        <div style="font-size: 14px; font-weight: bold; color: ${MonitorColors.primaryText}; margin-bottom: 6px;" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
+        <div class="luxar-cache-total__value" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
         </div>
-        ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColor(cacheMetrics.memoryPercent), `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit`, 6)}
+        ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit`, 6)}
       </div>
     </div>
   `;
@@ -446,14 +464,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-        rec.suggestion
-          ? `
-        <div class="luxar-recommendation__message" style="margin-top: 4px;">
+  rec.suggestion
+    ? `
+        <div class="luxar-recommendation__message luxar-suggestion">
           💡 ${rec.suggestion}
         </div>
       `
-          : ''
-      }
+    : ''
+}
     </div>
   `;
 }
@@ -464,7 +482,7 @@ export function renderRecommendation(rec: Recommendation): string {
 export function renderInsightsContent(recommendations: Recommendation[]): string {
   if (recommendations.length === 0) {
     return `
-      <div class="luxar-data-monitor__empty" style="opacity: 0.5;">
+      <div class="luxar-data-monitor__empty luxar-data-monitor__empty--faded">
         ✅ No issues detected
       </div>
     `;
@@ -493,16 +511,22 @@ function formatBytes(bytes: number): string {
   return bytes.toFixed(0) + 'B';
 }
 
-function getCacheMemoryColor(percent: number): string {
-  if (percent <= 60) return MonitorColors.success;
-  if (percent <= 80) return MonitorColors.warning;
-  return MonitorColors.error;
+/**
+ * Get CSS color class for cache memory usage percentage
+ */
+function getCacheMemoryColorClass(percent: number): string {
+  if (percent <= 60) return getColorClass('success');
+  if (percent <= 80) return getColorClass('warning');
+  return getColorClass('error');
 }
 
-function getProgressColor(percent: number): string {
-  if (percent <= 60) return MonitorColors.success;
-  if (percent <= 80) return MonitorColors.warning;
-  return MonitorColors.error;
+/**
+ * Get CSS color class for progress percentage
+ */
+function getProgressColorClass(percent: number): string {
+  if (percent <= 60) return getColorClass('success');
+  if (percent <= 80) return getColorClass('warning');
+  return getColorClass('error');
 }
 
 // Scene graph tree rendering
@@ -522,17 +546,17 @@ function getNodeTypeIcon(type: string): string {
 }
 
 /**
- * Get node type color
+ * Get CSS class for node type color
  */
-function getNodeTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    scene: MonitorColors.info,
-    group: MonitorColors.muted,
-    points: MonitorColors.success,
-    lines: MonitorColors.warning,
-    mesh: '#9b59b6',
+function getNodeTypeColorClass(type: string): string {
+  const typeClasses: Record<string, string> = {
+    scene: 'luxar-scene-graph__name--scene',
+    group: 'luxar-scene-graph__name--group',
+    points: 'luxar-scene-graph__name--points',
+    lines: 'luxar-scene-graph__name--lines',
+    mesh: 'luxar-scene-graph__name--mesh',
   };
-  return colors[type] || MonitorColors.primaryText;
+  return typeClasses[type] || '';
 }
 
 /**
@@ -545,7 +569,6 @@ function renderSceneGraphNode(
 ): string {
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedNodes.has(node.path);
-  const indent = depth * 16;
 
   // Node stats and tooltips
   let statsText = '';
@@ -579,43 +602,48 @@ function renderSceneGraphNode(
 
   // Expand/collapse toggle
   const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
-  const toggleStyle = hasChildren ? 'cursor: pointer; user-select: none;' : 'opacity: 0.3;';
+  const toggleClass = hasChildren
+    ? 'luxar-scene-graph__toggle--clickable'
+    : 'luxar-scene-graph__toggle--disabled';
+
+  // Indent using CSS custom property for dynamic depth
+  const indentStyle = `style="--node-depth: ${depth}; padding-left: calc(var(--node-depth) * 16px);"`;
 
   return `
-    <div style="padding: 2px 0;">
-      <div style="display: flex; align-items: center; padding-left: ${indent}px;" title="${nodeTooltip}">
+    <div class="luxar-scene-graph__node">
+      <div class="luxar-scene-graph__node-row" ${indentStyle} title="${nodeTooltip}">
         <!-- Toggle -->
         <span
+          class="luxar-scene-graph__toggle ${toggleClass}"
           ${hasChildren ? `data-action="toggleNode" data-node-path="${node.path}"` : ''}
-          style="width: 16px; font-size: 9px; color: ${MonitorColors.muted}; ${toggleStyle}"
           ${hasChildren ? `title="${isExpanded ? 'Collapse' : 'Expand'} ${node.name}"` : ''}
         >${toggleIcon}</span>
 
         <!-- Icon & Name -->
-        <span style="font-size: 11px; margin-right: 4px;">${getNodeTypeIcon(node.type)}</span>
-        <span style="font-size: 11px; color: ${getNodeTypeColor(node.type)}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+        <span class="luxar-scene-graph__icon">${getNodeTypeIcon(node.type)}</span>
+        <span class="luxar-scene-graph__name ${getNodeTypeColorClass(node.type)}">
           ${node.name}
         </span>
 
         <!-- Stats badge -->
         ${
-          statsText
-            ? `<span style="font-size: 9px; color: ${MonitorColors.primaryText}; background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 8px; margin-left: 4px;" title="${statsTooltip}">${statsText}</span>`
-            : ''
-        }
+  statsText
+    ? `<span class="luxar-scene-graph__badge" title="${statsTooltip}">${statsText}</span>`
+    : ''
+}
 
         <!-- Loading indicator -->
-        ${node.isLoading ? '<span style="font-size: 9px; margin-left: 4px;" title="Loading data...">⏳</span>' : ''}
+        ${node.isLoading ? '<span class="luxar-scene-graph__loading" title="Loading data...">⏳</span>' : ''}
       </div>
 
       <!-- Children (if expanded) -->
       ${
-        isExpanded && hasChildren
-          ? node.children
-              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
-              .join('')
-          : ''
-      }
+  isExpanded && hasChildren
+    ? node.children
+      .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+      .join('')
+    : ''
+}
     </div>
   `;
 }
@@ -626,7 +654,7 @@ function renderSceneGraphNode(
 export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<string>): string {
   if (!state.root) {
     return `
-      <div style="color: ${MonitorColors.dimmed}; font-size: 10px; padding: 8px;">
+      <div class="luxar-scene-graph__empty">
         No scene loaded
       </div>
     `;
@@ -641,16 +669,12 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
     .join(', ');
 
   return `
-    <div class="scene-graph-tree">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-        <h4 style="margin: 0; font-size: 11px; color: ${MonitorColors.muted};">SCENE GRAPH</h4>
-        ${
-          headerStats
-            ? `<span style="font-size: 9px; color: ${MonitorColors.dimmed};">${headerStats}</span>`
-            : ''
-        }
+    <div class="luxar-scene-graph">
+      <div class="luxar-scene-graph__header">
+        <h4 class="luxar-scene-graph__title">SCENE GRAPH</h4>
+        ${headerStats ? `<span class="luxar-scene-graph__stats">${headerStats}</span>` : ''}
       </div>
-      <div style="max-height: 180px; overflow-y: auto; background: ${MonitorColors.sectionBg}; border-radius: 4px; padding: 4px;">
+      <div class="luxar-scene-graph__container">
         ${renderSceneGraphNode(state.root, expandedNodes)}
       </div>
     </div>

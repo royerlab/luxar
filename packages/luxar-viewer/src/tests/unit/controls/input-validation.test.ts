@@ -66,8 +66,8 @@ describe('Input Validation Utilities', () => {
     });
 
     it('should clamp to maximum FOV', () => {
-      const newFov = calculateFovChange(115, 100);
-      expect(newFov).toBe(120); // Clamped to max
+      const newFov = calculateFovChange(165, 100);
+      expect(newFov).toBe(170); // Clamped to max (config.camera.fovMax = 170)
     });
 
     it('should use custom sensitivity', () => {

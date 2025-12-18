@@ -79,12 +79,11 @@ class GaussianSplatModel(nn.Module):
 
         # Auto-detect best performing device: CUDA → CPU
         # Note: MPS is supported but currently slower than CPU for typical workloads
-        if device is not None:
-            device = device
-        elif torch.cuda.is_available():
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
+        if device is None:
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+            else:
+                device = torch.device("cpu")
 
         # ---- Center parameterization: sigmoid ensures centers stay within image bounds ----
         # Transform initial centers to sigmoid parameter space

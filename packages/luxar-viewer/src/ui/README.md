@@ -402,13 +402,14 @@ Luxar viewer now features a **modular theming system** with runtime theme switch
 import { ThemeManager } from '../themes';
 
 // Switch themes
-ThemeManager.getInstance().setTheme('light');
 ThemeManager.getInstance().setTheme('dark');
-ThemeManager.getInstance().setTheme('high-contrast');
+ThemeManager.getInstance().setTheme('light');
+ThemeManager.getInstance().setTheme('frosted-glass');
+ThemeManager.getInstance().setTheme('liquid-glass');
 
 // Get current theme
 const current = ThemeManager.getInstance().getCurrentTheme();
-console.log(current.name); // "Dark Theme"
+console.log(current.name); // "Dark"
 
 // Subscribe to theme changes
 ThemeManager.getInstance().onChange((theme) => {
@@ -425,9 +426,10 @@ ThemeManager.getInstance().onChange((theme) => {
 **Via URL**:
 
 ```
-http://localhost:5173/?theme=light
 http://localhost:5173/?theme=dark
-http://localhost:5173/?theme=high-contrast
+http://localhost:5173/?theme=light
+http://localhost:5173/?theme=frosted-glass
+http://localhost:5173/?theme=liquid-glass
 ```
 
 ### CSS Architecture

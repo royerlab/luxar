@@ -55,7 +55,7 @@ camera: {
   far: 1000,                  // Far clipping plane
   initialPosition: { x: 0, y: 0, z: 8 },
   fovMin: 10,                 // Zoom limits
-  fovMax: 200,
+  fovMax: 170,                // Must be <180°
   fovSensitivity: 0.05        // Shift+wheel zoom sensitivity
 }
 ```

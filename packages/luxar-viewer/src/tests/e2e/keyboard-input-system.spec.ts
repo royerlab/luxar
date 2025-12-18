@@ -244,7 +244,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
     const statesBefore = await page.evaluate(() => {
       return {
         help: !!document.getElementById('help-overlay'),
-        rendering: !!document.querySelector('.lil-gui'),
+        rendering: !!document.querySelector('.luxar-gui'),
         performance: !!document.querySelector('.stats'),
       };
     });
@@ -259,7 +259,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
     const statesAfter = await page.evaluate(() => {
       return {
         help: !!document.getElementById('help-overlay'),
-        rendering: !!document.querySelector('.lil-gui'),
+        rendering: !!document.querySelector('.luxar-gui'),
         performance: !!document.querySelector('.stats'),
       };
     });
@@ -519,7 +519,7 @@ test.describe('Keyboard Input System - Browser Shortcuts Protection', () => {
     const renderingToggled = await page.evaluate(() => {
       // If our binding blocked the shortcut, rendering controls would show
       // If browser shortcut worked, page would reload (rendering controls reset)
-      const panel = document.querySelector('.lil-gui');
+      const panel = document.querySelector('.luxar-gui');
       return panel && (panel as HTMLElement).style.display !== 'none';
     });
 

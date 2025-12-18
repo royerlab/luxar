@@ -65,7 +65,7 @@ Comprehensive review and update of all 27 SPECIFICATIONS.md and README.md files 
 #### 7. Return Type Mismatches
 **Files**: gsplats/fitting/README.md (2 locations)
 
-- Changed from tuple `(params, amps, stats)` to `GaussianSplatResult` dataclass
+- Changed from tuple `(params, amps, stats)` to `GSplatData` dataclass
 - Added detailed field breakdown (centers, cholesky_factors, sharpnesses, amplitudes)
 - **Impact**: Correct expectations for API usage
 

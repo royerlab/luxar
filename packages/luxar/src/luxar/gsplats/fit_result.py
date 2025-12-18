@@ -1,4 +1,4 @@
-"""Gaussian Splat fitting result dataclass."""
+"""Gaussian Splat data container."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class GaussianSplatResult:
-    """Results from Gaussian splat fitting.
+class GSplatData:
+    """Container for Gaussian splat data.
 
     Attributes
     ----------
@@ -29,6 +29,9 @@ class GaussianSplatResult:
         Per-splat sharpness values (s=2.0 is standard Gaussian).
         Lower values (s<2) create heavy-tailed Gaussians.
         Higher values (s>2) create sharper, more compact splats.
+    colors : Optional[np.ndarray], shape (N, 3)
+        Optional RGB colors per splat. Can be uint8 [0, 255] for SDR or
+        float32 for HDR. None if colors are not present.
     stats : Dict[str, Any]
         Optimization statistics including:
         - time_seconds: Total optimization time
@@ -44,7 +47,13 @@ class GaussianSplatResult:
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
     sharpnesses: np.ndarray
-    stats: Dict[str, Any]
+    colors: Optional[np.ndarray] = None
+    stats: Dict[str, Any] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        """Initialize stats to empty dict if None."""
+        if self.stats is None:
+            self.stats = {}
 
     def save(
         self,
@@ -52,6 +61,7 @@ class GaussianSplatResult:
         ordering: Literal["morton", "hilbert", "none"] = "hilbert",
         encoding_mode: Optional["EncodingMode"] = None,
         positive_scalar_encoding: Literal["linear", "log"] = "linear",
+        color_mode: Optional[Literal["sdr", "hdr"]] = None,
         include_fitting_info: bool = True,
         include_provenance: bool = False,
         description: Optional[str] = None,
@@ -63,6 +73,7 @@ class GaussianSplatResult:
             ordering: Spatial ordering method ("morton", "hilbert", or "none")
             encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
             positive_scalar_encoding: Encoding for amplitudes ("linear" or "log")
+            color_mode: Required if colors are float32 ("sdr" or "hdr")
             include_fitting_info: Whether to include fitting statistics
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
@@ -70,6 +81,8 @@ class GaussianSplatResult:
         Example:
             >>> result = fit_gaussian_splats(image, n_iters=1000)
             >>> result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
+            >>> # With colors
+            >>> result_with_colors.save("colored.gsplats.zarr", color_mode="sdr")
         """
         from luxar.encoding import EncodingMode
         from luxar.gsplats.io.save_gsplats import save_gsplats
@@ -113,9 +126,11 @@ class GaussianSplatResult:
             centers=self.centers,
             amplitudes=self.amplitudes,
             cholesky_factors=self.cholesky_factors,
+            colors=self.colors,
             sharpnesses=self.sharpnesses,
             ordering=ordering,
             encoding_mode=encoding_mode,
+            color_mode=color_mode,
             positive_scalar_encoding=positive_scalar_encoding,
             fitting_info=fitting_info,
             fitting_config=fitting_config,
@@ -128,7 +143,7 @@ class GaussianSplatResult:
         cls,
         path: str | Path,
         include_stats: bool = False,
-    ) -> "GaussianSplatResult":
+    ) -> "GSplatData":
         """Load splats from .gsplats.zarr format.
 
         Args:
@@ -136,11 +151,11 @@ class GaussianSplatResult:
             include_stats: Whether to include fitting/provenance metadata
 
         Returns:
-            GaussianSplatResult with decoded arrays
+            GSplatData with decoded arrays
 
         Example:
-            >>> result = GaussianSplatResult.load("fitted.gsplats.zarr")
-            >>> print(result.centers.shape)
+            >>> data = GSplatData.load("fitted.gsplats.zarr")
+            >>> print(data.centers.shape)
         """
         from luxar.gsplats.io.load_gsplats import load_gsplats
 
