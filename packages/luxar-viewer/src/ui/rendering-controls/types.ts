@@ -5,7 +5,8 @@
  * category (navigation, camera, HDR, etc.) and returns controller references.
  */
 
-import type GUI from 'lil-gui';
+import type GUI from '../gui';
+import type { Folder } from '../gui';
 import type { RenderingSettings } from '../../config';
 import type { PostProcessingManager } from '../../rendering/post-processing-manager';
 import type { SceneManager } from '../../scene/scene-manager';
@@ -17,7 +18,7 @@ import type { RenderingControllers } from '../../controls/types';
  * Contains all dependencies needed to create controls.
  */
 export interface SetupContext {
-  /** The lil-gui instance or folder to add controls to */
+  /** The GUI instance or folder to add controls to */
   gui: GUI;
 
   /** Current rendering settings (mutable) */
@@ -55,9 +56,9 @@ export interface SetupResult {
 
   /** Folder references for visibility control (optional) */
   folders?: {
-    orbitFolder?: GUI;
-    flyFolder?: GUI;
-    [key: string]: GUI | undefined;
+    orbitFolder?: Folder;
+    flyFolder?: Folder;
+    [key: string]: Folder | undefined;
   };
 
   /** Shadow objects for special UI patterns (optional) */

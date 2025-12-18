@@ -3,11 +3,11 @@
 NumPy and PyTorch wrapper functions for Gaussian rendering.
 
 This module provides user-friendly wrappers around the core rendering engine:
-- render_gaussians_numpy: NumPy interface accepting GaussianSplatResult
-- render_gaussians_pytorch: PyTorch interface accepting GaussianSplatResult
+- render_gaussians_numpy: NumPy interface accepting GSplatData
+- render_gaussians_pytorch: PyTorch interface accepting GSplatData
 - render_gaussians_batched: Batched rendering with required sharpness
 
-All wrappers work directly with GaussianSplatResult for clean, type-safe rendering.
+All wrappers work directly with GSplatData for clean, type-safe rendering.
 """
 
 from __future__ import annotations
@@ -17,27 +17,27 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.gsplats.utils.trils import unpack_tril
 
 
 def render_gaussians_numpy(
     shape: Sequence[int],
-    result: GaussianSplatResult,
+    result: GSplatData,
     truncate: float = 3.0,
     chunk_size: Optional[int] = None,
 ) -> np.ndarray:
     """
     CPU NumPy output wrapper around torch renderer (no grads).
 
-    Takes a GaussianSplatResult and renders it to an image/volume.
+    Takes a GSplatData and renders it to an image/volume.
 
     Parameters
     ----------
     shape : Sequence[int]
         Output image/volume shape.
-    result : GaussianSplatResult
+    result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
         cholesky_factors, and sharpnesses.
     truncate : float, default=3.0
@@ -87,7 +87,7 @@ def render_gaussians_numpy(
 
 def render_gaussians_pytorch(
     shape: Sequence[int],
-    result: GaussianSplatResult,
+    result: GSplatData,
     truncate: float = 3.0,
     device: str = "cpu",
     chunk_size: Optional[int] = None,
@@ -95,13 +95,13 @@ def render_gaussians_pytorch(
     """
     PyTorch wrapper for rendering gaussians.
 
-    Takes a GaussianSplatResult and renders it to a tensor on specified device.
+    Takes a GSplatData and renders it to a tensor on specified device.
 
     Parameters
     ----------
     shape : Sequence[int]
         Output image/volume shape.
-    result : GaussianSplatResult
+    result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
         cholesky_factors, and sharpnesses.
     truncate : float, default=3.0

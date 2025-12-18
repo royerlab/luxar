@@ -50,11 +50,12 @@
 /* Header */
 .luxar-debug-console__header {
   padding: var(--luxar-spacing-8);
-  border-bottom: 1px solid var(--luxar-border-subtle);
+  padding-bottom: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-strong);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-radius: var(--luxar-radius-md) var(--luxar-radius-md) 0 0;
 }
 
 .luxar-debug-console__title {
@@ -96,11 +97,11 @@
   background: none;
   border: none;
   color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-2xl);
+  font-size: var(--luxar-text-3xl);
   cursor: pointer;
   padding: 0;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -117,7 +118,7 @@
 }
 
 .luxar-debug-console__close-btn:hover {
-  color: #fff;
+  color: var(--luxar-text-primary);
 }
 
 .luxar-debug-console__autoscroll {
@@ -190,7 +191,7 @@
 }
 
 .luxar-console-message-timestamp {
-  color: #606060;
+  color: var(--luxar-text-disabled);
   margin-right: var(--luxar-spacing-4);
   font-size: var(--luxar-text-xs);
 }
@@ -215,37 +216,37 @@
 }
 
 .luxar-console-message-debug {
-  color: #9e9e9e;
+  color: var(--luxar-text-muted);
   font-style: italic;
 }
 
 .luxar-console-message-stack {
   margin-top: var(--luxar-spacing-2);
   padding-left: var(--luxar-spacing-10);
-  color: #808080;
+  color: var(--luxar-text-muted);
   font-size: var(--luxar-text-xs);
   white-space: pre-wrap;
 }
 
 /* Syntax highlighting for different types */
 .luxar-console-message-object {
-  color: #64b5f6;
+  color: var(--luxar-info);
 }
 
 .luxar-console-message-number {
-  color: #ff9800;
+  color: var(--luxar-warning);
 }
 
 .luxar-console-message-boolean {
-  color: #e91e63;
+  color: var(--luxar-highlight);
 }
 
 .luxar-console-message-string {
-  color: #8bc34a;
+  color: var(--luxar-success);
 }
 
 .luxar-console-message-undefined {
-  color: #9e9e9e;
+  color: var(--luxar-text-muted);
   font-style: italic;
 }
 
@@ -263,36 +264,13 @@
 }
 
 [data-theme='light'] .luxar-debug-console__close-btn {
-  color: #666;
+  color: var(--luxar-text-muted);
 }
 
 [data-theme='light'] .luxar-debug-console__close-btn:hover {
-  color: #000;
+  color: var(--luxar-text-primary);
 }
 
 [data-theme='light'] .luxar-console-message:hover {
   background: rgba(0, 0, 0, 0.03);
-}
-
-[data-theme='high-contrast'] .luxar-debug-console {
-  background: #000000;
-  border: 2px solid var(--luxar-border-default);
-  border-radius: 0;
-}
-
-[data-theme='high-contrast'] .luxar-debug-console__content {
-  background: #000000;
-}
-
-[data-theme='high-contrast'] .luxar-debug-console__close-btn {
-  border: 1px solid var(--luxar-border-default);
-  color: var(--luxar-text-primary);
-}
-
-[data-theme='high-contrast'] .luxar-debug-console__close-btn:hover {
-  background: var(--luxar-interactive-hover);
-}
-
-[data-theme='high-contrast'] .luxar-console-message:hover {
-  background: var(--luxar-interactive-hover);
 }

@@ -28,14 +28,11 @@ import { LoadingAdvisor } from './components/loading-advisor';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
-// Extract commonly used config values
-const MonitorColors = config.ui.styles.colors;
-const MonitorTypography = config.ui.styles.typography;
-const MonitorSpacing = config.ui.styles.spacing;
+// Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;
 const MonitorLimits = config.dataLoading.monitor.limits;
 
-// MonitorStyles removed - all styling now in CSS files
+// All styling now handled by CSS classes in data-loading-monitor.css
 
 // Helper functions
 const VALID_TABS = ['overview', 'cache', 'performance', 'insights'] as const;
@@ -662,10 +659,10 @@ export class DataLoadingMonitor {
       <div class="luxar-monitor-detailed">
         <!-- Header -->
         <div class="luxar-data-monitor__header">
-          <h3 style="margin: 0; font-size: 14px;">Data Loading Monitor</h3>
-          <div class="header-actions" style="display: flex; gap: 8px;">
-            <button class="header-btn minimize-btn" data-action="minimize" title="Minimize">—</button>
-            <button class="header-btn close-btn" data-action="hide" title="Close">×</button>
+          <div class="luxar-data-monitor__title">Data Loading Monitor</div>
+          <div class="luxar-data-monitor__controls">
+            <button class="luxar-data-monitor__btn luxar-data-monitor__close-btn" data-action="minimize" title="Minimize">—</button>
+            <button class="luxar-data-monitor__btn luxar-data-monitor__close-btn" data-action="hide" title="Close">×</button>
           </div>
         </div>
 
@@ -812,16 +809,16 @@ export class DataLoadingMonitor {
    */
   private renderPerformanceTab(): string {
     return `
-      <div class="performance-content" style="width: 100%; overflow: hidden;">
-        <canvas id="timeline-canvas" style="width: 100%; height: 200px;"></canvas>
-        
-        <div class="timeline-controls" style="margin-top: 10px; font-size: 11px; color: ${MonitorColors.muted};">
+      <div class="luxar-performance-content">
+        <canvas id="timeline-canvas" class="luxar-performance-canvas"></canvas>
+
+        <div class="luxar-performance-info">
           Performance timeline (1 minute window)
         </div>
-        
+
         <!-- Recent events -->
-        <div class="event-log" style="margin-top: 15px; max-height: 150px; overflow-y: auto;">
-          <h4 style="margin: 0 0 10px 0; font-size: 12px; opacity: 0.7;">Recent Events</h4>
+        <div class="luxar-event-log">
+          <h4 class="luxar-event-log__title">Recent Events</h4>
           ${this.renderRecentEvents()}
         </div>
       </div>
@@ -850,7 +847,7 @@ export class DataLoadingMonitor {
     return recentEvents
       .map(
         (event) => `
-      <div class="event-item" style="${this.getEventItemStyles()}">
+      <div class="luxar-event-item">
         <span class="event-time">${new Date(event.timestamp).toLocaleTimeString()}</span>
         <span class="event-type">${this.getEventIcon(event.type)}</span>
         <span class="event-desc">${this.getEventDescription(event)}</span>
@@ -1097,7 +1094,7 @@ export class DataLoadingMonitor {
     const loaderEntries = Array.from(this.metrics.entries());
 
     if (loaderEntries.length === 0) {
-      return '<div style="color: rgba(255,255,255,0.4); font-size: 10px;">No active loaders</div>';
+      return '<div class="luxar-loader-empty">No active loaders</div>';
     }
 
     return loaderEntries.map(([path, metrics]) => renderLoaderItem(path, metrics)).join('');
@@ -1288,19 +1285,7 @@ export class DataLoadingMonitor {
     }
   }
 
-  // Styles
-
-  // All style getter methods removed - styling now in CSS files
-
-  private getEventItemStyles(): string {
-    return `
-      display: flex;
-      gap: ${MonitorSpacing.elementGap}px;
-      padding: ${MonitorSpacing.tinyGap}px 0;
-      font-size: ${MonitorTypography.small.fontSize};
-      opacity: 0.7;
-    `;
-  }
+  // All styling now handled by CSS classes in data-loading-monitor.css
 
   public dispose(): void {
     const errors: Error[] = [];

@@ -62,10 +62,10 @@ print(format_gsplats_info(info))
 
 ### Convenience Methods
 
-`GaussianSplatResult` has convenience methods that wrap the above functions:
+`GSplatData` has convenience methods that wrap the above functions:
 
 ```python
-from luxar.gsplats import fit_gaussian_splats, GaussianSplatResult
+from luxar.gsplats import fit_gaussian_splats, GSplatData
 from luxar.encoding import EncodingMode
 
 # Fit and save
@@ -73,7 +73,7 @@ result = fit_gaussian_splats(image, n_iters=1000)
 result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
 
 # Load
-loaded = GaussianSplatResult.load("fitted.gsplats.zarr", include_stats=True)
+loaded = GSplatData.load("fitted.gsplats.zarr", include_stats=True)
 ```
 
 ## Spatial Ordering
@@ -229,7 +229,7 @@ result = fit_gaussian_splats(image, n_iters=1000)
 result.save("fitted.gsplats.zarr")
 
 # Load
-loaded = GaussianSplatResult.load("fitted.gsplats.zarr")
+loaded = GSplatData.load("fitted.gsplats.zarr")
 ```
 
 ### Memory-Optimized Save

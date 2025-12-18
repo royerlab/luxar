@@ -1,6 +1,6 @@
 # Rendering Controls Setup Modules
 
-Modular setup functions for the rendering controls UI. Each module is responsible for creating a specific category of controls in the lil-gui interface.
+Modular setup functions for the rendering controls UI. Each module is responsible for creating a specific category of controls in the GUI interface.
 
 ## Overview
 
@@ -21,7 +21,7 @@ rendering-controls/
 Each module exports a setup function that:
 
 1. Takes a `SetupContext` with GUI, settings, and callbacks
-2. Creates its category's controls using lil-gui
+2. Creates its category's controls using the GUI library
 3. Returns a `SetupResult` with controller references
 
 ## Module Responsibilities
@@ -32,7 +32,7 @@ Defines shared interfaces used across all setup modules:
 
 ```typescript
 interface SetupContext {
-  gui: GUI; // lil-gui instance
+  gui: GUI; // GUI instance
   settings: RenderingSettings; // Current settings
   postProcessing: PostProcessingManager; // Effect manager
   sceneManager: SceneManager; // Scene/camera manager

@@ -480,7 +480,8 @@ export class DimensionSliders {
     if (isDiscrete) {
       slider.value = String(currentValue);
     } else {
-      const fraction = (currentValue - min) / (max - min);
+      const range = max - min;
+      const fraction = range === 0 ? 0.5 : (currentValue - min) / range;
       slider.value = String(Math.round(fraction * 1000));
     }
 
@@ -494,7 +495,9 @@ export class DimensionSliders {
       } else {
         const fraction = parseInt(slider.value) / 1000;
         const [min, max] = this.dimensionRanges[dimIndex];
-        value = min + fraction * (max - min);
+        const range = max - min;
+        // Handle edge case: dimension with no range (single value)
+        value = range === 0 ? min : min + fraction * range;
       }
 
       sceneDimsManager.setDimensionValue(dimIndex, value);
@@ -608,7 +611,9 @@ export class DimensionSliders {
 
     // Calculate fraction for visual position
     const [min, max] = this.dimensionRanges[dimIndex];
-    const fraction = (value - min) / (max - min);
+    const range = max - min;
+    // Handle edge case: dimension with no range (single value)
+    const fraction = range === 0 ? 0.5 : (value - min) / range;
 
     // Update progress bar
     const progressBar = document.getElementById(`progress-${dimIndex}`);
@@ -745,7 +750,8 @@ export class DimensionSliders {
         slider.value = String(currentValue);
       } else {
         const [min, max] = this.dimensionRanges[dimIndex];
-        const fraction = (currentValue - min) / (max - min);
+        const range = max - min;
+        const fraction = range === 0 ? 0.5 : (currentValue - min) / range;
         slider.value = String(Math.round(fraction * 1000));
       }
 

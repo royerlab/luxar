@@ -5,7 +5,7 @@
  * eliminating the need for 'any' types throughout the codebase.
  */
 
-import type { Controller } from 'lil-gui';
+import type { Controller } from '../ui/gui';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 // Note: ArcballControls doesn't have TypeScript definitions, so we use 'any'
 import type { LuxarFlyControls } from './luxar-fly-controls';

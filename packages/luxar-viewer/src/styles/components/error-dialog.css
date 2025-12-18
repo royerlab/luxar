@@ -103,14 +103,14 @@
   margin: 0;
   font-size: var(--luxar-text-xl);
   font-weight: var(--luxar-font-semibold);
-  color: #ff9999;
+  color: var(--luxar-error);
 }
 
 /* Message section */
 .luxar-error-dialog__message {
   margin-bottom: var(--luxar-spacing-8);
   line-height: var(--luxar-line-relaxed);
-  color: #ffcccc;
+  color: var(--luxar-text-secondary);
 }
 
 /* Guidance section */
@@ -125,12 +125,12 @@
 .luxar-error-dialog__guidance-title {
   font-weight: var(--luxar-font-semibold);
   margin-bottom: var(--luxar-spacing-4);
-  color: #88cc88;
+  color: var(--luxar-success);
 }
 
 .luxar-error-dialog__guidance-content {
   font-size: var(--luxar-text-sm);
-  color: #cccccc;
+  color: var(--luxar-text-secondary);
   line-height: var(--luxar-line-relaxed);
 }
 
@@ -177,16 +177,16 @@
 
 /* Theme-specific overrides */
 [data-theme='light'] .luxar-error-dialog {
-  border-color: #ffcccc;
+  border-color: var(--luxar-error);
   background: rgba(255, 255, 255, 0.98);
 }
 
 [data-theme='light'] .luxar-error-dialog__title {
-  color: #cc0000;
+  color: var(--luxar-error);
 }
 
 [data-theme='light'] .luxar-error-dialog__message {
-  color: #990000;
+  color: var(--luxar-text-secondary);
 }
 
 [data-theme='light'] .luxar-error-dialog__guidance {
@@ -194,33 +194,9 @@
 }
 
 [data-theme='light'] .luxar-error-dialog__guidance-title {
-  color: #2e7d32;
+  color: var(--luxar-success);
 }
 
 [data-theme='light'] .luxar-error-dialog__guidance-content {
-  color: #333333;
-}
-
-[data-theme='high-contrast'] .luxar-error-dialog {
-  border: 3px solid var(--luxar-error);
-  border-radius: 0;
-  background: #000000;
-}
-
-[data-theme='high-contrast'] .luxar-error-dialog__title {
-  color: var(--luxar-error);
-}
-
-[data-theme='high-contrast'] .luxar-error-dialog__message {
   color: var(--luxar-text-primary);
-}
-
-[data-theme='high-contrast'] .luxar-error-dialog__guidance {
-  background: rgba(255, 255, 255, 0.1);
-  border-left-color: var(--luxar-success);
-  border-radius: 0;
-}
-
-[data-theme='high-contrast'] .luxar-error-dialog__guidance-title {
-  color: var(--luxar-success);
 }

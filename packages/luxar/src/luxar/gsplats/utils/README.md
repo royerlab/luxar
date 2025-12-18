@@ -11,6 +11,7 @@ This package provides low-level utilities for working with Gaussian splat parame
 - `pack_tril(L)` - Pack lower triangular matrices to flat arrays
 - `unpack_tril(v, d)` - Unpack flat arrays to lower triangular matrices
 - `calculate_gradient_dilution_factor(d)` - Compute gradient compensation for nD spaces
+- `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
 
 ## Installation
 
@@ -155,6 +156,61 @@ factor_4d = calculate_gradient_dilution_factor(4)
 
 ---
 
+### validate_cholesky_shape(cholesky_factors, ndim, n_splats=None, allow_uniform=True) -> Tuple[bool, int]
+
+Validate the shape of packed Cholesky factors for Gaussian splats.
+
+**Purpose**: Verify that packed Cholesky factors have the correct shape for the given dimensionality. This helps catch shape errors early and ensures data consistency.
+
+**Parameters**:
+- `cholesky_factors`: np.ndarray to validate
+- `ndim`: int - Number of dimensions (determines expected packed size k = ndim*(ndim+1)/2)
+- `n_splats`: int, optional - Expected number of splats (validates first dimension if provided)
+- `allow_uniform`: bool, default=True - Whether to allow uniform (1D) Cholesky factors
+
+**Returns**: Tuple[bool, int]
+- `is_uniform`: bool - True if factors are uniform (shape (k,)), False if per-splat (shape (N, k))
+- `actual_n_splats`: int - Actual number of splats inferred from shape (0 for uniform)
+
+**Raises**: ValueError if shape is invalid
+
+**Valid Shapes**:
+- **Per-splat**: (N, k) where k = d*(d+1)/2
+- **Uniform**: (k,) when allow_uniform=True (shared by all splats)
+
+**Example**:
+```python
+from luxar.gsplats.utils import validate_cholesky_shape, tril_size
+import numpy as np
+
+# Valid per-splat for 2D (k=3)
+chol = np.random.rand(100, 3)
+is_uniform, n = validate_cholesky_shape(chol, ndim=2, n_splats=100)
+print(f"Uniform: {is_uniform}, N: {n}")  # Output: Uniform: False, N: 100
+
+# Valid uniform for 3D (k=6)
+chol = np.random.rand(6)
+is_uniform, n = validate_cholesky_shape(chol, ndim=3)
+print(f"Uniform: {is_uniform}, N: {n}")  # Output: Uniform: True, N: 0
+
+# Invalid shape raises ValueError
+try:
+    chol = np.random.rand(100, 5)  # Wrong k for 2D (expected 3)
+    validate_cholesky_shape(chol, ndim=2)
+except ValueError as e:
+    print(f"Error: {e}")
+```
+
+**Common Use Cases**:
+- **Validate user input** before fitting or rendering
+- **Debug shape mismatches** in splat pipelines
+- **Ensure data consistency** when loading from files
+- **Detect uniform vs per-splat** storage modes
+
+**Design Note**: Returns both uniform status and count to enable different handling for uniform (broadcasted) vs per-splat data.
+
+---
+
 ## Testing
 
 **Test File**: `tests/test_trils.py` (250 lines)
@@ -192,6 +248,7 @@ from luxar.gsplats.utils import (
     pack_tril,
     unpack_tril,
     calculate_gradient_dilution_factor,
+    validate_cholesky_shape,
 )
 ```
 

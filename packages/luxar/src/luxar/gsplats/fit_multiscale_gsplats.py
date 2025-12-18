@@ -12,7 +12,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.multiscale import decompose_image
 
@@ -33,7 +33,7 @@ def fit_multiscale_gaussian_splats(
     movie_max_frames: Optional[int] = None,
     visualize_per_scale: bool = False,
     **fit_kwargs,
-) -> GaussianSplatResult:
+) -> GSplatData:
     """
     Fit Gaussian splats using multi-scale decomposition for computational efficiency.
 
@@ -78,7 +78,7 @@ def fit_multiscale_gaussian_splats(
 
     Returns
     -------
-    GaussianSplatResult
+    GSplatData
         Dataclass containing combined results from all scales:
         - centers: np.ndarray, shape (N_total, d) - Center positions at full resolution
         - amplitudes: np.ndarray, shape (N_total,) - Combined amplitudes from all scales
@@ -294,7 +294,7 @@ def fit_multiscale_gaussian_splats(
             chol_full_res = params_geom[:, d:]
 
             # Create result object for rendering
-            result_vis = GaussianSplatResult(
+            result_vis = GSplatData(
                 centers=centers_full_res,
                 amplitudes=amps,
                 cholesky_factors=chol_full_res,
@@ -403,7 +403,7 @@ def fit_multiscale_gaussian_splats(
     cholesky_final = params_final[:, d:-1]  # Everything between centers and sharpness
     sharpnesses_final = params_final[:, -1]
 
-    return GaussianSplatResult(
+    return GSplatData(
         centers=centers_final,
         amplitudes=amps_combined,
         cholesky_factors=cholesky_final,

@@ -246,7 +246,7 @@ The scene manager provides comprehensive FOV management:
 // Adjust FOV with mouse wheel + shift
 sceneManager.updateFOV(delta);
 
-// FOV limits: 10° to 200°
+// FOV limits: 10° to 170° (must be <180°)
 // Sensitivity: 0.05 per wheel unit
 ```
 

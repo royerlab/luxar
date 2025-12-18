@@ -764,7 +764,7 @@ def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
     preprocessed_data: PreprocessedData,
-) -> GaussianSplatResult:
+) -> GSplatData:
     """
     Finalize optimization results for return to user.
 
@@ -774,7 +774,7 @@ def finalize_results(
     3. Pack Cholesky factors (lower triangular only)
     4. Rescale amplitudes to original intensity range
     5. Compile comprehensive statistics
-    6. Return GaussianSplatResult dataclass
+    6. Return GSplatData dataclass
     """
 ```
 
@@ -854,9 +854,9 @@ stats = {
 
 **Return Value**:
 ```python
-from luxar.gsplats.fitting.results import GaussianSplatResult
+from luxar.gsplats.fitting.results import GSplatData
 
-return GaussianSplatResult(
+return GSplatData(
     centers=centers_np,
     amplitudes=amplitudes_rescaled,
     cholesky_factors=cholesky_factors_packed,

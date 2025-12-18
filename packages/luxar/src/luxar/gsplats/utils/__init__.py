@@ -3,6 +3,7 @@ Utilities for Gaussian splat fitting.
 
 This package provides utility functions for:
 - Lower-triangular matrix operations (pack/unpack Cholesky factors)
+- Cholesky factor validation for Gaussian splats
 - Gradient dilution compensation for higher-dimensional optimization
 - Triangle matrix size calculations
 
@@ -14,6 +15,7 @@ from luxar.gsplats.utils.trils import (
     pack_tril,
     tril_size,
     unpack_tril,
+    validate_cholesky_shape,
 )
 
 __all__ = [
@@ -21,4 +23,5 @@ __all__ = [
     "calculate_gradient_dilution_factor",
     "pack_tril",
     "unpack_tril",
+    "validate_cholesky_shape",
 ]

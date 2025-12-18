@@ -110,14 +110,15 @@ reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
 
 ```
 
-**Note**: `fit_gaussian_splats()` returns a `GaussianSplatResult` dataclass with:
+**Note**: `fit_gaussian_splats()` returns a `GSplatData` dataclass with:
 - `centers`: np.ndarray, shape (N, d) - Splat center positions
 - `amplitudes`: np.ndarray, shape (N,) - Non-negative amplitudes
 - `cholesky_factors`: np.ndarray, shape (N, d*(d+1)//2) - Packed Cholesky factors
 - `sharpnesses`: np.ndarray, shape (N,) - Per-splat sharpness values
+- `colors`: Optional[np.ndarray], shape (N, 3) - RGB colors (uint8 or float32 for HDR)
 - `stats`: Dict[str, Any] - Optimization statistics
 
-The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering.
+The result can be directly passed to `render_gaussians_numpy()` or `render_gaussians_pytorch()` for rendering, or added to a Scene (see below).
 
 ### Multi-Scale Fitting for Large Datasets
 
@@ -518,6 +519,115 @@ print(f"Time: {result.stats['time_seconds']:.2f}s")
 print(f"Iterations: {result.stats['iterations']}/{500}")
 print(f"Converged: {result.stats['converged']}")
 print(f"Final loss: {result.stats['final_loss']:.5g}")
+```
+
+## Saving, Loading, and Scene Integration
+
+### Saving GSplatData
+
+Save fitted splats to disk in the `.gsplats.zarr` format for later use:
+
+```python
+from luxar.gsplats import fit_gaussian_splats
+
+# Fit splats
+result = fit_gaussian_splats(image, n_iters=1000)
+
+# Save to file with spatial ordering for efficient access
+result.save('fitted.gsplats.zarr',
+           ordering='hilbert',  # or 'morton', 'none'
+           color_mode='sdr')    # 'sdr' (uint8) or 'hdr' (float32)
+
+# Colors are automatically saved if present in result
+```
+
+### Loading GSplatData
+
+Load previously saved splats back into a GSplatData object:
+
+```python
+from luxar.gsplats.io import load_gsplats
+
+# Load from disk
+result = load_gsplats('fitted.gsplats.zarr')
+
+# Access all fields
+print(f"Loaded {result.centers.shape[0]} splats")
+print(f"Has colors: {result.colors is not None}")
+print(f"Has sharpness: {result.sharpnesses is not None}")
+
+# Render loaded splats
+from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
+reconstruction = render_gaussians_numpy(image.shape, result, truncate=3.0)
+```
+
+### Adding to Luxar Scenes
+
+Integrate fitted Gaussian splats directly into Luxar scenes for visualization:
+
+**Option 1: Add from GSplatData (no intermediate save)**
+```python
+from luxar import LuxarZarrCompiler, Dimensions
+from luxar.gsplats import fit_gaussian_splats
+
+# Fit splats
+image = np.random.rand(100, 100).astype(np.float32)
+result = fit_gaussian_splats(image, n_iters=1000)
+
+# Add directly to scene
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    gsplats = scene.add_gsplats_from_data('fitted', result)
+    print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
+```
+
+**Option 2: Add from saved .gsplats.zarr file**
+```python
+# First save result
+result.save('fitted.gsplats.zarr', ordering='hilbert')
+
+# Later, load into a scene
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    gsplats = scene.add_gsplats_from_file('loaded', 'fitted.gsplats.zarr')
+    print(f"Loaded {gsplats.n_splats} splats")
+```
+
+**Benefits:**
+- Seamless integration with Luxar's scene graph system
+- Preserves all splat data (centers, amplitudes, covariance, colors, sharpness)
+- Enables hierarchical organization with transforms
+- Works with Luxar viewer for interactive visualization
+
+### Color Support
+
+GSplatData now supports optional per-splat RGB colors:
+
+```python
+# Create result with colors
+result = GSplatData(
+    centers=centers,
+    amplitudes=amplitudes,
+    cholesky_factors=cholesky_factors,
+    sharpnesses=sharpnesses,
+    colors=np.random.rand(n_splats, 3).astype(np.float32),  # Add colors
+    stats={}
+)
+
+# Colors are preserved during save/load
+result.save('colored.gsplats.zarr', color_mode='sdr')  # uint8 [0-255]
+result.save('hdr_colored.gsplats.zarr', color_mode='hdr')  # float32 HDR
+
+# Load preserves colors
+loaded = load_gsplats('colored.gsplats.zarr')
+assert loaded.colors is not None
+assert loaded.colors.shape == (n_splats, 3)
+
+# Scene integration preserves colors
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    gsplats = scene.add_gsplats_from_data('colored', result)
+    assert gsplats.has_colors == True
 ```
 
 ## API Reference

@@ -89,7 +89,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 │ │ • Rescales amplitudes to original intensity range               │ │
 │ │ • Compiles optimization statistics                              │ │
 │ │ • Stores movie frames for visualization                         │ │
-│ │ • Returns GaussianSplatResult dataclass                         │ │
+│ │ • Returns GSplatData dataclass                         │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
@@ -194,7 +194,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 ### `results.py` - Result Finalization
 **Purpose:** Processes and packages optimization results.
 
-**Key Function:** `finalize_results(optimization_results, config, preprocessed_data) -> GaussianSplatResult`
+**Key Function:** `finalize_results(optimization_results, config, preprocessed_data) -> GSplatData`
 
 **Operations:**
 1. Extracts parameters from best state (not final state)
@@ -205,7 +205,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    - `amplitudes`: Shape `(N,)` - rescaled to original intensity range
 3. Compiles comprehensive statistics (including sharpness statistics)
 4. Stores movie frames for visualization
-5. Returns `GaussianSplatResult` dataclass containing all results
+5. Returns `GSplatData` dataclass containing all results
 
 **Critical Details:**
 - Returns a structured dataclass (not a tuple) with named fields for clarity

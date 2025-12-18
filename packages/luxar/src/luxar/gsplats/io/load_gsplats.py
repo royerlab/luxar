@@ -9,13 +9,13 @@ import numpy as np
 import zarr
 
 from luxar.encoding import ArrayDecoder
-from luxar.gsplats import GaussianSplatResult
+from luxar.gsplats import GSplatData
 
 
 def load_gsplats(
     path: str | Path,
     include_stats: bool = False,
-) -> GaussianSplatResult:
+) -> GSplatData:
     """Load Gaussian splats from .gsplats.zarr format.
 
     Arrays are automatically decoded from their stored encoding (quantization,
@@ -26,7 +26,7 @@ def load_gsplats(
         include_stats: Whether to include fitting/provenance metadata in stats
 
     Returns:
-        GaussianSplatResult with decoded arrays and optional stats
+        GSplatData with decoded arrays and optional stats
 
     Raises:
         FileNotFoundError: If path doesn't exist
@@ -102,20 +102,14 @@ def load_gsplats(
         if "description" in root.attrs:
             stats["description"] = root.attrs["description"]
 
-    # Create result object
-    result = GaussianSplatResult(
+    # Create data object with colors
+    data = GSplatData(
         centers=centers,
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,
         sharpnesses=sharpnesses,
+        colors=colors,
         stats=stats,
     )
 
-    # Add colors if present (not part of GaussianSplatResult by default)
-    # Store in stats for now
-    if colors is not None and include_stats:
-        stats["has_colors"] = True
-        # Note: Colors are not stored in GaussianSplatResult directly
-        # This would need to be extended if color support is added
-
-    return result
+    return data

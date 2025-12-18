@@ -3,7 +3,7 @@
  * Tests cover all synchronization bugs found and fixed
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import type { AnimationController } from '../../../scene/animation-controller';
 
@@ -11,8 +11,8 @@ import type { AnimationController } from '../../../scene/animation-controller';
 // duck-typed mocks (any type) to avoid loading the actual modules which have
 // complex dependencies that would require extensive mocking.
 
-// Mock lil-gui
-vi.mock('lil-gui', () => {
+// Mock custom GUI library
+vi.mock('../../../ui/gui', () => {
   class MockController {
     domElement = {
       setAttribute: vi.fn(),
@@ -60,7 +60,7 @@ vi.mock('lil-gui', () => {
     destroy = vi.fn();
   }
 
-  return { default: MockGUI };
+  return { default: MockGUI, GUI: MockGUI, Folder: MockFolder };
 });
 
 describe('RenderingControls', () => {
@@ -171,6 +171,13 @@ describe('RenderingControls', () => {
     // Create rendering controls instance
     renderingControls = new RenderingControls(mockPostProcessing, mockSceneManager);
     renderingControls.setAnimationController(mockAnimationController);
+  });
+
+  afterEach(() => {
+    // Clean up rendering controls to prevent timer leaks
+    if (renderingControls) {
+      renderingControls.dispose();
+    }
   });
 
   describe('Bug Fix #1: HDR Shadow Value Sync', () => {

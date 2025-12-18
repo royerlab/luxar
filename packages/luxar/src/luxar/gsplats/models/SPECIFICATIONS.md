@@ -284,15 +284,15 @@ Then shrink AABB radii to minimum of truncate-based and amplitude-based limits.
 
 ### 4. Rendering Wrappers (`gsplats/rendering_wrappers.py`)
 
-**Purpose**: User-friendly interfaces for numpy and torch tensors using `GaussianSplatResult` objects.
+**Purpose**: User-friendly interfaces for numpy and torch tensors using `GSplatData` objects.
 
-**API Change (v1.1.0, Nov 2025)**: Rendering wrappers now accept `GaussianSplatResult` dataclass instead of raw parameter arrays for type safety and clarity.
+**API Change (v1.1.0, Nov 2025)**: Rendering wrappers now accept `GSplatData` dataclass instead of raw parameter arrays for type safety and clarity.
 
 **render_gaussians_numpy**:
 ```python
 def render_gaussians_numpy(
     shape: Sequence[int],
-    result: GaussianSplatResult,  # Gaussian splat parameters
+    result: GSplatData,  # Gaussian splat parameters
     truncate: float = 3.0,
     chunk_size: Optional[int] = None
 ) -> np.ndarray:
@@ -301,7 +301,7 @@ def render_gaussians_numpy(
 
     Parameters:
         shape: Output volume dimensions
-        result: GaussianSplatResult from fit_gaussian_splats() or loaded from disk
+        result: GSplatData from fit_gaussian_splats() or loaded from disk
         truncate: Truncation radius in standard deviations (default: 3σ)
         chunk_size: Process in chunks for memory efficiency (default: auto)
 
@@ -321,7 +321,7 @@ def render_gaussians_numpy(
 ```python
 def render_gaussians_torch(
     shape: Sequence[int],
-    result: GaussianSplatResult,  # Gaussian splat parameters
+    result: GSplatData,  # Gaussian splat parameters
     truncate: float = 3.0,
     device: Optional[torch.device] = None,
     chunk_size: Optional[int] = None
@@ -331,7 +331,7 @@ def render_gaussians_torch(
 
     Parameters:
         shape: Output volume dimensions
-        result: GaussianSplatResult object
+        result: GSplatData object
         truncate: Truncation radius in standard deviations
         device: Target device (default: auto-detect CUDA→CPU)
         chunk_size: Batch size for memory efficiency
@@ -352,7 +352,7 @@ def render_gaussians_torch(
 ```python
 def render_gaussians_batched(
     shape: Sequence[int],
-    result: GaussianSplatResult,  # Gaussian splat parameters
+    result: GSplatData,  # Gaussian splat parameters
     model: GaussianSplatModel,    # Pre-initialized model
     truncate: float = 3.0,
     batch_size: int = 100,
@@ -363,7 +363,7 @@ def render_gaussians_batched(
 
     Parameters:
         shape: Output volume dimensions
-        result: GaussianSplatResult object
+        result: GSplatData object
         model: Pre-constructed GaussianSplatModel (avoids recreation per batch)
         truncate: Truncation radius in standard deviations
         batch_size: Splats per batch (default: 100)
@@ -386,10 +386,10 @@ def render_gaussians_batched(
     """
 ```
 
-**GaussianSplatResult Structure**:
+**GSplatData Structure**:
 ```python
 @dataclass
-class GaussianSplatResult:
+class GSplatData:
     centers: np.ndarray          # (N, d) float32 - Gaussian centers
     amplitudes: np.ndarray       # (N,) float32 - Amplitudes
     cholesky_factors: np.ndarray # (N, d*(d+1)/2) float32 - Packed Cholesky factors
@@ -403,8 +403,8 @@ class GaussianSplatResult:
 result.save('fitted_splats.npz')
 
 # Load result
-from luxar.gsplats import GaussianSplatResult
-result = GaussianSplatResult.load('fitted_splats.npz')
+from luxar.gsplats import GSplatData
+result = GSplatData.load('fitted_splats.npz')
 ```
 
 **Migration from Old API** (deprecated Nov 2025):
@@ -413,7 +413,7 @@ result = GaussianSplatResult.load('fitted_splats.npz')
 render_gaussians_numpy(shape, params_full, amps)
 
 # NEW API:
-result = fit_gaussian_splats(volume)  # Returns GaussianSplatResult
+result = fit_gaussian_splats(volume)  # Returns GSplatData
 render_gaussians_numpy(shape, result)
 ```
 

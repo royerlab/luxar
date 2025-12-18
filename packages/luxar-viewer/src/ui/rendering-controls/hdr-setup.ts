@@ -58,12 +58,12 @@ export function setupHDRControls(context: SetupContext, hdrLogValue: { log: numb
     });
 
   // Override updateDisplay to show actual intensity value instead of log value
-  // This is necessary because lil-gui doesn't support custom value formatters
+  // This is necessary because the GUI doesn't support custom value formatters
   const originalUpdateDisplay = hdrControl.updateDisplay.bind(hdrControl);
 
   (hdrControl as any).updateDisplay = () => {
     originalUpdateDisplay();
-    // After lil-gui updates the display, override the input value with formatted intensity
+    // After GUI updates the display, override the input value with formatted intensity
 
     const input = (hdrControl as any).$input as HTMLInputElement | undefined;
     if (input) {

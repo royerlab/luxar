@@ -271,9 +271,9 @@ describe('InputHandler Utilities', () => {
       expect(result).toBe(10);
     });
 
-    it('should clamp to maximum FOV (120)', () => {
-      const result = calculateFovChange(110, 200, 0.1);
-      expect(result).toBe(120);
+    it('should clamp to maximum FOV (170)', () => {
+      const result = calculateFovChange(160, 200, 0.1);
+      expect(result).toBe(170); // config.camera.fovMax = 170
     });
   });
 
