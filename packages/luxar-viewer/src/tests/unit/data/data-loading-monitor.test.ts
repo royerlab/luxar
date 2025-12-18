@@ -875,6 +875,77 @@ describe('DataLoadingMonitor', () => {
       expect(state.linesNodes).toBe(2);
       expect(state.totalSegments).toBe(300);
     });
+
+    it('should track visible segments separately from total segments', () => {
+      // Set up scene with lines
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/lines1',
+            name: 'lines1',
+            type: 'lines' as const,
+            segmentCount: 1000,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Initially visibleSegments equals totalSegments
+      let state = monitor.getSceneGraph();
+      expect(state.totalSegments).toBe(1000);
+      expect(state.visibleSegments).toBe(1000);
+
+      // Update visible segments (simulating nD slicing that hides some segments)
+      monitor.updateVisibleSegments(150);
+
+      state = monitor.getSceneGraph();
+      expect(state.totalSegments).toBe(1000); // Total unchanged
+      expect(state.visibleSegments).toBe(150); // Only visible count updated
+
+      // getGlobalStats should return the tracked visible count
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSegments).toBe(1000);
+      expect(stats.visibleSegments).toBe(150);
+    });
+
+    it('should report visible segments in getGlobalStats', () => {
+      // Set up scene with multiple lines nodes
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/lines1',
+            name: 'lines1',
+            type: 'lines' as const,
+            segmentCount: 500,
+            children: [],
+          },
+          {
+            path: '/lines2',
+            name: 'lines2',
+            type: 'lines' as const,
+            segmentCount: 500,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Update with combined visible count
+      monitor.updateVisibleSegments(200);
+
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSegments).toBe(1000); // 500 + 500
+      expect(stats.visibleSegments).toBe(200); // Only what's visible
+    });
   });
 
   describe('cache stats provider integration', () => {

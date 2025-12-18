@@ -115,6 +115,7 @@ export class DataLoadingMonitor {
     linesNodes: 0,
     totalPoints: 0,
     totalSegments: 0,
+    visibleSegments: 0,
   };
 
   // Track expanded nodes in scene graph tree (by path)
@@ -315,7 +316,20 @@ export class DataLoadingMonitor {
       totalSegments += childStats.totalSegments;
     }
 
-    return { totalNodes, pointsNodes, linesNodes, totalPoints, totalSegments };
+    // Initialize visibleSegments to totalSegments (will be updated by scene loader)
+    return { totalNodes, pointsNodes, linesNodes, totalPoints, totalSegments, visibleSegments: totalSegments };
+  }
+
+  /**
+   * Update the count of currently visible line segments.
+   * Called by SceneLoader after processing lines with nD clipping.
+   */
+  public updateVisibleSegments(count: number): void {
+    this.sceneGraphState.visibleSegments = count;
+    // Schedule UI update if visible
+    if (this.uiState.isVisible) {
+      this.scheduleUpdate();
+    }
   }
 
   /**
@@ -888,8 +902,8 @@ export class DataLoadingMonitor {
 
     // Get line segment stats from scene graph
     const datasetSegments = this.sceneGraphState.totalSegments;
-    // For lines, visible typically equals total (no spatial filtering like points)
-    const visibleSegments = this.sceneGraphState.totalSegments;
+    // Use tracked visible segments (updated by scene loader after nD clipping)
+    const visibleSegments = this.sceneGraphState.visibleSegments;
 
     return {
       totalLoaders: this.loaders.size,

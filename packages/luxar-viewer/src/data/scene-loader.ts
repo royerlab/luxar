@@ -244,6 +244,9 @@ export class SceneLoader {
         const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
         monitor.setSceneGraph(sceneGraphRoot);
 
+        // Update visible segments count (initial load)
+        this.updateVisibleSegmentsInMonitor();
+
         monitor.forceUpdate();
       }
     }
@@ -345,6 +348,9 @@ export class SceneLoader {
 
     await Promise.all([...pointsUpdates, ...linesUpdates]);
 
+    // Update monitor with total visible segments across all lines nodes
+    this.updateVisibleSegmentsInMonitor();
+
     // Warn user if any loaders failed
     if (this.failedLoaders.size > 0) {
       const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
@@ -356,6 +362,29 @@ export class SceneLoader {
         `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
           'Check browser console for details. Data may be incomplete.'
       );
+    }
+  }
+
+  /**
+   * Aggregate visible segment counts from all lines meshes and update monitor.
+   * This should be called after view updates to report accurate visible line counts.
+   */
+  private updateVisibleSegmentsInMonitor(): void {
+    if (!this.rootGroup || !this.monitorId) return;
+
+    let totalVisibleSegments = 0;
+
+    // Traverse all objects in the scene graph
+    this.rootGroup.traverse((object) => {
+      if (object instanceof THREE.Mesh && isLinesUserData(object.userData)) {
+        totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
+      }
+    });
+
+    // Update the monitor
+    const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+    if (monitor) {
+      monitor.updateVisibleSegments(totalVisibleSegments);
     }
   }
 
@@ -412,6 +441,11 @@ export class SceneLoader {
     // Copy geometry to existing mesh
     mesh.geometry = newMesh.geometry;
     mesh.count = processed.segmentCount;
+
+    // Track visible segment count in mesh userData for monitor reporting
+    if (isLinesUserData(mesh.userData)) {
+      mesh.userData.visibleSegmentCount = processed.segmentCount;
+    }
 
     // Clean up temporary mesh (but not its geometry, which is now on the original mesh)
     newMesh.geometry = new THREE.BufferGeometry(); // Replace to avoid double disposal
@@ -686,12 +720,13 @@ export class SceneLoader {
       const mesh = createInstancedLinesMesh(processed, material);
       mesh.name = node.path;
 
-      // Store user data for identification
+      // Store user data for identification (including visible segment count for monitor)
       mesh.userData = {
         nodeType: 'lines',
         loader,
         attrs,
         maxWidth: attrs.max_width ?? 1.0,
+        visibleSegmentCount: processed.segmentCount,
       } as LinesUserData;
 
       // Apply transform
