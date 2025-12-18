@@ -27,6 +27,7 @@ The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loo
 6. [Window Resize Handling](#window-resize-handling)
 7. [WebGL Context Loss Handling](#webgl-context-loss-handling)
 8. [Dimension Coordination](#dimension-coordination)
+9. [Dimension Animation](#dimension-animation)
 
 ---
 
@@ -1397,6 +1398,265 @@ interface SceneDimsManager {
 
 - **v1.0.1** (2025-12-08): WebGL context loss handling
   - Added `setupContextLossHandling()` method in SceneManager
+  - Added event listeners for `webglcontextlost` and `webglcontextrestored`
+  - Added `isWebGLContextLost()` public API method
+  - Proper cleanup in dispose() method
+  - Graceful recovery from GPU resets, system sleep, and memory pressure
+  - User-friendly error messages and recovery flow
+  - See: `scene-manager.ts:197-250`
+
+---
+
+## 9. Dimension Animation
+
+### 9.1 Purpose
+
+**Goal**: Provide automated playback through dimension ranges with FPS-based control and multiple loop modes.
+
+**Use Cases**:
+
+- Time-lapse visualization of temporal data
+- Z-stack traversal through volumetric data
+- Channel cycling in multi-wavelength imaging
+- Interactive exploration of high-dimensional datasets
+
+### 9.2 Animation Algorithm
+
+**Core Principle**: FPS-based throttling with frame-skipping to maintain target playback speed.
+
+**Algorithm Steps**:
+
+```
+For each animation frame:
+1. Check elapsed time since last update
+2. If elapsed < target frame time: SKIP (throttle)
+3. Calculate next value:
+   - Discrete: current + step * direction
+   - Continuous: current + (range / traverseTime) * (1000 / targetFPS) * direction
+4. Handle boundaries based on loop mode:
+   - Loop: Wrap to opposite end
+   - Once: Stop at boundary
+   - Bounce: Reverse direction
+5. Update dimension value via sceneDimsManager
+6. Measure actual FPS and emit warning if < threshold
+```
+
+### 9.3 FPS Throttling
+
+**Target vs Actual FPS**:
+
+```typescript
+const targetFrameTime = 1000 / targetFPS; // ms per frame
+const minFrameTime = 16; // ~60fps absolute max (hardware limit)
+const effectiveFrameTime = Math.max(targetFrameTime, minFrameTime);
+
+// On each animation frame
+const elapsed = currentTime - lastUpdateTime;
+if (elapsed < effectiveFrameTime) {
+  return; // Skip this frame
+}
+// Proceed with update
+```
+
+**Why This Approach**:
+
+- Prevents overwhelming data loading system
+- Maintains smooth visualization without dropped frames
+- Allows user to control playback speed precisely
+- Adapts to system performance (actual FPS may be lower than target)
+
+### 9.4 Loop Modes
+
+**Loop** (wrap):
+
+```
+Forward: 0 → 1 → 2 → 3 → 0 → 1 → ...
+Backward: 3 → 2 → 1 → 0 → 3 → 2 → ...
+```
+
+**Once** (stop):
+
+```
+Forward: 0 → 1 → 2 → 3 [STOP]
+Backward: 3 → 2 → 1 → 0 [STOP]
+```
+
+**Bounce** (ping-pong):
+
+```
+0 → 1 → 2 → 3 → 2 → 1 → 0 → 1 → 2 → ...
+```
+
+### 9.5 Discrete vs Continuous Dimensions
+
+**Discrete** (e.g., time frames, channels):
+
+```typescript
+// Step by integer increments
+nextValue = currentValue + step * direction;
+// Example: frame 0 → 1 → 2 → 3 ...
+```
+
+**Continuous** (e.g., spatial dimensions):
+
+```typescript
+// Calculate increment based on target FPS and traverse time
+const range = max - min;
+const traverseTime = 10000; // 10 seconds to traverse full range
+const increment = (range / traverseTime) * (1000 / targetFPS);
+nextValue = currentValue + increment * direction;
+// Example: z=0.0 → 0.05 → 0.10 → 0.15 ...
+```
+
+### 9.6 Boundary Handling
+
+**Forward Direction at Max**:
+
+- Loop: `value = min`
+- Once: `value = max; stop()`
+- Bounce: `value = max; direction = 'backward'`
+
+**Backward Direction at Min**:
+
+- Loop: `value = max`
+- Once: `value = min; stop()`
+- Bounce: `value = min; direction = 'forward'`
+
+### 9.7 Performance Monitoring
+
+**FPS Measurement**:
+
+```typescript
+// Measure actual FPS over 1-second window
+if (measurementElapsed >= 1000) {
+  actualFPS = (frameCount / measurementElapsed) * 1000;
+
+  // Warn if significantly below target
+  if (actualFPS < targetFPS * 0.8) {
+    emit('fpsWarning', { dimIndex, targetFPS, actualFPS });
+  }
+}
+```
+
+**Warning Threshold**: 80% of target FPS (configurable)
+
+**Why Monitor**:
+
+- Data loading may be slow (network, decoding)
+- System may be under load (CPU, GPU)
+- User feedback helps adjust expectations
+- Can inform automatic quality reduction
+
+### 9.8 Integration with AnimationController
+
+**Registration**:
+
+```typescript
+animationController.setPerFrameCallback(() => {
+  this.onFrame(); // Update all active animations
+});
+
+animationController.startAnimation(); // Ensure loop is running
+```
+
+**Per-Frame Execution**:
+
+- Called ~60 times per second (display refresh rate)
+- Each animation checks its own throttle before updating
+- Multiple dimensions can animate simultaneously
+- Updates trigger sceneDimsManager.setDimensionValue()
+
+### 9.9 Event System
+
+**Events Emitted**:
+
+- `play`: Animation started for dimension
+- `pause`: Animation paused for dimension
+- `complete`: Animation finished (loop mode: once)
+- `speedChange`: Target FPS changed
+- `loopModeChange`: Loop mode changed
+- `directionChange`: Direction reversed (bounce mode)
+- `fpsWarning`: Actual FPS significantly below target
+
+**Event-Driven UI**:
+
+- Play buttons update appearance (▶ ↔ ⏸)
+- FPS selectors reflect current speed
+- Progress indicators show playback position
+
+### 9.10 State Management
+
+**Per-Dimension State**:
+
+```typescript
+interface DimensionAnimationState {
+  isPlaying: boolean;
+  targetFPS: number;
+  loopMode: 'once' | 'loop' | 'bounce';
+  direction: 'forward' | 'backward';
+  lastUpdateTime: number;
+  frameCount: number;
+  lastFPSMeasurementTime: number;
+  actualFPS: number;
+}
+```
+
+**State Lifecycle**:
+
+1. Created on `play()` if doesn't exist
+2. Updated on configuration changes
+3. Preserved across pause/resume
+4. Removed on `stop()` or dispose
+
+### 9.11 Configuration
+
+**Defaults** (from `config.dimensionAnimation.defaults`):
+
+- `targetFPS`: 10 Hz
+- `loop`: 'loop'
+- `direction`: 'forward'
+
+**FPS Presets**: 1, 2, 5, 10, 15, 30, 60 Hz
+**Custom Range**: 0.1 to 120 Hz
+
+**Timing Constants**:
+
+- `minFrameTimeMs`: 16 (~60fps hardware limit)
+- `continuousTraverseSeconds`: 10 (full range traversal time)
+
+**UI Feedback**:
+
+- `showFPSFeedback`: true (show target vs actual)
+- `feedbackThreshold`: 0.8 (warn if actual < 80% target)
+
+### 9.12 Implementation Reference
+
+**Files**:
+
+- `scene/dimension-animation-manager.ts` - Core animation logic
+- `ui/dimension-sliders.ts` - UI integration
+- `input/input-handler.ts` - Keyboard shortcuts
+- `types/animation.ts` - Type definitions
+- `config/index.ts` - Configuration defaults
+
+**Tests**:
+
+- `tests/unit/scene/dimension-animation-manager.test.ts` (33 tests)
+
+---
+
+## Version History
+
+- **v1.7.0** (2025-12-18): Added dimension animation system
+  - FPS-based animation manager with throttling
+  - Loop modes: once, loop, bounce
+  - Per-dimension state management
+  - Event system for UI synchronization
+  - Integration with AnimationController
+  - Performance monitoring with FPS measurement
+  - See: `dimension-animation-manager.ts:1-620`
+
+- **v1.6.0** (2025-12-17): WebGL context loss handling
   - Added event listeners for `webglcontextlost` and `webglcontextrestored`
   - Added `isWebGLContextLost()` public API method
   - Proper cleanup in dispose() method

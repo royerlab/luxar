@@ -1,5 +1,7 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
+import { config } from '../config';
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -94,8 +96,23 @@ export class DimensionSliders {
       mouseleave?: () => void;
       focus?: () => void;
       blur?: () => void;
+      playClick?: () => void;
+      fpsChange?: () => void;
+      loopChange?: () => void;
     }
   > = new Map();
+
+  /** Animation manager for dimension playback (set by InputHandler) */
+  private animationManager?: DimensionAnimationManager;
+
+  /** Map of dimension indices to play button elements */
+  private playButtons: Map<number, HTMLButtonElement> = new Map();
+
+  /** Map of dimension indices to FPS selector elements */
+  private fpsSelectors: Map<number, HTMLSelectElement> = new Map();
+
+  /** Map of dimension indices to loop mode selector elements */
+  private loopSelectors: Map<number, HTMLSelectElement> = new Map();
 
   /**
    * Create and initialize the dimension slider UI component.
@@ -149,6 +166,32 @@ export class DimensionSliders {
     // Populate with actual sliders and initialize display
     this.createSliders();
     this.updateStatusBar();
+  }
+
+  /**
+   * Set animation manager and create animation controls for existing sliders
+   * Called by InputHandler after both DimensionSliders and DimensionAnimationManager are initialized
+   *
+   * @param manager - The animation manager instance
+   */
+  public setAnimationManager(manager: DimensionAnimationManager): void {
+    this.animationManager = manager;
+
+    // Add animation controls to existing sliders
+    this.addAnimationControlsToSliders();
+
+    // Listen for animation events to update UI
+    this.animationManager.addEventListener('play', (e) => {
+      this.updatePlayButtonState(e.dimIndex, true);
+    });
+
+    this.animationManager.addEventListener('pause', (e) => {
+      this.updatePlayButtonState(e.dimIndex, false);
+    });
+
+    this.animationManager.addEventListener('speedChange', (e) => {
+      this.updateFPSDisplay(e.dimIndex, e.fps);
+    });
   }
 
   /**
@@ -770,6 +813,177 @@ export class DimensionSliders {
   }
 
   /**
+   * Add animation controls to all existing sliders
+   * @private
+   */
+  private addAnimationControlsToSliders(): void {
+    // Add controls to each slider
+    for (const [dimIndex, slider] of this.sliders) {
+      const sliderGroup = slider.closest('.luxar-dimension-slider');
+      if (sliderGroup) {
+        this.addAnimationControlsToSlider(dimIndex, sliderGroup as HTMLElement);
+      }
+    }
+  }
+
+  /**
+   * Add animation controls to a specific slider
+   * @private
+   */
+  private addAnimationControlsToSlider(dimIndex: number, sliderGroup: HTMLElement): void {
+    if (!this.animationManager) return;
+
+    // Create controls container
+    const controlsContainer = document.createElement('div');
+    controlsContainer.className = 'luxar-dimension-slider__controls';
+
+    // Play/Pause button
+    const playButton = document.createElement('button');
+    playButton.className = 'luxar-dimension-slider__play-btn';
+    playButton.setAttribute('aria-label', 'Play/Pause animation');
+    playButton.textContent = '▶'; // Play icon
+
+    // FPS selector
+    const fpsContainer = document.createElement('div');
+    fpsContainer.className = 'luxar-dimension-slider__speed';
+
+    const fpsLabel = document.createElement('label');
+    fpsLabel.textContent = 'FPS:';
+    fpsLabel.className = 'luxar-dimension-slider__speed-label';
+
+    const fpsSelect = document.createElement('select');
+    fpsSelect.className = 'luxar-dimension-slider__speed-select';
+
+    // Add FPS presets
+    const presets = config.dimensionAnimation.presets.fps;
+    presets.forEach((fps) => {
+      const option = document.createElement('option');
+      option.value = String(fps);
+      option.textContent = String(fps);
+      fpsSelect.appendChild(option);
+    });
+
+    // Set default
+    fpsSelect.value = String(config.dimensionAnimation.defaults.targetFPS);
+
+    fpsContainer.appendChild(fpsLabel);
+    fpsContainer.appendChild(fpsSelect);
+
+    // Loop mode selector
+    const loopContainer = document.createElement('div');
+    loopContainer.className = 'luxar-dimension-slider__loop';
+
+    const loopLabel = document.createElement('label');
+    loopLabel.textContent = 'Loop:';
+    loopLabel.className = 'luxar-dimension-slider__loop-label';
+
+    const loopSelect = document.createElement('select');
+    loopSelect.className = 'luxar-dimension-slider__loop-select';
+
+    const loopModes: Array<{ value: string; label: string }> = [
+      { value: 'loop', label: 'Loop' },
+      { value: 'once', label: 'Once' },
+      { value: 'bounce', label: 'Bounce' },
+    ];
+
+    loopModes.forEach((mode) => {
+      const option = document.createElement('option');
+      option.value = mode.value;
+      option.textContent = mode.label;
+      loopSelect.appendChild(option);
+    });
+
+    loopSelect.value = config.dimensionAnimation.defaults.loop;
+
+    loopContainer.appendChild(loopLabel);
+    loopContainer.appendChild(loopSelect);
+
+    // Create bound event handlers
+    const playClickHandler = () => {
+      if (!this.animationManager) return;
+
+      const isPlaying = this.animationManager.isAnimating(dimIndex);
+      if (isPlaying) {
+        this.animationManager.pause(dimIndex);
+      } else {
+        const fps = parseInt(fpsSelect.value);
+        const loopMode = loopSelect.value as 'once' | 'loop' | 'bounce';
+        this.animationManager.play(dimIndex, { targetFPS: fps, loopMode });
+      }
+    };
+
+    const fpsChangeHandler = () => {
+      if (!this.animationManager) return;
+      const fps = parseInt(fpsSelect.value);
+      this.animationManager.setTargetFPS(dimIndex, fps);
+    };
+
+    const loopChangeHandler = () => {
+      if (!this.animationManager) return;
+      const loopMode = loopSelect.value as 'once' | 'loop' | 'bounce';
+      this.animationManager.setLoopMode(dimIndex, loopMode);
+    };
+
+    // Add event listeners
+    playButton.addEventListener('click', playClickHandler);
+    fpsSelect.addEventListener('change', fpsChangeHandler);
+    loopSelect.addEventListener('change', loopChangeHandler);
+
+    // Store handlers for cleanup
+    const handlers = this.eventHandlers.get(dimIndex) || {};
+    handlers.playClick = playClickHandler;
+    handlers.fpsChange = fpsChangeHandler;
+    handlers.loopChange = loopChangeHandler;
+    this.eventHandlers.set(dimIndex, handlers);
+
+    // Store element references
+    this.playButtons.set(dimIndex, playButton);
+    this.fpsSelectors.set(dimIndex, fpsSelect);
+    this.loopSelectors.set(dimIndex, loopSelect);
+
+    // Assemble controls
+    controlsContainer.appendChild(playButton);
+    controlsContainer.appendChild(fpsContainer);
+    controlsContainer.appendChild(loopContainer);
+
+    // Insert controls after the slider track
+    const sliderTrack = sliderGroup.querySelector('.luxar-dimension-slider__track');
+    if (sliderTrack && sliderTrack.nextSibling) {
+      sliderGroup.insertBefore(controlsContainer, sliderTrack.nextSibling);
+    } else {
+      sliderGroup.appendChild(controlsContainer);
+    }
+  }
+
+  /**
+   * Update play button appearance based on animation state
+   * @private
+   */
+  private updatePlayButtonState(dimIndex: number, isPlaying: boolean): void {
+    const playButton = this.playButtons.get(dimIndex);
+    if (!playButton) return;
+
+    if (isPlaying) {
+      playButton.textContent = '⏸'; // Pause icon
+      playButton.classList.add('luxar-dimension-slider__play-btn--playing');
+    } else {
+      playButton.textContent = '▶'; // Play icon
+      playButton.classList.remove('luxar-dimension-slider__play-btn--playing');
+    }
+  }
+
+  /**
+   * Update FPS selector display
+   * @private
+   */
+  private updateFPSDisplay(dimIndex: number, fps: number): void {
+    const fpsSelector = this.fpsSelectors.get(dimIndex);
+    if (!fpsSelector) return;
+
+    fpsSelector.value = String(fps);
+  }
+
+  /**
    * Set visibility of slider interface (show or hide).
    *
    * Used by main application to control slider display based on dataset
@@ -834,10 +1048,35 @@ export class DimensionSliders {
       }
     }
 
+    // Remove all event listeners from animation controls
+    for (const [dimIndex, playButton] of this.playButtons) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers?.playClick) {
+        playButton.removeEventListener('click', handlers.playClick);
+      }
+    }
+
+    for (const [dimIndex, fpsSelector] of this.fpsSelectors) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers?.fpsChange) {
+        fpsSelector.removeEventListener('change', handlers.fpsChange);
+      }
+    }
+
+    for (const [dimIndex, loopSelector] of this.loopSelectors) {
+      const handlers = this.eventHandlers.get(dimIndex);
+      if (handlers?.loopChange) {
+        loopSelector.removeEventListener('change', handlers.loopChange);
+      }
+    }
+
     // Clear all maps
     this.eventHandlers.clear();
     this.sliders.clear();
     this.dropdowns.clear();
+    this.playButtons.clear();
+    this.fpsSelectors.clear();
+    this.loopSelectors.clear();
 
     // Remove DOM elements
     this.slidersContainer.remove();

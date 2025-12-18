@@ -58,6 +58,7 @@ Beautiful napari-inspired sliders for navigating through nD datasets.
 - Keyboard navigation support
 - Auto-hide for 3D-only datasets
 - Step-based navigation for discrete dimensions
+- **Animation controls** for automated playback through dimension ranges
 
 **UI Structure:**
 
@@ -82,6 +83,78 @@ sliders.on('dimensionChanged', (dim, value) => {
   updateVisualization(dim, value);
 });
 ```
+
+**Animation Controls:**
+
+Each dimension slider includes animation controls for automated playback through dimension ranges (e.g., time-lapse, z-stack traversal):
+
+```
+┌─────────────────────────────────┐
+│ Time                    50ms    │
+│ ◀━━━━━━━●━━━━━━━━━━▶  [▶] 10   │
+│                        FPS Loop │
+└─────────────────────────────────┘
+```
+
+**Control Elements:**
+
+- **Play Button** (`▶`/`⏸`): Toggle animation play/pause
+- **FPS Selector**: Set target animation speed
+  - Presets: 1, 2, 5, 10, 15, 30, 60 FPS
+  - Custom range: 0.1 - 120 FPS
+- **Loop Selector**: Choose loop behavior
+  - `once`: Play once and stop
+  - `loop`: Loop continuously from start to end
+  - `bounce`: Ping-pong back and forth
+
+**Animation Features:**
+
+- FPS-based throttling with actual FPS measurement
+- Independent animation state per dimension
+- Forward/backward direction control
+- Discrete and continuous dimension support
+- Performance monitoring with warnings if target FPS not achieved
+- Event system for UI synchronization
+
+**Keyboard Shortcuts:**
+
+- `K`: Toggle play/pause for selected dimension
+- `Home`: Jump to dimension start
+- `End`: Jump to dimension end
+- `Shift+↑`: Increase animation speed
+- `Shift+↓`: Decrease animation speed
+
+**Integration:**
+
+```typescript
+import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
+
+// Animation manager is automatically created by InputHandler
+// and connected to dimension sliders
+
+// Programmatic control
+const animManager = inputHandler.getAnimationManager();
+animManager.play(dimIndex, { targetFPS: 30, loopMode: 'loop' });
+animManager.pause(dimIndex);
+animManager.setTargetFPS(dimIndex, 60);
+
+// Listen for animation events
+animManager.addEventListener('play', (e) => {
+  console.log(`Dimension ${e.dimIndex} started animating`);
+});
+
+animManager.addEventListener('complete', (e) => {
+  console.log(`Dimension ${e.dimIndex} animation complete`);
+});
+```
+
+**Implementation Details:**
+
+- Uses `DimensionAnimationManager` for FPS-based animation logic
+- Integrates with `AnimationController` for frame updates
+- Updates dimension values via `SceneDimsManager`
+- CSS styling in `styles/components/dimension-sliders.css`
+- See `scene/dimension-animation-manager.ts` for core animation logic
 
 ### 2. Rendering Controls
 
@@ -589,15 +662,20 @@ All UI components follow a consistent lifecycle:
 
 Global keyboard shortcuts managed by the UI system:
 
-| Key      | Action                     | Context             |
-| -------- | -------------------------- | ------------------- |
-| `H`      | Toggle help                | Global              |
-| `P`      | Toggle performance monitor | Global              |
-| `R`      | Toggle rendering controls  | Global              |
-| `D`      | Toggle dimension sliders   | When nD data loaded |
-| `M`      | Cycle data loading monitor | Global              |
-| `Ctrl+L` | Toggle debug console       | Development mode    |
-| `Esc`    | Close active panel         | Any panel open      |
+| Key       | Action                     | Context                  |
+| --------- | -------------------------- | ------------------------ |
+| `H`       | Toggle help                | Global                   |
+| `P`       | Toggle performance monitor | Global                   |
+| `R`       | Toggle rendering controls  | Global                   |
+| `D`       | Toggle dimension sliders   | When nD data loaded      |
+| `M`       | Cycle data loading monitor | Global                   |
+| `Ctrl+L`  | Toggle debug console       | Development mode         |
+| `Esc`     | Close active panel         | Any panel open           |
+| `K`       | Toggle dimension animation | When dimension selected  |
+| `Home`    | Jump to dimension start    | When dimension selected  |
+| `End`     | Jump to dimension end      | When dimension selected  |
+| `Shift+↑` | Increase animation speed   | When dimension animating |
+| `Shift+↓` | Decrease animation speed   | When dimension animating |
 
 ### Mouse Interactions
 
@@ -892,12 +970,15 @@ Override default styles:
 
 ### DimensionSliders
 
-| Method                 | Description                 |
-| ---------------------- | --------------------------- |
-| `setDimensions(dims)`  | Configure dimension sliders |
-| `setValue(dim, value)` | Set dimension value         |
-| `show()/hide()`        | Toggle visibility           |
-| `on(event, handler)`   | Subscribe to events         |
+| Method                            | Description                     |
+| --------------------------------- | ------------------------------- |
+| `setDimensions(dims)`             | Configure dimension sliders     |
+| `setValue(dim, value)`            | Set dimension value             |
+| `show()/hide()`                   | Toggle visibility               |
+| `on(event, handler)`              | Subscribe to events             |
+| `setAnimationManager(manager)`    | Connect animation manager to UI |
+| `updatePlayButtonState(dimIndex)` | Update play button visual state |
+| `updateFPSDisplay(dimIndex, fps)` | Update FPS display value        |
 
 ### RenderingControls
 

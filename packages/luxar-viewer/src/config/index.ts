@@ -95,7 +95,7 @@ export const config: AppConfig = {
     targetFPS: 55, // Target FPS - slightly below 60 to prevent toggling
     minFPS: 50, // FPS threshold for scaling down resolution
     maxFPS: 58, // FPS threshold for scaling up resolution
-    minDPR: 0.75, // Minimum DPR - lower bound before image becomes too pixelated
+    minDPR: 0.5, // Minimum DPR - lower bound before image becomes too pixelated
     scaleDownFactor: 0.9, // Reduce DPR by 10% when scaling down
     scaleUpFactor: 1.05, // Increase DPR by 5% when scaling up
     hysteresisSeconds: 3, // Wait 3 seconds of stable high FPS before scaling up
@@ -494,6 +494,28 @@ export const config: AppConfig = {
     l1MaxSizeMB: 100,
     l2MaxSizeMB: 2048,
     debug: false,
+  },
+
+  // Dimension animation configuration
+  dimensionAnimation: {
+    defaults: {
+      targetFPS: 10,
+      loop: 'loop' as const,
+      direction: 'forward' as const,
+    },
+    presets: {
+      fps: [1, 2, 5, 10, 15, 30, 60],
+      customMin: 0.1,
+      customMax: 120,
+    },
+    timing: {
+      minFrameTimeMs: 16, // ~60fps absolute max
+      continuousTraverseSeconds: 10, // Full range in 10s for continuous dims
+    },
+    ui: {
+      showFPSFeedback: true, // Show "target vs actual" fps
+      feedbackThreshold: 0.8, // Warn if actual < 80% of target
+    },
   },
 
   // Default path to demo Zarr data when no source is specified

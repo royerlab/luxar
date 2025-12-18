@@ -8,16 +8,18 @@
  * Inspired by Apple's liquid glass and https://dev.to/kevinbism/recreating-apples-liquid-glass-effect-with-pure-css-3gpl
  */
 
-/* Base overrides for all liquid glass components */
+/* Base overrides for components that support pseudo-element approach */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
-[data-theme='liquid-glass'] .luxar-dimension-sliders,
-[data-theme='liquid-glass'] .luxar-gui {
+[data-theme='liquid-glass'] .luxar-dimension-sliders {
   /* Create stacking context for pseudo-elements */
   isolation: isolate;
+
+  /* Ensure border doesn't affect sizing/centering */
+  box-sizing: border-box;
 
   /* Transparent - pseudo-elements handle the glass look */
   background: transparent !important;
@@ -26,6 +28,23 @@
 
   /* Brighter border for glass edge definition */
   border: 1px solid rgba(255, 255, 255, 0.5) !important;
+}
+
+/* GUI needs direct styling (overflow:auto breaks pseudo-element approach) */
+[data-theme='liquid-glass'] .luxar-gui {
+  /* Glass tint + backdrop blur */
+  background: rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(12px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
+
+  /* Brighter border */
+  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+
+  /* Liquid shine via box-shadow (since we can't use ::after) */
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 1px rgba(255, 255, 255, 0.4),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.1) !important;
 }
 
 /* ==========================================================================
@@ -37,8 +56,7 @@
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
-[data-theme='liquid-glass'] .luxar-gui::before {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -67,8 +85,7 @@
 [data-theme='liquid-glass'] .luxar-dataset-browser::after,
 [data-theme='liquid-glass'] .luxar-debug-console::after,
 [data-theme='liquid-glass'] .luxar-data-monitor::after,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::after,
-[data-theme='liquid-glass'] .luxar-gui::after {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -76,23 +93,23 @@
   border-radius: inherit;
   pointer-events: none;
 
-  /* Subtle glass tint */
-  background: rgba(255, 255, 255, 0.08);
+  /* Glass tint - more visible for better readability */
+  background: rgba(255, 255, 255, 0.15);
 
   /* Complex inset shadows for liquid shine effect */
   /* Top-left highlight + bottom edge glow */
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.4),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.1),
-    inset 2px 2px 4px rgba(255, 255, 255, 0.15),
-    inset -2px -2px 4px rgba(0, 0, 0, 0.05);
+    inset 0 1px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.15),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.2),
+    inset -2px -2px 6px rgba(0, 0, 0, 0.08);
 
-  /* Brightness boost and subtle blur for glossy feel */
-  filter: brightness(110%);
-  -webkit-filter: brightness(110%);
+  /* Brightness boost for glossy feel */
+  filter: brightness(105%);
+  -webkit-filter: brightness(105%);
 
-  /* Slight transparency to blend with refraction layer */
-  opacity: 0.7;
+  /* Higher opacity for better visibility */
+  opacity: 0.9;
 }
 
 /* Note: Adjust refraction parameters in src/themes/glass-filters.ts */
