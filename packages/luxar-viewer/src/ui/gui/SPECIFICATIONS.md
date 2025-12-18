@@ -101,12 +101,34 @@ slider.dispatchEvent(new Event('input')); // DOES call onChange
 
 Inputs blur automatically to restore keyboard shortcuts:
 
-| Input Type   | Blur Trigger        |
-| ------------ | ------------------- |
-| Checkbox     | After change        |
-| Slider       | On mouseup/touchend |
-| Number Input | On Enter key        |
-| Select       | After change        |
+| Input Type   | Blur Trigger          |
+| ------------ | --------------------- |
+| Checkbox     | After change or click |
+| Slider       | On mouseup/touchend   |
+| Number Input | On Enter or Escape    |
+| Text Input   | On Enter or Escape    |
+| Select       | After change          |
+
+**Important Note on Number Inputs**: Number inputs do NOT blur on mouseup, only on Enter/Escape. This allows users to click on the input field and edit the value directly without losing focus. Earlier implementations had mouseup blur which prevented text editing.
+
+### Hidden Spinner Buttons
+
+Number input spinner buttons (increment/decrement arrows) are hidden via CSS:
+
+```css
+.luxar-gui__input--number::-webkit-inner-spin-button,
+.luxar-gui__input--number::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+.luxar-gui__input--number[type='number'] {
+  -moz-appearance: textfield;
+}
+```
+
+**Rationale**: Spinner buttons interfere with text alignment and are difficult to position correctly. Users can edit values directly via the text field or use the slider for rapid adjustments.
 
 ## DOM Structure (BEM Naming)
 
@@ -335,3 +357,21 @@ All existing code works without changes:
 | `dom/event-manager.ts` | Memory management       | ~85           |
 | `utils/*.ts`           | Utility functions       | ~50-70 each   |
 | `styles/*.css`         | Styling                 | ~100-300 each |
+
+---
+
+## Changelog
+
+- **v1.1.0** (2025-12-17): Input handling improvements
+  - **FIXED**: Number inputs now allow direct text editing (removed mouseup blur)
+  - **CHANGED**: Number inputs blur only on Enter or Escape key
+  - **CHANGED**: Spinner buttons (up/down arrows) hidden via CSS
+  - **ADDED**: Documentation for auto-blur behavior differences by input type
+  - **ADDED**: Explanation of why spinner buttons are hidden
+
+- **v1.0.0** (2025-12-10): Initial implementation
+  - Drop-in replacement for lil-gui library
+  - Complete API compatibility with lil-gui
+  - Direct CSS variable integration for theming
+  - Memory leak prevention via EventManager
+  - Support for logarithmic sliders and controller synchronization

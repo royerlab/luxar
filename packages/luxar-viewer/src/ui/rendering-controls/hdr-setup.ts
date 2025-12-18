@@ -22,7 +22,7 @@ export function setupHDRControls(context: SetupContext, hdrLogValue: { log: numb
   const controllers: SetupResult['controllers'] = {};
 
   // HDR folder
-  const hdrFolder = gui.addFolder('HDR');
+  const hdrFolder = gui.addFolder('☀️ HDR');
   hdrFolder.open();
 
   // Logarithmic HDR intensity slider

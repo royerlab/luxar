@@ -22,7 +22,7 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
   const controllers: SetupResult['controllers'] = {};
 
   // Anti-aliasing folder
-  const aaFolder = gui.addFolder('Anti-Aliasing');
+  const aaFolder = gui.addFolder('✨ Anti-Aliasing');
   aaFolder.close(); // Collapsed by default
 
   // SSAA settings (collapsible) - First because it's the highest quality

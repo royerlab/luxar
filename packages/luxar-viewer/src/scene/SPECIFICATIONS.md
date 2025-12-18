@@ -1,7 +1,7 @@
 # luxar-viewer.scene - Technical Specification
 
-**Version**: 1.5.0
-**Last Updated**: 2025-12-15
+**Version**: 1.6.0
+**Last Updated**: 2025-12-17
 
 ## Purpose
 
@@ -234,6 +234,44 @@ class AnimationController {
 - Data loading completion
 - Dimension navigation
 - Window focus/visibility change
+
+### 2.1a Visibility-Based Pause (Power Saving)
+
+**Purpose**: Completely stop rendering when browser tab is not visible to guarantee zero CPU/GPU usage.
+
+**Problem**: Even with idle timeout, continuous effects (detector noise, auto-rotate) keep the animation loop running. Browser throttling of `requestAnimationFrame` reduces but doesn't eliminate resource usage.
+
+**Solution**: Explicitly stop animation when `document.hidden` becomes true:
+
+```typescript
+// In app.ts - setupFocusHandling()
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // Tab hidden - stop completely to save resources
+    this.animationController.stopAnimation();
+  } else {
+    // Tab visible - resume rendering
+    this.animationController.startAnimation();
+  }
+});
+```
+
+**Behavior**:
+
+| Event              | Action             | Effect                                |
+| ------------------ | ------------------ | ------------------------------------- |
+| Tab hidden         | `stopAnimation()`  | Zero CPU/GPU usage                    |
+| Tab visible        | `startAnimation()` | Resume at 60fps                       |
+| Window loses focus | Continue running   | Browser may throttle to ~1fps         |
+| Idle timeout (2s)  | `stopAnimation()`  | Zero usage (if no continuous effects) |
+
+**Rationale**:
+
+- Guarantees zero resource usage when tab is not visible
+- Overrides continuous effects (noise, auto-rotate) for hidden tabs
+- Improves battery life on laptops and mobile devices
+- Reduces thermal impact during extended sessions
+- Browser throttling alone may still consume 1-10% CPU
 
 ### 2.2 Render Loop
 
@@ -1310,6 +1348,13 @@ interface SceneDimsManager {
 ---
 
 ## Changelog
+
+- **v1.6.0** (2025-12-17): Visibility-based animation pause for power saving
+  - **ADDED**: Section 2.1a "Visibility-Based Pause (Power Saving)"
+  - **ADDED**: Explicit `stopAnimation()` call when browser tab becomes hidden
+  - **IMPROVED**: Guarantees zero CPU/GPU usage when tab is not visible
+  - **IMPROVED**: Overrides continuous effects (noise, auto-rotate) for hidden tabs
+  - **BENEFIT**: Better battery life and reduced thermal impact
 
 - **v1.5.0** (2025-12-11): Dimension initialization fix documentation
   - **ADDED**: Section 8.1.1 "Dimension Initialization Policy" documenting type-aware initialization

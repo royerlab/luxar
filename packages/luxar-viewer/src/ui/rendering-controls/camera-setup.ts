@@ -50,7 +50,7 @@ export function setupCameraControls(
   const controllers: SetupResult['controllers'] = {};
 
   // Camera folder - for camera-specific settings
-  const cameraFolder = gui.addFolder('Camera');
+  const cameraFolder = gui.addFolder('🎥 Camera');
   cameraFolder.open();
 
   // FOV Preset dropdown

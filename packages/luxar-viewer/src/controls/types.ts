@@ -92,6 +92,8 @@ export interface RenderingControllers {
   flyInertialMode?: Controller;
   flyDamping?: Controller;
   flyRotationDamping?: Controller;
+  // Performance controls
+  adaptiveDPREnabled?: Controller;
 }
 
 /**

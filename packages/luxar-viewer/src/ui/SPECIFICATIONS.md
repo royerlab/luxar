@@ -1,7 +1,7 @@
 # luxar-viewer.ui - Technical Specification
 
-**Version**: 1.3.0
-**Last Updated**: 2025-12-10
+**Version**: 1.4.0
+**Last Updated**: 2025-12-17
 
 ## Purpose
 
@@ -386,7 +386,7 @@ class UIComponent {
 
 ### 5.1 Purpose
 
-Comprehensive UI for controlling all rendering parameters in real-time using lil-gui library.
+Comprehensive UI for controlling all rendering parameters in real-time using a custom GUI library (drop-in replacement for lil-gui).
 
 **Features**:
 
@@ -395,12 +395,23 @@ Comprehensive UI for controlling all rendering parameters in real-time using lil
 - Settings persistence per-scene using localStorage
 - FOV presets with realistic lens distortion
 - Navigation controls (orbit, arcball, fly)
+- **Adaptive resolution controls** with manual DPR adjustment
+
+**Folder Icons**:
+
+Top-level folders use emoji prefixes for visual identification:
+
+- 🕹️ Navigation
+- 🎥 Camera
+- 💡 HDR
+- 🔲 Anti-Aliasing
+- ✨ Post-Processing Effects
 
 ### 5.2 Architecture
 
 **Design Decisions**:
 
-- Uses lil-gui library for immediate-mode GUI
+- Uses custom GUI library (see `./gui/SPECIFICATIONS.md`) for theme integration
 - Settings bound directly to live objects (no manual syncing)
 - Per-scene settings storage with unique keys
 - Deferred rebuild pattern to batch multiple effect changes
@@ -606,9 +617,9 @@ function toggleCinematicMode(): void {
 
   // 5. Set cinematic parameters if enabling
   if (shouldEnableAll) {
-    detectorNoiseReadoutSigma = 0.015;
-    detectorNoisePhotonGain = 0.008;
-    detectorNoiseFpnSigma = 0.003;
+    detectorNoiseReadoutSigma = 0.002;
+    detectorNoisePhotonGain = 0.002;
+    detectorNoiseFpnSigma = 0.001;
   }
 
   // 6. Switch FOV: 35mm for cinematic, 50mm Normal for regular
@@ -650,6 +661,59 @@ controls.toggle(); // Press 'R' in app
 // Cinematic mode
 controls.toggleCinematicMode(); // Press 'C' in app
 ```
+
+### 5.8 Adaptive Resolution Controls
+
+**Purpose**: Controls for managing rendering resolution (DPR) for performance/quality tradeoff.
+
+**UI Behavior**:
+
+The adaptive resolution section displays different controls based on whether adaptive mode is enabled or disabled:
+
+| Adaptive Mode | Controls Shown                                  |
+| ------------- | ----------------------------------------------- |
+| **ON**        | Enable toggle, Read-only DPR (%), Read-only FPS |
+| **OFF**       | Enable toggle, Manual DPR slider (25%-100%)     |
+
+**Implementation**:
+
+```typescript
+function setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
+  // Store reference for state queries
+  this.adaptiveDPRManager = manager;
+
+  // Create controls
+  const adaptiveToggle = folder
+    .add(settings, 'adaptiveResolutionEnabled')
+    .name('Enable Adaptive')
+    .onChange((enabled) => {
+      manager.setEnabled(enabled);
+      updateVisibility(enabled);
+    });
+
+  // Manual DPR control (visible when adaptive OFF)
+  const manualDPRControl = folder
+    .add(manualDPRSettings, 'dpr', 0.25, 1.0, 0.05)
+    .name('Resolution')
+    .onChange((value) => {
+      manager.setManualDPR(value * manager.getNativeDPR());
+    });
+
+  // Read-only displays (visible when adaptive ON)
+  const dprDisplay = folder.add(readOnlyState, 'dpr').name('DPR (%)');
+  dprDisplay.$input.disabled = true;
+
+  const fpsDisplay = folder.add(readOnlyState, 'fps').name('FPS');
+  fpsDisplay.$input.disabled = true;
+}
+```
+
+**Rationale**:
+
+- When adaptive mode is ON, the system automatically adjusts DPR based on performance, so manual control would conflict
+- When adaptive mode is OFF, users may want to manually reduce resolution for better performance
+- FPS display is only meaningful when adaptive mode is tracking performance
+- DPR display shows current value as percentage of native resolution
 
 ---
 
@@ -1857,6 +1921,116 @@ function renderLoop() {
 
 ---
 
+## 14. Low Power Indicator
+
+### 14.1 Purpose
+
+A subtle visual indicator that appears when the adaptive DPR system has reduced rendering resolution to maintain smooth frame rates. Provides feedback to users that the system is operating in "low power mode" with reduced quality.
+
+### 14.2 Architecture
+
+**Design Decisions**:
+
+- Lazy creation (DOM element created only when first shown)
+- Auto-hide after 4 seconds per activation
+- Single show per mode activation (prevents visual spam)
+- Reset mechanism when exiting low power mode
+
+**Component Lifecycle**:
+
+```
+Low Power Mode Activated
+  ↓
+show(dpr) called
+  ↓
+[hasShownForCurrentMode?] → Yes → Return (don't show again)
+  ↓ No
+Create/show element with animation
+  ↓
+Set hasShownForCurrentMode = true
+  ↓
+Start 4-second auto-hide timer
+  ↓
+Timer expires → hide()
+  ↓
+Low Power Mode Deactivated
+  ↓
+reset() called → hasShownForCurrentMode = false
+```
+
+### 14.3 Public API
+
+```typescript
+class LowPowerIndicator {
+  /**
+   * Show the indicator with optional DPR value.
+   * Only shows once per low power mode activation.
+   * Auto-hides after 4 seconds.
+   * @param dpr - Current device pixel ratio to display
+   */
+  show(dpr?: number): void;
+
+  /**
+   * Hide the indicator with animation.
+   */
+  hide(): void;
+
+  /**
+   * Reset state when exiting low power mode.
+   * Allows indicator to show again on next activation.
+   */
+  reset(): void;
+
+  /**
+   * Update the DPR display value (while visible).
+   */
+  updateDPR(dpr?: number): void;
+
+  /**
+   * Check if the indicator is currently visible.
+   */
+  getIsVisible(): boolean;
+
+  /**
+   * Clean up resources.
+   */
+  dispose(): void;
+}
+```
+
+### 14.4 DOM Structure
+
+```html
+<div class="luxar-low-power-indicator luxar-low-power-indicator--hidden">
+  <span class="luxar-low-power-indicator__icon">⚡</span>
+  <span class="luxar-low-power-indicator__text">Low Power Mode</span>
+  <span class="luxar-low-power-indicator__dpr">(75%)</span>
+</div>
+```
+
+### 14.5 Integration with AdaptiveDPRManager
+
+```typescript
+// In app.ts initialization
+this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isLowPowerMode) => {
+  if (isLowPowerMode) {
+    this.lowPowerIndicator.show(dpr);
+  } else {
+    // Exiting low power mode - reset indicator state
+    this.lowPowerIndicator.reset();
+  }
+});
+```
+
+**Rationale**:
+
+- The indicator shows briefly (4 seconds) when entering low power mode to inform the user
+- It doesn't stay visible permanently because that would be distracting
+- The reset() call when exiting ensures the indicator can show again if low power mode reactivates
+- The "once per activation" behavior prevents rapid show/hide cycling during FPS fluctuations
+
+---
+
 ## Data Structures
 
 ### DimensionSliders
@@ -1991,6 +2165,15 @@ interface BufferedMessage {
 ---
 
 ## Changelog
+
+- **v1.4.0** (2025-12-17): Adaptive resolution and low power mode
+  - **ADDED**: Section 5.8 "Adaptive Resolution Controls" - Manual DPR control when adaptive mode is OFF
+  - **ADDED**: Section 14 "Low Power Indicator" - New component with auto-hide behavior
+  - **ADDED**: Folder emoji prefixes for visual identification (🕹️ Navigation, 🎥 Camera, etc.)
+  - **CHANGED**: Updated to use custom GUI library (lil-gui replacement) for theme integration
+  - **IMPROVED**: Manual DPR slider when adaptive resolution is disabled
+  - **IMPROVED**: FPS display hidden when adaptive mode is OFF (no longer shows "0")
+  - **IMPROVED**: Low power indicator auto-hides after 4 seconds per activation
 
 - **v1.3.0** (2025-12-10): Logarithmic HDR intensity slider
   - **ADDED**: Section 5.2a "Logarithmic Slider Pattern" documenting the shadow property approach

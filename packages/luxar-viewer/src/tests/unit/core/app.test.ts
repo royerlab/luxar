@@ -84,7 +84,9 @@ describe('LuxarApp', () => {
 
     mockAnimationController = {
       startAnimation: vi.fn(),
+      stopAnimation: vi.fn(),
       setPerFrameCallback: vi.fn(),
+      setAdaptiveDPRManager: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };
@@ -99,6 +101,7 @@ describe('LuxarApp', () => {
 
     mockRenderingControls = {
       setAnimationController: vi.fn(),
+      setAdaptiveDPRManager: vi.fn(),
       setSceneId: vi.fn(),
       dispose: vi.fn(),
     };
@@ -535,6 +538,7 @@ describe('LuxarApp', () => {
 
     it('should not trigger render when document is hidden', async () => {
       mockAnimationController.startAnimation.mockClear();
+      mockAnimationController.stopAnimation.mockClear();
       (document as any).hidden = true;
 
       // Find the visibilitychange handler
@@ -545,6 +549,8 @@ describe('LuxarApp', () => {
       expect(visibilityHandler).toBeDefined();
       visibilityHandler?.();
 
+      // Should stop animation when hidden (saves resources)
+      expect(mockAnimationController.stopAnimation).toHaveBeenCalled();
       expect(mockAnimationController.startAnimation).not.toHaveBeenCalled();
     });
   });

@@ -89,6 +89,19 @@ export const config: AppConfig = {
     minFPS: 30, // Minimum acceptable FPS before quality reduction
   },
 
+  // Adaptive pixel ratio configuration for dynamic performance optimization
+  adaptiveDPR: {
+    enabled: true, // Enable adaptive DPR by default
+    targetFPS: 55, // Target FPS - slightly below 60 to prevent toggling
+    minFPS: 50, // FPS threshold for scaling down resolution
+    maxFPS: 58, // FPS threshold for scaling up resolution
+    minDPR: 0.75, // Minimum DPR - lower bound before image becomes too pixelated
+    scaleDownFactor: 0.9, // Reduce DPR by 10% when scaling down
+    scaleUpFactor: 1.05, // Increase DPR by 5% when scaling up
+    hysteresisSeconds: 3, // Wait 3 seconds of stable high FPS before scaling up
+    evaluationIntervalMs: 500, // Evaluate FPS every 500ms
+  },
+
   // 3D scene visual configuration
   scene: {
     backgroundColor: 0x111111, // Background color in hexadecimal - dark gray for good contrast with points
@@ -262,9 +275,9 @@ export const config: AppConfig = {
       vignetteOffset: 0.5, // Vignette offset from center (0-1)
       // Detector noise effect settings (physics-based: Poisson + Gaussian + FPN)
       detectorNoiseEnabled: false, // Detector noise disabled by default
-      detectorNoiseReadoutSigma: 0.01, // Temporal readout noise sigma (0-0.1)
-      detectorNoisePhotonGain: 0.01, // Photon gain for shot noise visibility (0.0001-0.1)
-      detectorNoiseFpnSigma: 0.005, // Fixed pattern noise sigma (0-0.05)
+      detectorNoiseReadoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
+      detectorNoisePhotonGain: 0.002, // Photon gain for shot noise visibility (0.0001-0.1)
+      detectorNoiseFpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
       // Lens distortion effect settings
       lensDistortionEnabled: false, // Lens distortion disabled by default
       lensDistortionX: -0.04, // Radial distortion coefficient X (subtle barrel distortion)
@@ -279,6 +292,8 @@ export const config: AppConfig = {
       autoRotate: false, // Auto-rotation disabled by default
       autoRotateSpeed: 0.25, // Slow rotation speed for presentations
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
+      // Adaptive resolution
+      adaptiveDPREnabled: true, // Adaptive resolution enabled by default
     },
   },
 
