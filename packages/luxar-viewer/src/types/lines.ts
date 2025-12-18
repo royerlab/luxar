@@ -331,6 +331,9 @@ export interface LinesUserData {
 
   /** Spatial index for queries (optional, may not exist for non-indexed data) */
   spatialIndex?: LinesChunkSpatialIndex;
+
+  /** Currently visible segment count after nD clipping (updated on view change) */
+  visibleSegmentCount?: number;
 }
 
 // ============================================================================

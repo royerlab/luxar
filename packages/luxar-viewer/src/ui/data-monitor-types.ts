@@ -322,6 +322,8 @@ export interface SceneGraphState {
   totalPoints: number;
   /** Total segments across all lines */
   totalSegments: number;
+  /** Currently visible segments (after nD clipping) */
+  visibleSegments: number;
 }
 
 /**
