@@ -49,12 +49,15 @@ export function applyAutoBlur(
           element.blur();
         }
       });
-      // Also blur on mouseup for number input arrows
-      if (element.type === 'number') {
-        eventManager.add(element, 'mouseup', () => {
-          setTimeout(() => element.blur(), 10);
-        });
-      }
+      // Blur on Escape key (cancel editing)
+      eventManager.add(element, 'keydown', (e: Event) => {
+        const keyEvent = e as KeyboardEvent;
+        if (keyEvent.key === 'Escape') {
+          element.blur();
+        }
+      });
+      // NOTE: Don't blur on mouseup for number inputs - it prevents text editing!
+      // The spinner buttons work fine without this, and users need to click to edit.
     }
   } else if (element instanceof HTMLSelectElement) {
     // Blur after change

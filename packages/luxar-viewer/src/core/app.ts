@@ -9,12 +9,16 @@ import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import { LowPowerIndicator } from '../ui/components/low-power-indicator';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
   private animationController!: AnimationController;
   private inputHandler!: InputHandler;
   private renderingControls!: RenderingControls;
+  private adaptiveDPRManager!: AdaptiveDPRManager;
+  private lowPowerIndicator!: LowPowerIndicator;
   private datasetBrowser?: DatasetBrowser;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
@@ -112,6 +116,22 @@ export class LuxarApp {
         this.sceneManager.updateDynamicClippingPlanes();
       });
 
+      // Initialize adaptive DPR manager for dynamic resolution scaling
+      this.adaptiveDPRManager = new AdaptiveDPRManager();
+      this.adaptiveDPRManager.setRenderer(this.sceneManager);
+      this.animationController.setAdaptiveDPRManager(this.adaptiveDPRManager);
+
+      // Initialize low power indicator and connect to DPR manager
+      this.lowPowerIndicator = new LowPowerIndicator();
+      this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isLowPowerMode) => {
+        if (isLowPowerMode) {
+          this.lowPowerIndicator.show(dpr);
+        } else {
+          // Reset the indicator so it can show again on next low power mode activation
+          this.lowPowerIndicator.reset();
+        }
+      });
+
       // Initialize input handler
       this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
       this.inputHandler.init();
@@ -124,6 +144,9 @@ export class LuxarApp {
 
       // Connect rendering controls to animation controller
       this.renderingControls.setAnimationController(this.animationController);
+
+      // Connect rendering controls to adaptive DPR manager for performance UI
+      this.renderingControls.setAdaptiveDPRManager(this.adaptiveDPRManager);
 
       // Connect rendering controls to input handler
       this.inputHandler.setRenderingControls(this.renderingControls);
@@ -309,12 +332,18 @@ export class LuxarApp {
       log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
     });
 
-    // Also handle visibility change (tab switching)
+    // Handle visibility change (tab switching) to save resources
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        // Document became visible, trigger render
+      if (document.hidden) {
+        // Document hidden - stop animation to save CPU/GPU resources
+        // This ensures zero resource usage when tab is not visible,
+        // regardless of continuous effects (noise, auto-rotate)
+        this.animationController.stopAnimation();
+        log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
+      } else {
+        // Document became visible, resume rendering
         this.animationController.startAnimation();
-        log.info(Modules.LUXAR, 'Document became visible - triggering render refresh');
+        log.info(Modules.LUXAR, 'Document became visible - resuming animation');
       }
     });
   }
@@ -510,6 +539,7 @@ export class LuxarApp {
       animationController: this.animationController,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
+      adaptiveDPRManager: this.adaptiveDPRManager,
     };
   }
 
@@ -528,6 +558,16 @@ export class LuxarApp {
       // Stop animation first
       if (this.animationController) {
         this.animationController.dispose();
+      }
+
+      // Clean up adaptive DPR manager
+      if (this.adaptiveDPRManager) {
+        this.adaptiveDPRManager.dispose();
+      }
+
+      // Clean up low power indicator
+      if (this.lowPowerIndicator) {
+        this.lowPowerIndicator.dispose();
       }
 
       // Clean up input handlers

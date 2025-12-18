@@ -164,6 +164,7 @@ export const Modules = {
   MEMORY: 'Memory',
   PERFORMANCE: 'Performance',
   CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',
+  ADAPTIVE_DPR: 'AdaptiveDPR',
 } as const;
 
 /**

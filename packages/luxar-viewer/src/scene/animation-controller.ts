@@ -11,6 +11,7 @@ import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
 import { PerformanceMonitor } from '../ui/performance-monitor';
 import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization
@@ -43,6 +44,9 @@ export class AnimationController {
 
   /** Optional per-frame callback for additional updates (e.g., dynamic clipping) */
   private perFrameCallback: (() => void) | null = null;
+
+  /** Adaptive DPR manager for dynamic resolution scaling */
+  private adaptiveDPRManager: AdaptiveDPRManager | null = null;
 
   /**
    * Create animation controller for rendering loop management.
@@ -107,6 +111,18 @@ export class AnimationController {
   }
 
   /**
+   * Set the adaptive DPR manager for dynamic resolution scaling.
+   *
+   * The animation loop will call recordFrame() on the manager each frame
+   * to track FPS and adjust pixel ratio as needed.
+   *
+   * @param manager - The AdaptiveDPRManager instance, or null to disable
+   */
+  setAdaptiveDPRManager(manager: AdaptiveDPRManager | null): void {
+    this.adaptiveDPRManager = manager;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -128,6 +144,11 @@ export class AnimationController {
     // Begin frame timing measurement for performance analysis
     // This records the start timestamp for FPS and frame time calculations
     this.performanceMonitor.begin();
+
+    // Record frame for adaptive DPR - tracks FPS and adjusts pixel ratio
+    if (this.adaptiveDPRManager) {
+      this.adaptiveDPRManager.recordFrame(performance.now());
+    }
 
     // Schedule the next frame - requestAnimationFrame syncs with display refresh
     // This provides smooth 60fps on most displays, or 120fps on high-refresh monitors

@@ -1,7 +1,7 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.3.6
-**Last Updated**: 2025-12-11
+**Version**: 1.3.7
+**Last Updated**: 2025-12-17
 
 ## Purpose
 
@@ -24,6 +24,7 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 5. [Material Management](#material-management)
 6. [Anti-Aliasing](#anti-aliasing)
 7. [Line Material System](#line-material-system)
+8. [Adaptive Resolution System](#adaptive-resolution-system)
 
 ---
 
@@ -419,11 +420,19 @@ I_observed = Poisson(I_true / gain) × gain + Gaussian_temporal(0, σ_read²) + 
 
 ```typescript
 const detectorNoiseEffect = new DetectorNoiseEffect({
-  readoutSigma: 0.01, // Temporal readout noise sigma (0-0.1)
-  photonGain: 0.01, // Controls shot noise visibility (0.0001-0.1)
-  fpnSigma: 0.005, // Fixed pattern noise sigma (0-0.05)
+  readoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
+  photonGain: 0.002, // Controls shot noise visibility (0.0001-0.1)
+  fpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
 });
 ```
+
+**Default Values** (as of v1.3.7):
+
+| Parameter    | Default | Range        |
+| ------------ | ------- | ------------ |
+| readoutSigma | 0.002   | 0 - 0.1      |
+| photonGain   | 0.002   | 0.0001 - 0.1 |
+| fpnSigma     | 0.001   | 0 - 0.05     |
 
 **Mathematical Details**:
 
@@ -469,6 +478,57 @@ vec3 normal3_fixed(vec2 seed) {
 | Single-molecule imaging | 0.02         | 0.1        | 0.01     |
 | Old/uncooled detector   | 0.05         | 0.01       | 0.03     |
 | Cinematic film look     | 0.015        | 0.008      | 0.003    |
+
+**DPR-Based Noise Scaling** (as of v1.3.7):
+
+When rendering at reduced resolution (DPR < 1.0) for performance, noise parameters are automatically scaled to maintain perceptual consistency.
+
+**Problem**: At lower DPR, each rendered pixel represents multiple screen pixels. When the image is upscaled, the noise becomes visually coarser/grainier than intended.
+
+**Solution**: Scale noise parameters proportionally to DPR:
+
+```typescript
+// Mathematical basis:
+// When DPR < 1, each rendered pixel covers 1/DPR² screen pixels
+// Averaging N noisy samples reduces sigma by √N
+// So noise should scale linearly with DPR for perceptual consistency
+
+private applyScaledNoiseSettings(): void {
+  const scale = this.currentDPRScale; // e.g., 0.5 for 50% resolution
+
+  this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
+  this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale;
+  this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
+}
+
+setDPRScale(dpr: number): void {
+  const scale = Math.max(0.25, Math.min(1.0, dpr));
+  if (Math.abs(scale - this.currentDPRScale) < 0.01) return;
+
+  this.currentDPRScale = scale;
+  this.applyScaledNoiseSettings();
+}
+```
+
+**Behavior**:
+
+| DPR  | Effective readoutSigma | Effective photonGain | Effective fpnSigma |
+| ---- | ---------------------- | -------------------- | ------------------ |
+| 1.0  | 0.002 (base)           | 0.002 (base)         | 0.001 (base)       |
+| 0.75 | 0.0015                 | 0.0015               | 0.00075            |
+| 0.5  | 0.001                  | 0.001                | 0.0005             |
+| 0.25 | 0.0005                 | 0.0005               | 0.00025            |
+
+**Integration**: Called from `SceneManager.setAdaptivePixelRatio()` when DPR changes:
+
+```typescript
+// In scene-manager.ts
+if (this.postProcessing) {
+  const nativeDPR = window.devicePixelRatio;
+  const normalizedDPR = dpr / nativeDPR;
+  this.postProcessing.setDPRScale(normalizedDPR);
+}
+```
 
 ### 4.5 RobustVignetteEffect (Custom Implementation)
 
@@ -1315,7 +1375,155 @@ interface LineMaterialUniforms {
 
 ---
 
+## 8. Adaptive Resolution System
+
+### 8.1 Purpose
+
+The AdaptiveDPRManager dynamically adjusts the device pixel ratio (DPR) based on real-time FPS to maintain smooth rendering performance. When frame rates drop below threshold, resolution is reduced; when performance improves, resolution is restored.
+
+### 8.2 Algorithm
+
+**Core Loop** (evaluated every 500ms):
+
+```
+recordFrame(timestamp)
+  ↓
+Add timestamp to sliding window (1 second)
+  ↓
+Calculate FPS from frame count / time span
+  ↓
+[FPS < minFPS?] → Scale down immediately
+  ↓
+[FPS > maxFPS for hysteresis period?] → Scale up
+  ↓
+Notify callback (for UI indicators)
+```
+
+**Hysteresis**: Scale up requires sustained high FPS (configurable, default 2 seconds) to prevent rapid toggling.
+
+### 8.3 Public API
+
+```typescript
+class AdaptiveDPRManager {
+  constructor(customConfig?: Partial<AdaptiveDPRConfig>);
+
+  // Renderer integration
+  setRenderer(renderer: DPRRenderer): void;
+  recordFrame(timestamp: number): void;
+
+  // Enable/disable
+  setEnabled(enabled: boolean): void;
+  isActive(): boolean;
+
+  // Manual control (only when adaptive is disabled)
+  setManualDPR(dpr: number): void;
+
+  // State queries
+  getCurrentDPR(): number;
+  getNativeDPR(): number;
+  getCurrentFPS(): number;
+  getIsLowPowerMode(): boolean;
+  getState(): AdaptiveDPRState;
+
+  // Callbacks
+  setOnDPRChangeCallback(callback: DPRChangeCallback | null): void;
+
+  dispose(): void;
+}
+
+interface AdaptiveDPRState {
+  enabled: boolean;
+  currentDPR: number;
+  currentFPS: number;
+  isLowPowerMode: boolean;
+  nativeDPR: number;
+}
+
+type DPRChangeCallback = (dpr: number, isLowPowerMode: boolean) => void;
+```
+
+### 8.4 Configuration
+
+```typescript
+interface AdaptiveDPRConfig {
+  enabled: boolean; // Default: true
+  minFPS: number; // Trigger scale down (default: 25)
+  maxFPS: number; // Trigger scale up (default: 55)
+  minDPR: number; // Floor value (default: 0.5)
+  scaleDownFactor: number; // DPR reduction multiplier (default: 0.8)
+  scaleUpFactor: number; // DPR increase multiplier (default: 1.1)
+  evaluationIntervalMs: number; // Check interval (default: 500)
+  hysteresisSeconds: number; // Sustain before scale up (default: 2)
+}
+```
+
+### 8.5 Manual DPR Control
+
+When adaptive mode is disabled, users can manually set the DPR:
+
+```typescript
+manager.setEnabled(false); // Disable adaptive mode
+manager.setManualDPR(0.75); // Set 75% of native resolution
+
+// DPR is clamped to [0.25, nativeDPR]
+// Logs warning if called while adaptive mode is enabled
+```
+
+**Use Case**: Testing performance at specific resolutions, or deliberately reducing quality for presentations.
+
+### 8.6 Integration with Scene Manager
+
+```typescript
+// In SceneManager
+setAdaptivePixelRatio(dpr: number): void {
+  this.renderer.setPixelRatio(dpr);
+  const w = this.canvas.clientWidth;
+  const h = this.canvas.clientHeight;
+  this.renderer.setSize(w, h, false);
+
+  // Update post-processing resolution
+  if (this.postProcessing) {
+    this.postProcessing.resize(w, h);
+    // Scale noise parameters for perceptual consistency
+    const normalizedDPR = dpr / window.devicePixelRatio;
+    this.postProcessing.setDPRScale(normalizedDPR);
+  }
+}
+```
+
+### 8.7 Low Power Mode Detection
+
+A device is in "low power mode" when DPR is reduced below 95% of native:
+
+```typescript
+this.isLowPowerMode = newDPR < this.nativeDPR * 0.95;
+```
+
+This status is passed to UI components (LowPowerIndicator) via the callback.
+
+---
+
 ## Changelog
+
+- **v1.3.7** (2025-12-17): Adaptive resolution system and DPR-based noise scaling
+  - **ADDED**: Section 8 "Adaptive Resolution System" documenting AdaptiveDPRManager
+    - Dynamic DPR adjustment based on real-time FPS
+    - Hysteresis algorithm to prevent rapid toggling
+    - Manual DPR control when adaptive mode is disabled
+    - Low power mode detection (DPR < 95% native)
+    - Integration with SceneManager and PostProcessingManager
+  - **ADDED**: DPR-based noise scaling for perceptual consistency at reduced resolutions
+    - Noise parameters (readoutSigma, photonGain, fpnSigma) scale linearly with DPR
+    - Maintains visual appearance when adaptive resolution reduces rendering quality
+    - New `setDPRScale(dpr)` method on PostProcessingManager
+  - **ADDED**: `getNativeDPR()` and `setManualDPR(dpr)` methods on AdaptiveDPRManager
+  - **CHANGED**: Updated detector noise default values
+    - readoutSigma: 0.01 → 0.002
+    - photonGain: 0.01 → 0.002
+    - fpnSigma: 0.005 → 0.001
+  - **ADDED**: `baseNoiseSettings` and `currentDPRScale` state variables for tracking
+  - **ADDED**: `applyScaledNoiseSettings()` method for applying DPR-adjusted values
+  - **DOCUMENTED**: Mathematical basis for DPR-proportional noise scaling
 
 - **v1.3.6** (2025-12-11): Line rendering anti-aliasing and aspect ratio fix
   - **BUGFIX**: Fixed aspect ratio issue in line perpendicular calculation
