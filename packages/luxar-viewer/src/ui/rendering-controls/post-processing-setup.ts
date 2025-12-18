@@ -30,7 +30,7 @@ export function setupPostProcessingControls(
   const controllers: SetupResult['controllers'] = {};
 
   // Post-Processing Effects folder
-  const effectsFolder = gui.addFolder('Post-Processing Effects');
+  const effectsFolder = gui.addFolder('🎬 Post-Processing');
   effectsFolder.close(); // Closed by default
 
   // Bloom subfolder - moved here from top level

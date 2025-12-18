@@ -101,6 +101,15 @@ export class PostProcessingManager {
   // Rebuild control - prevents redundant rebuilds during bulk changes
   private deferRebuild: boolean = false;
 
+  // DPR-based noise scaling
+  // Store base (user-configured) noise values separately from DPR-scaled effective values
+  private baseNoiseSettings = {
+    readoutSigma: config.renderingControls.defaults.detectorNoiseReadoutSigma,
+    photonGain: config.renderingControls.defaults.detectorNoisePhotonGain,
+    fpnSigma: config.renderingControls.defaults.detectorNoiseFpnSigma,
+  };
+  private currentDPRScale: number = 1.0;
+
   // Performance features
   private bloomLevels: number = config.renderingControls.defaults.bloomLevels;
   private _qualityPreset: 'low' | 'medium' | 'high' | 'ultra' = 'medium';
@@ -775,34 +784,72 @@ export class PostProcessingManager {
     photonGain?: number;
     fpnSigma?: number;
   }): void {
-    if (!this.detectorNoiseEffect) {
-      log.warning(Modules.POST_PROCESSING, 'Detector noise effect not initialized');
-      return;
-    }
-
-    if (!isDetectorNoiseEffect(this.detectorNoiseEffect)) {
-      log.error(Modules.POST_PROCESSING, 'Invalid detector noise effect type');
-      return;
-    }
-
+    // Store base (user-configured) values
     if (params.readoutSigma !== undefined) {
-      this.detectorNoiseEffect.readoutSigma = params.readoutSigma;
+      this.baseNoiseSettings.readoutSigma = params.readoutSigma;
     }
-
     if (params.photonGain !== undefined) {
-      this.detectorNoiseEffect.photonGain = params.photonGain;
+      this.baseNoiseSettings.photonGain = params.photonGain;
+    }
+    if (params.fpnSigma !== undefined) {
+      this.baseNoiseSettings.fpnSigma = params.fpnSigma;
     }
 
-    if (params.fpnSigma !== undefined) {
-      this.detectorNoiseEffect.fpnSigma = params.fpnSigma;
-    }
+    // Apply DPR-scaled values to the effect
+    this.applyScaledNoiseSettings();
 
     log.update(
       Modules.POST_PROCESSING,
       `Detector noise updated: ${Object.keys(params)
         .map((k) => `${k}=${params[k as keyof typeof params]}`)
-        .join(', ')}`
+        .join(', ')} (DPR scale: ${this.currentDPRScale.toFixed(2)})`
     );
+  }
+
+  /**
+   * Apply DPR-scaled noise settings to the effect
+   *
+   * When DPR < 1, we render at lower resolution and upscale. Each rendered pixel
+   * covers 1/DPR² screen pixels. To maintain perceptual consistency, noise sigma
+   * should be scaled by DPR (since averaging N noisy samples reduces sigma by √N,
+   * and here each sample covers 1/DPR² pixels, so sigma_effective = sigma × DPR).
+   */
+  private applyScaledNoiseSettings(): void {
+    if (!this.detectorNoiseEffect || !isDetectorNoiseEffect(this.detectorNoiseEffect)) {
+      return;
+    }
+
+    const scale = this.currentDPRScale;
+    this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
+    this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale;
+    this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
+  }
+
+  /**
+   * Set DPR scale for noise adjustment
+   *
+   * When rendering at lower DPR, noise appears as larger blocks when upscaled.
+   * This method scales noise parameters to maintain perceptual consistency.
+   *
+   * @param dpr - Current device pixel ratio (1.0 = native, <1.0 = reduced)
+   */
+  setDPRScale(dpr: number): void {
+    // Clamp to reasonable range
+    const scale = Math.max(0.25, Math.min(1.0, dpr));
+
+    if (Math.abs(scale - this.currentDPRScale) < 0.01) {
+      return; // No significant change
+    }
+
+    this.currentDPRScale = scale;
+    this.applyScaledNoiseSettings();
+
+    if (scale < 1.0) {
+      log.info(
+        Modules.POST_PROCESSING,
+        `Noise scaled for DPR ${dpr.toFixed(2)} (noise × ${scale.toFixed(2)})`
+      );
+    }
   }
 
   /**

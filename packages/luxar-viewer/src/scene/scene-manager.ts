@@ -860,6 +860,53 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
+   * Update pixel ratio for adaptive performance optimization.
+   *
+   * Uses setSize with updateStyle=false to keep canvas CSS size constant
+   * while reducing the internal buffer resolution for better performance.
+   *
+   * This method is called by the AdaptiveDPRManager when FPS drops below
+   * acceptable thresholds.
+   *
+   * @param dpr - The new device pixel ratio to use
+   */
+  public setAdaptivePixelRatio(dpr: number): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    // Set new pixel ratio
+    this.renderer.setPixelRatio(dpr);
+
+    // Update size with updateStyle=false to keep CSS dimensions constant
+    // This allows the internal render buffer to be smaller while the canvas
+    // still fills the viewport
+    this.renderer.setSize(w, h, false);
+
+    // Update post-processing pipeline for new buffer dimensions
+    if (this.postProcessing) {
+      this.postProcessing.resize(w, h);
+
+      // Scale noise parameters based on DPR to maintain perceptual consistency
+      // At lower DPR, each pixel covers more area, so noise should be scaled down
+      const nativeDPR = window.devicePixelRatio;
+      const normalizedDPR = dpr / nativeDPR; // 1.0 at native, <1.0 when reduced
+      this.postProcessing.setDPRScale(normalizedDPR);
+    }
+
+    // Update material uniforms for world-space point sizing
+    if (this.camera) {
+      const fovRadians = (this.camera.fov * Math.PI) / 180;
+      const drawingBufferSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      materialManager.updateCameraParams(fovRadians, drawingBufferSize);
+    }
+
+    log.update(
+      Modules.SCENE_MANAGER,
+      `Adaptive DPR: ${dpr.toFixed(2)} (buffer: ${Math.round(w * dpr)}x${Math.round(h * dpr)})`
+    );
+  }
+
+  /**
    * Update camera FOV with bounds checking
    */
   updateFOV(deltaY: number): void {

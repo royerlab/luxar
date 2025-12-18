@@ -399,7 +399,7 @@ animationController.stopAnimation();
 
 ### Focus and Visibility Handling
 
-The app automatically handles window focus changes:
+The app automatically handles window focus and visibility changes for power efficiency:
 
 ```typescript
 // Setup in app initialization
@@ -407,18 +407,33 @@ private setupFocusHandling(): void {
   // Refresh rendering when window gains focus
   window.addEventListener('focus', () => {
     this.animationController.startAnimation();
-    console.log('Window focused - triggering render refresh');
+    log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
   });
 
-  // Handle tab switching
+  // Handle tab switching - STOP animation when hidden to save resources
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
+    if (document.hidden) {
+      // Tab hidden - stop completely to guarantee zero CPU/GPU usage
+      this.animationController.stopAnimation();
+      log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
+    } else {
+      // Tab visible - resume rendering
       this.animationController.startAnimation();
-      console.log('Document became visible - triggering render refresh');
+      log.info(Modules.LUXAR, 'Document became visible - resuming animation');
     }
   });
 }
 ```
+
+**Power Saving Behavior**:
+
+| Event          | Action             | Console Message                                        |
+| -------------- | ------------------ | ------------------------------------------------------ |
+| Tab hidden     | `stopAnimation()`  | `[ℹ️] [Luxar] Document hidden - stopping animation...` |
+| Tab visible    | `startAnimation()` | `[ℹ️] [Luxar] Document became visible - resuming...`   |
+| Window focused | `startAnimation()` | `[ℹ️] [Luxar] Window focused - triggering render...`   |
+
+This ensures zero CPU/GPU usage when the tab is not visible, even if continuous effects (detector noise, auto-rotate) are enabled.
 
 ## Best Practices
 

@@ -158,24 +158,34 @@
   text-align: right;
   font-weight: 400;
   font-size: var(--luxar-text-sm);
-  padding: 2px 6px;
-  border: none;
+  padding: 2px 4px;
+  border: 1px solid transparent;
   border-radius: var(--luxar-radius-sm);
   box-sizing: border-box;
+  cursor: text;
+}
 
-  /* Hide spinner buttons */
-  -moz-appearance: textfield;
+.luxar-gui__input--number:hover {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: var(--luxar-border-subtle);
 }
 
 .luxar-gui__input--number:focus {
   outline: none;
   background: rgba(0, 0, 0, 0.3);
+  border-color: var(--luxar-success);
 }
 
+/* Hide spinner buttons - they interfere with text alignment */
 .luxar-gui__input--number::-webkit-inner-spin-button,
 .luxar-gui__input--number::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* Firefox spinner removal */
+.luxar-gui__input--number {
+  -moz-appearance: textfield;
 }
 
 /**
@@ -259,6 +269,11 @@
  */
 [data-theme='light'] .luxar-gui__input--number {
   background: rgba(0, 0, 0, 0.05);
+  color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-gui__input--number:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
 [data-theme='light'] .luxar-gui__input {

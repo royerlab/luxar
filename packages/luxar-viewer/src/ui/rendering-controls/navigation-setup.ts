@@ -30,7 +30,7 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
   const controllers: SetupResult['controllers'] = {};
 
   // Navigation folder - for camera movement and rotation controls
-  const navigationFolder = gui.addFolder('Navigation');
+  const navigationFolder = gui.addFolder('🕹️ Navigation');
   navigationFolder.open();
 
   // Control type selector

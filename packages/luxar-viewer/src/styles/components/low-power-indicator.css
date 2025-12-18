@@ -1,0 +1,88 @@
+/**
+ * Low Power Mode Indicator Component Styles
+ *
+ * A subtle indicator that appears when adaptive DPR has reduced
+ * rendering resolution for performance reasons.
+ */
+
+/* ========== Fade Animation ========== */
+
+@keyframes luxar-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes luxar-fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* ========== Low Power Indicator ========== */
+
+.luxar-low-power-indicator {
+  /* Positioning */
+  position: fixed;
+  bottom: var(--luxar-spacing-10);
+  right: var(--luxar-spacing-10);
+
+  /* Layout */
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-4);
+
+  /* Theming */
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-secondary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-md);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-6);
+
+  /* Typography */
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  font-weight: 500;
+
+  /* Effects */
+  backdrop-filter: var(--luxar-blur-sm);
+  box-shadow: var(--luxar-shadow-md);
+  z-index: var(--luxar-z-notification);
+
+  /* Animation */
+  animation: luxar-fade-in 0.3s ease-out forwards;
+
+  /* Interaction */
+  pointer-events: none;
+  user-select: none;
+}
+
+.luxar-low-power-indicator--hidden {
+  animation: luxar-fade-out 0.3s ease-out forwards;
+}
+
+.luxar-low-power-indicator__icon {
+  font-size: var(--luxar-text-md);
+  line-height: 1;
+}
+
+.luxar-low-power-indicator__text {
+  color: var(--luxar-text-secondary);
+  white-space: nowrap;
+}
+
+.luxar-low-power-indicator__dpr {
+  color: var(--luxar-text-tertiary);
+  font-size: var(--luxar-text-xs);
+  margin-left: var(--luxar-spacing-2);
+}

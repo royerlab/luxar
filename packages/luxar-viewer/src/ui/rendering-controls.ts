@@ -22,6 +22,7 @@ import { setupCameraControls } from './rendering-controls/camera-setup';
 import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
+import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -89,9 +90,8 @@ export class RenderingControls {
   /** Shadow object for logarithmic HDR intensity slider */
   private hdrLogValue: { log: number } = { log: 0 };
 
-  /** Auto-blur cleanup resources */
-  private autoBlurObserver?: MutationObserver;
-  private autoBlurTimeoutId?: ReturnType<typeof setTimeout>;
+  /** Reference to adaptive DPR manager for performance controls */
+  private adaptiveDPRManager?: AdaptiveDPRManager;
 
   /**
    * Create rendering controls UI with complete parameter access.
@@ -256,22 +256,8 @@ export class RenderingControls {
     // Theme selector
     this.setupThemeControls();
 
-    // Reset to Defaults button at root level
-    const resetButton = {
-      'Reset to Defaults': () => {
-        this.resetToDefaults();
-      },
-    };
-
-    const resetControl = this.gui.add(resetButton, 'Reset to Defaults');
-    resetControl.domElement.setAttribute(
-      'title',
-      'Reset to Defaults: Restore all rendering settings\n' +
-        '• Resets camera, HDR, bloom, anti-aliasing\n' +
-        '• Resets all post-processing effects\n' +
-        '• Resets navigation controls\n' +
-        '• Clears saved settings for this scene'
-    );
+    // Note: Reset to Defaults button is added at the end of setAdaptiveDPRManager
+    // to ensure it appears after the Performance folder
   }
 
   /**
@@ -422,6 +408,174 @@ export class RenderingControls {
    */
   setAnimationController(animationController: AnimationController): void {
     this.animationController = animationController;
+  }
+
+  /**
+   * Set the adaptive DPR manager reference and create performance controls.
+   *
+   * Creates a "Performance" folder with:
+   * - Adaptive Resolution toggle (enables/disables dynamic DPR scaling)
+   * - Current DPR display (read-only, shows current pixel ratio)
+   *
+   * @param manager - The AdaptiveDPRManager instance
+   */
+  setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
+    this.adaptiveDPRManager = manager;
+
+    // Create Performance folder with adaptive DPR controls
+    const performanceFolder = this.gui.addFolder('⚡ Performance');
+
+    // Adaptive Resolution toggle (onChange registered below after manual DPR control is created)
+    const adaptiveToggle = performanceFolder
+      .add(this.settings, 'adaptiveDPREnabled')
+      .name('Adaptive Resolution');
+
+    adaptiveToggle.domElement.setAttribute(
+      'title',
+      'Adaptive Resolution: Automatically adjusts rendering quality for smooth FPS\n' +
+        '• When FPS drops below 50, reduces pixel ratio\n' +
+        '• Gradually restores quality when FPS stabilizes above 58\n' +
+        '• Minimum DPR: 0.75 (75% of native resolution)'
+    );
+
+    // Manual DPR control (shown when adaptive is OFF)
+    const nativeDPR = manager.getNativeDPR();
+    const manualDPRSettings = { dpr: nativeDPR };
+
+    const manualDPRControl = performanceFolder
+      .add(manualDPRSettings, 'dpr', 0.25, nativeDPR, 0.05)
+      .name('Manual DPR')
+      .onChange((value: number) => {
+        if (this.adaptiveDPRManager && !this.settings.adaptiveDPREnabled) {
+          this.adaptiveDPRManager.setManualDPR(value);
+          this.triggerAnimation();
+        }
+      });
+
+    manualDPRControl.domElement.setAttribute(
+      'title',
+      'Manual Device Pixel Ratio (when adaptive is off)\n' +
+        `• Native: ${nativeDPR.toFixed(2)}\n` +
+        '• Lower values = better performance, less sharpness\n' +
+        '• 1.0 = 100% resolution, 0.5 = 50% resolution'
+    );
+
+    // Create simple text displays for DPR and FPS (read-only info, shown when adaptive is ON)
+    const createDisplayRow = (label: string, tooltip: string): HTMLElement => {
+      const row = document.createElement('div');
+      row.className = 'luxar-gui__controller';
+      row.style.opacity = '0.7';
+      row.setAttribute('title', tooltip);
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'luxar-gui__controller-name';
+      nameEl.textContent = label;
+
+      const valueEl = document.createElement('div');
+      valueEl.className = 'luxar-gui__controller-widget';
+      valueEl.style.textAlign = 'right';
+      valueEl.style.paddingRight = '8px';
+      valueEl.style.fontFamily = 'monospace';
+
+      row.appendChild(nameEl);
+      row.appendChild(valueEl);
+      return row;
+    };
+
+    const dprRow = createDisplayRow(
+      'Current DPR',
+      `Current Device Pixel Ratio\n• Native: ${nativeDPR.toFixed(2)}\n• Lower values = better performance, less sharpness`
+    );
+    const dprValue = dprRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
+
+    const fpsRow = createDisplayRow(
+      'Current FPS',
+      'Current Frames Per Second\n• Target: 55-60 FPS\n• Scales down if below 50 FPS'
+    );
+    const fpsValue = fpsRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
+
+    // Access folder's children container to append display rows
+    const folderEl = performanceFolder.domElement;
+    if (folderEl) {
+      const childrenContainer = folderEl.querySelector('.luxar-gui__children');
+      if (childrenContainer) {
+        childrenContainer.appendChild(dprRow);
+        childrenContainer.appendChild(fpsRow);
+      }
+    }
+
+    // Helper function to update visibility of controls based on adaptive state
+    const updateControlVisibility = (adaptiveEnabled: boolean) => {
+      if (adaptiveEnabled) {
+        // Adaptive ON: show display rows, hide manual control
+        manualDPRControl.hide();
+        dprRow.style.display = '';
+        fpsRow.style.display = '';
+      } else {
+        // Adaptive OFF: show manual control, hide display rows
+        manualDPRControl.show();
+        // Sync manual DPR slider with current value
+        manualDPRSettings.dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? nativeDPR;
+        manualDPRControl.updateDisplay();
+        dprRow.style.display = 'none';
+        fpsRow.style.display = 'none';
+      }
+    };
+
+    // Set initial visibility
+    updateControlVisibility(this.settings.adaptiveDPREnabled);
+
+    // Register onChange handler for adaptive toggle
+    adaptiveToggle.onChange((enabled: boolean) => {
+      if (this.adaptiveDPRManager) {
+        this.adaptiveDPRManager.setEnabled(enabled);
+      }
+      this.saveSettings();
+      log.info(Modules.RENDERER, `Adaptive resolution ${enabled ? 'enabled' : 'disabled'}`);
+      updateControlVisibility(enabled);
+    });
+
+    // Update displays periodically (only when adaptive is enabled)
+    const updateInterval = setInterval(() => {
+      if (this.adaptiveDPRManager && this.settings.adaptiveDPREnabled) {
+        const state = this.adaptiveDPRManager.getState();
+        dprValue.textContent = state.currentDPR.toFixed(2);
+        fpsValue.textContent = Math.round(state.currentFPS).toString();
+      }
+    }, 500);
+
+    // Store cleanup reference
+    const originalDispose = this.dispose.bind(this);
+    this.dispose = () => {
+      clearInterval(updateInterval);
+      originalDispose();
+    };
+
+    // Sync initial state
+    this.settings.adaptiveDPREnabled = manager.isActive();
+
+    // Close folder by default
+    performanceFolder.close();
+
+    // Store controller references
+    this.controllers.adaptiveDPREnabled = adaptiveToggle;
+
+    // Reset to Defaults button at root level (added last to appear at bottom)
+    const resetButton = {
+      'Reset to Defaults': () => {
+        this.resetToDefaults();
+      },
+    };
+
+    const resetControl = this.gui.add(resetButton, 'Reset to Defaults');
+    resetControl.domElement.setAttribute(
+      'title',
+      'Reset to Defaults: Restore all rendering settings\n' +
+        '• Resets camera, HDR, bloom, anti-aliasing\n' +
+        '• Resets all post-processing effects\n' +
+        '• Resets navigation controls\n' +
+        '• Clears saved settings for this scene'
+    );
   }
 
   /**
@@ -966,81 +1120,14 @@ export class RenderingControls {
 
   /**
    * Setup auto-blur for all GUI controls
-   * This prevents focus from getting stuck on checkboxes and other controls
+   *
+   * NOTE: The custom GUI library now handles auto-blur internally via
+   * src/ui/gui/utils/auto-blur.ts. This method is kept for backwards
+   * compatibility but does nothing - all auto-blur logic is in the GUI library.
    */
   private setupAutoBlur(): void {
-    // Use MutationObserver to watch for new controls being added
-    this.autoBlurObserver = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node instanceof HTMLElement) {
-            // Find all input elements (checkboxes, sliders, etc.)
-            const inputs = node.querySelectorAll('input, select');
-            inputs.forEach((input) => {
-              this.addAutoBlurToElement(input as HTMLElement);
-            });
-            // Also check if the node itself is an input
-            if (node.tagName === 'INPUT' || node.tagName === 'SELECT') {
-              this.addAutoBlurToElement(node);
-            }
-          }
-        });
-      });
-    });
-
-    // Start observing the GUI element for changes
-    this.autoBlurObserver.observe(this.gui.domElement, {
-      childList: true,
-      subtree: true,
-    });
-
-    // Also handle existing inputs
-    this.autoBlurTimeoutId = setTimeout(() => {
-      const inputs = this.gui.domElement.querySelectorAll('input, select');
-      inputs.forEach((input) => {
-        this.addAutoBlurToElement(input as HTMLElement);
-      });
-    }, 100);
-  }
-
-  /**
-   * Add auto-blur behavior to an element
-   */
-  private addAutoBlurToElement(element: HTMLElement): void {
-    // For checkboxes and select dropdowns, blur immediately after change
-    if (element instanceof HTMLInputElement && element.type === 'checkbox') {
-      element.addEventListener('change', () => {
-        // Small delay to ensure the change is processed
-        setTimeout(() => element.blur(), 10);
-      });
-      // Also blur on click for checkboxes
-      element.addEventListener('click', () => {
-        setTimeout(() => element.blur(), 10);
-      });
-    }
-    // For select dropdowns
-    else if (element instanceof HTMLSelectElement) {
-      element.addEventListener('change', () => {
-        setTimeout(() => element.blur(), 10);
-      });
-    }
-    // For text inputs and sliders, blur on Enter key or when value is committed
-    else if (element instanceof HTMLInputElement) {
-      element.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          element.blur();
-        }
-      });
-      // For sliders, also blur when mouse is released
-      if (element.type === 'range' || element.type === 'number') {
-        element.addEventListener('mouseup', () => {
-          setTimeout(() => element.blur(), 10);
-        });
-        element.addEventListener('touchend', () => {
-          setTimeout(() => element.blur(), 10);
-        });
-      }
-    }
+    // Auto-blur is now handled by the custom GUI library's applyAutoBlur() utility
+    // No additional setup needed here
   }
 
   /**
@@ -1151,9 +1238,9 @@ export class RenderingControls {
     // Set cinematic detector noise parameters when turning ON cinematic mode
     // Uses subtle physics-based noise for film-like look
     if (shouldEnableAll) {
-      this.settings.detectorNoiseReadoutSigma = 0.015; // Subtle temporal noise
-      this.settings.detectorNoisePhotonGain = 0.008; // Low shot noise
-      this.settings.detectorNoiseFpnSigma = 0.003; // Subtle fixed pattern
+      this.settings.detectorNoiseReadoutSigma = 0.002; // Subtle temporal noise
+      this.settings.detectorNoisePhotonGain = 0.002; // Low shot noise
+      this.settings.detectorNoiseFpnSigma = 0.001; // Subtle fixed pattern
     }
 
     // FOV switching: 35mm for cinematic, 50mm Normal for regular
@@ -1261,16 +1348,7 @@ export class RenderingControls {
    * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
-    // Clean up auto-blur resources
-    if (this.autoBlurTimeoutId) {
-      clearTimeout(this.autoBlurTimeoutId);
-      this.autoBlurTimeoutId = undefined;
-    }
-    if (this.autoBlurObserver) {
-      this.autoBlurObserver.disconnect();
-      this.autoBlurObserver = undefined;
-    }
-
+    // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();
   }
 }
