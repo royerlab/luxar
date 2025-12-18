@@ -20,9 +20,14 @@
 @import './components/debug-console.css';
 @import './components/dataset-browser.css';
 @import './components/data-loading-monitor.css';
-@import './components/rendering-controls.css';
 /* (More components will be added as they are migrated) */
 /* @import './components/performance-monitor.css'; */
 
+/* Custom GUI Library Styles (replaces lil-gui) */
+@import '../ui/gui/styles/gui.css';
+@import '../ui/gui/styles/controller.css';
+@import '../ui/gui/styles/folder.css';
+
 /* 4. Theme Overrides - theme-specific adjustments */
+@import './themes/frosted-glass.css';
 @import './themes/liquid-glass.css';

@@ -41,7 +41,7 @@ export class MaterialManager {
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
-  private currentHdrMultiplier = config.shader.points.hdrMultiplier; // Current HDR multiplier (default 16.0)
+  private currentHdrMultiplier = config.shader.points.hdrMultiplier; // Current HDR multiplier (default 1.0)
 
   /**
    * Get or create a point material with caching
@@ -234,7 +234,7 @@ export class MaterialManager {
     lineMaterials: number;
     totalRegistered: number;
     keys: string[];
-  } {
+    } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

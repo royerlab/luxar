@@ -1,6 +1,8 @@
 # -------------------------------
 # Pack / unpack lower-triangular matrices
 # -------------------------------
+from typing import Optional, Tuple
+
 import numpy as np
 
 
@@ -143,3 +145,104 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
             L[:, i, j] = v[:, k]
             k += 1
     return L  # type: ignore[no-any-return]
+
+
+def validate_cholesky_shape(
+    cholesky_factors: np.ndarray,
+    ndim: int,
+    n_splats: Optional[int] = None,
+    allow_uniform: bool = True,
+) -> Tuple[bool, int]:
+    """
+    Validate shape of packed Cholesky factors for Gaussian splats.
+
+    Packed Cholesky factors should be either:
+    - Per-splat: shape (N, k) where k = d*(d+1)//2
+    - Uniform: shape (k,) when allow_uniform=True
+
+    Parameters
+    ----------
+    cholesky_factors : np.ndarray
+        Packed Cholesky factors array to validate.
+    ndim : int
+        Number of dimensions (d). Determines expected packed size k = d*(d+1)//2.
+    n_splats : int, optional
+        Expected number of splats. If provided, validates first dimension matches.
+        Ignored if cholesky_factors is uniform (1D).
+    allow_uniform : bool, default=True
+        Whether to allow uniform Cholesky factors (shape (k,)) for all splats.
+
+    Returns
+    -------
+    is_uniform : bool
+        True if cholesky_factors is uniform (shape (k,)), False if per-splat.
+    actual_n_splats : int
+        Actual number of splats inferred from shape. For uniform, returns 0.
+
+    Raises
+    ------
+    ValueError
+        If shape is invalid for the given ndim and n_splats.
+
+    Examples
+    --------
+    >>> # Valid per-splat for 2D (k=3)
+    >>> chol = np.random.rand(100, 3)
+    >>> is_uniform, n = validate_cholesky_shape(chol, ndim=2, n_splats=100)
+    >>> is_uniform, n
+    (False, 100)
+
+    >>> # Valid uniform for 3D (k=6)
+    >>> chol = np.random.rand(6)
+    >>> is_uniform, n = validate_cholesky_shape(chol, ndim=3)
+    >>> is_uniform, n
+    (True, 0)
+
+    >>> # Invalid shape raises
+    >>> chol = np.random.rand(100, 5)  # Wrong k for 2D
+    >>> validate_cholesky_shape(chol, ndim=2)
+    Traceback (most recent call last):
+        ...
+    ValueError: Cholesky factors have wrong packed size...
+    """
+    expected_k = tril_size(ndim)
+
+    # Check for uniform (1D) case
+    if cholesky_factors.ndim == 1:
+        if not allow_uniform:
+            raise ValueError(
+                f"Uniform Cholesky factors (shape {cholesky_factors.shape}) not allowed. "
+                f"Expected shape ({n_splats or 'N'}, {expected_k})."
+            )
+
+        if cholesky_factors.shape[0] != expected_k:
+            raise ValueError(
+                f"Cholesky factors have wrong packed size for {ndim}D: "
+                f"expected ({expected_k},) for uniform, got {cholesky_factors.shape}"
+            )
+
+        return True, 0  # is_uniform=True, n_splats=0 (uniform)
+
+    # Per-splat case (2D array)
+    if cholesky_factors.ndim != 2:
+        raise ValueError(
+            f"Cholesky factors must be 1D (uniform) or 2D (per-splat), "
+            f"got {cholesky_factors.ndim}D with shape {cholesky_factors.shape}"
+        )
+
+    actual_n_splats, actual_k = cholesky_factors.shape
+
+    if actual_k != expected_k:
+        raise ValueError(
+            f"Cholesky factors have wrong packed size for {ndim}D: "
+            f"expected k={expected_k}, got k={actual_k}. "
+            f"Shape should be ({actual_n_splats}, {expected_k}), got {cholesky_factors.shape}"
+        )
+
+    if n_splats is not None and actual_n_splats != n_splats:
+        raise ValueError(
+            f"Cholesky factors count mismatch: expected {n_splats} splats, "
+            f"got {actual_n_splats} from shape {cholesky_factors.shape}"
+        )
+
+    return False, actual_n_splats  # is_uniform=False, actual n_splats

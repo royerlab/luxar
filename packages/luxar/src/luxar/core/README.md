@@ -98,7 +98,9 @@ with LuxarZarrCompiler('output.zarr') as compiler:
 - `add_group(name, **attrs)` - Create child group node
 - `add_points(name, positions, ...)` - Add points with attributes (radii defaults to 0.5 if not provided)
 - `add_lines(name, vertices, widths, ...)` - Add lines/curves
-- `add_gsplats(name, centers, amplitudes, ...)` - Add Gaussian splats
+- `add_gsplats(name, centers, amplitudes, ...)` - Add Gaussian splats from arrays
+- `add_gsplats_from_data(name, result, ...)` - Add Gaussian splats from GSplatData object
+- `add_gsplats_from_file(name, path, ...)` - Add Gaussian splats by loading from .gsplats.zarr file
 - `dimensions` (property) - Get/set scene-level dimensions
 
 ### 2. Node (`node.py`)
@@ -331,6 +333,40 @@ print(f"Center bounds: {splats.center_bounds}")
 - `cholesky_factors` - Shape (N, k) where k=D*(D+1)/2 (packed lower triangle)
 - `colors` - Shape (N, 3) splat colors (optional)
 - `sharpness` - Shape (N,) generalized Gaussian exponent (optional, default 2.0)
+
+**Convenience Methods for GSplats:**
+
+In addition to `add_gsplats()` which requires explicit arrays, Scene provides convenience methods for common workflows:
+
+**From GSplatData:**
+```python
+from luxar.gsplats import fit_gaussian_splats
+
+# Fit Gaussian splats to image
+image = np.random.rand(100, 100).astype(np.float32)
+result = fit_gaussian_splats(image, n_iters=1000)
+
+# Add directly to scene (no intermediate save)
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    gsplats = scene.add_gsplats_from_data('fitted', result)
+    print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
+```
+
+**From .gsplats.zarr File:**
+```python
+# Load previously saved Gaussian splats
+with LuxarZarrCompiler('scene.zarr') as compiler:
+    scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+    gsplats = scene.add_gsplats_from_file('loaded', 'path/to/fitted.gsplats.zarr')
+    print(f"Loaded {gsplats.n_splats} splats")
+```
+
+These methods automatically handle:
+- Extracting arrays from GSplatData objects
+- Loading data from .gsplats.zarr archives
+- Passing all data (centers, amplitudes, cholesky_factors, colors, sharpness) to add_gsplats()
+- Preserving optional attributes (colors, sharpness) when present
 
 ### 7. Dimensions (`dimensions.py`)
 

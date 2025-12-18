@@ -12,6 +12,21 @@ import { log, Modules } from '../../utils/log';
 import type { SetupContext, SetupResult } from './types';
 
 /**
+ * Calculate approximate 35mm equivalent focal length from horizontal FOV.
+ * Formula: focal_length = sensor_width / (2 * tan(FOV/2))
+ * For 35mm sensor, width = 36mm
+ *
+ * @param fovDegrees - Horizontal field of view in degrees
+ * @returns Approximate focal length in mm (rounded to integer)
+ */
+function fovToFocalLength(fovDegrees: number): number {
+  const sensorWidth = 36; // 35mm film width in mm
+  const fovRadians = (fovDegrees * Math.PI) / 180;
+  const focalLength = sensorWidth / (2 * Math.tan(fovRadians / 2));
+  return Math.round(focalLength);
+}
+
+/**
  * Set up camera controls in the rendering controls GUI.
  *
  * @param context - Setup context with GUI, settings, and callbacks
@@ -44,6 +59,15 @@ export function setupCameraControls(
     .add(settings, 'fovPreset', presetOptions)
     .name('FOV Preset')
     .onChange((presetName: string) => {
+      // Reset "Custom" option text back to "Custom" when a preset is selected
+      const select = fovPresetControl.$input as HTMLSelectElement;
+      if (select) {
+        const customOption = Array.from(select.options).find((opt) => opt.value === 'Custom');
+        if (customOption) {
+          customOption.textContent = 'Custom';
+        }
+      }
+
       const fovValue = config.camera.fovPresets[presetName];
       if (fovValue > 0) {
         // Apply preset FOV
@@ -138,9 +162,21 @@ export function setupCameraControls(
     .add(settings, 'fov', config.camera.fovMin, config.camera.fovMax, 1)
     .name('Field of View')
     .onChange((value: number) => {
-      // When FOV slider changes, switch to Custom preset
+      // When FOV slider changes, show approximate focal length
+      const focalLength = fovToFocalLength(value);
+      const customLabel = `~${focalLength}mm`;
+
+      // Update the "Custom" option text to show the approximate focal length
       settings.fovPreset = 'Custom';
       if (controllersRef.fovPreset) {
+        const select = controllersRef.fovPreset.$input as HTMLSelectElement;
+        if (select) {
+          // Find and update the "Custom" option
+          const customOption = Array.from(select.options).find((opt) => opt.value === 'Custom');
+          if (customOption) {
+            customOption.textContent = customLabel;
+          }
+        }
         controllersRef.fovPreset.setValue('Custom');
         controllersRef.fovPreset.updateDisplay();
       }

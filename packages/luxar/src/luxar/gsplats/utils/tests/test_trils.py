@@ -247,3 +247,102 @@ class TestEdgeCases:
             np.testing.assert_array_equal(
                 packed[0], numpy_packed, err_msg=f"Inconsistency with numpy for d={d}"
             )
+
+
+class TestValidateCholeskShape:
+    """Test validate_cholesky_shape function."""
+
+    def test_valid_per_splat_2d(self) -> None:
+        """Test valid per-splat Cholesky factors for 2D."""
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(100, 3).astype(np.float32)  # 2D: k=3
+        is_uniform, n_splats = validate_cholesky_shape(chol, ndim=2, n_splats=100)
+
+        assert is_uniform is False
+        assert n_splats == 100
+
+    def test_valid_per_splat_3d(self) -> None:
+        """Test valid per-splat Cholesky factors for 3D."""
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(50, 6).astype(np.float32)  # 3D: k=6
+        is_uniform, n_splats = validate_cholesky_shape(chol, ndim=3)
+
+        assert is_uniform is False
+        assert n_splats == 50
+
+    def test_valid_uniform_2d(self) -> None:
+        """Test valid uniform Cholesky factors for 2D."""
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(3).astype(np.float32)  # 2D uniform: k=3
+        is_uniform, n_splats = validate_cholesky_shape(chol, ndim=2)
+
+        assert is_uniform is True
+        assert n_splats == 0
+
+    def test_valid_uniform_3d(self) -> None:
+        """Test valid uniform Cholesky factors for 3D."""
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(6).astype(np.float32)  # 3D uniform: k=6
+        is_uniform, n_splats = validate_cholesky_shape(chol, ndim=3)
+
+        assert is_uniform is True
+        assert n_splats == 0
+
+    def test_invalid_packed_size_per_splat(self) -> None:
+        """Test error for wrong packed size in per-splat case."""
+        import pytest
+
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(100, 5).astype(np.float32)  # Wrong k for 2D (should be 3)
+
+        with pytest.raises(ValueError, match="wrong packed size"):
+            validate_cholesky_shape(chol, ndim=2)
+
+    def test_invalid_packed_size_uniform(self) -> None:
+        """Test error for wrong packed size in uniform case."""
+        import pytest
+
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(5).astype(np.float32)  # Wrong k for 3D (should be 6)
+
+        with pytest.raises(ValueError, match="wrong packed size"):
+            validate_cholesky_shape(chol, ndim=3)
+
+    def test_invalid_n_splats_mismatch(self) -> None:
+        """Test error when n_splats doesn't match."""
+        import pytest
+
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(100, 3).astype(np.float32)
+
+        with pytest.raises(ValueError, match="count mismatch"):
+            validate_cholesky_shape(chol, ndim=2, n_splats=50)  # Mismatch!
+
+    def test_uniform_not_allowed(self) -> None:
+        """Test error when uniform is not allowed."""
+        import pytest
+
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(3).astype(np.float32)  # Uniform
+
+        with pytest.raises(ValueError, match="not allowed"):
+            validate_cholesky_shape(chol, ndim=2, allow_uniform=False)
+
+    def test_invalid_3d_array(self) -> None:
+        """Test error for 3D array (should be 1D or 2D)."""
+        import pytest
+
+        from luxar.gsplats.utils.trils import validate_cholesky_shape
+
+        chol = np.random.rand(10, 3, 3).astype(np.float32)  # 3D!
+
+        with pytest.raises(ValueError, match="must be 1D .* or 2D"):
+            validate_cholesky_shape(chol, ndim=2)

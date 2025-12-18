@@ -20,7 +20,7 @@ export const config: AppConfig = {
     far: 1000, // Far clipping plane distance - objects further than this are not rendered
     initialPosition: { x: 0, y: 0, z: 8 }, // Initial camera position in 3D space (world coordinates)
     fovMin: 10, // Minimum field of view for zoom limits - prevents excessive zoom-in
-    fovMax: 200, // Maximum field of view for zoom limits - prevents excessive zoom-out
+    fovMax: 170, // Maximum field of view for zoom limits - must be <180° (fish-eye territory)
     fovSensitivity: 0.05, // FOV change sensitivity for Shift+wheel input - lower = finer control
     // FOV presets based on 35mm equivalent focal lengths (horizontal FOV - photography standard)
     fovPresets: {
@@ -150,83 +150,9 @@ export const config: AppConfig = {
       size: 24, // Loading spinner size in pixels
       borderWidth: 3, // Spinner border width
     },
-    // Style system (migrated from data-loading-monitor-styles.ts)
-    styles: {
-      colors: {
-        // Semantic colors
-        success: '#4CAF50',
-        warning: '#FFC107',
-        error: '#f44336',
-        info: '#2196F3',
-        secondary: '#9C27B0',
-        // Text colors
-        primaryText: '#e0e0e0',
-        secondaryText: '#888',
-        muted: 'rgba(255, 255, 255, 0.6)',
-        dimmed: 'rgba(255, 255, 255, 0.4)',
-        // Background colors
-        panelBg: 'rgba(30, 30, 30, 0.95)',
-        sectionBg: 'rgba(0, 0, 0, 0.3)',
-        hoverBg: 'rgba(40, 40, 40, 0.9)',
-        // Cache visualization
-        cacheHot: '#ff6b6b',
-        cacheWarm: '#FFC107',
-        cacheCold: '#4CAF50',
-        // Grid/separator colors
-        separator: 'rgba(255, 255, 255, 0.1)',
-        separatorStrong: 'rgba(255, 255, 255, 0.2)',
-      },
-      typography: {
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Roboto, sans-serif',
-        fontFamilyMono: 'monospace',
-        // Font sizes
-        title: { fontSize: '14px', fontWeight: 'bold' },
-        sectionHeader: { fontSize: '12px', fontWeight: 600 },
-        body: { fontSize: '11px' },
-        small: { fontSize: '10px' },
-        tiny: { fontSize: '9px' },
-        // Line heights
-        compact: { lineHeight: 1.2 },
-        normal: { lineHeight: 1.4 },
-        relaxed: { lineHeight: 1.6 },
-      },
-      spacing: {
-        // Panel spacing
-        panelPadding: 15,
-        panelPaddingLarge: 20, // For modals and prominent panels
-        panelPaddingXL: 24, // For error dialogs and major alerts
-        panelMargin: 20,
-        // Section spacing
-        sectionPadding: 10,
-        sectionPaddingLarge: 12,
-        sectionGap: 15,
-        sectionGapLarge: 16,
-        // Element spacing
-        elementGap: 8,
-        elementGapLarge: 10,
-        elementGapXL: 12,
-        compactGap: 5,
-        compactGapLarge: 6,
-        tinyGap: 2,
-        // Border and separator spacing
-        borderPadding: 6,
-      },
-      effects: {
-        // Backdrop and shadows
-        backdropBlur: 'blur(10px)',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-        boxShadowStrong: '0 8px 32px rgba(0, 0, 0, 0.4)',
-        // Border radius
-        borderRadius: 8,
-        borderRadiusSmall: 4,
-        borderRadiusLarge: 12,
-        // Transitions
-        transition: 'all 0.2s ease',
-        transitionFast: 'all 0.1s ease',
-        transitionSlow: 'all 0.3s ease',
-      },
-    },
+    // NOTE: ui.styles section has been removed - all styling now uses CSS variables
+    // and classes in src/styles/ (see theming system in src/themes/)
+
     // Debug console configuration (migrated from debug-console.ts)
     debugConsole: {
       panel: {

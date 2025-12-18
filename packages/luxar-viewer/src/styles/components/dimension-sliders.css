@@ -246,36 +246,3 @@
 [data-theme='light'] .luxar-dimension-dropdown__select:focus {
   background: rgba(0, 0, 0, 0.08);
 }
-
-/* High Contrast Theme */
-[data-theme='high-contrast'] .luxar-dimension-sliders {
-  background: #000000;
-  border: 2px solid var(--luxar-border-default);
-  border-radius: 0;
-}
-
-[data-theme='high-contrast'] .luxar-dimension-slider__track {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 0;
-}
-
-[data-theme='high-contrast'] .luxar-dimension-slider__progress {
-  background: var(--luxar-success);
-}
-
-[data-theme='high-contrast'] .luxar-dimension-slider__thumb {
-  background: var(--luxar-success);
-  box-shadow: 0 0 0 2px #ffffff;
-}
-
-[data-theme='high-contrast'] .luxar-dimension-dropdown__select {
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid var(--luxar-border-default);
-  border-radius: 0;
-}
-
-[data-theme='high-contrast'] .luxar-dimension-dropdown__select:hover,
-[data-theme='high-contrast'] .luxar-dimension-dropdown__select:focus {
-  border-color: var(--luxar-success);
-  background: rgba(255, 255, 255, 0.15);
-}

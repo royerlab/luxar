@@ -495,6 +495,107 @@ class Scene(Node):
             aprint(f"Failed to add gsplats node '{name}': {e}")
             raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
+    def add_gsplats_from_data(
+        self,
+        name: str,
+        result: "GSplatData",
+        parent: Optional[Node] = None,
+        **attrs: Any,
+    ) -> GSplats:
+        """Add Gaussian splats from a GSplatData object.
+
+        This convenience method bridges the gap between fitting results and scene
+        composition, allowing fitted splats to be added directly to a scene without
+        manually unpacking arrays.
+
+        Args:
+            name: Name of the gsplats node
+            result: GSplatData from fit_gaussian_splats()
+            parent: Parent node, defaults to scene root
+            **attrs: Additional attributes for the node
+
+        Returns:
+            The created GSplats node
+
+        Raises:
+            TypeError: If result is not a GSplatData instance
+            ValueError: If gsplats creation fails
+
+        Example:
+            >>> result = fit_gaussian_splats(image, n_iters=1000)
+            >>> with LuxarZarrCompiler("scene.zarr") as compiler:
+            ...     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            ...     gsplats = scene.add_gsplats_from_data("fitted", result)
+        """
+        from luxar.gsplats.fit_result import GSplatData
+
+        if not isinstance(result, GSplatData):
+            raise TypeError(
+                f"Expected GSplatData, got {type(result).__name__}"
+            )
+
+        # Extract arrays from result
+        return self.add_gsplats(
+            name=name,
+            centers=result.centers,
+            amplitudes=result.amplitudes,
+            cholesky_factors=result.cholesky_factors,
+            colors=result.colors,
+            sharpness=result.sharpnesses,
+            parent=parent,
+            **attrs,
+        )
+
+    def add_gsplats_from_file(
+        self,
+        name: str,
+        path: Union[str, "Path"],
+        parent: Optional[Node] = None,
+        **attrs: Any,
+    ) -> GSplats:
+        """Add Gaussian splats by loading from a .gsplats.zarr file.
+
+        This convenience method allows loading previously saved splat data
+        (from fitting or other sources) directly into a scene.
+
+        Args:
+            name: Name of the gsplats node
+            path: Path to .gsplats.zarr file
+            parent: Parent node, defaults to scene root
+            **attrs: Additional attributes for the node
+
+        Returns:
+            The created GSplats node
+
+        Raises:
+            FileNotFoundError: If path doesn't exist
+            ValueError: If file format is invalid or gsplats creation fails
+
+        Example:
+            >>> # After saving: result.save("fitted.gsplats.zarr")
+            >>> with LuxarZarrCompiler("scene.zarr") as compiler:
+            ...     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            ...     gsplats = scene.add_gsplats_from_file("fitted", "fitted.gsplats.zarr")
+        """
+        from pathlib import Path
+
+        from luxar.gsplats.io.load_gsplats import load_gsplats
+
+        # Load the gsplats file
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"GSplats file not found: {path}")
+
+        result = load_gsplats(path)
+
+        # Use add_gsplats_from_data to add to scene
+        return self.add_gsplats_from_data(
+            name=name,
+            result=result,
+            parent=parent,
+            **attrs,
+        )
+
     def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
         """Analyze which dimensions might be candidates for extend_to_all.
 

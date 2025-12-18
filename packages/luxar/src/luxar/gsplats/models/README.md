@@ -169,11 +169,11 @@ output = render_gaussians(
 
 ```python
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 import numpy as np
 
-# Create a GaussianSplatResult (typically from fit_gaussian_splats())
-result = GaussianSplatResult(
+# Create a GSplatData (typically from fit_gaussian_splats())
+result = GSplatData(
     centers=np.array([[5.0, 5.0]], dtype=np.float32),
     amplitudes=np.array([1.0], dtype=np.float32),
     cholesky_factors=np.array([[1.0, 0.0, 1.0]], dtype=np.float32),  # Packed L for 2D
@@ -194,7 +194,7 @@ output = render_gaussians_numpy(
 ```python
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_pytorch
 
-# Render with GaussianSplatResult on any device
+# Render with GSplatData on any device
 output = render_gaussians_pytorch(
     shape=(11, 11),
     result=result,
@@ -426,8 +426,8 @@ For comprehensive technical details, see [SPECIFICATIONS.md](SPECIFICATIONS.md),
 
 **Rendering Functions**
 - `render_gaussians(shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size)`
-- `render_gaussians_numpy(shape, result: GaussianSplatResult, truncate, chunk_size)`
-- `render_gaussians_pytorch(shape, result: GaussianSplatResult, truncate, device, chunk_size)`
+- `render_gaussians_numpy(shape, result: GSplatData, truncate, chunk_size)`
+- `render_gaussians_pytorch(shape, result: GSplatData, truncate, device, chunk_size)`
 - `render_gaussians_batched(shape, centers, Ls, amps, sharpness, truncate, intensity_floor, chunk_size)`
 
 **Utilities**

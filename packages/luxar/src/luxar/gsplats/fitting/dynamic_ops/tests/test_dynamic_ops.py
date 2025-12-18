@@ -429,7 +429,7 @@ class TestDynamicOperationsIntegration:
 
     def test_compression_analysis_functionality(self) -> None:
         """Test compression ratio analysis functionality."""
-        from luxar.gsplats.fit_result import GaussianSplatResult
+        from luxar.gsplats.fit_result import GSplatData
         from luxar.gsplats.fitting.visualization import display_compression_analysis
 
         # Create simple test data
@@ -437,8 +437,8 @@ class TestDynamicOperationsIntegration:
         d = 2
         N = 10
 
-        # Create GaussianSplatResult for testing
-        result = GaussianSplatResult(
+        # Create GSplatData for testing
+        result = GSplatData(
             centers=np.random.random((N, d)).astype(np.float32),
             amplitudes=np.random.uniform(0.1, 1.0, N).astype(np.float32),
             cholesky_factors=np.random.random((N, 3)).astype(np.float32),  # 2D tril = 3

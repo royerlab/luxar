@@ -116,7 +116,7 @@ interface CameraConfig {
 - **far**: 1000 (objects further are not rendered)
 - **initialPosition**: `{ x: 0, y: 0, z: 8 }`
 - **fovMin**: 10° (prevents excessive zoom-in)
-- **fovMax**: 200° (prevents excessive zoom-out)
+- **fovMax**: 170° (must be <180°, fish-eye territory)
 - **fovSensitivity**: 0.05 (Shift+wheel FOV change rate)
 - **fovPresets**: Professional lens equivalents
   - `'28mm Wide'`: 75° horizontal FOV
@@ -585,7 +585,8 @@ interface UIConfig {
     size: number;
     borderWidth: number;
   };
-  styles: UIStyles;
+  // NOTE: styles property removed - all styling now uses CSS variables
+  // See src/styles/ and src/themes/ for the theming system
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
 }
@@ -644,29 +645,28 @@ interface UIConfig {
 ```typescript
 import { config } from '../config';
 
-// Apply z-index
+// Apply z-index (still from config - structural, not styling)
 const helpOverlay = document.createElement('div');
 helpOverlay.style.zIndex = config.ui.zIndex.help.toString(); // 1001
 
-// Use style system colors
+// STYLING: Use CSS classes and variables (NOT config.ui.styles - removed)
+// All colors, typography, spacing, and effects are now in CSS variables
+// defined in src/themes/ and classes in src/styles/
+
+// Example: Create a themed panel using CSS classes
 const errorPanel = document.createElement('div');
-errorPanel.style.backgroundColor = config.ui.styles.colors.panelBg;
-errorPanel.style.color = config.ui.styles.colors.primaryText;
-errorPanel.style.borderRadius = `${config.ui.styles.effects.borderRadius}px`;
+errorPanel.className = 'luxar-panel luxar-panel--error';
+// Colors come from CSS: var(--luxar-bg-secondary), var(--luxar-error), etc.
 
-// Use typography
+// Example: Apply semantic color classes
+const statusText = document.createElement('span');
+statusText.className = 'luxar-color--success'; // Uses var(--luxar-success)
+
+// Example: Use typography classes
 const title = document.createElement('h1');
-Object.assign(title.style, {
-  fontFamily: config.ui.styles.typography.fontFamily,
-  ...config.ui.styles.typography.title,
-});
+title.className = 'luxar-text--lg'; // Uses var(--luxar-text-lg)
 
-// Use spacing
-const section = document.createElement('div');
-section.style.padding = `${config.ui.styles.spacing.sectionPadding}px`;
-section.style.gap = `${config.ui.styles.spacing.elementGap}px`;
-
-// Configure debug console
+// Configure debug console (structural config remains)
 const debugConsole = new DebugConsole();
 debugConsole.setSize(
   config.ui.debugConsole.panel.defaultWidth,
@@ -674,13 +674,16 @@ debugConsole.setSize(
 );
 ```
 
+> **Note**: The `ui.styles` property (colors, typography, spacing, effects) was removed.
+> All styling now uses CSS variables defined in `src/themes/` and CSS classes in `src/styles/`.
+> This enables proper theme switching and reduces JavaScript/CSS coupling.
+
 ### 8.5 Validation Rules
 
 - **zIndex** values: Must be unique or intentionally shared
 - **timings**: Must be > 0
 - **spinner.size**: Typical 16-48 pixels
 - **debugConsole.panel.minWidth**: Must be < defaultWidth < maxWidth
-- **colors**: Should be valid CSS color strings
 
 ---
 

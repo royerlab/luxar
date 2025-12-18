@@ -1176,36 +1176,27 @@ function renderRecommendation(rec: Recommendation): string;
 **Algorithm**:
 
 ```typescript
+// CSS color classes for semantic colors
+type SemanticColor = 'success' | 'warning' | 'error' | 'info' | 'muted' | 'dimmed' | 'primary';
+
+function getColorClass(color: SemanticColor): string {
+  return `luxar-color--${color}`;
+}
+
 function renderMetricCard(
   title: string,
   value: string | number,
   subtitle?: string,
-  color: string = MonitorColors.primaryText,
+  colorClass: string = '', // CSS class for color (e.g., 'luxar-color--success')
   size: 'small' | 'medium' | 'large' = 'medium'
 ): string {
-  const fontSize = {
-    large: '32px',
-    medium: '24px',
-    small: '16px',
-  }[size];
-
-  const padding = {
-    large: '16px',
-    medium: '12px',
-    small: '8px',
-  }[size];
-
   return `
-    <div style="
-      background: ${MonitorColors.sectionBg};
-      padding: ${padding};
-      border-radius: ${size === 'large' ? '8px' : '6px'};
-    ">
-      ${title ? `<div style="font-size: 10px; color: ${MonitorColors.muted}; margin-bottom: 4px;">${title}</div>` : ''}
-      <div style="font-size: ${fontSize}; font-weight: bold; color: ${color};">
+    <div class="luxar-metric-card luxar-metric-card--${size}">
+      ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
+      <div class="luxar-metric-card__value luxar-metric-card__value--${size} ${colorClass}">
         ${value}
       </div>
-      ${subtitle ? `<div style="font-size: 10px; color: ${MonitorColors.dimmed}; margin-top: 4px;">${subtitle}</div>` : ''}
+      ${subtitle ? `<div class="luxar-metric-card__subtitle">${subtitle}</div>` : ''}
     </div>
   `;
 }
@@ -1216,35 +1207,29 @@ function renderMetricCard(
 **Color Determination**:
 
 ```typescript
-function getProgressColor(percent: number): string {
-  if (percent <= 60) return MonitorColors.success;
-  if (percent <= 80) return MonitorColors.warning;
-  return MonitorColors.error;
+function getProgressColorClass(percent: number): string {
+  if (percent <= 60) return getColorClass('success');
+  if (percent <= 80) return getColorClass('warning');
+  return getColorClass('error');
 }
 
 function renderProgressBar(
   percent: number,
-  color?: string,
+  colorClass?: string, // CSS color class
   label?: string,
   height: number = 4
 ): string {
-  const barColor = color || getProgressColor(percent);
+  const barColorClass = colorClass || getProgressColorClass(percent);
+  // Using CSS custom properties for dynamic height
+  const trackStyle = `style="--bar-height: ${height}px; height: var(--bar-height); border-radius: calc(var(--bar-height) / 2);"`;
+  const fillStyle = `style="width: ${Math.min(100, percent)}%; border-radius: calc(var(--bar-height, 4px) / 2);"`;
 
   return `
-    <div style="margin-top: ${label ? 6 : 0}px;">
-      <div style="
-        height: ${height}px;
-        background: rgba(255,255,255,0.1);
-        border-radius: ${height / 2}px;
-      ">
-        <div style="
-          height: 100%;
-          background: ${barColor};
-          width: ${Math.min(100, percent)}%;
-          border-radius: ${height / 2}px;
-        "></div>
+    <div class="luxar-progress-bar__container">
+      <div class="luxar-progress-bar__track" ${trackStyle}>
+        <div class="luxar-progress-bar__fill ${barColorClass}" ${fillStyle}></div>
       </div>
-      ${label ? `<div style="font-size: 9px; color: ${MonitorColors.dimmed}; margin-top: 2px;">${label}</div>` : ''}
+      ${label ? `<div class="luxar-progress-bar__label">${label}</div>` : ''}
     </div>
   `;
 }
@@ -1273,35 +1258,36 @@ function formatBytes(bytes: number): string {
 ### 9.7 Integration Points
 
 - **Data Loading Monitor**: Primary consumer of all templates
-- **Config System**: Colors, spacing, border radius from config
+- **CSS Theme System**: Colors from CSS variables (--luxar-success, --luxar-warning, etc.)
 - **Type Definitions**: Uses types from data-monitor-types.ts
+- **Styling**: All styles in src/styles/components/data-loading-monitor.css
 
 ### 9.8 Usage Example
 
 ```typescript
 import { renderMetricCard, renderProgressBar, renderStatGrid } from './data-monitor-templates';
 
-// Large metric card
+// Large metric card with CSS color class
 const html = renderMetricCard(
   'VISIBLE POINTS',
   formatNumber(stats.visiblePoints),
   `${percent}% of ${formatNumber(stats.datasetSize)} total`,
-  MonitorColors.success,
+  getColorClass('success'), // CSS class for color
   'large'
 );
 
-// Progress bar with auto color
+// Progress bar with auto color class
 const progressHtml = renderProgressBar(
   cacheMemoryPercent,
-  undefined, // Auto color based on percent
+  undefined, // Auto color class based on percent
   'Cache Usage'
 );
 
-// Stat grid
+// Stat grid with CSS color classes
 const gridHtml = renderStatGrid([
-  { label: 'Queries', value: '1.2K', color: MonitorColors.info },
-  { label: 'Hit Rate', value: '95%', color: MonitorColors.success },
-  { label: 'Evictions', value: '12', color: MonitorColors.warning },
+  { label: 'Queries', value: '1.2K', colorClass: getColorClass('info') },
+  { label: 'Hit Rate', value: '95%', colorClass: getColorClass('success') },
+  { label: 'Evictions', value: '12', colorClass: getColorClass('warning') },
 ]);
 ```
 

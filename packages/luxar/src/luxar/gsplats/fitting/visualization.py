@@ -9,10 +9,10 @@ from typing import Any, Dict
 import numpy as np
 from arbol import aprint, asection
 
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 
 
-def display_compression_analysis(V: np.ndarray, result: GaussianSplatResult) -> None:
+def display_compression_analysis(V: np.ndarray, result: GSplatData) -> None:
     """
     Calculate and display compression ratio analysis.
 
@@ -22,7 +22,7 @@ def display_compression_analysis(V: np.ndarray, result: GaussianSplatResult) -> 
     ----------
     V : np.ndarray
         Original input image/volume
-    result : GaussianSplatResult
+    result : GSplatData
         Fitted Gaussian splat result
     """
     with asection("Compression Analysis"):

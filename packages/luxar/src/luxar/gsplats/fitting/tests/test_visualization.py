@@ -7,7 +7,7 @@ import sys
 import numpy as np
 import pytest
 
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.visualization import (
     display_compression_analysis,
     show_optimization_movie,
@@ -39,12 +39,12 @@ def test_display_compression_analysis_2d(capsys) -> None:
     """Test compression analysis display for 2D data."""
     V = np.random.rand(64, 64).astype(np.float32)
 
-    # Create GaussianSplatResult: 10 splats with 2D centers and packed L
+    # Create GSplatData: 10 splats with 2D centers and packed L
     N = 10
     d = 2
     tril_size = d * (d + 1) // 2  # 3 for 2D
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
@@ -67,12 +67,12 @@ def test_display_compression_analysis_3d(capsys) -> None:
     """Test compression analysis display for 3D data."""
     V = np.random.rand(32, 32, 32).astype(np.float32)
 
-    # Create GaussianSplatResult: 8 splats for 3D
+    # Create GSplatData: 8 splats for 3D
     N = 8
     d = 3
     tril_size = d * (d + 1) // 2  # 6 for 3D
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
@@ -100,7 +100,7 @@ def test_compression_ratio_calculation(capsys) -> None:
     d = 2
     tril_size = 3
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
@@ -125,7 +125,7 @@ def test_bits_per_pixel_calculation(capsys) -> None:
     d = 2
     tril_size = 3
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
@@ -216,7 +216,7 @@ def test_compression_analysis_zero_splats(capsys) -> None:
     d = 2
     tril_size = 3
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.array([]).reshape(0, d).astype(np.float32),
         amplitudes=np.array([]).astype(np.float32),
         cholesky_factors=np.array([]).reshape(0, tril_size).astype(np.float32),
@@ -243,7 +243,7 @@ def test_compression_analysis_many_splats(capsys) -> None:
     d = 2
     tril_size = 3
 
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=np.random.rand(N, d).astype(np.float32),
         amplitudes=np.random.rand(N).astype(np.float32),
         cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
@@ -268,7 +268,7 @@ def test_display_compression_various_dimensions(capsys) -> None:
         N = 5
         tril_size = d * (d + 1) // 2
 
-        result = GaussianSplatResult(
+        result = GSplatData(
             centers=np.random.rand(N, d).astype(np.float32),
             amplitudes=np.random.rand(N).astype(np.float32),
             cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),

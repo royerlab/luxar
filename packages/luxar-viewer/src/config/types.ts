@@ -178,104 +178,9 @@ export interface InputConfig {
   };
 }
 
-/**
- * UI style colors
- */
-export interface UIColors {
-  // Semantic colors
-  success: string;
-  warning: string;
-  error: string;
-  info: string;
-  secondary: string;
-  // Text colors
-  primaryText: string;
-  secondaryText: string;
-  muted: string;
-  dimmed: string;
-  // Background colors
-  panelBg: string;
-  sectionBg: string;
-  hoverBg: string;
-  // Cache visualization
-  cacheHot: string;
-  cacheWarm: string;
-  cacheCold: string;
-  // Grid/separator colors
-  separator: string;
-  separatorStrong: string;
-}
-
-/**
- * UI typography settings
- */
-export interface UITypography {
-  fontFamily: string;
-  fontFamilyMono: string;
-  // Font sizes
-  title: { fontSize: string; fontWeight: string | number };
-  sectionHeader: { fontSize: string; fontWeight: number };
-  body: { fontSize: string };
-  small: { fontSize: string };
-  tiny: { fontSize: string };
-  // Line heights
-  compact: { lineHeight: number };
-  normal: { lineHeight: number };
-  relaxed: { lineHeight: number };
-}
-
-/**
- * UI spacing settings
- */
-export interface UISpacing {
-  // Panel spacing
-  panelPadding: number;
-  panelPaddingLarge: number;
-  panelPaddingXL: number;
-  panelMargin: number;
-  // Section spacing
-  sectionPadding: number;
-  sectionPaddingLarge: number;
-  sectionGap: number;
-  sectionGapLarge: number;
-  // Element spacing
-  elementGap: number;
-  elementGapLarge: number;
-  elementGapXL: number;
-  compactGap: number;
-  compactGapLarge: number;
-  tinyGap: number;
-  // Border and separator spacing
-  borderPadding: number;
-}
-
-/**
- * UI visual effects
- */
-export interface UIEffects {
-  // Backdrop and shadows
-  backdropBlur: string;
-  boxShadow: string;
-  boxShadowStrong: string;
-  // Border radius
-  borderRadius: number;
-  borderRadiusSmall: number;
-  borderRadiusLarge: number;
-  // Transitions
-  transition: string;
-  transitionFast: string;
-  transitionSlow: string;
-}
-
-/**
- * UI styles configuration
- */
-export interface UIStyles {
-  colors: UIColors;
-  typography: UITypography;
-  spacing: UISpacing;
-  effects: UIEffects;
-}
+// NOTE: UIColors, UITypography, UISpacing, UIEffects, and UIStyles interfaces
+// have been removed. All styling now uses CSS variables and classes in
+// src/styles/ (see theming system in src/themes/)
 
 /**
  * Debug console configuration
@@ -376,7 +281,7 @@ export interface UIConfig {
     size: number;
     borderWidth: number;
   };
-  styles: UIStyles;
+  // NOTE: styles property removed - all styling now uses CSS variables
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
 }

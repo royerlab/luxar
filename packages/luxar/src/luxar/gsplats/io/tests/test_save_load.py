@@ -8,7 +8,7 @@ import pytest
 import zarr
 
 from luxar.encoding import EncodingMode
-from luxar.gsplats import GaussianSplatResult
+from luxar.gsplats import GSplatData
 from luxar.gsplats.io import (
     format_gsplats_info,
     inspect_gsplats_zarr,
@@ -395,17 +395,17 @@ class TestRoundTrip:
             assert np.allclose(result.amplitudes, splats["amplitudes"], atol=0.05)
 
 
-class TestGaussianSplatResultMethods:
-    """Test save/load methods on GaussianSplatResult."""
+class TestGSplatDataMethods:
+    """Test save/load methods on GSplatData."""
 
     def test_result_save(self) -> None:
-        """Test GaussianSplatResult.save()."""
+        """Test GSplatData.save()."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(100)
 
             # Create result
-            result = GaussianSplatResult(
+            result = GSplatData(
                 centers=splats["centers"],
                 amplitudes=splats["amplitudes"],
                 cholesky_factors=splats["cholesky_factors"],
@@ -425,7 +425,7 @@ class TestGaussianSplatResultMethods:
             assert root["fitting"].attrs["time_seconds"] == 10.5
 
     def test_result_load(self) -> None:
-        """Test GaussianSplatResult.load()."""
+        """Test GSplatData.load()."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(50)
@@ -434,11 +434,11 @@ class TestGaussianSplatResultMethods:
             save_gsplats(path=path, **splats, ordering="none")
 
             # Load via classmethod
-            result = GaussianSplatResult.load(path)
+            result = GSplatData.load(path)
 
             # Check loaded
             assert result.centers.shape == (50, 3)
-            assert isinstance(result, GaussianSplatResult)
+            assert isinstance(result, GSplatData)
 
     def test_result_roundtrip(self) -> None:
         """Test save/load via result methods."""
@@ -447,13 +447,143 @@ class TestGaussianSplatResultMethods:
             splats = create_test_splats_3d(100)
 
             # Create and save (with ordering="none" to preserve order for comparison)
-            original = GaussianSplatResult(**splats, stats={})
+            original = GSplatData(**splats, stats={})
             original.save(path, ordering="none")
 
             # Load
-            loaded = GaussianSplatResult.load(path)
+            loaded = GSplatData.load(path)
 
             # Compare (AUTO mode may use quantization, so use tolerance)
+            assert np.allclose(loaded.centers, original.centers, atol=0.01)
+            assert np.allclose(loaded.amplitudes, original.amplitudes, atol=0.05)
+
+
+class TestColorRoundtrip:
+    """Test color save/load round-trip functionality."""
+
+    def test_roundtrip_with_sdr_colors(self) -> None:
+        """Test round-trip with SDR float32 colors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            splats = create_test_splats_3d(100)
+
+            # Add SDR colors (float32)
+            colors = np.random.rand(100, 3).astype(np.float32)
+
+            # Save
+            save_gsplats(
+                path=path,
+                **splats,
+                colors=colors,
+                color_mode="sdr",
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+            )
+
+            # Load
+            result = load_gsplats(path)
+
+            # Verify colors are present and correct
+            assert result.colors is not None
+            assert result.colors.shape == (100, 3)
+            assert np.allclose(result.colors, colors, atol=0.01)
+
+    def test_roundtrip_with_uint8_colors(self) -> None:
+        """Test round-trip with uint8 colors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            splats = create_test_splats_3d(50)
+
+            # Add uint8 colors
+            colors = np.random.randint(0, 256, size=(50, 3), dtype=np.uint8)
+
+            # Save
+            save_gsplats(
+                path=path,
+                **splats,
+                colors=colors,
+                ordering="none",
+            )
+
+            # Load
+            result = load_gsplats(path)
+
+            # Verify colors are present and correct
+            assert result.colors is not None
+            assert result.colors.shape == (50, 3)
+            assert result.colors.dtype == np.uint8
+            assert np.array_equal(result.colors, colors)
+
+    def test_roundtrip_with_hdr_colors(self) -> None:
+        """Test round-trip with HDR float32 colors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            splats = create_test_splats_3d(75)
+
+            # Add HDR colors (values can exceed 1.0)
+            colors = np.random.rand(75, 3).astype(np.float32) * 5.0
+
+            # Save
+            save_gsplats(
+                path=path,
+                **splats,
+                colors=colors,
+                color_mode="hdr",
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+            )
+
+            # Load
+            result = load_gsplats(path)
+
+            # Verify colors are present and correct
+            assert result.colors is not None
+            assert result.colors.shape == (75, 3)
+            assert np.allclose(result.colors, colors, atol=0.05)
+
+    def test_roundtrip_without_colors(self) -> None:
+        """Test round-trip without colors (colors should be None)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            splats = create_test_splats_3d(100)
+
+            # Save without colors
+            save_gsplats(path=path, **splats, ordering="none")
+
+            # Load
+            result = load_gsplats(path)
+
+            # Verify colors are None
+            assert result.colors is None
+
+    def test_result_method_roundtrip_with_colors(self) -> None:
+        """Test GSplatData.save()/load() with colors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            splats = create_test_splats_3d(100)
+
+            # Add colors
+            colors = np.random.rand(100, 3).astype(np.float32)
+
+            # Create result with colors
+            original = GSplatData(
+                **splats,
+                colors=colors,
+                stats={"test": "value"},
+            )
+
+            # Save via method
+            original.save(path, ordering="none", color_mode="sdr")
+
+            # Load via classmethod
+            loaded = GSplatData.load(path)
+
+            # Verify colors roundtripped correctly
+            assert loaded.colors is not None
+            assert loaded.colors.shape == colors.shape
+            assert np.allclose(loaded.colors, colors, atol=0.01)
+
+            # Verify other data is intact
             assert np.allclose(loaded.centers, original.centers, atol=0.01)
             assert np.allclose(loaded.amplitudes, original.amplitudes, atol=0.05)
 

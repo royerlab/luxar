@@ -170,8 +170,8 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
 
     const state = await getLuxarState(page);
 
-    // FOV should be within reasonable bounds (10-200 degrees)
+    // FOV should be within reasonable bounds (10-170 degrees, must be <180°)
     expect(state.cameraFov).toBeGreaterThan(10);
-    expect(state.cameraFov).toBeLessThan(200);
+    expect(state.cameraFov).toBeLessThan(170);
   });
 });

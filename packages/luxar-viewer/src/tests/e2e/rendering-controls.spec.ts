@@ -25,7 +25,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Initially panel should be hidden
     const initiallyVisible = await page.evaluate(() => {
-      const panel = document.querySelector('.lil-gui');
+      const panel = document.querySelector('.luxar-gui');
       return panel && (panel as HTMLElement).style.display !== 'none';
     });
     expect(initiallyVisible).toBe(false);
@@ -36,7 +36,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Panel should now be visible
     const visibleAfterR = await page.evaluate(() => {
-      const panel = document.querySelector('.lil-gui');
+      const panel = document.querySelector('.luxar-gui');
       return panel && (panel as HTMLElement).style.display !== 'none';
     });
     expect(visibleAfterR).toBe(true);
@@ -47,7 +47,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Panel should be hidden again
     const hiddenAfterSecondR = await page.evaluate(() => {
-      const panel = document.querySelector('.lil-gui');
+      const panel = document.querySelector('.luxar-gui');
       return panel && (panel as HTMLElement).style.display === 'none';
     });
     expect(hiddenAfterSecondR).toBe(true);
@@ -67,7 +67,7 @@ test.describe('Rendering Controls Panel', () => {
 
     // Check for panel title
     const hasRenderingControlsTitle = await page.evaluate(() => {
-      const titles = document.querySelectorAll('.lil-gui .title');
+      const titles = document.querySelectorAll('.luxar-gui .luxar-gui__title');
       return Array.from(titles).some((el) => el.textContent?.includes('Rendering'));
     });
     expect(hasRenderingControlsTitle).toBe(true);
@@ -254,7 +254,7 @@ test.describe('Rendering Controls API', () => {
       return debug.renderingControls?.settings?.hdrMultiplier;
     });
 
-    // Default HDR multiplier is 16.0
-    expect(hdrMultiplier).toBe(16.0);
+    // Default HDR multiplier is 1.0 (neutral)
+    expect(hdrMultiplier).toBe(1.0);
   });
 });

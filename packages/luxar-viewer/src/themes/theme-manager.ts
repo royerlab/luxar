@@ -199,8 +199,8 @@ export class ThemeManager {
     if (savedThemeId && this.themes.has(savedThemeId)) {
       this.setTheme(savedThemeId);
     } else {
-      // Default to dark theme
-      this.setTheme('dark');
+      // Default to frosted-glass theme
+      this.setTheme('frosted-glass');
     }
   }
 

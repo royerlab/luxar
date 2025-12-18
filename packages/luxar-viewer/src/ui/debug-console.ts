@@ -119,7 +119,7 @@ export class DebugConsole {
     panel.className = 'luxar-debug-console';
     panel.innerHTML = `
       <div class="luxar-debug-console__header">
-        <div class="luxar-debug-console__title">🔧 Debug Console</div>
+        <div class="luxar-debug-console__title">Debug Console</div>
         <div class="luxar-debug-console__controls">
           <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." />
           <button class="luxar-debug-console__clear-btn" title="Clear console">Clear</button>
@@ -127,7 +127,7 @@ export class DebugConsole {
           <label class="luxar-debug-console__autoscroll">
             <input type="checkbox" checked /> Auto-scroll
           </label>
-          <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">✕</button>
+          <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">×</button>
         </div>
       </div>
       <div class="luxar-debug-console__content"></div>

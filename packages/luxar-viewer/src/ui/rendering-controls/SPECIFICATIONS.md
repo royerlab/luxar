@@ -20,7 +20,7 @@ RenderingControls (main class)
 
 Each setup function:
 
-1. Creates a GUI folder with lil-gui
+1. Creates a GUI folder with the custom GUI library
 2. Adds controls to the folder
 3. Configures onChange callbacks
 4. Returns controller references
@@ -30,7 +30,7 @@ Each setup function:
 ```
 User Interaction
     ↓
-lil-gui Control (onChange)
+GUI Control (onChange)
     ↓
 Update settings object
     ↓
@@ -50,7 +50,7 @@ Input parameter for all setup functions. Contains all dependencies needed to cre
 ```typescript
 interface SetupContext {
   // Core dependencies
-  gui: GUI; // lil-gui instance or folder
+  gui: GUI; // GUI instance or folder
   settings: RenderingSettings; // Mutable settings object
   postProcessing: PostProcessingManager; // Effects management
   sceneManager: SceneManager; // Scene/camera management
@@ -407,9 +407,9 @@ function setupPostProcessingControls(
 
 ## Control Type Reference
 
-### lil-gui Controller Types
+### GUI Controller Types
 
-All controls use lil-gui's controller system:
+All controls use the custom GUI's controller system:
 
 | Method                              | Type     | Use Case               |
 | ----------------------------------- | -------- | ---------------------- |

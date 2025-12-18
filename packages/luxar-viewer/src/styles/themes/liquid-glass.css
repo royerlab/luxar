@@ -1,39 +1,56 @@
 /**
  * Liquid Glass Theme Overrides
  *
- * Applies SVG filters to BACKGROUND behind panels for true glass refraction.
- * Filters distort what's BEHIND the panel, not the panel content.
+ * Two-layer glass effect:
+ * - ::before = SVG refraction filter (geometry-aware background distortion)
+ * - ::after = Liquid shine layer (glossy highlights and edge glow)
+ *
+ * Inspired by Apple's liquid glass and https://dev.to/kevinbism/recreating-apples-liquid-glass-effect-with-pure-css-3gpl
  */
 
-/* Enable stacking context for pseudo-elements (without changing position) */
+/* Base overrides for all liquid glass components */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
-[data-theme='liquid-glass'] .luxar-dimension-sliders {
-  isolation: isolate; /* Create stacking context without changing position */
+[data-theme='liquid-glass'] .luxar-dimension-sliders,
+[data-theme='liquid-glass'] .luxar-gui {
+  /* Create stacking context for pseudo-elements */
+  isolation: isolate;
+
+  /* Transparent - pseudo-elements handle the glass look */
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+
+  /* Brighter border for glass edge definition */
+  border: 1px solid rgba(255, 255, 255, 0.5) !important;
 }
 
-/* Distorted background layer (BEHIND content) */
-/* Note: Glass distortion NOT applied to lil-gui due to nested structure issues */
+/* ==========================================================================
+   LAYER 1: Refraction Layer (::before)
+   Geometry-aware background distortion using SVG filters
+   ========================================================================== */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
 [data-theme='liquid-glass'] .luxar-error-dialog::before,
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::before {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
+[data-theme='liquid-glass'] .luxar-gui::before {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: -1; /* BEHIND the content! */
+  z-index: -2; /* Furthest back - refraction layer */
   border-radius: inherit;
 
-  /* Apply geometry-aware refraction to backdrop */
-  /* backdrop-filter captures what's BEHIND, filter distorts it */
-  backdrop-filter: blur(2px); /* Captures background first */
-  filter: url(#luxar-liquid-refraction); /* Then distorts the capture */
-  -webkit-backdrop-filter: blur(2px);
+  /* Backdrop with saturation boost for vibrant colors through glass */
+  backdrop-filter: blur(2px) saturate(180%);
+  -webkit-backdrop-filter: blur(2px) saturate(180%);
+
+  /* SVG filter for geometry-aware refraction */
+  filter: url(#luxar-liquid-refraction);
   -webkit-filter: url(#luxar-liquid-refraction);
 
   /* Performance optimization */
@@ -41,17 +58,47 @@
   will-change: filter;
 }
 
-/* Rendering controls (lil-gui): Use simple blur without distortion */
-/* Complex nested structure doesn't work well with SVG filters */
-[data-theme='liquid-glass'] body > .lil-gui {
-  /* Just use backdrop blur, no distortion filter */
-  backdrop-filter: blur(var(--luxar-blur-md)) !important;
+/* ==========================================================================
+   LAYER 2: Liquid Shine Layer (::after)
+   Glossy highlights and edge glow - the "wet glass" look
+   ========================================================================== */
+[data-theme='liquid-glass'] .luxar-help-overlay::after,
+[data-theme='liquid-glass'] .luxar-error-dialog::after,
+[data-theme='liquid-glass'] .luxar-dataset-browser::after,
+[data-theme='liquid-glass'] .luxar-debug-console::after,
+[data-theme='liquid-glass'] .luxar-data-monitor::after,
+[data-theme='liquid-glass'] .luxar-dimension-sliders::after,
+[data-theme='liquid-glass'] .luxar-gui::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1; /* Between refraction and content */
+  border-radius: inherit;
+  pointer-events: none;
+
+  /* Subtle glass tint */
+  background: rgba(255, 255, 255, 0.08);
+
+  /* Complex inset shadows for liquid shine effect */
+  /* Top-left highlight + bottom edge glow */
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.4),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.1),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.15),
+    inset -2px -2px 4px rgba(0, 0, 0, 0.05);
+
+  /* Brightness boost and subtle blur for glossy feel */
+  filter: brightness(110%);
+  -webkit-filter: brightness(110%);
+
+  /* Slight transparency to blend with refraction layer */
+  opacity: 0.7;
 }
 
-/* Note: Adjust filter parameters in src/themes/glass-filters.ts */
-/* Default values:
- * - noiseFrequency: 0.012
- * - displacementScale: 60
- * - chromaticStrength: 1.5
- * - blurAmount: 2.5
+/* Note: Adjust refraction parameters in src/themes/glass-filters.ts */
+/* Default values (see defaultGlassParams):
+ * - blurRadius: 25 (edge curve width - larger = thicker glass feel)
+ * - refractionScale: 40 (lens strength - how much light bends)
+ * - chromaticStrength: 2 (RGB separation at edges)
+ * - specularIntensity: 0.3 (rim light brightness, 0 to disable)
  */

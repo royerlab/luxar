@@ -32,8 +32,8 @@ Each Gaussian splat is parameterized by:
 | `centers` | (N, d) | float32 | COORDINATE | Splat center positions (not broadcastable) |
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
 | `cholesky_factors` | (N, d*(d+1)/2) or (1, d*(d+1)/2) | float32 | CHOLESKY | Packed lower-triangular L where Σ = LLᵀ |
-| `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional, default white) |
-| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 31]) |
+| `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional); uint8 [0-255] for SDR, float32 for HDR; absent if not present |
+| `sharpnesses` | (N,) or (1,) | float32 | BOUNDED_SCALAR | Generalized Gaussian exponent (s=2 is standard, bounds [0, 31]); optional |
 
 **Note**: Cholesky factors are packed in row-major order. For d=3: `[L00, L10, L11, L20, L21, L22]`
 
@@ -491,7 +491,7 @@ When loading `.gsplats.zarr`:
 ### Saving
 
 ```python
-from luxar.gsplats import GaussianSplatResult
+from luxar.gsplats import GSplatData
 from luxar.encoding import EncodingMode
 
 result = fit_gaussian_splats(image, n_iters=1000)
@@ -532,10 +532,10 @@ result.save(
 
 ```python
 # Load for rendering (splats only)
-result = GaussianSplatResult.load("fitted.gsplats.zarr")
+result = GSplatData.load("fitted.gsplats.zarr")
 
 # Load with all metadata
-result = GaussianSplatResult.load(
+result = GSplatData.load(
     "fitted.gsplats.zarr",
     include_stats=True,
 )
@@ -622,7 +622,7 @@ Once `.gsplats.zarr` format is stable, integrate with Luxar visualization:
 
 ```python
 from luxar import LuxarZarrCompiler
-from luxar.gsplats import GaussianSplatResult
+from luxar.gsplats import GSplatData
 
 # Option 1: From in-memory result
 result = fit_gaussian_splats(image)

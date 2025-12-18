@@ -43,7 +43,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
 | **luxar/gsplats** | B (77%) | 85% | Splitting docs, default values |
 | **gsplats/clahe** | A (93%) | 98% | Test count minor discrepancy |
 | **gsplats/fitting** | B+ (84%) | 85% | Seed method names |
-| **gsplats/models** | B+ (85%) | 90% | ✅ GaussianSplatResult updated |
+| **gsplats/models** | B+ (85%) | 90% | ✅ GSplatData updated |
 | **gsplats/multiscale** | A- (92%) | 95% | Default init method |
 | **gsplats/optim** | A- (95%) | 95% | Sharpness param in examples |
 | **gsplats/seeds** | C+ (78%) | 85% | generate.py module missing |
@@ -82,7 +82,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
 3. ✅ **float16_allowed** - Fully documented in encoding, io, gsplats/io specs
 4. ✅ **Network Simulation** - Integrated into cli/SPECIFICATIONS.md with full documentation
 5. ✅ **gsplats/utils README** - Created with comprehensive documentation
-6. ✅ **models GaussianSplatResult** - Updated wrapper functions to show current API
+6. ✅ **models GSplatData** - Updated wrapper functions to show current API
 
 ### ⚠️ REMAINING CRITICAL ISSUES
 
@@ -208,7 +208,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
   - May still document splitting operation (replaced with LR boosting)
   - Missing I/O package documentation
   - Default values wrong (LR: 0.01 vs 0.05, scheduler: 0.5 vs 0.9)
-  - Return type changed (tuple vs GaussianSplatResult)
+  - Return type changed (tuple vs GSplatData)
 - **Impact**: HIGH - API and algorithm mismatches
 - **Root Cause**: Rapid development, documentation lag
 - **Recommendation**: Systematic update across multiple sections
@@ -304,7 +304,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
 
 - ❌ Function/method name drift during refactoring
 - ❌ Default values change but docs lag
-- ❌ API evolution (params_full → GaussianSplatResult) documentation lag
+- ❌ API evolution (params_full → GSplatData) documentation lag
 - ❌ Test counts become stale quickly
 - ❌ Some changelog claims not verified
 
@@ -321,7 +321,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
 | Dead code fix | ✅ Done | 0h | 1 file |
 | Gamma range | ✅ Done | 0h | 6 files |
 | Utils README | ✅ Done | 0h | 1 file |
-| Models GaussianSplatResult | ✅ Done | 0h | 1 file |
+| Models GSplatData | ✅ Done | 0h | 1 file |
 | **viewer/input rewrite** | ⏳ TODO | 3-4h | 1 file |
 | **viewer/types fixes** | ⏳ TODO | 45min | 1 file |
 | **Gsplats splitting** | ⏳ TODO | 1-2h | 1 file |
@@ -532,7 +532,7 @@ A comprehensive audit of all 27 SPECIFICATIONS.md files across the Luxar codebas
 
 ### API Changes Not Fully Reflected
 
-- GaussianSplatResult dataclass replacing params_full arrays (✅ mostly fixed)
+- GSplatData dataclass replacing params_full arrays (✅ mostly fixed)
 - Seed method names: "multiscale_gaussian" → "gaussian" (partially fixed)
 - Function renames across packages (various)
 - Sharpness from optional to required (documented in some places)

@@ -198,20 +198,20 @@ describe('ThemeManager', () => {
       expect(current.id).toBe('frosted-glass');
     });
 
-    it('should fallback to dark theme if saved theme is invalid', () => {
+    it('should fallback to frosted-glass theme if saved theme is invalid', () => {
       localStorage.setItem('luxar-theme', 'invalid');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
 
-      expect(current.id).toBe('dark');
+      expect(current.id).toBe('frosted-glass');
     });
 
-    it('should use dark theme if localStorage is empty', () => {
+    it('should use frosted-glass theme if localStorage is empty', () => {
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
 
-      expect(current.id).toBe('dark');
+      expect(current.id).toBe('frosted-glass');
     });
   });
 

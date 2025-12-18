@@ -15,7 +15,7 @@ from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-from luxar.gsplats.fit_result import GaussianSplatResult
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
@@ -134,7 +134,7 @@ for i, K in enumerate(keep_counts):
     idx = order[:K]
 
     # Create sliced result for rendering
-    result_idx = GaussianSplatResult(
+    result_idx = GSplatData(
         centers=result.centers[idx],
         amplitudes=result.amplitudes[idx],
         cholesky_factors=result.cholesky_factors[idx],

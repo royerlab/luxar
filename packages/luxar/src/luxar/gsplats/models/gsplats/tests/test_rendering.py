@@ -16,7 +16,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
-    from luxar.gsplats.fit_result import GaussianSplatResult
+    from luxar.gsplats.fit_result import GSplatData
     from luxar.gsplats.models.gsplats import (
         render_gaussians,
         render_gaussians_batched,
@@ -43,7 +43,7 @@ def simple_2d_params():
     sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
@@ -90,7 +90,7 @@ def multi_2d_params():
     sharpnesses = np.array([2.0, 2.0, 2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
@@ -125,7 +125,7 @@ def simple_3d_params():
     sharpnesses = np.array([2.0], dtype=np.float32)  # Standard Gaussian
 
     # Create result object
-    result = GaussianSplatResult(
+    result = GSplatData(
         centers=centers,
         amplitudes=amps,
         cholesky_factors=L_packed,
@@ -225,7 +225,7 @@ class TestRenderGaussiansFullTorch:
         shape = (5, 5)
 
         # Create empty result object
-        empty_result = GaussianSplatResult(
+        empty_result = GSplatData(
             centers=np.zeros((0, 2), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
             cholesky_factors=np.zeros(
@@ -384,7 +384,7 @@ class TestBatchedRendering:
             truncate=3.0,
         )
 
-        # Render with wrapper (uses GaussianSplatResult)
+        # Render with wrapper (uses GSplatData)
         result_sequential = render_gaussians_pytorch(
             shape=params["shape"],
             result=params["result"],
@@ -491,7 +491,7 @@ class TestRenderingEdgeCases:
         amps = np.array([1.0], dtype=np.float32)
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -517,7 +517,7 @@ class TestRenderingEdgeCases:
         amps = np.array([0.01], dtype=np.float32)  # Small amplitude to compensate
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -551,7 +551,7 @@ class TestRenderingEdgeCases:
         amps = np.ones(3, dtype=np.float32)
         sharpnesses = np.full(3, 2.0, dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -578,7 +578,7 @@ class TestRenderingEdgeCases:
         amps = np.array([1.0], dtype=np.float32)
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -614,7 +614,7 @@ class TestRenderingEdgeCases:
         amps = np.array([0.0], dtype=np.float32)  # Zero amplitude
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -652,7 +652,7 @@ class TestPerformanceAndNumericalStability:
         amps = np.random.uniform(0.1, 1.0, n_splats).astype(np.float32)
         sharpnesses = np.full(n_splats, 2.0, dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -679,7 +679,7 @@ class TestPerformanceAndNumericalStability:
         amps_small = np.array([1e-6], dtype=np.float32)
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result_small = GaussianSplatResult(
+        test_result_small = GSplatData(
             centers=centers,
             amplitudes=amps_small,
             cholesky_factors=L_packed_small,
@@ -695,7 +695,7 @@ class TestPerformanceAndNumericalStability:
         L_packed_large = pack_tril(L_large)
         amps_large = np.array([0.1], dtype=np.float32)
 
-        test_result_large = GaussianSplatResult(
+        test_result_large = GSplatData(
             centers=centers,
             amplitudes=amps_large,
             cholesky_factors=L_packed_large,
@@ -715,7 +715,7 @@ class TestRenderingWrappersEdgeCases:
         shape = (10, 10)
 
         # Create empty result object
-        empty_result = GaussianSplatResult(
+        empty_result = GSplatData(
             centers=np.zeros((0, 2), dtype=np.float32),
             amplitudes=np.zeros((0,), dtype=np.float32),
             cholesky_factors=np.zeros(
@@ -731,7 +731,7 @@ class TestRenderingWrappersEdgeCases:
         assert np.all(result == 0)
 
     def test_numpy_wrapper_with_standard_result(self) -> None:
-        """Test numpy wrapper with standard GaussianSplatResult."""
+        """Test numpy wrapper with standard GSplatData."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
         L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
@@ -740,7 +740,7 @@ class TestRenderingWrappersEdgeCases:
         amps = np.ones(1, dtype=np.float32)
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,
@@ -756,7 +756,7 @@ class TestRenderingWrappersEdgeCases:
         assert np.sum(result) > 0
 
     def test_pytorch_wrapper_with_standard_result(self) -> None:
-        """Test pytorch wrapper with standard GaussianSplatResult."""
+        """Test pytorch wrapper with standard GSplatData."""
         shape = (10, 10)
         centers = np.array([[5.0, 5.0]], dtype=np.float32)
         L = np.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
@@ -765,7 +765,7 @@ class TestRenderingWrappersEdgeCases:
         amps = np.ones(1, dtype=np.float32)
         sharpnesses = np.array([2.0], dtype=np.float32)
 
-        test_result = GaussianSplatResult(
+        test_result = GSplatData(
             centers=centers,
             amplitudes=amps,
             cholesky_factors=L_packed,

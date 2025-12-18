@@ -1,7 +1,7 @@
 // Advanced rendering controls UI for the Luxar scene player
 // Provides real-time control over post-processing and rendering parameters
 
-import GUI from 'lil-gui';
+import GUI, { Folder } from './gui';
 import * as THREE from 'three';
 import { PostProcessingManager } from '../rendering/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
@@ -38,7 +38,7 @@ import { setupPostProcessingControls } from './rendering-controls/post-processin
  * - Settings persistence per scene (localStorage)
  * - Cinematic mode presets (C key for quick film-like look)
  * - Real-time updates with deferred rebuild to prevent lag
- * - Clean collapsible UI using lil-gui library
+ * - Clean collapsible UI using custom GUI library
  * - Auto-blur behavior to keep keyboard shortcuts working
  *
  * @example
@@ -58,7 +58,7 @@ import { setupPostProcessingControls } from './rendering-controls/post-processin
  * ```
  */
 export class RenderingControls {
-  /** The lil-gui instance */
+  /** The custom GUI instance */
   private gui: GUI;
 
   /** Current rendering settings */
@@ -83,16 +83,20 @@ export class RenderingControls {
   private controllers: RenderingControllers = {};
 
   /** Folder references for visibility control */
-  private orbitFolder?: GUI;
-  private flyFolder?: GUI;
+  private orbitFolder?: Folder;
+  private flyFolder?: Folder;
 
   /** Shadow object for logarithmic HDR intensity slider */
   private hdrLogValue: { log: number } = { log: 0 };
 
+  /** Auto-blur cleanup resources */
+  private autoBlurObserver?: MutationObserver;
+  private autoBlurTimeoutId?: ReturnType<typeof setTimeout>;
+
   /**
    * Create rendering controls UI with complete parameter access.
    *
-   * Initializes lil-gui with all post-processing and rendering controls
+   * Initializes GUI with all post-processing and rendering controls
    * organized in folders. Sets up auto-blur behavior and keyboard handling.
    * Starts hidden - call show() or toggle() to display.
    *
@@ -121,11 +125,12 @@ export class RenderingControls {
       flyRotationDamping: config.controls.fly.rotation.damping.default,
     };
 
-    // Initialize GUI
+    // Initialize GUI with close button callback
     this.gui = new GUI({
       title: 'Rendering Controls',
       width: 300,
       closeFolders: false,
+      onClose: () => this.hide(),
     });
 
     // Position on the left side with standard margins
@@ -965,7 +970,7 @@ export class RenderingControls {
    */
   private setupAutoBlur(): void {
     // Use MutationObserver to watch for new controls being added
-    const observer = new MutationObserver((mutations) => {
+    this.autoBlurObserver = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node instanceof HTMLElement) {
@@ -984,13 +989,13 @@ export class RenderingControls {
     });
 
     // Start observing the GUI element for changes
-    observer.observe(this.gui.domElement, {
+    this.autoBlurObserver.observe(this.gui.domElement, {
       childList: true,
       subtree: true,
     });
 
     // Also handle existing inputs
-    setTimeout(() => {
+    this.autoBlurTimeoutId = setTimeout(() => {
       const inputs = this.gui.domElement.querySelectorAll('input, select');
       inputs.forEach((input) => {
         this.addAutoBlurToElement(input as HTMLElement);
@@ -1248,7 +1253,7 @@ export class RenderingControls {
   }
 
   /**
-   * Clean up lil-gui resources and remove from DOM.
+   * Clean up GUI resources and remove from DOM.
    *
    * Destroys the GUI instance. Should be called when rendering controls
    * are no longer needed (e.g., application teardown).
@@ -1256,6 +1261,16 @@ export class RenderingControls {
    * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
+    // Clean up auto-blur resources
+    if (this.autoBlurTimeoutId) {
+      clearTimeout(this.autoBlurTimeoutId);
+      this.autoBlurTimeoutId = undefined;
+    }
+    if (this.autoBlurObserver) {
+      this.autoBlurObserver.disconnect();
+      this.autoBlurObserver = undefined;
+    }
+
     this.gui.destroy();
   }
 }
