@@ -60,7 +60,7 @@ export interface AdaptiveDPRConfig {
   minFPS: number;
   /** FPS threshold for scaling up resolution (default: 58) */
   maxFPS: number;
-  /** Minimum allowed DPR - lower bound before image becomes too pixelated (default: 0.75) */
+  /** Minimum allowed DPR - lower bound before image becomes too pixelated (default: 0.5) */
   minDPR: number;
   /** Factor to multiply DPR when scaling down (default: 0.9 = 10% reduction) */
   scaleDownFactor: number;
@@ -557,6 +557,31 @@ export interface CacheConfig {
 }
 
 /**
+ * Dimension animation configuration
+ * Controls FPS-based animation through dimension ranges with various loop modes
+ */
+export interface DimensionAnimationConfig {
+  defaults: {
+    targetFPS: number;
+    loop: 'once' | 'loop' | 'bounce';
+    direction: 'forward' | 'backward';
+  };
+  presets: {
+    fps: number[];
+    customMin: number;
+    customMax: number;
+  };
+  timing: {
+    minFrameTimeMs: number;
+    continuousTraverseSeconds: number;
+  };
+  ui: {
+    showFPSFeedback: boolean;
+    feedbackThreshold: number;
+  };
+}
+
+/**
  * Complete application configuration structure
  */
 export interface AppConfig {
@@ -573,6 +598,7 @@ export interface AppConfig {
   dataLoading: DataLoadingConfig;
   webgl: WebGLConfig;
   cache: CacheConfig;
+  dimensionAnimation: DimensionAnimationConfig;
   defaultZarrPath: string;
   canvasId: string;
 }

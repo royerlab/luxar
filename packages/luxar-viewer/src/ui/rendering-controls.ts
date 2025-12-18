@@ -438,7 +438,7 @@ export class RenderingControls {
       'Adaptive Resolution: Automatically adjusts rendering quality for smooth FPS\n' +
         '• When FPS drops below 50, reduces pixel ratio\n' +
         '• Gradually restores quality when FPS stabilizes above 58\n' +
-        '• Minimum DPR: 0.75 (75% of native resolution)'
+        '• Minimum DPR: 0.5 (50% of native resolution)'
     );
 
     // Manual DPR control (shown when adaptive is OFF)
