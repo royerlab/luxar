@@ -82,6 +82,24 @@ vi.mock('three', () => ({
       set: vi.fn().mockReturnThis(),
     },
   })),
+  Mesh: vi.fn().mockImplementation((geometry, material) => ({
+    name: '',
+    userData: {},
+    geometry,
+    material,
+    count: 0,
+    position: {
+      copy: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+    },
+    quaternion: {
+      copy: vi.fn().mockReturnThis(),
+    },
+    scale: {
+      copy: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+    },
+  })),
   BufferGeometry: vi.fn().mockImplementation(() => ({
     setAttribute: vi.fn(),
     boundingBox: null,
