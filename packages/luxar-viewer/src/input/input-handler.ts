@@ -36,6 +36,7 @@
 import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
+import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay, hideHelpOverlay } from '../ui/helpers';
 import { SimpleDims } from '../types/dims';
@@ -68,6 +69,9 @@ export class InputHandler {
 
   /** UI component for interactive dimension sliders */
   private dimensionSliders?: DimensionSliders;
+
+  /** Animation manager for dimension playback */
+  private animationManager?: DimensionAnimationManager;
 
   /** Debug console for capturing browser console output */
   private debugConsole: DebugConsole;
@@ -197,6 +201,12 @@ export class InputHandler {
       this.dimensionSliders = undefined;
     }
 
+    // Dispose of animation manager
+    if (this.animationManager) {
+      this.animationManager.dispose();
+      this.animationManager = undefined;
+    }
+
     // Reset the scene dimension manager
     sceneDimsManager.reset();
 
@@ -279,6 +289,14 @@ export class InputHandler {
     // Show sliders only if we have non-displayed dimensions
     this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
 
+    // Initialize animation manager and register keyboard shortcuts
+    this.initAnimationManager();
+
+    // Pass animation manager to dimension sliders for UI controls
+    if (this.dimensionSliders && this.animationManager) {
+      this.dimensionSliders.setAnimationManager(this.animationManager);
+    }
+
     // Listen for dimension changes
     sceneDimsManager.addListener(() => {
       this.updateAllNDNodes();
@@ -293,6 +311,116 @@ export class InputHandler {
     // This ensures data loads at the correct initial slice position
     this.updateAllNDNodes();
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Initialize animation manager and register keyboard shortcuts
+   * Called from initDimensionSliders() after scene loads
+   * @private
+   */
+  private initAnimationManager(): void {
+    if (!this.animationManager) {
+      this.animationManager = new DimensionAnimationManager(
+        sceneDimsManager,
+        this.animationController
+      );
+
+      // Register animation shortcuts
+      this.registerAnimationShortcuts();
+    }
+  }
+
+  /**
+   * Register dimension animation keyboard shortcuts
+   * Uses InputContextManager for proper context handling
+   * @private
+   */
+  private registerAnimationShortcuts(): void {
+    // K - Toggle play/pause
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'k',
+      handler: () => {
+        if (this.selectedDimension >= 0 && this.animationManager) {
+          const isPlaying = this.animationManager.togglePlay(this.selectedDimension);
+          log.info(
+            Modules.ANIMATION,
+            `Dimension ${this.selectedDimension} ${isPlaying ? 'playing' : 'paused'}`
+          );
+        }
+      },
+      preventDefault: true,
+      description: 'Toggle dimension animation (K)',
+    });
+
+    // Home - Jump to start
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'Home',
+      handler: () => {
+        if (this.selectedDimension >= 0) {
+          const ranges = sceneDimsManager.getDimensionRanges();
+          if (ranges) {
+            sceneDimsManager.setDimensionValue(
+              this.selectedDimension,
+              ranges[this.selectedDimension][0]
+            );
+            log.info(Modules.ANIMATION, `Jumped to start of dimension ${this.selectedDimension}`);
+          }
+        }
+      },
+      preventDefault: true,
+      description: 'Jump to dimension start (Home)',
+    });
+
+    // End - Jump to end
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'End',
+      handler: () => {
+        if (this.selectedDimension >= 0) {
+          const ranges = sceneDimsManager.getDimensionRanges();
+          if (ranges) {
+            sceneDimsManager.setDimensionValue(
+              this.selectedDimension,
+              ranges[this.selectedDimension][1]
+            );
+            log.info(Modules.ANIMATION, `Jumped to end of dimension ${this.selectedDimension}`);
+          }
+        }
+      },
+      preventDefault: true,
+      description: 'Jump to dimension end (End)',
+    });
+
+    // Shift+Up - Increase speed
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'ArrowUp',
+      modifiers: { shift: true },
+      handler: () => {
+        if (this.selectedDimension >= 0 && this.animationManager) {
+          this.animationManager.increaseSpeed(this.selectedDimension);
+          const fps = this.animationManager.getState(this.selectedDimension)?.targetFPS;
+          log.info(Modules.ANIMATION, `Increased speed to ${fps} FPS`);
+        }
+      },
+      preventDefault: true,
+      description: 'Increase animation speed (Shift+↑)',
+    });
+
+    // Shift+Down - Decrease speed
+    this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      key: 'ArrowDown',
+      modifiers: { shift: true },
+      handler: () => {
+        if (this.selectedDimension >= 0 && this.animationManager) {
+          this.animationManager.decreaseSpeed(this.selectedDimension);
+          const fps = this.animationManager.getState(this.selectedDimension)?.targetFPS;
+          log.info(Modules.ANIMATION, `Decreased speed to ${fps} FPS`);
+        }
+      },
+      preventDefault: true,
+      description: 'Decrease animation speed (Shift+↓)',
+    });
+
+    log.success(Modules.ANIMATION, 'Animation keyboard shortcuts registered');
   }
 
   /**

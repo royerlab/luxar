@@ -246,3 +246,168 @@
 [data-theme='light'] .luxar-dimension-dropdown__select:focus {
   background: rgba(0, 0, 0, 0.08);
 }
+
+/* ========== Animation Controls ========== */
+
+.luxar-dimension-slider__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-4);
+  margin-top: var(--luxar-spacing-3);
+  padding-top: var(--luxar-spacing-3);
+  border-top: 1px solid var(--luxar-border-subtle);
+}
+
+/* Play/Pause Button */
+
+.luxar-dimension-slider__play-btn {
+  /* Sizing */
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+
+  /* Theming */
+  background: var(--luxar-success);
+  color: white;
+  border: none;
+  border-radius: var(--luxar-radius-sm);
+
+  /* Typography */
+  font-size: var(--luxar-text-lg);
+  line-height: 1;
+
+  /* Behavior */
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  /* Center the icon */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.luxar-dimension-slider__play-btn:hover {
+  background: var(--luxar-success-hover);
+  transform: scale(1.05);
+}
+
+.luxar-dimension-slider__play-btn:active {
+  transform: scale(0.95);
+}
+
+.luxar-dimension-slider__play-btn--playing {
+  background: var(--luxar-warning);
+}
+
+.luxar-dimension-slider__play-btn--playing:hover {
+  background: var(--luxar-warning-hover);
+}
+
+/* Speed Control */
+
+.luxar-dimension-slider__speed {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-dimension-slider__speed-label {
+  font-size: var(--luxar-text-sm);
+  color: var(--luxar-text-secondary);
+  white-space: nowrap;
+}
+
+.luxar-dimension-slider__speed-select {
+  /* Sizing */
+  min-width: 60px;
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-2);
+
+  /* Theming */
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-sm);
+
+  /* Typography */
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-sm);
+
+  /* Behavior */
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.luxar-dimension-slider__speed-select:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--luxar-success);
+}
+
+.luxar-dimension-slider__speed-select:focus {
+  outline: none;
+  border-color: var(--luxar-success);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Loop Mode Control */
+
+.luxar-dimension-slider__loop {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+}
+
+.luxar-dimension-slider__loop-label {
+  font-size: var(--luxar-text-sm);
+  color: var(--luxar-text-secondary);
+  white-space: nowrap;
+}
+
+.luxar-dimension-slider__loop-select {
+  /* Sizing */
+  min-width: 80px;
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-2);
+
+  /* Theming */
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-sm);
+
+  /* Typography */
+  font-size: var(--luxar-text-sm);
+
+  /* Behavior */
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.luxar-dimension-slider__loop-select:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--luxar-success);
+}
+
+.luxar-dimension-slider__loop-select:focus {
+  outline: none;
+  border-color: var(--luxar-success);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Theme Overrides for Animation Controls */
+
+[data-theme='light'] .luxar-dimension-slider__speed-select,
+[data-theme='light'] .luxar-dimension-slider__loop-select {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme='light'] .luxar-dimension-slider__speed-select:hover,
+[data-theme='light'] .luxar-dimension-slider__loop-select:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: var(--luxar-success);
+}
+
+[data-theme='light'] .luxar-dimension-slider__speed-select:focus,
+[data-theme='light'] .luxar-dimension-slider__loop-select:focus {
+  background: rgba(0, 0, 0, 0.08);
+}

@@ -19,10 +19,11 @@ The Luxar Scene package provides comprehensive scene management, animation contr
 
 ```
 scene/
-├── scene-manager.ts       # Main scene orchestrator
-├── animation-controller.ts # Render loop management
-├── scene-dims-manager.ts  # nD dimension coordination
-└── README.md             # This documentation
+├── scene-manager.ts              # Main scene orchestrator
+├── animation-controller.ts        # Render loop management
+├── scene-dims-manager.ts         # nD dimension coordination
+├── dimension-animation-manager.ts # Dimension playback automation
+└── README.md                     # This documentation
 ```
 
 ---
@@ -184,6 +185,89 @@ sceneDimsManager.addListener(() => {
   updateVisualization();
 });
 ```
+
+### 4. Dimension Animation Manager
+
+The `DimensionAnimationManager` provides automated playback through dimension ranges.
+
+**Responsibilities:**
+
+- FPS-based animation control
+- Loop mode management (once, loop, bounce)
+- Per-dimension animation state
+- Frame throttling and measurement
+- Integration with AnimationController
+
+**Key Features:**
+
+```typescript
+class DimensionAnimationManager extends THREE.EventDispatcher {
+  // Playback control
+  play(dimIndex: number, options?: PlayOptions): boolean;
+  pause(dimIndex: number): boolean;
+  togglePlay(dimIndex: number): boolean;
+  stop(dimIndex: number): void;
+
+  // Speed control
+  setTargetFPS(dimIndex: number, fps: number): void;
+  increaseSpeed(dimIndex: number): void;
+  decreaseSpeed(dimIndex: number): void;
+
+  // Configuration
+  setLoopMode(dimIndex: number, loopMode: LoopMode): void;
+
+  // State queries
+  isAnimating(dimIndex: number): boolean;
+  getState(dimIndex: number): DimensionAnimationState | undefined;
+
+  // Lifecycle
+  dispose(): void;
+}
+
+interface PlayOptions {
+  targetFPS?: number; // Default: 10
+  loopMode?: 'once' | 'loop' | 'bounce'; // Default: 'loop'
+  direction?: 'forward' | 'backward'; // Default: 'forward'
+}
+```
+
+**Usage:**
+
+```typescript
+// Create animation manager
+const animManager = new DimensionAnimationManager(sceneDimsManager, animationController);
+
+// Start animating time dimension at 10 FPS
+animManager.play(3, { targetFPS: 10, loopMode: 'loop' });
+
+// Adjust speed
+animManager.increaseSpeed(3); // Next preset: 15 FPS
+animManager.setTargetFPS(3, 30); // Set exact FPS
+
+// Change loop mode
+animManager.setLoopMode(3, 'bounce'); // Reverse at boundaries
+
+// Listen for events
+animManager.addEventListener('play', (e) => {
+  console.log(`Dimension ${e.dimIndex} started`);
+});
+
+animManager.addEventListener('complete', (e) => {
+  console.log(`Dimension ${e.dimIndex} finished (loop: once)`);
+});
+
+// Pause/stop
+animManager.pause(3);
+animManager.stop(3); // Also removes state
+```
+
+**Animation Modes:**
+
+- **Loop**: Wrap to start when reaching end (continuous playback)
+- **Once**: Stop at end boundary (single pass)
+- **Bounce**: Reverse direction at boundaries (ping-pong)
+
+**FPS Presets:** 1, 2, 5, 10, 15, 30, 60 Hz
 
 ---
 
