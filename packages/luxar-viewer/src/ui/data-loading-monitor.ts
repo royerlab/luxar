@@ -317,7 +317,14 @@ export class DataLoadingMonitor {
     }
 
     // Initialize visibleSegments to totalSegments (will be updated by scene loader)
-    return { totalNodes, pointsNodes, linesNodes, totalPoints, totalSegments, visibleSegments: totalSegments };
+    return {
+      totalNodes,
+      pointsNodes,
+      linesNodes,
+      totalPoints,
+      totalSegments,
+      visibleSegments: totalSegments,
+    };
   }
 
   /**

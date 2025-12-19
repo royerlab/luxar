@@ -97,8 +97,7 @@ export class DimensionSliders {
       focus?: () => void;
       blur?: () => void;
       playClick?: () => void;
-      fpsChange?: () => void;
-      loopChange?: () => void;
+      contextMenu?: (e: MouseEvent) => void;
     }
   > = new Map();
 
@@ -108,11 +107,20 @@ export class DimensionSliders {
   /** Map of dimension indices to play button elements */
   private playButtons: Map<number, HTMLButtonElement> = new Map();
 
-  /** Map of dimension indices to FPS selector elements */
-  private fpsSelectors: Map<number, HTMLSelectElement> = new Map();
+  /** Active context menu element (only one can be open at a time) */
+  private activeContextMenu: HTMLElement | null = null;
 
-  /** Map of dimension indices to loop mode selector elements */
-  private loopSelectors: Map<number, HTMLSelectElement> = new Map();
+  /** Stored event handlers for context menu cleanup */
+  private contextMenuCleanup: {
+    clickOutside?: (e: MouseEvent) => void;
+    escape?: (e: KeyboardEvent) => void;
+  } = {};
+
+  /** Stored event handlers for animation manager events (for cleanup) */
+  private animationEventHandlers: {
+    play?: (e: any) => void;
+    pause?: (e: any) => void;
+  } = {};
 
   /**
    * Create and initialize the dimension slider UI component.
@@ -175,23 +183,29 @@ export class DimensionSliders {
    * @param manager - The animation manager instance
    */
   public setAnimationManager(manager: DimensionAnimationManager): void {
+    // Remove listeners from old manager if it exists
+    if (this.animationManager && this.animationEventHandlers.play) {
+      this.animationManager.removeEventListener('play', this.animationEventHandlers.play);
+      this.animationManager.removeEventListener('pause', this.animationEventHandlers.pause!);
+    }
+
     this.animationManager = manager;
 
     // Add animation controls to existing sliders
     this.addAnimationControlsToSliders();
 
-    // Listen for animation events to update UI
-    this.animationManager.addEventListener('play', (e) => {
+    // Create and store event handlers for cleanup
+    this.animationEventHandlers.play = (e) => {
       this.updatePlayButtonState(e.dimIndex, true);
-    });
+    };
 
-    this.animationManager.addEventListener('pause', (e) => {
+    this.animationEventHandlers.pause = (e) => {
       this.updatePlayButtonState(e.dimIndex, false);
-    });
+    };
 
-    this.animationManager.addEventListener('speedChange', (e) => {
-      this.updateFPSDisplay(e.dimIndex, e.fps);
-    });
+    // Listen for animation events to update UI
+    this.animationManager.addEventListener('play', this.animationEventHandlers.play);
+    this.animationManager.addEventListener('pause', this.animationEventHandlers.pause);
   }
 
   /**
@@ -827,78 +841,23 @@ export class DimensionSliders {
   }
 
   /**
-   * Add animation controls to a specific slider
+   * Add animation controls to a specific slider (compact layout with context menu)
    * @private
    */
   private addAnimationControlsToSlider(dimIndex: number, sliderGroup: HTMLElement): void {
     if (!this.animationManager) return;
 
-    // Create controls container
-    const controlsContainer = document.createElement('div');
-    controlsContainer.className = 'luxar-dimension-slider__controls';
+    // Skip if controls already exist for this dimension
+    if (this.playButtons.has(dimIndex)) return;
 
-    // Play/Pause button
+    // Create compact play/pause button
     const playButton = document.createElement('button');
     playButton.className = 'luxar-dimension-slider__play-btn';
-    playButton.setAttribute('aria-label', 'Play/Pause animation');
+    playButton.setAttribute('aria-label', 'Play/Pause animation (right-click for settings)');
+    playButton.setAttribute('title', 'Play/Pause (right-click for settings)');
     playButton.textContent = '▶'; // Play icon
 
-    // FPS selector
-    const fpsContainer = document.createElement('div');
-    fpsContainer.className = 'luxar-dimension-slider__speed';
-
-    const fpsLabel = document.createElement('label');
-    fpsLabel.textContent = 'FPS:';
-    fpsLabel.className = 'luxar-dimension-slider__speed-label';
-
-    const fpsSelect = document.createElement('select');
-    fpsSelect.className = 'luxar-dimension-slider__speed-select';
-
-    // Add FPS presets
-    const presets = config.dimensionAnimation.presets.fps;
-    presets.forEach((fps) => {
-      const option = document.createElement('option');
-      option.value = String(fps);
-      option.textContent = String(fps);
-      fpsSelect.appendChild(option);
-    });
-
-    // Set default
-    fpsSelect.value = String(config.dimensionAnimation.defaults.targetFPS);
-
-    fpsContainer.appendChild(fpsLabel);
-    fpsContainer.appendChild(fpsSelect);
-
-    // Loop mode selector
-    const loopContainer = document.createElement('div');
-    loopContainer.className = 'luxar-dimension-slider__loop';
-
-    const loopLabel = document.createElement('label');
-    loopLabel.textContent = 'Loop:';
-    loopLabel.className = 'luxar-dimension-slider__loop-label';
-
-    const loopSelect = document.createElement('select');
-    loopSelect.className = 'luxar-dimension-slider__loop-select';
-
-    const loopModes: Array<{ value: string; label: string }> = [
-      { value: 'loop', label: 'Loop' },
-      { value: 'once', label: 'Once' },
-      { value: 'bounce', label: 'Bounce' },
-    ];
-
-    loopModes.forEach((mode) => {
-      const option = document.createElement('option');
-      option.value = mode.value;
-      option.textContent = mode.label;
-      loopSelect.appendChild(option);
-    });
-
-    loopSelect.value = config.dimensionAnimation.defaults.loop;
-
-    loopContainer.appendChild(loopLabel);
-    loopContainer.appendChild(loopSelect);
-
-    // Create bound event handlers
+    // Click handler for play/pause
     const playClickHandler = () => {
       if (!this.animationManager) return;
 
@@ -906,52 +865,215 @@ export class DimensionSliders {
       if (isPlaying) {
         this.animationManager.pause(dimIndex);
       } else {
-        const fps = parseInt(fpsSelect.value);
-        const loopMode = loopSelect.value as 'once' | 'loop' | 'bounce';
+        // Get current settings from animation state or use defaults
+        const state = this.animationManager.getState(dimIndex);
+        const fps = state?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
+        const loopMode = state?.loopMode ?? config.dimensionAnimation.defaults.loop;
         this.animationManager.play(dimIndex, { targetFPS: fps, loopMode });
       }
     };
 
-    const fpsChangeHandler = () => {
-      if (!this.animationManager) return;
-      const fps = parseInt(fpsSelect.value);
-      this.animationManager.setTargetFPS(dimIndex, fps);
-    };
-
-    const loopChangeHandler = () => {
-      if (!this.animationManager) return;
-      const loopMode = loopSelect.value as 'once' | 'loop' | 'bounce';
-      this.animationManager.setLoopMode(dimIndex, loopMode);
+    // Context menu handler for settings
+    const contextMenuHandler = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showContextMenu(dimIndex, e.clientX, e.clientY);
     };
 
     // Add event listeners
     playButton.addEventListener('click', playClickHandler);
-    fpsSelect.addEventListener('change', fpsChangeHandler);
-    loopSelect.addEventListener('change', loopChangeHandler);
+    playButton.addEventListener('contextmenu', contextMenuHandler);
 
-    // Store handlers for cleanup
+    // Store handlers and button reference
     const handlers = this.eventHandlers.get(dimIndex) || {};
     handlers.playClick = playClickHandler;
-    handlers.fpsChange = fpsChangeHandler;
-    handlers.loopChange = loopChangeHandler;
+    handlers.contextMenu = contextMenuHandler;
     this.eventHandlers.set(dimIndex, handlers);
-
-    // Store element references
     this.playButtons.set(dimIndex, playButton);
-    this.fpsSelectors.set(dimIndex, fpsSelect);
-    this.loopSelectors.set(dimIndex, loopSelect);
 
-    // Assemble controls
-    controlsContainer.appendChild(playButton);
-    controlsContainer.appendChild(fpsContainer);
-    controlsContainer.appendChild(loopContainer);
-
-    // Insert controls after the slider track
+    // Create a wrapper to hold play button and slider track horizontally
     const sliderTrack = sliderGroup.querySelector('.luxar-dimension-slider__track');
-    if (sliderTrack && sliderTrack.nextSibling) {
-      sliderGroup.insertBefore(controlsContainer, sliderTrack.nextSibling);
-    } else {
-      sliderGroup.appendChild(controlsContainer);
+    if (sliderTrack) {
+      // Create wrapper container for horizontal layout
+      const controlsWrapper = document.createElement('div');
+      controlsWrapper.className = 'luxar-dimension-slider__controls-wrapper';
+
+      // Replace slider track with wrapper containing button + track
+      sliderGroup.replaceChild(controlsWrapper, sliderTrack);
+      controlsWrapper.appendChild(playButton);
+      controlsWrapper.appendChild(sliderTrack);
+    }
+  }
+
+  /**
+   * Show context menu for animation settings (Napari-style)
+   * @private
+   */
+  private showContextMenu(dimIndex: number, x: number, y: number): void {
+    // Close any existing context menu
+    this.closeContextMenu();
+
+    // Get current animation state
+    const state = this.animationManager?.getState(dimIndex);
+    const currentFPS = state?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS;
+    const currentLoopMode = state?.loopMode ?? config.dimensionAnimation.defaults.loop;
+
+    // Create context menu
+    const menu = document.createElement('div');
+    menu.className = 'luxar-dimension-slider__context-menu';
+
+    // Speed section
+    const speedSection = document.createElement('div');
+    speedSection.className = 'luxar-dimension-slider__context-section';
+
+    const speedHeader = document.createElement('div');
+    speedHeader.className = 'luxar-dimension-slider__context-header';
+    speedHeader.textContent = 'Speed';
+    speedSection.appendChild(speedHeader);
+
+    const fpsPresets = config.dimensionAnimation.presets.fps;
+    fpsPresets.forEach((fps) => {
+      const item = document.createElement('div');
+      item.className = 'luxar-dimension-slider__context-item';
+      if (fps === currentFPS) {
+        item.classList.add('luxar-dimension-slider__context-item--selected');
+      }
+
+      const radio = document.createElement('span');
+      radio.className = 'luxar-dimension-slider__context-radio';
+      radio.textContent = fps === currentFPS ? '●' : '○';
+
+      const label = document.createElement('span');
+      label.textContent = `${fps} FPS`;
+
+      item.appendChild(radio);
+      item.appendChild(label);
+
+      item.addEventListener('click', () => {
+        if (this.animationManager) {
+          this.animationManager.setTargetFPS(dimIndex, fps);
+          this.closeContextMenu();
+        }
+      });
+
+      speedSection.appendChild(item);
+    });
+
+    menu.appendChild(speedSection);
+
+    // Loop mode section
+    const loopSection = document.createElement('div');
+    loopSection.className = 'luxar-dimension-slider__context-section';
+
+    const loopHeader = document.createElement('div');
+    loopHeader.className = 'luxar-dimension-slider__context-header';
+    loopHeader.textContent = 'Loop Mode';
+    loopSection.appendChild(loopHeader);
+
+    const loopModes: Array<{ value: 'once' | 'loop' | 'bounce'; label: string }> = [
+      { value: 'once', label: 'Once' },
+      { value: 'loop', label: 'Loop' },
+      { value: 'bounce', label: 'Bounce' },
+    ];
+
+    loopModes.forEach((mode) => {
+      const item = document.createElement('div');
+      item.className = 'luxar-dimension-slider__context-item';
+      if (mode.value === currentLoopMode) {
+        item.classList.add('luxar-dimension-slider__context-item--selected');
+      }
+
+      const radio = document.createElement('span');
+      radio.className = 'luxar-dimension-slider__context-radio';
+      radio.textContent = mode.value === currentLoopMode ? '●' : '○';
+
+      const label = document.createElement('span');
+      label.textContent = mode.label;
+
+      item.appendChild(radio);
+      item.appendChild(label);
+
+      item.addEventListener('click', () => {
+        if (this.animationManager) {
+          this.animationManager.setLoopMode(dimIndex, mode.value);
+          this.closeContextMenu();
+        }
+      });
+
+      loopSection.appendChild(item);
+    });
+
+    menu.appendChild(loopSection);
+
+    // Add to document first (needed to measure height)
+    document.body.appendChild(menu);
+    this.activeContextMenu = menu;
+
+    // Position menu above the cursor (Napari-style) with bounds checking
+    const menuHeight = menu.offsetHeight;
+    const menuWidth = menu.offsetWidth;
+
+    // Ensure menu stays within viewport bounds
+    let menuX = x;
+    let menuY = y - menuHeight;
+
+    // Check right edge
+    if (menuX + menuWidth > window.innerWidth) {
+      menuX = window.innerWidth - menuWidth - 10; // 10px padding from edge
+    }
+
+    // Check left edge
+    if (menuX < 10) {
+      menuX = 10; // 10px padding from edge
+    }
+
+    // Check top edge - if menu would go above viewport, show below cursor instead
+    if (menuY < 10) {
+      menuY = y + 10; // Show below cursor with 10px gap
+    }
+
+    menu.style.left = `${menuX}px`;
+    menu.style.top = `${menuY}px`;
+
+    // Close on click outside - store handler for cleanup
+    const closeOnClickOutside = (e: MouseEvent) => {
+      if (!menu.contains(e.target as Node)) {
+        this.closeContextMenu();
+      }
+    };
+    this.contextMenuCleanup.clickOutside = closeOnClickOutside;
+    setTimeout(() => {
+      document.addEventListener('click', closeOnClickOutside);
+    }, 0);
+
+    // Close on escape - store handler for cleanup
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.closeContextMenu();
+      }
+    };
+    this.contextMenuCleanup.escape = closeOnEscape;
+    document.addEventListener('keydown', closeOnEscape);
+  }
+
+  /**
+   * Close active context menu and clean up event listeners
+   * @private
+   */
+  private closeContextMenu(): void {
+    if (this.activeContextMenu) {
+      this.activeContextMenu.remove();
+      this.activeContextMenu = null;
+    }
+
+    // Remove document-level event listeners
+    if (this.contextMenuCleanup.clickOutside) {
+      document.removeEventListener('click', this.contextMenuCleanup.clickOutside);
+      this.contextMenuCleanup.clickOutside = undefined;
+    }
+    if (this.contextMenuCleanup.escape) {
+      document.removeEventListener('keydown', this.contextMenuCleanup.escape);
+      this.contextMenuCleanup.escape = undefined;
     }
   }
 
@@ -970,17 +1092,6 @@ export class DimensionSliders {
       playButton.textContent = '▶'; // Play icon
       playButton.classList.remove('luxar-dimension-slider__play-btn--playing');
     }
-  }
-
-  /**
-   * Update FPS selector display
-   * @private
-   */
-  private updateFPSDisplay(dimIndex: number, fps: number): void {
-    const fpsSelector = this.fpsSelectors.get(dimIndex);
-    if (!fpsSelector) return;
-
-    fpsSelector.value = String(fps);
   }
 
   /**
@@ -1054,19 +1165,21 @@ export class DimensionSliders {
       if (handlers?.playClick) {
         playButton.removeEventListener('click', handlers.playClick);
       }
-    }
-
-    for (const [dimIndex, fpsSelector] of this.fpsSelectors) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers?.fpsChange) {
-        fpsSelector.removeEventListener('change', handlers.fpsChange);
+      if (handlers?.contextMenu) {
+        playButton.removeEventListener('contextmenu', handlers.contextMenu);
       }
     }
 
-    for (const [dimIndex, loopSelector] of this.loopSelectors) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers?.loopChange) {
-        loopSelector.removeEventListener('change', handlers.loopChange);
+    // Close any open context menu
+    this.closeContextMenu();
+
+    // Remove event listeners from animation manager
+    if (this.animationManager) {
+      if (this.animationEventHandlers.play) {
+        this.animationManager.removeEventListener('play', this.animationEventHandlers.play);
+      }
+      if (this.animationEventHandlers.pause) {
+        this.animationManager.removeEventListener('pause', this.animationEventHandlers.pause);
       }
     }
 
@@ -1075,8 +1188,7 @@ export class DimensionSliders {
     this.sliders.clear();
     this.dropdowns.clear();
     this.playButtons.clear();
-    this.fpsSelectors.clear();
-    this.loopSelectors.clear();
+    this.animationEventHandlers = {};
 
     // Remove DOM elements
     this.slidersContainer.remove();
