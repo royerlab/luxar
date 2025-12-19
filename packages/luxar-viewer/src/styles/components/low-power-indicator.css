@@ -6,8 +6,10 @@
  */
 
 /* ========== Fade Animation ========== */
+/* NOTE: Use unique animation names to avoid conflicting with global luxar-fade-in
+   in utilities.css (which only animates opacity without transform) */
 
-@keyframes luxar-fade-in {
+@keyframes luxar-low-power-fade-in {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -18,7 +20,7 @@
   }
 }
 
-@keyframes luxar-fade-out {
+@keyframes luxar-low-power-fade-out {
   from {
     opacity: 1;
     transform: translateY(0);
@@ -60,7 +62,7 @@
   z-index: var(--luxar-z-notification);
 
   /* Animation */
-  animation: luxar-fade-in 0.3s ease-out forwards;
+  animation: luxar-low-power-fade-in 0.3s ease-out forwards;
 
   /* Interaction */
   pointer-events: none;
@@ -68,7 +70,7 @@
 }
 
 .luxar-low-power-indicator--hidden {
-  animation: luxar-fade-out 0.3s ease-out forwards;
+  animation: luxar-low-power-fade-out 0.3s ease-out forwards;
 }
 
 .luxar-low-power-indicator__icon {

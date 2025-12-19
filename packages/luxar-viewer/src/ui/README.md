@@ -91,21 +91,27 @@ Each dimension slider includes animation controls for automated playback through
 ```
 ┌─────────────────────────────────┐
 │ Time                    50ms    │
-│ ◀━━━━━━━●━━━━━━━━━━▶  [▶] 10   │
-│                        FPS Loop │
+│ [▶] ◀━━━━━━━●━━━━━━━━━━▶       │
 └─────────────────────────────────┘
 ```
 
 **Control Elements:**
 
-- **Play Button** (`▶`/`⏸`): Toggle animation play/pause
-- **FPS Selector**: Set target animation speed
+- **Play Button** (`▶`/`⏸`): Compact button to the left of slider
+  - Left-click: Toggle animation play/pause
+  - Right-click: Open settings context menu (Napari-style)
+
+**Context Menu Settings** (right-click play button):
+
+- **Speed Section**: Set target animation speed
   - Presets: 1, 2, 5, 10, 15, 30, 60 FPS
-  - Custom range: 0.1 - 120 FPS
-- **Loop Selector**: Choose loop behavior
-  - `once`: Play once and stop
-  - `loop`: Loop continuously from start to end
-  - `bounce`: Ping-pong back and forth
+  - Radio button selection with current speed marked
+
+- **Loop Mode Section**: Choose loop behavior
+  - `Once`: Play once and stop at end
+  - `Loop`: Loop continuously from start to end
+  - `Bounce`: Ping-pong back and forth
+  - Radio button selection with current mode marked
 
 **Animation Features:**
 
