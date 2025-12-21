@@ -15,6 +15,7 @@ class BlendingMode(str, Enum):
 
     NORMAL = "normal"  # Standard alpha blending
     ADDITIVE = "additive"  # Colors add together (glow effect)
+    MAX = "max"  # Maximum of source and destination (brightest wins)
 
     @classmethod
     def validate(cls, value: str) -> "BlendingMode":

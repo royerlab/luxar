@@ -105,7 +105,7 @@ class Scene(Node):
             **attrs: Additional attributes for the group. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.1-10.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", default "additive") - Blending mode for rendering
+                blending_mode: str ("normal", "additive", "max", default "additive") - Blending mode for rendering
 
         Returns:
             The created group node
@@ -177,7 +177,7 @@ class Scene(Node):
             **attrs: Additional attributes for the node. Supports:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.1-10.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", default "additive") - Blending mode for rendering
+                blending_mode: str ("normal", "additive", "max", default "additive") - Blending mode for rendering
 
         Returns:
             The created Points node

@@ -91,8 +91,8 @@ export function renderStatGrid(
   return `
     <div class="luxar-stat-grid luxar-stat-grid--cols-${cols}">
       ${stats
-    .map((stat) => {
-      return `
+        .map((stat) => {
+          return `
         <div class="luxar-stat-grid__item">
           <div class="luxar-stat-grid__value ${stat.colorClass || ''}">
             ${stat.value}
@@ -100,8 +100,8 @@ export function renderStatGrid(
           <div class="luxar-stat-grid__label">${stat.label}</div>
         </div>
       `;
-    })
-    .join('')}
+        })
+        .join('')}
     </div>
   `;
 }
@@ -195,9 +195,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
   // Calculate visible percentage for gsplats
   const visibleSplatsPercent =
-    stats.datasetSplats > 0
-      ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1)
-      : '0';
+    stats.datasetSplats > 0 ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1) : '0';
 
   // Build primary metrics section
   let primaryMetrics = '';
@@ -206,26 +204,26 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-3">
         ${renderMetricCard(
-    'VISIBLE POINTS',
-    formatNumber(stats.visiblePoints),
-    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-    getColorClass('success'),
-    'small'
-  )}
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
+          getColorClass('success'),
+          'small'
+        )}
         ${renderMetricCard(
-    'VISIBLE LINES',
-    formatNumber(stats.visibleSegments),
-    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
-    getColorClass('warning'),
-    'small'
-  )}
+          'VISIBLE LINES',
+          formatNumber(stats.visibleSegments),
+          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
+          getColorClass('warning'),
+          'small'
+        )}
         ${renderMetricCard(
-    'VISIBLE SPLATS',
-    formatNumber(stats.visibleSplats),
-    `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
-    getColorClass('info'),
-    'small'
-  )}
+          'VISIBLE SPLATS',
+          formatNumber(stats.visibleSplats),
+          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
+          getColorClass('info'),
+          'small'
+        )}
       </div>
     `;
   } else if (showBoth) {
@@ -274,12 +272,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-    'VISIBLE POINTS',
-    formatNumber(stats.visiblePoints),
-    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-    getColorClass('success'),
-    'large'
-  )}
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+          getColorClass('success'),
+          'large'
+        )}
       </div>
     `;
   } else if (hasLines) {
@@ -287,12 +285,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-    'VISIBLE LINES',
-    formatNumber(stats.visibleSegments),
-    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-    getColorClass('warning'),
-    'large'
-  )}
+          'VISIBLE LINES',
+          formatNumber(stats.visibleSegments),
+          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+          getColorClass('warning'),
+          'large'
+        )}
       </div>
     `;
   } else if (hasGSplats) {
@@ -300,12 +298,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     primaryMetrics = `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
-    'VISIBLE SPLATS',
-    formatNumber(stats.visibleSplats),
-    `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
-    getColorClass('info'),
-    'large'
-  )}
+          'VISIBLE SPLATS',
+          formatNumber(stats.visibleSplats),
+          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
+          getColorClass('info'),
+          'large'
+        )}
       </div>
     `;
   } else {
@@ -324,10 +322,10 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
-    { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
-    { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
-    cacheMetrics.network
-  )}
+        { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },
+        { avgTime: stats.avgQueryTime, perSec: stats.queriesPerSecond },
+        cacheMetrics.network
+      )}
 
       <!-- Scene graph or loader list (injected by monitor) -->
       <div class="scene-or-loaders">
@@ -364,12 +362,12 @@ function renderCacheSection(
       </div>
       <div class="luxar-cache-section__metrics luxar-cache-section__metrics--${cols}">
         ${metrics
-    .map((metric) => {
-      const sizeClass =
+          .map((metric) => {
+            const sizeClass =
               metrics.length === 2
                 ? 'luxar-metric-card__value--medium'
                 : 'luxar-metric-card__value--small';
-      return `
+            return `
           <div class="luxar-metric-card luxar-metric-card--small"${metric.tooltip ? ` title="${metric.tooltip}"` : ''}>
             <div class="luxar-metric-card__title">${metric.label}</div>
             <div class="luxar-metric-card__value ${sizeClass} ${metric.colorClass || ''}">
@@ -380,8 +378,8 @@ function renderCacheSection(
             </div>
           </div>
         `;
-    })
-    .join('')}
+          })
+          .join('')}
       </div>
     </div>
   `;
@@ -415,19 +413,19 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       <div class="cache-content">
         <div class="luxar-grid-2">
           ${renderMetricCard(
-    'CACHE MEMORY',
-    formatBytes(cacheMetrics.totalCacheMemory),
-    `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
-    getColorClass('success'),
-    'medium'
-  )}
+            'CACHE MEMORY',
+            formatBytes(cacheMetrics.totalCacheMemory),
+            `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
+            getColorClass('success'),
+            'medium'
+          )}
           ${renderMetricCard(
-    'CACHED ENTRIES',
-    cacheMetrics.totalEntries.toString(),
-    '',
-    getColorClass('primary'),
-    'medium'
-  )}
+            'CACHED ENTRIES',
+            cacheMetrics.totalEntries.toString(),
+            '',
+            getColorClass('primary'),
+            'medium'
+          )}
         </div>
         <div class="luxar-cache-loading">
           Loading cache statistics...
@@ -452,54 +450,54 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
     <div class="cache-content">
       <!-- L1 Memory Cache Section -->
       ${renderCacheSection('L1 MEMORY CACHE', undefined, 'clearL1', 'Clear L1 cache', [
-    {
-      label: 'SIZE',
-      value: formatBytes(cacheMetrics.l1!.size),
-      subtitle: `${cacheMetrics.l1!.count} entries`,
-      tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
-      colorClass: getColorClass('success'),
-    },
-    {
-      label: 'HIT RATE',
-      value: `${l1HitRate.toFixed(1)}%`,
-      subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
-      tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
-      colorClass: hitRateColorClass,
-    },
-    {
-      label: 'EVICTIONS',
-      value: formatNumber(cacheMetrics.l1!.evictions),
-      subtitle: 'LRU removed',
-      tooltip:
+        {
+          label: 'SIZE',
+          value: formatBytes(cacheMetrics.l1!.size),
+          subtitle: `${cacheMetrics.l1!.count} entries`,
+          tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+          colorClass: getColorClass('success'),
+        },
+        {
+          label: 'HIT RATE',
+          value: `${l1HitRate.toFixed(1)}%`,
+          subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
+          tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+          colorClass: hitRateColorClass,
+        },
+        {
+          label: 'EVICTIONS',
+          value: formatNumber(cacheMetrics.l1!.evictions),
+          subtitle: 'LRU removed',
+          tooltip:
             'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
-      colorClass:
+          colorClass:
             cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
-    },
-  ])}
+        },
+      ])}
 
       <!-- L2 OPFS Cache Section -->
       ${renderCacheSection(
-    'L2 OPFS CACHE',
-    'Origin Private File System: persistent browser storage for cached data',
-    'clearL2',
-    'Clear L2 persistent cache (data will need to be re-downloaded)',
-    [
-      {
-        label: 'SIZE',
-        value: formatBytes(cacheMetrics.l2!.size),
-        subtitle: `${cacheMetrics.l2!.count} entries`,
-        tooltip:
-              'L2 persistent cache: stored in browser\'s Origin Private File System, survives page reloads',
-        colorClass: getColorClass('info'),
-      },
-      {
-        label: 'I/O',
-        value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-        subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
-        tooltip: 'Disk I/O operations: reads from cache, writes to cache',
-      },
-    ]
-  )}
+        'L2 OPFS CACHE',
+        'Origin Private File System: persistent browser storage for cached data',
+        'clearL2',
+        'Clear L2 persistent cache (data will need to be re-downloaded)',
+        [
+          {
+            label: 'SIZE',
+            value: formatBytes(cacheMetrics.l2!.size),
+            subtitle: `${cacheMetrics.l2!.count} entries`,
+            tooltip:
+              "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
+            colorClass: getColorClass('info'),
+          },
+          {
+            label: 'I/O',
+            value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
+            subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+            tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+          },
+        ]
+      )}
 
       <!-- Combined Stats + Clear All -->
       <div class="luxar-cache-total">
@@ -536,14 +534,14 @@ export function renderRecommendation(rec: Recommendation): string {
         ${rec.message}
       </div>
       ${
-  rec.suggestion
-    ? `
+        rec.suggestion
+          ? `
         <div class="luxar-recommendation__message luxar-suggestion">
           💡 ${rec.suggestion}
         </div>
       `
-    : ''
-}
+          : ''
+      }
     </div>
   `;
 }
@@ -708,10 +706,10 @@ function renderSceneGraphNode(
 
         <!-- Stats badge -->
         ${
-  statsText
-    ? `<span class="luxar-scene-graph__badge" title="${statsTooltip}">${statsText}</span>`
-    : ''
-}
+          statsText
+            ? `<span class="luxar-scene-graph__badge" title="${statsTooltip}">${statsText}</span>`
+            : ''
+        }
 
         <!-- Loading indicator -->
         ${node.isLoading ? '<span class="luxar-scene-graph__loading" title="Loading data...">⏳</span>' : ''}
@@ -719,12 +717,12 @@ function renderSceneGraphNode(
 
       <!-- Children (if expanded) -->
       ${
-  isExpanded && hasChildren
-    ? node.children
-      .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
-      .join('')
-    : ''
-}
+        isExpanded && hasChildren
+          ? node.children
+              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+              .join('')
+          : ''
+      }
     </div>
   `;
 }

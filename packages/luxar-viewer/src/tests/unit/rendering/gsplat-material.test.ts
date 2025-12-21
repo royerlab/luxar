@@ -34,6 +34,9 @@ vi.mock('three', async () => {
     Vector2: actual.Vector2,
     AdditiveBlending: 'AdditiveBlending',
     NormalBlending: 'NormalBlending',
+    CustomBlending: 'CustomBlending',
+    MaxEquation: 'MaxEquation',
+    OneFactor: 'OneFactor',
     DoubleSide: 'DoubleSide',
   };
 });
@@ -55,6 +58,7 @@ describe('GSplatMaterial', () => {
       expect(material.toneMapped).toBe(false);
       expect(material.blending).toBe('AdditiveBlending');
       expect(material.side).toBe('DoubleSide');
+      expect(material.uniforms.uProjectionMode.value).toBe(0); // Default additive uses sum projection
     });
 
     it('should accept custom configuration', () => {
@@ -70,6 +74,17 @@ describe('GSplatMaterial', () => {
       expect(material.uniforms.uTruncate.value).toBe(4.0);
       expect(material.blending).toBe('NormalBlending');
       expect(material.depthWrite).toBe(true); // Normal blending enables depth write
+      expect(material.uniforms.uProjectionMode.value).toBe(0); // Sum projection for normal
+    });
+
+    it('should configure max blending with max projection', () => {
+      const material = new GSplatMaterial({
+        blendingMode: 'max',
+      });
+
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.depthWrite).toBe(false); // Max blending disables depth write
+      expect(material.uniforms.uProjectionMode.value).toBe(1); // Max projection
     });
   });
 
@@ -93,6 +108,7 @@ describe('GSplatMaterial', () => {
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
       expect(material.vertexShader).toContain('uniform float uFx, uFy');
       expect(material.vertexShader).toContain('uniform float uTruncate');
+      expect(material.vertexShader).toContain('uniform int uProjectionMode');
 
       // Check for varyings
       expect(material.vertexShader).toContain('varying vec3 vColor');

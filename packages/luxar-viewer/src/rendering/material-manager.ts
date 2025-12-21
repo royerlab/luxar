@@ -87,6 +87,13 @@ export class MaterialManager {
       sharpnessScale: props.sharpnessScale,
     });
 
+    // Configure custom blending for max mode
+    if (props.blendingMode === 'max') {
+      material.blendEquation = THREE.MaxEquation; // Max(source, destination)
+      material.blendSrc = THREE.OneFactor;
+      material.blendDst = THREE.OneFactor;
+    }
+
     // Register for global updates
     this.registeredMaterials.add(material);
 
@@ -194,7 +201,7 @@ export class MaterialManager {
       case 'additive':
         return THREE.AdditiveBlending;
       case 'max':
-        return THREE.MaxBlending;
+        return THREE.CustomBlending; // Max blending uses CustomBlending with MaxEquation
       default:
         log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
         return THREE.NormalBlending;
@@ -295,7 +302,7 @@ export class MaterialManager {
     gsplatMaterials: number;
     totalRegistered: number;
     keys: string[];
-    } {
+  } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,

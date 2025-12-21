@@ -12,9 +12,24 @@ describe('processGSplats3DOnly', () => {
       centers: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       amplitudes: new Float32Array([1.0, 0.5, 0.3]),
       choleskyFactors: new Float32Array([
-        1, 0, 1, 0, 0, 1, // Identity covariance
-        2, 0, 2, 0, 0, 2, // Scaled
-        1, 0.5, 1, 0, 0.5, 1, // Anisotropic
+        1,
+        0,
+        1,
+        0,
+        0,
+        1, // Identity covariance
+        2,
+        0,
+        2,
+        0,
+        0,
+        2, // Scaled
+        1,
+        0.5,
+        1,
+        0,
+        0.5,
+        1, // Anisotropic
       ]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
       sharpness: new Float32Array([2.0, 1.5, 2.5]),
@@ -94,10 +109,7 @@ describe('processGSplatsTo3D', () => {
     const loaded: LoadedGSplatsData = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
-      choleskyFactors: new Float32Array([
-        1, 0, 1, 0, 0, 1,
-        1, 0, 1, 0, 0, 1,
-      ]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       sharpness: new Float32Array([2.0, 2.0]),
       splatCount: 2,
@@ -127,8 +139,26 @@ describe('processGSplatsTo3D', () => {
       // 4D Cholesky has 10 elements: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
       // Use identity-like covariance (σ=1 in all dims)
       choleskyFactors: new Float32Array([
-        1, 0, 1, 0, 0, 1, 0, 0, 0, 1, // First splat: identity
-        1, 0, 1, 0, 0, 1, 0, 0, 0, 1, // Second splat: identity
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // First splat: identity
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1, // Second splat: identity
       ]),
       colors: new Float32Array([1, 1, 1, 1, 1, 1]),
       sharpness: new Float32Array([2.0, 2.0]),
@@ -202,9 +232,7 @@ describe('processGSplatsTo3D', () => {
       centers: new Float32Array([10, 20, 30, 40, 50]), // 5D center
       amplitudes: new Float32Array([1.0]),
       // Minimal valid Cholesky for 5D (15 elements)
-      choleskyFactors: new Float32Array([
-        1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1,
-      ]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0]),
       sharpness: new Float32Array([2.0]),
       splatCount: 1,
@@ -329,10 +357,7 @@ describe('edge cases', () => {
     const loaded: LoadedGSplatsData = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1]),
       amplitudes: new Float32Array([1.0, 0.0]), // Second has zero amplitude
-      choleskyFactors: new Float32Array([
-        1, 0, 1, 0, 0, 1,
-        1, 0, 1, 0, 0, 1,
-      ]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: null,
       sharpness: null,
       splatCount: 2,

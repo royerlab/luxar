@@ -236,7 +236,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
       blendingMode === 'additive'
         ? THREE.AdditiveBlending
         : blendingMode === 'max'
-          ? THREE.MaxBlending
+          ? THREE.CustomBlending
           : THREE.NormalBlending;
 
     super({
@@ -253,11 +253,18 @@ export class LineMaterial extends THREE.ShaderMaterial {
       fragmentShader: LineMaterial.FRAGMENT_SHADER,
 
       transparent: true,
-      depthWrite: blendingMode !== 'additive', // No depth write for additive
+      depthWrite: blendingMode !== 'additive' && blendingMode !== 'max', // No depth write for additive/max
       toneMapped: false, // HDR values pass through to post-processing
       blending: blending,
       side: THREE.DoubleSide, // Lines visible from both sides
     });
+
+    // Configure custom blending for max mode
+    if (blendingMode === 'max') {
+      this.blendEquation = THREE.MaxEquation; // Max(source, destination)
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+    }
   }
 
   /**
@@ -295,7 +302,7 @@ export class LineMaterial extends THREE.ShaderMaterial {
       blendingMode:
         this.blending === THREE.AdditiveBlending
           ? 'additive'
-          : this.blending === THREE.MaxBlending
+          : this.blending === THREE.CustomBlending && this.blendEquation === THREE.MaxEquation
             ? 'max'
             : 'normal',
     });

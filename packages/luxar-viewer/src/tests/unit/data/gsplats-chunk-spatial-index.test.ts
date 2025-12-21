@@ -6,7 +6,11 @@ import {
   computeGSplatsTolerance,
   computeToleranceFromViewState,
 } from '../../../data/gsplats-chunk-spatial-index';
-import type { GSplatsChunkSpatialIndex, GSplatsViewState, SplatRange } from '../../../types/gsplats';
+import type {
+  GSplatsChunkSpatialIndex,
+  GSplatsViewState,
+  SplatRange,
+} from '../../../types/gsplats';
 
 describe('queryGSplatsChunksForView', () => {
   it('should find chunks intersecting query region', () => {

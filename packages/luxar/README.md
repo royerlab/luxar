@@ -238,7 +238,7 @@ class Scene:
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction
-                blending_mode: str ("normal", "additive", default "additive")
+                blending_mode: str ("normal", "additive", "max", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
     
@@ -264,7 +264,7 @@ class Scene:
             **attrs: Additional attributes including:
                 opacity: float (0.0-1.0, default 1.0) - Node opacity
                 gamma: float (0.2-2.0, default 1.0) - Gamma correction  
-                blending_mode: str ("normal", "additive", default "additive")
+                blending_mode: str ("normal", "additive", "max", default "additive")
                 transform: list[float] - 16-element 4x4 transformation matrix (use transforms.to_list())
         """
     
@@ -406,11 +406,9 @@ group = scene.add_group(
 ```
 
 **Blending Modes:**
-- `"additive"` (default): HDR additive blending, good for glowing effects
+- `"additive"` (default): HDR additive blending, colors add together (glow effect)
 - `"normal"`: Standard alpha blending
-- `"multiply"`: Multiplicative blending, creates darkening effects
-- `"minimum"`: Takes minimum values, creates intersection effects
-- `"maximum"`: Takes maximum values, creates union effects
+- `"max"`: Maximum blending, brightest values win (highlight effect)
 
 ## 🔬 Advanced Usage
 

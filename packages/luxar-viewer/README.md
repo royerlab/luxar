@@ -318,7 +318,7 @@ The material manager in `src/rendering/material-manager.ts` provides optimized m
 
 ```typescript
 // Supported blending modes
-type BlendingMode = 'normal' | 'additive' | 'multiply' | 'minimum' | 'maximum';
+type BlendingMode = 'normal' | 'additive' | 'max';
 
 // Materials are automatically cached based on properties
 const material = materialManager.getMaterial({

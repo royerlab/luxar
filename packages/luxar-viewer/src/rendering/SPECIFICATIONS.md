@@ -841,7 +841,7 @@ canvas.style.height = `${height}px`;
 
 ```typescript
 interface MaterialConfig {
-  blendingMode: 'additive' | 'normal';
+  blendingMode: 'additive' | 'normal' | 'max';
   opacity: number; // 0.0 to 1.0
   gamma: number; // Typically 1.0 (no correction)
 }
@@ -1358,7 +1358,7 @@ instancedGeometry.setAttribute('aEndPos', new THREE.InstancedBufferAttribute(end
 
 ```typescript
 interface LineMaterialConfig {
-  blendingMode: 'additive' | 'normal';
+  blendingMode: 'additive' | 'normal' | 'max';
   opacity: number; // 0.0 to 1.0
   hdrMultiplier: number; // Typically 16.0
 }

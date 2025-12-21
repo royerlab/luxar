@@ -23,7 +23,7 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | float]  # Can be array of centers or float proportion
+    seeds: Optional[np.ndarray | int | float]  # Array, int count, or proportion
 
     # Normalization
     norm_percentile: float

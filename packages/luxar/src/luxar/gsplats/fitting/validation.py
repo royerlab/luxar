@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
-    seeds: Optional[np.ndarray | float] = None,
+    seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
@@ -84,7 +84,11 @@ def prepare_fit_config(
 
     # Validate seeds if provided
     if seeds is not None:
-        if isinstance(seeds, (int, float)):
+        if isinstance(seeds, int):
+            # Integer exact count
+            if seeds <= 0:
+                raise ValueError("seeds as int must be positive")
+        elif isinstance(seeds, float):
             # Float proportion of voxels
             if seeds <= 0 or seeds > 1.0:
                 raise ValueError("seeds as float must be in range (0, 1.0]")
