@@ -705,7 +705,7 @@ describe('zarr-loader', () => {
 
       await loadScene('http://localhost:8000/defaults.zarr');
 
-      // Should use default opacity=1.0, blending='normal', gamma=1.0
+      // Should use default opacity=1.0, blending='additive', gamma=1.0
     });
   });
 

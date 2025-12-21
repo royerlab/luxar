@@ -1,0 +1,324 @@
+/**
+ * GSplats type definitions for luxar-viewer.
+ *
+ * These types mirror Python luxar.gsplats and enable type-safe
+ * handling of Gaussian splat data throughout the viewer.
+ *
+ * GSplats are volumetric primitives representing oriented, anisotropic
+ * Gaussian density functions with a generalized falloff exponent (sharpness).
+ *
+ * @module types/gsplats
+ */
+
+import type { DimensionMetadata } from './dims';
+
+// ============================================================================
+// Metadata Types (from zarr .zattrs)
+// ============================================================================
+
+/**
+ * Range with min and max values.
+ */
+export interface ValueRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * Bounding box with min and max coordinates per dimension.
+ */
+export interface CoordinateBounds {
+  min: number[];
+  max: number[];
+}
+
+/**
+ * GSplats node metadata from zarr .zattrs
+ *
+ * This interface defines all metadata stored with a GSplats node in the zarr archive.
+ * It enables type-safe access to splat properties throughout the viewer.
+ */
+export interface GSplatsMetadata {
+  /** Node type identifier */
+  type: 'gsplats';
+
+  /** Total splat count */
+  n_splats: number;
+
+  /** Position dimensionality */
+  ndim: number;
+
+  /** Whether colors array is present */
+  has_colors: boolean;
+
+  /** Whether sharpness array is present */
+  has_sharpness: boolean;
+
+  /** Elements per chunk */
+  chunk_size: number;
+
+  /** Amplitude value range */
+  amplitude_range: ValueRange;
+
+  /** Sharpness value bounds */
+  sharpness_bounds: ValueRange;
+
+  /** Center coordinate bounds */
+  center_bounds: CoordinateBounds;
+
+  /** Spatial ordering method */
+  ordering: 'morton' | 'hilbert' | 'none';
+
+  /** Min bounds for coordinate normalization (when ordering != 'none') */
+  ordering_min?: number[];
+
+  /** Max bounds for coordinate normalization (when ordering != 'none') */
+  ordering_max?: number[];
+
+  /** Bits per dimension for space-filling curve encoding (when ordering != 'none') */
+  ordering_bits_per_dim?: number;
+
+  /** 4x4 transform matrix (column-major for THREE.js) */
+  transform?: number[];
+
+  /** Opacity multiplier */
+  opacity?: number;
+
+  /** Gamma correction */
+  gamma?: number;
+
+  /** Blending mode */
+  blending_mode?: 'additive' | 'normal' | 'max';
+
+  /**
+   * List of dimension names to extend visibility across.
+   * GSplats with extend_to_all will be visible regardless of slice position
+   * in the specified dimensions.
+   */
+  extend_to_all?: string[];
+}
+
+// ============================================================================
+// Spatial Index Types
+// ============================================================================
+
+/**
+ * Chunk-based spatial index for GSplats.
+ *
+ * GSplats use spatial ordering (Morton or Hilbert) for chunk-based loading.
+ * Each chunk has a bounding box that includes splat extents (based on Cholesky factors).
+ */
+export interface GSplatsChunkSpatialIndex {
+  /** GSplats metadata from zarr attributes */
+  metadata: GSplatsMetadata;
+
+  /** Chunk bounding boxes (num_chunks * ndim * 2), flattened row-major */
+  chunkBounds: Float32Array;
+
+  /** Computed: ceil(n_splats / chunk_size) */
+  chunkCount: number;
+}
+
+// ============================================================================
+// Loaded Data Types
+// ============================================================================
+
+/**
+ * Splat range for partial loading.
+ */
+export interface SplatRange {
+  /** Start splat index (inclusive) */
+  start: number;
+
+  /** End splat index (exclusive) */
+  end: number;
+}
+
+/**
+ * Raw gsplats data loaded from zarr before nD projection.
+ *
+ * At this stage:
+ * - Centers are in full nD space
+ * - Cholesky factors are packed (k = ndim * (ndim + 1) / 2 elements per splat)
+ * - Attributes may need broadcasting (scalar → per-splat)
+ */
+export interface LoadedGSplatsData {
+  /** Splat center positions (N splats * ndim dimensions), flattened row-major */
+  centers: Float32Array;
+
+  /** Splat amplitudes (N,) */
+  amplitudes: Float32Array;
+
+  /**
+   * Packed Cholesky factors (N splats * k elements), flattened row-major.
+   * k = ndim * (ndim + 1) / 2
+   *
+   * Packing order: [L00, L10, L11, L20, L21, L22, ...]
+   * Forms lower-triangular L where covariance Σ = L @ Lᵀ
+   */
+  choleskyFactors: Float32Array;
+
+  /** Splat colors (N * 3) RGB, null if not present */
+  colors: Float32Array | null;
+
+  /** Splat sharpness (N,), null if not present (defaults to 2.0 = standard Gaussian) */
+  sharpness: Float32Array | null;
+
+  /** Number of splats loaded */
+  splatCount: number;
+
+  /** Dimensionality for interpreting centers and cholesky arrays */
+  ndim: number;
+}
+
+/**
+ * Processed gsplats data ready for GPU rendering.
+ *
+ * After nD → 3D slicing:
+ * - Centers are in 3D display space
+ * - Cholesky factors are 3D (6 elements per splat)
+ * - Amplitudes are attenuated based on distance to hyperplane in hidden dimensions
+ * - Per-splat attributes ready for instanced rendering
+ */
+export interface ProcessedGSplatsData {
+  /** Splat centers in 3D display space (M * 3) */
+  centers3D: Float32Array;
+
+  /** Attenuated amplitudes (M,), reduced based on nD slice distance */
+  amplitudes: Float32Array;
+
+  /**
+   * 3D Cholesky factors (M * 6), packed as [L00, L10, L11, L20, L21, L22]
+   * Extracted from nD Cholesky by taking display dimension submatrix.
+   */
+  choleskyFactors3D: Float32Array;
+
+  /** Splat colors RGB (M * 3) */
+  colors: Float32Array;
+
+  /** Splat sharpness values (M,) */
+  sharpness: Float32Array;
+
+  /** Number of visible splats after nD clipping */
+  splatCount: number;
+}
+
+// ============================================================================
+// Scene Integration Types
+// ============================================================================
+
+/**
+ * Data loader interface for GSplats nodes.
+ *
+ * Mirrors the DataLoader interface from points but specialized for gsplats.
+ */
+export interface GSplatsDataLoader {
+  /** Load gsplats data for the given view state */
+  loadGSplats(viewState: GSplatsViewState): Promise<LoadedGSplatsData>;
+
+  /** Update existing data for a new view state */
+  updateView(viewState: GSplatsViewState): Promise<LoadedGSplatsData>;
+
+  /** Clean up resources */
+  dispose(): void;
+}
+
+/**
+ * View state for gsplats loading.
+ *
+ * Extends the points ViewState pattern with gsplats-specific information.
+ */
+export interface GSplatsViewState {
+  /** Which dimensions to display (max 3, indices into nD space) */
+  displayDims: number[];
+
+  /** Current position in nD space (one value per dimension) */
+  slicePosition: number[];
+
+  /** Tolerance for slicing in each dimension */
+  tolerance: number[];
+
+  /** Dimension metadata for the dataset */
+  dimensions?: DimensionMetadata[];
+}
+
+/**
+ * User data attached to THREE.Mesh for GSplats in scene.
+ *
+ * GSplats use THREE.Mesh with InstancedBufferGeometry for rendering
+ * oriented quads that are ray-integrated in the fragment shader.
+ *
+ * Enables runtime type checking and provides access to loader/metadata.
+ * Note: Dimension info is NOT stored here - it's only at the Scene level.
+ */
+export interface GSplatsUserData {
+  /** Node type identifier for runtime type checking */
+  nodeType: 'gsplats';
+
+  /** Data loader instance */
+  loader: GSplatsDataLoader;
+
+  /** Zarr group attributes */
+  attrs: GSplatsMetadata;
+
+  /** Spatial index for queries (optional, may not exist for non-ordered data) */
+  spatialIndex?: GSplatsChunkSpatialIndex;
+
+  /** Currently visible splat count after nD slicing (updated on view change) */
+  visibleSplatCount?: number;
+}
+
+// ============================================================================
+// Type Guards
+// ============================================================================
+
+/**
+ * Check if metadata is for a GSplats node.
+ *
+ * @param attrs - Unknown attributes object
+ * @returns True if attrs is GSplatsMetadata
+ */
+export function isGSplatsMetadata(attrs: unknown): attrs is GSplatsMetadata {
+  return (
+    typeof attrs === 'object' &&
+    attrs !== null &&
+    (attrs as Record<string, unknown>).type === 'gsplats'
+  );
+}
+
+/**
+ * Check if userData indicates a GSplats object.
+ *
+ * @param userData - THREE.Object3D userData
+ * @returns True if userData is GSplatsUserData
+ */
+export function isGSplatsUserData(userData: unknown): userData is GSplatsUserData {
+  return (
+    typeof userData === 'object' &&
+    userData !== null &&
+    (userData as Record<string, unknown>).nodeType === 'gsplats'
+  );
+}
+
+// ============================================================================
+// Cholesky Utility Types
+// ============================================================================
+
+/**
+ * Number of packed Cholesky elements for a given dimensionality.
+ *
+ * @param ndim - Number of dimensions
+ * @returns Number of elements in packed lower-triangular form
+ */
+export function choleskyPackedSize(ndim: number): number {
+  return (ndim * (ndim + 1)) / 2;
+}
+
+/**
+ * Standard packed Cholesky sizes for common dimensions.
+ */
+export const CHOLESKY_SIZES = {
+  '2D': 3, // [L00, L10, L11]
+  '3D': 6, // [L00, L10, L11, L20, L21, L22]
+  '4D': 10, // [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
+} as const;

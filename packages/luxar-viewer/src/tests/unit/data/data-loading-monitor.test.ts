@@ -946,6 +946,77 @@ describe('DataLoadingMonitor', () => {
       expect(stats.datasetSegments).toBe(1000); // 500 + 500
       expect(stats.visibleSegments).toBe(200); // Only what's visible
     });
+
+    it('should track visible splats separately from total splats', () => {
+      // Set up scene with gsplats
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/gsplats1',
+            name: 'gsplats1',
+            type: 'gsplats' as const,
+            splatCount: 5000,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Initially visibleSplats equals totalSplats
+      let state = monitor.getSceneGraph();
+      expect(state.totalSplats).toBe(5000);
+      expect(state.visibleSplats).toBe(5000);
+
+      // Update visible splats (simulating nD slicing that hides some splats)
+      monitor.updateVisibleSplats(1200);
+
+      state = monitor.getSceneGraph();
+      expect(state.totalSplats).toBe(5000); // Total unchanged
+      expect(state.visibleSplats).toBe(1200); // Only visible count updated
+
+      // getGlobalStats should return the tracked visible count
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSplats).toBe(5000);
+      expect(stats.visibleSplats).toBe(1200);
+    });
+
+    it('should report visible splats in getGlobalStats', () => {
+      // Set up scene with multiple gsplats nodes
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/gsplats1',
+            name: 'gsplats1',
+            type: 'gsplats' as const,
+            splatCount: 3000,
+            children: [],
+          },
+          {
+            path: '/gsplats2',
+            name: 'gsplats2',
+            type: 'gsplats' as const,
+            splatCount: 2000,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Update with combined visible count
+      monitor.updateVisibleSplats(1000);
+
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSplats).toBe(5000); // 3000 + 2000
+      expect(stats.visibleSplats).toBe(1000); // Only what's visible
+    });
   });
 
   describe('cache stats provider integration', () => {

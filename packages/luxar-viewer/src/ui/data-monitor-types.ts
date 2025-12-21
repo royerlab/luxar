@@ -177,6 +177,9 @@ export interface GlobalStats {
   // Dataset metrics - Lines
   datasetSegments: number; // Total segments in all line datasets
   visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
+  // Dataset metrics - GSplats
+  datasetSplats: number; // Total splats in all gsplats datasets
+  visibleSplats: number; // Currently visible/rendered splats
   // Additional properties expected by tests
   totalQueries: number;
   totalLoads: number;
@@ -277,7 +280,7 @@ export interface GridCellState {
 /**
  * Node type for scene graph display
  */
-export type SceneGraphNodeType = 'scene' | 'group' | 'points' | 'lines' | 'mesh';
+export type SceneGraphNodeType = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
 
 /**
  * Scene graph node for UI display.
@@ -296,6 +299,10 @@ export interface SceneGraphNode {
   segmentCount?: number;
   /** Number of vertices (for lines nodes) */
   vertexCount?: number;
+  /** Number of splats (for gsplats nodes) */
+  splatCount?: number;
+  /** Number of visible splats after nD slicing (for gsplats nodes) */
+  visibleSplatCount?: number;
   /** Whether this node is currently loading */
   isLoading?: boolean;
   /** Whether this node has a spatial index */
@@ -318,12 +325,18 @@ export interface SceneGraphState {
   pointsNodes: number;
   /** Number of lines nodes */
   linesNodes: number;
+  /** Number of gsplats nodes */
+  gsplatsNodes: number;
   /** Total points across all nodes */
   totalPoints: number;
   /** Total segments across all lines */
   totalSegments: number;
   /** Currently visible segments (after nD clipping) */
   visibleSegments: number;
+  /** Total splats across all gsplats nodes */
+  totalSplats: number;
+  /** Currently visible splats (after nD clipping) */
+  visibleSplats: number;
 }
 
 /**

@@ -9,11 +9,12 @@
 import * as THREE from 'three';
 import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
+import { GSplatMaterial } from './gsplat-material';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
 // Supported blending modes
-export type BlendingMode = 'normal' | 'additive';
+export type BlendingMode = 'normal' | 'additive' | 'max';
 
 // Point material properties
 export interface PointMaterialProperties {
@@ -31,6 +32,14 @@ export interface LineMaterialProperties {
   hdrMultiplier?: number;
 }
 
+// GSplat material properties
+export interface GSplatMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  hdrMultiplier?: number;
+  truncationRadius?: number; // Default 3.0
+}
+
 /**
  * Manages all materials in the scene with caching and global updates.
  * Supports points, lines, and future material types.
@@ -38,6 +47,7 @@ export interface LineMaterialProperties {
 export class MaterialManager {
   private pointMaterialCache = new Map<string, PointMaterial>();
   private lineMaterialCache = new Map<string, LineMaterial>();
+  private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
@@ -137,6 +147,44 @@ export class MaterialManager {
   }
 
   /**
+   * Get or create a gsplat material with caching
+   */
+  getGSplatMaterial(props: GSplatMaterialProperties): GSplatMaterial {
+    // Create cache key
+    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
+    const hdrBucket = props.hdrMultiplier ? Math.round(Math.max(0, props.hdrMultiplier) * 10) : 160;
+    const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
+
+    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_h${hdrBucket}_t${truncBucket}`;
+
+    // Check cache first
+    let material = this.gsplatMaterialCache.get(key);
+    if (material) {
+      return material;
+    }
+
+    // Create new GSplatMaterial instance
+    material = new GSplatMaterial({
+      opacity: props.opacity,
+      blendingMode: props.blendingMode,
+      hdrMultiplier: props.hdrMultiplier ?? this.currentHdrMultiplier,
+      truncationRadius: props.truncationRadius ?? 3.0,
+    });
+
+    // Register for global updates
+    this.registeredMaterials.add(material);
+
+    // Update with current camera params
+    material.updateCameraParams(this.currentFov, this.currentResolution);
+
+    // Cache it
+    this.gsplatMaterialCache.set(key, material);
+
+    log.info(Modules.RENDERER, `Created gsplat material: ${key}`);
+    return material;
+  }
+
+  /**
    * Convert our blending mode to Three.js blending constant
    */
   private getThreeBlending(mode: BlendingMode): THREE.Blending {
@@ -145,6 +193,8 @@ export class MaterialManager {
         return THREE.NormalBlending;
       case 'additive':
         return THREE.AdditiveBlending;
+      case 'max':
+        return THREE.MaxBlending;
       default:
         log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
         return THREE.NormalBlending;
@@ -164,6 +214,8 @@ export class MaterialManager {
       if (material instanceof PointMaterial) {
         material.updateHDRMultiplier(multiplier);
       } else if (material instanceof LineMaterial) {
+        material.updateHDRMultiplier(multiplier);
+      } else if (material instanceof GSplatMaterial) {
         material.updateHDRMultiplier(multiplier);
       }
     });
@@ -211,6 +263,13 @@ export class MaterialManager {
           break;
         }
       }
+    } else if (material instanceof GSplatMaterial) {
+      for (const [key, cachedMaterial] of this.gsplatMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.gsplatMaterialCache.delete(key);
+          break;
+        }
+      }
     }
   }
 
@@ -223,6 +282,7 @@ export class MaterialManager {
     });
     this.pointMaterialCache.clear();
     this.lineMaterialCache.clear();
+    this.gsplatMaterialCache.clear();
     this.registeredMaterials.clear();
   }
 
@@ -232,16 +292,19 @@ export class MaterialManager {
   getCacheStats(): {
     pointMaterials: number;
     lineMaterials: number;
+    gsplatMaterials: number;
     totalRegistered: number;
     keys: string[];
     } {
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,
+      gsplatMaterials: this.gsplatMaterialCache.size,
       totalRegistered: this.registeredMaterials.size,
       keys: [
         ...Array.from(this.pointMaterialCache.keys()),
         ...Array.from(this.lineMaterialCache.keys()),
+        ...Array.from(this.gsplatMaterialCache.keys()),
       ],
     };
   }

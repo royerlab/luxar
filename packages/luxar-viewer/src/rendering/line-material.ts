@@ -24,8 +24,8 @@ import { materialManager } from './material-manager';
 export interface LineMaterialConfig {
   /** Opacity multiplier (0.0 to 1.0) */
   opacity?: number;
-  /** Blending mode ('additive' | 'normal') */
-  blendingMode?: 'additive' | 'normal';
+  /** Blending mode ('additive' | 'normal' | 'max') */
+  blendingMode?: 'additive' | 'normal' | 'max';
   /** HDR intensity multiplier */
   hdrMultiplier?: number;
 }
@@ -232,7 +232,12 @@ export class LineMaterial extends THREE.ShaderMaterial {
    */
   constructor(materialConfig: LineMaterialConfig = {}) {
     const blendingMode = materialConfig.blendingMode ?? 'additive';
-    const blending = blendingMode === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending;
+    const blending =
+      blendingMode === 'additive'
+        ? THREE.AdditiveBlending
+        : blendingMode === 'max'
+          ? THREE.MaxBlending
+          : THREE.NormalBlending;
 
     super({
       uniforms: {
@@ -287,7 +292,12 @@ export class LineMaterial extends THREE.ShaderMaterial {
     const cloned = new LineMaterial({
       opacity: this.uniforms.uOpacity.value,
       hdrMultiplier: this.uniforms.uHDRMultiplier.value,
-      blendingMode: this.blending === THREE.AdditiveBlending ? 'additive' : 'normal',
+      blendingMode:
+        this.blending === THREE.AdditiveBlending
+          ? 'additive'
+          : this.blending === THREE.MaxBlending
+            ? 'max'
+            : 'normal',
     });
 
     cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;

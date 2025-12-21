@@ -186,28 +186,87 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
   // Determine what to show based on available data
   const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
   const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
-  const showBoth = hasPoints && hasLines;
+  const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
+
+  // Count how many data types we have
+  const dataTypes = [hasPoints, hasLines, hasGSplats].filter(Boolean).length;
+  const showBoth = dataTypes === 2;
+  const showAll = dataTypes === 3;
+
+  // Calculate visible percentage for gsplats
+  const visibleSplatsPercent =
+    stats.datasetSplats > 0
+      ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1)
+      : '0';
 
   // Build primary metrics section
   let primaryMetrics = '';
-  if (showBoth) {
-    // Show both side by side
+  if (showAll) {
+    // Show all three (points, lines, gsplats)
     primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-2">
+      <div class="luxar-overview-grid luxar-overview-grid--cols-3">
         ${renderMetricCard(
     'VISIBLE POINTS',
     formatNumber(stats.visiblePoints),
-    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
+    `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
     getColorClass('success'),
-    'medium'
+    'small'
   )}
         ${renderMetricCard(
     'VISIBLE LINES',
     formatNumber(stats.visibleSegments),
-    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
+    `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
     getColorClass('warning'),
-    'medium'
+    'small'
   )}
+        ${renderMetricCard(
+    'VISIBLE SPLATS',
+    formatNumber(stats.visibleSplats),
+    `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
+    getColorClass('info'),
+    'small'
+  )}
+      </div>
+    `;
+  } else if (showBoth) {
+    // Show two data types
+    const cards = [];
+    if (hasPoints) {
+      cards.push(
+        renderMetricCard(
+          'VISIBLE POINTS',
+          formatNumber(stats.visiblePoints),
+          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
+          getColorClass('success'),
+          'medium'
+        )
+      );
+    }
+    if (hasLines) {
+      cards.push(
+        renderMetricCard(
+          'VISIBLE LINES',
+          formatNumber(stats.visibleSegments),
+          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
+          getColorClass('warning'),
+          'medium'
+        )
+      );
+    }
+    if (hasGSplats) {
+      cards.push(
+        renderMetricCard(
+          'VISIBLE SPLATS',
+          formatNumber(stats.visibleSplats),
+          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
+          getColorClass('info'),
+          'medium'
+        )
+      );
+    }
+    primaryMetrics = `
+      <div class="luxar-overview-grid luxar-overview-grid--cols-2">
+        ${cards.join('\n')}
       </div>
     `;
   } else if (hasPoints) {
@@ -232,6 +291,19 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     formatNumber(stats.visibleSegments),
     `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
     getColorClass('warning'),
+    'large'
+  )}
+      </div>
+    `;
+  } else if (hasGSplats) {
+    // Show only gsplats (large)
+    primaryMetrics = `
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
+        ${renderMetricCard(
+    'VISIBLE SPLATS',
+    formatNumber(stats.visibleSplats),
+    `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
+    getColorClass('info'),
     'large'
   )}
       </div>
@@ -540,6 +612,7 @@ function getNodeTypeIcon(type: string): string {
     group: '📁',
     points: '⚬',
     lines: '╱',
+    gsplats: '🔮',
     mesh: '⬡',
   };
   return icons[type] || '•';
@@ -554,6 +627,7 @@ function getNodeTypeColorClass(type: string): string {
     group: 'luxar-scene-graph__name--group',
     points: 'luxar-scene-graph__name--points',
     lines: 'luxar-scene-graph__name--lines',
+    gsplats: 'luxar-scene-graph__name--gsplats',
     mesh: 'luxar-scene-graph__name--mesh',
   };
   return typeClasses[type] || '';
@@ -584,6 +658,12 @@ function renderSceneGraphNode(
         statsTooltip += `, ${node.vertexCount.toLocaleString()} vertices`;
       }
     }
+  } else if (node.type === 'gsplats' && node.splatCount !== undefined) {
+    statsText = formatNumber(node.splatCount);
+    statsTooltip = `${node.splatCount.toLocaleString()} Gaussian splats`;
+    if (node.visibleSplatCount !== undefined && node.visibleSplatCount !== node.splatCount) {
+      statsTooltip += ` (${node.visibleSplatCount.toLocaleString()} visible)`;
+    }
   } else if (node.type === 'group' && hasChildren) {
     // For groups, show child count
     statsText = `${node.children.length}`;
@@ -596,6 +676,7 @@ function renderSceneGraphNode(
     group: 'Container for organizing nodes',
     points: 'Point cloud layer',
     lines: 'Line segments layer',
+    gsplats: 'Gaussian splats layer',
     mesh: 'Mesh geometry',
   };
   const nodeTooltip = `${nodeTypeDescriptions[node.type] || node.type}${node.hasSpatialIndex ? ' (indexed)' : ''}`;
@@ -664,6 +745,7 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
   const headerStats = [
     state.pointsNodes > 0 ? `${state.pointsNodes} points` : null,
     state.linesNodes > 0 ? `${state.linesNodes} lines` : null,
+    state.gsplatsNodes > 0 ? `${state.gsplatsNodes} gsplats` : null,
   ]
     .filter(Boolean)
     .join(', ');
