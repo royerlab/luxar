@@ -349,12 +349,13 @@ def add_reference_points(scene, volume, sample_rate=0.01):
 # =============================================================================
 
 
-def view_with_napari(volume, gsplats_data):
+def view_with_napari(volume, gsplats_data, volume_centered=False):
     """Open original volume and gsplat rendering in napari for comparison.
 
     Args:
         volume: Original 3D volume
-        gsplats_data: Fitted gsplats
+        gsplats_data: Fitted gsplats (should be centered at origin)
+        volume_centered: Whether volume has been centered at origin
     """
     try:
         import napari
@@ -365,32 +366,57 @@ def view_with_napari(volume, gsplats_data):
 
     with asection("Opening in napari"):
         aprint("Launching napari for comparison...")
-        aprint("  Layer 1: Original DAPI volume")
-        aprint("  Layer 2: GSplats rendering")
+        aprint("  Layer 1: Original DAPI volume (centered)")
+        aprint("  Layer 2: GSplats rendering (centered)")
 
         viewer = napari.Viewer(title="GSplats vs Original - DAPI Nuclei")
 
-        # Add original volume
+        # Compute volume center of mass to align with centered gsplats
+        coords = np.argwhere(volume > 0)
+        if len(coords) > 0:
+            intensities = volume[coords[:, 0], coords[:, 1], coords[:, 2]]
+            volume_com = (coords.T @ intensities) / intensities.sum()
+            aprint(f"Volume COM: [{volume_com[0]:.1f}, {volume_com[1]:.1f}, {volume_com[2]:.1f}]")
+        else:
+            volume_com = np.array(volume.shape) / 2
+
+        # Since gsplats are centered at origin, translate volume to also center at origin
+        # Use napari's translate to shift the display coordinate system
+        translate_offset = -volume_com + np.array(volume.shape) / 2
+
+        # Add original volume (centered to align with gsplats)
         viewer.add_image(
             volume,
             name="Original DAPI",
             colormap="green",
             opacity=0.8,
             blending="additive",
+            translate=translate_offset,
         )
 
         # Render gsplats to volume for comparison
+        # Gsplats are already centered, so render them in same coordinate system
         aprint("Rendering gsplats to volume...")
-        from luxar.gsplats.models.gsplats import render_gaussians_numpy
+        from luxar.gsplats.io.inspect_gsplats import render_gsplats_to_volume
 
-        rendered = render_gaussians_numpy(volume.shape, gsplats_data, truncate=3.0)
+        # Translate gsplat centers back to volume space for rendering
+        gsplats_in_volume_space = gsplats_data.translate(volume_com - np.array(volume.shape) / 2)
 
+        rendered = render_gsplats_to_volume(
+            gsplats_in_volume_space.centers,
+            gsplats_in_volume_space.cholesky_factors,
+            gsplats_in_volume_space.amplitudes,
+            volume_shape=volume.shape,
+        )
+
+        # Add rendered gsplats (with same translation as original volume)
         viewer.add_image(
             rendered,
             name="GSplats Rendering",
             colormap="magenta",
             opacity=0.8,
             blending="additive",
+            translate=translate_offset,  # Same translation as original!
         )
 
         aprint("✓ Napari opened - compare original (green) vs gsplats (magenta)")
