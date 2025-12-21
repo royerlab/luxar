@@ -26,6 +26,26 @@ export type {
 } from './lines';
 export { isLinesMetadata, isLinesUserData, isValidLineType } from './lines';
 
+// GSplats types
+export type {
+  ValueRange,
+  CoordinateBounds,
+  GSplatsMetadata,
+  GSplatsChunkSpatialIndex,
+  SplatRange,
+  LoadedGSplatsData,
+  ProcessedGSplatsData,
+  GSplatsDataLoader,
+  GSplatsViewState,
+  GSplatsUserData,
+} from './gsplats';
+export {
+  isGSplatsMetadata,
+  isGSplatsUserData,
+  choleskyPackedSize,
+  CHOLESKY_SIZES,
+} from './gsplats';
+
 // Zarr types
 export type { ZarrSceneAttrs, ZarrNodeAttrs } from './zarr';
 export { hasContentsMethod } from './zarr';

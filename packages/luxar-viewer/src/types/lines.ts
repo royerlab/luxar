@@ -103,7 +103,7 @@ export interface LinesMetadata {
   gamma?: number;
 
   /** Blending mode */
-  blending_mode?: 'additive' | 'normal';
+  blending_mode?: 'additive' | 'normal' | 'max';
 
   /**
    * List of dimension names to extend visibility across.

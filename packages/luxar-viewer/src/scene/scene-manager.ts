@@ -585,15 +585,20 @@ export class SceneManager extends THREE.EventDispatcher<{
         }
       }
 
-      // Handle InstancedMesh objects (legacy) and Line Mesh objects
-      // Lines use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
+      // Handle InstancedMesh objects (legacy) and instanced Mesh objects
+      // Lines and GSplats use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
       // to avoid exceeding WebGL's 16 attribute location limit
       const isLineMesh =
         object instanceof THREE.Mesh &&
         object.userData?.nodeType === 'lines' &&
         object.geometry instanceof THREE.InstancedBufferGeometry;
 
-      if (object instanceof THREE.InstancedMesh || isLineMesh) {
+      const isGSplatMesh =
+        object instanceof THREE.Mesh &&
+        object.userData?.nodeType === 'gsplats' &&
+        object.geometry instanceof THREE.InstancedBufferGeometry;
+
+      if (object instanceof THREE.InstancedMesh || isLineMesh || isGSplatMesh) {
         const geometry = object.geometry;
 
         // For instanced meshes/geometries, use the precomputed bounding box

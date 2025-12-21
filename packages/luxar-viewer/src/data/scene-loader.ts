@@ -29,6 +29,20 @@ import type {
   LoadedLinesData,
 } from '../types/lines';
 import { isLinesUserData } from '../types/lines';
+import type {
+  GSplatsMetadata,
+  GSplatsDataLoader,
+  GSplatsUserData,
+  GSplatsViewState,
+  LoadedGSplatsData,
+} from '../types/gsplats';
+import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
+import { processGSplats } from './gsplats-processor';
+import {
+  createInstancedGSplatsMesh,
+  updateInstancedGSplatsMesh,
+  packCholeskyForShader,
+} from '../rendering/gsplat-material';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -45,6 +59,7 @@ export class SceneLoader {
   private cachingStore: TwoLevelCachingStore | null = null;
   private loaders = new Map<string, DataLoader>();
   private linesLoaders = new Map<string, LinesDataLoader>();
+  private gsplatLoaders = new Map<string, GSplatsDataLoader>();
   private viewState: ViewState;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
@@ -245,7 +260,7 @@ export class SceneLoader {
         monitor.setSceneGraph(sceneGraphRoot);
 
         // Update visible segments count (initial load)
-        this.updateVisibleSegmentsInMonitor();
+        this.updateVisibleCountsInMonitor();
 
         monitor.forceUpdate();
       }
@@ -261,7 +276,7 @@ export class SceneLoader {
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     this.viewState = { ...this.viewState, ...viewState };
 
-    const totalLoaders = this.loaders.size + this.linesLoaders.size;
+    const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
     log.update(Modules.SCENE_LOADER, `Updating view for ${totalLoaders} loaders`);
 
     // Update points loaders
@@ -346,10 +361,69 @@ export class SceneLoader {
       }
     });
 
-    await Promise.all([...pointsUpdates, ...linesUpdates]);
+    // Update gsplat loaders
+    const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(async ([path, loader]) => {
+      try {
+        // Get mesh to check extend_to_all attribute
+        const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+        const extendDims: string[] = attrs?.extend_to_all || [];
+
+        // Check if we can skip this update (extend_to_all optimization)
+        if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+          const dims = this.viewState.dimensions.metadata;
+          const nonDisplayedDims = dims
+            .filter(
+              (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
+            )
+            .map((d: { name?: string }) => d.name)
+            .filter((name: string | undefined): name is string => !!name);
+
+          const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+            extendDims.includes(dimName)
+          );
+
+          if (isFullyExtended) {
+            // All non-displayed dimensions are extended - geometry is unchanged
+            log.info(
+              Modules.SCENE_LOADER,
+              `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+            );
+            return;
+          }
+        }
+
+        const gsplatsViewState: GSplatsViewState = {
+          displayDims: this.viewState.displayDims,
+          slicePosition: this.viewState.slicePosition,
+          tolerance: this.viewState.tolerance,
+          dimensions: this.viewState.dimensions?.metadata,
+        };
+
+        const data = await loader.updateView(gsplatsViewState);
+        if (data) {
+          this.updateGSplatsGeometry(path, data, gsplatsViewState);
+        }
+        this.failedLoaders.delete(path);
+      } catch (error) {
+        const errorInfo = this.failedLoaders.get(path);
+        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+        this.failedLoaders.set(path, {
+          error: error as Error,
+          timestamp: Date.now(),
+          retryCount,
+        });
+        log.error(
+          Modules.SCENE_LOADER,
+          `Failed to update gsplats ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+        );
+      }
+    });
+
+    await Promise.all([...pointsUpdates, ...linesUpdates, ...gsplatsUpdates]);
 
     // Update monitor with total visible segments across all lines nodes
-    this.updateVisibleSegmentsInMonitor();
+    this.updateVisibleCountsInMonitor();
 
     // Warn user if any loaders failed
     if (this.failedLoaders.size > 0) {
@@ -366,18 +440,23 @@ export class SceneLoader {
   }
 
   /**
-   * Aggregate visible segment counts from all lines meshes and update monitor.
-   * This should be called after view updates to report accurate visible line counts.
+   * Aggregate visible counts from all lines and gsplats meshes and update monitor.
+   * This should be called after view updates to report accurate visible counts.
    */
-  private updateVisibleSegmentsInMonitor(): void {
+  private updateVisibleCountsInMonitor(): void {
     if (!this.rootGroup || !this.monitorId) return;
 
     let totalVisibleSegments = 0;
+    let totalVisibleSplats = 0;
 
     // Traverse all objects in the scene graph
     this.rootGroup.traverse((object) => {
-      if (object instanceof THREE.Mesh && isLinesUserData(object.userData)) {
-        totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
+      if (object instanceof THREE.Mesh) {
+        if (isLinesUserData(object.userData)) {
+          totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
+        } else if (object.userData?.nodeType === 'gsplats') {
+          totalVisibleSplats += (object.userData as GSplatsUserData).visibleSplatCount ?? 0;
+        }
       }
     });
 
@@ -385,6 +464,7 @@ export class SceneLoader {
     const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
     if (monitor) {
       monitor.updateVisibleSegments(totalVisibleSegments);
+      monitor.updateVisibleSplats(totalVisibleSplats);
     }
   }
 
@@ -455,6 +535,53 @@ export class SceneLoader {
       log.info(
         Modules.SCENE_LOADER,
         `Clearing lines for ${path} (no visible segments at current slice)`
+      );
+    }
+  }
+
+  /**
+   * Update gsplats geometry for a specific path
+   */
+  private updateGSplatsGeometry(
+    path: string,
+    data: LoadedGSplatsData,
+    viewState: GSplatsViewState
+  ): void {
+    if (!this.rootGroup) return;
+
+    const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
+    if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
+
+    // Process nD data to 3D for rendering
+    const processed = processGSplats(data, viewState);
+
+    // Pack Cholesky factors for shader
+    const { cholesky01, cholesky23, cholesky45 } = packCholeskyForShader(
+      processed.choleskyFactors3D,
+      processed.splatCount
+    );
+
+    // Update mesh geometry in place
+    updateInstancedGSplatsMesh(mesh, {
+      centers: processed.centers3D,
+      cholesky01,
+      cholesky23,
+      cholesky45,
+      amplitudes: processed.amplitudes,
+      sharpness: processed.sharpness,
+      colors: processed.colors,
+      splatCount: processed.splatCount,
+    });
+
+    // Track visible splat count in mesh userData
+    if (mesh.userData) {
+      (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
+    }
+
+    if (processed.splatCount === 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing gsplats for ${path} (no visible splats at current slice)`
       );
     }
   }
@@ -542,6 +669,12 @@ export class SceneLoader {
       const lines = await this.loadLines(node, parentLoc);
       if (lines) {
         parentThree.add(lines);
+      }
+    } else if (node.type === 'gsplats') {
+      // Load gsplats
+      const gsplats = await this.loadGSplats(node, parentLoc);
+      if (gsplats) {
+        parentThree.add(gsplats);
       }
     } else if (node.children) {
       // Create group and recurse
@@ -763,6 +896,128 @@ export class SceneLoader {
 
     log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
     const loader = new LinesSpatialIndexLoader(nodeLoc, node, this.arrayRefRegistry, this.store!);
+
+    return loader;
+  }
+
+  /**
+   * Load a single gsplats node
+   */
+  private async loadGSplats(
+    node: SceneNode,
+    loc: zarr.Location<zarr.Readable>
+  ): Promise<THREE.Mesh | null> {
+    const attrs = node.attrs as unknown as GSplatsMetadata;
+    log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
+    log.info(Modules.SCENE_LOADER, `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`);
+    log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
+
+    // Create gsplats loader
+    const loader = this.createGSplatsLoader(node, loc);
+
+    // Store loader for updates
+    this.gsplatLoaders.set(node.path, loader);
+
+    try {
+      // Build gsplats view state
+      const gsplatsViewState: GSplatsViewState = {
+        displayDims: this.viewState.displayDims,
+        slicePosition: this.viewState.slicePosition,
+        tolerance: this.viewState.tolerance,
+        dimensions: this.viewState.dimensions?.metadata,
+      };
+
+      // Load gsplats data
+      const data = await loader.loadGSplats(gsplatsViewState);
+
+      if (data.splatCount === 0) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `No initially visible gsplats for ${node.path} - object created for future updates`
+        );
+      }
+
+      // Process nD data to 3D for rendering
+      const processed = processGSplats(data, gsplatsViewState);
+
+      // Pack Cholesky factors for shader
+      const { cholesky01, cholesky23, cholesky45 } = packCholeskyForShader(
+        processed.choleskyFactors3D,
+        processed.splatCount
+      );
+
+      // Create material
+      const material = materialManager.getGSplatMaterial({
+        opacity: attrs.opacity ?? 1.0,
+        blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
+      });
+
+      // Create instanced mesh
+      const mesh = createInstancedGSplatsMesh(
+        {
+          centers: processed.centers3D,
+          cholesky01,
+          cholesky23,
+          cholesky45,
+          amplitudes: processed.amplitudes,
+          sharpness: processed.sharpness,
+          colors: processed.colors,
+          splatCount: processed.splatCount,
+        },
+        material
+      );
+      mesh.name = node.path;
+
+      // Store user data for identification
+      mesh.userData = {
+        nodeType: 'gsplats',
+        loader,
+        attrs,
+        visibleSplatCount: processed.splatCount,
+      } as GSplatsUserData;
+
+      // Apply transform
+      if (attrs.transform) {
+        this.applyTransform(mesh, attrs.transform);
+      }
+
+      log.success(
+        Modules.SCENE_LOADER,
+        `Loaded ${processed.splatCount.toLocaleString()} gsplats for ${node.path}`
+      );
+
+      return mesh;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error);
+      log.error(Modules.SCENE_LOADER, `Failed to load gsplats ${node.path}: ${errorMessage}`);
+      if (error instanceof Error && error.stack) {
+        console.error(`[SceneLoader] Stack trace for ${node.path}:`, error.stack);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Create a gsplats loader for a node
+   */
+  private createGSplatsLoader(
+    node: SceneNode,
+    loc: zarr.Location<zarr.Readable>
+  ): GSplatsDataLoader {
+    const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
+
+    log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
+    const loader = new GSplatsSpatialIndexLoader(
+      nodeLoc,
+      node,
+      this.arrayRefRegistry,
+      this.store!
+    );
 
     return loader;
   }
@@ -1020,7 +1275,7 @@ export class SceneLoader {
     return materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
-      blendingMode: (attrs.blending_mode as BlendingMode) ?? 'normal',
+      blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
       radiusScale: radiusScale,
       sharpnessScale: sharpnessScale,
     });
@@ -1207,7 +1462,7 @@ export class SceneLoader {
       node.path === '/' ? 'Scene' : node.path.split('/').filter(Boolean).pop() || node.path;
 
     // Determine node type for display
-    const type = node.type as 'scene' | 'group' | 'points' | 'lines' | 'mesh';
+    const type = node.type as 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
 
     // Build the graph node
     const graphNode: SceneGraphNode = {
@@ -1224,6 +1479,8 @@ export class SceneLoader {
     } else if (node.type === 'lines') {
       graphNode.segmentCount = node.attrs.n_segments as number | undefined;
       graphNode.vertexCount = node.attrs.n_vertices as number | undefined;
+    } else if (node.type === 'gsplats') {
+      graphNode.splatCount = node.attrs.n_splats as number | undefined;
     }
 
     // Convert children recursively
@@ -1333,6 +1590,12 @@ export class SceneLoader {
       loader.dispose();
     }
     this.linesLoaders.clear();
+
+    // Dispose gsplat loaders
+    for (const loader of this.gsplatLoaders.values()) {
+      loader.dispose();
+    }
+    this.gsplatLoaders.clear();
 
     // Dispose caching store (flushes L2 metadata, clears L1)
     if (this.cachingStore) {

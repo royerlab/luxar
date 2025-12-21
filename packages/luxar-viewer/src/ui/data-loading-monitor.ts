@@ -113,9 +113,12 @@ export class DataLoadingMonitor {
     totalNodes: 0,
     pointsNodes: 0,
     linesNodes: 0,
+    gsplatsNodes: 0,
     totalPoints: 0,
     totalSegments: 0,
     visibleSegments: 0,
+    totalSplats: 0,
+    visibleSplats: 0,
   };
 
   // Track expanded nodes in scene graph tree (by path)
@@ -304,26 +307,33 @@ export class DataLoadingMonitor {
     let totalNodes = 1;
     let pointsNodes = node.type === 'points' ? 1 : 0;
     let linesNodes = node.type === 'lines' ? 1 : 0;
+    let gsplatsNodes = node.type === 'gsplats' ? 1 : 0;
     let totalPoints = node.pointCount || 0;
     let totalSegments = node.segmentCount || 0;
+    let totalSplats = node.splatCount || 0;
 
     for (const child of node.children) {
       const childStats = this.calculateSceneGraphStats(child);
       totalNodes += childStats.totalNodes;
       pointsNodes += childStats.pointsNodes;
       linesNodes += childStats.linesNodes;
+      gsplatsNodes += childStats.gsplatsNodes;
       totalPoints += childStats.totalPoints;
       totalSegments += childStats.totalSegments;
+      totalSplats += childStats.totalSplats;
     }
 
-    // Initialize visibleSegments to totalSegments (will be updated by scene loader)
+    // Initialize visible counts to totals (will be updated by scene loader)
     return {
       totalNodes,
       pointsNodes,
       linesNodes,
+      gsplatsNodes,
       totalPoints,
       totalSegments,
       visibleSegments: totalSegments,
+      totalSplats,
+      visibleSplats: totalSplats,
     };
   }
 
@@ -333,6 +343,18 @@ export class DataLoadingMonitor {
    */
   public updateVisibleSegments(count: number): void {
     this.sceneGraphState.visibleSegments = count;
+    // Schedule UI update if visible
+    if (this.uiState.isVisible) {
+      this.scheduleUpdate();
+    }
+  }
+
+  /**
+   * Update the count of currently visible gsplats.
+   * Called by SceneLoader after processing gsplats with nD clipping.
+   */
+  public updateVisibleSplats(count: number): void {
+    this.sceneGraphState.visibleSplats = count;
     // Schedule UI update if visible
     if (this.uiState.isVisible) {
       this.scheduleUpdate();
@@ -912,6 +934,10 @@ export class DataLoadingMonitor {
     // Use tracked visible segments (updated by scene loader after nD clipping)
     const visibleSegments = this.sceneGraphState.visibleSegments;
 
+    // Get gsplat stats from scene graph
+    const datasetSplats = this.sceneGraphState.totalSplats;
+    const visibleSplats = this.sceneGraphState.visibleSplats;
+
     return {
       totalLoaders: this.loaders.size,
       activeSpatialLoaders: activeSpatial,
@@ -922,6 +948,8 @@ export class DataLoadingMonitor {
       visiblePoints, // Currently visible/rendered points
       datasetSegments, // Total segments in all line datasets
       visibleSegments, // Currently visible segments (for lines, typically equals total)
+      datasetSplats, // Total splats in all gsplats datasets
+      visibleSplats, // Currently visible splats
       totalQueries,
       totalLoads,
       totalCacheHits: 0, // L0 cache removed
