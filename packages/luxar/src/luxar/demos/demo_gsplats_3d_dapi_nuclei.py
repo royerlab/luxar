@@ -338,7 +338,7 @@ def add_reference_points(scene, volume, sample_rate=0.01):
         radii=np.full(n_sample, 0.3, dtype=np.float32),
         sharpness=np.full(n_sample, 8.0, dtype=np.float32),
         opacity=0.3,
-        blending_mode="additive",
+        blending_mode="max",
     )
 
     aprint(f"✓ Added {n_sample:,} reference points")
@@ -407,6 +407,7 @@ def view_with_napari(volume, gsplats_data, volume_centered=False):
             gsplats_in_volume_space.cholesky_factors,
             gsplats_in_volume_space.amplitudes,
             volume_shape=volume.shape,
+            sharpness=gsplats_in_volume_space.sharpnesses,  # Parameter name is 'sharpness' (accepts array)
         )
 
         # Add rendered gsplats (with same translation as original volume)
