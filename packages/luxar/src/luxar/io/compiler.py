@@ -975,10 +975,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(sharpness, (int, float)):
                 n_elems_sharp = n_splats
                 chunks_sharp = None
+                sharpness_min = sharpness_max = float(sharpness)
             else:
                 validate_sharpness_for_writing(sharpness, n_splats)
                 n_elems_sharp = None
                 chunks_sharp = _calculate_intelligent_chunks((n_splats,))
+                sharpness_min = float(np.min(sharpness))
+                sharpness_max = float(np.max(sharpness))
 
             self._encoder.encode(
                 data=sharpness,
@@ -992,6 +995,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 compressor=self.compressor,
             )
             metadata["has_sharpness"] = True
+            metadata["sharpness_bounds"] = {"min": sharpness_min, "max": sharpness_max}
+        else:
+            # Default sharpness bounds when not provided
+            metadata["sharpness_bounds"] = {"min": 2.0, "max": 2.0}
 
         # Write chunk_bounds if ordering was applied
         if ordering_data is not None:
@@ -1015,13 +1022,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs.update(attrs)
         group.attrs["type"] = "gsplats"
         group.attrs["n_splats"] = n_splats
+        group.attrs["ndim"] = n_dims
+        group.attrs["has_colors"] = metadata["has_colors"]
+        group.attrs["has_sharpness"] = metadata["has_sharpness"]
         group.attrs["amplitude_range"] = metadata["amplitude_range"]
+        group.attrs["sharpness_bounds"] = metadata["sharpness_bounds"]
         group.attrs["center_bounds"] = metadata["center_bounds"]
+        group.attrs["ordering"] = metadata["ordering"]
 
         # Add ordering metadata to attrs if present
         if ordering_data is not None:
             for key in [
-                "ordering",
                 "ordering_min",
                 "ordering_max",
                 "ordering_bits_per_dim",
@@ -1029,6 +1040,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             ]:
                 if key in metadata:
                     group.attrs[key] = metadata[key]
+        else:
+            # Set default chunk_size when no ordering (required by TypeScript)
+            # Use a reasonable default based on splat count
+            default_chunk_size = min(1024, max(64, n_splats))
+            group.attrs["chunk_size"] = default_chunk_size
+
+        # Update scene-level bounds (for dynamic clipping planes in viewer)
+        position_bounds = {"min": center_min, "max": center_max}
+        self._update_scene_bounds(position_bounds)
 
         self._metadata_cache[path] = metadata
         aprint(f"✅ GSplats written to {path}")

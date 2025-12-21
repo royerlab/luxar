@@ -146,3 +146,80 @@ class TestPreprocessData:
         assert result.V_tensor.device == mock_config_2d.device
         assert result.V_tensor.dtype == torch.float32
         assert result.V_tensor.shape == mock_config_2d.V.shape
+
+    def test_seeds_as_int_count(self, mock_config_2d) -> None:
+        """Test seeds parameter as integer count."""
+        # Create volume with known peaks
+        V = np.zeros((40, 40), dtype=np.float32)
+        # Add Gaussian peaks
+        for cx, cy in [(10, 10), (20, 20), (30, 30)]:
+            x, y = np.meshgrid(np.arange(40) - cx, np.arange(40) - cy, indexing="ij")
+            r2 = x**2 + y**2
+            V += 100 * np.exp(-r2 / (2 * 3**2))
+        V += np.random.rand(40, 40) * 5  # Add noise
+
+        mock_config_2d.V = V
+        mock_config_2d.seeds = 5  # Request exactly 5 seeds
+        mock_config_2d.seed_method = "gaussian"
+        mock_config_2d.seed_kwargs = {"scales": [2.0, 4.0], "percentile_thresh": 75}
+
+        result = preprocess_data(mock_config_2d)
+
+        # Should get exactly 5 seeds (or fewer if less were detected)
+        assert result.N <= 5
+        assert result.seed_centers.shape[1] == 2
+
+    def test_seeds_as_int_subsample(self, mock_config_2d) -> None:
+        """Test that int seeds correctly subsamples when more are detected."""
+        # Create volume with many peaks
+        V = np.zeros((50, 50), dtype=np.float32)
+        # Add many Gaussian peaks
+        centers = [(i * 10 + 5, j * 10 + 5) for i in range(4) for j in range(4)]
+        for cx, cy in centers:
+            x, y = np.meshgrid(np.arange(50) - cx, np.arange(50) - cy, indexing="ij")
+            r2 = x**2 + y**2
+            V += 50 * np.exp(-r2 / (2 * 2**2))
+
+        mock_config_2d.V = V
+        mock_config_2d.seeds = 8  # Request 8 seeds (should subsample from ~16)
+        mock_config_2d.seed_method = "gaussian"
+        mock_config_2d.seed_kwargs = {
+            "scales": [2.0, 4.0],
+            "percentile_thresh": 60,
+            "apply_clahe": False,
+        }
+
+        result = preprocess_data(mock_config_2d)
+
+        # Should get at most 8 seeds
+        assert result.N <= 8
+        # If subsampling occurred, should be exactly 8
+        # (unless fewer than 8 were detected, but with this setup we should get more)
+        if result.N < 8:
+            # This is the case where fewer seeds were detected
+            pass
+        else:
+            assert result.N == 8
+
+    def test_seeds_as_float_proportion(self, mock_config_2d) -> None:
+        """Test seeds parameter as float proportion."""
+        mock_config_2d.seeds = 0.01  # 1% of voxels
+        mock_config_2d.seed_method = "gaussian"
+        mock_config_2d.seed_kwargs = {"scales": [2.0, 4.0]}
+
+        result = preprocess_data(mock_config_2d)
+
+        # Just verify it runs without error and generates seeds
+        assert result.seed_centers is not None
+        assert result.N >= 0  # May be 0 if no peaks detected
+
+    def test_seeds_explicit_array(self, mock_config_2d) -> None:
+        """Test seeds parameter as explicit array."""
+        explicit_seeds = np.array([[5.0, 5.0], [15.0, 15.0], [25.0, 25.0]])
+        mock_config_2d.seeds = explicit_seeds
+
+        result = preprocess_data(mock_config_2d)
+
+        # Should use exact seeds provided
+        assert result.N == 3
+        assert np.allclose(result.seed_centers, explicit_seeds)

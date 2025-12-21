@@ -1,7 +1,7 @@
 # Gaussian Splat Fitting Pipeline Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-11-27
+**Version**: 1.1.0
+**Last Updated**: 2025-12-21
 
 ## Overview
 
@@ -44,7 +44,7 @@ class FitConfig:
 
     # Input data
     V: np.ndarray                            # Input image/volume to fit (ndim >= 1)
-    seeds: Optional[np.ndarray | float]      # Centers array (N, d) OR float proportion (e.g., 0.01 = 1%)
+    seeds: Optional[np.ndarray | int | float]  # Centers array (N, d), int count, OR float proportion (e.g., 0.01 = 1%)
     seed_method: str                         # Method for auto seed generation: "gaussian", "decomposition", "both", or combinations
     seed_kwargs: Dict[str, Any]              # Additional parameters for seed generation function
 
@@ -93,7 +93,7 @@ class FitConfig:
 **Validation Rules**:
 - `V.ndim >= 1` (at least 1D data)
 - `V.size > 0` (non-empty)
-- `seeds` shape matches `(N, V.ndim)` if provided
+- `seeds` shape matches `(N, V.ndim)` if array, `seeds > 0` if int, `0 < seeds <= 1.0` if float
 - `norm_percentile >= 0.0`
 - `init_sigma_vox > 0`, `sigma_min_vox > 0`, `sigma_max_vox > sigma_min_vox`
 - `n_iters >= 0`, `lr > 0`
@@ -208,7 +208,7 @@ class OptimizationResults:
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",
     V: np.ndarray,
-    seeds: Optional[np.ndarray | float] = None,  # Can be array OR proportion
+    seeds: Optional[np.ndarray | int | float] = None,  # Can be array, int count, OR float proportion
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 1.5,
     n_iters: int = 1000,
@@ -238,7 +238,7 @@ def prepare_fit_config(
     Validation Steps:
     1. Check V is non-empty numpy array with ndim >= 1
     2. Verify V contains finite values only
-    3. Validate seeds shape matches (N, V.ndim) if provided
+    3. Validate seeds: if array check shape (N, V.ndim), if int check > 0, if float check 0 < seeds <= 1.0
     4. Check all numeric parameters are in valid ranges
     5. Verify loss_type is supported
     6. Validate scheduler parameters
@@ -299,7 +299,9 @@ else:
 ```
 
 **Seed Generation**:
-- **If seeds provided**: Validate shape and convert to numpy
+- **If seeds is ndarray**: Validate shape and use directly
+- **If seeds is int**: Auto-generate, then subsample to exact count (keeping highest intensity)
+- **If seeds is float**: Auto-generate (proportion hint, not strictly enforced)
 - **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
   # Generate candidates using both methods for comprehensive coverage

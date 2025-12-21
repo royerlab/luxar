@@ -210,7 +210,9 @@ export function processGSplatsTo3D(
 
     let attenuation = 1.0;
     if (sortedHiddenDims.length > 0) {
-      const diff = sortedHiddenDims.map((d) => slicePosition[d] - loaded.centers[srcCenterOffset + d]);
+      const diff = sortedHiddenDims.map(
+        (d) => slicePosition[d] - loaded.centers[srcCenterOffset + d]
+      );
       const hiddenCholesky = new Float32Array(hiddenPackedSize);
       extractCholeskySubmatrix(
         loaded.choleskyFactors,

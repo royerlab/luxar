@@ -107,7 +107,7 @@ class TestNodeRenderingAttributes:
             node = scene.add_group("test_node")
 
         # Test setting valid blending modes
-        for mode in ["normal", "additive"]:
+        for mode in ["normal", "additive", "max"]:
             node.blending_mode = mode
             assert node.blending_mode == mode
             assert node.attrs["blending_mode"] == mode

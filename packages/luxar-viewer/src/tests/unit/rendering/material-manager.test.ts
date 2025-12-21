@@ -520,6 +520,17 @@ describe('MaterialManager', () => {
 
       expect(material.depthWrite).toBe(false);
     });
+
+    it('should configure max blending mode with custom blending', () => {
+      const material = manager.getPointMaterial({
+        blendingMode: 'max',
+        opacity: 1.0,
+        gamma: 1.0,
+      });
+
+      expect(material.blending).toBe(THREE.CustomBlending);
+      expect(material.depthWrite).toBe(false); // Max blending disables depth write
+    });
   });
 
   // =========================================================================

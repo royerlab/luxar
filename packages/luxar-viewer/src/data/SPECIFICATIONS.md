@@ -665,7 +665,7 @@ Stored in each group's `.zattrs`:
   "transform": [m00, m01, ..., m33],  // 16-element 4x4 matrix (column-major for THREE.js)
   "opacity": 1.0,
   "gamma": 1.0,
-  "blending_mode": "additive" | "normal",
+  "blending_mode": "additive" | "normal" | "max",
   "extend_to_all": ["Time", "Channel"],  // Optional: dimensions to extend visibility across
 }
 ```

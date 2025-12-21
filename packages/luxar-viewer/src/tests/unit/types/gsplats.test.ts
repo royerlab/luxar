@@ -244,9 +244,24 @@ describe('GSplats Type Definitions', () => {
         centers: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 splats * 3D
         amplitudes: new Float32Array([1.0, 0.5, 0.8]),
         choleskyFactors: new Float32Array([
-          1, 0, 1, 0, 0, 1, // Splat 0: identity covariance
-          2, 0, 2, 0, 0, 2, // Splat 1: scaled
-          1, 0.5, 1, 0, 0.5, 1, // Splat 2: anisotropic
+          1,
+          0,
+          1,
+          0,
+          0,
+          1, // Splat 0: identity covariance
+          2,
+          0,
+          2,
+          0,
+          0,
+          2, // Splat 1: scaled
+          1,
+          0.5,
+          1,
+          0,
+          0.5,
+          1, // Splat 2: anisotropic
         ]),
         colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), // RGB per splat
         sharpness: new Float32Array([2.0, 1.5, 2.5]),
@@ -281,10 +296,7 @@ describe('GSplats Type Definitions', () => {
       const data = {
         centers3D: new Float32Array([0, 0, 0, 1, 1, 1]),
         amplitudes: new Float32Array([0.8, 0.4]), // Attenuated
-        choleskyFactors3D: new Float32Array([
-          1, 0, 1, 0, 0, 1,
-          2, 0, 2, 0, 0, 2,
-        ]),
+        choleskyFactors3D: new Float32Array([1, 0, 1, 0, 0, 1, 2, 0, 2, 0, 0, 2]),
         colors: new Float32Array([1, 0, 0, 0, 1, 0]),
         sharpness: new Float32Array([2.0, 1.5]),
         splatCount: 2,
@@ -314,11 +326,36 @@ describe('GSplats Type Definitions', () => {
         },
         chunkBounds: new Float32Array([
           // 5 chunks * 3 dims * 2 (min/max)
-          0, 20, 0, 20, 0, 20, // Chunk 0
-          20, 40, 0, 20, 0, 20, // Chunk 1
-          40, 60, 0, 20, 0, 20, // Chunk 2
-          60, 80, 0, 20, 0, 20, // Chunk 3
-          80, 100, 0, 20, 0, 20, // Chunk 4
+          0,
+          20,
+          0,
+          20,
+          0,
+          20, // Chunk 0
+          20,
+          40,
+          0,
+          20,
+          0,
+          20, // Chunk 1
+          40,
+          60,
+          0,
+          20,
+          0,
+          20, // Chunk 2
+          60,
+          80,
+          0,
+          20,
+          0,
+          20, // Chunk 3
+          80,
+          100,
+          0,
+          20,
+          0,
+          20, // Chunk 4
         ]),
         chunkCount: 5,
       };

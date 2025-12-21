@@ -26,6 +26,7 @@ class TestBlendingMode:
         """Test that BlendingMode has expected values."""
         assert BlendingMode.NORMAL.value == "normal"
         assert BlendingMode.ADDITIVE.value == "additive"
+        assert BlendingMode.MAX.value == "max"
 
     def test_validate_normal(self) -> None:
         """Test validate with 'normal' string."""
@@ -36,6 +37,11 @@ class TestBlendingMode:
         """Test validate with 'additive' string."""
         result = BlendingMode.validate("additive")
         assert result == BlendingMode.ADDITIVE
+
+    def test_validate_max(self) -> None:
+        """Test validate with 'max' string."""
+        result = BlendingMode.validate("max")
+        assert result == BlendingMode.MAX
 
     def test_validate_invalid(self) -> None:
         """Test validate raises for invalid value."""
@@ -49,6 +55,7 @@ class TestBlendingMode:
         error_msg = str(exc_info.value)
         assert "'normal'" in error_msg
         assert "'additive'" in error_msg
+        assert "'max'" in error_msg
 
 
 class TestNodeType:

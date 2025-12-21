@@ -206,6 +206,7 @@ class TestBlendingModeValidation:
         """Test that valid blending modes are accepted."""
         assert validate_blending_mode("normal") == "normal"
         assert validate_blending_mode("additive") == "additive"
+        assert validate_blending_mode("max") == "max"
 
     def test_invalid_blending_mode(self) -> None:
         """Test that invalid blending modes raise ValueError."""

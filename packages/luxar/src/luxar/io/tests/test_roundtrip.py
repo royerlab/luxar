@@ -18,6 +18,7 @@ Tests cover:
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimension, Dimensions, LuxarScene, LuxarZarrCompiler, transforms
 
@@ -862,6 +863,109 @@ class TestGSplatsRoundTrip:
 
         with pytest.raises(KeyError):
             scene.get_gsplats("nonexistent")
+
+    def test_gsplats_metadata_completeness(self, tmp_path) -> None:
+        """Test that ALL required metadata fields are written to group.attrs.
+
+        This test prevents regression of the critical bug where ndim, has_colors,
+        has_sharpness, sharpness_bounds, ordering, and chunk_size were in the
+        internal metadata dict but NOT written to group.attrs, causing viewer errors.
+        """
+        output_path = tmp_path / "test.zarr"
+        n_splats = 100
+
+        centers = np.random.randn(n_splats, 3).astype(np.float32)
+        amplitudes = np.random.rand(n_splats).astype(np.float32) + 0.1
+        cholesky = np.random.rand(n_splats, 6).astype(np.float32) * 0.5 + 0.1
+        colors = np.random.rand(n_splats, 3).astype(np.float32)
+        sharpness = np.random.rand(n_splats).astype(np.float32) * 2.0 + 1.0
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_gsplats(
+                "test_splats",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                sharpness=sharpness,
+            )
+
+        # Open zarr directly to check group.attrs (not through LuxarScene API)
+        store = zarr.open_group(output_path, mode="r")
+        gsplats_group = store["test_splats"]
+        attrs = dict(gsplats_group.attrs)
+
+        # Verify ALL required fields are in group.attrs (not just metadata dict)
+        required_fields = [
+            "type",
+            "n_splats",
+            "ndim",  # Bug #7: Was missing
+            "has_colors",  # Bug #9: Was missing
+            "has_sharpness",  # Bug #9: Was missing
+            "chunk_size",  # Bug: Required by TypeScript
+            "ordering",  # Bug: Required by TypeScript
+            "amplitude_range",
+            "sharpness_bounds",  # Bug #8: Was missing
+            "center_bounds",
+        ]
+
+        for field in required_fields:
+            assert field in attrs, f"Required field '{field}' missing from group.attrs!"
+
+        # Verify values are correct
+        assert attrs["type"] == "gsplats"
+        assert attrs["n_splats"] == n_splats
+        assert attrs["ndim"] == 3
+        assert attrs["has_colors"] is True
+        assert attrs["has_sharpness"] is True
+        assert isinstance(attrs["chunk_size"], int)
+        assert attrs["chunk_size"] > 0
+        assert attrs["ordering"] in ["morton", "hilbert", "none"]
+
+        # Verify ranges are dicts with min/max
+        assert "min" in attrs["amplitude_range"]
+        assert "max" in attrs["amplitude_range"]
+        assert "min" in attrs["sharpness_bounds"]
+        assert "max" in attrs["sharpness_bounds"]
+        assert "min" in attrs["center_bounds"]
+        assert "max" in attrs["center_bounds"]
+
+        # Verify sharpness bounds reflect actual data
+        assert attrs["sharpness_bounds"]["min"] >= 1.0
+        assert attrs["sharpness_bounds"]["max"] <= 3.0  # Our test data range
+
+    def test_gsplats_metadata_without_optional_arrays(self, tmp_path) -> None:
+        """Test metadata completeness when colors and sharpness are not provided."""
+        output_path = tmp_path / "test.zarr"
+        n_splats = 50
+
+        centers = np.random.randn(n_splats, 3).astype(np.float32)
+        amplitudes = np.random.rand(n_splats).astype(np.float32) + 0.1
+        cholesky = np.random.rand(n_splats, 6).astype(np.float32) * 0.5 + 0.1
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_gsplats(
+                "test_splats",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                # No colors or sharpness
+            )
+
+        store = zarr.open_group(output_path, mode="r")
+        gsplats_group = store["test_splats"]
+        attrs = dict(gsplats_group.attrs)
+
+        # Verify required fields still present
+        assert attrs["has_colors"] is False
+        assert attrs["has_sharpness"] is False
+        assert "sharpness_bounds" in attrs  # Should have defaults
+        assert attrs["sharpness_bounds"]["min"] == 2.0  # Default
+        assert attrs["sharpness_bounds"]["max"] == 2.0  # Default
+        assert attrs["ndim"] == 3  # Must be present
+        assert attrs["chunk_size"] > 0  # Must be present
 
 
 class TestLinesRoundTrip:

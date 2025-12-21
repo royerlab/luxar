@@ -224,6 +224,13 @@ export class PointMaterial extends THREE.ShaderMaterial {
       depthWrite: this.depthWrite,
     });
 
+    // Copy blend equation settings for max blending
+    if (this.blending === THREE.CustomBlending && this.blendEquation === THREE.MaxEquation) {
+      cloned.blendEquation = THREE.MaxEquation;
+      cloned.blendSrc = this.blendSrc;
+      cloned.blendDst = this.blendDst;
+    }
+
     // Copy current uniform values
     cloned.uniforms.hdrMultiplier.value = this.uniforms.hdrMultiplier.value;
     cloned.uniforms.baseAlpha.value = this.uniforms.baseAlpha.value;

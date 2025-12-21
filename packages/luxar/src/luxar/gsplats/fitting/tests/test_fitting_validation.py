@@ -190,3 +190,61 @@ class TestPrepareConfig:
         assert config.loss_type == "mse"
         assert config.truncate == 2.5
         assert config.verbose is False
+
+    def test_seeds_as_int_valid(self) -> None:
+        """Test seeds parameter as valid integer count."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        # Should accept positive integers
+        config = prepare_fit_config(fitter, V, seeds=100)
+        assert config.seeds == 100
+
+        # Should accept 1
+        config = prepare_fit_config(fitter, V, seeds=1)
+        assert config.seeds == 1
+
+    def test_seeds_as_int_invalid(self) -> None:
+        """Test seeds parameter as invalid integer."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        # Should reject zero
+        with pytest.raises(ValueError, match="seeds as int must be positive"):
+            prepare_fit_config(fitter, V, seeds=0)
+
+        # Should reject negative
+        with pytest.raises(ValueError, match="seeds as int must be positive"):
+            prepare_fit_config(fitter, V, seeds=-10)
+
+    def test_seeds_as_float_valid(self) -> None:
+        """Test seeds parameter as valid float proportion."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        # Should accept proportions in (0, 1]
+        config = prepare_fit_config(fitter, V, seeds=0.01)
+        assert config.seeds == 0.01
+
+        config = prepare_fit_config(fitter, V, seeds=1.0)
+        assert config.seeds == 1.0
+
+        config = prepare_fit_config(fitter, V, seeds=0.5)
+        assert config.seeds == 0.5
+
+    def test_seeds_as_float_invalid(self) -> None:
+        """Test seeds parameter as invalid float proportion."""
+        fitter = MockGaussianSplatFitter()
+        V = np.random.rand(16, 16).astype(np.float32)
+
+        # Should reject values > 1.0
+        with pytest.raises(ValueError, match="seeds as float must be in range"):
+            prepare_fit_config(fitter, V, seeds=1.5)
+
+        # Should reject zero
+        with pytest.raises(ValueError, match="seeds as float must be in range"):
+            prepare_fit_config(fitter, V, seeds=0.0)
+
+        # Should reject negative
+        with pytest.raises(ValueError, match="seeds as float must be in range"):
+            prepare_fit_config(fitter, V, seeds=-0.1)

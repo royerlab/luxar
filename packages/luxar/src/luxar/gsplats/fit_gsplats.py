@@ -61,7 +61,7 @@ class GaussianSplatFitter:
     def fit(
         self,
         V: np.ndarray,
-        seeds: Optional[np.ndarray | float] = None,
+        seeds: Optional[np.ndarray | int | float] = None,
         norm_percentile: float = 0.0,
         init_sigma_vox: float = 0.5,
         n_iters: int = 1000,
@@ -184,7 +184,7 @@ class GaussianSplatFitter:
 
 def fit_gaussian_splats(
     V: np.ndarray,
-    seeds: Optional[np.ndarray | float] = None,
+    seeds: Optional[np.ndarray | int | float] = None,
     norm_percentile: float = 0.0,
     init_sigma_vox: float = 0.5,
     n_iters: int = 1000,
@@ -234,10 +234,11 @@ def fit_gaussian_splats(
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to reconstruct. Will be normalized to [0,1].
-    seeds : np.ndarray, shape (N, d) or float, optional
-        Initial seed center positions or proportion of voxels to use as seeds.
-        - If np.ndarray: Explicit seed centers in voxel coordinates (float)
-        - If float (0 < seeds <= 1.0): Proportion of voxels to use as seeds
+    seeds : np.ndarray, shape (N, d) or int or float, optional
+        Initial seed center positions, count, or proportion.
+        - If np.ndarray: Explicit seed centers in voxel coordinates
+        - If int: Exact number (keeps highest intensity if more detected)
+        - If float (0 < seeds <= 1.0): Proportion of voxels
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds

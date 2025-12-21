@@ -59,6 +59,7 @@ class TestSaveGsplats:
             # Check splats group
             assert "splats" in root
             splats_group = root["splats"]
+            assert splats_group.attrs["type"] == "gsplats"  # Required for SceneLoader
             assert splats_group.attrs["n_splats"] == 100
             assert splats_group.attrs["ndim"] == 3
 

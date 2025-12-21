@@ -288,7 +288,7 @@ class Node:
         """Set the blending mode for this node.
 
         Args:
-            value: Blending mode ("normal", "additive")
+            value: Blending mode ("normal", "additive", "max")
 
         Raises:
             ValueError: If blending mode is not valid
@@ -326,7 +326,7 @@ class Node:
         """Set blending mode and return self for chaining.
 
         Args:
-            value: Blending mode string
+            value: Blending mode string ("normal", "additive", "max")
 
         Returns:
             Self for method chaining

@@ -183,9 +183,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     );
 
     // Load optional arrays
-    const colors = this.arrays.colors
-      ? await this.loadArrayRanges('colors', splatRanges, 3)
-      : null;
+    const colors = this.arrays.colors ? await this.loadArrayRanges('colors', splatRanges, 3) : null;
     const sharpness = this.arrays.sharpness
       ? await this.loadArrayRanges('sharpness', splatRanges, 1)
       : null;
@@ -465,7 +463,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         // Use elementsPerSplat (caller's expectation) for output indexing
         for (let i = 0; i < totalSplats; i++) {
           for (let j = 0; j < elementsPerSplat; j++) {
-            output[i * elementsPerSplat + j] = broadcastValue[j % broadcastLen] ?? broadcastValue[0];
+            output[i * elementsPerSplat + j] =
+              broadcastValue[j % broadcastLen] ?? broadcastValue[0];
           }
         }
       } else {
