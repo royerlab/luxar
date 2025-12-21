@@ -138,6 +138,79 @@ class GSplatData:
             description=description,
         )
 
+    def translate(self, offset: np.ndarray) -> "GSplatData":
+        """Translate all splat centers by an offset vector.
+
+        Args:
+            offset: Translation vector (shape: (d,) where d is spatial dimensions)
+
+        Returns:
+            New GSplatData with translated centers (all other data unchanged)
+
+        Example:
+            >>> # Shift all splats by [10, 20, 30]
+            >>> translated = data.translate(np.array([10, 20, 30]))
+        """
+        return GSplatData(
+            centers=self.centers + offset,
+            amplitudes=self.amplitudes.copy(),
+            cholesky_factors=self.cholesky_factors.copy(),
+            sharpnesses=self.sharpnesses.copy(),
+            colors=self.colors.copy() if self.colors is not None else None,
+            stats=self.stats.copy() if self.stats else {},
+        )
+
+    def center_at_centroid(self) -> "GSplatData":
+        """Center the splats at their center of mass (amplitude-weighted centroid).
+
+        The centroid is computed as the amplitude-weighted average of splat centers,
+        which corresponds to the center of mass of the represented density.
+
+        Returns:
+            New GSplatData centered at origin (centroid at [0, 0, ...])
+
+        Example:
+            >>> # Center splats at origin for easier viewing
+            >>> centered = data.center_at_centroid()
+            >>> print(centered.centers.mean(axis=0))  # Should be close to [0, 0, 0]
+        """
+        # Compute amplitude-weighted centroid
+        total_amplitude = self.amplitudes.sum()
+        if total_amplitude > 0:
+            centroid = (self.centers.T @ self.amplitudes) / total_amplitude
+        else:
+            centroid = self.centers.mean(axis=0)
+
+        # Translate to center at origin
+        return self.translate(-centroid)
+
+    def scale_intensity(self, factor: float) -> "GSplatData":
+        """Scale all splat amplitudes by a multiplicative factor.
+
+        This effectively brightens (factor > 1) or dims (factor < 1) the
+        entire representation.
+
+        Args:
+            factor: Multiplicative scaling factor for amplitudes
+
+        Returns:
+            New GSplatData with scaled amplitudes
+
+        Example:
+            >>> # Reduce brightness by 10x
+            >>> dimmed = data.scale_intensity(0.1)
+            >>> # Brighten by 2x
+            >>> brightened = data.scale_intensity(2.0)
+        """
+        return GSplatData(
+            centers=self.centers.copy(),
+            amplitudes=self.amplitudes * factor,
+            cholesky_factors=self.cholesky_factors.copy(),
+            sharpnesses=self.sharpnesses.copy(),
+            colors=self.colors.copy() if self.colors is not None else None,
+            stats=self.stats.copy() if self.stats else {},
+        )
+
     @classmethod
     def load(
         cls,
