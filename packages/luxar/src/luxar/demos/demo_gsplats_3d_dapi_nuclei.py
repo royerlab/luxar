@@ -381,14 +381,9 @@ def view_with_napari(volume, gsplats_data):
 
         # Render gsplats to volume for comparison
         aprint("Rendering gsplats to volume...")
-        from luxar.gsplats.io.inspect_gsplats import render_gsplats_to_volume
+        from luxar.gsplats.models.gsplats import render_gaussians_numpy
 
-        rendered = render_gsplats_to_volume(
-            gsplats_data.centers,
-            gsplats_data.cholesky_factors,
-            gsplats_data.amplitudes,
-            volume_shape=volume.shape,
-        )
+        rendered = render_gaussians_numpy(volume.shape, gsplats_data, truncate=3.0)
 
         viewer.add_image(
             rendered,
@@ -460,6 +455,17 @@ def main():
 
     # Fit or load gsplats
     gsplats_data = fit_or_load_gsplats(volume)
+
+    # Apply transformations for better viewing
+    with asection("Applying transformations"):
+        aprint("Centering at center-of-mass...")
+        gsplats_data = gsplats_data.center_at_centroid()
+        centroid_check = (gsplats_data.centers.T @ gsplats_data.amplitudes) / gsplats_data.amplitudes.sum()
+        aprint(f"✓ Centered (centroid: [{centroid_check[0]:.3f}, {centroid_check[1]:.3f}, {centroid_check[2]:.3f}])")
+
+        aprint("Reducing brightness by 10x for better visualization...")
+        gsplats_data = gsplats_data.scale_intensity(0.1)
+        aprint(f"✓ Brightness scaled to 0.1x (amplitude range: [{gsplats_data.amplitudes.min():.4f}, {gsplats_data.amplitudes.max():.4f}])")
 
     # Create scene
     scene_path = create_luxar_scene(gsplats_data)
