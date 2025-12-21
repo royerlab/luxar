@@ -182,6 +182,7 @@ def save_gsplats(
 
     # Splats group attributes
     splats_attrs = {
+        "type": "gsplats",  # Required for SceneLoader node type identification
         "n_splats": n_splats,
         "ndim": ndim,
         "has_colors": colors is not None,

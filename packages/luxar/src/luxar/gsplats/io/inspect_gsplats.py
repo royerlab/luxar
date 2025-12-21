@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
+import numpy as np
 import zarr
 
 
@@ -194,3 +195,86 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
             )
 
     return "\n".join(lines)
+
+
+def render_gsplats_to_volume(
+    centers: np.ndarray,
+    cholesky_factors: np.ndarray,
+    amplitudes: np.ndarray,
+    volume_shape: Tuple[int, int, int],
+    sharpness: np.ndarray | None = None,
+) -> np.ndarray:
+    """Render Gaussian splats into a 3D volume for visualization.
+
+    This function evaluates each Gaussian splat on a 3D grid and accumulates
+    the contributions to create a volumetric representation.
+
+    Args:
+        centers: Splat centers (N, 3) in voxel coordinates
+        cholesky_factors: Packed Cholesky factors (N, 6) [L00, L10, L11, L20, L21, L22]
+        amplitudes: Splat amplitudes (N,)
+        volume_shape: Output volume shape (Z, Y, X)
+        sharpness: Optional sharpness values (N,). If None, uses s=2.0 (standard Gaussian)
+
+    Returns:
+        3D volume (Z, Y, X) with accumulated splat contributions
+    """
+    n_splats = centers.shape[0]
+    volume = np.zeros(volume_shape, dtype=np.float32)
+
+    # Default sharpness to 2.0 (standard Gaussian)
+    if sharpness is None:
+        sharpness = np.full(n_splats, 2.0, dtype=np.float32)
+
+    # Create coordinate grid
+    Z, Y, X = volume_shape
+    z_grid, y_grid, x_grid = np.meshgrid(
+        np.arange(Z, dtype=np.float32),
+        np.arange(Y, dtype=np.float32),
+        np.arange(X, dtype=np.float32),
+        indexing="ij",
+    )
+
+    # Stack into (Z*Y*X, 3) coordinate array
+    coords = np.stack([z_grid.ravel(), y_grid.ravel(), x_grid.ravel()], axis=1)
+
+    # Render each splat
+    for i in range(n_splats):
+        center = centers[i]
+        amplitude = amplitudes[i]
+        s = sharpness[i]
+
+        # Unpack Cholesky factor (lower triangular)
+        L = np.array(
+            [
+                [cholesky_factors[i, 0], 0, 0],
+                [cholesky_factors[i, 1], cholesky_factors[i, 2], 0],
+                [cholesky_factors[i, 3], cholesky_factors[i, 4], cholesky_factors[i, 5]],
+            ]
+        )
+
+        # Compute difference from center
+        diff = coords - center  # (Z*Y*X, 3)
+
+        # Solve L @ y = diff using forward substitution (vectorized)
+        y = np.zeros_like(diff)
+        y[:, 0] = diff[:, 0] / L[0, 0]
+        y[:, 1] = (diff[:, 1] - L[1, 0] * y[:, 0]) / L[1, 1]
+        y[:, 2] = (diff[:, 2] - L[2, 0] * y[:, 0] - L[2, 1] * y[:, 1]) / L[2, 2]
+
+        # Mahalanobis distance: ||y||
+        mahal_sq = np.sum(y * y, axis=1)
+
+        # Generalized Gaussian: exp(-0.5 * ||y||^s)
+        # For s=2 (standard Gaussian), this is exp(-0.5 * mahal_sq)
+        # For s≠2, we use ||y||^s = (mahal_sq)^(s/2)
+        if s == 2.0:
+            density = amplitude * np.exp(-0.5 * mahal_sq)
+        else:
+            mahal_dist = np.sqrt(mahal_sq)
+            density = amplitude * np.exp(-0.5 * np.power(mahal_dist, s))
+
+        # Accumulate into volume
+        volume += density.reshape(volume_shape)
+
+    return volume

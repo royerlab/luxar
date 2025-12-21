@@ -148,7 +148,7 @@ This discriminator enables the viewer to determine how to render each node.
   "transform": [...],         # optional, 16-element column-major
   "opacity": 1.0,             # optional
   "gamma": 1.0,               # optional
-  "blending_mode": "additive" # optional
+  "blending_mode": "additive" # optional (normal, additive, max)
 }
 ```
 *Note: Comments shown for documentation; actual JSON has no comments.*
@@ -1394,7 +1394,7 @@ User provides data → Node validates → Writer writes to Zarr → Metadata ret
 **Valid Ranges**:
 - `opacity`: 0.0 to 1.0 (float)
 - `gamma`: 0.1 to 10.0 (float)
-- `blending_mode`: "normal" | "additive" (string)
+- `blending_mode`: "normal" | "additive" | "max" (string)
 
 **Validation**: All values validated on assignment, invalid values raise ValueError
 

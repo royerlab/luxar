@@ -99,6 +99,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     uniform vec2 uResolution;
     uniform float uFx, uFy;           // Focal lengths in pixels
     uniform float uTruncate;          // Truncation radius (in sigmas)
+    uniform int uProjectionMode;      // 0 = sum projection (additive), 1 = max projection (max blending)
 
     // Varyings to fragment
     varying vec3 vColor;
@@ -185,24 +186,22 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
         float sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
 
-        // Amplitude boost from ray integration
+        // Projection mode determines amplitude calculation (BRANCHLESS):
+        // - Sum projection (uProjectionMode = 0): Integrate Gaussian along ray → ray boost
+        // - Max projection (uProjectionMode = 1): Use peak Gaussian value → no boost
         //
-        // Ray integration formula: I = ∫ a·exp(-½||y||^s) dt = a·σ_ray·c(s)
-        // where:
-        //   σ_ray = sqrt(d^T·Σ·d) = standard deviation along ray (voxel units)
-        //   c(s) = ∫ exp(-½|t|^s) dt = sharpness integral factor
+        // Branchless implementation using mix():
+        //   uProjectionMode = 0 → useSumProjection = 1.0 → rayBoost = sigmaRay * c(s)
+        //   uProjectionMode = 1 → useSumProjection = 0.0 → rayBoost = 1.0
         //
-        // Python fitting: Discrete voxel sampling with spacing h=1.0
-        //   Per-voxel contribution = a * exp(-½||y||^s)
-        //
-        // Normalization: To match Python's discrete rendering with continuous integration,
-        // divide by voxel spacing h. Since both Python and viewer use voxel coordinates,
-        // h = 1.0, giving:
+        float useSumProjection = 1.0 - float(uProjectionMode); // 1.0 for sum, 0.0 for max
         float c_s = sharpnessIntegralFactor(aSharpness);
         float voxelSpacing = 1.0;
-        vAmplitude2D = aAmplitude * sigmaRay * c_s / voxelSpacing;
+        float rayIntegrationBoost = sigmaRay * c_s / voxelSpacing;
+        float rayBoost = mix(1.0, rayIntegrationBoost, useSumProjection);
+        vAmplitude2D = aAmplitude * rayBoost;
 
-        // NOTE: Still ~10x too bright empirically. May need additional normalization.
+        // NOTE: Sum projection still ~10x too bright empirically. May need additional normalization.
         // Consider: divide by truncate radius, or by sqrt(2π), or apply global scale
 
         // Compute 2D Cholesky for fragment shader
@@ -302,7 +301,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
         // HDR color output
         vec3 finalColor = vColor * intensity * uHDRMultiplier;
 
-        // Additive blending output
+        // Output for blending (additive/normal/max handled by WebGL blend equation)
         gl_FragColor = vec4(finalColor, intensity * uOpacity);
     }
   `;
@@ -318,7 +317,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       blendingMode === 'additive'
         ? THREE.AdditiveBlending
         : blendingMode === 'max'
-          ? THREE.MaxBlending
+          ? THREE.CustomBlending
           : THREE.NormalBlending;
 
     super({
@@ -331,17 +330,25 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
           value: materialConfig.hdrMultiplier ?? config.shader.points.hdrMultiplier,
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
+        uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
       },
 
       vertexShader: GSplatMaterial.VERTEX_SHADER,
       fragmentShader: GSplatMaterial.FRAGMENT_SHADER,
 
       transparent: true,
-      depthWrite: blendingMode !== 'additive', // No depth write for additive
+      depthWrite: blendingMode !== 'additive' && blendingMode !== 'max', // No depth write for additive/max
       toneMapped: false, // HDR values pass through to post-processing
       blending: blending,
       side: THREE.DoubleSide, // Splats visible from both sides
     });
+
+    // Configure custom blending for max mode
+    if (blendingMode === 'max') {
+      this.blendEquation = THREE.MaxEquation; // Max(source, destination)
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+    }
   }
 
   /**
@@ -396,7 +403,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
       blendingMode:
         this.blending === THREE.AdditiveBlending
           ? 'additive'
-          : this.blending === THREE.MaxBlending
+          : this.blending === THREE.CustomBlending && this.blendEquation === THREE.MaxEquation
             ? 'max'
             : 'normal',
     });
@@ -404,6 +411,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial {
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
 
     return cloned as this;
   }
@@ -556,9 +564,18 @@ export function createInstancedGSplatsMesh(
 
   // Set instanced attributes
   geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(meshConfig.centers, 3));
-  geometry.setAttribute('aCholesky01', new THREE.InstancedBufferAttribute(meshConfig.cholesky01, 2));
-  geometry.setAttribute('aCholesky23', new THREE.InstancedBufferAttribute(meshConfig.cholesky23, 2));
-  geometry.setAttribute('aCholesky45', new THREE.InstancedBufferAttribute(meshConfig.cholesky45, 2));
+  geometry.setAttribute(
+    'aCholesky01',
+    new THREE.InstancedBufferAttribute(meshConfig.cholesky01, 2)
+  );
+  geometry.setAttribute(
+    'aCholesky23',
+    new THREE.InstancedBufferAttribute(meshConfig.cholesky23, 2)
+  );
+  geometry.setAttribute(
+    'aCholesky45',
+    new THREE.InstancedBufferAttribute(meshConfig.cholesky45, 2)
+  );
   geometry.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1));
   geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(meshConfig.sharpness, 1));
   geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
@@ -624,7 +641,10 @@ export function updateInstancedGSplatsMesh(
       'aAmplitude',
       new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1)
     );
-    geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(meshConfig.sharpness, 1));
+    geometry.setAttribute(
+      'aSharpness',
+      new THREE.InstancedBufferAttribute(meshConfig.sharpness, 1)
+    );
     geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
     geometry.instanceCount = meshConfig.splatCount;
   } else {

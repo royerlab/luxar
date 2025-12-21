@@ -199,7 +199,7 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],  // 4x4 matrix as 16-element array
   "opacity": 1.0,           // 0.0-1.0, inherited by children
   "gamma": 1.0,            // 0.2-2.0, gamma correction
-  "blending_mode": "additive"  // normal, additive
+  "blending_mode": "additive"  // normal, additive, max (default: additive)
 }
 ```
 
@@ -214,7 +214,7 @@ Points nodes contain the actual point data.
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
   "opacity": 1.0,
   "gamma": 1.0,
-  "blending_mode": "additive",
+  "blending_mode": "additive",  // or "normal", "max"
   "n_points": 10000,
   "max_radius": 2.5,
   "extend_to_all": ["Time", "Channel"]  // Optional: extend visibility to all values of these dimensions

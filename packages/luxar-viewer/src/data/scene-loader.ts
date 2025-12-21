@@ -818,8 +818,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-          .fill(0)
-          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1012,12 +1012,7 @@ export class SceneLoader {
     const nodeLoc = node.path === '/' ? loc : zarr.root(this.store!).resolve(node.path.slice(1));
 
     log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
-    const loader = new GSplatsSpatialIndexLoader(
-      nodeLoc,
-      node,
-      this.arrayRefRegistry,
-      this.store!
-    );
+    const loader = new GSplatsSpatialIndexLoader(nodeLoc, node, this.arrayRefRegistry, this.store!);
 
     return loader;
   }

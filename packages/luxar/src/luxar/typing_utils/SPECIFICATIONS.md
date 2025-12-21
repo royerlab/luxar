@@ -60,6 +60,7 @@ The `typing_utils` package centralizes all type definitions, constants, protocol
 **BlendingMode**:
 - `NORMAL = "normal"` - Standard alpha blending
 - `ADDITIVE = "additive"` - Colors add together (glow effect)
+- `MAX = "max"` - Maximum of source and destination (brightest wins)
 
 **NodeType**:
 - `SCENE = "scene"` - Root node

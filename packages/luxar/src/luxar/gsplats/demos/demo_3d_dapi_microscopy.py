@@ -301,7 +301,7 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
         result = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
+            seeds= 10000,  # initial seed count
             n_iters=N_ITERS,
             device=DEVICE,
             verbose=True,

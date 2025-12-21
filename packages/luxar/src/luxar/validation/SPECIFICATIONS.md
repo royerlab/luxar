@@ -123,7 +123,7 @@ Error Messages: Distinguish between wrong count vs wrong channels
 - Raises ValueError if out of range
 
 **Blending Mode**:
-- Valid: "normal", "additive"
+- Valid: "normal", "additive", "max"
 - Must be string
 - Case-sensitive
 
