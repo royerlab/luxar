@@ -31,7 +31,52 @@ result = fit_gaussian_splats(
     verbose=True         # Show progress
 )
 # Access via result.centers, result.amplitudes, result.cholesky_factors, result.sharpnesses, result.stats
+
+# Transform the result
+centered = result.center_at_centroid()  # Center at origin
+dimmed = centered.scale_intensity(0.1)  # Reduce brightness 10x
+shifted = dimmed.translate([10, 20, 30])  # Translate in space
 ```
+
+## 0. GSplat Data Container (`fit_result.py`)
+
+### Class: `GSplatData`
+
+Container for Gaussian splat fitting results with transformation methods.
+
+**Attributes**:
+- `centers`: (N, d) array of splat center positions
+- `amplitudes`: (N,) array of non-negative splat amplitudes
+- `cholesky_factors`: (N, d*(d+1)//2) packed Cholesky factors L where Σ = L @ L.T
+- `sharpnesses`: (N,) per-splat sharpness values (s=2.0 is standard Gaussian)
+- `colors`: Optional (N, 3) RGB colors (uint8 or float32)
+- `stats`: Dictionary of optimization statistics
+
+**Transformation Methods**:
+
+**`translate(offset: np.ndarray) -> GSplatData`**
+- Translates all splat centers by the given offset vector
+- Returns new GSplatData with shifted centers
+- All other attributes (amplitudes, covariances, etc.) unchanged
+- Example: `shifted = data.translate(np.array([10, 20, 30]))`
+
+**`center_at_centroid() -> GSplatData`**
+- Centers the splats at their amplitude-weighted centroid (center of mass)
+- Centroid computed as: `Σ(amplitude_i * center_i) / Σ(amplitude_i)`
+- Returns new GSplatData with centroid at origin [0, 0, ...]
+- Useful for easier camera framing in viewers
+- Example: `centered = data.center_at_centroid()`
+
+**`scale_intensity(factor: float) -> GSplatData`**
+- Multiplies all amplitudes by the given factor
+- factor < 1: dims the representation
+- factor > 1: brightens the representation
+- Useful for visualization adjustment without re-fitting
+- Example: `dimmed = data.scale_intensity(0.1)  # Reduce by 10x`
+
+**Save/Load Methods**:
+- `save(path, ...)`: Save to .gsplats.zarr format with encoding options
+- `load(path)`: Load from .gsplats.zarr format
 
 ## Overview
 
