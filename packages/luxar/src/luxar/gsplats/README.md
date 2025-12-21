@@ -21,6 +21,23 @@ This package implements a sophisticated Gaussian splatting system that fits coll
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
 - **Memory Efficient**: Truncated rendering, optional mixed precision, pre-allocated buffers
 
+## Quick Example
+
+```python
+from luxar.gsplats import fit_gaussian_splats
+
+# Fit splats to your volume
+result = fit_gaussian_splats(volume, n_iters=1000)
+
+# Post-processing transformations
+result = result.center_at_centroid()     # Center for easier viewing
+result = result.scale_intensity(0.1)     # Reduce brightness 10x
+result = result.translate([10, 20, 30])  # Shift in space
+
+# Save or visualize
+result.save("output.gsplats.zarr")
+```
+
 ## How It Works
 
 ### 1. Seed Generation
