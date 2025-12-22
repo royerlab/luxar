@@ -90,22 +90,37 @@ test.describe('Dimension Animation - UI Controls', () => {
     await page.keyboard.press('n');
     await page.waitForTimeout(300);
 
-    // Check for animation controls
-    const controls = await page.evaluate(() => {
+    // Check for play button
+    const hasPlayButton = await page.evaluate(() => {
       const playBtn = document.querySelector('.luxar-dimension-slider__play-btn');
-      const fpsSelect = document.querySelector('.luxar-dimension-slider__speed-select');
-      const loopSelect = document.querySelector('.luxar-dimension-slider__loop-select');
+      return playBtn !== null;
+    });
+
+    expect(hasPlayButton).toBe(true);
+
+    // Right-click play button to open context menu
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Check for context menu with speed and loop options
+    const menuControls = await page.evaluate(() => {
+      const menu = document.querySelector('.luxar-dimension-slider__context-menu');
+      const speedSection = document.querySelector('.luxar-dimension-slider__context-section');
+      const speedItems = Array.from(
+        document.querySelectorAll('.luxar-dimension-slider__context-item')
+      );
 
       return {
-        hasPlayButton: playBtn !== null,
-        hasFPSSelector: fpsSelect !== null,
-        hasLoopSelector: loopSelect !== null,
+        hasContextMenu: menu !== null,
+        hasSpeedSection: speedSection !== null,
+        hasMenuItems: speedItems.length > 0,
       };
     });
 
-    expect(controls.hasPlayButton).toBe(true);
-    expect(controls.hasFPSSelector).toBe(true);
-    expect(controls.hasLoopSelector).toBe(true);
+    expect(menuControls.hasContextMenu).toBe(true);
+    expect(menuControls.hasSpeedSection).toBe(true);
+    expect(menuControls.hasMenuItems).toBe(true);
   });
 
   test('should toggle play button text on click', async ({ page }) => {
@@ -167,8 +182,13 @@ test.describe('Dimension Animation - UI Controls', () => {
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
 
-    // Change FPS to 30
-    await page.selectOption('.luxar-dimension-slider__speed-select', '30');
+    // Right-click play button to open context menu
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Click on 30 FPS option in context menu
+    await page.click('text=30 FPS');
     await page.waitForTimeout(200);
 
     // Start animation
@@ -194,8 +214,13 @@ test.describe('Dimension Animation - UI Controls', () => {
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
 
-    // Change loop mode to bounce
-    await page.selectOption('.luxar-dimension-slider__loop-select', 'bounce');
+    // Right-click play button to open context menu
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Click on Bounce option in context menu
+    await page.click('text=Bounce');
     await page.waitForTimeout(200);
 
     // Start animation
@@ -329,7 +354,12 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     // Set FPS to 30 first via UI
     await page.keyboard.press('n'); // Open sliders
     await page.waitForTimeout(200);
-    await page.selectOption('.luxar-dimension-slider__speed-select', '30');
+
+    // Right-click play button and select 30 FPS
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.click({ button: 'right' });
+    await page.waitForTimeout(200);
+    await page.click('text=30 FPS');
     await page.waitForTimeout(200);
 
     // Start animation
@@ -367,8 +397,14 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Start animation at high FPS for faster test
     await page.keyboard.press('n'); // Open sliders
     await page.waitForTimeout(200);
-    await page.selectOption('.luxar-dimension-slider__speed-select', '30');
+
+    // Right-click play button and select 30 FPS
+    const playButton1 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton1.click({ button: 'right' });
     await page.waitForTimeout(200);
+    await page.click('text=30 FPS');
+    await page.waitForTimeout(200);
+
     await page.keyboard.press('k'); // Start animation
     await page.waitForTimeout(200);
 
@@ -396,8 +432,20 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Set loop mode to loop and high FPS
     await page.keyboard.press('n'); // Open sliders
     await page.waitForTimeout(200);
-    await page.selectOption('.luxar-dimension-slider__loop-select', 'loop');
-    await page.selectOption('.luxar-dimension-slider__speed-select', '30');
+
+    // Right-click play button to open context menu
+    const playButton2 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton2.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Select loop mode
+    await page.click('text=Loop');
+    await page.waitForTimeout(100);
+
+    // Right-click again to set FPS
+    await playButton2.click({ button: 'right' });
+    await page.waitForTimeout(200);
+    await page.click('text=30 FPS');
     await page.waitForTimeout(200);
 
     // Jump to near end
@@ -434,8 +482,20 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Set loop mode to once and high FPS
     await page.keyboard.press('n'); // Open sliders
     await page.waitForTimeout(200);
-    await page.selectOption('.luxar-dimension-slider__loop-select', 'once');
-    await page.selectOption('.luxar-dimension-slider__speed-select', '60');
+
+    // Right-click play button to open context menu
+    const playButton3 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton3.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Select once mode
+    await page.click('text=Once');
+    await page.waitForTimeout(100);
+
+    // Right-click again to set FPS
+    await playButton3.click({ button: 'right' });
+    await page.waitForTimeout(200);
+    await page.click('text=60 FPS');
     await page.waitForTimeout(200);
 
     // Jump to near end (not quite at end)
@@ -481,8 +541,20 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Set loop mode to bounce and high FPS
     await page.keyboard.press('n'); // Open sliders
     await page.waitForTimeout(200);
-    await page.selectOption('.luxar-dimension-slider__loop-select', 'bounce');
-    await page.selectOption('.luxar-dimension-slider__speed-select', '60');
+
+    // Right-click play button to open context menu
+    const playButton4 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton4.click({ button: 'right' });
+    await page.waitForTimeout(200);
+
+    // Select bounce mode
+    await page.click('text=Bounce');
+    await page.waitForTimeout(100);
+
+    // Right-click again to set FPS
+    await playButton4.click({ button: 'right' });
+    await page.waitForTimeout(200);
+    await page.click('text=60 FPS');
     await page.waitForTimeout(200);
 
     // Jump to near end
