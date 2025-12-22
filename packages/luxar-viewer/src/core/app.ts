@@ -427,6 +427,15 @@ export class LuxarApp {
                 currentStep: dims.currentStep,
               }
             : null,
+          camera: {
+            position: {
+              x: this.sceneManager.camera.position.x,
+              y: this.sceneManager.camera.position.y,
+              z: this.sceneManager.camera.position.z,
+            },
+            fov: this.sceneManager.camera.fov,
+          },
+          // Keep legacy cameraPosition for backward compatibility
           cameraPosition: {
             x: this.sceneManager.camera.position.x,
             y: this.sceneManager.camera.position.y,
