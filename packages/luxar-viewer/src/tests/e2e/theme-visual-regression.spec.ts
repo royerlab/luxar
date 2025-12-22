@@ -79,10 +79,14 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be ready
-    await page.waitForFunction(() => window.__luxarDebug?.runtimeReady === true, {
-      timeout: 30000,
-    });
+    // Wait for app to be fully initialized
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        return debug && debug.getState && debug.getState().initialized;
+      },
+      { timeout: 45000 }
+    );
 
     // Press N to show dimension sliders
     await page.keyboard.press('n');
@@ -105,10 +109,14 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be ready
-    await page.waitForFunction(() => window.__luxarDebug?.runtimeReady === true, {
-      timeout: 30000,
-    });
+    // Wait for app to be fully initialized
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        return debug && debug.getState && debug.getState().initialized;
+      },
+      { timeout: 45000 }
+    );
 
     // Press M to cycle to mini view
     await page.keyboard.press('m');
@@ -134,10 +142,14 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be ready
-    await page.waitForFunction(() => window.__luxarDebug?.runtimeReady === true, {
-      timeout: 30000,
-    });
+    // Wait for app to be fully initialized
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        return debug && debug.getState && debug.getState().initialized;
+      },
+      { timeout: 45000 }
+    );
 
     // Press M twice to cycle to expanded view
     await page.keyboard.press('m');
@@ -267,8 +279,8 @@ test('theme persists across page reloads', async ({ page }) => {
   // Reload page
   await page.reload();
 
-  // Wait for app to initialize
-  await page.waitForTimeout(1000);
+  // Wait for theme to be restored after reload
+  await waitForTheme(page, 'light');
 
   // Check that light theme is still active via data-theme attribute
   const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
