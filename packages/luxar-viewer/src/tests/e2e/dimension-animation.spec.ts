@@ -88,18 +88,12 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Open dimension sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
 
-    // Check for play button
-    const hasPlayButton = await page.evaluate(() => {
-      const playBtn = document.querySelector('.luxar-dimension-slider__play-btn');
-      return playBtn !== null;
-    });
-
-    expect(hasPlayButton).toBe(true);
+    // Wait for play button to be visible
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
 
     // Right-click play button to open context menu
-    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
     await playButton.click({ button: 'right' });
     await page.waitForTimeout(200);
 
