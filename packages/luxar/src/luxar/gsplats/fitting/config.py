@@ -49,8 +49,9 @@ class FitConfig:
 
     # Scheduler parameters
     scheduler_type: str
-    patience: int
-    factor: float
+    patience: int  # LR reduction patience (iterations without loss improvement)
+    lr_reduction_factor: float  # LR multiplier (e.g., 0.5 = halve, 0.1 = reduce to 10%)
+    early_stop_patience: Optional[int]  # Stop if no improvement for N iters
 
     # Dynamic operations
     enable_dynamic_ops: bool
@@ -65,6 +66,11 @@ class FitConfig:
     # Device and logging
     device: torch.device
     verbose: bool
+
+    # Metal acceleration (with defaults - must come after required fields)
+    use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
+    metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels
+    metal_tile_size: int = 4  # Tile size for 3D binning (4=64 threads, 8=512 threads)
 
     # Seed generation (with defaults - must come after required fields)
     seed_method: str = "both"  # "gaussian", "decomposition", "both", etc.

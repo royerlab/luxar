@@ -75,14 +75,15 @@ export interface RenderingControllers {
   clippingAdaptSpeed?: Controller;
   // HDR controls
   hdrMultiplier?: Controller;
-  // Lens distortion controls
-  lensDistortionX?: Controller;
-  lensDistortionY?: Controller;
-  lensPrincipalPointX?: Controller;
-  lensPrincipalPointY?: Controller;
-  lensFocalLengthX?: Controller;
-  lensFocalLengthY?: Controller;
-  lensSkew?: Controller;
+  // Chromatic lens distortion controls (replaces old separate lens + chromatic effects)
+  chromaticLensDistortionX?: Controller;
+  chromaticLensDistortionY?: Controller;
+  chromaticLensDispersion?: Controller;
+  chromaticLensPrincipalPointX?: Controller;
+  chromaticLensPrincipalPointY?: Controller;
+  chromaticLensFocalLengthX?: Controller;
+  chromaticLensFocalLengthY?: Controller;
+  chromaticLensSkew?: Controller;
   // Orbit controls
   autoRotate?: Controller;
   autoRotateSpeed?: Controller;

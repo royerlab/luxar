@@ -124,11 +124,14 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Open dimension sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
 
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
+
+    // Wait for play button to be visible
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
 
     // Get initial play button text
     const initialText = await page.evaluate(() => {
@@ -170,14 +173,14 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Open dimension sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
 
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
 
-    // Right-click play button to open context menu
+    // Wait for play button to be visible, then right-click to open context menu
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
     await playButton.click({ button: 'right' });
     await page.waitForTimeout(200);
 
@@ -202,14 +205,14 @@ test.describe('Dimension Animation - UI Controls', () => {
 
     // Open dimension sliders
     await page.keyboard.press('n');
-    await page.waitForTimeout(300);
 
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
 
-    // Right-click play button to open context menu
+    // Wait for play button to be visible, then right-click to open context menu
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
     await playButton.click({ button: 'right' });
     await page.waitForTimeout(200);
 
@@ -347,10 +350,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Set FPS to 30 first via UI
     await page.keyboard.press('n'); // Open sliders
-    await page.waitForTimeout(200);
 
-    // Right-click play button and select 30 FPS
+    // Wait for play button to be visible, then right-click to select 30 FPS
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
     await playButton.click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.click('text=30 FPS');
@@ -390,10 +393,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Start animation at high FPS for faster test
     await page.keyboard.press('n'); // Open sliders
-    await page.waitForTimeout(200);
 
-    // Right-click play button and select 30 FPS
+    // Wait for play button to be visible, then right-click and select 30 FPS
     const playButton1 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton1.waitFor({ state: 'visible', timeout: 5000 });
     await playButton1.click({ button: 'right' });
     await page.waitForTimeout(200);
     await page.click('text=30 FPS');
@@ -425,10 +428,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Set loop mode to loop and high FPS
     await page.keyboard.press('n'); // Open sliders
-    await page.waitForTimeout(200);
 
-    // Right-click play button to open context menu
+    // Wait for play button to be visible, then right-click to open context menu
     const playButton2 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton2.waitFor({ state: 'visible', timeout: 5000 });
     await playButton2.click({ button: 'right' });
     await page.waitForTimeout(200);
 
@@ -475,10 +478,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Set loop mode to once and high FPS
     await page.keyboard.press('n'); // Open sliders
-    await page.waitForTimeout(200);
 
-    // Right-click play button to open context menu
+    // Wait for play button to be visible, then right-click to open context menu
     const playButton3 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton3.waitFor({ state: 'visible', timeout: 5000 });
     await playButton3.click({ button: 'right' });
     await page.waitForTimeout(200);
 
@@ -534,10 +537,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
 
     // Set loop mode to bounce and high FPS
     await page.keyboard.press('n'); // Open sliders
-    await page.waitForTimeout(200);
 
-    // Right-click play button to open context menu
+    // Wait for play button to be visible, then right-click to open context menu
     const playButton4 = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton4.waitFor({ state: 'visible', timeout: 5000 });
     await playButton4.click({ button: 'right' });
     await page.waitForTimeout(200);
 

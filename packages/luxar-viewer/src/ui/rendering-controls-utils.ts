@@ -221,9 +221,9 @@ export function calculatePerformanceImpact(settings: RenderingSettings): number 
     score += 5;
   }
 
-  // DOF and chromatic aberration impact
+  // DOF and chromatic lens distortion impact
   if (settings.dofEnabled) score += 8;
-  if (settings.chromaticAberrationEnabled) score += 3;
+  if (settings.chromaticLensDistortionEnabled) score += 4; // Slightly higher than old chromatic (3 texture samples)
 
   // Auto-rotate impact (continuous rendering)
   if (settings.autoRotate) score += 5;

@@ -72,8 +72,9 @@ class FitConfig:
 
     # Scheduler parameters
     scheduler_type: str                      # "plateau" or "exponential"
-    patience: int                            # Iterations to wait before LR reduction
-    factor: float                            # LR reduction factor
+    patience: int                            # Iters without loss improvement before LR reduction
+    lr_reduction_factor: float               # LR multiplier (0.5=halve, 0.1=reduce to 10%)
+    early_stop_patience: Optional[int]       # Stop if no better state for N iters (None=off)
 
     # Dynamic operations
     enable_dynamic_ops: bool                 # Enable adaptive seeding/pruning
@@ -101,7 +102,7 @@ class FitConfig:
 - `asymmetric_penalty >= 1.0`
 - All L1 regularization values `>= 0` if specified
 - `grad_clip > 0` if specified
-- `plateau_patience >= 1`, `plateau_factor in (0, 1)`, `plateau_min_lr > 0`
+- `patience >= 1`, `lr_reduction_factor in (0, 1)`, `early_stop_patience >= 1` if specified
 - `exp_gamma in (0, 1]`
 - `movie_every >= 1`
 
@@ -228,8 +229,9 @@ def prepare_fit_config(
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
     scheduler_type: str = "plateau",
-    patience: int = 10,  # Generic parameter (not plateau_patience)
-    factor: float = 0.5,  # Generic parameter (not plateau_factor)
+    patience: int = 10,
+    lr_reduction_factor: float = 0.5,
+    early_stop_patience: Optional[int] = None,
     dynamic_ops_verbose: bool = False,
 ) -> FitConfig:
     """
@@ -300,7 +302,9 @@ else:
 
 **Seed Generation**:
 - **If seeds is ndarray**: Validate shape and use directly
-- **If seeds is int**: Auto-generate, then subsample to exact count (keeping highest intensity)
+- **If seeds is int**: Auto-generate, then ensure exact count via:
+  * If too many: subsample using farthest-first with intensity weighting (spatial diversity)
+  * If too few: regenerate with low threshold (10%), or add grid-based fallback
 - **If seeds is float**: Auto-generate (proportion hint, not strictly enforced)
 - **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
@@ -439,7 +443,7 @@ optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
     lr=config.lr,  # Base learning rate
     scheduler_type=config.scheduler_type,
     patience=config.patience,
-    factor=config.factor,
+    lr_reduction_factor=config.lr_reduction_factor,
 )
 ```
 
@@ -453,7 +457,7 @@ optimizer, scheduler, coordinator = create_per_splat_optimizer_setup(
      - Sharpness (s'): ×0.5 (conservative, no gradient dilution since always 1 scalar)
 
 2. Creates scheduler based on scheduler_type:
-   - "plateau": PerSplatReduceLROnPlateau with patience and factor
+   - "plateau": PerSplatReduceLROnPlateau with patience and lr_reduction_factor
    - "exponential": PerSplatExponentialLR with gamma
 
 3. Creates ModelOptimizerCoordinator to manage dynamic operations

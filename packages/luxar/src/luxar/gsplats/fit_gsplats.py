@@ -82,8 +82,9 @@ class GaussianSplatFitter:
         movie_every: int = 1,
         movie_max_frames: Optional[int] = None,
         scheduler_type: str = "plateau",
-        patience: int = 10,
-        factor: float = 0.5,
+        patience: int = 25,
+        lr_reduction_factor: float = 0.95,
+        early_stop_patience: Optional[int] = None,
         dynamic_ops_verbose: bool = False,
         **seed_kwargs,
     ) -> GSplatData:
@@ -147,7 +148,8 @@ class GaussianSplatFitter:
             movie_max_frames,
             scheduler_type,
             patience,
-            factor,
+            lr_reduction_factor,
+            early_stop_patience,
             dynamic_ops_verbose,
             seed_method=seed_method,
             **seed_kwargs,
@@ -205,8 +207,9 @@ def fit_gaussian_splats(
     gradient_clip: Optional[float] = 1.0,
     # Per-splat optimizer parameters
     scheduler_type: str = "plateau",
-    patience: int = 10,
-    factor: float = 0.9,
+    patience: int = 25,
+    lr_reduction_factor: float = 0.95,
+    early_stop_patience: Optional[int] = None,
     # Dynamic operations parameters
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
@@ -327,10 +330,15 @@ def fit_gaussian_splats(
         Maximum gradient norm for clipping. None disables clipping.
     scheduler_type : str, default="plateau"
         Type of learning rate scheduler ("plateau" or "exponential").
-    patience : int, default=10
-        Scheduler patience for plateau scheduler.
-    factor : float, default=0.9
-        Learning rate reduction factor for scheduler (new_lr = lr * factor).
+    patience : int, default=25
+        Scheduler patience: iterations without loss improvement before LR reduction.
+    lr_reduction_factor : float, default=0.95
+        LR multiplier on plateau (new_lr = lr × lr_reduction_factor).
+        Examples: 0.5=halve LR, 0.1=reduce to 10%, 0.95=gentle reduction.
+    early_stop_patience : Optional[int], default=None
+        Early stopping: stop if no better state found for N iterations.
+        None disables early stopping (runs until convergence or iteration limit).
+        Example: 100 stops if no improvement for 100 consecutive iterations.
     enable_dynamic_ops : bool, default=True
         Enable dynamic operations (seeding and pruning).
     dynamic_config : DynamicOpsConfig, optional
@@ -407,7 +415,8 @@ def fit_gaussian_splats(
             movie_max_frames=movie_max_frames,
             scheduler_type=scheduler_type,
             patience=patience,
-            factor=factor,
+            lr_reduction_factor=lr_reduction_factor,
+            early_stop_patience=early_stop_patience,
             **seed_kwargs,
         )
 

@@ -31,6 +31,7 @@ export interface CameraConfig {
       focalLengthX: number;
       focalLengthY: number;
       skew: number;
+      dispersion: number;
     }
   >;
 }
@@ -433,8 +434,6 @@ export interface RenderingSettings {
   dofEnabled: boolean;
   dofFocus: number;
   dofStrength: number;
-  chromaticAberrationEnabled: boolean;
-  chromaticAberrationStrength: number;
   // New pmndrs effects
   aoEnabled: boolean;
   aoQuality: 'low' | 'medium' | 'high' | 'ultra';
@@ -446,15 +445,16 @@ export interface RenderingSettings {
   detectorNoiseReadoutSigma: number;
   detectorNoisePhotonGain: number;
   detectorNoiseFpnSigma: number;
-  // Lens distortion effect
-  lensDistortionEnabled: boolean;
-  lensDistortionX: number;
-  lensDistortionY: number;
-  lensPrincipalPointX: number;
-  lensPrincipalPointY: number;
-  lensFocalLengthX: number;
-  lensFocalLengthY: number;
-  lensSkew: number;
+  // Chromatic lens distortion effect (replaces old separate lens distortion + chromatic aberration)
+  chromaticLensDistortionEnabled: boolean;
+  chromaticLensDistortionX: number;
+  chromaticLensDistortionY: number;
+  chromaticLensDispersion: number;
+  chromaticLensPrincipalPointX: number;
+  chromaticLensPrincipalPointY: number;
+  chromaticLensFocalLengthX: number;
+  chromaticLensFocalLengthY: number;
+  chromaticLensSkew: number;
   // Navigation controls
   controlType: 'orbit' | 'arcball' | 'fly';
   autoRotate: boolean;
