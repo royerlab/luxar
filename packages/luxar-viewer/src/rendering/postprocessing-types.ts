@@ -5,15 +5,7 @@
  * to avoid unsafe 'any' casting and improve type safety.
  */
 
-import {
-  BloomEffect,
-  ToneMappingEffect,
-  DepthOfFieldEffect,
-  ChromaticAberrationEffect,
-  VignetteEffect,
-  LensDistortionEffect,
-} from 'postprocessing';
-import * as THREE from 'three';
+import { BloomEffect, ToneMappingEffect, DepthOfFieldEffect, VignetteEffect } from 'postprocessing';
 
 /**
  * Extended BloomEffect type with proper typing for internal properties
@@ -67,28 +59,11 @@ export type DepthOfFieldEffectTyped = DepthOfFieldEffect & {
 };
 
 /**
- * Extended ChromaticAberrationEffect interface
- */
-export interface ChromaticAberrationEffectTyped extends ChromaticAberrationEffect {
-  offset: THREE.Vector2;
-}
-
-/**
  * Extended VignetteEffect interface
  */
 export interface VignetteEffectTyped extends VignetteEffect {
   darkness: number;
   offset: number;
-}
-
-/**
- * Extended LensDistortionEffect interface
- */
-export interface LensDistortionEffectTyped extends LensDistortionEffect {
-  distortion: THREE.Vector2;
-  principalPoint: THREE.Vector2;
-  focalLength: THREE.Vector2;
-  skew: number;
 }
 
 /**
@@ -221,22 +196,6 @@ export function isDepthOfFieldEffectTyped(effect: any): effect is DepthOfFieldEf
   return effect && 'bokehScale' in effect;
 }
 
-export function isChromaticAberrationEffectTyped(
-  effect: any
-): effect is ChromaticAberrationEffectTyped {
-  return effect && 'offset' in effect;
-}
-
 export function isVignetteEffectTyped(effect: any): effect is VignetteEffectTyped {
   return effect && 'darkness' in effect && 'offset' in effect;
-}
-
-export function isLensDistortionEffectTyped(effect: any): effect is LensDistortionEffectTyped {
-  return (
-    effect &&
-    'distortion' in effect &&
-    'principalPoint' in effect &&
-    'focalLength' in effect &&
-    'skew' in effect
-  );
 }

@@ -53,7 +53,9 @@ for (const theme of THEMES) {
  */
 for (const theme of THEMES) {
   test(`help overlay - ${theme} theme`, async ({ page }) => {
-    await page.goto(`/?theme=${theme}&debug`);
+    const testDataUrl =
+      'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
     // Trigger help overlay with H key
@@ -218,6 +220,7 @@ test('theme switching updates all CSS variables', async ({ page }) => {
       (window as any).ThemeManager?.getInstance?.() || (window as any).__luxarDebug?.app;
     if (themeManager) themeManager.setTheme?.('dark');
   });
+  await waitForTheme(page, 'dark');
 
   const darkBg = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')

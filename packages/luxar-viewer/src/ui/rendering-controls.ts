@@ -997,12 +997,6 @@ export class RenderingControls {
       this.settings.dofStrength
     );
 
-    // Apply chromatic aberration
-    this.postProcessing.setChromaticAberration(
-      this.settings.chromaticAberrationEnabled,
-      this.settings.chromaticAberrationStrength
-    );
-
     // Apply detector noise effect
     this.postProcessing.setDetectorNoiseEnabled(
       this.settings.detectorNoiseEnabled,
@@ -1023,16 +1017,17 @@ export class RenderingControls {
       this.settings.vignetteOffset
     );
 
-    // Apply lens distortion effect
-    this.postProcessing.setLensDistortionEnabled(
-      this.settings.lensDistortionEnabled,
-      this.settings.lensDistortionX,
-      this.settings.lensDistortionY,
-      this.settings.lensPrincipalPointX,
-      this.settings.lensPrincipalPointY,
-      this.settings.lensFocalLengthX,
-      this.settings.lensFocalLengthY,
-      this.settings.lensSkew
+    // Apply chromatic lens distortion effect (replaces old separate effects)
+    this.postProcessing.setChromaticLensDistortionEnabled(
+      this.settings.chromaticLensDistortionEnabled,
+      this.settings.chromaticLensDistortionX,
+      this.settings.chromaticLensDistortionY,
+      this.settings.chromaticLensDispersion,
+      this.settings.chromaticLensPrincipalPointX,
+      this.settings.chromaticLensPrincipalPointY,
+      this.settings.chromaticLensFocalLengthX,
+      this.settings.chromaticLensFocalLengthY,
+      this.settings.chromaticLensSkew
     );
 
     // Apply ambient occlusion (always call to ensure proper enable/disable)
@@ -1216,8 +1211,7 @@ export class RenderingControls {
    * Cinematic mode affects:
    * - Detector noise (subtle film grain)
    * - Vignette (darkened corners)
-   * - Chromatic aberration (color fringing)
-   * - Lens distortion (barrel/pincushion)
+   * - Chromatic lens distortion (wavelength-dependent lens distortion + color fringing)
    * - FOV (35mm wide-angle for cinematic, 50mm normal for regular)
    *
    * Uses deferred rebuild to apply all changes in single pass (performance).
@@ -1237,8 +1231,7 @@ export class RenderingControls {
     const cinematicEffects = [
       this.settings.detectorNoiseEnabled,
       this.settings.vignetteEnabled,
-      this.settings.chromaticAberrationEnabled,
-      this.settings.lensDistortionEnabled,
+      this.settings.chromaticLensDistortionEnabled,
     ];
 
     // Count how many effects are currently enabled
@@ -1251,8 +1244,7 @@ export class RenderingControls {
     // Apply cinematic mode settings
     this.settings.detectorNoiseEnabled = shouldEnableAll;
     this.settings.vignetteEnabled = shouldEnableAll;
-    this.settings.chromaticAberrationEnabled = shouldEnableAll;
-    this.settings.lensDistortionEnabled = shouldEnableAll;
+    this.settings.chromaticLensDistortionEnabled = shouldEnableAll;
 
     // Set cinematic detector noise parameters when turning ON cinematic mode
     // Uses subtle physics-based noise for film-like look
@@ -1270,26 +1262,28 @@ export class RenderingControls {
     this.settings.fov = targetFOV;
     this.settings.fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
 
-    // Apply appropriate lens distortion preset when enabling lens distortion in cinematic mode
+    // Apply appropriate chromatic lens distortion preset based on cinematic mode
     if (shouldEnableAll) {
       const lensPreset = config.camera.lensDistortionPresets['35mm'];
-      this.settings.lensDistortionX = lensPreset.distortionX;
-      this.settings.lensDistortionY = lensPreset.distortionY;
-      this.settings.lensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.lensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.lensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.lensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.lensSkew = lensPreset.skew;
+      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
+      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
+      this.settings.chromaticLensDispersion = lensPreset.dispersion;
+      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
+      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
+      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
+      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
+      this.settings.chromaticLensSkew = lensPreset.skew;
     } else {
-      // Return to 50mm Normal lens distortion when disabling cinematic mode
+      // Return to 50mm Normal preset when disabling cinematic mode
       const lensPreset = config.camera.lensDistortionPresets['50mm Normal'];
-      this.settings.lensDistortionX = lensPreset.distortionX;
-      this.settings.lensDistortionY = lensPreset.distortionY;
-      this.settings.lensPrincipalPointX = lensPreset.principalPointX;
-      this.settings.lensPrincipalPointY = lensPreset.principalPointY;
-      this.settings.lensFocalLengthX = lensPreset.focalLengthX;
-      this.settings.lensFocalLengthY = lensPreset.focalLengthY;
-      this.settings.lensSkew = lensPreset.skew;
+      this.settings.chromaticLensDistortionX = lensPreset.distortionX;
+      this.settings.chromaticLensDistortionY = lensPreset.distortionY;
+      this.settings.chromaticLensDispersion = lensPreset.dispersion;
+      this.settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
+      this.settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
+      this.settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
+      this.settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
+      this.settings.chromaticLensSkew = lensPreset.skew;
     }
 
     // Apply the changes to post-processing using deferred rebuild to prevent multiple rebuilds
@@ -1308,20 +1302,16 @@ export class RenderingControls {
       this.settings.vignetteOffset
     );
 
-    this.postProcessing.setChromaticAberration(
-      this.settings.chromaticAberrationEnabled,
-      this.settings.chromaticAberrationStrength
-    );
-
-    this.postProcessing.setLensDistortionEnabled(
-      this.settings.lensDistortionEnabled,
-      this.settings.lensDistortionX,
-      this.settings.lensDistortionY,
-      this.settings.lensPrincipalPointX,
-      this.settings.lensPrincipalPointY,
-      this.settings.lensFocalLengthX,
-      this.settings.lensFocalLengthY,
-      this.settings.lensSkew
+    this.postProcessing.setChromaticLensDistortionEnabled(
+      this.settings.chromaticLensDistortionEnabled,
+      this.settings.chromaticLensDistortionX,
+      this.settings.chromaticLensDistortionY,
+      this.settings.chromaticLensDispersion,
+      this.settings.chromaticLensPrincipalPointX,
+      this.settings.chromaticLensPrincipalPointY,
+      this.settings.chromaticLensFocalLengthX,
+      this.settings.chromaticLensFocalLengthY,
+      this.settings.chromaticLensSkew
     );
 
     // End deferred mode and trigger single rebuild with all effects
@@ -1354,7 +1344,7 @@ export class RenderingControls {
     log.info(
       Modules.RENDERER,
       `Cinematic mode ${modeText}: detector noise=${shouldEnableAll}, vignette=${shouldEnableAll}, ` +
-        `chromatic aberration=${shouldEnableAll}, lens distortion=${shouldEnableAll}, FOV=${fovText}`
+        `chromatic lens distortion=${shouldEnableAll}, FOV=${fovText}`
     );
   }
 

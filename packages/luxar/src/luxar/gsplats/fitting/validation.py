@@ -38,7 +38,8 @@ def prepare_fit_config(
     movie_max_frames: Optional[int] = None,
     scheduler_type: str = "plateau",
     patience: int = 10,
-    factor: float = 0.5,
+    lr_reduction_factor: float = 0.5,
+    early_stop_patience: Optional[int] = None,
     dynamic_ops_verbose: bool = False,
     seed_method: str = "both",
     **seed_kwargs,
@@ -128,8 +129,10 @@ def prepare_fit_config(
         raise ValueError("gradient_clip must be positive if specified")
     if patience < 1:
         raise ValueError("patience must be >= 1")
-    if factor <= 0.0 or factor >= 1.0:
-        raise ValueError("factor must be in range (0, 1)")
+    if lr_reduction_factor <= 0.0 or lr_reduction_factor >= 1.0:
+        raise ValueError("lr_reduction_factor must be in range (0, 1)")
+    if early_stop_patience is not None and early_stop_patience < 1:
+        raise ValueError("early_stop_patience must be >= 1 if specified")
     if scheduler_type not in ["plateau", "exponential"]:
         raise ValueError("scheduler_type must be 'plateau' or 'exponential'")
     if truncate <= 0:
@@ -182,7 +185,8 @@ def prepare_fit_config(
         l1_sharpness=l1_sharpness,
         scheduler_type=scheduler_type,
         patience=patience,
-        factor=factor,
+        lr_reduction_factor=lr_reduction_factor,
+        early_stop_patience=early_stop_patience,
         enable_dynamic_ops=fitter.enable_dynamic_ops,
         dynamic_config=fitter.dynamic_config,
         dynamic_ops_verbose=dynamic_ops_verbose,

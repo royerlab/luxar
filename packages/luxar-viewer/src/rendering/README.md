@@ -323,23 +323,17 @@ Screen edge darkening:
 - Minimal performance cost
 - **Custom Implementation**: Uses `RobustVignetteEffect` to prevent alpha overflow artifacts with additive blending and Float16 HDR buffers
 
-#### Chromatic Aberration
+#### Chromatic Lens Distortion
 
-Lens color fringing effect:
+Physically accurate lens distortion with wavelength-dependent chromatic aberration:
 
-- RGB channel separation
-- Configurable strength
-- Cinematic look
-
-#### Lens Distortion
-
-Camera lens imperfection simulation:
-
-- Barrel/pincushion distortion effects
-- Principal point and focal length adjustment
-- Skew correction for non-square pixels
-- Simulates realistic camera optics
-- **Note**: Uses separate pass due to UV transformation incompatibility
+- **Combined effect**: Replaces separate lens distortion + chromatic aberration
+- **Wavelength-dependent distortion**: Blue refracts more than red (optical dispersion)
+- **Realistic chromatic fringing**: Follows lens geometry (stronger at edges)
+- Full camera model: Distortion, principal point, focal length, skew
+- Barrel/pincushion distortion for wide angle/telephoto simulation
+- **More efficient**: 3 texture samples in single pass vs separate effects
+- **Custom Implementation**: See `chromatic-lens-distortion-effect.ts`
 
 #### Detector Noise (Physics-Based)
 
@@ -421,7 +415,7 @@ HDR Render Target (HalfFloatType)
     ↓
 Dynamic Pass Assignment Algorithm:
 
-1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration → LensDistortion → DetectorNoise → ToneMapping → AA
+1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticLensDistortion → DetectorNoise → ToneMapping → AA
 2. Add effects sequentially to Pass A until incompatibility detected
 3. When incompatibility found, switch to Pass B for that effect and ALL remaining effects
 4. Pass A (if exists) → Pass B (if exists) → Final Output
@@ -433,7 +427,7 @@ Example Scenarios:
 │ ├── Vignette           │     │ └── Vignette                  │
 │ ├── Noise              │     │                               │
 │ └── Tone Mapping       │     │ Pass B:                       │
-│                        │     │ ├── Lens Distortion (UV)     │
+│                        │     │ ├── Chromatic Lens Dist (UV) │
 │ Final Output           │     │ ├── Noise                     │
 └────────────────────────┘     │ └── Tone Mapping             │
                                │                               │
@@ -446,7 +440,7 @@ Example Scenarios:
 The renderer automatically handles effect incompatibilities using a **sequential pass assignment algorithm**:
 
 1. **Sequential Processing**: Effects are processed in their correct visual order
-2. **Incompatibility Detection**: When UV transformation effects (LensDistortion) encounter convolution effects (ChromaticAberration) or vice versa, incompatibility is detected
+2. **Simplified Pipeline**: ChromaticLensDistortion combines UV transformation with chromatic effect, eliminating incompatibility issues
 3. **Pass Switching**: Upon incompatibility, all remaining effects (including the incompatible one) are moved to Pass B
 4. **Final Pass Logic**: Pass B always contains tone mapping when it exists, ensuring proper HDR→LDR conversion
 5. **Single vs Dual Pass**: If no incompatibilities exist, only Pass A is used; otherwise Pass A feeds into Pass B
@@ -537,7 +531,7 @@ postProcessing.setFXAAEnabled(true);
 // Add cinematic effects
 postProcessing.setDOF(true, 10.0, 0.5);
 postProcessing.setVignetteEnabled(true, 0.5, 0.5);
-postProcessing.setChromaticAberration(true, 0.15);
+postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
 ```
 
 ### Render Loop
@@ -672,9 +666,8 @@ function animate() {
 | `setAOEnabled(enabled, quality)`                          | Configure ambient occlusion                          |
 | `setDOF(enabled, focus, strength)`                        | Configure depth of field                             |
 | `setVignetteEnabled(enabled, darkness, offset)`           | Configure vignette                                   |
-| `setChromaticAberration(enabled, strength)`               | Configure chromatic aberration                       |
-| `setLensDistortionEnabled(enabled, ...params)`            | Configure lens distortion                            |
-| `updateLensDistortion(params)`                            | Update lens distortion params                        |
+| `setChromaticLensDistortionEnabled(enabled, ...params)`   | Configure chromatic lens distortion                  |
+| `updateChromaticLensDistortion(params)`                   | Update chromatic lens distortion params              |
 | `setQualityPreset(preset)`                                | Set quality preset: 'low', 'medium', 'high', 'ultra' |
 | `setBloomLevels(levels)`                                  | Set bloom mipmap levels (1-12)                       |
 | `setSSAAEnabled(enabled)`                                 | Toggle SSAA                                          |

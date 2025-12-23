@@ -220,6 +220,28 @@ result = fit_gaussian_splats(
 )
 ```
 
+### Controlling Seed Count
+
+The `seeds` parameter supports multiple input types for flexible control:
+
+```python
+# Option 1: Auto-generate (default)
+result = fit_gaussian_splats(image)  # ~1% of voxels
+
+# Option 2: Exact count (NEW!)
+result = fit_gaussian_splats(image, seeds=1000)  # Exactly 1000 splats
+# - Auto-generates with low threshold if needed
+# - Subsamples with spatial diversity + intensity if too many
+# - Grid fallback ensures target is reached
+
+# Option 3: Proportion of voxels
+result = fit_gaussian_splats(image, seeds=0.01)  # ~1% of voxels (hint)
+
+# Option 4: Explicit seed array
+custom_seeds = np.array([[10, 20], [30, 40]])  # (N, ndim)
+result = fit_gaussian_splats(image, seeds=custom_seeds)
+```
+
 ### Auto-Seed Generation Features
 
 - **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) detect features from fine details to large structures

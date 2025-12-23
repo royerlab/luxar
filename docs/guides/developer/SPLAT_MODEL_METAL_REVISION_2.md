@@ -697,3 +697,184 @@ If you see gradients exploding during training:
 3. This ensures the graph is 100% PyTorch-native, and Metal is just a "renderer" that takes `Conic` as input. **This is safer and likely fast enough**, as the  conversion is , which is negligible compared to .
 
 **I strongly recommend moving the `L -> Conic` conversion entirely to PyTorch before calling Metal.** It eliminates the biggest source of mathematical inconsistency.
+
+
+You are asking for the single most effective optimization for training performance.
+
+The "Atomic Contention" issue occurs because in a naive implementation, if a splat covers 1,000 pixels, 1,000 threads try to write to the same memory address (`d_amps[i]`) simultaneously. This serializes the GPU and kills performance.
+
+To solve this, we don't necessarily need a separate "Reduction Kernel." Instead, we use **Inline SIMD Reduction** (Warp-level reduction) within the backward kernel.
+
+### The Strategy: "SIMD Shuffle" Reduction
+
+On Apple M-series GPUs, threads execute in groups of 32 called **simdgroups** (warps).
+
+1. **Naive approach:** Every thread calculates a gradient and calls `atomic_add`. (64 writes per tile).
+2. **Optimized approach:**
+* Threads calculate their local gradient.
+* We use `simd_sum()` intrinsic to aggregate these gradients across the 32 threads in the simdgroup *instantly* in registers.
+* Only the **first thread** (lane 0) of the group performs the `atomic_add`.
+* **Result:** 32x reduction in memory traffic.
+
+
+
+Here is the replaced `rasterize_bwd_3d` kernel using SIMD reduction.
+
+### Updated `src/kernels.metal` (Backward Section)
+
+Replace your existing `rasterize_bwd_3d` with this optimized version.
+
+```cpp
+#include <metal_stdlib>
+#include <metal_atomic>
+#include <metal_simd> // REQUIRED for simd_sum
+using namespace metal;
+
+// ... (Keep existing helpers and forward kernels) ...
+
+// ==========================================
+// KERNEL 4: RASTERIZE BACKWARD (Optimized with SIMD Reduction)
+// ==========================================
+kernel void rasterize_bwd_3d(
+    device const float* grad_output [[buffer(0)]],
+    device const float* centers [[buffer(1)]],
+    device const float* conic [[buffer(2)]],
+    device const float* amps [[buffer(3)]],
+    device const float* sharpness [[buffer(4)]],
+    device const int* tile_offsets [[buffer(5)]],
+    device const int* tile_counts [[buffer(6)]],
+    device const int* tile_content [[buffer(7)]],
+    // Gradients Accumulators
+    device atomic_float* d_centers [[buffer(8)]],
+    device atomic_float* d_conic   [[buffer(9)]],
+    device atomic_float* d_amps    [[buffer(10)]],
+    device atomic_float* d_sharpness [[buffer(11)]],
+    
+    constant uint3& img_size [[buffer(12)]],
+    constant uint3& grid_dims [[buffer(13)]],
+    constant float& truncate_val [[buffer(14)]],
+    
+    uint3 gid [[thread_position_in_grid]],
+    uint3 group_id [[threadgroup_position_in_grid]],
+    uint simd_lane_id [[thread_index_in_simdgroup]] // 0..31
+) {
+    // 1. Load Gradient from Image (Coalesced Read)
+    // If out of bounds, we still participate in SIMD helper logic, but with value 0
+    bool active = (gid.x < img_size.x && gid.y < img_size.y && gid.z < img_size.z);
+    int pix_idx = gid.z*(img_size.x*img_size.y) + gid.y*img_size.x + gid.x;
+    float d_L_d_I = active ? grad_output[pix_idx] : 0.0f;
+
+    // Tile Info
+    uint tile_idx = group_id.z*(grid_dims.x*grid_dims.y) + group_id.y*grid_dims.x + group_id.x;
+    int count = tile_counts[tile_idx];
+    int start = tile_offsets[tile_idx];
+    float trunc_sq = truncate_val * truncate_val;
+    float3 px = float3(gid);
+
+    // Loop over splats in tile (Uniform control flow for the whole simdgroup)
+    for (int i = 0; i < count; i++) {
+        int id = tile_content[start + i];
+        
+        // --- A. Compute Local Gradients (Per Thread) ---
+        // Initialize local gradients to 0
+        float val_amps = 0.0f;
+        float val_sharpness = 0.0f;
+        float3 val_centers = 0.0f;
+        float val_conic[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        
+        // Only do math if pixel is valid AND gradient is non-zero
+        if (active && abs(d_L_d_I) > 1e-9f) {
+             float3 c = { centers[id*3], centers[id*3+1], centers[id*3+2] };
+             float3 d = px - c;
+             int cb = id * 6;
+             
+             // Pre-load conic to registers (shared by all threads ideally, but L1 handles it)
+             float c0=conic[cb+0]; float c1=conic[cb+1]; float c2=conic[cb+2];
+             float c3=conic[cb+3]; float c4=conic[cb+4]; float c5=conic[cb+5];
+
+             float dist_sq = d.x*d.x*c0 + d.y*d.y*c3 + d.z*d.z*c5
+                           + 2.0f*(d.x*d.y*c1 + d.x*d.z*c2 + d.y*d.z*c4);
+
+             if (dist_sq <= trunc_sq) {
+                 float s = sharpness[id];
+                 float a = amps[id];
+                 float half_s = s * 0.5f;
+                 float inner = -0.5f * pow(dist_sq, half_s);
+                 float exp_val = exp(inner);
+                 float intensity = a * exp_val;
+                 float d_common = intensity * d_L_d_I;
+
+                 // 1. Amp
+                 val_amps = exp_val * d_L_d_I;
+
+                 // 2. Sharpness
+                 // Safe log: clamp to epsilon
+                 val_sharpness = d_common * inner * 0.5f * log(max(dist_sq, 1e-9f));
+
+                 // 3. Center
+                 float d_inner_d_D2 = -0.25f * s * pow(max(dist_sq, 1e-9f), half_s - 1.0f);
+                 float grad_dist = d_common * d_inner_d_D2; // scalar
+
+                 float3 d_D2_d_d; 
+                 d_D2_d_d.x = 2.0f*(d.x*c0 + d.y*c1 + d.z*c2);
+                 d_D2_d_d.y = 2.0f*(d.x*c1 + d.y*c3 + d.z*c4);
+                 d_D2_d_d.z = 2.0f*(d.x*c2 + d.y*c4 + d.z*c5);
+                 
+                 val_centers = grad_dist * d_D2_d_d * -1.0f;
+
+                 // 4. Conic
+                 val_conic[0] = grad_dist * d.x * d.x;
+                 val_conic[1] = grad_dist * 2.0f * d.x * d.y;
+                 val_conic[2] = grad_dist * 2.0f * d.x * d.z;
+                 val_conic[3] = grad_dist * d.y * d.y;
+                 val_conic[4] = grad_dist * 2.0f * d.y * d.z;
+                 val_conic[5] = grad_dist * d.z * d.z;
+             }
+        }
+
+        // --- B. SIMD Reduction (The Optimization) ---
+        // Sum values across all 32 threads in the warp
+        
+        float sum_amps = simd_sum(val_amps);
+        float sum_sharp = simd_sum(val_sharpness);
+        float3 sum_centers;
+        sum_centers.x = simd_sum(val_centers.x);
+        sum_centers.y = simd_sum(val_centers.y);
+        sum_centers.z = simd_sum(val_centers.z);
+        
+        // Reduce Conic array
+        float sum_conic[6];
+        for(int k=0; k<6; ++k) sum_conic[k] = simd_sum(val_conic[k]);
+
+        // --- C. Leader Writes to Global Memory ---
+        // Only the first active thread in the SIMD group writes
+        if (simd_lane_id == 0) {
+            // Note: If you have 64 threads per threadgroup (4x4x4 tile),
+            // there are 2 simdgroups. This atomic_add happens TWICE per tile,
+            // which is still a 32x improvement over 64 writes.
+            
+            // Check for non-zero contribution to avoid useless locks
+            if (abs(sum_amps) > 1e-12f) atomic_add_float(&d_amps[id], sum_amps);
+            if (abs(sum_sharp) > 1e-12f) atomic_add_float(&d_sharpness[id], sum_sharp);
+            
+            atomic_add_float(&d_centers[id*3+0], sum_centers.x);
+            atomic_add_float(&d_centers[id*3+1], sum_centers.y);
+            atomic_add_float(&d_centers[id*3+2], sum_centers.z);
+
+            int cb = id * 6;
+            for(int k=0; k<6; ++k) {
+                if(abs(sum_conic[k]) > 1e-12f) atomic_add_float(&d_conic[cb+k], sum_conic[k]);
+            }
+        }
+    }
+}
+
+```
+
+### Why this is faster
+
+1. **Registers vs Global Memory:** `simd_sum` happens entirely in GPU registers (fastest memory possible) using shuffle instructions.
+2. **Contention Drop:** Instead of 64 threads hammering the atomic lock for `d_amps[id]`, only 2 threads (one per simdgroup) do it.
+3. **Coalescing:** The read from `grad_output` remains fully coalesced (efficient), unlike "Splat-Centric" approaches that scatter reads.
+
+This approach is the industry standard for implementing "scatter-add" logic on GPUs without writing complex multi-stage reduction pipelines.

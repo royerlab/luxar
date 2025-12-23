@@ -83,6 +83,7 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
             truncate=TRUNCATE_SIG,
             device=DEVICE,
             verbose=True,
+            lr_reduction_factor=0.95,
             # Dynamic operations
             enable_dynamic_ops=True,
             dynamic_config=dynamic_config,

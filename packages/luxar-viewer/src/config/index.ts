@@ -33,6 +33,7 @@ export const config: AppConfig = {
     },
     // Lens distortion presets matching realistic lens characteristics for each focal length
     // Negative distortion = barrel (wide angle), positive = pincushion (telephoto)
+    // Dispersion values simulate chromatic aberration (wavelength-dependent refraction)
     lensDistortionPresets: {
       '28mm Wide': {
         distortionX: -0.07,
@@ -42,6 +43,7 @@ export const config: AppConfig = {
         focalLengthX: 1.075,
         focalLengthY: 1.08, // Focal length values from your screenshot
         skew: 0, // No skew (perfect optics)
+        dispersion: 0.05, // Wide angle = more chromatic aberration (higher light bending angles)
       },
       '35mm': {
         distortionX: -0.05,
@@ -51,6 +53,7 @@ export const config: AppConfig = {
         focalLengthX: 1.054,
         focalLengthY: 1.055, // Focal length values from your screenshot
         skew: 0,
+        dispersion: 0.035, // Moderate chromatic aberration
       },
       '50mm Normal': {
         distortionX: 0,
@@ -60,6 +63,7 @@ export const config: AppConfig = {
         focalLengthX: 1,
         focalLengthY: 1,
         skew: 0,
+        dispersion: 0.02, // Minimal chromatic aberration (normal focal length)
       },
       '85mm Portrait': {
         distortionX: 0.05,
@@ -69,6 +73,7 @@ export const config: AppConfig = {
         focalLengthX: 0.91,
         focalLengthY: 0.91, // Slight compression (opposite of wide angle expansion)
         skew: 0,
+        dispersion: 0.025, // Low chromatic aberration (longer focal length = less bending)
       },
       '135mm Tele': {
         distortionX: 0.07,
@@ -78,6 +83,7 @@ export const config: AppConfig = {
         focalLengthX: 0.882,
         focalLengthY: 0.883, // Focal length values from your screenshot
         skew: 0,
+        dispersion: 0.03, // Telephoto with some chromatic aberration at edges
       },
     },
   },
@@ -265,8 +271,6 @@ export const config: AppConfig = {
       dofEnabled: false, // Depth of field disabled by default
       dofFocus: 10, // DOF focus distance
       dofStrength: 0.5, // DOF blur strength (0-1)
-      chromaticAberrationEnabled: false, // Chromatic aberration disabled by default
-      chromaticAberrationStrength: 0.15, // Chromatic aberration strength - default as shown
       // New pmndrs effects
       aoEnabled: false, // Ambient occlusion disabled by default
       aoQuality: 'medium' as const, // AO quality level
@@ -278,15 +282,16 @@ export const config: AppConfig = {
       detectorNoiseReadoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
       detectorNoisePhotonGain: 0.002, // Photon gain for shot noise visibility (0.0001-0.1)
       detectorNoiseFpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
-      // Lens distortion effect settings
-      lensDistortionEnabled: false, // Lens distortion disabled by default
-      lensDistortionX: -0.04, // Radial distortion coefficient X (subtle barrel distortion)
-      lensDistortionY: -0.04, // Radial distortion coefficient Y (subtle barrel distortion)
-      lensPrincipalPointX: 0, // Principal point offset X (default: centered)
-      lensPrincipalPointY: 0, // Principal point offset Y (default: centered)
-      lensFocalLengthX: 1.045, // Focal length X (slight telephoto effect)
-      lensFocalLengthY: 1.045, // Focal length Y (slight telephoto effect)
-      lensSkew: 0, // Skew in radians (default: no skew)
+      // Chromatic lens distortion effect settings (replaces old separate lens distortion + chromatic aberration)
+      chromaticLensDistortionEnabled: false, // Chromatic lens distortion disabled by default
+      chromaticLensDistortionX: 0, // Radial distortion coefficient X (50mm Normal: no distortion)
+      chromaticLensDistortionY: 0, // Radial distortion coefficient Y (50mm Normal: no distortion)
+      chromaticLensDispersion: 0.02, // Chromatic dispersion strength (50mm Normal: minimal)
+      chromaticLensPrincipalPointX: 0, // Principal point offset X
+      chromaticLensPrincipalPointY: 0, // Principal point offset Y
+      chromaticLensFocalLengthX: 1.0, // Focal length X (50mm Normal: neutral)
+      chromaticLensFocalLengthY: 1.0, // Focal length Y (50mm Normal: neutral)
+      chromaticLensSkew: 0, // Skew in radians
       // Navigation controls
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
