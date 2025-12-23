@@ -14,6 +14,7 @@ export async function waitForLuxarReady(page: Page, timeout = 45000): Promise<vo
       const debug = (window as any).__luxarDebug;
       return debug && debug.getState && debug.getState().initialized;
     },
+    null, // no arguments to pass to the pageFunction
     { timeout }
   );
 }

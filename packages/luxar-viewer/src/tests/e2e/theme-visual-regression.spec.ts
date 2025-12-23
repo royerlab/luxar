@@ -20,7 +20,7 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
   // Wait for data-theme attribute to be set
   await page.waitForFunction(
     (theme) => document.documentElement.getAttribute('data-theme') === theme,
-    themeId,
+    themeId, // pass theme as argument
     { timeout: 2000 }
   );
 
@@ -87,6 +87,7 @@ for (const theme of THEMES) {
         const debug = (window as any).__luxarDebug;
         return debug && debug.getState && debug.getState().initialized;
       },
+      null, // no arguments
       { timeout: 45000 }
     );
 
@@ -117,6 +118,7 @@ for (const theme of THEMES) {
         const debug = (window as any).__luxarDebug;
         return debug && debug.getState && debug.getState().initialized;
       },
+      null, // no arguments
       { timeout: 45000 }
     );
 
@@ -150,6 +152,7 @@ for (const theme of THEMES) {
         const debug = (window as any).__luxarDebug;
         return debug && debug.getState && debug.getState().initialized;
       },
+      null, // no arguments
       { timeout: 45000 }
     );
 

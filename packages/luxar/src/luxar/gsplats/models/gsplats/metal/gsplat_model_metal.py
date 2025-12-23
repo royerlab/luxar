@@ -312,12 +312,15 @@ class MetalSplatFunction(torch.autograd.Function):
                 print("\n" + "=" * 80)
                 print("DEBUG: RAW METAL BACKWARD OUTPUT")
                 print("=" * 80)
-                print(f"d_centers shape: {d_centers.shape}")
+                print(f"grad_output shape: {grad_output.shape}")
+                print(f"grad_output sum: {grad_output.sum().item():.6f}")
+                print(f"\nd_centers shape: {d_centers.shape}")
                 print(f"d_centers (first 3 splats):")
                 for i in range(min(3, d_centers.shape[0])):
                     dc = d_centers[i].cpu().numpy() if d_centers.device.type == 'mps' else d_centers[i].numpy()
                     print(f"  Splat {i}: [Z={dc[0]:.6e}, Y={dc[1]:.6e}, X={dc[2]:.6e}]")
-                print(f"\nIf Y gradient is already wrong here, bug is in METAL.")
+                print(f"\nPython reference expects: [Z=2.707e-01, Y=-6.601e-08, X=-1.346e-07]")
+                print(f"If Y gradient is already wrong here, bug is in METAL.")
                 print(f"If Y gradient is correct here, bug is in PYTHON chain rule below.")
                 print("=" * 80 + "\n")
             # === END DEBUG PROBE ===
