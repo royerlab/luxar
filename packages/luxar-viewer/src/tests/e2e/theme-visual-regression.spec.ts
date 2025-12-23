@@ -75,9 +75,9 @@ for (const theme of THEMES) {
  */
 for (const theme of THEMES) {
   test(`dimension sliders - ${theme} theme`, async ({ page }) => {
-    // Use a 4D dataset to ensure dimension sliders appear
+    // Use a 4D dataset to ensure dimension sliders appear (use local for speed)
     const testDataUrl =
-      'https://public.czbiohub.org/royerlab/zoo/demos/nucleus_4d_cropped_t10_c2_small.zarr';
+      'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
@@ -107,7 +107,7 @@ for (const theme of THEMES) {
 for (const theme of THEMES) {
   test(`data monitor mini - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
-      'https://public.czbiohub.org/royerlab/zoo/demos/nucleus_4d_cropped_t10_c2_small.zarr';
+      'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
@@ -140,7 +140,7 @@ for (const theme of THEMES) {
 for (const theme of THEMES) {
   test(`data monitor expanded - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
-      'https://public.czbiohub.org/royerlab/zoo/demos/nucleus_4d_cropped_t10_c2_small.zarr';
+      'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
@@ -174,7 +174,9 @@ for (const theme of THEMES) {
  */
 for (const theme of THEMES) {
   test(`debug console - ${theme} theme`, async ({ page }) => {
-    await page.goto(`/?theme=${theme}&debug`);
+    const testDataUrl =
+      'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
+    await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
     // Trigger debug console with Ctrl+L
@@ -211,7 +213,9 @@ for (const theme of THEMES) {
  * Test theme switching behavior
  */
 test('theme switching updates all CSS variables', async ({ page }) => {
-  await page.goto('/?debug');
+  const testDataUrl =
+    'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
+  await page.goto(`/?src=${testDataUrl}&debug`);
 
   // Check dark theme variables
   await page.evaluate(() => {
@@ -270,8 +274,10 @@ test('theme switching updates all CSS variables', async ({ page }) => {
  * Test theme persistence across page reloads
  */
 test('theme persists across page reloads', async ({ page }) => {
-  // Set light theme
-  await page.goto('/?debug');
+  // Set light theme (use dataset to avoid browser dialog)
+  const testDataUrl =
+    'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
+  await page.goto(`/?src=${testDataUrl}&debug`);
 
   await page.evaluate(() => {
     const themeManager = (window as any).ThemeManager?.getInstance?.();

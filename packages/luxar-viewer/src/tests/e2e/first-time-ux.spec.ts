@@ -164,10 +164,9 @@ test.describe('First-Time User Experience', () => {
 
     // Close with Escape key
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(500);
 
-    const stillVisible = await browser.isVisible().catch(() => false);
-    expect(stillVisible).toBe(false);
+    // Wait for browser to close
+    await expect(browser).toBeHidden({ timeout: 2000 });
   });
 
   test('should provide helpful guidance without specific URLs', async ({ page }) => {
