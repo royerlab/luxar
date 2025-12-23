@@ -2,19 +2,21 @@
  * GSplat Material for Luxar
  *
  * Specialized THREE.ShaderMaterial for rendering Gaussian splats using instanced quads.
- * Implements volumetric ray integration with oriented, anisotropic Gaussian density functions.
+ * Implements projection-aware volumetric rendering with oriented, anisotropic Gaussian density functions.
  *
  * Key features:
  * - Instanced oriented quad geometry (4 vertices per splat)
  * - Full 3D covariance via Cholesky factors
  * - Perspective-correct projection of covariance to 2D
- * - Ray-integrated amplitude boost (volumetric rendering)
+ * - Blending-mode-aware projection (sum for additive/normal, max for max blending)
+ * - Branchless shader implementation (GPU-optimized)
  * - Generalized Gaussian falloff: exp(-½ · r^sharpness)
  * - Per-splat attributes (center, cholesky, amplitude, sharpness, color)
  *
  * Mathematical basis:
  * - GSplat density: G(x) = a · exp(-½ · ‖L⁻¹(x - μ)‖^s)
- * - Ray integration boosts amplitude by σ_ray · c(s)
+ * - Sum projection: amplitude boost by σ_ray · c(s) (ray integration)
+ * - Max projection: amplitude = a (peak value, no integration)
  * - 2D covariance: Σ_2D = J · Σ_cam · Jᵀ (perspective Jacobian projection)
  *
  * @module rendering/gsplat-material
@@ -54,6 +56,8 @@ export interface GSplatMaterialUniforms {
   uHDRMultiplier: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
+  /** Projection mode: 0=sum (additive/normal), 1=max (max blending) */
+  uProjectionMode: { value: number };
 }
 
 /**

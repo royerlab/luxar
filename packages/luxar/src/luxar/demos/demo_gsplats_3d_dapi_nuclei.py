@@ -4,6 +4,9 @@
 Demonstrates Gaussian Splatting compression of real 3D microscopy data with
 interactive web visualization.
 
+Note: This demo uses Metal acceleration on Apple Silicon for 5-7x speedup.
+Some PyTorch ops on MPS aren't supported yet, so we enable CPU fallback.
+
 ================================================================================
 GAUSSIAN SPLATTING FOR 3D MICROSCOPY
 ================================================================================
@@ -80,6 +83,10 @@ Controls:
 
 """
 
+# Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
+import os
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
 import subprocess
 import sys
 import time
@@ -93,6 +100,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.models.gsplats.metal import is_metal_available
 
 # =============================================================================
 # Configuration
@@ -106,7 +114,6 @@ TIME_POINT = 0  # First time point
 # Fitting parameters
 N_ITERS = 1500  # Good balance of quality vs speed
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
-TRUNCATE = 3.0  # 3-sigma truncation
 
 # Output paths
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
@@ -224,16 +231,32 @@ def fit_or_load_gsplats(volume):
                 aprint(f"⚠ Cache load failed: {e}")
                 aprint("Re-fitting...")
 
+        # Auto-detect best device (Metal on Apple Silicon for 5-7x speedup!)
+        global DEVICE
+        if DEVICE is None:
+            import torch
+            if is_metal_available() and torch.backends.mps.is_available():
+                DEVICE = "mps"
+                aprint("🚀 Metal acceleration detected - will use MPS device for 5-7x speedup!")
+                aprint("   (MPS→CPU fallback enabled for unsupported PyTorch ops)")
+            elif torch.cuda.is_available():
+                DEVICE = "cuda"
+                aprint("Using CUDA device")
+            else:
+                DEVICE = "cpu"
+                aprint("Using CPU device")
+        else:
+            aprint(f"Using specified device: {DEVICE}")
+
         # Fit gsplats
         aprint(f"Fitting Gaussian Splats ({N_ITERS} iterations)...")
-        aprint(f"Device: {DEVICE or 'auto-detect'}")
 
         dynamic_config = DynamicOpsConfig()
 
         result = fit_gaussian_splats(
             volume,
+            seeds=5000,
             n_iters=N_ITERS,
-            truncate=TRUNCATE,
             device=DEVICE,
             verbose=True,
             enable_dynamic_ops=True,

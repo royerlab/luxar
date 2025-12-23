@@ -98,9 +98,11 @@ def run_optimization_loop(
     best_max_abs_error = float("inf")
     best_state = None
     best_iteration = 0
+    iterations_since_improvement = 0  # Track patience for early stopping
 
     # Main optimization loop
     converged_early = False
+    early_stopped = False
     actual_iters = 0
     for it in range(1, config.n_iters + 1):
         actual_iters = it
@@ -146,6 +148,7 @@ def run_optimization_loop(
 
                 best_max_abs_error = current_max_abs_error
                 best_iteration = it
+                iterations_since_improvement = 0  # Reset patience counter
 
                 # Save current best state (deep copy to avoid mutations)
                 centers, Ls, amps, sharpness = model.current_params()
@@ -166,6 +169,9 @@ def run_optimization_loop(
                     aprint(
                         f"    ★ New best state: iteration {it}, max_abs_error={current_max_abs_error:.6f}"
                     )
+            else:
+                # No improvement this iteration
+                iterations_since_improvement += 1
 
             # Check for convergence
             if current_max_abs_error < preprocessed_data.max_abs_error:
@@ -176,6 +182,22 @@ def run_optimization_loop(
                         f"  Max absolute error: {current_max_abs_error:.6f} < threshold: {preprocessed_data.max_abs_error:.6f}"
                     )
                 break
+
+            # Check for early stopping (patience-based)
+            if config.early_stop_patience is not None:
+                if iterations_since_improvement >= config.early_stop_patience:
+                    early_stopped = True
+                    if config.verbose:
+                        aprint(f"⏹ EARLY STOPPING at iteration {it}")
+                        aprint(
+                            f"  No improvement for {iterations_since_improvement} iterations "
+                            f"(patience: {config.early_stop_patience})"
+                        )
+                        aprint(
+                            f"  Best state from iteration {best_iteration}: "
+                            f"max_abs_error={best_max_abs_error:.6f}"
+                        )
+                    break
 
         # Dynamic operations (seeding and pruning)
         if config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0:
@@ -212,6 +234,15 @@ def run_optimization_loop(
     if config.verbose:
         if converged_early:
             aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
+        elif early_stopped:
+            aprint("⏹ Optimization terminated: EARLY STOPPING (no improvement)")
+            aprint(
+                f"  No improvement for {config.early_stop_patience} iterations"
+            )
+            aprint(
+                f"  Best state from iteration {best_iteration}: "
+                f"max_abs_error={best_max_abs_error:.6f}"
+            )
         else:
             aprint("⚠ Optimization terminated: ITERATION LIMIT REACHED")
             aprint(

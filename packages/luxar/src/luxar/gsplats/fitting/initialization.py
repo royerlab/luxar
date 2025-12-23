@@ -55,17 +55,57 @@ def initialize_optimization(
     )
     amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
 
-    # Build model
-    model = GaussianSplatModel(
-        shape=config.V.shape,
-        centers0=preprocessed_data.seed_centers,
-        L0=L0,
-        amps0=amps0,
-        sigma_min_diag=config.sigma_min_diag,
-        sigma_max_diag=config.sigma_max_diag,
-        truncate=config.truncate,
-        device=config.device,
+    # Build model - use Metal acceleration when available
+    use_metal = (
+        config.use_metal
+        and d == 3  # Metal ONLY for 3D (overhead > benefit for 2D)
+        and config.device.type == "mps"  # Requires MPS device
     )
+
+    if use_metal:
+        # Try to use Metal-accelerated model
+        try:
+            from luxar.gsplats.models.gsplats.metal import (
+                GaussianSplatModelMetal,
+                is_metal_available,
+            )
+
+            if is_metal_available():
+                model = GaussianSplatModelMetal(
+                    shape=config.V.shape,
+                    centers0=preprocessed_data.seed_centers,
+                    L0=L0,
+                    amps0=amps0,
+                    sigma_min_diag=config.sigma_min_diag,
+                    sigma_max_diag=config.sigma_max_diag,
+                    truncate=config.truncate,
+                    intensity_floor=config.metal_intensity_floor,
+                    tile_size=config.metal_tile_size,  # Configurable tile size
+                    device=config.device,
+                )
+                if config.verbose:
+                    from arbol import aprint
+
+                    aprint("Using Metal-accelerated model (3-7x faster on Apple Silicon)")
+            else:
+                # Metal not available, fall back
+                use_metal = False
+        except ImportError:
+            # Metal backend not installed
+            use_metal = False
+
+    if not use_metal:
+        # Standard PyTorch model
+        model = GaussianSplatModel(
+            shape=config.V.shape,
+            centers0=preprocessed_data.seed_centers,
+            L0=L0,
+            amps0=amps0,
+            sigma_min_diag=config.sigma_min_diag,
+            sigma_max_diag=config.sigma_max_diag,
+            truncate=config.truncate,
+            device=config.device,
+        )
 
     # Setup per-splat optimizer
     # Note: Gradient dilution compensation is handled internally by the optimizer
@@ -74,7 +114,7 @@ def initialize_optimization(
         lr=config.lr,  # Base learning rate (optimizer handles gradient dilution internally)
         scheduler_type=config.scheduler_type,
         patience=config.patience,
-        factor=config.factor,
+        lr_reduction_factor=config.lr_reduction_factor,
     )
 
     return ModelComponents(

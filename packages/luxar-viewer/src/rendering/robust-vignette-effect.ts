@@ -25,11 +25,16 @@ const fragmentShader = /* glsl */ `
     const vec2 center = vec2(0.5);
     vec3 color = inputColor.rgb;
 
-    // Calculate vignette factor using pmndrs DEFAULT technique
-    float d = distance(uv, center);
-    float vignetteFactor = smoothstep(0.8, offset * 0.799, d * (darkness + offset));
+    // Calculate vignette darkening factor
+    // Use squared distance from center for smooth falloff
+    vec2 coord = (uv - center) / offset; // offset controls size (smaller = tighter vignette)
+    float dist2 = dot(coord, coord);
 
-    // Apply vignette darkening
+    // Create smooth darkening that goes to 0 at edges
+    // darkness controls intensity, offset controls size
+    float vignetteFactor = 1.0 - smoothstep(0.0, 1.5, dist2) * darkness;
+
+    // Apply multiplicative darkening (preserves color ratios, doesn't shift toward gray)
     color *= vignetteFactor;
 
     // FIX: Force alpha to 1.0

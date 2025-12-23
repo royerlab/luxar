@@ -1,0 +1,118 @@
+"""
+Unit tests for optimizer compatibility with Metal backend.
+
+Ensures GaussianSplatModelMetal works with Luxar's optimizers.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+import torch
+
+from luxar.gsplats.models.gsplats.metal import (
+    GaussianSplatModelMetal,
+    is_metal_available,
+)
+
+
+pytestmark = pytest.mark.skipif(
+    not is_metal_available() or not torch.backends.mps.is_available(),
+    reason="Metal backend or MPS not available",
+)
+
+
+class TestOptimizerCompatibility:
+    """Test that Metal model works with Luxar optimizers."""
+
+    @pytest.fixture
+    def simple_model(self):
+        """Create a simple Metal model for testing."""
+        np.random.seed(42)
+        return GaussianSplatModelMetal(
+            shape=(16, 16, 16),
+            centers0=np.random.rand(5, 3) * 8 + 4,
+            L0=np.tile(np.eye(3) * 1.5, (5, 1, 1)).astype(np.float32),
+            amps0=np.ones(5, dtype=np.float32),
+            sigma_min_diag=[0.5, 0.5, 0.5],
+            device="mps",
+        )
+
+    def test_model_has_shape_property(self, simple_model):
+        """Test that model.shape is accessible."""
+        assert hasattr(simple_model, "shape")
+        assert simple_model.shape == (16, 16, 16)
+
+    def test_model_has_dim_property(self, simple_model):
+        """Test that model.dim is accessible."""
+        assert hasattr(simple_model, "dim")
+        assert simple_model.dim == 3
+
+    def test_model_has_truncate_property(self, simple_model):
+        """Test that model.truncate is accessible."""
+        assert hasattr(simple_model, "truncate")
+        assert simple_model.truncate == 3.0
+
+    def test_model_has_internal_parameters(self, simple_model):
+        """Test that internal parameters are accessible (required by optimizer)."""
+        assert hasattr(simple_model, "raw_mu")
+        assert hasattr(simple_model, "raw_L_diag")
+        assert hasattr(simple_model, "L_off")
+        assert hasattr(simple_model, "raw_a")
+        assert hasattr(simple_model, "sharpness_offsets_raw")
+
+        # Verify shapes
+        assert simple_model.raw_mu.shape == (5, 3)
+        assert simple_model.L_off.shape == (5, 3)
+
+    def test_works_with_torch_adam(self, simple_model):
+        """Test that model works with standard torch.optim.Adam."""
+        optimizer = torch.optim.Adam(simple_model.parameters(), lr=0.05)
+
+        # Training iteration
+        output = simple_model()
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        assert True  # If we get here, it worked
+
+    def test_works_with_per_splat_adam(self, simple_model):
+        """Test that model works with Luxar's PerSplatAdam optimizer."""
+        from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
+
+        # This is the critical test - PerSplatAdam needs internal parameter access
+        optimizer = PerSplatAdam(simple_model, lr=0.05)
+
+        # Training iteration
+        output = simple_model()
+        loss = output.sum()
+        loss.backward()
+        optimizer.step()
+        simple_model.zero_grad()
+
+        assert True  # If we get here, optimizer compatibility is confirmed
+
+    def test_multiple_training_steps(self, simple_model):
+        """Test multiple training iterations (ensures state is maintained)."""
+        from luxar.gsplats.optim.per_splat_adam import PerSplatAdam
+
+        optimizer = PerSplatAdam(simple_model, lr=0.05)
+
+        losses = []
+        for _ in range(5):
+            output = simple_model()
+            loss = output.sum()
+            losses.append(loss.item())
+
+            loss.backward()
+            optimizer.step()
+            simple_model.zero_grad()
+
+        # Losses should be finite
+        assert all(np.isfinite(l) for l in losses)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

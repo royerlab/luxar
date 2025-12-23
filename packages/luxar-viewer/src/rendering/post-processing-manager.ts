@@ -16,14 +16,16 @@ import {
   SMAAEffect,
   SMAAPreset,
   FXAAEffect,
-  ChromaticAberrationEffect,
   SSAOEffect,
-  LensDistortionEffect,
   KernelSize,
   BlendFunction,
 } from 'postprocessing';
 import { DetectorNoiseEffect, isDetectorNoiseEffect } from './detector-noise-effect';
 import { RobustVignetteEffect, isRobustVignetteEffect } from './robust-vignette-effect';
+import {
+  ChromaticLensDistortionEffect,
+  isChromaticLensDistortionEffect,
+} from './chromatic-lens-distortion-effect';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -31,14 +33,10 @@ import {
   BloomEffectTyped,
   ToneMappingEffectTyped,
   DepthOfFieldEffectTyped,
-  ChromaticAberrationEffectTyped,
-  LensDistortionEffectTyped,
   PerspectiveDepthMapper,
   isBloomEffectTyped,
   isToneMappingEffectTyped,
   isDepthOfFieldEffectTyped,
-  isChromaticAberrationEffectTyped,
-  isLensDistortionEffectTyped,
 } from './postprocessing-types';
 
 /**
@@ -85,9 +83,8 @@ export class PostProcessingManager {
   private fxaaEffect?: FXAAEffect;
   private aoEffect?: SSAOEffect;
   private vignetteEffect?: RobustVignetteEffect;
-  private chromaticEffect?: ChromaticAberrationEffectTyped;
   private detectorNoiseEffect?: DetectorNoiseEffect;
-  private lensDistortionEffect?: LensDistortionEffectTyped;
+  private chromaticLensDistortionEffect?: ChromaticLensDistortionEffect;
 
   // State tracking
   private fxaaEnabled: boolean = false;
@@ -251,7 +248,7 @@ export class PostProcessingManager {
    * postProcessing.startDeferRebuild();
    * postProcessing.updateBloomSettings(1.5);
    * postProcessing.setVignetteEnabled(true);
-   * postProcessing.setChromaticAberration(true);
+   * postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
    * postProcessing.endDeferRebuild();  // Single rebuild
    * ```
    */
@@ -322,20 +319,37 @@ export class PostProcessingManager {
     const orderedEffects: { effect: any; name: string }[] = [];
 
     // Build ordered list of active effects - CORRECT ORDER per user requirements
+    // HDR effects (before tone mapping)
     if (this.bloomEffect) orderedEffects.push({ effect: this.bloomEffect, name: 'Bloom' });
     if (this.dofEffect) orderedEffects.push({ effect: this.dofEffect, name: 'DOF' });
     if (this.aoEffect) orderedEffects.push({ effect: this.aoEffect, name: 'AO' });
-    if (this.vignetteEffect) orderedEffects.push({ effect: this.vignetteEffect, name: 'Vignette' });
-    if (this.chromaticEffect)
-      orderedEffects.push({ effect: this.chromaticEffect, name: 'ChromaticAberration' });
-    if (this.lensDistortionEffect)
-      orderedEffects.push({ effect: this.lensDistortionEffect, name: 'LensDistortion' });
+
+    // Chromatic Lens Distortion: Combined effect with wavelength-dependent distortion
+    // Physically accurate chromatic aberration that follows lens geometry
+    if (this.chromaticLensDistortionEffect) {
+      orderedEffects.push({
+        effect: this.chromaticLensDistortionEffect,
+        name: 'ChromaticLensDistortion',
+      });
+    }
+
     // Detector noise comes AFTER lens distortion and chromatic aberration but before tone mapping
     if (this.detectorNoiseEffect)
       orderedEffects.push({ effect: this.detectorNoiseEffect, name: 'DetectorNoise' });
 
-    // Always add tone mapping and AA at the end
+    // Tone mapping (HDR → LDR conversion)
     orderedEffects.push({ effect: this.toneMappingEffect, name: 'ToneMapping' });
+
+    // LDR effects (after tone mapping) - pmndrs v7 requires vignette after tone mapping
+    if (this.vignetteEffect) {
+      orderedEffects.push({ effect: this.vignetteEffect, name: 'Vignette' });
+      log.info(
+        Modules.POST_PROCESSING,
+        `Vignette added to effects (after tone mapping) - darkness=${this.vignetteEffect.darkness}, offset=${this.vignetteEffect.offset}`
+      );
+    }
+
+    // Anti-aliasing always last
     if (this.smaaEnabled && this.smaaEffect)
       orderedEffects.push({ effect: this.smaaEffect, name: 'SMAA' });
     else if (this.fxaaEnabled && this.fxaaEffect)
@@ -350,11 +364,12 @@ export class PostProcessingManager {
 
     // Known incompatibility rules based on pmndrs documentation
     const isUVTransformEffect = (name: string): boolean => {
-      return name === 'LensDistortion'; // UV transformation effects
+      return name === 'ChromaticLensDistortion'; // UV transformation effects
     };
 
-    const isConvolutionEffect = (name: string): boolean => {
-      return name === 'ChromaticAberration'; // Convolution effects
+    const isConvolutionEffect = (_name: string): boolean => {
+      // No convolution effects currently used (ChromaticLensDistortion is UV-based)
+      return false;
     };
 
     for (const { effect, name } of orderedEffects) {
@@ -693,46 +708,6 @@ export class PostProcessingManager {
   }
 
   /**
-   * Sets chromatic aberration effect with proper typing
-   */
-  setChromaticAberration(enabled: boolean, strength?: number): void {
-    if (enabled && !this.chromaticEffect) {
-      const offset = (strength ?? 0.5) * 0.002;
-      this.chromaticEffect = new ChromaticAberrationEffect({
-        offset: new THREE.Vector2(offset, offset),
-        radialModulation: false,
-        modulationOffset: 0,
-      }) as ChromaticAberrationEffectTyped;
-      this.rebuildEffectPass();
-      log.info(Modules.POST_PROCESSING, `Chromatic aberration enabled: strength=${strength}`);
-    } else if (!enabled && this.chromaticEffect) {
-      this.safeDisposeEffect(this.chromaticEffect, 'ChromaticAberration');
-      this.chromaticEffect = undefined;
-      this.rebuildEffectPass();
-      log.info(Modules.POST_PROCESSING, 'Chromatic aberration disabled');
-    }
-  }
-
-  /**
-   * Updates chromatic aberration strength with validation
-   */
-  updateChromaticAberration(strength: number): void {
-    if (!this.chromaticEffect) {
-      log.warning(Modules.POST_PROCESSING, 'Chromatic aberration effect not initialized');
-      return;
-    }
-
-    if (!isChromaticAberrationEffectTyped(this.chromaticEffect)) {
-      log.error(Modules.POST_PROCESSING, 'Invalid chromatic aberration effect type');
-      return;
-    }
-
-    const offset = strength * 0.002;
-    this.chromaticEffect.offset = new THREE.Vector2(offset, offset);
-    log.update(Modules.POST_PROCESSING, `Chromatic aberration strength: ${strength}`);
-  }
-
-  /**
    * Sets physics-based detector noise effect
    *
    * This provides realistic camera/detector noise simulation with three components:
@@ -873,14 +848,15 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.success(
         Modules.POST_PROCESSING,
-        `RobustVignetteEffect created (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`
+        `Vignette enabled (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`
       );
     } else if (!enabled && this.vignetteEffect) {
       this.safeDisposeEffect(this.vignetteEffect, 'Vignette');
       this.vignetteEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Vignette disabled');
-    } else if (this.vignetteEffect) {
+    } else if (enabled && this.vignetteEffect) {
+      // Effect already enabled, update parameters
       if (!isRobustVignetteEffect(this.vignetteEffect)) {
         log.error(Modules.POST_PROCESSING, 'Invalid vignette effect type');
         return;
@@ -889,48 +865,66 @@ export class PostProcessingManager {
       if (offset !== undefined) this.vignetteEffect.offset = offset;
       log.update(
         Modules.POST_PROCESSING,
-        `Vignette updated: darkness=${darkness}, offset=${offset}`
+        `Vignette parameters updated: darkness=${darkness}, offset=${offset}`
       );
     }
   }
 
   /**
-   * Sets lens distortion effect with proper typing and validation
+   * Sets chromatic lens distortion effect - combines lens distortion with wavelength-dependent chromatic aberration
+   *
+   * This effect replaces both the separate lens distortion and chromatic aberration effects,
+   * providing a more physically accurate simulation where chromatic aberration follows the
+   * lens geometry (stronger at edges where distortion is greater).
+   *
+   * @param enabled - Whether to enable the effect
+   * @param distortionX - Radial distortion coefficient X (negative = barrel, positive = pincushion)
+   * @param distortionY - Radial distortion coefficient Y
+   * @param dispersion - Chromatic dispersion strength (0 = no chromatic, 0.05 = subtle, 0.2 = strong)
+   * @param principalPointX - Principal point offset X (optical center shift)
+   * @param principalPointY - Principal point offset Y
+   * @param focalLengthX - Focal length scale X (< 1 = wide angle, > 1 = telephoto)
+   * @param focalLengthY - Focal length scale Y
+   * @param skew - Skew factor in radians
    */
-  setLensDistortionEnabled(
+  setChromaticLensDistortionEnabled(
     enabled: boolean,
     distortionX?: number,
     distortionY?: number,
+    dispersion?: number,
     principalPointX?: number,
     principalPointY?: number,
     focalLengthX?: number,
     focalLengthY?: number,
     skew?: number
   ): void {
-    if (enabled && !this.lensDistortionEffect) {
-      this.lensDistortionEffect = new LensDistortionEffect({
+    if (enabled && !this.chromaticLensDistortionEffect) {
+      this.chromaticLensDistortionEffect = new ChromaticLensDistortionEffect({
         distortion: new THREE.Vector2(distortionX ?? 0, distortionY ?? 0),
+        dispersion: dispersion ?? 0.0,
         principalPoint: new THREE.Vector2(principalPointX ?? 0, principalPointY ?? 0),
         focalLength: new THREE.Vector2(focalLengthX ?? 1, focalLengthY ?? 1),
         skew: skew ?? 0,
-      }) as LensDistortionEffectTyped;
+      });
+
       this.rebuildEffectPass();
       log.info(
         Modules.POST_PROCESSING,
-        `Lens distortion enabled: distortion=(${distortionX}, ${distortionY}), ` +
-          `principalPoint=(${principalPointX}, ${principalPointY}), ` +
+        `Chromatic lens distortion enabled: distortion=(${distortionX}, ${distortionY}), ` +
+          `dispersion=${dispersion}, principalPoint=(${principalPointX}, ${principalPointY}), ` +
           `focalLength=(${focalLengthX}, ${focalLengthY}), skew=${skew}`
       );
-    } else if (!enabled && this.lensDistortionEffect) {
-      this.safeDisposeEffect(this.lensDistortionEffect, 'LensDistortion');
-      this.lensDistortionEffect = undefined;
+    } else if (!enabled && this.chromaticLensDistortionEffect) {
+      this.safeDisposeEffect(this.chromaticLensDistortionEffect, 'ChromaticLensDistortion');
+      this.chromaticLensDistortionEffect = undefined;
       this.rebuildEffectPass();
-      log.info(Modules.POST_PROCESSING, 'Lens distortion disabled');
-    } else if (enabled && this.lensDistortionEffect) {
+      log.info(Modules.POST_PROCESSING, 'Chromatic lens distortion disabled');
+    } else if (enabled && this.chromaticLensDistortionEffect) {
       // Effect already enabled, update parameters if provided
-      this.updateLensDistortion({
+      this.updateChromaticLensDistortion({
         distortionX,
         distortionY,
+        dispersion,
         principalPointX,
         principalPointY,
         focalLengthX,
@@ -941,58 +935,63 @@ export class PostProcessingManager {
   }
 
   /**
-   * Updates lens distortion parameters with validation
+   * Updates chromatic lens distortion parameters with validation
    */
-  updateLensDistortion(params: {
+  updateChromaticLensDistortion(params: {
     distortionX?: number;
     distortionY?: number;
+    dispersion?: number;
     principalPointX?: number;
     principalPointY?: number;
     focalLengthX?: number;
     focalLengthY?: number;
     skew?: number;
   }): void {
-    if (!this.lensDistortionEffect) {
-      log.warning(Modules.POST_PROCESSING, 'Lens distortion effect not initialized');
+    if (!this.chromaticLensDistortionEffect) {
+      log.warning(Modules.POST_PROCESSING, 'Chromatic lens distortion effect not initialized');
       return;
     }
 
-    if (!isLensDistortionEffectTyped(this.lensDistortionEffect)) {
-      log.error(Modules.POST_PROCESSING, 'Invalid lens distortion effect type');
+    if (!isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)) {
+      log.error(Modules.POST_PROCESSING, 'Invalid chromatic lens distortion effect type');
       return;
     }
 
     if (params.distortionX !== undefined || params.distortionY !== undefined) {
-      const currentDistortion = this.lensDistortionEffect.distortion;
-      this.lensDistortionEffect.distortion = new THREE.Vector2(
+      const currentDistortion = this.chromaticLensDistortionEffect.distortion;
+      this.chromaticLensDistortionEffect.distortion = new THREE.Vector2(
         params.distortionX ?? currentDistortion.x,
         params.distortionY ?? currentDistortion.y
       );
     }
 
+    if (params.dispersion !== undefined) {
+      this.chromaticLensDistortionEffect.dispersion = params.dispersion;
+    }
+
     if (params.principalPointX !== undefined || params.principalPointY !== undefined) {
-      const currentPrincipalPoint = this.lensDistortionEffect.principalPoint;
-      this.lensDistortionEffect.principalPoint = new THREE.Vector2(
+      const currentPrincipalPoint = this.chromaticLensDistortionEffect.principalPoint;
+      this.chromaticLensDistortionEffect.principalPoint = new THREE.Vector2(
         params.principalPointX ?? currentPrincipalPoint.x,
         params.principalPointY ?? currentPrincipalPoint.y
       );
     }
 
     if (params.focalLengthX !== undefined || params.focalLengthY !== undefined) {
-      const currentFocalLength = this.lensDistortionEffect.focalLength;
-      this.lensDistortionEffect.focalLength = new THREE.Vector2(
+      const currentFocalLength = this.chromaticLensDistortionEffect.focalLength;
+      this.chromaticLensDistortionEffect.focalLength = new THREE.Vector2(
         params.focalLengthX ?? currentFocalLength.x,
         params.focalLengthY ?? currentFocalLength.y
       );
     }
 
     if (params.skew !== undefined) {
-      this.lensDistortionEffect.skew = params.skew;
+      this.chromaticLensDistortionEffect.skew = params.skew;
     }
 
     log.update(
       Modules.POST_PROCESSING,
-      `Lens distortion updated: ${Object.keys(params).join(', ')}`
+      `Chromatic lens distortion updated: ${Object.keys(params).join(', ')}`
     );
   }
 
@@ -1074,6 +1073,7 @@ export class PostProcessingManager {
     vignette: boolean;
     ao: boolean;
     lensDistortion: boolean;
+    chromaticLensDistortion: boolean;
   } {
     const toneMappingNames: Record<ToneMappingMode, string> = {
       [ToneMappingMode.LINEAR]: 'Linear',
@@ -1088,7 +1088,7 @@ export class PostProcessingManager {
       bloom: !!this.bloomEffect,
       detectorNoise: !!this.detectorNoiseEffect,
       dof: !!this.dofEffect,
-      chromaticAberration: !!this.chromaticEffect,
+      chromaticAberration: false, // Old effect removed - now part of ChromaticLensDistortion
       fxaa: this.fxaaEnabled,
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
@@ -1096,7 +1096,8 @@ export class PostProcessingManager {
       toneMapping: toneMappingNames[this.toneMappingEffect.mode] ?? 'Unknown',
       vignette: !!this.vignetteEffect,
       ao: !!this.aoEffect,
-      lensDistortion: !!this.lensDistortionEffect,
+      lensDistortion: false, // Old effect removed - now part of ChromaticLensDistortion
+      chromaticLensDistortion: !!this.chromaticLensDistortionEffect,
     };
   }
 
@@ -1284,12 +1285,6 @@ export class PostProcessingManager {
                 this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
             }
           : null,
-      chromatic:
-        this.chromaticEffect && isChromaticAberrationEffectTyped(this.chromaticEffect)
-          ? {
-              offset: this.chromaticEffect.offset.clone(),
-            }
-          : null,
       vignette:
         this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
           ? {
@@ -1297,13 +1292,15 @@ export class PostProcessingManager {
               offset: this.vignetteEffect.offset,
             }
           : null,
-      lensDistortion:
-        this.lensDistortionEffect && isLensDistortionEffectTyped(this.lensDistortionEffect)
+      chromaticLensDistortion:
+        this.chromaticLensDistortionEffect &&
+        isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
           ? {
-              distortion: this.lensDistortionEffect.distortion.clone(),
-              principalPoint: this.lensDistortionEffect.principalPoint.clone(),
-              focalLength: this.lensDistortionEffect.focalLength.clone(),
-              skew: this.lensDistortionEffect.skew,
+              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
+              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
+              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
+              skew: this.chromaticLensDistortionEffect.skew,
+              dispersion: this.chromaticLensDistortionEffect.dispersion,
             }
           : null,
       detectorNoise:
@@ -1402,16 +1399,21 @@ export class PostProcessingManager {
       }
     }
 
-    // Restore lens distortion settings if they were saved
+    // Restore chromatic lens distortion settings if they were saved
     if (
-      savedEffects.lensDistortion &&
-      this.lensDistortionEffect &&
-      isLensDistortionEffectTyped(this.lensDistortionEffect)
+      savedEffects.chromaticLensDistortion &&
+      this.chromaticLensDistortionEffect &&
+      isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
     ) {
-      this.lensDistortionEffect.distortion = savedEffects.lensDistortion.distortion.clone();
-      this.lensDistortionEffect.principalPoint = savedEffects.lensDistortion.principalPoint.clone();
-      this.lensDistortionEffect.focalLength = savedEffects.lensDistortion.focalLength.clone();
-      this.lensDistortionEffect.skew = savedEffects.lensDistortion.skew;
+      this.chromaticLensDistortionEffect.distortion =
+        savedEffects.chromaticLensDistortion.distortion.clone();
+      this.chromaticLensDistortionEffect.principalPoint =
+        savedEffects.chromaticLensDistortion.principalPoint.clone();
+      this.chromaticLensDistortionEffect.focalLength =
+        savedEffects.chromaticLensDistortion.focalLength.clone();
+      this.chromaticLensDistortionEffect.skew = savedEffects.chromaticLensDistortion.skew;
+      this.chromaticLensDistortionEffect.dispersion =
+        savedEffects.chromaticLensDistortion.dispersion;
     }
 
     // Restore vignette settings if they were saved
@@ -1422,15 +1424,6 @@ export class PostProcessingManager {
     ) {
       this.vignetteEffect.darkness = savedEffects.vignette.darkness;
       this.vignetteEffect.offset = savedEffects.vignette.offset;
-    }
-
-    // Restore chromatic aberration settings if they were saved
-    if (
-      savedEffects.chromatic &&
-      this.chromaticEffect &&
-      isChromaticAberrationEffectTyped(this.chromaticEffect)
-    ) {
-      this.chromaticEffect.offset = savedEffects.chromatic.offset.clone();
     }
 
     // Restore detector noise settings if they were saved
@@ -1704,8 +1697,7 @@ export class PostProcessingManager {
     this.dofEffect = undefined;
     this.aoEffect = undefined;
     this.vignetteEffect = undefined;
-    this.chromaticEffect = undefined;
-    this.lensDistortionEffect = undefined;
+    this.chromaticLensDistortionEffect = undefined;
     this.smaaEffect = undefined;
     this.fxaaEffect = undefined;
 

@@ -84,21 +84,23 @@ export function setupCameraControls(
           controllersRef.fov.updateDisplay();
         }
 
-        // Apply corresponding lens distortion preset (if lens distortion is enabled)
+        // Apply corresponding chromatic lens distortion preset (if enabled)
         const lensPreset = config.camera.lensDistortionPresets[presetName];
-        if (lensPreset && settings.lensDistortionEnabled) {
-          settings.lensDistortionX = lensPreset.distortionX;
-          settings.lensDistortionY = lensPreset.distortionY;
-          settings.lensPrincipalPointX = lensPreset.principalPointX;
-          settings.lensPrincipalPointY = lensPreset.principalPointY;
-          settings.lensFocalLengthX = lensPreset.focalLengthX;
-          settings.lensFocalLengthY = lensPreset.focalLengthY;
-          settings.lensSkew = lensPreset.skew;
+        if (lensPreset && settings.chromaticLensDistortionEnabled) {
+          settings.chromaticLensDistortionX = lensPreset.distortionX;
+          settings.chromaticLensDistortionY = lensPreset.distortionY;
+          settings.chromaticLensDispersion = lensPreset.dispersion;
+          settings.chromaticLensPrincipalPointX = lensPreset.principalPointX;
+          settings.chromaticLensPrincipalPointY = lensPreset.principalPointY;
+          settings.chromaticLensFocalLengthX = lensPreset.focalLengthX;
+          settings.chromaticLensFocalLengthY = lensPreset.focalLengthY;
+          settings.chromaticLensSkew = lensPreset.skew;
 
-          // Apply lens distortion changes
-          postProcessing.updateLensDistortion({
+          // Apply chromatic lens distortion changes
+          postProcessing.updateChromaticLensDistortion({
             distortionX: lensPreset.distortionX,
             distortionY: lensPreset.distortionY,
+            dispersion: lensPreset.dispersion,
             principalPointX: lensPreset.principalPointX,
             principalPointY: lensPreset.principalPointY,
             focalLengthX: lensPreset.focalLengthX,
@@ -106,34 +108,38 @@ export function setupCameraControls(
             skew: lensPreset.skew,
           });
 
-          // Update lens distortion UI controllers to reflect new values
-          if (controllersRef.lensDistortionX) {
-            controllersRef.lensDistortionX.setValue(lensPreset.distortionX);
-            controllersRef.lensDistortionX.updateDisplay();
+          // Update chromatic lens distortion UI controllers to reflect new values
+          if (controllersRef.chromaticLensDistortionX) {
+            controllersRef.chromaticLensDistortionX.setValue(lensPreset.distortionX);
+            controllersRef.chromaticLensDistortionX.updateDisplay();
           }
-          if (controllersRef.lensDistortionY) {
-            controllersRef.lensDistortionY.setValue(lensPreset.distortionY);
-            controllersRef.lensDistortionY.updateDisplay();
+          if (controllersRef.chromaticLensDistortionY) {
+            controllersRef.chromaticLensDistortionY.setValue(lensPreset.distortionY);
+            controllersRef.chromaticLensDistortionY.updateDisplay();
           }
-          if (controllersRef.lensPrincipalPointX) {
-            controllersRef.lensPrincipalPointX.setValue(lensPreset.principalPointX);
-            controllersRef.lensPrincipalPointX.updateDisplay();
+          if (controllersRef.chromaticLensDispersion) {
+            controllersRef.chromaticLensDispersion.setValue(lensPreset.dispersion);
+            controllersRef.chromaticLensDispersion.updateDisplay();
           }
-          if (controllersRef.lensPrincipalPointY) {
-            controllersRef.lensPrincipalPointY.setValue(lensPreset.principalPointY);
-            controllersRef.lensPrincipalPointY.updateDisplay();
+          if (controllersRef.chromaticLensPrincipalPointX) {
+            controllersRef.chromaticLensPrincipalPointX.setValue(lensPreset.principalPointX);
+            controllersRef.chromaticLensPrincipalPointX.updateDisplay();
           }
-          if (controllersRef.lensFocalLengthX) {
-            controllersRef.lensFocalLengthX.setValue(lensPreset.focalLengthX);
-            controllersRef.lensFocalLengthX.updateDisplay();
+          if (controllersRef.chromaticLensPrincipalPointY) {
+            controllersRef.chromaticLensPrincipalPointY.setValue(lensPreset.principalPointY);
+            controllersRef.chromaticLensPrincipalPointY.updateDisplay();
           }
-          if (controllersRef.lensFocalLengthY) {
-            controllersRef.lensFocalLengthY.setValue(lensPreset.focalLengthY);
-            controllersRef.lensFocalLengthY.updateDisplay();
+          if (controllersRef.chromaticLensFocalLengthX) {
+            controllersRef.chromaticLensFocalLengthX.setValue(lensPreset.focalLengthX);
+            controllersRef.chromaticLensFocalLengthX.updateDisplay();
           }
-          if (controllersRef.lensSkew) {
-            controllersRef.lensSkew.setValue(lensPreset.skew);
-            controllersRef.lensSkew.updateDisplay();
+          if (controllersRef.chromaticLensFocalLengthY) {
+            controllersRef.chromaticLensFocalLengthY.setValue(lensPreset.focalLengthY);
+            controllersRef.chromaticLensFocalLengthY.updateDisplay();
+          }
+          if (controllersRef.chromaticLensSkew) {
+            controllersRef.chromaticLensSkew.setValue(lensPreset.skew);
+            controllersRef.chromaticLensSkew.updateDisplay();
           }
         }
       }

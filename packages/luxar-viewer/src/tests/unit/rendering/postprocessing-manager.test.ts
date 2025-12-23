@@ -71,9 +71,6 @@ vi.mock('postprocessing', () => ({
     isEnabled: true,
   })),
   SSAOEffect: vi.fn().mockImplementation(() => ({})),
-  ChromaticAberrationEffect: vi.fn().mockImplementation(() => ({
-    offset: new THREE.Vector2(),
-  })),
   VignetteEffect: vi.fn().mockImplementation(() => ({
     darkness: 0.5,
     offset: 0.5,
@@ -84,12 +81,6 @@ vi.mock('postprocessing', () => ({
       setOpacity: vi.fn(),
       blendFunction: 1,
     },
-  })),
-  LensDistortionEffect: vi.fn().mockImplementation(() => ({
-    distortion: new THREE.Vector2(),
-    principalPoint: new THREE.Vector2(),
-    focalLength: new THREE.Vector2(1, 1),
-    skew: 0,
   })),
   KernelSize: {
     VERY_SMALL: 0,
@@ -333,15 +324,15 @@ describe('PostProcessingManager', () => {
       expect(status.vignette).toBe(true);
     });
 
-    it('should enable chromatic aberration', () => {
-      manager.setChromaticAberration(true, 0.5);
+    it('should enable chromatic lens distortion', () => {
+      manager.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
       const status = manager.getEffectsStatus();
-      expect(status.chromaticAberration).toBe(true);
+      expect(status.chromaticLensDistortion).toBe(true);
     });
 
-    it('should update chromatic aberration strength', () => {
-      manager.setChromaticAberration(true, 0.5);
-      manager.updateChromaticAberration(0.8);
+    it('should update chromatic lens distortion parameters', () => {
+      manager.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
+      manager.updateChromaticLensDistortion({ dispersion: 0.1, distortionX: -0.08 });
       expect(manager).toBeDefined();
     });
   });

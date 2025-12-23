@@ -22,7 +22,7 @@ import type { SetupContext, SetupResult } from './types';
  */
 export function setupPostProcessingControls(
   context: SetupContext,
-  controllersRef: SetupResult['controllers']
+  _controllersRef: SetupResult['controllers']
 ): SetupResult {
   const { gui, settings, postProcessing, animationController, saveSettings, triggerAnimation } =
     context;
@@ -263,48 +263,6 @@ export function setupPostProcessingControls(
       '• Higher values create stronger bokeh effect'
   );
 
-  // Chromatic Aberration subfolder
-  const chromaticFolder = effectsFolder.addFolder('Chromatic Aberration');
-  chromaticFolder.close();
-
-  const chromaticEnabledControl = chromaticFolder
-    .add(settings, 'chromaticAberrationEnabled')
-    .name('Enabled')
-    .onChange((value: boolean) => {
-      postProcessing.setChromaticAberration(value, settings.chromaticAberrationStrength);
-      saveSettings();
-      triggerAnimation();
-    });
-
-  // Set tooltip for chromatic aberration enabled
-  chromaticEnabledControl.domElement.setAttribute(
-    'title',
-    'Chromatic Aberration: Simulates lens color fringing\n' +
-      '• Separates RGB channels slightly\n' +
-      '• Creates rainbow edges on high contrast areas\n' +
-      '• Adds cinematic/stylistic effect'
-  );
-
-  const chromaticStrengthControl = chromaticFolder
-    .add(settings, 'chromaticAberrationStrength', 0, 1, 0.01)
-    .name('Strength')
-    .onChange((value: number) => {
-      // Always update the uniform, even if disabled (so it's ready when enabled)
-      postProcessing.updateChromaticAberration(value);
-      saveSettings();
-      triggerAnimation();
-    });
-
-  // Set tooltip for chromatic aberration strength
-  chromaticStrengthControl.domElement.setAttribute(
-    'title',
-    'Chromatic Aberration Strength\n' +
-      '• 0 = No color separation\n' +
-      '• 0.15 = Subtle effect (default)\n' +
-      '• 0.5 = Moderate color fringing\n' +
-      '• 1.0 = Strong rainbow edges'
-  );
-
   // Ambient Occlusion subfolder
   const aoFolder = effectsFolder.addFolder('Ambient Occlusion');
   aoFolder.close();
@@ -405,129 +363,136 @@ export function setupPostProcessingControls(
       '• 1.0 = Effect only at very edges'
   );
 
-  // Lens Distortion subfolder
-  const lensDistortionFolder = effectsFolder.addFolder('Lens Distortion');
-  lensDistortionFolder.close();
+  // Chromatic Lens Distortion subfolder (combined effect - replaces old separate effects)
+  const chromaticLensDistortionFolder = effectsFolder.addFolder('Chromatic Lens Distortion');
+  chromaticLensDistortionFolder.close();
 
-  const lensDistortionEnabledControl = lensDistortionFolder
-    .add(settings, 'lensDistortionEnabled')
+  const chromaticLensDistortionEnabledControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensDistortionEnabled')
     .name('Enabled')
     .onChange((value: boolean) => {
-      postProcessing.setLensDistortionEnabled(
+      postProcessing.setChromaticLensDistortionEnabled(
         value,
-        settings.lensDistortionX,
-        settings.lensDistortionY,
-        settings.lensPrincipalPointX,
-        settings.lensPrincipalPointY,
-        settings.lensFocalLengthX,
-        settings.lensFocalLengthY,
-        settings.lensSkew
+        settings.chromaticLensDistortionX,
+        settings.chromaticLensDistortionY,
+        settings.chromaticLensDispersion,
+        settings.chromaticLensPrincipalPointX,
+        settings.chromaticLensPrincipalPointY,
+        settings.chromaticLensFocalLengthX,
+        settings.chromaticLensFocalLengthY,
+        settings.chromaticLensSkew
       );
       saveSettings();
       triggerAnimation();
     });
 
-  lensDistortionEnabledControl.domElement.setAttribute(
+  chromaticLensDistortionEnabledControl.domElement.setAttribute(
     'title',
-    'Lens Distortion: Simulates camera lens imperfections\n' +
-      '• Barrel/pincushion distortion effects\n' +
-      '• Principal point and focal length adjustment\n' +
-      '• Skew correction for non-square pixels'
+    'Chromatic Lens Distortion: Combined effect simulating optical dispersion\n' +
+      '• Physically accurate wavelength-dependent distortion\n' +
+      '• Combines lens distortion + chromatic aberration\n' +
+      '• More efficient than separate effects\n' +
+      '• Color fringing follows lens geometry'
   );
 
-  const lensDistortionXControl = lensDistortionFolder
-    .add(settings, 'lensDistortionX', -1, 1, 0.001)
-    .name('Distortion X')
+  const chromaticLensDispersionControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensDispersion', 0, 0.5, 0.001)
+    .name('Dispersion')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ distortionX: value });
+      postProcessing.updateChromaticLensDistortion({ dispersion: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensDistortionX = lensDistortionXControl;
+  chromaticLensDispersionControl.domElement.setAttribute(
+    'title',
+    'Chromatic Dispersion: Wavelength-dependent distortion strength\n' +
+      '• 0 = No chromatic effect (pure lens distortion)\n' +
+      '• 0.03 = Subtle, realistic (default)\n' +
+      '• 0.1 = Noticeable color fringing\n' +
+      '• 0.2-0.5 = Strong stylized effect'
+  );
 
-  lensDistortionXControl.domElement.setAttribute(
+  const chromaticLensDistortionXControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensDistortionX', -1, 1, 0.001)
+    .name('Distortion X')
+    .onChange((value: number) => {
+      postProcessing.updateChromaticLensDistortion({ distortionX: value });
+      saveSettings();
+      triggerAnimation();
+    });
+
+  chromaticLensDistortionXControl.domElement.setAttribute(
     'title',
     'Radial Distortion X:\n' +
       '• 0 = No distortion\n' +
-      '• Negative = Barrel distortion (fish-eye)\n' +
-      '• Positive = Pincushion distortion'
+      '• Negative = Barrel distortion (wide angle)\n' +
+      '• Positive = Pincushion distortion (telephoto)\n' +
+      '• Chromatic fringing scales with distortion'
   );
 
-  const lensDistortionYControl = lensDistortionFolder
-    .add(settings, 'lensDistortionY', -1, 1, 0.001)
+  const chromaticLensDistortionYControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensDistortionY', -1, 1, 0.001)
     .name('Distortion Y')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ distortionY: value });
+      postProcessing.updateChromaticLensDistortion({ distortionY: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensDistortionY = lensDistortionYControl;
-
-  lensDistortionYControl.domElement.setAttribute(
+  chromaticLensDistortionYControl.domElement.setAttribute(
     'title',
     'Radial Distortion Y:\n' +
       '• 0 = No distortion\n' +
-      '• Negative = Barrel distortion (fish-eye)\n' +
-      '• Positive = Pincushion distortion'
+      '• Negative = Barrel distortion (wide angle)\n' +
+      '• Positive = Pincushion distortion (telephoto)\n' +
+      '• Usually same as Distortion X'
   );
 
-  const lensPrincipalPointXControl = lensDistortionFolder
-    .add(settings, 'lensPrincipalPointX', -1, 1, 0.001)
+  const chromaticLensPrincipalPointXControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensPrincipalPointX', -1, 1, 0.001)
     .name('Principal Point X')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ principalPointX: value });
+      postProcessing.updateChromaticLensDistortion({ principalPointX: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensPrincipalPointX = lensPrincipalPointXControl;
-
-  lensPrincipalPointXControl.domElement.setAttribute(
+  chromaticLensPrincipalPointXControl.domElement.setAttribute(
     'title',
     'Principal Point X offset:\n' +
       '• 0 = Centered (default)\n' +
-      '• Negative = Shift distortion center left\n' +
-      '• Positive = Shift distortion center right'
+      '• Shifts optical center horizontally\n' +
+      '• Affects distortion center'
   );
 
-  const lensPrincipalPointYControl = lensDistortionFolder
-    .add(settings, 'lensPrincipalPointY', -1, 1, 0.001)
+  const chromaticLensPrincipalPointYControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensPrincipalPointY', -1, 1, 0.001)
     .name('Principal Point Y')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ principalPointY: value });
+      postProcessing.updateChromaticLensDistortion({ principalPointY: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensPrincipalPointY = lensPrincipalPointYControl;
-
-  lensPrincipalPointYControl.domElement.setAttribute(
+  chromaticLensPrincipalPointYControl.domElement.setAttribute(
     'title',
     'Principal Point Y offset:\n' +
       '• 0 = Centered (default)\n' +
-      '• Negative = Shift distortion center up\n' +
-      '• Positive = Shift distortion center down'
+      '• Shifts optical center vertically\n' +
+      '• Affects distortion center'
   );
 
-  const lensFocalLengthXControl = lensDistortionFolder
-    .add(settings, 'lensFocalLengthX', 0.1, 3, 0.001)
+  const chromaticLensFocalLengthXControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensFocalLengthX', 0.1, 3, 0.001)
     .name('Focal Length X')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ focalLengthX: value });
+      postProcessing.updateChromaticLensDistortion({ focalLengthX: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensFocalLengthX = lensFocalLengthXControl;
-
-  lensFocalLengthXControl.domElement.setAttribute(
+  chromaticLensFocalLengthXControl.domElement.setAttribute(
     'title',
     'Focal Length X:\n' +
       '• 1 = Normal (default)\n' +
@@ -535,19 +500,16 @@ export function setupPostProcessingControls(
       '• > 1 = Telephoto effect'
   );
 
-  const lensFocalLengthYControl = lensDistortionFolder
-    .add(settings, 'lensFocalLengthY', 0.1, 3, 0.001)
+  const chromaticLensFocalLengthYControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensFocalLengthY', 0.1, 3, 0.001)
     .name('Focal Length Y')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ focalLengthY: value });
+      postProcessing.updateChromaticLensDistortion({ focalLengthY: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensFocalLengthY = lensFocalLengthYControl;
-
-  lensFocalLengthYControl.domElement.setAttribute(
+  chromaticLensFocalLengthYControl.domElement.setAttribute(
     'title',
     'Focal Length Y:\n' +
       '• 1 = Normal (default)\n' +
@@ -555,34 +517,32 @@ export function setupPostProcessingControls(
       '• > 1 = Telephoto effect'
   );
 
-  const lensSkewControl = lensDistortionFolder
-    .add(settings, 'lensSkew', -0.1, 0.1, 0.001)
+  const chromaticLensSkewControl = chromaticLensDistortionFolder
+    .add(settings, 'chromaticLensSkew', -0.1, 0.1, 0.001)
     .name('Skew')
     .onChange((value: number) => {
-      postProcessing.updateLensDistortion({ skew: value });
+      postProcessing.updateChromaticLensDistortion({ skew: value });
       saveSettings();
       triggerAnimation();
     });
 
-  // Store reference for updates
-  controllersRef.lensSkew = lensSkewControl;
-
-  lensSkewControl.domElement.setAttribute(
+  chromaticLensSkewControl.domElement.setAttribute(
     'title',
     'Lens Skew (radians):\n' +
       '• 0 = No skew (default)\n' +
       '• Corrects for non-square pixels\n' +
-      '• Usually very small values'
+      '• Rare in modern systems'
   );
 
-  // Store all lens distortion controller references for FOV preset synchronization
-  controllers.lensDistortionX = lensDistortionXControl;
-  controllers.lensDistortionY = lensDistortionYControl;
-  controllers.lensPrincipalPointX = lensPrincipalPointXControl;
-  controllers.lensPrincipalPointY = lensPrincipalPointYControl;
-  controllers.lensFocalLengthX = lensFocalLengthXControl;
-  controllers.lensFocalLengthY = lensFocalLengthYControl;
-  controllers.lensSkew = lensSkewControl;
+  // Store chromatic lens distortion controller references for FOV preset synchronization
+  controllers.chromaticLensDistortionX = chromaticLensDistortionXControl;
+  controllers.chromaticLensDistortionY = chromaticLensDistortionYControl;
+  controllers.chromaticLensDispersion = chromaticLensDispersionControl;
+  controllers.chromaticLensPrincipalPointX = chromaticLensPrincipalPointXControl;
+  controllers.chromaticLensPrincipalPointY = chromaticLensPrincipalPointYControl;
+  controllers.chromaticLensFocalLengthX = chromaticLensFocalLengthXControl;
+  controllers.chromaticLensFocalLengthY = chromaticLensFocalLengthYControl;
+  controllers.chromaticLensSkew = chromaticLensSkewControl;
 
   return {
     controllers,

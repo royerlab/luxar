@@ -596,12 +596,7 @@ function deserializeSettings(json: string): RenderingSettings | null {
 ```typescript
 function toggleCinematicMode(): void {
   // 1. Check current state of all cinematic effects
-  const effects = [
-    detectorNoiseEnabled,
-    vignetteEnabled,
-    chromaticAberrationEnabled,
-    lensDistortionEnabled,
-  ];
+  const effects = [detectorNoiseEnabled, vignetteEnabled, chromaticLensDistortionEnabled];
 
   // 2. Count enabled effects
   const enabledCount = effects.filter(Boolean).length;
@@ -612,8 +607,7 @@ function toggleCinematicMode(): void {
   // 4. Apply to all effects
   detectorNoiseEnabled = shouldEnableAll;
   vignetteEnabled = shouldEnableAll;
-  chromaticAberrationEnabled = shouldEnableAll;
-  lensDistortionEnabled = shouldEnableAll;
+  chromaticLensDistortionEnabled = shouldEnableAll;
 
   // 5. Set cinematic parameters if enabling
   if (shouldEnableAll) {
@@ -626,7 +620,7 @@ function toggleCinematicMode(): void {
   fov = shouldEnableAll ? 63 : 47; // degrees
   fovPreset = shouldEnableAll ? '35mm' : '50mm Normal';
 
-  // 7. Apply corresponding lens distortion preset
+  // 7. Apply corresponding chromatic lens distortion preset
   if (shouldEnableAll) {
     applyLensPreset('35mm'); // Barrel distortion
   } else {
@@ -2122,21 +2116,19 @@ interface RenderingSettings {
   dofFocus: number;
   dofStrength: number;
 
-  chromaticAberrationEnabled: boolean;
-  chromaticAberrationStrength: number;
-
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;
 
-  lensDistortionEnabled: boolean;
-  lensDistortionX: number;
-  lensDistortionY: number;
-  lensPrincipalPointX: number;
-  lensPrincipalPointY: number;
-  lensFocalLengthX: number;
-  lensFocalLengthY: number;
-  lensSkew: number;
+  chromaticLensDistortionEnabled: boolean;
+  chromaticLensDistortionX: number;
+  chromaticLensDistortionY: number;
+  chromaticLensDispersion: number;
+  chromaticLensPrincipalPointX: number;
+  chromaticLensPrincipalPointY: number;
+  chromaticLensFocalLengthX: number;
+  chromaticLensFocalLengthY: number;
+  chromaticLensSkew: number;
 
   aoEnabled: boolean;
   aoQuality: 'low' | 'medium' | 'high' | 'ultra';
@@ -2200,7 +2192,7 @@ interface BufferedMessage {
   - **Enhanced**: Secondary metrics bar shows Network I/O instead of Load Speed
 
 - **v1.1.0** (2025-12-09): Comprehensive specification update
-  - **Added**: Rendering Controls (2,153 lines) - Complete documentation of all effect controls, cinematic mode, settings persistence, lil-gui integration, FOV presets, lens distortion, navigation controls
+  - **Added**: Rendering Controls (2,153 lines) - Complete documentation of all effect controls, cinematic mode, settings persistence, lil-gui integration, FOV presets, chromatic lens distortion, navigation controls
   - **Added**: Dataset Browser (632 lines) - Directory navigation, path extraction algorithm, server detection strategies, manual entry fallback
   - **Added**: Debug Console (762 lines) - Console interceptor integration, ring buffer architecture, message rendering, filtering, copy-to-clipboard
   - **Added**: Helper Utilities (502 lines) - Loading indicators, error display with guidance, collapsible help overlay, cleanup functions

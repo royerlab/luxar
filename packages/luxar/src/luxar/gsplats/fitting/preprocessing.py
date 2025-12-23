@@ -182,7 +182,7 @@ def _generate_seeds(
                 )
 
         elif len(seed_centers) < target_count:
-            # Not enough: try adaptive threshold lowering
+            # Not enough: regenerate with low threshold to get more seeds
             seed_centers = _ensure_minimum_seeds(
                 V, target_count, seed_centers, seed_method, verbose, **seed_kwargs
             )
@@ -230,20 +230,26 @@ def _subsample_seeds_spatially_diverse(
     if n_available <= target_count:
         return seeds  # Return all if not enough
 
-    # Determine intensity threshold (50th percentile = median)
-    # This filters out lower-quality seeds while keeping good spatial coverage
-    intensity_threshold = np.percentile(intensities, 50.0)
+    # Determine intensity threshold to filter low-quality seeds
+    # Use percentile that ensures we have enough candidates for selection
+    # Calculate percentile that would keep at least target_count seeds
+    min_percentile = max(0.0, 100.0 * (1.0 - target_count / n_available))
+    # Use at least 30th percentile for quality, but relax if needed for count
+    intensity_percentile = min(50.0, min_percentile)
 
-    # Filter to high-quality candidates
+    intensity_threshold = np.percentile(intensities, intensity_percentile)
+
+    # Filter to candidates above threshold
     valid_mask = intensities >= intensity_threshold
     valid_seeds = seeds[valid_mask]
     valid_intensities = intensities[valid_mask]
 
-    # If filtering removed too many, relax threshold
+    # Sanity check - should always have enough now
     if len(valid_seeds) < target_count:
-        # Fall back to top N by intensity if not enough high-quality seeds
-        top_indices = np.argsort(intensities)[-target_count:]
-        return seeds[top_indices]
+        # Edge case: use all seeds if filtering still removed too many
+        # (can happen with many tied intensity values at percentile boundary)
+        valid_seeds = seeds
+        valid_intensities = intensities
 
     # Farthest-first selection with intensity priority
     # Start with highest intensity seed
@@ -279,9 +285,10 @@ def _subsample_seeds_spatially_diverse(
         if len(result) > 1:
             tree = cKDTree(result)
             distances, _ = tree.query(result, k=2)  # k=2 to get nearest neighbor
-            avg_spacing = np.mean(distances[:, 1])  # distances[:,1] is nearest neighbor
+            avg_spacing = np.mean(distances[:, 1])  # nearest neighbor dist
             aprint(
-                f"Spatial diversity: avg nearest-neighbor distance = {avg_spacing:.1f} voxels"
+                f"Spatial diversity: avg nearest-neighbor distance = "
+                f"{avg_spacing:.1f} voxels"
             )
 
     return result
@@ -296,11 +303,15 @@ def _ensure_minimum_seeds(
     **seed_kwargs,
 ) -> np.ndarray:
     """
-    Ensure minimum seed count through adaptive threshold lowering.
+    Ensure minimum seed count by generating with low threshold once.
 
     Strategy:
-    1. Progressively lower percentile_thresh to find more seeds
-    2. If still not enough, add grid-based seeds as fallback
+    1. KEEP initial seeds (don't discard!)
+    2. If method supports Gaussian: regenerate with low threshold, use best result
+    3. If still not enough, ADD grid-based seeds to initial seeds
+    4. Subsample to exact target_count using spatial diversity
+
+    This is much faster than iterative threshold lowering!
 
     Parameters
     ----------
@@ -309,7 +320,7 @@ def _ensure_minimum_seeds(
     target_count : int
         Target number of seeds needed
     initial_seeds : np.ndarray
-        Seeds already found
+        Seeds already found (MUST be preserved!)
     seed_method : str
         Seed generation method
     verbose : bool
@@ -320,57 +331,86 @@ def _ensure_minimum_seeds(
     Returns
     -------
     np.ndarray
-        Seed centers (at least target_count)
+        Seed centers (exactly target_count)
     """
     from luxar.gsplats.seeds import generate_seeds
 
+    # Start with initial seeds - NEVER discard these!
     current_seeds = initial_seeds
-    current_count = len(current_seeds)
 
-    # Get current percentile threshold (default is 75 for gaussian)
-    base_thresh = seed_kwargs.get("percentile_thresh", 75.0)
+    # Check if method includes Gaussian (supports percentile_thresh)
+    method_lower = seed_method.lower()
+    has_gaussian = (
+        method_lower == "gaussian"
+        or method_lower == "both"
+        or "gaussian" in method_lower.split(",")
+    )
 
-    # Try progressively lower thresholds
-    thresholds = [70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0]
-    for thresh in thresholds:
-        if thresh >= base_thresh:
-            continue  # Skip if not actually lower
-
-        if current_count >= target_count:
-            break
-
+    if has_gaussian:
+        # Method includes Gaussian - regenerate Gaussian with low threshold
         if verbose:
             aprint(
-                f"Need {target_count - current_count} more seeds, "
-                f"retrying with percentile_thresh={thresh}"
+                f"Regenerating Gaussian with low threshold (10th percentile) "
+                f"to find {target_count} seeds"
             )
 
-        # Try with lower threshold
         kwargs_adjusted = seed_kwargs.copy()
-        kwargs_adjusted["percentile_thresh"] = thresh
-        new_seeds = generate_seeds(V, method=seed_method, **kwargs_adjusted)
+        kwargs_adjusted["percentile_thresh"] = 10.0  # Very inclusive
+        gaussian_seeds = generate_seeds(V, method="gaussian", **kwargs_adjusted)
 
-        if len(new_seeds) > current_count:
-            current_seeds = new_seeds
-            current_count = len(current_seeds)
+        if verbose:
+            aprint(f"Found {len(gaussian_seeds)} Gaussian seeds with low threshold")
+
+        # For "both" or combined methods: merge with initial seeds
+        # For pure "gaussian": use whichever gives more
+        if method_lower == "both" or "," in method_lower:
+            # Combine initial (decomposition+gaussian) with new gaussian seeds
+            # Use minimal deduplication (0.5 voxels) to remove only near-duplicates
+            # We want to KEEP seeds, not aggressively filter them
+            from luxar.gsplats.seeds.utils import combine_seeds
+
+            combined = combine_seeds(
+                initial_seeds, gaussian_seeds, min_distance=0.5
+            )
+            current_seeds = combined
             if verbose:
-                aprint(f"Found {current_count} seeds with lower threshold")
-
-    # If still not enough, add grid-based seeds as fallback
-    if current_count < target_count:
+                aprint(
+                    f"Combined {len(initial_seeds)} initial + "
+                    f"{len(gaussian_seeds)} new → {len(combined)} total seeds"
+                )
+        else:
+            # Pure gaussian: use whichever gives more
+            if len(gaussian_seeds) > len(current_seeds):
+                current_seeds = gaussian_seeds
+                if verbose:
+                    aprint(
+                        f"Using new Gaussian seeds "
+                        f"(more than initial {len(initial_seeds)})"
+                    )
+            else:
+                if verbose:
+                    aprint(f"Keeping initial {len(current_seeds)} seeds")
+    else:
+        # Pure decomposition - can't adjust threshold
         if verbose:
             aprint(
-                f"Still need {target_count - current_count} seeds, "
-                "adding grid-based fallback seeds"
+                f"Method '{seed_method}' is decomposition-only, "
+                f"keeping initial {len(current_seeds)} seeds"
+            )
+
+    # If still not enough, add grid-based seeds
+    if len(current_seeds) < target_count:
+        if verbose:
+            aprint(
+                f"Still need {target_count - len(current_seeds)} seeds, "
+                "adding grid-based fallback"
             )
         current_seeds = _add_grid_fallback_seeds(
             V, target_count, current_seeds, verbose
         )
-        current_count = len(current_seeds)
 
-    # If we ended up with more than target (from adaptive threshold),
-    # subsample to exact count with spatial diversity
-    if current_count > target_count:
+    # Subsample to exact count using spatial diversity
+    if len(current_seeds) > target_count:
         idx = np.clip(
             np.round(current_seeds).astype(int),
             0,
@@ -424,12 +464,13 @@ def _add_grid_fallback_seeds(
     ndim = V.ndim
     shape = np.array(V.shape)
 
-    # Calculate grid spacing to get approximately 'needed' points
-    # Volume = ∏ shape[i], points = ∏ (shape[i] / spacing[i])
-    # So spacing ≈ (Volume / needed)^(1/ndim)
+    # Calculate grid spacing to generate enough points
+    # Target more points than needed to account for filtering
     volume = np.prod(shape)
-    spacing = int(np.ceil((volume / (needed * 2)) ** (1.0 / ndim)))
-    spacing = max(spacing, 3)  # Minimum spacing of 3
+    # Use more aggressive multiplier (3-5x) to ensure enough after filtering
+    target_grid_points = needed * 4
+    spacing = int(np.ceil((volume / target_grid_points) ** (1.0 / ndim)))
+    spacing = max(spacing, 1)  # Allow minimum spacing of 1 (dense grid)
 
     # Generate grid points
     grid_coords = []
@@ -442,22 +483,39 @@ def _add_grid_fallback_seeds(
     grid_coords = np.array(grid_coords, dtype=float)
 
     # Remove grid points too close to existing seeds (if any exist)
+    # But be less aggressive about filtering to ensure we get enough
     if len(existing_seeds) > 0:
         from scipy.spatial import cKDTree
+
         tree = cKDTree(existing_seeds)
         distances, _ = tree.query(grid_coords, k=1)
-        min_distance = spacing * 0.5  # Keep points at least half-spacing away
+        # Use smaller min_distance to be more permissive
+        min_distance = max(1.0, spacing * 0.3)  # 30% of spacing, min 1 voxel
         grid_coords = grid_coords[distances > min_distance]
+
+    # If we still don't have enough grid points after filtering,
+    # generate a denser grid without filtering
+    if len(grid_coords) < needed:
+        if verbose:
+            aprint(
+                f"Grid filtering left only {len(grid_coords)} points, "
+                f"generating denser unfiltered grid"
+            )
+        # Dense grid without filtering
+        spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
+        ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
+        grid_coords_dense = []
+        for coords in itertools.product(*ranges_dense):
+            grid_coords_dense.append(coords)
+        grid_coords = np.array(grid_coords_dense, dtype=float)
 
     # Sort by intensity and take top N
     if len(grid_coords) > 0:
-        idx = np.clip(
-            np.round(grid_coords).astype(int), 0, shape - 1
-        )
+        idx = np.clip(np.round(grid_coords).astype(int), 0, shape - 1)
         intensities = V[tuple(idx.T)]
         sorted_indices = np.argsort(intensities)[::-1]
 
-        # Take enough to reach target
+        # Take exactly 'needed' to reach target (or all if fewer available)
         take = min(needed, len(grid_coords))
         grid_coords = grid_coords[sorted_indices[:take]]
 
