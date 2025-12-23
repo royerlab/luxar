@@ -423,8 +423,10 @@ kernel void rasterize_bwd_3d(
             float c_xx = conic[cb + 0], c_xy = conic[cb + 1], c_xz = conic[cb + 2];
             float c_yy = conic[cb + 3], c_yz = conic[cb + 4], c_zz = conic[cb + 5];
 
-            // Distance calculation with d=[dz,dy,dx], conic in [X,Y,Z]
-            float dz = d.x, dy = d.y, dx = d.z;
+            // EXPLICIT distance calculation (avoid float3 component confusion)
+            float dz = px.x - c.x;  // Z_pixel - Z_center
+            float dy = px.y - c.y;  // Y_pixel - Y_center
+            float dx = px.z - c.z;  // X_pixel - X_center
             float dist_sq = dx * dx * c_xx + dy * dy * c_yy + dz * dz * c_zz
                           + 2.0f * (dx * dy * c_xy + dx * dz * c_xz + dy * dz * c_yz);
 
@@ -472,51 +474,37 @@ kernel void rasterize_bwd_3d(
                 val_conic[3] = grad_dist * dy * dy;             // c_yy
                 val_conic[4] = grad_dist * 2.0f * dy * dz;      // c_yz
                 val_conic[5] = grad_dist * dz * dz;             // c_zz
-            }
-        }
 
-        // === B. SIMD Reduction (sum across 32 threads in simdgroup) ===
-        float sum_amps = simd_sum(val_amps);
-        float sum_sharpness = simd_sum(val_sharpness);
-        float3 sum_centers;
-        sum_centers.x = simd_sum(val_centers.x);
-        sum_centers.y = simd_sum(val_centers.y);
-        sum_centers.z = simd_sum(val_centers.z);
+                // === DIRECT ATOMIC WRITE (no SIMD reduction) ===
+                // Each thread atomically adds its own gradient contribution
+                // This matches the forward pass pattern and avoids race conditions
 
-        float sum_conic[6];
-        for (int k = 0; k < 6; k++) {
-            sum_conic[k] = simd_sum(val_conic[k]);
-        }
+                // Guard against NaN poisoning
+                bool has_nan = isnan(val_amps) || isinf(val_amps) ||
+                              isnan(val_sharpness) || isinf(val_sharpness) ||
+                              isnan(val_centers.x) || isnan(val_centers.y) || isnan(val_centers.z);
 
-        // === C. Leader writes to global memory (lane 0 only) ===
-        if (simd_lane_id == 0) {
-            // CRITICAL: Guard against NaN poisoning (safety check)
-            // If any gradient is NaN/Inf, skip this splat to prevent corruption
-            bool has_nan = isnan(sum_amps) || isinf(sum_amps) ||
-                          isnan(sum_sharpness) || isinf(sum_sharpness) ||
-                          isnan(sum_centers.x) || isnan(sum_centers.y) || isnan(sum_centers.z);
+                if (!has_nan) {
+                    // Amplitude and sharpness gradients
+                    if (abs(val_amps) > 1e-12f) {
+                        atomic_add_float(&d_amps[splat_id], val_amps);
+                    }
+                    if (abs(val_sharpness) > 1e-12f) {
+                        atomic_add_float(&d_sharpness[splat_id], val_sharpness);
+                    }
 
-            if (has_nan) {
-                // Skip this splat - NaN would poison the entire gradient buffer
-                continue;
-            }
+                    // Center gradients (always add, even if small)
+                    atomic_add_float(&d_centers[splat_id * 3 + 0], val_centers.x);
+                    atomic_add_float(&d_centers[splat_id * 3 + 1], val_centers.y);
+                    atomic_add_float(&d_centers[splat_id * 3 + 2], val_centers.z);
 
-            // Skip zero contributions to avoid unnecessary atomics
-            if (abs(sum_amps) > 1e-12f) {
-                atomic_add_float(&d_amps[splat_id], sum_amps);
-            }
-            if (abs(sum_sharpness) > 1e-12f) {
-                atomic_add_float(&d_sharpness[splat_id], sum_sharpness);
-            }
-
-            atomic_add_float(&d_centers[splat_id * 3 + 0], sum_centers.x);
-            atomic_add_float(&d_centers[splat_id * 3 + 1], sum_centers.y);
-            atomic_add_float(&d_centers[splat_id * 3 + 2], sum_centers.z);
-
-            int cb = splat_id * 6;
-            for (int k = 0; k < 6; k++) {
-                if (abs(sum_conic[k]) > 1e-12f && !isnan(sum_conic[k]) && !isinf(sum_conic[k])) {
-                    atomic_add_float(&d_conic[cb + k], sum_conic[k]);
+                    // Conic gradients
+                    int cb = splat_id * 6;
+                    for (int k = 0; k < 6; k++) {
+                        if (abs(val_conic[k]) > 1e-12f && !isnan(val_conic[k]) && !isinf(val_conic[k])) {
+                            atomic_add_float(&d_conic[cb + k], val_conic[k]);
+                        }
+                    }
                 }
             }
         }
