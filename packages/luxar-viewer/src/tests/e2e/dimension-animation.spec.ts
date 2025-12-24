@@ -89,9 +89,25 @@ test.describe('Dimension Animation - UI Controls', () => {
     // Open dimension sliders
     await page.keyboard.press('n');
 
-    // Wait for play button to be visible
+    // Wait for dimension sliders animation to complete
+    await page.waitForTimeout(300); // Allow fade-in animation to complete (0.15s animation + buffer)
+
+    // Wait for dimension sliders to be attached and visible
+    await page.waitForSelector('.luxar-dimension-sliders', { timeout: 2000 });
+
+    // Wait for play button to be visible (checking opacity, not hidden state)
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector('.luxar-dimension-slider__play-btn');
+        if (!btn) return false;
+        const style = window.getComputedStyle(btn);
+        return style.display !== 'none' && parseFloat(style.opacity) > 0;
+      },
+      null,
+      { timeout: 3000 }
+    );
+
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
-    await playButton.waitFor({ state: 'visible', timeout: 5000 });
 
     // Right-click play button to open context menu
     await playButton.click({ button: 'right' });
