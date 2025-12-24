@@ -11,7 +11,6 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
@@ -41,99 +40,67 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
     """
     N, d, _ = L.shape
 
-    # MPS doesn't support cholesky_inverse, so we implement it manually
-    # C = Σ^(-1) = (L @ L^T)^(-1) = L^(-T) @ L^(-1)
+    # Manual implementation of C = Σ^(-1) = (L @ L^T)^(-1) = L^(-T) @ L^(-1)
+    # Works on all devices (MPS, CPU, CUDA) and avoids MPS cholesky_inverse issues.
     # Compute K = L^(-1) via forward substitution, then C = K^T @ K
 
-    if L.device.type == "mps" or True:  # Use manual implementation for all devices
-        # For 3D, manual implementation is fast enough
-        if d == 3:
-            # Extract elements (row-major)
-            L00 = L[:, 0, 0]
-            L10 = L[:, 1, 0]
-            L11 = L[:, 1, 1]
-            L20 = L[:, 2, 0]
-            L21 = L[:, 2, 1]
-            L22 = L[:, 2, 2]
+    if d == 3:
+        # Extract elements (row-major)
+        L00 = L[:, 0, 0]
+        L10 = L[:, 1, 0]
+        L11 = L[:, 1, 1]
+        L20 = L[:, 2, 0]
+        L21 = L[:, 2, 1]
+        L22 = L[:, 2, 2]
 
-            # Compute K = L^(-1) via forward substitution
-            K00 = 1.0 / (L00 + 1e-9)
-            K11 = 1.0 / (L11 + 1e-9)
-            K22 = 1.0 / (L22 + 1e-9)
-            K10 = -L10 * K00 * K11
-            K21 = -L21 * K11 * K22
-            K20 = -(L20 * K00 + L21 * K10) * K22
+        # Compute K = L^(-1) via forward substitution
+        K00 = 1.0 / (L00 + 1e-9)
+        K11 = 1.0 / (L11 + 1e-9)
+        K22 = 1.0 / (L22 + 1e-9)
+        K10 = -L10 * K00 * K11
+        K21 = -L21 * K11 * K22
+        K20 = -(L20 * K00 + L21 * K10) * K22
 
-            # Compute C = K^T @ K
-            c_xx = K00 * K00 + K10 * K10 + K20 * K20
-            c_xy = K10 * K11 + K20 * K21
-            c_xz = K20 * K22
-            c_yy = K11 * K11 + K21 * K21
-            c_yz = K21 * K22
-            c_zz = K22 * K22
+        # Compute C = K^T @ K
+        c_xx = K00 * K00 + K10 * K10 + K20 * K20
+        c_xy = K10 * K11 + K20 * K21
+        c_xz = K20 * K22
+        c_yy = K11 * K11 + K21 * K21
+        c_yz = K21 * K22
+        c_zz = K22 * K22
 
-            conic = torch.stack([c_xx, c_xy, c_xz, c_yy, c_yz, c_zz], dim=1)
+        conic = torch.stack([c_xx, c_xy, c_xz, c_yy, c_yz, c_zz], dim=1)
 
-        elif d == 2:
-            # 2D case
-            L00 = L[:, 0, 0]
-            L10 = L[:, 1, 0]
-            L11 = L[:, 1, 1]
+    elif d == 2:
+        # 2D case
+        L00 = L[:, 0, 0]
+        L10 = L[:, 1, 0]
+        L11 = L[:, 1, 1]
 
-            K00 = 1.0 / (L00 + 1e-9)
-            K11 = 1.0 / (L11 + 1e-9)
-            K10 = -L10 * K00 * K11
+        K00 = 1.0 / (L00 + 1e-9)
+        K11 = 1.0 / (L11 + 1e-9)
+        K10 = -L10 * K00 * K11
 
-            c_xx = K00 * K00 + K10 * K10
-            c_xy = K10 * K11
-            c_yy = K11 * K11
+        c_xx = K00 * K00 + K10 * K10
+        c_xy = K10 * K11
+        c_yy = K11 * K11
 
-            conic = torch.stack([c_xx, c_xy, c_yy], dim=1)
-
-        else:
-            # Generic nD: use torch.linalg.inv (slower but works)
-            # Move to CPU if on MPS since MPS has limited support
-            device = L.device
-            L_cpu = L.cpu() if L.device.type == "mps" else L
-
-            Sigma = L_cpu @ L_cpu.transpose(-2, -1)
-            Sigma_inv = torch.linalg.inv(Sigma)
-
-            # Extract upper triangle
-            indices = torch.triu_indices(d, d)
-            conic = Sigma_inv[:, indices[0], indices[1]]
-
-            conic = conic.to(device)
+        conic = torch.stack([c_xx, c_xy, c_yy], dim=1)
 
     else:
-        # Use cholesky_inverse for CPU/CUDA (more efficient)
-        Sigma_inv = torch.cholesky_inverse(L)
+        # Generic nD: use torch.linalg.inv (slower but works)
+        # Move to CPU if on MPS since MPS has limited support
+        device = L.device
+        L_cpu = L.cpu() if L.device.type == "mps" else L
 
-        # Extract upper triangular elements
-        if d == 3:
-            conic = torch.stack(
-                [
-                    Sigma_inv[:, 0, 0],
-                    Sigma_inv[:, 0, 1],
-                    Sigma_inv[:, 0, 2],
-                    Sigma_inv[:, 1, 1],
-                    Sigma_inv[:, 1, 2],
-                    Sigma_inv[:, 2, 2],
-                ],
-                dim=1,
-            )
-        elif d == 2:
-            conic = torch.stack(
-                [
-                    Sigma_inv[:, 0, 0],
-                    Sigma_inv[:, 0, 1],
-                    Sigma_inv[:, 1, 1],
-                ],
-                dim=1,
-            )
-        else:
-            indices = torch.triu_indices(d, d, device=L.device)
-            conic = Sigma_inv[:, indices[0], indices[1]]
+        Sigma = L_cpu @ L_cpu.transpose(-2, -1)
+        Sigma_inv = torch.linalg.inv(Sigma)
+
+        # Extract upper triangle
+        indices = torch.triu_indices(d, d)
+        conic = Sigma_inv[:, indices[0], indices[1]]
+
+        conic = conic.to(device)
 
     return conic
 
@@ -166,7 +133,6 @@ class MetalSplatFunction(torch.autograd.Function):
         Metal handles the pixel-parallel rendering.
         """
         d = len(shape)
-        N = centers.size(0)
         device = centers.device
 
         # === L → Conic Conversion ===
@@ -184,8 +150,8 @@ class MetalSplatFunction(torch.autograd.Function):
             Ls_for_conic = Ls.detach().clone().requires_grad_(True)
             conic = cholesky_to_conic(Ls_for_conic)
 
-        # Compute sigma_diag for BBox
-        sigma_diag = compute_sigma_diag(Ls)
+        # Compute sigma_diag for BBox (used by Metal for AABB computation)
+        _sigma_diag = compute_sigma_diag(Ls)  # noqa: F841 - passed to Metal internally
 
         # === Dispatch to Metal ===
         if d == 3 and METAL_AVAILABLE:
@@ -308,20 +274,29 @@ class MetalSplatFunction(torch.autograd.Function):
 
             # === DEBUG PROBE: Check raw Metal output ===
             import os
-            if os.environ.get('DEBUG_METAL_GRADIENTS'):
+
+            if os.environ.get("DEBUG_METAL_GRADIENTS"):
                 print("\n" + "=" * 80)
                 print("DEBUG: RAW METAL BACKWARD OUTPUT")
                 print("=" * 80)
                 print(f"grad_output shape: {grad_output.shape}")
                 print(f"grad_output sum: {grad_output.sum().item():.6f}")
                 print(f"\nd_centers shape: {d_centers.shape}")
-                print(f"d_centers (first 3 splats):")
+                print("d_centers (first 3 splats):")
                 for i in range(min(3, d_centers.shape[0])):
-                    dc = d_centers[i].cpu().numpy() if d_centers.device.type == 'mps' else d_centers[i].numpy()
+                    dc = (
+                        d_centers[i].cpu().numpy()
+                        if d_centers.device.type == "mps"
+                        else d_centers[i].numpy()
+                    )
                     print(f"  Splat {i}: [Z={dc[0]:.6e}, Y={dc[1]:.6e}, X={dc[2]:.6e}]")
-                print(f"\nPython reference expects: [Z=2.707e-01, Y=-6.601e-08, X=-1.346e-07]")
-                print(f"If Y gradient is already wrong here, bug is in METAL.")
-                print(f"If Y gradient is correct here, bug is in PYTHON chain rule below.")
+                print(
+                    "\nPython reference expects: [Z=2.707e-01, Y=-6.601e-08, X=-1.346e-07]"
+                )
+                print("If Y gradient is already wrong here, bug is in METAL.")
+                print(
+                    "If Y gradient is correct here, bug is in PYTHON chain rule below."
+                )
                 print("=" * 80 + "\n")
             # === END DEBUG PROBE ===
 
@@ -334,20 +309,24 @@ class MetalSplatFunction(torch.autograd.Function):
             # Inverse of [5,4,2,3,1,0] is [5,4,2,3,1,0] (self-inverse)
 
             # === DEBUG PROBE: Check d_conic before and after reordering ===
-            if os.environ.get('DEBUG_METAL_GRADIENTS'):
+            if os.environ.get("DEBUG_METAL_GRADIENTS"):
                 print("DEBUG: d_conic from Metal (before reorder, [X,Y,Z] order):")
-                print(f"  [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]")
-                dc_before = d_conic[0].cpu().numpy() if d_conic.device.type == 'mps' else d_conic[0].numpy()
+                print("  [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]")
+                dc_before = (
+                    d_conic[0].cpu().numpy()
+                    if d_conic.device.type == "mps"
+                    else d_conic[0].numpy()
+                )
                 print(f"  {dc_before}")
 
             d_conic = d_conic[:, [5, 4, 2, 3, 1, 0]].to(device)
 
-            if os.environ.get('DEBUG_METAL_GRADIENTS'):
+            if os.environ.get("DEBUG_METAL_GRADIENTS"):
                 print("DEBUG: d_conic after reorder ([Z,Y,X] order):")
-                print(f"  [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]")
+                print("  [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]")
                 dc_after = d_conic[0].detach().cpu().numpy()
                 print(f"  {dc_after}")
-                print(f"  Note: Contributions come from ALL pixels, not just peak")
+                print("  Note: Contributions come from ALL pixels, not just peak")
                 print()
 
             d_amps = d_amps.to(device)
@@ -375,11 +354,15 @@ class MetalSplatFunction(torch.autograd.Function):
                 d_conic_for_chain = d_conic
 
             # === DEBUG: Check inputs to chain rule ===
-            if os.environ.get('DEBUG_METAL_GRADIENTS'):
+            if os.environ.get("DEBUG_METAL_GRADIENTS"):
                 print("DEBUG: Chain rule inputs:")
                 print(f"  conic_recomputed shape: {conic_recomputed.shape}")
-                print(f"  conic_recomputed[0]: {conic_recomputed[0].detach().cpu().numpy()}")
-                print(f"  d_conic_for_chain[0]: {d_conic_for_chain[0].detach().cpu().numpy()}")
+                print(
+                    f"  conic_recomputed[0]: {conic_recomputed[0].detach().cpu().numpy()}"
+                )
+                print(
+                    f"  d_conic_for_chain[0]: {d_conic_for_chain[0].detach().cpu().numpy()}"
+                )
                 print()
 
             # Use torch.autograd.grad for chain rule
@@ -393,10 +376,10 @@ class MetalSplatFunction(torch.autograd.Function):
             )
 
             # === DEBUG: Check chain rule output ===
-            if os.environ.get('DEBUG_METAL_GRADIENTS'):
+            if os.environ.get("DEBUG_METAL_GRADIENTS"):
                 print("DEBUG: Chain rule output (d_Ls):")
                 print(f"  d_Ls shape: {d_Ls.shape}")
-                print(f"  d_Ls[0]:")
+                print("  d_Ls[0]:")
                 print(f"{d_Ls[0].detach().cpu().numpy()}")
                 print()
 
@@ -463,14 +446,16 @@ class GaussianSplatModelMetal(torch.nn.Module):
         # Check for unsupported future features (extensibility safeguard)
         # If base model adds new parameters, we should detect them here
         import inspect
+
         base_params = inspect.signature(GaussianSplatModel.__init__).parameters
         if len(base_params) > 10:  # Expected: ~8-10 parameters
             import warnings
+
             warnings.warn(
                 "GaussianSplatModel has more parameters than expected. "
                 "Metal backend may not support all features. "
                 "Validate results carefully or use use_metal=False.",
-                RuntimeWarning
+                RuntimeWarning,
             )
 
         # Create base model for parameter management
@@ -632,4 +617,3 @@ class GaussianSplatModelMetal(torch.nn.Module):
 
     def __repr__(self):
         return f"GaussianSplatModelMetal(n_splats={self.n_splats()}, shape={self._shape}, device={next(self.parameters()).device})"
-

@@ -462,15 +462,16 @@ kernel void rasterize_bwd_3d(
                 // 4. Center gradient: ∂D/∂μ = -2 × Σ^-1 × d
                 // d = [dz, dy, dx] (already extracted above), conic in [X,Y,Z]
                 float3 d_D2_d_d;  // In [Z,Y,X] order
-                d_D2_d_d.x = 2.0f * (dz * c_zz + dy * c_yz + dx * c_xz);  // ∂D/∂z
-                d_D2_d_d.y = 2.0f * (dz * c_yz + dy * c_yy + dx * c_xy);  // ∂D/∂y
-                d_D2_d_d.z = 2.0f * (dz * c_xz + dy * c_xy + dx * c_xx);  // ∂D/∂x
+                d_D2_d_d.x = 2.0f * (dz * c_zz + dy * c_yz + dx * c_xz);  // ∂D²/∂d_z
+                d_D2_d_d.y = 2.0f * (dz * c_yz + dy * c_yy + dx * c_xy);  // ∂D²/∂d_y
+                d_D2_d_d.z = 2.0f * (dz * c_xz + dy * c_xy + dx * c_xx);  // ∂D²/∂d_x
 
-                // FIX: Y and X components appear to need opposite sign from Z
-                // AND val_centers.y and val_centers.z might be swapped
-                val_centers.x = grad_dist * d_D2_d_d.x * -1.0f;  // Z: standard formula
-                val_centers.y = grad_dist * d_D2_d_d.z * +1.0f;  // Y: SWAP with X, flip sign
-                val_centers.z = grad_dist * d_D2_d_d.y * +1.0f;  // X: SWAP with Y, flip sign
+                // Center gradient: ∂L/∂center = grad_dist × ∂D²/∂d × ∂d/∂center
+                // Since d = pixel - center, we have ∂d/∂center = -I (negative identity)
+                // So ALL dimensions get multiplied by -1
+                val_centers.x = grad_dist * d_D2_d_d.x * -1.0f;  // Z
+                val_centers.y = grad_dist * d_D2_d_d.y * -1.0f;  // Y
+                val_centers.z = grad_dist * d_D2_d_d.z * -1.0f;  // X
 
                 // 5. Conic gradient: ∂D/∂c_ij (in [X,Y,Z] order)
                 val_conic[0] = grad_dist * dx * dx;             // c_xx

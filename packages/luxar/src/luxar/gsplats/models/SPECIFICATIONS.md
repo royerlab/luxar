@@ -19,6 +19,7 @@ The models package contains PyTorch model implementations and rendering engines 
 - **Rendering Algorithm**: [Main SPECIFICATIONS.md](../SPECIFICATIONS.md) → Section 2: Rendering Function
 - **Optimizers**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
 - **Matrix Utilities**: [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md)
+- **Metal Backend**: [gsplats/metal/SPECIFICATIONS.md](gsplats/metal/SPECIFICATIONS.md) - Apple Silicon GPU acceleration
 
 ## Package Structure
 
@@ -28,7 +29,14 @@ models/
 │   ├── gsplat_model.py         # Main PyTorch model class
 │   ├── rendering_core.py       # Core rendering engine
 │   ├── rendering_wrappers.py   # NumPy/PyTorch wrappers
-│   └── __init__.py
+│   ├── __init__.py
+│   └── metal/                  # Apple Silicon GPU acceleration
+│       ├── gsplat_model_metal.py  # Metal-accelerated model
+│       ├── SPECIFICATIONS.md      # Metal backend specification
+│       ├── README.md              # Installation and usage
+│       └── src/
+│           ├── kernels.metal      # Metal compute shaders
+│           └── bindings.mm        # C++ dispatcher
 └── utils/
     ├── inverse_softplus.py     # Stable inverse softplus
     ├── lt_solver.py            # Lower-triangular solver compatibility wrapper
@@ -97,7 +105,8 @@ def n_splats() -> int:
 
 **Device Selection**:
 - Auto-detects best device: CUDA → CPU
-- MPS supported but currently slower than CPU for typical workloads
+- MPS supported via standard PyTorch path
+- **Metal backend** (Apple Silicon): For 3D volumes on MPS, use `GaussianSplatModelMetal` for 10-50× speedup. See [metal/SPECIFICATIONS.md](gsplats/metal/SPECIFICATIONS.md)
 - Explicitly set via `device` parameter if needed
 
 **Parameter Constraints**:
