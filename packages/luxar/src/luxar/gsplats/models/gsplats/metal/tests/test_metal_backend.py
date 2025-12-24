@@ -15,7 +15,6 @@ from luxar.gsplats.models.gsplats.metal import (
     is_metal_available,
 )
 
-
 # Skip all tests if Metal is not available
 pytestmark = pytest.mark.skipif(
     not is_metal_available() or not torch.backends.mps.is_available(),

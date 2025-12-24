@@ -166,3 +166,7 @@ error-state.png
 # Deprecated folders (no longer used)
 packages/luxar-viewer/test-screenshots/
 packages/luxar-viewer/debug-screenshots/
+
+# Metal backend build artifacts
+*.metallib
+packages/luxar/src/luxar/gsplats/models/gsplats/metal/packages/

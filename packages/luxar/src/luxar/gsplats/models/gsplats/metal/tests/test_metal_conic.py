@@ -13,7 +13,6 @@ import torch
 from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import cholesky_to_conic
 
-
 pytestmark = pytest.mark.skipif(
     not is_metal_available() or not torch.backends.mps.is_available(),
     reason="Metal backend or MPS not available",
@@ -26,13 +25,17 @@ class TestMetalConicAccuracy:
     def test_diagonal_L(self):
         """Test Metal conic for diagonal L matrices."""
         import sys
-        sys.path.insert(0, '/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal')
+
+        sys.path.insert(
+            0,
+            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
+        )
         import metal_splatting_backend
 
         # Diagonal L in [Z,Y,X] order
-        L = torch.tensor([[[2.0, 0.0, 0.0],
-                           [0.0, 1.5, 0.0],
-                           [0.0, 0.0, 1.0]]], dtype=torch.float32)
+        L = torch.tensor(
+            [[[2.0, 0.0, 0.0], [0.0, 1.5, 0.0], [0.0, 0.0, 1.0]]], dtype=torch.float32
+        )
 
         # Compute in PyTorch (outputs in [Z,Y,X] order)
         conic_pytorch_zyx = cholesky_to_conic(L)
@@ -45,19 +48,24 @@ class TestMetalConicAccuracy:
         conic_pytorch_xyz = conic_pytorch_zyx[:, [5, 4, 2, 3, 1, 0]]
 
         # Should be identical
-        assert torch.allclose(conic_metal_xyz, conic_pytorch_xyz, atol=1e-6), \
+        assert torch.allclose(conic_metal_xyz, conic_pytorch_xyz, atol=1e-6), (
             f"Metal conic differs:\nMetal [X,Y,Z]:   {conic_metal_xyz}\nPyTorch [X,Y,Z]: {conic_pytorch_xyz}"
+        )
 
     def test_non_diagonal_L(self):
         """Test Metal conic for non-diagonal L matrices."""
         import sys
-        sys.path.insert(0, '/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal')
+
+        sys.path.insert(
+            0,
+            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
+        )
         import metal_splatting_backend
 
         # Non-diagonal L in [Z,Y,X] order
-        L = torch.tensor([[[2.0, 0.0, 0.0],
-                           [1.0, 1.5, 0.0],
-                           [0.5, 0.3, 1.0]]], dtype=torch.float32)
+        L = torch.tensor(
+            [[[2.0, 0.0, 0.0], [1.0, 1.5, 0.0], [0.5, 0.3, 1.0]]], dtype=torch.float32
+        )
 
         # Compute in PyTorch (outputs [Z,Y,X])
         conic_pytorch_zyx = cholesky_to_conic(L)
@@ -76,7 +84,11 @@ class TestMetalConicAccuracy:
     def test_batch_processing(self):
         """Test Metal conic with multiple splats."""
         import sys
-        sys.path.insert(0, '/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal')
+
+        sys.path.insert(
+            0,
+            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
+        )
         import metal_splatting_backend
 
         # Multiple random L matrices
@@ -88,7 +100,9 @@ class TestMetalConicAccuracy:
 
         # Compute both ways
         conic_pytorch_zyx = cholesky_to_conic(L)
-        conic_pytorch_xyz = conic_pytorch_zyx[:, [5, 4, 2, 3, 1, 0]]  # Reorder to [X,Y,Z]
+        conic_pytorch_xyz = conic_pytorch_zyx[
+            :, [5, 4, 2, 3, 1, 0]
+        ]  # Reorder to [X,Y,Z]
 
         conic_metal_xyz = metal_splatting_backend.compute_conic_metal(L.to("mps")).cpu()
 
@@ -102,21 +116,38 @@ class TestMetalConicAccuracy:
     def test_coordinate_ordering(self):
         """Verify Metal conic outputs in correct [X,Y,Z] order."""
         import sys
-        sys.path.insert(0, '/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal')
+
+        sys.path.insert(
+            0,
+            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
+        )
         import metal_splatting_backend
 
         # L with different values to check ordering
-        L = torch.tensor([[[3.0, 0.0, 0.0],  # L_zz = 3
-                           [0.0, 2.0, 0.0],  # L_yy = 2
-                           [0.0, 0.0, 1.0]]], dtype=torch.float32)  # L_xx = 1
+        L = torch.tensor(
+            [
+                [
+                    [3.0, 0.0, 0.0],  # L_zz = 3
+                    [0.0, 2.0, 0.0],  # L_yy = 2
+                    [0.0, 0.0, 1.0],
+                ]
+            ],
+            dtype=torch.float32,
+        )  # L_xx = 1
 
         conic = metal_splatting_backend.compute_conic_metal(L.to("mps")).cpu()
 
         # Conic should be in [X,Y,Z] order: [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]
         # Expected: [1/1²=1.0, 0, 0, 1/2²=0.25, 0, 1/3²=0.111]
-        assert torch.allclose(conic[0, 0], torch.tensor(1.0), atol=1e-6), "c_xx should be 1.0"
-        assert torch.allclose(conic[0, 3], torch.tensor(0.25), atol=1e-6), "c_yy should be 0.25"
-        assert torch.allclose(conic[0, 5], torch.tensor(1/9), atol=1e-6), "c_zz should be 1/9"
+        assert torch.allclose(conic[0, 0], torch.tensor(1.0), atol=1e-6), (
+            "c_xx should be 1.0"
+        )
+        assert torch.allclose(conic[0, 3], torch.tensor(0.25), atol=1e-6), (
+            "c_yy should be 0.25"
+        )
+        assert torch.allclose(conic[0, 5], torch.tensor(1 / 9), atol=1e-6), (
+            "c_zz should be 1/9"
+        )
 
 
 class TestMetalConicIntegration:
@@ -159,8 +190,9 @@ class TestMetalConicIntegration:
         loss.backward()
 
         # Check gradients computed
-        has_grad = any(p.grad is not None and p.grad.norm() > 0
-                      for p in model.parameters())
+        has_grad = any(
+            p.grad is not None and p.grad.norm() > 0 for p in model.parameters()
+        )
         assert has_grad, "Gradients should be computed"
 
     def test_matches_pytorch_conic(self):
@@ -174,7 +206,10 @@ class TestMetalConicIntegration:
 
         # Model with PyTorch conic
         model_pytorch = GaussianSplatModelMetal(
-            shape=(16, 16, 16), centers0=centers, L0=L, amps0=amps,
+            shape=(16, 16, 16),
+            centers0=centers,
+            L0=L,
+            amps0=amps,
             sigma_min_diag=[0.5, 0.5, 0.5],
             use_metal_conic=False,  # PyTorch
             device="mps",
@@ -182,7 +217,10 @@ class TestMetalConicIntegration:
 
         # Model with Metal conic
         model_metal = GaussianSplatModelMetal(
-            shape=(16, 16, 16), centers0=centers, L0=L, amps0=amps,
+            shape=(16, 16, 16),
+            centers0=centers,
+            L0=L,
+            amps0=amps,
             sigma_min_diag=[0.5, 0.5, 0.5],
             use_metal_conic=True,  # Metal
             device="mps",

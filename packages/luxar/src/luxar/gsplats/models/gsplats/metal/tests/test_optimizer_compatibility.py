@@ -15,7 +15,6 @@ from luxar.gsplats.models.gsplats.metal import (
     is_metal_available,
 )
 
-
 pytestmark = pytest.mark.skipif(
     not is_metal_available() or not torch.backends.mps.is_available(),
     reason="Metal backend or MPS not available",
@@ -111,7 +110,7 @@ class TestOptimizerCompatibility:
             simple_model.zero_grad()
 
         # Losses should be finite
-        assert all(np.isfinite(l) for l in losses)
+        assert all(np.isfinite(loss_val) for loss_val in losses)
 
 
 if __name__ == "__main__":

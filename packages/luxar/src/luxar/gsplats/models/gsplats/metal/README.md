@@ -64,13 +64,22 @@ else:
 ```
 metal/
 ├── __init__.py                 # Package interface
-├── setup.py                    # Build script
-├── gsplat_model_metal.py      # Python interface (GaussianSplatModelMetal)
-├── README.md                  # This file
-└── src/
-    ├── kernels.metal          # Metal compute shaders
-    ├── bindings.mm            # C++ dispatcher (PyTorch ↔ Metal)
-    └── default.metallib       # Compiled Metal library (generated)
+├── setup.py                    # Build script (native code compilation)
+├── gsplat_model_metal.py       # Python interface (GaussianSplatModelMetal)
+├── README.md                   # This file
+├── SPECIFICATIONS.md           # Technical specification
+├── src/
+│   ├── kernels.metal           # Metal compute shaders
+│   └── bindings.mm             # C++ dispatcher (PyTorch ↔ Metal)
+└── tests/
+    ├── test_metal_backend.py   # Core functionality tests
+    ├── test_metal_numerical.py # Gradient correctness tests
+    └── ...                     # Additional test modules
+
+# Build artifacts (generated, gitignored):
+# ├── build/                    # Temporary build files
+# ├── *.so                      # Compiled Python extension
+# └── src/default.metallib      # Compiled Metal library
 ```
 
 ### Data Flow
