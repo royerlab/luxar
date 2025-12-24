@@ -74,6 +74,9 @@ def _find_residual_peaks_global(
     if kernel_size % 2 == 0:
         kernel_size += 1
 
+    # Apply max pooling for NMS
+    # Note: max_pool3d is not implemented for MPS, so we use CPU fallback
+    original_device = residual_abs.device
     if d == 2:
         max_pooled = torch.nn.functional.max_pool2d(
             residual_abs[None, None],
@@ -82,12 +85,22 @@ def _find_residual_peaks_global(
             padding=kernel_size // 2,
         )[0, 0]
     elif d == 3:
-        max_pooled = torch.nn.functional.max_pool3d(
-            residual_abs[None, None],
-            kernel_size=kernel_size,
-            stride=1,
-            padding=kernel_size // 2,
-        )[0, 0]
+        # MPS doesn't support max_pool3d, so fall back to CPU
+        if residual_abs.device.type == "mps":
+            residual_abs_cpu = residual_abs.cpu()
+            max_pooled = torch.nn.functional.max_pool3d(
+                residual_abs_cpu[None, None],
+                kernel_size=kernel_size,
+                stride=1,
+                padding=kernel_size // 2,
+            )[0, 0].to(original_device)
+        else:
+            max_pooled = torch.nn.functional.max_pool3d(
+                residual_abs[None, None],
+                kernel_size=kernel_size,
+                stride=1,
+                padding=kernel_size // 2,
+            )[0, 0]
     else:
         # Fallback for other dimensions
         max_pooled = residual_abs
