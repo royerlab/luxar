@@ -798,5 +798,166 @@ class TestRenderingWrappersEdgeCases:
         assert torch.sum(result) > 0
 
 
+class TestMPSFallbackHandling:
+    """Test MPS fallback handling for torch.unique operations."""
+
+    def test_group_by_box_cpu(self) -> None:
+        """Test _group_by_box works on CPU."""
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+
+        # Create test data on CPU with different box shapes
+        # Box 0: (0,0) to (5,5) -> shape (5,5)
+        # Box 1: (10,10) to (17,13) -> shape (7,3)
+        # Box 2: (0,0) to (5,5) -> shape (5,5) - same as Box 0
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
+
+        groups = _group_by_box(lo, hi)
+
+        # Should group identical box shapes together
+        assert len(groups) == 2  # Two unique shapes: (5,5) and (7,3)
+        assert (5, 5) in groups
+        assert (7, 3) in groups
+        # Indices 0 and 2 have same box shape (5,5)
+        assert len(groups[(5, 5)]) == 2
+
+    def test_group_by_box_gpu_cpu(self) -> None:
+        """Test _group_by_box_gpu works on CPU."""
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
+
+        uniq, inv = _group_by_box_gpu(lo, hi)
+
+        # Should find 2 unique sizes: (5,5) and (7,3)
+        assert uniq.shape[0] == 2
+        # inv should map back to unique sizes
+        assert inv.shape[0] == 3
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(),
+        reason="MPS not available",
+    )
+    def test_group_by_box_mps(self) -> None:
+        """Test _group_by_box MPS fallback path."""
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+
+        # Create test data on MPS with different box shapes
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long, device="mps")
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long, device="mps")
+
+        groups = _group_by_box(lo, hi)
+
+        # Should still work correctly on MPS with CPU fallback
+        assert len(groups) == 2
+        assert (5, 5) in groups
+        assert (7, 3) in groups
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(),
+        reason="MPS not available",
+    )
+    def test_group_by_box_gpu_mps(self) -> None:
+        """Test _group_by_box_gpu MPS fallback path."""
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long, device="mps")
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long, device="mps")
+
+        uniq, inv = _group_by_box_gpu(lo, hi)
+
+        # Results should be on MPS device
+        assert uniq.device.type == "mps"
+        assert inv.device.type == "mps"
+        assert uniq.shape[0] == 2
+
+    def test_mps_fallback_code_path_exists(self) -> None:
+        """Verify MPS fallback code path exists in _group_by_box."""
+        import inspect
+
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box
+
+        source = inspect.getsource(_group_by_box)
+        assert 'device.type == "mps"' in source, (
+            "_group_by_box should have MPS fallback handling"
+        )
+
+    def test_mps_fallback_code_path_exists_gpu(self) -> None:
+        """Verify MPS fallback code path exists in _group_by_box_gpu."""
+        import inspect
+
+        from luxar.gsplats.models.gsplats.rendering_core import _group_by_box_gpu
+
+        source = inspect.getsource(_group_by_box_gpu)
+        assert 'device.type == "mps"' in source, (
+            "_group_by_box_gpu should have MPS fallback handling"
+        )
+
+
+class TestMPSPeakFindingFallback:
+    """Test MPS fallback handling for max_pool3d in peak finding."""
+
+    def test_mps_fallback_code_path_exists_global(self) -> None:
+        """Verify MPS fallback exists in _find_residual_peaks_global."""
+        import inspect
+
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_global,
+        )
+
+        source = inspect.getsource(_find_residual_peaks_global)
+        assert 'device.type == "mps"' in source, (
+            "_find_residual_peaks_global should have MPS fallback for max_pool3d"
+        )
+
+    def test_mps_fallback_code_path_exists_tiled(self) -> None:
+        """Verify MPS fallback exists in _find_peaks_in_tile."""
+        import inspect
+
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import _find_peaks_in_tile
+
+        source = inspect.getsource(_find_peaks_in_tile)
+        assert 'device.type == "mps"' in source, (
+            "_find_peaks_in_tile should have MPS fallback for max_pool3d"
+        )
+
+    def test_global_peak_finding_cpu_3d(self) -> None:
+        """Test global peak finding works on CPU for 3D."""
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_global,
+        )
+
+        # Create 3D residual with clear peaks
+        residual = torch.zeros(16, 16, 16, dtype=torch.float32)
+        residual[5, 5, 5] = 1.0
+        residual[10, 10, 10] = 0.8
+
+        peaks = _find_residual_peaks_global(residual, k_max_residuals=2, nms_radius_vox=2.0)
+
+        assert len(peaks) == 2
+        assert (5, 5, 5) in peaks
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(),
+        reason="MPS not available",
+    )
+    def test_global_peak_finding_mps_3d(self) -> None:
+        """Test global peak finding works on MPS for 3D with CPU fallback."""
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_global,
+        )
+
+        # Create 3D residual on MPS
+        residual = torch.zeros(16, 16, 16, dtype=torch.float32, device="mps")
+        residual[5, 5, 5] = 1.0
+        residual[10, 10, 10] = 0.8
+
+        # Should work without error due to CPU fallback
+        peaks = _find_residual_peaks_global(residual, k_max_residuals=2, nms_radius_vox=2.0)
+
+        assert len(peaks) == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

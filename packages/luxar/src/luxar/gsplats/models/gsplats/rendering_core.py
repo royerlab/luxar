@@ -205,7 +205,13 @@ def _group_by_box(
     sizes = (hi - lo).to(torch.int32)  # (N, d)
 
     # Use torch.unique on GPU to find unique sizes and group indices
-    uniq, inv = torch.unique(sizes, dim=0, return_inverse=True)
+    # MPS doesn't support torch.unique with dim argument, fallback to CPU
+    if sizes.device.type == "mps":
+        sizes_cpu = sizes.cpu()
+        uniq, inv = torch.unique(sizes_cpu, dim=0, return_inverse=True)
+        uniq, inv = uniq.to(sizes.device), inv.to(sizes.device)
+    else:
+        uniq, inv = torch.unique(sizes, dim=0, return_inverse=True)
 
     groups: Dict[Tuple[int, ...], torch.Tensor] = {}
     # Only transfer the small unique array to CPU for dict keys
