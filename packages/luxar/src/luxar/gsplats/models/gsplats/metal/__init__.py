@@ -343,7 +343,7 @@ def get_metal_status() -> str:
     Returns:
         Status message explaining current Metal backend state
     """
-    if not sys.platform == "darwin":
+    if sys.platform != "darwin":
         return "Metal backend only available on macOS"
     if not _mps_interop_valid:
         return "MPS-Metal interop validation failed. PyTorch MPS may not be available."

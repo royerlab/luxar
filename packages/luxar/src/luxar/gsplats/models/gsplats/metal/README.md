@@ -26,18 +26,17 @@ sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 xcrun --find metal
 ```
 
-### 2. Build the Metal Extension
+### 2. Build the Metal Extension (Automatic)
 
-From the `metal/` directory:
+**The Metal extension is automatically compiled on first import.** No manual build step is required.
+
+If you need to manually rebuild (e.g., after modifying the Metal shaders):
 
 ```bash
 cd packages/luxar/src/luxar/gsplats/models/gsplats/metal
 
 # Build in-place (for development):
 python setup.py build_ext --inplace
-
-# Or install as a package:
-pip install -e .
 ```
 
 The build process will:
@@ -191,19 +190,18 @@ Actual speedup depends on:
 
 ### "Metal backend not available"
 
-Check:
+The extension auto-compiles on first import. If it fails, check:
+
 ```bash
-# 1. Xcode installed?
+# 1. Xcode installed and active?
 xcrun --find metal
+# If this fails, run: sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 
-# 2. Extension compiled?
-ls -la src/default.metallib
-
-# 3. PyTorch MPS available?
+# 2. PyTorch MPS available?
 python -c "import torch; print(torch.backends.mps.is_available())"
 
-# 4. Extension importable?
-python -c "import metal_splatting_backend; print('OK')"
+# 3. Extension importable (after auto-build)?
+python -c "from luxar.gsplats.models.gsplats.metal import is_metal_available; print(is_metal_available())"
 ```
 
 ### Build Errors
