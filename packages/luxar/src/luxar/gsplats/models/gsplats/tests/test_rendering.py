@@ -933,7 +933,9 @@ class TestMPSPeakFindingFallback:
         residual[5, 5, 5] = 1.0
         residual[10, 10, 10] = 0.8
 
-        peaks = _find_residual_peaks_global(residual, k_max_residuals=2, nms_radius_vox=2.0)
+        peaks = _find_residual_peaks_global(
+            residual, k_max_residuals=2, nms_radius_vox=2.0
+        )
 
         assert len(peaks) == 2
         assert (5, 5, 5) in peaks
@@ -954,7 +956,9 @@ class TestMPSPeakFindingFallback:
         residual[10, 10, 10] = 0.8
 
         # Should work without error due to CPU fallback
-        peaks = _find_residual_peaks_global(residual, k_max_residuals=2, nms_radius_vox=2.0)
+        peaks = _find_residual_peaks_global(
+            residual, k_max_residuals=2, nms_radius_vox=2.0
+        )
 
         assert len(peaks) == 2
 
