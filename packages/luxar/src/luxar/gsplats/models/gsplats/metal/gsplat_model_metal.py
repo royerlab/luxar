@@ -105,11 +105,6 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
     return conic
 
 
-def compute_sigma_diag(L: torch.Tensor) -> torch.Tensor:
-    """Compute diagonal of Σ = L @ L^T: Σ_ii = sum_j(L_ij²)."""
-    return torch.sum(L * L, dim=2)  # (N, d)
-
-
 class MetalSplatFunction(torch.autograd.Function):
     """Custom autograd function for Metal-accelerated splatting."""
 
@@ -150,10 +145,8 @@ class MetalSplatFunction(torch.autograd.Function):
             Ls_for_conic = Ls.detach().clone().requires_grad_(True)
             conic = cholesky_to_conic(Ls_for_conic)
 
-        # Compute sigma_diag for BBox (used by Metal for AABB computation)
-        _sigma_diag = compute_sigma_diag(Ls)  # noqa: F841 - passed to Metal internally
-
         # === Dispatch to Metal ===
+        # Note: Metal computes sigma_diag internally from Ls for AABB
         if d == 3 and METAL_AVAILABLE:
             # CRITICAL: Coordinate convention handling
             # PyTorch/numpy uses [Z,Y,X], Metal kernel expects [X,Y,Z] for conic/distance
