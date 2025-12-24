@@ -86,14 +86,11 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
-    // Open dimension sliders
-    await page.keyboard.press('n');
-
-    // Wait for dimension sliders animation to complete
-    await page.waitForTimeout(300); // Allow fade-in animation to complete (0.15s animation + buffer)
+    // Dimension sliders should be visible by default for nD datasets
+    // (no need to press 'n' - they're already shown)
 
     // Wait for dimension sliders to be attached and visible
-    await page.waitForSelector('.luxar-dimension-sliders', { timeout: 2000 });
+    await page.waitForSelector('.luxar-dimension-sliders', { timeout: 5000 });
 
     // Wait for play button to be visible (checking opacity, not hidden state)
     await page.waitForFunction(
@@ -138,8 +135,6 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
-    // Open dimension sliders
-    await page.keyboard.press('n');
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -187,8 +182,6 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
-    // Open dimension sliders
-    await page.keyboard.press('n');
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -219,8 +212,6 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
-    // Open dimension sliders
-    await page.keyboard.press('n');
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -365,7 +356,6 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await page.waitForTimeout(100);
 
     // Set FPS to 30 first via UI
-    await page.keyboard.press('n'); // Open sliders
 
     // Wait for play button to be visible, then right-click to select 30 FPS
     const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -408,7 +398,6 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     const initialValue = await getDimensionValue(page, 3);
 
     // Start animation at high FPS for faster test
-    await page.keyboard.press('n'); // Open sliders
 
     // Wait for play button to be visible, then right-click and select 30 FPS
     const playButton1 = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -443,7 +432,6 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.waitForTimeout(100);
 
     // Set loop mode to loop and high FPS
-    await page.keyboard.press('n'); // Open sliders
 
     // Wait for play button to be visible, then right-click to open context menu
     const playButton2 = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -493,7 +481,6 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.waitForTimeout(100);
 
     // Set loop mode to once and high FPS
-    await page.keyboard.press('n'); // Open sliders
 
     // Wait for play button to be visible, then right-click to open context menu
     const playButton3 = await page.locator('.luxar-dimension-slider__play-btn').first();
@@ -552,7 +539,6 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.waitForTimeout(100);
 
     // Set loop mode to bounce and high FPS
-    await page.keyboard.press('n'); // Open sliders
 
     // Wait for play button to be visible, then right-click to open context menu
     const playButton4 = await page.locator('.luxar-dimension-slider__play-btn').first();

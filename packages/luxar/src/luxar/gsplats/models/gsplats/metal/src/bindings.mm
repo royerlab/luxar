@@ -49,11 +49,9 @@ struct MetalContext {
         // Load precompiled Metal library
         // Try multiple locations to find the library
         NSArray* searchPaths = @[
-            // Relative to source directory (build time)
+            // Relative to source directory (build time and runtime)
             [[NSString stringWithUTF8String:__FILE__] stringByDeletingLastPathComponent],
-            // Relative to Python package (runtime)
-            @"/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal/src",
-            // Current directory
+            // Current directory (fallback)
             [[NSFileManager defaultManager] currentDirectoryPath]
         ];
 
