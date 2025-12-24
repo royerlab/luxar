@@ -129,6 +129,7 @@ export async function waitForDataLoaded(page: Page, timeout = 10000): Promise<vo
       // 2. Either has points OR explicitly has no points (valid state)
       return state && !state.isLoading;
     },
+    null, // no arguments
     { timeout }
   );
 }
@@ -178,6 +179,7 @@ export async function waitForConsoleInterceptor(page: Page, timeout = 5000): Pro
         typeof debug.consoleInterceptor.getBufferedMessages === 'function'
       );
     },
+    null,
     { timeout }
   );
 }
@@ -199,6 +201,7 @@ export async function waitForDebugInterfaceReady(page: Page, timeout = 10000): P
         typeof debug.getState === 'function'
       );
     },
+    null,
     { timeout }
   );
 }
@@ -219,6 +222,7 @@ export async function waitForDimensionSelected(
       // For now, just wait for state to be stable
       return debug && debug.getState && debug.getState().initialized;
     },
+    null,
     { timeout }
   );
   // Small delay to ensure input handler processed the key
@@ -535,6 +539,7 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
       const debug = (window as any).__luxarDebug;
       return debug && debug.getState && typeof debug.getState().isLoading === 'boolean';
     },
+    null,
     { timeout: 5000 }
   );
 
@@ -583,7 +588,7 @@ export async function waitForRenderStable(
         const debug = (window as any).__luxarDebug;
         return debug?.renderer?.info?.render?.frame >= minFrames;
       },
-      minFrames,
+      minFrames, // pass minFrames as argument (this one is correct)
       { timeout }
     );
   } else {
@@ -594,6 +599,7 @@ export async function waitForRenderStable(
         const state = debug?.getState?.();
         return state && !state.isLoading && state.initialized;
       },
+      null,
       { timeout }
     );
     // Additional buffer for GPU to render frames

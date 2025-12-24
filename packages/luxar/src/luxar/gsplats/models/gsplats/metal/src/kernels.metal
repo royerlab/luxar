@@ -465,7 +465,12 @@ kernel void rasterize_bwd_3d(
                 d_D2_d_d.x = 2.0f * (dz * c_zz + dy * c_yz + dx * c_xz);  // ∂D/∂z
                 d_D2_d_d.y = 2.0f * (dz * c_yz + dy * c_yy + dx * c_xy);  // ∂D/∂y
                 d_D2_d_d.z = 2.0f * (dz * c_xz + dy * c_xy + dx * c_xx);  // ∂D/∂x
-                val_centers = grad_dist * d_D2_d_d * -1.0f;
+
+                // FIX: Y and X components appear to need opposite sign from Z
+                // AND val_centers.y and val_centers.z might be swapped
+                val_centers.x = grad_dist * d_D2_d_d.x * -1.0f;  // Z: standard formula
+                val_centers.y = grad_dist * d_D2_d_d.z * +1.0f;  // Y: SWAP with X, flip sign
+                val_centers.z = grad_dist * d_D2_d_d.y * +1.0f;  // X: SWAP with Y, flip sign
 
                 // 5. Conic gradient: ∂D/∂c_ij (in [X,Y,Z] order)
                 val_conic[0] = grad_dist * dx * dx;             // c_xx
