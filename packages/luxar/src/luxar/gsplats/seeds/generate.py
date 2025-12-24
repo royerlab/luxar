@@ -216,6 +216,12 @@ def generate_seeds(
         "verbose",
     }
 
+    # Parameters that may be passed from higher-level APIs but aren't used for seed generation
+    # (e.g., fitting parameters passed through from fit_gsplats)
+    passthrough_params = {
+        "use_metal",  # GPU acceleration for fitting, not seed generation
+    }
+
     # Route parameters based on which methods are being used
     for key, value in kwargs.items():
         # Check which method(s) use this parameter
@@ -229,7 +235,8 @@ def generate_seeds(
             decomposition_kwargs[key] = value
 
         # Warn about unused parameters (not consumed by any selected method)
-        if not (used_by_gaussian or used_by_decomposition):
+        # Skip known passthrough params that come from higher-level APIs
+        if not (used_by_gaussian or used_by_decomposition or key in passthrough_params):
             import warnings
 
             warnings.warn(
