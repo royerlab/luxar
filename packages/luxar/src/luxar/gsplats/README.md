@@ -731,6 +731,40 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 
 **Current Optimal Strategy**: Auto-select CPU on Apple Silicon, which provides the best performance available. This will automatically benefit from future improvements in either PyTorch MPS or MLX GPU acceleration.
 
+### Metal Backend (Apple Silicon GPU Acceleration)
+
+For 3D volumes on Apple Silicon, a native **Metal compute shader** backend is available that provides **10-50× speedup** over CPU rendering:
+
+```python
+from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
+
+# Drop-in replacement for GaussianSplatModel
+model = GaussianSplatModelMetal(
+    shape=(64, 64, 64),
+    centers0=centers,
+    L0=L,
+    amps0=amps,
+    truncate=3.0,
+    device='mps'  # Must be MPS
+)
+
+# Use like normal PyTorch model
+output = model()
+loss = criterion(output, target)
+loss.backward()  # Gradients computed via Metal kernels
+```
+
+**Requirements**: macOS with Apple Silicon (M1/M2/M3/M4), full Xcode installation.
+
+**Compilation**: The Metal backend requires one-time compilation:
+
+```bash
+cd packages/luxar/src/luxar/gsplats/models/gsplats/metal
+python setup.py build_ext --inplace
+```
+
+See [metal/README.md](models/gsplats/metal/README.md) for detailed installation and troubleshooting.
+
 ## Package Structure
 
 ```
