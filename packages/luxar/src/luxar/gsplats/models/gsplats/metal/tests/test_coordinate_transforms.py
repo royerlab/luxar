@@ -214,13 +214,6 @@ class TestEndToEndCoordinates:
 
     def test_asymmetric_splat_metal_vs_pytorch(self):
         """Test that Metal produces same result as PyTorch after proper reordering."""
-        import sys
-
-        sys.path.insert(
-            0,
-            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
-        )
-
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
         from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
 

@@ -19,18 +19,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+# Import the extension module after the skip check
+# This avoids import errors when Metal is not available
+def _get_metal_backend():
+    """Get the Metal extension module (already loaded by is_metal_available)."""
+    import metal_splatting_backend
+
+    return metal_splatting_backend
+
+
 class TestMetalConicAccuracy:
     """Test Metal L→Conic accuracy against PyTorch reference."""
 
     def test_diagonal_L(self):
         """Test Metal conic for diagonal L matrices."""
-        import sys
-
-        sys.path.insert(
-            0,
-            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
-        )
-        import metal_splatting_backend
+        metal_splatting_backend = _get_metal_backend()
 
         # Diagonal L in [Z,Y,X] order
         L = torch.tensor(
@@ -54,13 +57,7 @@ class TestMetalConicAccuracy:
 
     def test_non_diagonal_L(self):
         """Test Metal conic for non-diagonal L matrices."""
-        import sys
-
-        sys.path.insert(
-            0,
-            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
-        )
-        import metal_splatting_backend
+        metal_splatting_backend = _get_metal_backend()
 
         # Non-diagonal L in [Z,Y,X] order
         L = torch.tensor(
@@ -83,13 +80,7 @@ class TestMetalConicAccuracy:
 
     def test_batch_processing(self):
         """Test Metal conic with multiple splats."""
-        import sys
-
-        sys.path.insert(
-            0,
-            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
-        )
-        import metal_splatting_backend
+        metal_splatting_backend = _get_metal_backend()
 
         # Multiple random L matrices
         N = 100
@@ -116,13 +107,7 @@ class TestMetalConicAccuracy:
 
     def test_coordinate_ordering(self):
         """Verify Metal conic outputs in correct [X,Y,Z] order."""
-        import sys
-
-        sys.path.insert(
-            0,
-            "/Users/loic.royer/workspace/python/luxar/packages/luxar/src/luxar/gsplats/models/gsplats/metal",
-        )
-        import metal_splatting_backend
+        metal_splatting_backend = _get_metal_backend()
 
         # L with different values to check ordering
         L = torch.tensor(
