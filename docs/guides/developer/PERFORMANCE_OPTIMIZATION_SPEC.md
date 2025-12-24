@@ -1,9 +1,43 @@
-# Luxar Performance Optimization Specification (CORRECTED)
+# Luxar Performance Optimization Specification v3.5.0
 
-**Version**: 3.0.0 (Fully Corrected)
-**Date**: 2025-12-22
+> **v3.5.0 Changes (2025-12-23)**:
+> - 🔴 FIXED: processGSplats() now correctly documents Mahalanobis distance algorithm
+> - 🔴 FIXED: acquireGSplatsGeometry() no longer takes ndim (always 3D after processing)
+> - 🔴 FIXED: SceneManager.updateGSplats() now shows correct data flow (process → pack → update)
+> - 🔴 ADDED: Note about actual vs proposed GSplats patterns (direct mesh vs GPUBufferPool)
+> - 🔴 ADDED: mahalanobisDistance() helper function documentation
+> - 🔴 ADDED: Two-pass visibility filtering documentation
+>
+> **v3.4.0 Changes (2025-12-23)**:
+> - 🔴 FIXED: createGSplatsGeometry uses 3D centers and packed Cholesky (aCholesky01/23/45)
+> - 🔴 FIXED: updateGSplatsGeometry takes PackedGSplatsData (3D), not LoadedGSplatsData (nD)
+> - 🔴 ADDED: processGSplats() transformation function (nD → 3D with amplitude attenuation)
+> - 🔴 ADDED: packCholeskyForShader() function (6-element → 3×vec2 packing)
+> - 🔴 ADDED: ProcessedGSplatsData and PackedGSplatsData interfaces
+> - 🔴 ADDED: Complete GSplats data flow diagram (Loader → processGSplats → packCholesky → GPU)
+>
+> **v3.3.0 Changes (2025-12-23)**:
+> - 🟡 FIXED: createPointsGeometry uses Float32Array (RGB, 3 components) for HDR color support
+> - 🟡 FIXED: updatePointsGeometry uses Float32Array and count*3 for colors (matching scene-loader.ts)
+>
+> **v3.2.0 Changes (2025-12-23)**:
+> - 🟡 FIXED: PointsDataAccumulator now supports HDR colors (Float32Array)
+> - 🟡 FIXED: Architecture diagram accurately shows ArrayDecoder on main thread
+> - 🟡 FIXED: createLinesGeometry uses Float32Array for clipped flags (matches line-material.ts)
+> - 🟡 FIXED: Points colors use RGB (3 components), not RGBA (4 components)
+> - 🟡 FIXED: Color fill() handles Uint8Array/Uint16Array → Float32Array conversion
+>
+> **v3.1.0 Changes (2025-12-23)**:
+> - 🔴 FIXED: widths in LoadedLinesData are PER-VERTEX, not per-segment
+> - 🔴 FIXED: GPU Buffer Pool uses ProcessedLinesData (per-segment), not LoadedLinesData (per-vertex)
+> - 🔴 FIXED: ArrayDecoder stays on main thread (needs zarr.Array objects)
+> - 🔴 ADDED: buildInstanceBuffers() transformation function for Lines
+> - 🔴 FIXED: createLinesGeometry() creates InstancedBufferGeometry with per-segment attributes
+
+**Version**: 3.5.0 (Corrected GSplats Algorithm - Mahalanobis Distance)
+**Date**: 2025-12-23
 **Status**: Ready for Implementation
-**Revision Notes**: ALL critical issues from review addressed with correct types and implementations
+**Revision Notes**: ALL node types (Points, Lines, GSplats) now have complete, accurate data flow documentation
 
 ## Executive Summary
 
@@ -99,38 +133,36 @@ GSplatsSpatialIndexLoader
 │  │         Loader Coordinator (Polymorphic by Type)                      │   │
 │  │  PointSpatialIndexLoader   | Lines...  | GSplats...                  │   │
 │  │  - Owns persistent Accumulator (per type)                            │   │
-│  │  - Fetches zarr chunks (pre-encoded)                                 │   │
-│  │  - Dispatches to worker for decoding                                 │   │
-│  │  - Receives Transferable results                                     │   │
+│  │  - Fetches zarr chunks (async IO - non-blocking)                     │   │
+│  │  - Decodes via ArrayDecoder (on main thread!)                        │   │
+│  │  - Dispatches spatial queries to worker                              │   │
 │  └───────────────────────────┬──────────────────────────────────────────┘   │
-│                               │ postMessage([ArrayBuffers], transferList)    │
+│                               │                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  ArrayDecoder (MAIN THREAD - needs zarr.Array objects)                │  │
+│  │  Handles: broadcasting, LUT, quantization, array_ref, delta, Blosc   │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                               │ postMessage(spatial query params)            │
 └───────────────────────────────┼───────────────────────────────────────────────┘
                                 │
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Worker Thread (Processing)                          │
+│                          Worker Thread (WASM Processing)                     │
 │                                                                               │
-│  ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐  │
-│  │ SpatialQueryTask │      │ DecodingTask     │      │ VisibilityTask   │  │
-│  │ - WASM query     │      │ - ArrayDecoder   │      │ - WASM nD dist   │  │
-│  │ - Chunk bounds   │      │ - Blosc/LUT/etc  │      │ - Filter points  │  │
-│  └──────────────────┘      └──────────────────┘      └──────────────────┘  │
-│           │                         │                         │              │
-│           └─────────────────────────┼─────────────────────────┘              │
-│                                     ▼                                         │
-│                  ┌───────────────────────────────────────────┐               │
-│                  │        ArrayDecoder (Critical!)           │               │
-│                  │  Handles: broadcasting, LUT, quantization,│               │
-│                  │           array_ref, delta, Blosc         │               │
-│                  └───────────────────────────────────────────┘               │
-│                                     │                                         │
-│                                     ▼                                         │
+│  ┌──────────────────┐                             ┌──────────────────┐       │
+│  │ SpatialQueryTask │                             │ VisibilityTask   │       │
+│  │ - WASM query     │                             │ - WASM nD dist   │       │
+│  │ - Chunk bounds   │                             │ - Filter points  │       │
+│  └────────┬─────────┘                             └────────┬─────────┘       │
+│           │                                                 │                 │
+│           └─────────────────────┬───────────────────────────┘                 │
+│                                 ▼                                             │
 │                  ┌───────────────────────────────────────────┐               │
 │                  │         WASM Module (Rust)                │               │
 │                  │  - query_chunks_for_view()               │               │
 │                  │  - compute_nd_visibility_points()        │               │
 │                  │  - compute_nd_visibility_lines()         │               │
 │                  │  - compute_nd_visibility_gsplats()       │               │
-│                  │  - interleave_attributes_<type>()        │               │
+│                  │  - interleave_attributes() [optional]    │               │
 │                  └───────────────────────────────────────────┘               │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -268,16 +300,23 @@ export interface AccumulatorStats {
 
 /**
  * Points data accumulator
+ *
+ * NOTE: Supports both SDR (Uint8Array) and HDR (Float32Array) colors.
+ * The actual codebase handles Float16Array, Float32Array, Uint8Array, Uint16Array.
+ * This accumulator uses Float32Array internally and can convert on output.
  */
 export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   // Persistent buffers (never disposed until loader destroyed)
   private positionBuffer: Float32Array;
-  private colorBuffer: Uint8Array;
+  private colorBuffer: Float32Array;  // Use Float32 to support HDR!
   private radiiBuffer: Float32Array;
   private sharpnessBuffer: Float32Array;
 
   // Current capacity (number of points)
   private capacity: number;
+
+  // Color mode tracking
+  private isHDR = false;  // Track whether colors are HDR (need full Float32) or SDR
 
   // Statistics
   private allocations = 0;
@@ -295,7 +334,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
     this.totalPoints = totalPoints;
 
     this.positionBuffer = new Float32Array(initialCapacity * 3);
-    this.colorBuffer = new Uint8Array(initialCapacity * 4);
+    this.colorBuffer = new Float32Array(initialCapacity * 3);  // RGB Float32 for HDR support
     this.radiiBuffer = new Float32Array(initialCapacity);
     this.sharpnessBuffer = new Float32Array(initialCapacity);
 
@@ -321,7 +360,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
 
     // Allocate new buffers
     const newPositions = new Float32Array(newCapacity * 3);
-    const newColors = new Uint8Array(newCapacity * 4);
+    const newColors = new Float32Array(newCapacity * 3);  // RGB Float32
     const newRadii = new Float32Array(newCapacity);
     const newSharpness = new Float32Array(newCapacity);
 
@@ -345,7 +384,17 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   }
 
   /**
+   * Set whether colors are HDR (for proper output type)
+   */
+  setHDRMode(isHDR: boolean): void {
+    this.isHDR = isHDR;
+  }
+
+  /**
    * Get PointsData with metadata (CORRECT interface matching data-loader-types.ts!)
+   *
+   * Colors are returned as Float32Array (RGB). The actual scene-loader handles
+   * both SDR and HDR colors - Float32Array works for both.
    */
   getData(count: number): PointsData {
     if (count > this.capacity) {
@@ -364,9 +413,10 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
     }
 
     // Return PointsData with CORRECT metadata structure
+    // Colors are RGB Float32 (3 components, not 4)
     return {
       positions: this.positionBuffer.subarray(0, count * 3),
-      colors: this.colorBuffer.subarray(0, count * 4),
+      colors: this.colorBuffer.subarray(0, count * 3),  // RGB, not RGBA!
       radii: this.radiiBuffer.subarray(0, count),
       sharpness: this.sharpnessBuffer.subarray(0, count),
       metadata: {
@@ -377,7 +427,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
         usedSpatialIndex: this.usedSpatialIndex,
         dtypes: {
           positions: 'float32',
-          colors: 'uint8',
+          colors: this.isHDR ? 'float32' : 'uint8',  // Track actual source dtype
           radii: 'float32',
           sharpness: 'float32',
         },
@@ -387,19 +437,40 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
 
   /**
    * Fill accumulator at offset
+   *
+   * NOTE: Colors are stored as RGB (3 components), not RGBA.
+   * Input can be Float32Array (HDR) or Uint8Array/Uint16Array (SDR).
+   * SDR colors are converted to [0,1] float range on fill.
    */
   fill(offset: number, data: Partial<PointsData>): void {
     if (data.positions) {
       this.positionBuffer.set(data.positions, offset * 3);
     }
     if (data.colors) {
-      this.colorBuffer.set(data.colors, offset * 4);
+      // Handle different color array types
+      if (data.colors instanceof Float32Array) {
+        this.colorBuffer.set(data.colors, offset * 3);
+      } else if (data.colors instanceof Uint8Array) {
+        // Convert Uint8 [0,255] to Float32 [0,1]
+        const floatColors = new Float32Array(data.colors.length);
+        for (let i = 0; i < data.colors.length; i++) {
+          floatColors[i] = data.colors[i] / 255;
+        }
+        this.colorBuffer.set(floatColors, offset * 3);
+      } else if (data.colors instanceof Uint16Array) {
+        // Convert Uint16 [0,65535] to Float32 [0,1]
+        const floatColors = new Float32Array(data.colors.length);
+        for (let i = 0; i < data.colors.length; i++) {
+          floatColors[i] = data.colors[i] / 65535;
+        }
+        this.colorBuffer.set(floatColors, offset * 3);
+      }
     }
     if (data.radii) {
-      this.radiiBuffer.set(data.radii, offset);
+      this.radiiBuffer.set(data.radii as Float32Array, offset);
     }
     if (data.sharpness) {
-      this.sharpnessBuffer.set(data.sharpness, offset);
+      this.sharpnessBuffer.set(data.sharpness as Float32Array, offset);
     }
   }
 
@@ -418,35 +489,38 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   }
 
   getStats(): AccumulatorStats {
+    // Memory: pos(12) + color(12) + radii(4) + sharpness(4) = 32 bytes per point
     return {
       capacity: this.capacity,
       allocations: this.allocations,
       growthEvents: this.totalGrowths,
-      memoryMB: (this.capacity * 16) / 1024 / 1024, // pos(12) + color(4)
+      memoryMB: (this.capacity * 32) / 1024 / 1024,
     };
   }
 
   dispose(): void {
     this.positionBuffer = new Float32Array(0);
-    this.colorBuffer = new Uint8Array(0);
+    this.colorBuffer = new Float32Array(0);
     this.radiiBuffer = new Float32Array(0);
     this.sharpnessBuffer = new Float32Array(0);
     this.capacity = 0;
+    this.isHDR = false;
   }
 }
 
 /**
  * Lines data accumulator (CORRECTED STRUCTURE!)
  *
- * CRITICAL FIX: Flat buffers matching types/lines.ts:170-194
+ * CRITICAL: Flat buffers matching types/lines.ts:170-194
+ * CRITICAL: widths is PER-VERTEX (N,), NOT per-segment!
  */
 export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
   // FLAT buffers (not nested!)
   private vertexBuffer: Float32Array;        // ndim-dimensional vertices
   private segmentBuffer: Uint32Array;        // index pairs
-  private widthBuffer: Float32Array;         // per-segment (REQUIRED, never null)
-  private colorBuffer: Float32Array;         // RGB Float32 (always allocated)
-  private sharpnessBuffer: Float32Array;     // always allocated
+  private widthBuffer: Float32Array;         // PER-VERTEX widths (N,) - NOT per-segment!
+  private colorBuffer: Float32Array;         // RGB Float32 per-vertex (always allocated)
+  private sharpnessBuffer: Float32Array;     // per-vertex (always allocated)
 
   // Track whether data actually has colors/sharpness
   private hasColors = false;
@@ -469,9 +543,10 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
     this.ndim = ndim;
 
     // Always allocate buffers (persistent, never null)
+    // NOTE: widths is per-VERTEX, allocated with vertexCapacity!
     this.vertexBuffer = new Float32Array(initialVertexCapacity * ndim);
     this.segmentBuffer = new Uint32Array(initialSegmentCapacity * 2);
-    this.widthBuffer = new Float32Array(initialSegmentCapacity);
+    this.widthBuffer = new Float32Array(initialVertexCapacity);  // PER-VERTEX!
     this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB
     this.sharpnessBuffer = new Float32Array(initialVertexCapacity);
 
@@ -486,7 +561,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
 
     let grew = false;
 
-    // Grow vertices if needed
+    // Grow vertices if needed (widths grow with vertices!)
     if (neededVertices > this.vertexCapacity) {
       let newVertexCap = this.vertexCapacity;
       while (newVertexCap < neededVertices) {
@@ -494,14 +569,17 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
       }
 
       const newVertexBuf = new Float32Array(newVertexCap * this.ndim);
+      const newWidthBuf = new Float32Array(newVertexCap);  // PER-VERTEX!
       const newColorBuf = new Float32Array(newVertexCap * 3); // RGB
       const newSharpnessBuf = new Float32Array(newVertexCap);
 
       newVertexBuf.set(this.vertexBuffer);
-      newColorBuf.set(this.colorBuffer); // Always allocated, never null
-      newSharpnessBuf.set(this.sharpnessBuffer); // Always allocated, never null
+      newWidthBuf.set(this.widthBuffer);  // widths grow with vertices
+      newColorBuf.set(this.colorBuffer);
+      newSharpnessBuf.set(this.sharpnessBuffer);
 
       this.vertexBuffer = newVertexBuf;
+      this.widthBuffer = newWidthBuf;
       this.colorBuffer = newColorBuf;
       this.sharpnessBuffer = newSharpnessBuf;
       this.vertexCapacity = newVertexCap;
@@ -509,7 +587,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
       grew = true;
     }
 
-    // Grow segments if needed
+    // Grow segments if needed (only segment indices, not widths!)
     if (neededSegments > this.segmentCapacity) {
       let newSegmentCap = this.segmentCapacity;
       while (newSegmentCap < neededSegments) {
@@ -517,13 +595,9 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
       }
 
       const newSegmentBuf = new Uint32Array(newSegmentCap * 2);
-      const newWidthBuf = new Float32Array(newSegmentCap);
-
       newSegmentBuf.set(this.segmentBuffer);
-      newWidthBuf.set(this.widthBuffer);
 
       this.segmentBuffer = newSegmentBuf;
-      this.widthBuffer = newWidthBuf;
       this.segmentCapacity = newSegmentCap;
 
       grew = true;
@@ -539,20 +613,20 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
 
   /**
    * CORRECTED: getData returns LoadedLinesData with proper nullable handling
-   * NOTE: Signature differs from base interface (Lines need 2 counts)
+   * NOTE: widths is per-VERTEX (vertexCount), NOT per-segment!
    */
   getData(segmentCount: number, vertexCount: number): LoadedLinesData {
     return {
       // FLAT structure (not nested)
       vertices: this.vertexBuffer.subarray(0, vertexCount * this.ndim),
       segments: this.segmentBuffer.subarray(0, segmentCount * 2),
-      widths: this.widthBuffer.subarray(0, segmentCount), // REQUIRED, never null
+      widths: this.widthBuffer.subarray(0, vertexCount),  // PER-VERTEX! Not segmentCount!
       colors: this.hasColors
         ? this.colorBuffer.subarray(0, vertexCount * 3)
-        : null,  // Nullable based on data presence
+        : null,
       sharpness: this.hasSharpness
         ? this.sharpnessBuffer.subarray(0, vertexCount)
-        : null,  // Nullable based on data presence
+        : null,
       segmentCount,
       vertexCount,
       ndim: this.ndim,
@@ -561,7 +635,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
 
   /**
    * CORRECTED: fill with proper tracking of data presence
-   * NOTE: Signature differs from base interface (Lines need 2 offsets)
+   * NOTE: widths uses vertexOffset (per-vertex), NOT segmentOffset!
    */
   fill(segmentOffset: number, vertexOffset: number, data: Partial<LoadedLinesData>): void {
     if (data.vertices) {
@@ -571,26 +645,27 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
       this.segmentBuffer.set(data.segments, segmentOffset * 2);
     }
     if (data.widths) {
-      this.widthBuffer.set(data.widths, segmentOffset);
+      // widths is PER-VERTEX, use vertexOffset!
+      this.widthBuffer.set(data.widths, vertexOffset);
     }
     if (data.colors) {
-      this.hasColors = true;  // Mark as present
+      this.hasColors = true;
       this.colorBuffer.set(data.colors, vertexOffset * 3);
     }
     if (data.sharpness) {
-      this.hasSharpness = true;  // Mark as present
+      this.hasSharpness = true;
       this.sharpnessBuffer.set(data.sharpness, vertexOffset);
     }
   }
 
   getStats(): AccumulatorStats {
     return {
-      capacity: this.segmentCapacity, // Report segment capacity as primary
+      capacity: this.segmentCapacity,
       allocations: this.allocations,
       growthEvents: this.totalGrowths,
       memoryMB:
-        (this.vertexCapacity * (this.ndim * 4 + 3 * 4 + 4) + // vertices + colors + sharpness
-          this.segmentCapacity * (2 * 4 + 4)) / // segments + widths
+        (this.vertexCapacity * (this.ndim * 4 + 4 + 3 * 4 + 4) + // vertices + widths + colors + sharpness
+          this.segmentCapacity * (2 * 4)) / // segments only (no widths here!)
         1024 /
         1024,
     };
@@ -752,7 +827,218 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
 }
 ```
 
-### 2.3 Integration into Loaders
+### 2.3 Lines Processing: buildInstanceBuffers()
+
+**CRITICAL**: Lines require transformation from per-vertex LoadedLinesData to per-segment ProcessedLinesData.
+
+**File**: `packages/luxar-viewer/src/data/lines-processor.ts` (NEW)
+
+```typescript
+/**
+ * Transform LoadedLinesData (per-vertex) to ProcessedLinesData (per-segment).
+ *
+ * This function:
+ * 1. Clips segments to nD slice
+ * 2. Converts per-vertex → per-segment attributes
+ * 3. Extracts 3D positions from nD space
+ * 4. Interpolates attributes for clipped endpoints
+ * 5. Calculates segment lengths and tracks clipping state
+ */
+
+import type { LoadedLinesData, ProcessedLinesData, ClippedSegment } from '../types/lines';
+
+/**
+ * Linear interpolation
+ */
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * Linear interpolation for 3D vectors
+ */
+function lerpVec3(a: number[], b: number[], t: number): number[] {
+  return [
+    lerp(a[0], b[0], t),
+    lerp(a[1], b[1], t),
+    lerp(a[2], b[2], t),
+  ];
+}
+
+/**
+ * 3D distance calculation
+ */
+function distance3D(a: number[], b: number[]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const dz = b[2] - a[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/**
+ * Clip a segment to the nD slice (Cohen-Sutherland style).
+ * Returns clipped 3D endpoints and interpolation parameters.
+ */
+function clipSegmentToSlice(
+  p1: number[],
+  p2: number[],
+  slicePosition: number[],
+  tolerance: number[],
+  displayDims: number[]
+): ClippedSegment {
+  let t1 = 0;
+  let t2 = 1;
+  let visible = true;
+
+  // Check each non-display dimension
+  for (let dim = 0; dim < slicePosition.length; dim++) {
+    if (displayDims.includes(dim)) continue;
+
+    const pos1 = p1[dim];
+    const pos2 = p2[dim];
+    const sliceVal = slicePosition[dim];
+    const tol = tolerance[dim];
+
+    const min = sliceVal - tol;
+    const max = sliceVal + tol;
+
+    // Both outside same side → invisible
+    if ((pos1 < min && pos2 < min) || (pos1 > max && pos2 > max)) {
+      visible = false;
+      break;
+    }
+
+    // Clip to bounds
+    const delta = pos2 - pos1;
+    if (Math.abs(delta) > 1e-10) {
+      if (pos1 < min) t1 = Math.max(t1, (min - pos1) / delta);
+      if (pos1 > max) t1 = Math.max(t1, (max - pos1) / delta);
+      if (pos2 < min) t2 = Math.min(t2, (min - pos1) / delta);
+      if (pos2 > max) t2 = Math.min(t2, (max - pos1) / delta);
+    }
+
+    if (t1 > t2) {
+      visible = false;
+      break;
+    }
+  }
+
+  if (!visible) {
+    return { p1: [0, 0, 0], p2: [0, 0, 0], t1: 0, t2: 1, visible: false };
+  }
+
+  // Extract 3D positions at clipped t values
+  const clippedP1: number[] = [];
+  const clippedP2: number[] = [];
+  for (const dim of displayDims) {
+    clippedP1.push(lerp(p1[dim], p2[dim], t1));
+    clippedP2.push(lerp(p1[dim], p2[dim], t2));
+  }
+
+  return { p1: clippedP1, p2: clippedP2, t1, t2, visible: true };
+}
+
+/**
+ * Build GPU instance buffers from loaded lines data.
+ *
+ * Transforms per-vertex data into per-segment instance attributes.
+ *
+ * @param loadedData - Raw lines data from loader (per-vertex)
+ * @param slicePosition - Current position in nD space
+ * @param tolerance - Per-dimension tolerance
+ * @param displayDims - Which dimensions to display (e.g., [0, 1, 2])
+ * @returns Processed data ready for GPU (per-segment)
+ */
+export function buildInstanceBuffers(
+  loadedData: LoadedLinesData,
+  slicePosition: number[],
+  tolerance: number[],
+  displayDims: number[]
+): ProcessedLinesData {
+  const { vertices, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+
+  // Pre-allocate output arrays (may be smaller after clipping)
+  const maxSegments = segmentCount;
+  const startPositions = new Float32Array(maxSegments * 3);
+  const endPositions = new Float32Array(maxSegments * 3);
+  const startColors = new Float32Array(maxSegments * 3);
+  const endColors = new Float32Array(maxSegments * 3);
+  const startWidths = new Float32Array(maxSegments);
+  const endWidths = new Float32Array(maxSegments);
+  const startSharpness = new Float32Array(maxSegments);
+  const endSharpness = new Float32Array(maxSegments);
+  const segmentLengths = new Float32Array(maxSegments);
+  const startClipped = new Uint8Array(maxSegments);
+  const endClipped = new Uint8Array(maxSegments);
+
+  let outIdx = 0;
+
+  for (let i = 0; i < segmentCount; i++) {
+    // Get vertex indices (local space)
+    const v0 = segments[i * 2];
+    const v1 = segments[i * 2 + 1];
+
+    // Extract nD positions
+    const p1 = Array.from(vertices.slice(v0 * ndim, (v0 + 1) * ndim));
+    const p2 = Array.from(vertices.slice(v1 * ndim, (v1 + 1) * ndim));
+
+    // Clip to slice
+    const clipped = clipSegmentToSlice(p1, p2, slicePosition, tolerance, displayDims);
+    if (!clipped.visible) continue;
+
+    // Write 3D positions
+    startPositions.set(clipped.p1, outIdx * 3);
+    endPositions.set(clipped.p2, outIdx * 3);
+
+    // Interpolate and write colors
+    const c0 = colors ? Array.from(colors.slice(v0 * 3, (v0 + 1) * 3)) : [1, 1, 1];
+    const c1 = colors ? Array.from(colors.slice(v1 * 3, (v1 + 1) * 3)) : [1, 1, 1];
+    const startC = lerpVec3(c0, c1, clipped.t1);
+    const endC = lerpVec3(c0, c1, clipped.t2);
+    startColors.set(startC, outIdx * 3);
+    endColors.set(endC, outIdx * 3);
+
+    // Interpolate widths (PER-VERTEX in LoadedLinesData!)
+    const w0 = widths[v0];  // v0 is VERTEX index
+    const w1 = widths[v1];  // v1 is VERTEX index
+    startWidths[outIdx] = lerp(w0, w1, clipped.t1);
+    endWidths[outIdx] = lerp(w0, w1, clipped.t2);
+
+    // Interpolate sharpness (default 1.0 if not present)
+    const s0 = sharpness ? sharpness[v0] : 1.0;
+    const s1 = sharpness ? sharpness[v1] : 1.0;
+    startSharpness[outIdx] = lerp(s0, s1, clipped.t1);
+    endSharpness[outIdx] = lerp(s0, s1, clipped.t2);
+
+    // Calculate 3D segment length
+    segmentLengths[outIdx] = distance3D(clipped.p1, clipped.p2);
+
+    // Track clipping for cap factor adjustment
+    startClipped[outIdx] = clipped.t1 > 0 ? 1 : 0;
+    endClipped[outIdx] = clipped.t2 < 1 ? 1 : 0;
+
+    outIdx++;
+  }
+
+  // Trim arrays to actual size (after clipping, may have fewer segments)
+  return {
+    startPositions: startPositions.slice(0, outIdx * 3),
+    endPositions: endPositions.slice(0, outIdx * 3),
+    startColors: startColors.slice(0, outIdx * 3),
+    endColors: endColors.slice(0, outIdx * 3),
+    startWidths: startWidths.slice(0, outIdx),
+    endWidths: endWidths.slice(0, outIdx),
+    startSharpness: startSharpness.slice(0, outIdx),
+    endSharpness: endSharpness.slice(0, outIdx),
+    segmentLengths: segmentLengths.slice(0, outIdx),
+    startClipped: startClipped.slice(0, outIdx),
+    endClipped: endClipped.slice(0, outIdx),
+    segmentCount: outIdx,
+  };
+}
+```
+
+### 2.4 Integration into Loaders
 
 **File**: `packages/luxar-viewer/src/data/point-spatial-index-loader.ts` (MODIFY)
 
@@ -823,22 +1109,415 @@ export class PointSpatialIndexLoader implements DataLoader {
 - `loadLines()` (not `loadPoints`)
 - `loadGSplats()` (not `loadPoints`)
 
+### 2.5 GSplats Processing: processGSplats() and packCholeskyForShader()
+
+**CRITICAL**: GSplats require a multi-stage transformation similar to Lines:
+1. `LoadedGSplatsData` (nD raw data from loader)
+2. `ProcessedGSplatsData` (3D data via `processGSplats()`)
+3. `PackedGSplatsData` (packed for GPU via `packCholeskyForShader()`)
+
+**File**: `packages/luxar-viewer/src/data/gsplats-processor.ts` (EXISTS)
+
+#### ProcessedGSplatsData Interface (from types/gsplats.ts)
+
+```typescript
+/**
+ * Processed gsplats data ready for GPU rendering.
+ * After nD → 3D slicing:
+ * - Centers are in 3D display space
+ * - Cholesky factors are 3D (6 elements per splat)
+ * - Amplitudes are attenuated based on distance to hyperplane
+ */
+export interface ProcessedGSplatsData {
+  /** Splat centers in 3D display space (M * 3) */
+  centers3D: Float32Array;
+
+  /** Attenuated amplitudes (M,) */
+  amplitudes: Float32Array;
+
+  /** 3D Cholesky factors (M * 6), packed as [L00, L10, L11, L20, L21, L22] */
+  choleskyFactors3D: Float32Array;
+
+  /** Splat colors RGB (M * 3) */
+  colors: Float32Array;
+
+  /** Splat sharpness values (M,) */
+  sharpness: Float32Array;
+
+  /** Number of visible splats after nD clipping */
+  splatCount: number;
+}
+```
+
+#### PackedGSplatsData Interface (for GPU)
+
+```typescript
+/**
+ * Packed GSplats data ready for GPU upload.
+ * Cholesky factors are split into 3 vec2 attributes for efficient shader access.
+ */
+export interface PackedGSplatsData {
+  /** Splat centers in 3D (M * 3) */
+  centers3D: Float32Array;
+
+  /** Attenuated amplitudes (M,) */
+  amplitudes: Float32Array;
+
+  /** Packed Cholesky [L00, L10] (M * 2) */
+  cholesky01: Float32Array;
+
+  /** Packed Cholesky [L11, L20] (M * 2) */
+  cholesky23: Float32Array;
+
+  /** Packed Cholesky [L21, L22] (M * 2) */
+  cholesky45: Float32Array;
+
+  /** Splat colors RGB (M * 3) */
+  colors: Float32Array;
+
+  /** Splat sharpness values (M,) */
+  sharpness: Float32Array;
+
+  /** Number of splats */
+  splatCount: number;
+}
+```
+
+#### processGSplats() Function
+
+Transforms nD LoadedGSplatsData to 3D ProcessedGSplatsData using **Mahalanobis distance**
+for attenuation (matching actual implementation in `gsplats-processor.ts`).
+
+**Key Algorithm Features:**
+1. **Two-pass approach**: First counts visible splats, then extracts data (efficient memory allocation)
+2. **Mahalanobis distance**: Uses Cholesky factors in hidden dimensions for ellipsoid-aware attenuation
+3. **Visibility filtering**: Splats below `minAmplitude` threshold are excluded
+4. **Sharpness exponent**: Attenuation uses `exp(-0.5 * mahal^sharpness)`, not simple Gaussian
+
+```typescript
+/**
+ * Compute packed index for Cholesky element L[row, col].
+ * Packed lower-triangular: [L00, L10, L11, L20, L21, L22, ...]
+ */
+function packedIndex(row: number, col: number): number {
+  return (row * (row + 1)) / 2 + col;
+}
+
+/**
+ * Extract a submatrix from packed lower-triangular Cholesky factors.
+ */
+function extractCholeskySubmatrix(
+  packed: Float32Array,
+  offset: number,
+  ndim: number,
+  keepDims: number[],  // Sorted ascending!
+  output: Float32Array,
+  outputOffset: number
+): void {
+  const subNdim = keepDims.length;
+  let outIdx = outputOffset;
+
+  for (let subRow = 0; subRow < subNdim; subRow++) {
+    const origRow = keepDims[subRow];
+    for (let subCol = 0; subCol <= subRow; subCol++) {
+      const origCol = keepDims[subCol];
+      output[outIdx++] = packed[offset + packedIndex(origRow, origCol)];
+    }
+  }
+}
+
+/**
+ * Compute Mahalanobis distance using forward substitution.
+ * Given L (lower-triangular Cholesky), solve L·y = d, then ||y|| is Mahalanobis distance.
+ */
+function mahalanobisDistance(
+  diff: number[],
+  packedL: Float32Array,
+  offset: number,
+  ndim: number
+): number {
+  // Forward substitution: solve L · y = diff
+  const y = new Array(ndim);
+
+  for (let i = 0; i < ndim; i++) {
+    let val = diff[i];
+    for (let j = 0; j < i; j++) {
+      val -= packedL[offset + packedIndex(i, j)] * y[j];
+    }
+    const diag = packedL[offset + packedIndex(i, i)];
+    y[i] = diag > 1e-10 ? val / diag : 0;
+  }
+
+  // Compute ||y||
+  let sumSq = 0;
+  for (let i = 0; i < ndim; i++) {
+    sumSq += y[i] * y[i];
+  }
+  return Math.sqrt(sumSq);
+}
+
+/**
+ * Process nD GSplats data to 3D for rendering.
+ *
+ * Uses Mahalanobis distance in hidden dimensions for proper ellipsoid-aware
+ * attenuation. This matches the actual implementation in gsplats-processor.ts.
+ *
+ * @param loaded - Raw nD data from GSplatsSpatialIndexLoader
+ * @param viewState - Current view state with displayDims and slicePosition
+ * @returns Processed 3D data ready for Cholesky packing
+ */
+export function processGSplats(
+  loaded: LoadedGSplatsData,
+  viewState: GSplatsViewState
+): ProcessedGSplatsData {
+  const { displayDims, slicePosition } = viewState;
+  const ndim = loaded.ndim;
+  const splatCount = loaded.splatCount;
+
+  // Compute hidden dimensions (all dims not in displayDims)
+  const hiddenDims = [];
+  for (let d = 0; d < ndim; d++) {
+    if (!displayDims.includes(d)) {
+      hiddenDims.push(d);
+    }
+  }
+
+  // Sort dimensions for consistent submatrix extraction (CRITICAL!)
+  const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
+  const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
+
+  // Compute packed sizes
+  const fullPackedSize = (ndim * (ndim + 1)) / 2;
+  const display3DPackedSize = 6;  // 3D Cholesky has 6 elements
+  const hiddenPackedSize = (sortedHiddenDims.length * (sortedHiddenDims.length + 1)) / 2;
+
+  // Minimum amplitude threshold (splats below this are invisible)
+  const minAmplitude = 1e-6;
+
+  // FIRST PASS: Count visible splats
+  let visibleCount = 0;
+  const visibleIndices: number[] = [];
+
+  for (let i = 0; i < splatCount; i++) {
+    const sharpness = loaded.sharpness?.[i] ?? 2.0;
+
+    // Compute attenuation in hidden dimensions using Mahalanobis distance
+    let attenuation = 1.0;
+    if (sortedHiddenDims.length > 0) {
+      const centerOffset = i * ndim;
+      const diff = sortedHiddenDims.map(
+        (d) => slicePosition[d] - loaded.centers[centerOffset + d]
+      );
+
+      // Extract hidden Cholesky submatrix
+      const hiddenCholesky = new Float32Array(hiddenPackedSize);
+      extractCholeskySubmatrix(
+        loaded.choleskyFactors,
+        i * fullPackedSize,
+        ndim,
+        sortedHiddenDims,
+        hiddenCholesky,
+        0
+      );
+
+      // Compute Mahalanobis distance in hidden dims
+      const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
+
+      // Attenuation: exp(-½ · mahal^sharpness)
+      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, sharpness));
+    }
+
+    const attenuatedAmplitude = loaded.amplitudes[i] * attenuation;
+
+    if (attenuatedAmplitude >= minAmplitude) {
+      visibleIndices.push(i);
+      visibleCount++;
+    }
+  }
+
+  // Allocate output arrays for visible splats only
+  const centers3D = new Float32Array(visibleCount * 3);
+  const choleskyFactors3D = new Float32Array(visibleCount * display3DPackedSize);
+  const amplitudes = new Float32Array(visibleCount);
+  const sharpness = new Float32Array(visibleCount);
+  const colors = new Float32Array(visibleCount * 3);
+
+  // SECOND PASS: Extract visible splat data
+  for (let outIdx = 0; outIdx < visibleCount; outIdx++) {
+    const srcIdx = visibleIndices[outIdx];
+    const srcCenterOffset = srcIdx * ndim;
+    const srcCholeskyOffset = srcIdx * fullPackedSize;
+
+    // Extract 3D center using SORTED display dimensions (must match Cholesky order!)
+    const dstCenterOffset = outIdx * 3;
+    for (let d = 0; d < 3 && d < sortedDisplayDims.length; d++) {
+      centers3D[dstCenterOffset + d] = loaded.centers[srcCenterOffset + sortedDisplayDims[d]];
+    }
+
+    // Extract 3D Cholesky submatrix
+    extractCholeskySubmatrix(
+      loaded.choleskyFactors,
+      srcCholeskyOffset,
+      ndim,
+      sortedDisplayDims,
+      choleskyFactors3D,
+      outIdx * display3DPackedSize
+    );
+
+    // Compute attenuated amplitude (recalculate for visible splats)
+    const srcSharpness = loaded.sharpness?.[srcIdx] ?? 2.0;
+    sharpness[outIdx] = srcSharpness;
+
+    let attenuation = 1.0;
+    if (sortedHiddenDims.length > 0) {
+      const diff = sortedHiddenDims.map(
+        (d) => slicePosition[d] - loaded.centers[srcCenterOffset + d]
+      );
+      const hiddenCholesky = new Float32Array(hiddenPackedSize);
+      extractCholeskySubmatrix(
+        loaded.choleskyFactors,
+        srcCholeskyOffset,
+        ndim,
+        sortedHiddenDims,
+        hiddenCholesky,
+        0
+      );
+      const mahalDist = mahalanobisDistance(diff, hiddenCholesky, 0, sortedHiddenDims.length);
+      attenuation = Math.exp(-0.5 * Math.pow(mahalDist, srcSharpness));
+    }
+
+    amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuation;
+
+    // Copy colors (default to white if not present)
+    const srcColorOffset = srcIdx * 3;
+    const dstColorOffset = outIdx * 3;
+    if (loaded.colors) {
+      colors[dstColorOffset] = loaded.colors[srcColorOffset];
+      colors[dstColorOffset + 1] = loaded.colors[srcColorOffset + 1];
+      colors[dstColorOffset + 2] = loaded.colors[srcColorOffset + 2];
+    } else {
+      colors[dstColorOffset] = 1.0;
+      colors[dstColorOffset + 1] = 1.0;
+      colors[dstColorOffset + 2] = 1.0;
+    }
+  }
+
+  return {
+    centers3D,
+    amplitudes,
+    choleskyFactors3D,
+    colors,
+    sharpness,
+    splatCount: visibleCount,  // NOTE: May be less than input splatCount!
+  };
+}
+```
+
+#### packCholeskyForShader() Function
+
+Packs 3D Cholesky factors into 3 vec2 attributes for efficient shader access:
+
+```typescript
+/**
+ * Pack 3D Cholesky factors into 3 vec2 attributes for GPU.
+ *
+ * Input: choleskyFactors3D[M * 6] = [L00, L10, L11, L20, L21, L22] per splat
+ * Output:
+ *   - cholesky01[M * 2] = [L00, L10] per splat
+ *   - cholesky23[M * 2] = [L11, L20] per splat
+ *   - cholesky45[M * 2] = [L21, L22] per splat
+ *
+ * In the shader, these reconstruct the 3x3 lower triangular matrix:
+ *   L = [[L00, 0,   0  ],
+ *        [L10, L11, 0  ],
+ *        [L20, L21, L22]]
+ */
+export function packCholeskyForShader(
+  choleskyFactors3D: Float32Array,
+  splatCount: number
+): { cholesky01: Float32Array; cholesky23: Float32Array; cholesky45: Float32Array } {
+  const cholesky01 = new Float32Array(splatCount * 2);
+  const cholesky23 = new Float32Array(splatCount * 2);
+  const cholesky45 = new Float32Array(splatCount * 2);
+
+  for (let i = 0; i < splatCount; i++) {
+    const srcOffset = i * 6;
+    const dstOffset = i * 2;
+
+    // [L00, L10]
+    cholesky01[dstOffset + 0] = choleskyFactors3D[srcOffset + 0];  // L00
+    cholesky01[dstOffset + 1] = choleskyFactors3D[srcOffset + 1];  // L10
+
+    // [L11, L20]
+    cholesky23[dstOffset + 0] = choleskyFactors3D[srcOffset + 2];  // L11
+    cholesky23[dstOffset + 1] = choleskyFactors3D[srcOffset + 3];  // L20
+
+    // [L21, L22]
+    cholesky45[dstOffset + 0] = choleskyFactors3D[srcOffset + 4];  // L21
+    cholesky45[dstOffset + 1] = choleskyFactors3D[srcOffset + 5];  // L22
+  }
+
+  return { cholesky01, cholesky23, cholesky45 };
+}
+```
+
+#### Complete GSplats Data Flow
+
+```
+GSplatsSpatialIndexLoader
+         │
+         ▼ loadGSplats()
+   LoadedGSplatsData
+   (nD: centers, amplitudes, choleskyFactors)
+         │
+         ▼ processGSplats()
+  ProcessedGSplatsData
+  (3D: centers3D, choleskyFactors3D, attenuated amplitudes)
+         │
+         ▼ packCholeskyForShader()
+    PackedGSplatsData
+    (GPU-ready: centers3D, cholesky01/23/45)
+         │
+         ▼ GPUBufferPool.updateGSplatsGeometry()
+       GPU Buffers
+```
+
 ---
 
 ## 3. Component 2: Web Workers with ArrayDecoder
 
-### 3.1 Critical Requirement: ArrayDecoder Integration
+### 3.1 Worker-Main Thread Division of Labor
 
-The worker **MUST** use `ArrayDecoder` to handle all encoding types:
-- Broadcasting (`scalar_float32`, `vector_float32`)
-- Lookup tables (`lut_uint8`, `lut_uint16`)
-- Quantization (`quantized_uint8`, `quantized_uint16`)
-- Log-space (`log_scalar_uint8`, `log_scalar_uint16`)
-- Array references (`array_ref` - deduplication)
-- Delta encoding (`delta_uint8`, etc.)
-- Blosc compression (handled by zarr layer)
+**CRITICAL DESIGN DECISION**: ArrayDecoder stays on main thread!
 
-**Without ArrayDecoder, worker will fail on encoded arrays!**
+The `ArrayDecoder.decode()` method signature is:
+```typescript
+async decode(
+  array: zarr.Array<...>,     // Takes zarr.Array, NOT raw bytes!
+  attrs: ArrayMetadata,
+  expectedElements: number,
+  zarrRootLoc?: zarr.Location<...>  // Needed for array_ref resolution
+): Promise<Float32Array>
+```
+
+This means ArrayDecoder needs:
+1. Access to the zarr store (for fetching chunks)
+2. Access to zarrRootLoc (for resolving `array_ref` deduplication)
+
+**Therefore, the worker handles ONLY:**
+- WASM spatial index queries (chunk bounding box tests)
+- WASM nD visibility computation (hyperbolic distance filtering)
+- WASM attribute interleaving (optional)
+
+**Main thread handles:**
+- Zarr chunk fetching (async IO, non-blocking)
+- ArrayDecoder decoding (handles all 7+ encoding types)
+- Accumulator buffer management
+
+This is actually optimal because:
+- Zarr fetching is async IO (doesn't block main thread)
+- Spatial queries are the CPU-intensive bottleneck (perfect for WASM worker)
+- ArrayDecoder needs zarr context that's complex to serialize
 
 ### 3.2 Worker Architecture
 
@@ -846,25 +1525,26 @@ The worker **MUST** use `ArrayDecoder` to handle all encoding types:
 
 ```typescript
 /**
- * Data processing worker for CPU-intensive tasks (ALL three types).
+ * Data processing worker for CPU-intensive WASM tasks.
  *
- * CRITICAL: Uses ArrayDecoder for proper zarr decoding!
+ * NOTE: ArrayDecoder stays on main thread (needs zarr.Array objects).
+ * Worker handles ONLY spatial queries and nD visibility computation.
  *
  * Responsibilities:
- * - Spatial index queries (chunk bounding box tests)
- * - Zarr chunk decoding (via ArrayDecoder - handles ALL encodings)
- * - nD visibility computation (hyperbolic distance filtering)
- * - Type-specific processing (Lines two-phase, etc.)
+ * - WASM spatial index queries (chunk bounding box tests)
+ * - WASM nD visibility computation (hyperbolic distance filtering)
+ * - WASM attribute interleaving (optional optimization)
+ *
+ * NOT handled here (stays on main thread):
+ * - Zarr chunk fetching (async IO)
+ * - ArrayDecoder decoding (needs zarr context)
  */
 
 import { expose } from 'comlink';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../data/array-decoder';
 import { initWasm, type WasmModule } from './wasm-bindings';
 
 // Worker-side persistent state
 let wasmModule: WasmModule | null = null;
-let arrayDecoder: ArrayDecoder | null = null;
-let refRegistry: ArrayRefRegistry | null = null;
 
 // Persistent buffers (avoid per-task allocations)
 let chunkBoundsCache: Float32Array | null = null;
@@ -888,15 +1568,11 @@ async function initialize(): Promise<void> {
     );
   }
 
-  // Initialize ArrayDecoder (CRITICAL for zarr decoding)
-  refRegistry = new ArrayRefRegistry();
-  arrayDecoder = new ArrayDecoder(refRegistry);
-
   // Pre-allocate buffers
   chunkBoundsCache = new Float32Array(1000 * 10 * 2); // 1000 chunks, 10D
   visibilityMaskBuffer = new Uint8Array(100000); // 100K points
 
-  console.log('[DataWorker] Ready (WASM enabled, ArrayDecoder initialized)');
+  console.log('[DataWorker] Ready (WASM enabled)');
 }
 
 /**
@@ -927,28 +1603,10 @@ async function querySpatialIndex(params: {
 }
 
 /**
- * Task 2: Decode zarr array chunk (generic, uses ArrayDecoder)
+ * Task 2: Compute nD visibility for Points
  *
- * CRITICAL: Must use ArrayDecoder to handle all encoding types!
- * NOTE: Receives PRE-FETCHED encoded data (not zarr URLs)
- */
-async function decodeArrayChunk(params: {
-  encodedData: ArrayBuffer; // Already fetched from zarr
-  attrs: ArrayMetadata;
-}): Promise<Float32Array> {
-  const { encodedData, attrs } = params;
-
-  // Decode using ArrayDecoder (handles ALL encoding types)
-  const decoded = await arrayDecoder!.decodeRaw(
-    new Uint8Array(encodedData),
-    attrs
-  );
-
-  return decoded;
-}
-
-/**
- * Task 3: Compute nD visibility for Points
+ * NOTE: Decoding happens on main thread via ArrayDecoder.
+ * This task receives ALREADY DECODED Float32Array data.
  */
 async function computeNDVisibilityPoints(params: {
   positions: Float32Array;
@@ -1040,11 +1698,10 @@ async function computeNDVisibilityGSplats(params: {
   };
 }
 
-// Expose worker API
+// Expose worker API (NO decoding - ArrayDecoder stays on main thread)
 const workerAPI = {
   initialize,
   querySpatialIndex,
-  decodeArrayChunk,
   computeNDVisibilityPoints,
   computeNDVisibilityLines,
   computeNDVisibilityGSplats,
@@ -1345,20 +2002,60 @@ echo "WASM module built successfully!"
 
 ## 5. Component 4: GPU Buffer Pool (All Geometry Types)
 
-### 5.1 Multi-Type GPU Buffer Pool
+### 5.1 Data Flow: LoadedLinesData → ProcessedLinesData → GPU
+
+**CRITICAL**: Lines require a transformation step before GPU upload:
+
+```
+LoadedLinesData (from loader)     ProcessedLinesData (for GPU)
+├─ vertices: nD per-vertex    →   ├─ startPositions: 3D per-segment
+├─ segments: index pairs      →   ├─ endPositions: 3D per-segment
+├─ widths: PER-VERTEX (N,)    →   ├─ startWidths: per-segment
+├─ colors: PER-VERTEX         →   ├─ endWidths: per-segment
+└─ sharpness: PER-VERTEX      →   ├─ startColors/endColors: per-segment
+                                   ├─ startSharpness/endSharpness: per-segment
+                                   └─ segmentLengths, startClipped, endClipped
+```
+
+The transformation (`buildInstanceBuffers()`) performs:
+1. nD clipping to slice
+2. Per-vertex → per-segment attribute conversion
+3. 3D extraction from nD space
+4. Attribute interpolation for clipped endpoints
+
+### 5.2 Multi-Type GPU Buffer Pool
 
 **File**: `packages/luxar-viewer/src/rendering/gpu-buffer-pool.ts` (NEW)
 
 ```typescript
 /**
  * GPU buffer pool for all three geometry types: Points, Lines, GSplats
+ *
+ * IMPORTANT: Lines use ProcessedLinesData (per-segment), NOT LoadedLinesData (per-vertex)!
  */
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import type { PointsData } from '../data/data-loader-types';
-import type { LoadedLinesData } from '../types/lines';
-import type { LoadedGSplatsData } from '../types/gsplats';
+import type { ProcessedLinesData } from '../types/lines';  // NOT LoadedLinesData!
+import type { ProcessedGSplatsData } from '../types/gsplats';  // After nD→3D processing
+
+/**
+ * Packed GSplats data ready for GPU upload.
+ * Cholesky factors are split into 3 vec2 attributes for efficient shader access.
+ *
+ * NOTE: This is generated by calling packCholeskyForShader() on ProcessedGSplatsData.
+ */
+export interface PackedGSplatsData {
+  centers3D: Float32Array;      // M * 3
+  amplitudes: Float32Array;     // M
+  cholesky01: Float32Array;     // M * 2 [L00, L10]
+  cholesky23: Float32Array;     // M * 2 [L11, L20]
+  cholesky45: Float32Array;     // M * 2 [L21, L22]
+  colors: Float32Array;         // M * 3 (RGB)
+  sharpness: Float32Array;      // M
+  splatCount: number;
+}
 
 interface PooledBuffer {
   geometry: THREE.BufferGeometry;
@@ -1438,37 +2135,48 @@ export class GPUBufferPool {
   }
 
   /**
-   * Acquire geometry for Lines
+   * Acquire geometry for Lines (ProcessedLinesData - per-segment attributes)
+   *
+   * NOTE: Lines geometry only needs segmentCount since all attributes are per-segment
    */
   acquireLinesGeometry(
     nodeId: string,
-    segmentCount: number,
-    vertexCount: number
-  ): THREE.BufferGeometry {
+    segmentCount: number
+  ): THREE.InstancedBufferGeometry {
     this.frameCount++;
 
     let pooled = this.activeBuffers.get(nodeId);
 
     if (pooled && pooled.type === 'lines') {
-      // Check if capacity sufficient (simplified check)
       if (pooled.capacity >= segmentCount) {
         pooled.lastUsedFrame = this.frameCount;
         this.stats.reuses++;
-        return pooled.geometry;
+        return pooled.geometry as THREE.InstancedBufferGeometry;
       } else {
-        this.growLinesBuffer(pooled, segmentCount, vertexCount);
+        this.growLinesBuffer(pooled, segmentCount);
         this.stats.capacityGrowths++;
-        return pooled.geometry;
+        return pooled.geometry as THREE.InstancedBufferGeometry;
       }
     }
 
-    // Try pool (simplified)
-    // ... similar to points ...
+    // Try pool
+    for (const [_bucket, buffers] of this.lineBuffers.entries()) {
+      for (let i = 0; i < buffers.length; i++) {
+        const candidate = buffers[i];
+        if (!candidate.inUse && candidate.capacity >= segmentCount) {
+          buffers.splice(i, 1);
+          candidate.inUse = true;
+          candidate.lastUsedFrame = this.frameCount;
+          this.activeBuffers.set(nodeId, candidate);
+          this.stats.reuses++;
+          return candidate.geometry as THREE.InstancedBufferGeometry;
+        }
+      }
+    }
 
-    // Allocate new
+    // Allocate new (only segment capacity needed - all attributes are per-segment)
     const newSegmentCap = Math.ceil(segmentCount * 1.5);
-    const newVertexCap = Math.ceil(vertexCount * 1.5);
-    const geometry = this.createLinesGeometry(newSegmentCap, newVertexCap);
+    const geometry = this.createLinesGeometry(newSegmentCap);
 
     pooled = {
       geometry,
@@ -1486,15 +2194,18 @@ export class GPUBufferPool {
 
   /**
    * Acquire geometry for GSplats
+   *
+   * NOTE: GSplats geometry is ALWAYS 3D after processing - ndim is NOT needed!
+   * The nD → 3D conversion happens in processGSplats() BEFORE reaching GPUBufferPool.
    */
-  acquireGSplatsGeometry(nodeId: string, splatCount: number, ndim: number): THREE.BufferGeometry {
+  acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.BufferGeometry {
     this.frameCount++;
 
     // Similar pattern to points...
     // (omitted for brevity)
 
     const newCapacity = Math.ceil(splatCount * 1.5);
-    const geometry = this.createGSplatsGeometry(newCapacity, ndim);
+    const geometry = this.createGSplatsGeometry(newCapacity);  // No ndim!
 
     const pooled = {
       geometry,
@@ -1518,8 +2229,10 @@ export class GPUBufferPool {
 
     geometry.setAttribute('position',
       new THREE.Float32BufferAttribute(new Float32Array(capacity * 3), 3));
+    // Use Float32Array with 3 components (RGB) for HDR support
+    // Matches scene-loader.ts which handles normalization based on actual data type
     geometry.setAttribute('color',
-      new THREE.Uint8BufferAttribute(new Uint8Array(capacity * 4), 4, true));
+      new THREE.Float32BufferAttribute(new Float32Array(capacity * 3), 3));
     geometry.setAttribute('radius',
       new THREE.Float32BufferAttribute(new Float32Array(capacity), 1));
     geometry.setAttribute('sharpness',
@@ -1534,30 +2247,58 @@ export class GPUBufferPool {
   }
 
   /**
-   * Create Lines geometry (CORRECTED for nD vertices extraction)
+   * Create Lines geometry for ProcessedLinesData (per-segment instanced attributes)
+   *
+   * Lines use InstancedBufferGeometry with per-segment attributes:
+   * - aStartPos, aEndPos: 3D segment endpoints
+   * - aStartColor, aEndColor: per-segment colors
+   * - aStartWidth, aEndWidth: per-segment widths
+   * - aStartSharpness, aEndSharpness: per-segment sharpness
    */
-  private createLinesGeometry(segmentCapacity: number, vertexCapacity: number): THREE.BufferGeometry {
-    const geometry = new THREE.BufferGeometry();
+  private createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeometry {
+    const geometry = new THREE.InstancedBufferGeometry();
 
-    // Vertex attributes (3D positions - extracted from nD in processor)
-    geometry.setAttribute('position',
-      new THREE.Float32BufferAttribute(new Float32Array(vertexCapacity * 3), 3));
-    geometry.setAttribute('color',
-      new THREE.Float32BufferAttribute(new Float32Array(vertexCapacity * 3), 3)); // RGB Float32
+    // Base quad geometry (4 vertices, 2 triangles)
+    const quadPositions = new Float32Array([
+      -1, -1,  // bottom-left
+       1, -1,  // bottom-right
+      -1,  1,  // top-left
+       1,  1,  // top-right
+    ]);
+    geometry.setAttribute('aQuadCorner',
+      new THREE.Float32BufferAttribute(quadPositions, 2));
+    geometry.setIndex([0, 1, 2, 2, 1, 3]);
 
-    // Index buffer (pairs of vertex indices)
-    geometry.setIndex(
-      new THREE.Uint32BufferAttribute(new Uint32Array(segmentCapacity * 2), 1)
-    );
+    // Per-segment instanced attributes (ProcessedLinesData format)
+    geometry.setAttribute('aStartPos',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity * 3), 3));
+    geometry.setAttribute('aEndPos',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity * 3), 3));
+    geometry.setAttribute('aStartColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity * 3), 3));
+    geometry.setAttribute('aEndColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity * 3), 3));
+    geometry.setAttribute('aStartWidth',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    geometry.setAttribute('aEndWidth',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    geometry.setAttribute('aStartSharpness',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    geometry.setAttribute('aEndSharpness',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    geometry.setAttribute('aSegmentLength',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    // Use Float32Array for clipped flags (shader expects float, matching line-material.ts)
+    geometry.setAttribute('aStartClipped',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
+    geometry.setAttribute('aEndClipped',
+      new THREE.InstancedBufferAttribute(new Float32Array(segmentCapacity), 1));
 
-    // Per-segment attributes (widths are per-segment in LoadedLinesData)
-    geometry.setAttribute('width',
-      new THREE.Float32BufferAttribute(new Float32Array(segmentCapacity), 1));
-    geometry.setAttribute('sharpness',
-      new THREE.Float32BufferAttribute(new Float32Array(vertexCapacity), 1));
-
-    for (const key in geometry.attributes) {
-      geometry.attributes[key].setUsage(THREE.DynamicDrawUsage);
+    // Set all instanced attributes to dynamic usage
+    for (const key of ['aStartPos', 'aEndPos', 'aStartColor', 'aEndColor',
+                       'aStartWidth', 'aEndWidth', 'aStartSharpness', 'aEndSharpness',
+                       'aSegmentLength', 'aStartClipped', 'aEndClipped']) {
+      geometry.getAttribute(key).setUsage(THREE.DynamicDrawUsage);
     }
 
     return geometry;
@@ -1565,23 +2306,61 @@ export class GPUBufferPool {
 
   /**
    * Create GSplats geometry (instanced)
+   *
+   * CRITICAL: GSplats GPU geometry uses PROCESSED 3D data, not raw nD data!
+   * - Centers are 3D (from ProcessedGSplatsData.centers3D)
+   * - Cholesky factors are packed into 3 vec2 attributes (from packCholeskyForShader)
+   *
+   * The shader expects:
+   * - aCenter: vec3 (3D splat center)
+   * - aCholesky01: vec2 (L00, L10)
+   * - aCholesky23: vec2 (L11, L20)
+   * - aCholesky45: vec2 (L21, L22)
+   *
+   * ⚠️ ACTUAL VS PROPOSED PATTERN ⚠️
+   * The ACTUAL implementation in scene-loader.ts uses:
+   *   - createInstancedGSplatsMesh() / updateInstancedGSplatsMesh() from gsplat-material.ts
+   *   - These functions manage their own InstancedBufferGeometry internally
+   *
+   * The GPUBufferPool pattern proposed here is an OPTIMIZATION that would:
+   *   - Reuse geometry buffers across view updates
+   *   - Reduce GPU memory allocations
+   *   - Enable partial buffer updates
+   *
+   * During implementation, either:
+   *   a) Modify gsplat-material.ts to use GPUBufferPool, OR
+   *   b) Keep current pattern and skip GPUBufferPool for GSplats
    */
-  private createGSplatsGeometry(capacity: number, ndim: number): THREE.BufferGeometry {
+  private createGSplatsGeometry(capacity: number): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
-    const choleskySize = (ndim * (ndim + 1)) / 2;
 
-    // Per-splat instance attributes
-    geometry.setAttribute('center',
-      new THREE.Float32BufferAttribute(new Float32Array(capacity * ndim), ndim));
-    geometry.setAttribute('amplitude',
-      new THREE.Float32BufferAttribute(new Float32Array(capacity), 1));
-    geometry.setAttribute('cholesky',
-      new THREE.Float32BufferAttribute(new Float32Array(capacity * choleskySize), choleskySize));
-    geometry.setAttribute('color',
-      new THREE.Float32BufferAttribute(new Float32Array(capacity * 3), 3)); // RGB Float32
-    geometry.setAttribute('sharpness',
-      new THREE.Float32BufferAttribute(new Float32Array(capacity), 1));
+    // Per-splat instance attributes (3D processed data!)
+    // Centers are always 3D after nD → 3D projection
+    geometry.setAttribute('aCenter',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
 
+    // Amplitudes (attenuated based on hyperplane distance)
+    geometry.setAttribute('aAmplitude',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1));
+
+    // Packed 3D Cholesky factors (from packCholeskyForShader)
+    // L = [[L00, 0, 0], [L10, L11, 0], [L20, L21, L22]]
+    geometry.setAttribute('aCholesky01',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2));  // [L00, L10]
+    geometry.setAttribute('aCholesky23',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2));  // [L11, L20]
+    geometry.setAttribute('aCholesky45',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2));  // [L21, L22]
+
+    // Colors (RGB Float32)
+    geometry.setAttribute('aColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
+
+    // Sharpness
+    geometry.setAttribute('aSharpness',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1));
+
+    // Set dynamic usage for all attributes
     for (const key in geometry.attributes) {
       geometry.attributes[key].setUsage(THREE.DynamicDrawUsage);
     }
@@ -1606,15 +2385,14 @@ export class GPUBufferPool {
     pooled.capacity = newCapacity;
   }
 
-  private growLinesBuffer(pooled: PooledBuffer, segmentCount: number, vertexCount: number): void {
+  private growLinesBuffer(pooled: PooledBuffer, segmentCount: number): void {
     const newSegmentCap = Math.ceil(segmentCount * 1.5);
-    const newVertexCap = Math.ceil(vertexCount * 1.5);
 
     log.info(Modules.RENDERER,
       `Growing Lines GPU buffer: ${pooled.capacity} → ${newSegmentCap} segments`);
 
     pooled.geometry.dispose();
-    pooled.geometry = this.createLinesGeometry(newSegmentCap, newVertexCap);
+    pooled.geometry = this.createLinesGeometry(newSegmentCap);
     pooled.capacity = newSegmentCap;
   }
 
@@ -1670,12 +2448,14 @@ export class GPUBufferPool {
       posAttr.needsUpdate = true;
     }
 
-    // Update color
+    // Update color (RGB Float32 for HDR support)
     const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
     if (colors) {
-      (colorAttr.array as Uint8Array).set(colors);
+      // Handle both Float32Array (HDR) and Uint8/Uint16 (SDR) by converting to float
+      // scene-loader.ts handles normalization for Uint types
+      (colorAttr.array as Float32Array).set(colors);
       if (previousCount !== undefined && count < previousCount) {
-        colorAttr.addUpdateRange(0, count * 4);
+        colorAttr.addUpdateRange(0, count * 3);  // RGB = 3 components
       } else {
         colorAttr.needsUpdate = true;
       }
@@ -1687,108 +2467,150 @@ export class GPUBufferPool {
   }
 
   /**
-   * Update Lines geometry (FULL IMPLEMENTATION)
+   * Update Lines geometry with ProcessedLinesData (per-segment attributes)
+   *
+   * IMPORTANT: Takes ProcessedLinesData (from buildInstanceBuffers), NOT LoadedLinesData!
+   * All attributes are per-segment (M segments), not per-vertex.
    */
   updateLinesGeometry(
-    geometry: THREE.BufferGeometry,
-    linesData: LoadedLinesData,
+    geometry: THREE.InstancedBufferGeometry,
+    processedData: ProcessedLinesData,
     previousSegmentCount?: number
   ): void {
-    const { vertices, segments, widths, colors, sharpness, segmentCount, vertexCount, ndim } = linesData;
+    const {
+      startPositions, endPositions,
+      startColors, endColors,
+      startWidths, endWidths,
+      startSharpness, endSharpness,
+      segmentLengths,
+      startClipped, endClipped,
+      segmentCount
+    } = processedData;
 
-    // Extract 3D positions from nD vertices
-    // Assuming displayDims are [0, 1, 2] for simplicity
-    const positions3D = new Float32Array(vertexCount * 3);
-    for (let i = 0; i < vertexCount; i++) {
-      positions3D[i * 3 + 0] = vertices[i * ndim + 0]; // x
-      positions3D[i * 3 + 1] = vertices[i * ndim + 1]; // y
-      positions3D[i * 3 + 2] = vertices[i * ndim + 2]; // z
-    }
+    // Update start positions
+    const startPosAttr = geometry.getAttribute('aStartPos') as THREE.InstancedBufferAttribute;
+    (startPosAttr.array as Float32Array).set(startPositions);
+    startPosAttr.needsUpdate = true;
 
-    // Update position
-    const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
-    (posAttr.array as Float32Array).set(positions3D);
-    if (previousSegmentCount !== undefined && vertexCount < posAttr.array.length / 3) {
-      posAttr.addUpdateRange(0, vertexCount * 3);
-    } else {
-      posAttr.needsUpdate = true;
-    }
+    // Update end positions
+    const endPosAttr = geometry.getAttribute('aEndPos') as THREE.InstancedBufferAttribute;
+    (endPosAttr.array as Float32Array).set(endPositions);
+    endPosAttr.needsUpdate = true;
 
-    // Update color (RGB Float32)
-    if (colors) {
-      const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
-      (colorAttr.array as Float32Array).set(colors);
-      colorAttr.needsUpdate = true;
-    }
+    // Update start colors
+    const startColorAttr = geometry.getAttribute('aStartColor') as THREE.InstancedBufferAttribute;
+    (startColorAttr.array as Float32Array).set(startColors);
+    startColorAttr.needsUpdate = true;
 
-    // Update index buffer
-    const indexAttr = geometry.getIndex() as THREE.BufferAttribute;
-    (indexAttr.array as Uint32Array).set(segments);
-    if (previousSegmentCount !== undefined && segmentCount < previousSegmentCount) {
-      indexAttr.addUpdateRange(0, segmentCount * 2);
-    } else {
-      indexAttr.needsUpdate = true;
-    }
+    // Update end colors
+    const endColorAttr = geometry.getAttribute('aEndColor') as THREE.InstancedBufferAttribute;
+    (endColorAttr.array as Float32Array).set(endColors);
+    endColorAttr.needsUpdate = true;
 
-    // Update widths (per-segment)
-    const widthAttr = geometry.getAttribute('width') as THREE.BufferAttribute;
-    (widthAttr.array as Float32Array).set(widths);
-    widthAttr.needsUpdate = true;
+    // Update widths (per-segment start/end)
+    const startWidthAttr = geometry.getAttribute('aStartWidth') as THREE.InstancedBufferAttribute;
+    (startWidthAttr.array as Float32Array).set(startWidths);
+    startWidthAttr.needsUpdate = true;
 
-    // Update sharpness
-    if (sharpness) {
-      const sharpnessAttr = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
-      (sharpnessAttr.array as Float32Array).set(sharpness);
-      sharpnessAttr.needsUpdate = true;
-    }
+    const endWidthAttr = geometry.getAttribute('aEndWidth') as THREE.InstancedBufferAttribute;
+    (endWidthAttr.array as Float32Array).set(endWidths);
+    endWidthAttr.needsUpdate = true;
 
-    geometry.setDrawRange(0, segmentCount * 2);
+    // Update sharpness (per-segment start/end)
+    const startSharpAttr = geometry.getAttribute('aStartSharpness') as THREE.InstancedBufferAttribute;
+    (startSharpAttr.array as Float32Array).set(startSharpness);
+    startSharpAttr.needsUpdate = true;
+
+    const endSharpAttr = geometry.getAttribute('aEndSharpness') as THREE.InstancedBufferAttribute;
+    (endSharpAttr.array as Float32Array).set(endSharpness);
+    endSharpAttr.needsUpdate = true;
+
+    // Update segment lengths
+    const lengthAttr = geometry.getAttribute('aSegmentLength') as THREE.InstancedBufferAttribute;
+    (lengthAttr.array as Float32Array).set(segmentLengths);
+    lengthAttr.needsUpdate = true;
+
+    // Update clipped flags (convert Uint8 to Float32 for shader)
+    const startClipAttr = geometry.getAttribute('aStartClipped') as THREE.InstancedBufferAttribute;
+    const startClipFloat = new Float32Array(startClipped);  // Convert Uint8 → Float32
+    (startClipAttr.array as Float32Array).set(startClipFloat);
+    startClipAttr.needsUpdate = true;
+
+    const endClipAttr = geometry.getAttribute('aEndClipped') as THREE.InstancedBufferAttribute;
+    const endClipFloat = new Float32Array(endClipped);  // Convert Uint8 → Float32
+    (endClipAttr.array as Float32Array).set(endClipFloat);
+    endClipAttr.needsUpdate = true;
+
+    // Set instance count (for instanced rendering)
+    geometry.instanceCount = segmentCount;
   }
 
   /**
    * Update GSplats geometry (FULL IMPLEMENTATION)
+   *
+   * CRITICAL: Takes PACKED 3D data (after processGSplats + packCholeskyForShader),
+   * NOT raw LoadedGSplatsData!
+   *
+   * Data flow:
+   * 1. LoadedGSplatsData (nD) → processGSplats() → ProcessedGSplatsData (3D)
+   * 2. ProcessedGSplatsData → packCholeskyForShader() → PackedGSplatsData
+   * 3. PackedGSplatsData → updateGSplatsGeometry() → GPU
    */
   updateGSplatsGeometry(
     geometry: THREE.BufferGeometry,
-    gsplatsData: LoadedGSplatsData,
+    packedData: PackedGSplatsData,
     previousCount?: number
   ): void {
-    const { centers, amplitudes, choleskyFactors, colors, sharpness, splatCount, ndim } = gsplatsData;
+    const {
+      centers3D,
+      amplitudes,
+      cholesky01,
+      cholesky23,
+      cholesky45,
+      colors,
+      sharpness,
+      splatCount,
+    } = packedData;
 
-    // Update center
-    const centerAttr = geometry.getAttribute('center') as THREE.BufferAttribute;
-    (centerAttr.array as Float32Array).set(centers);
+    // Update 3D centers
+    const centerAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
+    (centerAttr.array as Float32Array).set(centers3D);
     if (previousCount !== undefined && splatCount < previousCount) {
-      centerAttr.addUpdateRange(0, splatCount * ndim);
+      centerAttr.addUpdateRange(0, splatCount * 3);  // Always 3D!
     } else {
       centerAttr.needsUpdate = true;
     }
 
-    // Update amplitude
-    const ampAttr = geometry.getAttribute('amplitude') as THREE.BufferAttribute;
+    // Update attenuated amplitudes
+    const ampAttr = geometry.getAttribute('aAmplitude') as THREE.InstancedBufferAttribute;
     (ampAttr.array as Float32Array).set(amplitudes);
     ampAttr.needsUpdate = true;
 
-    // Update Cholesky factors
-    const cholAttr = geometry.getAttribute('cholesky') as THREE.BufferAttribute;
-    (cholAttr.array as Float32Array).set(choleskyFactors);
-    cholAttr.needsUpdate = true;
+    // Update packed Cholesky factors (3 vec2 attributes)
+    const chol01Attr = geometry.getAttribute('aCholesky01') as THREE.InstancedBufferAttribute;
+    (chol01Attr.array as Float32Array).set(cholesky01);
+    chol01Attr.needsUpdate = true;
 
-    // Update color (RGB Float32)
-    if (colors) {
-      const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
-      (colorAttr.array as Float32Array).set(colors);
-      colorAttr.needsUpdate = true;
-    }
+    const chol23Attr = geometry.getAttribute('aCholesky23') as THREE.InstancedBufferAttribute;
+    (chol23Attr.array as Float32Array).set(cholesky23);
+    chol23Attr.needsUpdate = true;
+
+    const chol45Attr = geometry.getAttribute('aCholesky45') as THREE.InstancedBufferAttribute;
+    (chol45Attr.array as Float32Array).set(cholesky45);
+    chol45Attr.needsUpdate = true;
+
+    // Update colors (RGB Float32)
+    const colorAttr = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
+    (colorAttr.array as Float32Array).set(colors);
+    colorAttr.needsUpdate = true;
 
     // Update sharpness
-    if (sharpness) {
-      const sharpnessAttr = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
-      (sharpnessAttr.array as Float32Array).set(sharpness);
-      sharpnessAttr.needsUpdate = true;
-    }
+    const sharpnessAttr = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
+    (sharpnessAttr.array as Float32Array).set(sharpness);
+    sharpnessAttr.needsUpdate = true;
 
-    geometry.setDrawRange(0, splatCount);
+    // Set instance count (for instanced rendering)
+    geometry.instanceCount = splatCount;
   }
 
   private getCapacityBucket(capacity: number): string {
@@ -1888,37 +2710,50 @@ export default defineConfig({
 
 ### 6.2 Config Integration
 
-**File**: `packages/luxar-viewer/src/config/index.ts` (ADD SECTION)
+**File**: `packages/luxar-viewer/src/config/index.ts` (ADD TO EXISTING `dataLoading` SECTION)
+
+⚠️ **IMPORTANT**: The actual config uses `dataLoading` (not `dataLoader`). Add a new
+`performance` sub-section within the existing `dataLoading` config block.
 
 ```typescript
 export const config = {
   // ... existing sections ...
 
-  // Data loading and performance optimization
-  dataLoader: {
-    // Object pooling (Phase 1)
-    useAccumulators: true,
-    initialAccumulatorCapacity: 8192,
-    accumulatorGrowthFactor: 1.5,
+  // Data loading configuration (EXISTING - add 'performance' sub-section)
+  dataLoading: {
+    spatial: { /* existing */ },
+    network: { /* existing */ },
+    memory: { /* existing */ },
+    monitor: { /* existing */ },
 
-    // Web Workers (Phase 2)
-    useWebWorkers: true,
-    workerCount: 1, // Single worker for now
+    // NEW: Performance optimization settings
+    performance: {
+      // Object pooling (Phase 1)
+      useAccumulators: true,
+      initialAccumulatorCapacity: 8192,
+      accumulatorGrowthFactor: 1.5,
 
-    // WASM acceleration (Phase 3)
-    useWASM: true,
-    wasmModulePath: '/dist/wasm/luxar_wasm_bg.wasm',
+      // Web Workers (Phase 2)
+      useWebWorkers: true,
+      workerCount: 1, // Single worker for now
 
-    // GPU buffer pool (Phase 4)
-    useGPUBufferPool: true,
-    gpuPoolMaxSize: 20,
-    gpuPoolEvictionFrames: 300,
+      // WASM acceleration (Phase 3)
+      useWASM: true,
+      wasmModulePath: '/dist/wasm/luxar_wasm_bg.wasm',
 
-    // Performance monitoring
-    enablePerformanceMonitoring: false,
+      // GPU buffer pool (Phase 4)
+      useGPUBufferPool: true,
+      gpuPoolMaxSize: 20,
+      gpuPoolEvictionFrames: 300,
+
+      // Performance monitoring
+      enablePerformanceMonitoring: false,
+    },
   },
 };
 ```
+
+**Access pattern**: `config.dataLoading.performance.useAccumulators` etc.
 
 ### 6.3 SceneManager Integration
 
@@ -1926,9 +2761,13 @@ export const config = {
 
 ```typescript
 import { gpuBufferPool } from '../rendering/gpu-buffer-pool';
+import { buildInstanceBuffers } from '../data/lines-processor';  // Lines transformation
+import { processGSplats, packCholeskyForShader } from '../data/gsplats-processor';  // GSplats transformation
+import { materialManager } from '../rendering/material-manager';
 import type { PointsData } from '../data/data-loader-types';
-import type { LoadedLinesData } from '../types/lines';
-import type { LoadedGSplatsData } from '../types/gsplats';
+import type { LoadedLinesData, ProcessedLinesData } from '../types/lines';
+import type { LoadedGSplatsData, GSplatsViewState, ProcessedGSplatsData } from '../types/gsplats';
+import type { PackedGSplatsData } from '../rendering/gpu-buffer-pool';  // GPU-ready format
 
 export class SceneManager {
   // Track previous counts for partial updates
@@ -1963,23 +2802,40 @@ export class SceneManager {
 
   /**
    * Update lines node
+   *
+   * IMPORTANT: Lines require TWO steps:
+   * 1. buildInstanceBuffers() transforms LoadedLinesData → ProcessedLinesData
+   * 2. GPU pool updates geometry with per-segment ProcessedLinesData
    */
-  updateLines(nodeId: string, linesData: LoadedLinesData): void {
-    const geometry = gpuBufferPool.acquireLinesGeometry(
-      nodeId,
-      linesData.segmentCount,
-      linesData.vertexCount
+  updateLines(
+    nodeId: string,
+    loadedData: LoadedLinesData,
+    viewState: { slicePosition: number[]; tolerance: number[]; displayDims: number[] }
+  ): void {
+    // STEP 1: Transform per-vertex LoadedLinesData → per-segment ProcessedLinesData
+    const processedData: ProcessedLinesData = buildInstanceBuffers(
+      loadedData,
+      viewState.slicePosition,
+      viewState.tolerance,
+      viewState.displayDims
     );
 
-    const previousCount = this.nodeSegmentCounts.get(nodeId);
-    gpuBufferPool.updateLinesGeometry(geometry, linesData, previousCount);
-    this.nodeSegmentCounts.set(nodeId, linesData.segmentCount);
+    // STEP 2: Acquire geometry with ProcessedLinesData segment count
+    const geometry = gpuBufferPool.acquireLinesGeometry(
+      nodeId,
+      processedData.segmentCount  // Use PROCESSED count (after clipping)
+    );
 
-    // Create or update mesh
+    // STEP 3: Update geometry with ProcessedLinesData (per-segment)
+    const previousCount = this.nodeSegmentCounts.get(nodeId);
+    gpuBufferPool.updateLinesGeometry(geometry, processedData, previousCount);
+    this.nodeSegmentCounts.set(nodeId, processedData.segmentCount);
+
+    // Create or update mesh (InstancedMesh for lines)
     let mesh = this.linesMeshes.get(nodeId);
     if (!mesh) {
       const material = materialManager.getLineMaterial({ /* ... */ });
-      mesh = new THREE.Line(geometry, material);
+      mesh = new THREE.Mesh(geometry, material);  // Mesh, not Line!
       this.scene.add(mesh);
       this.linesMeshes.set(nodeId, mesh);
     } else {
@@ -1989,20 +2845,56 @@ export class SceneManager {
 
   /**
    * Update gsplats node
+   *
+   * CRITICAL DATA FLOW (matches actual scene-loader.ts):
+   * 1. LoadedGSplatsData (nD raw from zarr)
+   * 2. → processGSplats() → ProcessedGSplatsData (3D sliced + attenuated)
+   * 3. → packCholeskyForShader() → Packed Cholesky arrays
+   * 4. → GPUBufferPool / mesh update → GPU
+   *
+   * NOTE: The actual implementation uses createInstancedGSplatsMesh/updateInstancedGSplatsMesh
+   * from gsplat-material.ts. The GPUBufferPool pattern here is a PROPOSED optimization.
    */
-  updateGSplats(nodeId: string, gsplatsData: LoadedGSplatsData): void {
+  updateGSplats(nodeId: string, gsplatsData: LoadedGSplatsData, viewState: GSplatsViewState): void {
+    // Step 1: Process nD → 3D (visibility filtering + attenuation)
+    const processed = processGSplats(gsplatsData, viewState);
+
+    // Step 2: Pack Cholesky factors for shader attributes
+    const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
+
+    // Step 3: Acquire GPU geometry (always 3D - no ndim parameter!)
     const geometry = gpuBufferPool.acquireGSplatsGeometry(
       nodeId,
-      gsplatsData.splatCount,
-      gsplatsData.ndim
+      processed.splatCount  // Use processed count (may be less due to visibility filtering!)
     );
 
-    const previousCount = this.nodeSplatCounts.get(nodeId);
-    gpuBufferPool.updateGSplatsGeometry(geometry, gsplatsData, previousCount);
-    this.nodeSplatCounts.set(nodeId, gsplatsData.splatCount);
+    // Step 4: Create PackedGSplatsData for GPU upload
+    const packedData: PackedGSplatsData = {
+      centers3D: processed.centers3D,
+      amplitudes: processed.amplitudes,
+      cholesky01: packed.cholesky01,
+      cholesky23: packed.cholesky23,
+      cholesky45: packed.cholesky45,
+      colors: processed.colors,
+      sharpness: processed.sharpness,
+      splatCount: processed.splatCount,
+    };
 
-    // Create or update custom GSplat mesh
-    // ... (implementation depends on GSplat renderer)
+    // Step 5: Update GPU buffers
+    const previousCount = this.nodeSplatCounts.get(nodeId);
+    gpuBufferPool.updateGSplatsGeometry(geometry, packedData, previousCount);
+    this.nodeSplatCounts.set(nodeId, processed.splatCount);
+
+    // Step 6: Create or update mesh
+    let mesh = this.gsplatsMeshes.get(nodeId);
+    if (!mesh) {
+      const material = materialManager.getGSplatMaterial({ /* ... */ });
+      mesh = new THREE.Mesh(geometry, material);
+      this.scene.add(mesh);
+      this.gsplatsMeshes.set(nodeId, mesh);
+    } else {
+      mesh.geometry = geometry;
+    }
   }
 
   /**
@@ -2271,17 +3163,22 @@ THREE.Scene → Render
 
 **No conflict - separate layers!**
 
-### 10.5 RGB Float32 Colors (Not RGBA Uint8)
+### 10.5 RGB Colors (3 Components, Multiple Formats)
 
-**CRITICAL**: Lines and GSplats use RGB Float32 colors (nullable), NOT RGBA Uint8:
+**CRITICAL**: All types use **RGB** (3 components), NOT RGBA (4 components):
 
 ```typescript
-// CORRECT for Lines/GSplats
-colors: Float32Array | null;  // RGB, 3 components per vertex/splat
+// Lines and GSplats (after processing)
+colors: Float32Array | null;  // RGB, 3 components per vertex/splat (nullable)
 
-// Points still use RGBA Uint8 (for compatibility)
-colors: Uint8Array;  // RGBA, 4 components per point
+// Points (supports multiple formats for HDR/SDR)
+colors?: Uint8Array | Uint16Array | Float32Array;  // RGB, 3 components
+// - Uint8Array: SDR mode [0-255], normalized by THREE.js
+// - Float32Array: HDR mode [0-∞), no normalization
 ```
+
+**Note**: The accumulator and GPU buffer pool use Float32Array internally
+for maximum flexibility. Conversion happens as needed.
 
 ### 10.6 nD Vertices → 3D Extraction
 
@@ -2301,12 +3198,22 @@ for (let i = 0; i < vertexCount; i++) {
 
 ## Summary
 
-This fully corrected specification:
+This fully corrected specification (v3.5.0):
+
+**v3.5.0 Corrections:**
+- ✅ processGSplats() now uses **Mahalanobis distance** (not simple Gaussian)
+- ✅ Two-pass visibility filtering with **minAmplitude threshold**
+- ✅ acquireGSplatsGeometry() **no longer takes ndim** (always 3D after processing)
+- ✅ SceneManager.updateGSplats() shows **correct data flow** (process → pack → update)
+- ✅ Added **PackedGSplatsData interface** in GPUBufferPool module
+- ✅ Documents **actual vs proposed** GSplats pattern (direct mesh vs GPUBufferPool)
+
+**Previous Corrections (v3.0-v3.4):**
 - ✅ Fixes ALL interface mismatches (LoadedLinesData, LoadedGSplatsData)
 - ✅ Uses correct field names (choleskyFactors camelCase, not snake_case)
 - ✅ Uses correct method names (loadLines, loadGSplats, not all loadPoints)
 - ✅ Implements complete GPU buffer pool methods (updateLinesGeometry, updateGSplatsGeometry)
-- ✅ Uses correct color types (RGB Float32 for Lines/GSplats)
+- ✅ Uses correct color types (RGB Float32 for Lines/GSplats, HDR for Points)
 - ✅ Handles nD vertices extraction to 3D correctly
 - ✅ Includes proper Vite configuration for workers/WASM
 - ✅ Clarifies worker-zarr pattern (pre-fetched chunks)
@@ -2314,10 +3221,21 @@ This fully corrected specification:
 - ✅ Defines Option C backwards compatibility (no fallbacks)
 - ✅ Provides complete, implementation-ready code examples
 
+**Key GSplats Data Flow:**
+```
+LoadedGSplatsData (nD)
+    ↓ processGSplats() [Mahalanobis distance, visibility filtering]
+ProcessedGSplatsData (3D)
+    ↓ packCholeskyForShader()
+PackedGSplatsData (GPU-ready)
+    ↓ updateGSplatsGeometry() / updateInstancedGSplatsMesh()
+GPU Buffers
+```
+
 **Status: READY FOR IMPLEMENTATION**
 
 ---
 
-**Document Version**: 3.0.0 (Fully Corrected)
-**Date**: 2025-12-22
+**Document Version**: 3.5.0 (Corrected GSplats Algorithm - Mahalanobis Distance)
+**Date**: 2025-12-23
 **Approval**: Ready for Phase 1 start

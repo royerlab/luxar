@@ -37,9 +37,9 @@
   user-select: none;
   overflow-y: auto;
 
-  /* Animation */
-  opacity: 0;
-  animation: luxar-fade-in 0.15s ease forwards;
+  /* Animation removed - controlled via inline styles for E2E test reliability */
+  /* opacity: 0; */
+  /* animation: luxar-fade-in 0.15s ease forwards; */
 }
 
 /* ========== Header ========== */
