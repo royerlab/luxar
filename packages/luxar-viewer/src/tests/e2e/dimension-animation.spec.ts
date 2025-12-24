@@ -135,6 +135,9 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -182,6 +185,9 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -212,6 +218,9 @@ test.describe('Dimension Animation - UI Controls', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -244,6 +253,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus (sliders shouldn't capture keyboard)
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -269,6 +282,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -298,6 +315,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -326,6 +347,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension and start animation
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -350,6 +375,10 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension and start animation at high FPS
     await page.keyboard.press('4');
@@ -390,6 +419,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -426,6 +459,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -475,6 +512,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Select a dimension
     await page.keyboard.press('4');
@@ -534,6 +575,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -587,6 +632,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
+
     // Select a dimension and start animation
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
@@ -623,6 +672,10 @@ test.describe('Dimension Animation - Multiple Dimensions', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(50);
 
     // Start animation on dimension 4 (index 3)
     await page.keyboard.press('4');

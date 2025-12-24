@@ -338,9 +338,13 @@ export class InputHandler {
    * @private
    */
   private getSelectedDimensionIndex(): number {
-    if (this.selectedDimension < 0) return -1;
+    if (this.selectedDimension < 0) {
+      return -1;
+    }
     const dims = sceneDimsManager.getDims();
-    if (!dims) return -1;
+    if (!dims) {
+      return -1;
+    }
     const navigableDims = this.getNavigableDimensionsList(dims);
     if (this.selectedDimension >= navigableDims.length) return -1;
     return navigableDims[this.selectedDimension];
@@ -1281,7 +1285,9 @@ export class InputHandler {
    */
   private selectDimension(index: number): void {
     const dims = sceneDimsManager.getDims();
-    if (!dims) return;
+    if (!dims) {
+      return;
+    }
 
     // Use utility to map key to actual dimension index
     const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
