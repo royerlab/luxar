@@ -1,5 +1,12 @@
-# Luxar Performance Optimization Specification v3.5.0
+# Luxar Performance Optimization Specification v3.6.0
 
+> **v3.6.0 Changes (2025-12-23)**:
+> - 🟡 FIXED: Config uses `dataLoading.performance` (not separate `dataLoader`)
+> - 🟡 FIXED: ArrayDecoder location clarified (MAIN THREAD, not worker) in all places
+> - 🟡 FIXED: Worker init comment corrected (WASM only, not ArrayDecoder)
+> - 🟡 FIXED: Phase 2 success criteria corrected (WASM queries, not ArrayDecoder in worker)
+> - 🟡 FIXED: Architecture diagram shows ArrayDecoder on MAIN THREAD
+>
 > **v3.5.0 Changes (2025-12-23)**:
 > - 🔴 FIXED: processGSplats() now correctly documents Mahalanobis distance algorithm
 > - 🔴 FIXED: acquireGSplatsGeometry() no longer takes ndim (always 3D after processing)
@@ -34,7 +41,7 @@
 > - 🔴 ADDED: buildInstanceBuffers() transformation function for Lines
 > - 🔴 FIXED: createLinesGeometry() creates InstancedBufferGeometry with per-segment attributes
 
-**Version**: 3.5.0 (Corrected GSplats Algorithm - Mahalanobis Distance)
+**Version**: 3.6.0 (Config Integration & ArrayDecoder Location Consistency)
 **Date**: 2025-12-23
 **Status**: Ready for Implementation
 **Revision Notes**: ALL node types (Points, Lines, GSplats) now have complete, accurate data flow documentation
@@ -1490,6 +1497,25 @@ GSplatsSpatialIndexLoader
 
 **CRITICAL DESIGN DECISION**: ArrayDecoder stays on main thread!
 
+> ⚠️ **KNOWN OPTIMIZATION OPPORTUNITY**
+>
+> Having ArrayDecoder on the main thread means decoding (Blosc decompression,
+> dequantization, LUT lookups) happens on the main thread. This could cause
+> frame drops during heavy loading.
+>
+> **Why it's here for now:**
+> - `zarrita.js` doesn't have built-in web worker support
+> - ArrayDecoder needs `zarr.Array` objects which aren't easily serializable
+> - Network I/O is usually the bottleneck, not decoding
+>
+> **Future optimization (if profiling shows it's needed):**
+> 1. Fetch raw chunk bytes on main thread
+> 2. Transfer bytes to worker via `postMessage` (transferable)
+> 3. Use separate decompression library in worker (e.g., `numcodecs.js` for Blosc)
+> 4. Handle dequantization/LUT in worker with serialized metadata
+>
+> **Profile first** after Phase 1 to see if this is actually a bottleneck.
+
 The `ArrayDecoder.decode()` method signature is:
 ```typescript
 async decode(
@@ -1742,7 +1768,7 @@ class WorkerPool {
       // Wrap with Comlink
       this.workerAPI = wrap<DataWorkerAPI>(this.worker);
 
-      // Initialize worker (loads WASM, sets up ArrayDecoder)
+      // Initialize worker (loads WASM only - ArrayDecoder stays on main thread)
       // FAILS if WASM unavailable (no fallback)
       try {
         await this.workerAPI.initialize();
@@ -3066,7 +3092,7 @@ describe('GSplatsDataAccumulator', () => {
 **Success Criteria:**
 - Main thread block: <5ms (Points), <10ms (Lines), <8ms (GSplats)
 - Frame rate: 55-60 FPS
-- ArrayDecoder works in worker
+- WASM spatial queries work in worker (ArrayDecoder stays on main thread)
 
 ---
 
@@ -3152,13 +3178,15 @@ Network Request
     ↓
 [L1/L2 Zarr Cache] ← EXISTING (unchanged)
     ↓
-ArrayDecoder (Worker)
+ArrayDecoder (MAIN THREAD)  ← Needs zarr.Array objects
     ↓
 [CPU Accumulators] ← NEW (Phase 1)
     ↓
 [GPU Buffer Pool] ← NEW (Phase 4)
     ↓
 THREE.Scene → Render
+
+[WASM Worker handles: Spatial index queries, nD visibility computation]
 ```
 
 **No conflict - separate layers!**
@@ -3198,7 +3226,13 @@ for (let i = 0; i < vertexCount; i++) {
 
 ## Summary
 
-This fully corrected specification (v3.5.0):
+This fully corrected specification (v3.6.0):
+
+**v3.6.0 Corrections:**
+- ✅ Config integration uses **`dataLoading.performance`** (matches existing pattern)
+- ✅ ArrayDecoder location **consistently documented as MAIN THREAD** throughout
+- ✅ Worker responsibilities clarified (**WASM spatial queries only**)
+- ✅ Architecture diagram **correctly shows ArrayDecoder on main thread**
 
 **v3.5.0 Corrections:**
 - ✅ processGSplats() now uses **Mahalanobis distance** (not simple Gaussian)
@@ -3236,6 +3270,6 @@ GPU Buffers
 
 ---
 
-**Document Version**: 3.5.0 (Corrected GSplats Algorithm - Mahalanobis Distance)
+**Document Version**: 3.6.0 (Config Integration & ArrayDecoder Location Consistency)
 **Date**: 2025-12-23
 **Approval**: Ready for Phase 1 start

@@ -331,6 +331,22 @@ export class InputHandler {
   }
 
   /**
+   * Get the actual dimension index from the selected position.
+   * Converts from position in navigable dimensions list to actual dimension index.
+   *
+   * @returns Dimension index, or -1 if no dimension selected
+   * @private
+   */
+  private getSelectedDimensionIndex(): number {
+    if (this.selectedDimension < 0) return -1;
+    const dims = sceneDimsManager.getDims();
+    if (!dims) return -1;
+    const navigableDims = this.getNavigableDimensionsList(dims);
+    if (this.selectedDimension >= navigableDims.length) return -1;
+    return navigableDims[this.selectedDimension];
+  }
+
+  /**
    * Register dimension animation keyboard shortcuts
    * Uses InputContextManager for proper context handling
    * @private
@@ -340,12 +356,10 @@ export class InputHandler {
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: 'k',
       handler: () => {
-        if (this.selectedDimension >= 0 && this.animationManager) {
-          const isPlaying = this.animationManager.togglePlay(this.selectedDimension);
-          log.info(
-            Modules.ANIMATION,
-            `Dimension ${this.selectedDimension} ${isPlaying ? 'playing' : 'paused'}`
-          );
+        const dimIndex = this.getSelectedDimensionIndex();
+        if (dimIndex >= 0 && this.animationManager) {
+          const isPlaying = this.animationManager.togglePlay(dimIndex);
+          log.info(Modules.ANIMATION, `Dimension ${dimIndex} ${isPlaying ? 'playing' : 'paused'}`);
         }
       },
       preventDefault: true,
@@ -356,14 +370,12 @@ export class InputHandler {
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: 'Home',
       handler: () => {
-        if (this.selectedDimension >= 0) {
+        const dimIndex = this.getSelectedDimensionIndex();
+        if (dimIndex >= 0) {
           const ranges = sceneDimsManager.getDimensionRanges();
           if (ranges) {
-            sceneDimsManager.setDimensionValue(
-              this.selectedDimension,
-              ranges[this.selectedDimension][0]
-            );
-            log.info(Modules.ANIMATION, `Jumped to start of dimension ${this.selectedDimension}`);
+            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][0]);
+            log.info(Modules.ANIMATION, `Jumped to start of dimension ${dimIndex}`);
           }
         }
       },
@@ -375,14 +387,12 @@ export class InputHandler {
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
       key: 'End',
       handler: () => {
-        if (this.selectedDimension >= 0) {
+        const dimIndex = this.getSelectedDimensionIndex();
+        if (dimIndex >= 0) {
           const ranges = sceneDimsManager.getDimensionRanges();
           if (ranges) {
-            sceneDimsManager.setDimensionValue(
-              this.selectedDimension,
-              ranges[this.selectedDimension][1]
-            );
-            log.info(Modules.ANIMATION, `Jumped to end of dimension ${this.selectedDimension}`);
+            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][1]);
+            log.info(Modules.ANIMATION, `Jumped to end of dimension ${dimIndex}`);
           }
         }
       },
@@ -395,9 +405,10 @@ export class InputHandler {
       key: 'ArrowUp',
       modifiers: { shift: true },
       handler: () => {
-        if (this.selectedDimension >= 0 && this.animationManager) {
-          this.animationManager.increaseSpeed(this.selectedDimension);
-          const fps = this.animationManager.getState(this.selectedDimension)?.targetFPS;
+        const dimIndex = this.getSelectedDimensionIndex();
+        if (dimIndex >= 0 && this.animationManager) {
+          this.animationManager.increaseSpeed(dimIndex);
+          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
           log.info(Modules.ANIMATION, `Increased speed to ${fps} FPS`);
         }
       },
@@ -410,9 +421,10 @@ export class InputHandler {
       key: 'ArrowDown',
       modifiers: { shift: true },
       handler: () => {
-        if (this.selectedDimension >= 0 && this.animationManager) {
-          this.animationManager.decreaseSpeed(this.selectedDimension);
-          const fps = this.animationManager.getState(this.selectedDimension)?.targetFPS;
+        const dimIndex = this.getSelectedDimensionIndex();
+        if (dimIndex >= 0 && this.animationManager) {
+          this.animationManager.decreaseSpeed(dimIndex);
+          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
           log.info(Modules.ANIMATION, `Decreased speed to ${fps} FPS`);
         }
       },
