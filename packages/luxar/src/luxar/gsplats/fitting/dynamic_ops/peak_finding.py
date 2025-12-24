@@ -273,6 +273,8 @@ def _find_peaks_in_tile(
         kernel_size = max(1, kernel_size - 1)  # Ensure odd kernel
 
     # Apply max pooling for NMS
+    # Note: max_pool3d is not implemented for MPS, so we use CPU fallback
+    original_device = tile.device
     if d == 2:
         max_pooled = torch.nn.functional.max_pool2d(
             tile[None, None],
@@ -281,12 +283,22 @@ def _find_peaks_in_tile(
             padding=kernel_size // 2,
         )[0, 0]
     elif d == 3:
-        max_pooled = torch.nn.functional.max_pool3d(
-            tile[None, None],
-            kernel_size=kernel_size,
-            stride=1,
-            padding=kernel_size // 2,
-        )[0, 0]
+        # MPS doesn't support max_pool3d, so fall back to CPU
+        if tile.device.type == "mps":
+            tile_cpu = tile.cpu()
+            max_pooled = torch.nn.functional.max_pool3d(
+                tile_cpu[None, None],
+                kernel_size=kernel_size,
+                stride=1,
+                padding=kernel_size // 2,
+            )[0, 0].to(original_device)
+        else:
+            max_pooled = torch.nn.functional.max_pool3d(
+                tile[None, None],
+                kernel_size=kernel_size,
+                stride=1,
+                padding=kernel_size // 2,
+            )[0, 0]
     else:
         # Fallback: no NMS for unsupported dimensions
         max_pooled = tile
