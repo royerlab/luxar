@@ -169,8 +169,32 @@ def download_storm_localizations(
         aprint("")
 
         try:
-            response = requests.get(url, stream=True, timeout=300)
-            response.raise_for_status()
+            # Retry logic for rate limiting
+            max_retries = 3
+            retry_delay = 10  # seconds
+
+            for attempt in range(max_retries):
+                response = requests.get(url, stream=True, timeout=300)
+
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        aprint(f"⚠️  Rate limited, waiting {retry_delay} seconds...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        aprint("❌ Rate limit exceeded")
+                        aprint("")
+                        aprint("Manual download:")
+                        aprint(f"  1. Visit: https://zenodo.org/record/{ZENODO_RECORD}")
+                        aprint(f"  2. Download: {filename}")
+                        aprint(f"  3. Save to: {cache_file}")
+                        aprint("  4. Run demo again")
+                        response.raise_for_status()
+
+                response.raise_for_status()
+                break  # Success!
 
             total_size = int(response.headers.get("content-length", 0))
             aprint(f"File size: {total_size / (1024**2):.1f} MB")
