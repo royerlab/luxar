@@ -20,7 +20,7 @@ import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { config } from '../config';
+import { config as appConfig } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher } from '../cache';
 import type {
   LinesMetadata,
@@ -43,6 +43,7 @@ import {
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
 } from '../rendering/gsplat-material';
+import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -66,6 +67,11 @@ export class SceneLoader {
   private monitorId: string | null = null;
   private arrayRefRegistry: ArrayRefRegistry;
 
+  // Phase 4: GPU buffer pool for geometry reuse ✅ INTEGRATED
+  // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
+  // Enabled via config.dataLoading.performance.useGPUBufferPool
+  private _gpuBufferPool: GPUBufferPool | null = null;
+
   // Error recovery tracking
   private failedLoaders = new Map<
     string,
@@ -80,6 +86,21 @@ export class SceneLoader {
       tolerance: [],
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
+
+    // Phase 4: Initialize GPU buffer pool if enabled
+    // Fully integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
+    // Note: Requires Float32Array data; falls back to standard path for Uint8/Uint16
+    if (appConfig.dataLoading.performance.useGPUBufferPool) {
+      this._gpuBufferPool = new GPUBufferPool(
+        appConfig.dataLoading.performance.gpuPoolMaxSize,
+        appConfig.dataLoading.performance.gpuPoolEvictionFrames
+      );
+      log.info(
+        Modules.GPU_BUFFER_POOL,
+        `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
+          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames)`
+      );
+    }
 
     // Use the DataMonitorManager to get or create a monitor
     if (typeof document !== 'undefined' && config.enableMonitor !== false) {
@@ -176,11 +197,11 @@ export class SceneLoader {
 
     // Open zarr store with caching
     let rawStore: Readable;
-    if (config.cache.enabled) {
+    if (appConfig.cache.enabled) {
       const cachingStore = new TwoLevelCachingStore(this.normalizeURL(url), {
-        l1MaxSize: config.cache.l1MaxSizeMB * 1024 * 1024,
-        l2MaxSize: config.cache.l2MaxSizeMB * 1024 * 1024,
-        debug: config.cache.debug,
+        l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
+        l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
+        debug: appConfig.cache.debug,
       });
       await cachingStore.init();
 
@@ -509,27 +530,40 @@ export class SceneLoader {
       viewState.displayDims
     );
 
-    // Dispose old geometry
-    const oldGeometry = mesh.geometry;
-    if (oldGeometry) {
-      oldGeometry.dispose();
+    // Phase 4: Use GPU buffer pool if enabled
+    if (this._gpuBufferPool) {
+      // Acquire geometry from pool (may reuse existing)
+      const geometry = this._gpuBufferPool.acquireLinesGeometry(path, processed.segmentCount);
+
+      // Update attributes in place (zero GPU allocations on reuse)
+      this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+
+      // Assign to mesh (might be same geometry, reused)
+      mesh.geometry = geometry;
+      mesh.count = processed.segmentCount;
+    } else {
+      // Fallback: Original path (dispose + create new)
+      const oldGeometry = mesh.geometry;
+      if (oldGeometry) {
+        oldGeometry.dispose();
+      }
+
+      // Create new geometry with updated data
+      const newMesh = createInstancedLinesMesh(processed, mesh.material as LineMaterial);
+
+      // Copy geometry to existing mesh
+      mesh.geometry = newMesh.geometry;
+      mesh.count = processed.segmentCount;
+
+      // Clean up temporary mesh (but not its geometry, which is now on the original mesh)
+      newMesh.geometry = new THREE.BufferGeometry(); // Replace to avoid double disposal
+      newMesh.geometry.dispose();
     }
-
-    // Create new geometry with updated data
-    const newMesh = createInstancedLinesMesh(processed, mesh.material as LineMaterial);
-
-    // Copy geometry to existing mesh
-    mesh.geometry = newMesh.geometry;
-    mesh.count = processed.segmentCount;
 
     // Track visible segment count in mesh userData for monitor reporting
     if (isLinesUserData(mesh.userData)) {
       mesh.userData.visibleSegmentCount = processed.segmentCount;
     }
-
-    // Clean up temporary mesh (but not its geometry, which is now on the original mesh)
-    newMesh.geometry = new THREE.BufferGeometry(); // Replace to avoid double disposal
-    newMesh.geometry.dispose();
 
     if (data.segmentCount === 0) {
       log.info(
@@ -561,17 +595,42 @@ export class SceneLoader {
       processed.splatCount
     );
 
-    // Update mesh geometry in place
-    updateInstancedGSplatsMesh(mesh, {
-      centers: processed.centers3D,
-      cholesky01,
-      cholesky23,
-      cholesky45,
-      amplitudes: processed.amplitudes,
-      sharpness: processed.sharpness,
-      colors: processed.colors,
-      splatCount: processed.splatCount,
-    });
+    // Phase 4: Use GPU buffer pool if enabled
+    if (this._gpuBufferPool) {
+      // Acquire geometry from pool (may reuse existing)
+      const geometry = this._gpuBufferPool.acquireGSplatsGeometry(path, processed.splatCount);
+
+      // Update attributes in place (zero GPU allocations on reuse)
+      this._gpuBufferPool.updateGSplatsGeometry(
+        geometry,
+        {
+          centers3D: processed.centers3D,
+          amplitudes: processed.amplitudes,
+          cholesky01,
+          cholesky23,
+          cholesky45,
+          colors: processed.colors,
+          sharpness: processed.sharpness,
+          splatCount: processed.splatCount,
+        },
+        processed.splatCount
+      );
+
+      // Assign to mesh (might be same geometry, reused)
+      mesh.geometry = geometry;
+    } else {
+      // Fallback: Original path (updateInstancedGSplatsMesh)
+      updateInstancedGSplatsMesh(mesh, {
+        centers: processed.centers3D,
+        cholesky01,
+        cholesky23,
+        cholesky45,
+        amplitudes: processed.amplitudes,
+        sharpness: processed.sharpness,
+        colors: processed.colors,
+        splatCount: processed.splatCount,
+      });
+    }
 
     // Track visible splat count in mesh userData
     if (mesh.userData) {
@@ -818,8 +877,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1351,33 +1410,52 @@ export class SceneLoader {
       );
     }
 
-    // Store reference to old geometry
-    const oldGeometry = points.geometry;
+    // Phase 4: Use GPU buffer pool if enabled (now supports all TypedArray types!)
+    if (this._gpuBufferPool) {
+      // Acquire geometry from pool (type-aware: matches capacity AND attribute types)
+      const geometry = this._gpuBufferPool.acquirePointsGeometry(
+        path,
+        data,
+        data.metadata.loadedPoints
+      );
 
-    // Save bounding box/sphere BEFORE disposal to preserve them
-    const savedBoundingBox = oldGeometry?.boundingBox?.clone() || null;
-    const savedBoundingSphere = oldGeometry?.boundingSphere?.clone() || null;
+      // Update attributes in place (zero GPU allocations on reuse)
+      this._gpuBufferPool.updatePointsGeometry(geometry, data, data.metadata.loadedPoints);
 
-    // Dispose old geometry FIRST to free GPU memory immediately
-    // This prevents temporary memory spike from holding both geometries
-    // Trade-off: Brief 1-frame flicker vs memory safety (memory safety wins for nD navigation)
-    if (oldGeometry) {
-      oldGeometry.dispose();
+      // Update bounding box
+      if (data.metadata.bounds) {
+        geometry.boundingBox = data.metadata.bounds.clone();
+      }
+
+      // Assign to mesh (might be same geometry, reused)
+      points.geometry = geometry;
+    } else {
+      // Fallback: GPU buffer pool disabled, use standard path
+      const oldGeometry = points.geometry;
+
+      // Save bounding box/sphere BEFORE disposal to preserve them
+      const savedBoundingBox = oldGeometry?.boundingBox?.clone() || null;
+      const savedBoundingSphere = oldGeometry?.boundingSphere?.clone() || null;
+
+      // Dispose old geometry FIRST to free GPU memory immediately
+      if (oldGeometry) {
+        oldGeometry.dispose();
+      }
+
+      // Create new geometry AFTER disposal
+      const newGeometry = this.createGeometry(data);
+
+      // Restore bounding box/sphere if available
+      if (savedBoundingBox) {
+        newGeometry.boundingBox = savedBoundingBox;
+      }
+      if (savedBoundingSphere) {
+        newGeometry.boundingSphere = savedBoundingSphere;
+      }
+
+      // Assign the new geometry
+      points.geometry = newGeometry;
     }
-
-    // Create new geometry AFTER disposal (only one geometry in memory at a time)
-    const newGeometry = this.createGeometry(data);
-
-    // Restore bounding box/sphere if available (prevents recomputation)
-    if (savedBoundingBox) {
-      newGeometry.boundingBox = savedBoundingBox;
-    }
-    if (savedBoundingSphere) {
-      newGeometry.boundingSphere = savedBoundingSphere;
-    }
-
-    // Assign the new geometry
-    points.geometry = newGeometry;
   }
 
   /**

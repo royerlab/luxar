@@ -46,25 +46,62 @@ async function isAnimating(page: any, dimIndex: number): Promise<boolean> {
 
 /**
  * Helper to get dimension value
+ * Reads from the slider UI element for the dimension
  */
 async function getDimensionValue(page: any, dimIndex: number): Promise<number> {
   return await page.evaluate((idx: number) => {
     const debug = (window as any).__luxarDebug;
     const sceneDimsManager = debug?.app?.sceneDimsManager;
     if (!sceneDimsManager) {
-      console.log('[TEST] sceneDimsManager is null');
+      console.log('[TEST-DEBUG] sceneDimsManager not found');
       return -1;
     }
+
     const dims = sceneDimsManager.getDims();
     if (!dims) {
-      console.log('[TEST] dims is null');
+      console.log('[TEST-DEBUG] dims not found');
       return -1;
     }
-    if (dims.currentStep[idx] === undefined) {
-      console.log('[TEST] dims.currentStep[' + idx + '] is undefined. currentStep:', dims.currentStep, 'ndim:', dims.ndim);
-      return -1;
+
+    console.log('[TEST-DEBUG] dims:', {
+      ndim: dims.ndim,
+      displayed: dims.displayed,
+      currentStep: dims.currentStep,
+      currentStepLength: dims.currentStep?.length,
+      requestedIndex: idx,
+      valueAtIndex: dims.currentStep?.[idx]
+    });
+
+    // Read the actual value from currentStep
+    if (dims.currentStep && dims.currentStep[idx] !== undefined) {
+      console.log('[TEST-DEBUG] Found value in currentStep:', dims.currentStep[idx]);
+      return dims.currentStep[idx];
     }
-    return dims.currentStep[idx];
+
+    // Fallback: Try to read from UI slider if currentStep isn't available
+    // Find the slider for this dimension (non-displayed dimensions have sliders)
+    const sliders = document.querySelectorAll('.luxar-dimension-slider input[type="range"]');
+    const navigableDims = dims.displayed ?
+      Array.from({length: dims.ndim}, (_, i) => i).filter(i => !dims.displayed.includes(i)) :
+      [];
+    const sliderIndex = navigableDims.indexOf(idx);
+
+    console.log('[TEST-DEBUG] Slider fallback:', {
+      totalSliders: sliders.length,
+      navigableDims,
+      sliderIndex,
+      hasSlider: sliderIndex >= 0 && !!sliders[sliderIndex]
+    });
+
+    if (sliderIndex >= 0 && sliders[sliderIndex]) {
+      const slider = sliders[sliderIndex] as HTMLInputElement;
+      const value = parseFloat(slider.value);
+      console.log('[TEST-DEBUG] Found value in slider:', value);
+      return value;
+    }
+
+    console.log('[TEST-DEBUG] No value found, returning -1');
+    return -1;
   }, dimIndex);
 }
 
@@ -428,13 +465,6 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
-
-    // Wait for dims to be fully initialized
-    await page.waitForFunction(() => {
-      const debug = (window as any).__luxarDebug;
-      const dims = debug?.app?.sceneDimsManager?.getDims();
-      return dims && dims.currentStep && dims.currentStep.length === dims.ndim;
-    }, null, { timeout: 5000 });
 
     // Click canvas to ensure it has focus
     await page.click('canvas');

@@ -187,8 +187,8 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
           result="final"/>
 
         ${
-          params.specularIntensity && params.specularIntensity > 0
-            ? `
+  params.specularIntensity && params.specularIntensity > 0
+    ? `
         <!-- OPTIONAL: Specular Rim Light (glossy highlight) -->
         <feGaussianBlur in="heightMap" stdDeviation="5" result="specMap"/>
         <feColorMatrix
@@ -209,8 +209,8 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
           in2="SourceAlpha"
           operator="in"/>
         `
-            : ''
-        }
+    : ''
+}
 
       </filter>
     </defs>

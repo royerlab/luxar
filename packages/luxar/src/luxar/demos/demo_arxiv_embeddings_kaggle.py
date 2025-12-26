@@ -146,7 +146,13 @@ def download_kaggle_dataset(
     output_path: Path,
     url: str = "https://www.kaggle.com/api/v1/datasets/download/tomtum/openai-arxiv-embeddings",
 ) -> Path:
-    """Download Kaggle dataset with progress bar.
+    """Download Kaggle dataset with robust retry and resume capability.
+
+    Uses the robust_download utility which provides:
+    - Automatic retry on network errors (up to 3 attempts)
+    - Resume capability for partial downloads
+    - Progress tracking with ETA
+    - File size verification
 
     Args:
         output_path: Where to save the ZIP file
@@ -155,7 +161,7 @@ def download_kaggle_dataset(
     Returns:
         Path to downloaded file
     """
-    import requests
+    from luxar.utils.download import robust_download
 
     with asection("Downloading Kaggle ArXiv Embeddings Dataset"):
         aprint("URL: https://www.kaggle.com/datasets/tomtum/openai-arxiv-embeddings")
@@ -163,47 +169,28 @@ def download_kaggle_dataset(
         aprint("")
         aprint("⏱️  This is a ONE-TIME download (~30 GB, 10-15 minutes)")
         aprint("⏱️  Subsequent runs will use cached file instantly!")
+        aprint("⏱️  Download will auto-retry on network errors and can resume if interrupted")
         aprint("")
 
         try:
-            # Stream download with progress
-            response = requests.get(url, stream=True, timeout=300)
-            response.raise_for_status()
+            output_path = robust_download(
+                url=url,
+                output_path=output_path,
+                max_retries=3,  # Retry up to 3 times on network errors
+                timeout=600,  # 10 minute initial connection timeout for large file
+                chunk_size=1024 * 1024,  # 1MB chunks
+                verify_size=True,  # Verify final size matches Content-Length
+            )
 
-            total_size = int(response.headers.get("content-length", 0))
-            aprint(f"Dataset size: {total_size / (1024**3):.1f} GB")
-            aprint("Downloading...")
-
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            downloaded = 0
-            chunk_size = 8192 * 128  # 1MB chunks
-            last_progress = 0
-
-            with open(output_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-
-                        # Progress update every 100MB
-                        progress_mb = downloaded / (1024 * 1024)
-                        if progress_mb - last_progress >= 100:
-                            percent = (downloaded / total_size * 100) if total_size > 0 else 0
-                            aprint(
-                                f"  Progress: {downloaded / (1024**3):.1f} GB / "
-                                f"{total_size / (1024**3):.1f} GB ({percent:.1f}%)"
-                            )
-                            last_progress = progress_mb
-
-            aprint("✓ Download complete!")
-            aprint(f"✓ Saved to: {output_path}")
-            aprint(f"  Size: {output_path.stat().st_size / (1024**3):.1f} GB")
+            aprint("✓ Download complete and verified!")
+            return output_path
 
         except Exception as e:
-            aprint(f"❌ Download failed: {e}")
+            aprint(f"❌ Download failed after all retries: {e}")
             if output_path.exists():
-                output_path.unlink()  # Clean up partial download
+                partial_size = output_path.stat().st_size
+                aprint(f"   Partial download saved: {partial_size / (1024**2):.1f} MB")
+                aprint(f"   Run again to resume from this point")
             raise
 
     return output_path

@@ -88,6 +88,44 @@ export interface LoaderMetrics {
   memoryLimit: number;
   // Spatial index specific metrics
   spatialIndex?: PointSpatialIndexMetrics;
+  // Performance optimization metrics (NEW - Phase 1-4)
+  optimization?: OptimizationMetrics;
+}
+
+/**
+ * Performance optimization metrics (Phases 1-4)
+ */
+export interface OptimizationMetrics {
+  // Phase 1: Accumulator stats
+  accumulator?: {
+    enabled: boolean;
+    capacity: number;
+    allocations: number;
+    growthEvents: number;
+    memoryMB: number;
+  };
+  // Phase 2: Worker stats
+  worker?: {
+    enabled: boolean;
+    queriesOffloaded: number;
+    fallbackCount: number;
+  };
+  // Phase 3: WASM stats
+  wasm?: {
+    loaded: boolean;
+    queriesAccelerated: number;
+  };
+  // Phase 4: GPU Buffer Pool stats
+  gpuPool?: {
+    enabled: boolean;
+    allocations: number;
+    reuses: number;
+    evictions: number;
+    capacityGrowths: number;
+    activeBuffers: number;
+    pooledBuffers: number;
+    reuseRate: number; // Calculated: reuses / (allocations + reuses)
+  };
 }
 
 /**
