@@ -165,13 +165,40 @@ def download_storm_localizations(
         aprint(f"Source: Zenodo record {ZENODO_RECORD}")
         aprint(f"URL: {url}")
         aprint("")
-        aprint("⏱️  Downloading ~1-2 GB (may take 2-5 minutes)...")
+        aprint("⏱️  Downloading ~1.8 GB (may take 2-5 minutes)...")
         aprint("")
 
-        try:
-            import time
+        # Try curl first (more robust), fallback to requests
+        import shutil
+        import subprocess
+        import time
 
-            # Check if partial download exists
+        if shutil.which("curl"):
+            # Use curl for robust download with automatic resume
+            aprint("Using curl for download (automatic resume support)...")
+            try:
+                cmd = [
+                    "curl",
+                    "-L",  # Follow redirects
+                    "-C", "-",  # Resume from partial
+                    "--retry", "10",
+                    "--retry-delay", "5",
+                    "--max-time", "3600",
+                    "-o", str(cache_file),
+                    "-#",  # Progress bar
+                    url
+                ]
+
+                subprocess.run(cmd, check=True)
+                aprint(f"✓ Downloaded to {cache_file}")
+                aprint(f"  Size: {cache_file.stat().st_size / (1024**2):.1f} MB")
+                return cache_file
+
+            except subprocess.CalledProcessError:
+                aprint("⚠️  curl failed, trying Python requests...")
+
+        # Fallback: Python requests with manual resume
+        try:
             temp_file = cache_file.parent / f"{cache_file.name}.partial"
             resume_pos = 0
             if temp_file.exists():
