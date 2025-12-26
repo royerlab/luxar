@@ -101,7 +101,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -544,93 +543,95 @@ def create_storm_scene(
     Returns:
         Path to output scene
     """
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_storm_") as tmpdir:
-        output_path = Path(tmpdir) / "storm_microtubules.zarr"
+    # Save to examples directory (permanent location)
+    examples_dir = Path(__file__).parent.parent.parent / "examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+    output_path = examples_dir / "storm_3d_microtubules_example.zarr"
 
-        with asection("Creating Luxar scene"):
-            # Use 3D dimensions (viewer can toggle groups on/off)
-            dims = Dimensions([
-                Dimension("x", unit="μm", display=True),
-                Dimension("y", unit="μm", display=True),
-                Dimension("z", unit="μm", display=True),
-            ])
+    with asection("Creating Luxar scene"):
+        # Use 3D dimensions (viewer can toggle groups on/off)
+        dims = Dimensions([
+            Dimension("x", unit="μm", display=True),
+            Dimension("y", unit="μm", display=True),
+            Dimension("z", unit="μm", display=True),
+        ])
 
-            with LuxarZarrCompiler(output_path) as compiler:
-                scene = compiler.create_scene(dimensions=dims)
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
 
-                # Add metadata (keep simple for JSON compatibility)
-                scene.attrs["title"] = "3D STORM Microtubule Network"
+            # Add metadata (keep simple for JSON compatibility)
+            scene.attrs["title"] = "3D STORM Microtubule Network"
 
-                if widefield_volume is not None:
-                    # Add widefield as points (sampled from volume)
-                    with asection("Adding widefield reference"):
-                        # Sample volume above threshold
-                        threshold = np.percentile(widefield_volume, 80)
-                        coords = np.argwhere(widefield_volume > threshold)
+            if widefield_volume is not None:
+                # Add widefield as points (sampled from volume)
+                with asection("Adding widefield reference"):
+                    # Sample volume above threshold
+                    threshold = np.percentile(widefield_volume, 80)
+                    coords = np.argwhere(widefield_volume > threshold)
 
-                        # Subsample for performance
-                        n_total = len(coords)
-                        n_sample = min(100_000, n_total)
-                        indices = np.random.choice(n_total, n_sample, replace=False)
+                    # Subsample for performance
+                    n_total = len(coords)
+                    n_sample = min(100_000, n_total)
+                    indices = np.random.choice(n_total, n_sample, replace=False)
 
-                        widefield_pos = coords[indices].astype(np.float32) * PIXEL_SIZE / 1000  # to μm
-                        widefield_colors = np.full((n_sample, 3), 0.5, dtype=np.float32)  # Gray
-                        widefield_radii = np.full(n_sample, WIDEFIELD_PSF_SIGMA / 1000, dtype=np.float32)  # PSF size in μm
+                    widefield_pos = coords[indices].astype(np.float32) * PIXEL_SIZE / 1000  # to μm
+                    widefield_colors = np.full((n_sample, 3), 0.5, dtype=np.float32)  # Gray
+                    widefield_radii = np.full(n_sample, WIDEFIELD_PSF_SIGMA / 1000, dtype=np.float32)  # PSF size in μm
 
-                        scene.add_points(
-                            "widefield",
-                            positions=widefield_pos,  # 3D
-                            colors=widefield_colors,
-                            radii=widefield_radii,
-                            sharpness=np.full(n_sample, 0.5, dtype=np.float32),  # Soft
-                            opacity=0.6,
-                            blending_mode="additive",
-                        )
-
-                        aprint(f"✓ Added {n_sample:,} widefield points")
-
-                # Add super-resolution as gsplats
-                with asection("Adding super-resolution gsplats"):
-                    from luxar.gsplats.fit_result import GSplatData
-
-                    # Convert centers to μm
-                    centers_um = centers * PIXEL_SIZE / 1000
-
-                    # Convert covariances to μm²
-                    covariances_um = covariances * (PIXEL_SIZE / 1000)**2
-
-                    # Compute Cholesky factors from covariances
-                    cholesky_factors = np.zeros((len(centers), 6), dtype=np.float32)
-                    for i, cov in enumerate(covariances_um):
-                        L = np.linalg.cholesky(cov)
-                        # Pack: [L00, L10, L11, L20, L21, L22]
-                        cholesky_factors[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
-
-                    # Colors: cyan for super-resolution
-                    colors_uint8 = np.full((len(centers), 3), [76, 230, 230], dtype=np.uint8)
-
-                    # Create GSplatData object
-                    gsplat_data = GSplatData(
-                        centers=centers_um,
-                        cholesky_factors=cholesky_factors,
-                        amplitudes=amplitudes,
-                        sharpnesses=sharpnesses,
-                        colors=colors_uint8,
-                    )
-
-                    # Use add_gsplats_from_data (more robust)
-                    scene.add_gsplats_from_data(
-                        name="storm_localizations",
-                        result=gsplat_data,
-                        opacity=0.8,
+                    scene.add_points(
+                        "widefield",
+                        positions=widefield_pos,  # 3D
+                        colors=widefield_colors,
+                        radii=widefield_radii,
+                        sharpness=np.full(n_sample, 0.5, dtype=np.float32),  # Soft
+                        opacity=0.6,
                         blending_mode="additive",
                     )
 
-                    aprint(f"✓ Added {len(centers):,} STORM splats")
+                    aprint(f"✓ Added {n_sample:,} widefield points")
 
-            aprint("✓ Scene saved")
+            # Add super-resolution as gsplats
+            with asection("Adding super-resolution gsplats"):
+                from luxar.gsplats.fit_result import GSplatData
 
-        return output_path
+                # Convert centers to μm
+                centers_um = centers * PIXEL_SIZE / 1000
+
+                # Convert covariances to μm²
+                covariances_um = covariances * (PIXEL_SIZE / 1000)**2
+
+                # Compute Cholesky factors from covariances
+                cholesky_factors = np.zeros((len(centers), 6), dtype=np.float32)
+                for i, cov in enumerate(covariances_um):
+                    L = np.linalg.cholesky(cov)
+                    # Pack: [L00, L10, L11, L20, L21, L22]
+                    cholesky_factors[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
+
+                # Colors: cyan for super-resolution
+                colors_uint8 = np.full((len(centers), 3), [76, 230, 230], dtype=np.uint8)
+
+                # Create GSplatData object
+                gsplat_data = GSplatData(
+                    centers=centers_um,
+                    cholesky_factors=cholesky_factors,
+                    amplitudes=amplitudes,
+                    sharpnesses=sharpnesses,
+                    colors=colors_uint8,
+                )
+
+                # Use add_gsplats_from_data (more robust)
+                scene.add_gsplats_from_data(
+                    name="storm_localizations",
+                    result=gsplat_data,
+                    opacity=0.8,
+                    blending_mode="additive",
+                )
+
+                aprint(f"✓ Added {len(centers):,} STORM splats")
+
+        aprint("✓ Scene saved")
+
+    return output_path
 
 
 # =============================================================================
