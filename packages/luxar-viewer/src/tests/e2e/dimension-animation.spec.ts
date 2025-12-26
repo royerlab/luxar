@@ -24,7 +24,7 @@ const DATASET = 'http://localhost:9000/packages/luxar/examples/dimension_sliders
 async function getAnimationState(page: any, dimIndex: number): Promise<any> {
   return await page.evaluate((idx: number) => {
     const debug = (window as any).__luxarDebug;
-    const inputHandler = debug?.app?.inputHandler;
+    const inputHandler = debug?.inputHandler;
     const animManager = inputHandler?.animationManager;
     if (!animManager) return null;
     return animManager.getState(idx);
@@ -37,7 +37,7 @@ async function getAnimationState(page: any, dimIndex: number): Promise<any> {
 async function isAnimating(page: any, dimIndex: number): Promise<boolean> {
   return await page.evaluate((idx: number) => {
     const debug = (window as any).__luxarDebug;
-    const inputHandler = debug?.app?.inputHandler;
+    const inputHandler = debug?.inputHandler;
     const animManager = inputHandler?.animationManager;
     if (!animManager) return false;
     return animManager.isAnimating(idx);
@@ -51,30 +51,14 @@ async function isAnimating(page: any, dimIndex: number): Promise<boolean> {
 async function getDimensionValue(page: any, dimIndex: number): Promise<number> {
   return await page.evaluate((idx: number) => {
     const debug = (window as any).__luxarDebug;
-    const sceneDimsManager = debug?.app?.sceneDimsManager;
-    if (!sceneDimsManager) {
-      console.log('[TEST-DEBUG] sceneDimsManager not found');
-      return -1;
-    }
+    const sceneDimsManager = debug?.sceneDimsManager;
+    if (!sceneDimsManager) return -1;
 
     const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      console.log('[TEST-DEBUG] dims not found');
-      return -1;
-    }
-
-    console.log('[TEST-DEBUG] dims:', {
-      ndim: dims.ndim,
-      displayed: dims.displayed,
-      currentStep: dims.currentStep,
-      currentStepLength: dims.currentStep?.length,
-      requestedIndex: idx,
-      valueAtIndex: dims.currentStep?.[idx]
-    });
+    if (!dims) return -1;
 
     // Read the actual value from currentStep
     if (dims.currentStep && dims.currentStep[idx] !== undefined) {
-      console.log('[TEST-DEBUG] Found value in currentStep:', dims.currentStep[idx]);
       return dims.currentStep[idx];
     }
 
@@ -86,21 +70,11 @@ async function getDimensionValue(page: any, dimIndex: number): Promise<number> {
       [];
     const sliderIndex = navigableDims.indexOf(idx);
 
-    console.log('[TEST-DEBUG] Slider fallback:', {
-      totalSliders: sliders.length,
-      navigableDims,
-      sliderIndex,
-      hasSlider: sliderIndex >= 0 && !!sliders[sliderIndex]
-    });
-
     if (sliderIndex >= 0 && sliders[sliderIndex]) {
       const slider = sliders[sliderIndex] as HTMLInputElement;
-      const value = parseFloat(slider.value);
-      console.log('[TEST-DEBUG] Found value in slider:', value);
-      return value;
+      return parseFloat(slider.value);
     }
 
-    console.log('[TEST-DEBUG] No value found, returning -1');
     return -1;
   }, dimIndex);
 }
@@ -373,7 +347,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     // Get the max value for this dimension
     const maxValue = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const sceneDimsManager = debug?.app?.sceneDimsManager;
+      const sceneDimsManager = debug?.sceneDimsManager;
       if (!sceneDimsManager) return -1;
       const ranges = sceneDimsManager.getDimensionRanges();
       if (!ranges) return -1;
@@ -589,14 +563,14 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Jump to near end (not quite at end)
     const maxValue = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const sceneDimsManager = debug?.app?.sceneDimsManager;
+      const sceneDimsManager = debug?.sceneDimsManager;
       const ranges = sceneDimsManager?.getDimensionRanges();
       return ranges?.[3]?.[1] ?? 10;
     });
 
     await page.evaluate((max: number) => {
       const debug = (window as any).__luxarDebug;
-      const sceneDimsManager = debug?.app?.sceneDimsManager;
+      const sceneDimsManager = debug?.sceneDimsManager;
       sceneDimsManager?.setDimensionValue(3, Math.max(0, max - 2));
     }, maxValue);
     await page.waitForTimeout(200);
