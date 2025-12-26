@@ -549,8 +549,15 @@ def create_storm_scene(
     output_path = examples_dir / "storm_3d_microtubules_example.zarr"
 
     with asection("Creating Luxar scene"):
-        # Use 3D dimensions (viewer can toggle groups on/off)
+        # Create dimensions with categorical view toggle
         dims = Dimensions([
+            Dimension(
+                "view",
+                unit="",
+                categories=["Conventional (Widefield)", "Super-Resolution (STORM)"],
+                display=False,
+                description="Microscopy mode: toggle between diffraction-limited and super-resolution",
+            ),
             Dimension("x", unit="μm", display=True),
             Dimension("y", unit="μm", display=True),
             Dimension("z", unit="μm", display=True),
@@ -562,72 +569,86 @@ def create_storm_scene(
             # Add metadata (keep simple for JSON compatibility)
             scene.attrs["title"] = "3D STORM Microtubule Network"
 
-            if widefield_volume is not None:
-                # Add widefield as points (sampled from volume)
-                with asection("Adding widefield reference"):
-                    # Sample volume above threshold
-                    threshold = np.percentile(widefield_volume, 80)
-                    coords = np.argwhere(widefield_volume > threshold)
-
-                    # Subsample for performance
-                    n_total = len(coords)
-                    n_sample = min(100_000, n_total)
-                    indices = np.random.choice(n_total, n_sample, replace=False)
-
-                    widefield_pos = coords[indices].astype(np.float32) * PIXEL_SIZE / 1000  # to μm
-                    widefield_colors = np.full((n_sample, 3), 0.5, dtype=np.float32)  # Gray
-                    widefield_radii = np.full(n_sample, WIDEFIELD_PSF_SIGMA / 1000, dtype=np.float32)  # PSF size in μm
-
-                    scene.add_points(
-                        "widefield",
-                        positions=widefield_pos,  # 3D
-                        colors=widefield_colors,
-                        radii=widefield_radii,
-                        sharpness=np.full(n_sample, 0.5, dtype=np.float32),  # Soft
-                        opacity=0.6,
-                        blending_mode="additive",
-                    )
-
-                    aprint(f"✓ Added {n_sample:,} widefield points")
-
-            # Add super-resolution as gsplats
-            with asection("Adding super-resolution gsplats"):
+            # Create BOTH views as gsplats with different PSF sizes
+            with asection("Adding both microscopy views as gsplats"):
                 from luxar.gsplats.fit_result import GSplatData
 
                 # Convert centers to μm
                 centers_um = centers * PIXEL_SIZE / 1000
 
-                # Convert covariances to μm²
-                covariances_um = covariances * (PIXEL_SIZE / 1000)**2
+                # Create TWO sets of gsplats - same positions, different covariances!
+                n_splats = len(centers)
 
-                # Compute Cholesky factors from covariances
-                cholesky_factors = np.zeros((len(centers), 6), dtype=np.float32)
-                for i, cov in enumerate(covariances_um):
-                    L = np.linalg.cholesky(cov)
-                    # Pack: [L00, L10, L11, L20, L21, L22]
-                    cholesky_factors[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
+                # Prepare storage for both views
+                all_centers = []
+                all_cholesky = []
+                all_amplitudes = []
+                all_sharpnesses = []
+                all_colors = []
 
-                # Colors: cyan for super-resolution
-                colors_uint8 = np.full((len(centers), 3), [76, 230, 230], dtype=np.uint8)
+                aprint(f"Creating {n_splats:,} splats × 2 views...")
 
-                # Create GSplatData object
+                # VIEW 0: Widefield (large PSF ~150 nm)
+                widefield_psf_um = WIDEFIELD_PSF_SIGMA / 1000  # nm to μm
+                widefield_cov = np.diag([widefield_psf_um**2, widefield_psf_um**2, widefield_psf_um**2 * 4])
+
+                for i in range(n_splats):
+                    # Add view dimension coordinate (0 = widefield)
+                    center_4d = np.array([0.0, centers_um[i, 0], centers_um[i, 1], centers_um[i, 2]], dtype=np.float32)
+                    all_centers.append(center_4d)
+
+                    # Large covariance for widefield
+                    # 4D: add zero variance in view dimension
+                    cov_4d = np.zeros((4, 4), dtype=np.float32)
+                    cov_4d[1:, 1:] = widefield_cov  # Spatial part
+                    cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
+
+                    L = np.linalg.cholesky(cov_4d)
+                    # Pack 4D Cholesky: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
+                    chol = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2], L[3,0], L[3,1], L[3,2], L[3,3]]
+                    all_cholesky.append(chol)
+
+                    all_amplitudes.append(amplitudes[i] * 0.5)  # Dim for widefield
+                    all_sharpnesses.append(1.0)  # Soft
+                    all_colors.append([128, 128, 128])  # Gray
+
+                # VIEW 1: Super-resolution (small PSF ~20 nm from precision)
+                for i in range(n_splats):
+                    # Add view dimension coordinate (1 = super-res)
+                    center_4d = np.array([1.0, centers_um[i, 0], centers_um[i, 1], centers_um[i, 2]], dtype=np.float32)
+                    all_centers.append(center_4d)
+
+                    # Small covariance from localization precision
+                    cov_3d = covariances[i] * (PIXEL_SIZE / 1000)**2
+                    cov_4d = np.zeros((4, 4), dtype=np.float32)
+                    cov_4d[1:, 1:] = cov_3d  # Spatial part
+                    cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
+
+                    L = np.linalg.cholesky(cov_4d)
+                    chol = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2], L[3,0], L[3,1], L[3,2], L[3,3]]
+                    all_cholesky.append(chol)
+
+                    all_amplitudes.append(amplitudes[i])
+                    all_sharpnesses.append(3.0)  # Sharp
+                    all_colors.append([76, 230, 230])  # Cyan
+
+                # Create combined GSplatData
                 gsplat_data = GSplatData(
-                    centers=centers_um,
-                    cholesky_factors=cholesky_factors,
-                    amplitudes=amplitudes,
-                    sharpnesses=sharpnesses,
-                    colors=colors_uint8,
+                    centers=np.array(all_centers, dtype=np.float32),
+                    cholesky_factors=np.array(all_cholesky, dtype=np.float32),
+                    amplitudes=np.array(all_amplitudes, dtype=np.float32),
+                    sharpnesses=np.array(all_sharpnesses, dtype=np.float32),
+                    colors=np.array(all_colors, dtype=np.uint8),
                 )
 
-                # Use add_gsplats_from_data (more robust)
                 scene.add_gsplats_from_data(
-                    name="storm_localizations",
+                    name="microtubules",
                     result=gsplat_data,
                     opacity=0.8,
                     blending_mode="additive",
                 )
 
-                aprint(f"✓ Added {len(centers):,} STORM splats")
+                aprint(f"✓ Added {n_splats * 2:,} splats (2 views × {n_splats:,})")
 
         aprint("✓ Scene saved")
 
