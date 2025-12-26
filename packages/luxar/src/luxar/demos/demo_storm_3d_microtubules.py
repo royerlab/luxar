@@ -548,22 +548,8 @@ def create_storm_scene(
         output_path = Path(tmpdir) / "storm_microtubules.zarr"
 
         with asection("Creating Luxar scene"):
-            # Create dimensions with categorical view toggle
-            if widefield_volume is not None:
-                dims = Dimensions([
-                    Dimension(
-                        "view",
-                        unit="",
-                        categories=["Widefield (Conventional)", "Super-Resolution (STORM)"],
-                        display=False,
-                        description="Toggle between conventional and super-resolution views",
-                    ),
-                    Dimension("x", unit="μm", display=True),
-                    Dimension("y", unit="μm", display=True),
-                    Dimension("z", unit="μm", display=True),
-                ])
-            else:
-                dims = Dimensions.default_3d(unit="μm")
+            # Use 3D dimensions (viewer can toggle groups on/off)
+            dims = Dimensions.default_3d(unit="μm")
 
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
@@ -603,15 +589,9 @@ Toggle between widefield and super-resolution to see the power of STORM!
                         widefield_colors = np.full((n_sample, 3), 0.5, dtype=np.float32)  # Gray
                         widefield_radii = np.full(n_sample, WIDEFIELD_PSF_SIGMA / 1000, dtype=np.float32)  # PSF size in μm
 
-                        # Convert to 4D (view dimension)
-                        widefield_pos_4d = np.column_stack([
-                            np.zeros(n_sample),  # View dimension = 0 (widefield)
-                            widefield_pos
-                        ])
-
                         scene.add_points(
                             "widefield",
-                            positions=widefield_pos_4d,
+                            positions=widefield_pos,  # 3D
                             colors=widefield_colors,
                             radii=widefield_radii,
                             sharpness=np.full(n_sample, 0.5, dtype=np.float32),  # Soft
@@ -636,21 +616,13 @@ Toggle between widefield and super-resolution to see the power of STORM!
                         # Pack: [L00, L10, L11, L20, L21, L22]
                         cholesky_factors[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
 
-                    if widefield_volume is not None:
-                        # Add view dimension coordinate (1 = super-resolution)
-                        centers_4d = np.column_stack([
-                            np.ones(len(centers)),  # View dimension = 1
-                            centers_um
-                        ])
-                    else:
-                        centers_4d = centers_um
-
+                    # Keep as 3D (view dimension handled by separate groups)
                     # Colors: cyan for super-resolution
                     colors = np.full((len(centers), 3), [0.3, 0.9, 0.9], dtype=np.float32)
 
                     scene.add_gsplats(
                         "storm_localizations",
-                        centers=centers_4d,
+                        centers=centers_um,  # 3D, not 4D!
                         cholesky_factors=cholesky_factors,
                         amplitudes=amplitudes,
                         colors=colors,
