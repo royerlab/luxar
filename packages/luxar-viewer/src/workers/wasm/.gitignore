@@ -1,0 +1,11 @@
+# Rust/Cargo artifacts
+/target/
+Cargo.lock
+
+# wasm-pack output (goes to public/wasm/)
+/pkg/
+
+# Backup files
+*.bak
+*.swp
+*~

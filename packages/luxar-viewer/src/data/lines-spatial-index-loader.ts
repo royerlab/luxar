@@ -34,6 +34,9 @@ import type {
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { LinesDataAccumulator } from './data-accumulator';
+import { config as _appConfig } from '../config';
+import { getWorkerPool } from '../workers/worker-pool';
 
 /**
  * Lines data loader using spatial indices for efficient nD queries.
@@ -52,6 +55,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private initLock = false;
   private decoder: ArrayDecoder;
   private zarrStore: zarr.Readable | null = null;
+
+  // Data accumulator for object pooling (Phase 1 optimization)
+  private _accumulator: LinesDataAccumulator | null = null;
 
   private arrays: {
     vertices?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -136,6 +142,38 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default sharpness)');
     }
+
+    // Initialize data accumulator for object pooling (Phase 1 optimization)
+    // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
+    // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
+    if (_appConfig.dataLoading.performance.useAccumulators) {
+      const metadata = attrs as LinesMetadata;
+      const totalSegments = this.chunkIndex?.metadata.n_segments || metadata.n_segments || 0;
+      const totalVertices = this.chunkIndex?.metadata.n_vertices || metadata.n_vertices || 0;
+      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.vertices?.shape[1] || 3;
+
+      // Estimate initial capacity (at least 1024 segments, or ~10% of total)
+      const initialSegmentCap = Math.min(
+        _appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        Math.max(512, Math.ceil(totalSegments / 10))
+      );
+      const initialVertexCap = Math.min(
+        _appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        Math.max(1024, Math.ceil(totalVertices / 10))
+      );
+
+      this._accumulator = new LinesDataAccumulator(initialVertexCap, initialSegmentCap, ndim);
+
+      if (_appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+        const stats = this._accumulator.getStats();
+        log.info(
+          Modules.DATA_ACCUMULATOR,
+          `Initialized LinesDataAccumulator for ${this.node.path}: ` +
+            `segmentCap=${stats.capacity}, vertexCap=${initialVertexCap}, ndim=${ndim} ` +
+            '(infrastructure-only, hot path integration in Phase 2)'
+        );
+      }
+    }
   }
 
   /**
@@ -160,8 +198,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
-    // Phase 1: Query segment chunks and load segments
-    const segmentRanges = this.queryVisibleSegmentRanges(viewState);
+    // Phase 1: Query segment chunks and load segments (Phase 2: async for worker support)
+    const segmentRanges = await this.queryVisibleSegmentRanges(viewState);
 
     if (segmentRanges.length === 0) {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible segments - returning empty lines data');
@@ -220,7 +258,69 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       log.info(Modules.SPATIAL_INDEX_LOADER, `  Last 5 ranges: ${last5}`);
     }
 
-    // Load vertex data
+    // Phase 1 DEEP Integration: Load directly to accumulator if enabled (ZERO allocations!)
+    // DISABLED: Accumulator path has a bug causing particle tracks to be invisible
+    // TODO: Debug and re-enable after fixing the clipping issue
+    const useAccumulator = false; // this._accumulator && _appConfig.dataLoading.performance.useAccumulators;
+
+    if (useAccumulator && this._accumulator) {
+      // Ensure capacity FIRST using ACTUAL vertex count (not estimated!)
+      const segmentCount = segmentData.length / 2;
+      const actualVertexCount = sortedIndices.length; // ACTUAL count from unique indices!
+      this._accumulator.ensureCapacity(actualVertexCount); // FIXED: Pass actual vertex count
+
+      // Get direct buffer references
+      const vertexBuffer = this._accumulator['vertexBuffer'] as Float32Array;
+      const segmentBuffer = this._accumulator['segmentBuffer'] as Uint32Array;
+      const widthBuffer = this._accumulator['widthBuffer'] as Float32Array;
+      const colorBuffer = this.arrays.colors ? (this._accumulator['colorBuffer'] as Float32Array) : null;
+      const sharpnessBuffer = this.arrays.sharpness ? (this._accumulator['sharpnessBuffer'] as Float32Array) : null;
+
+      // Load directly into accumulator buffers (ZERO intermediate allocations!)
+      await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer);
+
+      if (this.arrays.widths) {
+        await this.loadVertexRanges('widths', mergedVertexRanges, 1, widthBuffer);
+      } else {
+        // Create default widths directly in buffer
+        widthBuffer.fill(1.0, 0, sortedIndices.length);
+      }
+
+      if (colorBuffer) {
+        await this.loadVertexRanges('colors', mergedVertexRanges, 3, colorBuffer);
+      }
+
+      if (sharpnessBuffer) {
+        await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
+      }
+
+      // Build global → local index mapping
+      const vertexIndexMap = new Map<number, number>();
+      let localIdx = 0;
+      for (const range of mergedVertexRanges) {
+        for (let i = range.start; i < range.end; i++) {
+          vertexIndexMap.set(i, localIdx++);
+        }
+      }
+
+      // Remap segment indices directly in accumulator buffer (ZERO allocation!)
+      for (let i = 0; i < segmentData.length; i++) {
+        const localIndex = vertexIndexMap.get(segmentData[i]);
+        if (localIndex === undefined) {
+          throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
+        }
+        segmentBuffer[i] = localIndex;
+      }
+
+      const vertexCount = vertexIndexMap.size;
+
+      // Return from accumulator (subarrays, zero copy!)
+      // Data already in buffers, no fill() needed!
+      // segmentCount already defined above for ensureCapacity
+      return this._accumulator.getData(segmentCount, vertexCount);
+    }
+
+    // Fallback: Load to separate arrays (allocations when accumulator disabled)
     const vertices = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
     const widths = this.arrays.widths
       ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
@@ -251,6 +351,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       remappedSegments[i] = localIndex;
     }
 
+    // Fallback: Return new object
     return {
       vertices,
       segments: remappedSegments,
@@ -275,7 +376,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   /**
    * Query visible segment ranges based on view state
    */
-  private queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
+  private async queryVisibleSegmentRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
     // Check if this node has extend_to_all dimensions
@@ -329,8 +430,30 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query segment chunks
-    const chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
+    // Query segment chunks (worker or main thread based on config)
+    let chunkIndices: number[];
+
+    if (_appConfig.dataLoading.performance.useWebWorkers) {
+      // Phase 2: Use worker for spatial queries
+      try {
+        const worker = await getWorkerPool().getWorker();
+        const result = await worker.querySpatialIndex({
+          chunkBounds: this.chunkIndex.segmentChunkBounds,
+          slicePosition: new Float32Array(slicePosition),
+          tolerance: new Float32Array(tolerance),
+          numChunks: this.chunkIndex.segmentChunkCount,
+          ndim: attrs.ndim,
+        });
+        chunkIndices = Array.from(result);
+      } catch (error) {
+        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
+        // Fallback to main thread
+        chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
+      }
+    } else {
+      // Main thread query
+      chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
+    }
 
     if (chunkIndices.length === 0) {
       return [];
@@ -389,10 +512,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * CRITICAL: For encoded arrays, we load ONLY the needed ranges, not the full array!
    * This provides massive performance improvement for large animated datasets.
    */
+  /**
+   * Load vertex ranges with optional target buffer for zero-allocation operation
+   */
   private async loadVertexRanges(
     arrayName: string,
     ranges: SegmentRange[],
-    elementsPerVertex: number
+    elementsPerVertex: number,
+    targetBuffer?: Float32Array
   ): Promise<Float32Array> {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) {
@@ -413,7 +540,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const shape = array.shape;
     const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
 
-    const output = new Float32Array(totalElements);
+    // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
+    const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
     let destOffset = 0;
 
     if (isBroadcasted) {
@@ -657,6 +785,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.chunkIndex = null;
     this.arrays = {};
     this.initPromise = null;
+
+    // Dispose accumulator
+    if (this._accumulator) {
+      this._accumulator.dispose();
+      this._accumulator = null;
+    }
   }
 }
 

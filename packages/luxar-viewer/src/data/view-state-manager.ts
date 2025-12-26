@@ -134,17 +134,18 @@ export class ViewStateManager {
     for (let i = 0; i < ndim; i++) {
       const range = metadata[i].range;
       if (!displayed.includes(i) && range) {
-        // Use center of range to maximize chance of visible data
-        const [rangeMin, rangeMax] = range;
-        let centerValue = (rangeMin + rangeMax) / 2;
+        // FIXED: Use minimum of range (leftmost slider position) for time dimensions
+        // This ensures time starts at 0 and matches dimension slider initialization
+        const [rangeMin, _rangeMax] = range;
+        let initialValue = rangeMin;  // Start at minimum, not center!
 
         // For discrete dimensions, floor to nearest integer
         // Use floor instead of round to avoid edge cases
         if (metadata[i].discrete) {
-          centerValue = Math.floor(centerValue);
+          initialValue = Math.floor(initialValue);
         }
 
-        currentStep[i] = centerValue;
+        currentStep[i] = initialValue;
       }
     }
 

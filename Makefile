@@ -2,9 +2,11 @@
 # Uses Hatch for on-demand environment management
 .PHONY: help install install-dev format format-all lint type-check security test test-python \
         test-cov test-all test-fixtures clean clean-examples pre-commit-install pre-commit-run check dev-setup \
+        check-docs check-docs-verbose docs-clean docs-build docs-serve \
         demo run-examples serve-examples serve-data viewer-install viewer viewer-build viewer-rebuild \
         viewer-test viewer-test-fixtures viewer-test-cov viewer-lint viewer-typecheck viewer-format viewer-check \
-        demo-and-serve docs-build docs-serve stats env-show env-prune shell build publish-test publish
+        setup-rust wasm-build wasm-test wasm-clean \
+        demo-and-serve stats env-show env-prune shell build publish-test publish
 
 # Default target
 help:  ## Show this help message
@@ -104,6 +106,10 @@ check-docs:  ## Check documentation quality and coverage
 check-docs-verbose:  ## Check documentation with detailed output
 	@echo "📚 Checking documentation (verbose mode)..."
 	hatch run python scripts/check_documentation.py --verbose
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
 	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
 
 docs-clean:  ## Clean built documentation
@@ -153,6 +159,7 @@ clean-examples:  ## Clean up only example zarr files
 dev-setup:  ## Complete development setup with Hatch
 	@echo "🚀 Setting up development environment with Hatch..."
 	@command -v hatch >/dev/null 2>&1 || { echo "❌ Hatch not found. Please install with: pip install hatch"; exit 1; }
+	@command -v pnpm >/dev/null 2>&1 || { echo "❌ pnpm not found. Please install with: npm install -g pnpm"; exit 1; }
 	hatch env create
 	hatch run pre-commit install
 	@echo "📦 Installing TypeScript/viewer dependencies..."
@@ -160,6 +167,7 @@ dev-setup:  ## Complete development setup with Hatch
 	@echo "✅ Development environment setup complete!"
 	@echo "💡 Use 'hatch shell' to activate the environment"
 	@echo "💡 Run 'make check' to verify everything works"
+	@echo "💡 For WASM/Rust support, also run 'make setup-rust'"
 
 # Demo and serving
 demo:  ## Generate a demo dataset (dist/demo.zarr with 100k points)
@@ -207,16 +215,16 @@ serve-examples:  ## Serve the examples directory for browsing datasets
 	@echo ""
 	hatch run luxar serve packages/luxar/examples/
 
+# Default values for serve-data (override with: make serve-data DATASET=path/to/data.zarr PORT=8080)
+DATASET ?= dist/demo.zarr
+PORT ?= 8000
+
 serve-data:  ## Serve a dataset (default: dist/demo.zarr, port: 8000)
 	@if [ ! -d "dist/demo.zarr" ]; then \
 		echo "No demo dataset found. Creating one..."; \
-		make demo; \
+		$(MAKE) demo; \
 	fi
 	hatch run luxar serve $(DATASET) -p $(PORT)
-
-# Override defaults with: make serve-data DATASET=path/to/data.zarr PORT=8080
-DATASET ?= dist/demo.zarr
-PORT ?= 8000
 
 # Web viewer
 viewer-install:  ## Install viewer dependencies
@@ -225,20 +233,87 @@ viewer-install:  ## Install viewer dependencies
 viewer:  ## Start the web viewer development server
 	cd packages/luxar-viewer && pnpm dev
 
-viewer-build:  ## Build the viewer for production
+viewer-build:  ## Build the viewer for production (requires Rust + wasm-pack)
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "❌ wasm-pack not found. Run 'make setup-rust' first"; \
+		exit 1; \
+	fi; \
+	echo "🦀 Building with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
 
 viewer-rebuild:  ## Complete clean rebuild of viewer (removes dist, .vite, reinstalls deps)
 	@echo "🧹 Cleaning viewer build artifacts..."
-	rm -rf packages/luxar-viewer/dist/
-	rm -rf packages/luxar-viewer/.vite/
-	rm -f packages/luxar-viewer/*.tsbuildinfo
-	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
+	@rm -rf packages/luxar-viewer/dist/
+	@rm -rf packages/luxar-viewer/.vite/
+	@rm -f packages/luxar-viewer/*.tsbuildinfo
+	@rm -f packages/luxar-viewer/vite.config.*.timestamp-*
 	@echo "📦 Reinstalling dependencies..."
-	cd packages/luxar-viewer && pnpm install
+	@cd packages/luxar-viewer && pnpm install
 	@echo "🔨 Building viewer..."
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "❌ wasm-pack not found. Run 'make setup-rust' first"; \
+		exit 1; \
+	fi; \
+	echo "🦀 Building with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
 	@echo "✅ Viewer rebuild complete!"
+
+# WASM/Rust setup and build (Phase 3)
+setup-rust:  ## Install/update Rust and wasm-pack for WASM development
+	@echo "🦀 Checking Rust installation..."
+	@if command -v rustc >/dev/null 2>&1; then \
+		echo "✅ Rust is already installed: $$(rustc --version)"; \
+		echo "🔄 Updating Rust to latest stable..."; \
+		rustup update stable; \
+		rustup default stable; \
+	else \
+		echo "📥 Installing Rust via rustup..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+		echo ""; \
+		echo "⚠️  Please run: source \"$$HOME/.cargo/env\" to update PATH"; \
+		echo "⚠️  Then run 'make setup-rust' again to install wasm-pack"; \
+		exit 0; \
+	fi
+	@echo "🔧 Checking wasm-pack installation..."
+	@if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
+	else \
+		echo "📥 Installing wasm-pack..."; \
+		cargo install wasm-pack; \
+		echo "✅ wasm-pack installed successfully!"; \
+	fi
+	@echo ""
+	@echo "✅ Rust/WASM development environment ready!"
+	@echo "   Rust version: $$(rustc --version)"
+	@echo "   Cargo version: $$(cargo --version)"
+	@echo "   wasm-pack version: $$(wasm-pack --version)"
+	@echo ""
+	@echo "💡 Run 'make wasm-test' to test the Rust code"
+	@echo "💡 Run 'make wasm-build' to compile the WASM module"
+
+wasm-build:  ## Build the WASM module (requires Rust + wasm-pack)
+	@command -v wasm-pack >/dev/null 2>&1 || { echo "❌ wasm-pack not found. Run 'make setup-rust' first"; exit 1; }
+	@echo "🦀 Building WASM module..."
+	cd packages/luxar-viewer && pnpm build:wasm
+	@echo "✅ WASM module built successfully!"
+
+wasm-test:  ## Run Rust unit tests for WASM module
+	@command -v cargo >/dev/null 2>&1 || { echo "❌ cargo not found. Run 'make setup-rust' first"; exit 1; }
+	@echo "🧪 Running Rust tests..."
+	cd packages/luxar-viewer && pnpm test:wasm
+	@echo "✅ All Rust tests passed!"
+
+wasm-clean:  ## Clean WASM build artifacts
+	@echo "🧹 Cleaning WASM artifacts..."
+	rm -rf packages/luxar-viewer/public/wasm/
+	rm -rf packages/luxar-viewer/src/workers/wasm/target/
+	@echo "✅ WASM artifacts cleaned!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
@@ -249,7 +324,7 @@ viewer-test-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm test
+	cd packages/luxar-viewer && pnpm test --run
 
 viewer-test:  ## Run TypeScript tests (without regenerating fixtures)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -311,7 +386,7 @@ docs-serve:  ## Serve documentation locally
 # Project statistics
 stats:  ## Generate project statistics report (HTML)
 	@echo "📊 Analyzing project codebase..."
-	python3 stats/generate_stats.py
+	hatch run python stats/generate_stats.py
 	@echo "✅ Report generated: stats/project_stats.html"
 	@echo "💡 Open with: open stats/project_stats.html"
 

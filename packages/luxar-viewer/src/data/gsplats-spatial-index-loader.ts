@@ -31,6 +31,9 @@ import type {
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 import { choleskyPackedSize } from '../types/gsplats';
+import { GSplatsDataAccumulator } from './data-accumulator';
+import { config as appConfig } from '../config';
+import { getWorkerPool } from '../workers/worker-pool';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -48,6 +51,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private initLock = false;
   private decoder: ArrayDecoder;
   private zarrStore: zarr.Readable | null = null;
+
+  // Data accumulator for object pooling (Phase 1 optimization)
+  private _accumulator: GSplatsDataAccumulator | null = null;
 
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -132,6 +138,33 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default 2.0)');
     }
+
+    // Initialize data accumulator for object pooling (Phase 1 optimization)
+    // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
+    // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
+    if (appConfig.dataLoading.performance.useAccumulators) {
+      const metadata = attrs as GSplatsMetadata;
+      const totalSplats = this.chunkIndex?.metadata.n_splats || metadata.n_splats || 0;
+      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.centers?.shape[1] || 3;
+
+      // Estimate initial capacity (at least 1024, or ~10% of total)
+      const initialCapacity = Math.min(
+        appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        Math.max(1024, Math.ceil(totalSplats / 10))
+      );
+
+      this._accumulator = new GSplatsDataAccumulator(initialCapacity, ndim);
+
+      if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+        const stats = this._accumulator.getStats();
+        log.info(
+          Modules.DATA_ACCUMULATOR,
+          `Initialized GSplatsDataAccumulator for ${this.node.path}: ` +
+            `capacity=${stats.capacity}, ndim=${ndim}, totalSplats=${totalSplats} ` +
+            '(infrastructure-only, hot path integration in Phase 2)'
+        );
+      }
+    }
   }
 
   /**
@@ -156,8 +189,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
 
-    // Query visible splat ranges
-    const splatRanges = this.queryVisibleSplatRanges(viewState);
+    // Query visible splat ranges (Phase 2: async for worker support)
+    const splatRanges = await this.queryVisibleSplatRanges(viewState);
 
     if (splatRanges.length === 0) {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
@@ -173,7 +206,42 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
     );
 
-    // Load all arrays for the ranges
+    // Phase 1 DEEP Integration: Load DIRECTLY to accumulator buffers (ZERO allocations!)
+    if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      // Ensure capacity FIRST
+      this._accumulator.ensureCapacity(totalSplats);
+
+      // Get direct buffer references for zero-allocation loading
+      const centerBuffer = this._accumulator['centerBuffer'] as Float32Array;
+      const amplitudeBuffer = this._accumulator['amplitudeBuffer'] as Float32Array;
+      const choleskyBuffer = this._accumulator['choleskyBuffer'] as Float32Array;
+
+      // Load directly into accumulator buffers (ZERO intermediate allocations!)
+      await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
+      await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
+      await this.loadArrayRanges(
+        'cholesky_factors',
+        splatRanges,
+        choleskyPackedSize(attrs.ndim),
+        choleskyBuffer
+      );
+
+      // Load optional arrays directly to accumulator
+      if (this.arrays.colors) {
+        const colorBuffer = this._accumulator['colorBuffer'] as Float32Array;
+        await this.loadArrayRanges('colors', splatRanges, 3, colorBuffer);
+      }
+      if (this.arrays.sharpness) {
+        const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
+        await this.loadArrayRanges('sharpness', splatRanges, 1, sharpnessBuffer);
+      }
+
+      // Return from accumulator (subarrays, zero copy!)
+      // NO fill() needed - data already in buffers!
+      return this._accumulator.getData(totalSplats);
+    }
+
+    // Fallback: Load to separate arrays (allocations when accumulator disabled)
     const centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
     const amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
     const choleskyFactors = await this.loadArrayRanges(
@@ -182,7 +250,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       choleskyPackedSize(attrs.ndim)
     );
 
-    // Load optional arrays
     const colors = this.arrays.colors ? await this.loadArrayRanges('colors', splatRanges, 3) : null;
     const sharpness = this.arrays.sharpness
       ? await this.loadArrayRanges('sharpness', splatRanges, 1)
@@ -209,7 +276,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /**
    * Query visible splat ranges based on view state
    */
-  private queryVisibleSplatRanges(viewState: GSplatsViewState): SplatRange[] {
+  private async queryVisibleSplatRanges(viewState: GSplatsViewState): Promise<SplatRange[]> {
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
 
     // Check if this node has extend_to_all dimensions
@@ -250,8 +317,30 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       slicePosition[i] = viewState.slicePosition[i] ?? 0;
     }
 
-    // Query chunks
-    const chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
+    // Query chunks (worker or main thread based on config)
+    let chunkIndices: number[];
+
+    if (appConfig.dataLoading.performance.useWebWorkers) {
+      // Phase 2: Use worker for spatial queries
+      try {
+        const worker = await getWorkerPool().getWorker();
+        const result = await worker.querySpatialIndex({
+          chunkBounds: this.chunkIndex.chunkBounds,
+          slicePosition: new Float32Array(slicePosition),
+          tolerance: new Float32Array(tolerance),
+          numChunks: this.chunkIndex.chunkCount,
+          ndim: attrs.ndim,
+        });
+        chunkIndices = Array.from(result);
+      } catch (error) {
+        log.error(Modules.SPATIAL_INDEX_LOADER, 'Worker query failed, using main thread:', error);
+        // Fallback to main thread
+        chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
+      }
+    } else {
+      // Main thread query
+      chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
+    }
 
     if (chunkIndices.length === 0) {
       return [];
@@ -273,10 +362,20 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * - Array ref: Resolve target, apply optimized loading
    * - Direct: Load ranges directly from zarr
    */
+  /**
+   * Load array ranges with optional target buffer for zero-allocation operation
+   *
+   * @param arrayName - Name of array to load
+   * @param ranges - Ranges to load
+   * @param elementsPerSplat - Elements per splat
+   * @param targetBuffer - Optional target buffer (for accumulator integration)
+   * @returns Loaded data (new array or subarray of target)
+   */
   private async loadArrayRanges(
     arrayName: string,
     ranges: SplatRange[],
-    elementsPerSplat: number
+    elementsPerSplat: number,
+    targetBuffer?: Float32Array
   ): Promise<Float32Array> {
     const array = this.arrays[arrayName as keyof typeof this.arrays];
     if (!array) {
@@ -296,7 +395,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Get array shape for slice specification
     const shape = array.shape;
 
-    const output = new Float32Array(totalElements);
+    // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
+    const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
     let destOffset = 0;
 
     if (isBroadcasted) {
@@ -539,5 +639,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.chunkIndex = null;
     this.arrays = {};
     this.initPromise = null;
+
+    // Dispose accumulator
+    if (this._accumulator) {
+      this._accumulator.dispose();
+      this._accumulator = null;
+    }
   }
 }
