@@ -51,9 +51,19 @@ async function getDimensionValue(page: any, dimIndex: number): Promise<number> {
   return await page.evaluate((idx: number) => {
     const debug = (window as any).__luxarDebug;
     const sceneDimsManager = debug?.app?.sceneDimsManager;
-    if (!sceneDimsManager) return -1;
+    if (!sceneDimsManager) {
+      console.log('[TEST] sceneDimsManager is null');
+      return -1;
+    }
     const dims = sceneDimsManager.getDims();
-    if (!dims) return -1;
+    if (!dims) {
+      console.log('[TEST] dims is null');
+      return -1;
+    }
+    if (dims.currentStep[idx] === undefined) {
+      console.log('[TEST] dims.currentStep[' + idx + '] is undefined. currentStep:', dims.currentStep, 'ndim:', dims.ndim);
+      return -1;
+    }
     return dims.currentStep[idx];
   }, dimIndex);
 }
@@ -418,6 +428,13 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
+
+    // Wait for dims to be fully initialized
+    await page.waitForFunction(() => {
+      const debug = (window as any).__luxarDebug;
+      const dims = debug?.app?.sceneDimsManager?.getDims();
+      return dims && dims.currentStep && dims.currentStep.length === dims.ndim;
+    }, null, { timeout: 5000 });
 
     // Click canvas to ensure it has focus
     await page.click('canvas');
