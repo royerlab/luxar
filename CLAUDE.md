@@ -26,11 +26,28 @@ pnpm format       # Format
 
 ### Make Commands (from project root)
 ```bash
+# Development Setup
+make dev-setup    # Complete development environment setup
+make setup-rust   # Install Rust + wasm-pack for viewer builds
+
+# Quality & Testing
 make test-all     # All tests (Python + TypeScript)
 make check        # All quality checks
 make format-all   # Format everything
+
+# Viewer
+make viewer       # Start viewer dev server (port 5173)
+make viewer-build # Build viewer for production (requires Rust)
+make wasm-build   # Build WASM module only
+make wasm-test    # Run Rust unit tests
+
+# Data & Examples
 make run-examples # Generate example datasets
+make demo-and-serve # Create demo + start servers
+
+# Utilities
 make clean        # Clean artifacts
+make help         # Show all available commands
 ```
 
 ### Luxar CLI

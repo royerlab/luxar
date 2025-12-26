@@ -49,13 +49,21 @@ make test-cov      # Run tests with coverage
 | Command | Purpose |
 |---------|---------|
 | `make dev-setup` | Complete development environment setup |
+| `make setup-rust` | Install Rust + wasm-pack for viewer builds |
 | `make format` | Format code with ruff |
+| `make format-all` | Format all code (Python + TypeScript) |
 | `make lint` | Run ruff linting |
 | `make type-check` | Run mypy type checking |
 | `make security` | Run bandit security scan |
-| `make test` | Run test suite |
+| `make test` | Run Python test suite |
+| `make test-all` | Run all tests (Python + TypeScript) |
 | `make test-cov` | Run tests with coverage report |
 | `make check` | Run all quality checks |
+| `make viewer` | Start viewer development server |
+| `make viewer-build` | Build viewer for production (requires Rust) |
+| `make viewer-test` | Run TypeScript tests |
+| `make wasm-build` | Build WASM module |
+| `make wasm-test` | Run Rust unit tests |
 | `make clean` | Clean temporary files |
 | `make help` | Show all available commands |
 

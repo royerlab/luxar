@@ -1332,6 +1332,7 @@ def generate_animated_detector_scene(
                         colors=all_colors,
                         sharpness=1.5,
                         line_type="segments",
+                        # NOTE: NOT using extend_to_all - tracks should only be visible at their birth time
                     )
 
                     total_verts = len(all_positions)

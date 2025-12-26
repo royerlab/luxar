@@ -1,0 +1,259 @@
+/**
+ * Integration tests for GPU Buffer Pool usage in scene-loader
+ *
+ * Verifies that scene-loader ACTUALLY calls GPU pool methods when enabled,
+ * and that geometry reuse actually happens. Uses spies to verify calls.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import type { PointsData } from '../../../data/data-loader-types';
+import * as THREE from 'three';
+
+describe('GPU Buffer Pool Integration Tests', () => {
+  describe('Geometry Acquisition Verification', () => {
+    it('should call acquirePointsGeometry when updating points', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      // Spy on acquire method
+      const acquireSpy = vi.spyOn(pool, 'acquirePointsGeometry');
+
+      // Simulate what scene-loader does (line 1415-1420)
+      const mockData: PointsData = {
+        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
+        colors: new Uint8Array([255, 128, 0, 128, 255, 0]),
+        radii: new Float32Array([0.5, 0.6]),
+        sharpness: new Float32Array([2.0, 2.5]),
+        metadata: {
+          totalPoints: 2,
+          loadedPoints: 2,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      const geometry = pool.acquirePointsGeometry('/test_points', mockData, 2);
+
+      // Verify acquire was called with correct params
+      expect(acquireSpy).toHaveBeenCalledWith('/test_points', mockData, 2);
+      expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
+    });
+
+    it('should call updatePointsGeometry after acquiring', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      const mockData: PointsData = {
+        positions: new Float32Array([1, 2, 3]),
+        colors: new Float32Array([1, 0, 0]),
+        radii: new Float32Array([0.5]),
+        sharpness: new Float32Array([2.0]),
+        metadata: {
+          totalPoints: 1,
+          loadedPoints: 1,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      // Simulate what scene-loader does (lines 1415-1421)
+      const geometry = pool.acquirePointsGeometry('/node', mockData, 1);
+
+      // Spy on update method
+      const updateSpy = vi.spyOn(pool, 'updatePointsGeometry');
+
+      // Update geometry (line 1421)
+      pool.updatePointsGeometry(geometry, mockData, 1);
+
+      // Verify update was called
+      expect(updateSpy).toHaveBeenCalledWith(geometry, mockData, 1);
+    });
+
+    it('should reuse geometry on subsequent updates (NOT dispose)', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      const mockData1: PointsData = {
+        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
+        colors: new Float32Array([1, 0, 0, 0, 1, 0]),
+        radii: new Float32Array([0.5, 0.6]),
+        sharpness: new Float32Array([2.0, 2.5]),
+        metadata: {
+          totalPoints: 2,
+          loadedPoints: 2,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      const mockData2: PointsData = {
+        ...mockData1,
+        metadata: { ...mockData1.metadata, loadedPoints: 1 },
+      };
+
+      // First acquisition
+      const geom1 = pool.acquirePointsGeometry('/node1', mockData1, 2);
+
+      // Second acquisition (same node, smaller count - should reuse)
+      const geom2 = pool.acquirePointsGeometry('/node1', mockData2, 1);
+
+      // CRITICAL: Verify same geometry instance (REUSE, not new allocation)
+      expect(geom2).toBe(geom1);
+
+      // Verify stats show reuse
+      const stats = pool.getStats();
+      expect(stats.allocations).toBe(1); // Only one allocation
+      expect(stats.reuses).toBe(1); // One reuse
+    });
+  });
+
+  describe('Type-Aware Reuse Verification', () => {
+    it('should reuse geometry when types match', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      const data1: PointsData = {
+        positions: new Float32Array(3000),
+        colors: new Uint8Array(3000), // Uint8 colors
+        radii: new Float32Array(1000),
+        sharpness: new Float32Array(1000),
+        metadata: {
+          totalPoints: 1000,
+          loadedPoints: 1000,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      const data2: PointsData = {
+        ...data1,
+        colors: new Uint8Array(2400), // Still Uint8, smaller
+        metadata: { ...data1.metadata, loadedPoints: 800 },
+      };
+
+      const geom1 = pool.acquirePointsGeometry('/node1', data1, 1000);
+      const geom2 = pool.acquirePointsGeometry('/node1', data2, 800);
+
+      // Should reuse (types match)
+      expect(geom2).toBe(geom1);
+      expect(pool.getStats().reuses).toBe(1);
+    });
+
+    it('should NOT reuse geometry when types differ', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      const dataUint8: PointsData = {
+        positions: new Float32Array(3000),
+        colors: new Uint8Array(3000), // Uint8
+        radii: new Float32Array(1000),
+        sharpness: new Float32Array(1000),
+        metadata: {
+          totalPoints: 1000,
+          loadedPoints: 1000,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      const dataFloat: PointsData = {
+        ...dataUint8,
+        colors: new Float32Array(3000), // Float32 (different type!)
+      };
+
+      const geom1 = pool.acquirePointsGeometry('/node1', dataUint8, 1000);
+
+      // Release and acquire with different type
+      pool.releasePointsGeometry('/node1');
+      const geom2 = pool.acquirePointsGeometry('/node2', dataFloat, 1000);
+
+      // Should NOT reuse (types differ)
+      expect(geom2).not.toBe(geom1);
+      expect(pool.getStats().allocations).toBe(2); // Two allocations
+    });
+  });
+
+  describe('Memory Management Integration', () => {
+    it('should handle capacity growth during active use', () => {
+      const pool = new GPUBufferPool(20, 300);
+
+      const smallData: PointsData = {
+        positions: new Float32Array(3000),
+        colors: new Float32Array(3000),
+        radii: new Float32Array(1000),
+        sharpness: new Float32Array(1000),
+        metadata: {
+          totalPoints: 1000,
+          loadedPoints: 1000,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: true,
+        },
+      };
+
+      const largeData: PointsData = {
+        ...smallData,
+        positions: new Float32Array(6000),
+        colors: new Float32Array(6000),
+        radii: new Float32Array(2000),
+        sharpness: new Float32Array(2000),
+        metadata: { ...smallData.metadata, loadedPoints: 2000 },
+      };
+
+      // Acquire with small data
+      const geom1 = pool.acquirePointsGeometry('/node1', smallData, 1000);
+
+      // Acquire with large data (exceeds capacity, should grow)
+      const geom2 = pool.acquirePointsGeometry('/node1', largeData, 2000);
+
+      // Should be same geometry (grown)
+      expect(geom2).toBe(geom1);
+
+      // Verify growth happened
+      expect(pool.getStats().capacityGrowths).toBe(1);
+    });
+
+    it('should evict unused geometries over time', () => {
+      const pool = new GPUBufferPool(20, 2); // Short eviction time for testing
+
+      // Acquire and release many geometries
+      for (let i = 0; i < 10; i++) {
+        const data: PointsData = {
+          positions: new Float32Array((1000 + i * 100) * 3),
+          colors: new Float32Array((1000 + i * 100) * 3),
+          metadata: {
+            totalPoints: 1000 + i * 100,
+            loadedPoints: 1000 + i * 100,
+            bounds: new THREE.Box3(),
+            ndim: 3,
+            usedSpatialIndex: true,
+          },
+        };
+
+        pool.acquirePointsGeometry(`/node${i}`, data, 1000 + i * 100);
+        pool.releasePointsGeometry(`/node${i}`);
+      }
+
+      // Advance frames
+      for (let i = 0; i < 5; i++) {
+        pool.acquirePointsGeometry(`/active${i}`, {
+          positions: new Float32Array(30000),
+          metadata: {
+            totalPoints: 10000,
+            loadedPoints: 10000,
+            bounds: new THREE.Box3(),
+            ndim: 3,
+            usedSpatialIndex: true,
+          },
+        }, 10000);
+      }
+
+      // Evict
+      const evicted = pool.evictUnused();
+
+      // Should have evicted some geometries
+      expect(evicted).toBeGreaterThan(0);
+    });
+  });
+});

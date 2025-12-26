@@ -136,6 +136,8 @@ export const Modules = {
   SPATIAL_INDEX_LOADER: 'PointSpatialIndexLoader',
   SPATIAL_INDEX: 'PointSpatialIndex',
   DATA_MONITOR: 'DataMonitor',
+  DATA_ACCUMULATOR: 'DataAccumulator',
+  WORKER_POOL: 'WorkerPool',
   ZARR_LOADER: 'ZarrLoader',
   RANGE_CACHE: 'RangeCache',
   CACHE: 'Cache',
@@ -143,6 +145,7 @@ export const Modules = {
 
   // Rendering
   RENDERER: 'Renderer',
+  GPU_BUFFER_POOL: 'GPUBufferPool',
   POST_PROCESSING: 'PostProcessing',
   HDR: 'HDR',
   SCENE_MANAGER: 'SceneManager',

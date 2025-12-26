@@ -130,7 +130,13 @@ FUNCTION_COLORS = {
 
 
 def download_cafa5_dataset(output_dir: Path) -> Path:
-    """Download CAFA5 ProtT5 embeddings from Kaggle.
+    """Download CAFA5 ProtT5 embeddings from Kaggle with robust retry and resume.
+
+    Uses the robust_download utility which provides:
+    - Automatic retry on network errors (up to 3 attempts)
+    - Resume capability for partial downloads
+    - Progress tracking with ETA
+    - File size verification
 
     Args:
         output_dir: Where to save the dataset
@@ -140,7 +146,7 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
     """
     import zipfile
 
-    import requests
+    from luxar.utils.download import robust_download
 
     dataset_zip = output_dir / "cafa5_prott5.zip"
 
@@ -149,6 +155,7 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
         aprint("URL: https://www.kaggle.com/datasets/horikitasaku/prott5-embedding-for-cafa5")
         aprint("")
         aprint("Download: 540 MB (pre-computed embeddings)")
+        aprint("Features: Auto-retry on errors, resume on interruption")
         aprint("")
 
         if dataset_zip.exists():
@@ -157,34 +164,23 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
             url = "https://www.kaggle.com/api/v1/datasets/download/horikitasaku/prott5-embedding-for-cafa5"
 
             try:
-                aprint("Downloading...")
-                output_dir.mkdir(parents=True, exist_ok=True)  # Create directory first!
+                dataset_zip = robust_download(
+                    url=url,
+                    output_path=dataset_zip,
+                    max_retries=3,  # Retry up to 3 times
+                    timeout=300,  # 5 minute initial connection timeout
+                    chunk_size=1024 * 1024,  # 1MB chunks
+                    verify_size=True,  # Verify final size
+                )
 
-                response = requests.get(url, stream=True, timeout=300)
-                response.raise_for_status()
-
-                total_size = int(response.headers.get("content-length", 0))
-                aprint(f"Size: {total_size / (1024**2):.0f} MB")
-
-                downloaded = 0
-                chunk_size = 8192 * 128
-
-                with open(dataset_zip, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-
-                            if downloaded % (50 * 1024 * 1024) == 0:  # Every 50MB
-                                percent = (downloaded / total_size * 100) if total_size > 0 else 0
-                                aprint(f"  Progress: {downloaded / (1024**2):.0f} MB ({percent:.0f}%)")
-
-                aprint(f"✓ Downloaded to {dataset_zip}")
+                aprint("✓ Download complete and verified!")
 
             except Exception as e:
-                aprint(f"❌ Download failed: {e}")
+                aprint(f"❌ Download failed after all retries: {e}")
                 if dataset_zip.exists():
-                    dataset_zip.unlink()
+                    partial_size = dataset_zip.stat().st_size
+                    aprint(f"   Partial download saved: {partial_size / (1024**2):.0f} MB")
+                    aprint(f"   Run again to resume from this point")
                 raise
 
         # Extract if needed
