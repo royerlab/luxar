@@ -621,7 +621,7 @@ def create_storm_scene(
 
                     all_amplitudes.append(amplitudes[i] * 0.5)  # Dim for widefield
                     all_sharpnesses.append(1.0)  # Soft
-                    all_colors.append([128, 128, 128])  # Gray
+                    all_colors.append([0.5, 0.5, 0.5])  # Gray (SDR 0-1 range)
 
                 # VIEW 1: Super-resolution (small PSF ~20 nm from precision)
                 for i in range(n_splats):
@@ -641,7 +641,7 @@ def create_storm_scene(
 
                     all_amplitudes.append(amplitudes[i])
                     all_sharpnesses.append(3.0)  # Sharp
-                    all_colors.append([76, 230, 230])  # Cyan
+                    all_colors.append([0.3, 0.9, 0.9])  # Cyan (SDR 0-1 range)
 
                 # Create combined GSplatData
                 gsplat_data = GSplatData(
@@ -649,7 +649,7 @@ def create_storm_scene(
                     cholesky_factors=np.array(all_cholesky, dtype=np.float32),
                     amplitudes=np.array(all_amplitudes, dtype=np.float32),
                     sharpnesses=np.array(all_sharpnesses, dtype=np.float32),
-                    colors=np.array(all_colors, dtype=np.uint8),
+                    colors=np.array(all_colors, dtype=np.float32),  # Float32 for SDR
                 )
 
                 scene.add_gsplats_from_data(
