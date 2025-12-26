@@ -56,12 +56,12 @@ def main():
         prec_y = df['crlb_y'].values * PIXEL_SIZE / 1000
         prec_z = df['crlb_z'].values * PIXEL_SIZE / 1000
 
-        # Create diagonal covariances
+        # Create diagonal covariances (scale down by 10x - precision values are too large!)
         n = len(centers)
         cholesky = np.zeros((n, 6), dtype=np.float32)
         for i in range(n):
-            # Diagonal covariance
-            sx, sy, sz = prec_x[i] * 1.5, prec_y[i] * 1.5, prec_z[i] * 1.5
+            # Diagonal covariance - scale WAY down (Z precision is huge!)
+            sx, sy, sz = prec_x[i] * 0.1, prec_y[i] * 0.1, prec_z[i] * 0.02  # Much smaller!
             cov = np.diag([sx**2, sy**2, sz**2])
             L = np.linalg.cholesky(cov)
             cholesky[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
