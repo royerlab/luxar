@@ -470,8 +470,23 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    * @param fps - Target FPS (clamped to valid range)
    */
   setTargetFPS(dimIndex: number, fps: number): void {
-    const state = this.animationStates.get(dimIndex);
-    if (!state) return;
+    let state = this.animationStates.get(dimIndex);
+
+    // Create state if it doesn't exist (for pre-configuring settings before starting animation)
+    if (!state) {
+      const currentTime = performance.now();
+      state = {
+        isPlaying: false,
+        targetFPS: config.dimensionAnimation.defaults.targetFPS,
+        loopMode: config.dimensionAnimation.defaults.loop,
+        direction: config.dimensionAnimation.defaults.direction,
+        lastUpdateTime: currentTime,
+        frameCount: 0,
+        lastFPSMeasurementTime: currentTime,
+        actualFPS: 0,
+      };
+      this.animationStates.set(dimIndex, state);
+    }
 
     // Clamp to valid range
     const { customMin, customMax } = config.dimensionAnimation.presets;
@@ -534,8 +549,23 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    * @param loopMode - Loop mode to set
    */
   setLoopMode(dimIndex: number, loopMode: LoopMode): void {
-    const state = this.animationStates.get(dimIndex);
-    if (!state) return;
+    let state = this.animationStates.get(dimIndex);
+
+    // Create state if it doesn't exist (for pre-configuring settings before starting animation)
+    if (!state) {
+      const currentTime = performance.now();
+      state = {
+        isPlaying: false,
+        targetFPS: config.dimensionAnimation.defaults.targetFPS,
+        loopMode: config.dimensionAnimation.defaults.loop,
+        direction: config.dimensionAnimation.defaults.direction,
+        lastUpdateTime: currentTime,
+        frameCount: 0,
+        lastFPSMeasurementTime: currentTime,
+        actualFPS: 0,
+      };
+      this.animationStates.set(dimIndex, state);
+    }
 
     state.loopMode = loopMode;
     this.dispatchEvent({ type: 'loopModeChange', dimIndex, loopMode });
