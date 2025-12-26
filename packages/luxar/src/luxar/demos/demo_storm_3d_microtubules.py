@@ -549,7 +549,11 @@ def create_storm_scene(
 
         with asection("Creating Luxar scene"):
             # Use 3D dimensions (viewer can toggle groups on/off)
-            dims = Dimensions.default_3d(unit="μm")
+            dims = Dimensions([
+                Dimension("x", unit="μm", display=True),
+                Dimension("y", unit="μm", display=True),
+                Dimension("z", unit="μm", display=True),
+            ])
 
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
