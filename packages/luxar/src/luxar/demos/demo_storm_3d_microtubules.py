@@ -336,19 +336,29 @@ def parse_storm_localizations(
         # Common formats: x, y, z or xnm, ynm, znm
         result = {}
 
-        # Try different column name conventions
+        # Extract coordinates (prioritize nm columns!)
         for key_base in ['x', 'y', 'z']:
-            # Try: x, xnm, x [nm], x_nm, etc.
-            for variant in [key_base, f'{key_base}nm', f'{key_base} [nm]', f'{key_base}_nm']:
+            # Try nm columns first, then pixel columns
+            for variant in [f'{key_base}_nm', f'{key_base}nm', f'{key_base} [nm]', f'{key_base}_pix', key_base]:
                 if variant in df.columns:
-                    result[key_base] = df[variant].values
+                    values = df[variant].values
+                    # Convert pixels to nm if needed
+                    if '_pix' in variant:
+                        values = values * PIXEL_SIZE
+                    result[key_base] = values
                     break
 
-        # Precision/uncertainty
+        # Precision/uncertainty (CRLB = Cramér-Rao Lower Bound)
         for key_base in ['x', 'y', 'z']:
-            for variant in [f'precision_{key_base}', f'{key_base}_precision', f'sigma_{key_base}', f'{key_base}_std']:
+            # Try various precision column names
+            for variant in [f'crlb_{key_base}nm', f'crlb_{key_base}', f'precision_{key_base}', f'sigma_{key_base}']:
                 if variant in df.columns:
-                    result[f'precision_{key_base}'] = df[variant].values
+                    values = df[variant].values
+                    # CRLB is already in nm (or pixels)
+                    if 'crlb_' in variant and '_pix' not in variant and 'nm' not in variant:
+                        # Plain 'crlb_x' might be in pixels
+                        values = values * PIXEL_SIZE
+                    result[f'precision_{key_base}'] = values
                     break
 
         # Additional attributes
