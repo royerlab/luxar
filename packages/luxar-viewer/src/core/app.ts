@@ -388,6 +388,8 @@ export class LuxarApp {
       animationController: this.animationController,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
+      sceneDimsManager: sceneDimsManager,
+      app: this,
 
       // Helper function to get current state snapshot
       getState: () => {
