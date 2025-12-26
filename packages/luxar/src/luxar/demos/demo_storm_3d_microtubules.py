@@ -558,24 +558,8 @@ def create_storm_scene(
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=dims)
 
-                # Add metadata
-                scene.attrs["title"] = "3D STORM: Microtubule Network"
-                scene.attrs["description"] = """
-3D STORM Super-Resolution Microscopy
-====================================
-
-Microtubule cytoskeleton in COS7 cells imaged with 3D STORM.
-Each point represents a single fluorescently-labeled tubulin molecule
-localized with ~20 nm precision.
-
-Resolution: ~20 nm lateral, ~50 nm axial
-Conventional microscopy: ~250 nm (10x worse!)
-
-Dataset: Zenodo 3547521
-Target: Alpha-tubulin (Alexa Fluor 647)
-
-Toggle between widefield and super-resolution to see the power of STORM!
-"""
+                # Add metadata (keep simple for JSON compatibility)
+                scene.attrs["title"] = "3D STORM Microtubule Network"
 
                 if widefield_volume is not None:
                     # Add widefield as points (sampled from volume)
