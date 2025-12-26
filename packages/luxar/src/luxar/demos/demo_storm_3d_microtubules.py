@@ -591,6 +591,8 @@ def create_storm_scene(
 
                 # Add super-resolution as gsplats
                 with asection("Adding super-resolution gsplats"):
+                    from luxar.gsplats.fit_result import GSplatData
+
                     # Convert centers to μm
                     centers_um = centers * PIXEL_SIZE / 1000
 
@@ -604,17 +606,22 @@ def create_storm_scene(
                         # Pack: [L00, L10, L11, L20, L21, L22]
                         cholesky_factors[i] = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2]]
 
-                    # Keep as 3D (view dimension handled by separate groups)
                     # Colors: cyan for super-resolution
-                    colors = np.full((len(centers), 3), [0.3, 0.9, 0.9], dtype=np.float32)
+                    colors_uint8 = np.full((len(centers), 3), [76, 230, 230], dtype=np.uint8)
 
-                    scene.add_gsplats(
-                        "storm_localizations",
-                        centers=centers_um,  # 3D, not 4D!
+                    # Create GSplatData object
+                    gsplat_data = GSplatData(
+                        centers=centers_um,
                         cholesky_factors=cholesky_factors,
                         amplitudes=amplitudes,
-                        colors=colors,
                         sharpnesses=sharpnesses,
+                        colors=colors_uint8,
+                    )
+
+                    # Use add_gsplats_from_data (more robust)
+                    scene.add_gsplats_from_data(
+                        name="storm_localizations",
+                        result=gsplat_data,
                         opacity=0.8,
                         blending_mode="additive",
                     )
