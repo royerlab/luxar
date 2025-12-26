@@ -169,51 +169,90 @@ def download_storm_localizations(
         aprint("")
 
         try:
-            # Retry logic for rate limiting
-            max_retries = 3
-            retry_delay = 10  # seconds
+            import time
+
+            # Check if partial download exists
+            temp_file = cache_file.parent / f"{cache_file.name}.partial"
+            resume_pos = 0
+            if temp_file.exists():
+                resume_pos = temp_file.stat().st_size
+                aprint(f"Found partial download ({resume_pos / (1024**2):.1f} MB), resuming...")
+
+            # Robust download with resume support
+            max_retries = 5
+            retry_delay = 10
 
             for attempt in range(max_retries):
-                response = requests.get(url, stream=True, timeout=300)
+                try:
+                    # Request with resume support
+                    headers = {}
+                    if resume_pos > 0:
+                        headers['Range'] = f'bytes={resume_pos}-'
 
-                if response.status_code == 429:
+                    response = requests.get(url, headers=headers, stream=True, timeout=300)
+
+                    # Handle rate limiting
+                    if response.status_code == 429:
+                        if attempt < max_retries - 1:
+                            aprint(f"⚠️  Rate limited, waiting {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        else:
+                            raise Exception("Rate limit exceeded after retries")
+
+                    # Handle resume response codes
+                    if response.status_code == 206:  # Partial content (resume)
+                        aprint(f"✓ Resuming from {resume_pos / (1024**2):.1f} MB")
+                        mode = "ab"  # Append mode
+                    elif response.status_code == 200:  # Full download
+                        mode = "wb"  # Write mode
+                        resume_pos = 0
+                    else:
+                        response.raise_for_status()
+                        continue
+
+                    # Get total size
+                    content_range = response.headers.get('Content-Range')
+                    if content_range:
+                        total_size = int(content_range.split('/')[-1])
+                    else:
+                        total_size = int(response.headers.get("content-length", 0)) + resume_pos
+
+                    aprint(f"File size: {total_size / (1024**2):.1f} MB")
+
+                    downloaded = resume_pos
+                    chunk_size = 1024 * 1024  # 1 MB chunks
+
+                    with open(temp_file, mode) as f:
+                        last_progress = downloaded
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+
+                                # Progress every 100 MB
+                                if downloaded - last_progress >= 100 * 1024 * 1024:
+                                    percent = (downloaded / total_size * 100) if total_size > 0 else 0
+                                    aprint(f"  Progress: {downloaded / (1024**2):.0f} / {total_size / (1024**2):.0f} MB ({percent:.0f}%)")
+                                    last_progress = downloaded
+
+                    # Download complete - move temp to final
+                    temp_file.rename(cache_file)
+                    aprint(f"✓ Downloaded to {cache_file}")
+                    aprint(f"  Final size: {cache_file.stat().st_size / (1024**2):.1f} MB")
+                    break  # Success!
+
+                except (requests.exceptions.ChunkedEncodingError,
+                        requests.exceptions.ConnectionError) as e:
                     if attempt < max_retries - 1:
-                        aprint(f"⚠️  Rate limited, waiting {retry_delay} seconds...")
-                        import time
+                        aprint(f"⚠️  Download interrupted ({e})")
+                        aprint(f"   Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
                         time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
+                        retry_delay = min(retry_delay * 2, 120)  # Max 2 min
                         continue
                     else:
-                        aprint("❌ Rate limit exceeded")
-                        aprint("")
-                        aprint("Manual download:")
-                        aprint(f"  1. Visit: https://zenodo.org/record/{ZENODO_RECORD}")
-                        aprint(f"  2. Download: {filename}")
-                        aprint(f"  3. Save to: {cache_file}")
-                        aprint("  4. Run demo again")
-                        response.raise_for_status()
-
-                response.raise_for_status()
-                break  # Success!
-
-            total_size = int(response.headers.get("content-length", 0))
-            aprint(f"File size: {total_size / (1024**2):.1f} MB")
-
-            downloaded = 0
-            chunk_size = 1024 * 1024  # 1 MB chunks
-
-            with open(cache_file, "wb") as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-
-                        # Progress every 100 MB
-                        if downloaded % (100 * 1024 * 1024) < chunk_size:
-                            percent = (downloaded / total_size * 100) if total_size > 0 else 0
-                            aprint(f"  Progress: {downloaded / (1024**2):.0f} MB ({percent:.0f}%)")
-
-            aprint(f"✓ Downloaded to {cache_file}")
+                        raise
 
         except Exception as e:
             aprint(f"❌ Download failed: {e}")
