@@ -576,6 +576,17 @@ def create_storm_scene(
                 # Convert centers to μm
                 centers_um = centers * PIXEL_SIZE / 1000
 
+                # Center at center-of-mass (amplitude-weighted)
+                total_amplitude = amplitudes.sum()
+                if total_amplitude > 0:
+                    centroid = (centers_um.T @ amplitudes) / total_amplitude
+                else:
+                    centroid = centers_um.mean(axis=0)
+
+                centers_um = centers_um - centroid
+                aprint(f"✓ Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)")
+                aprint(f"  New range: [{centers_um.min(axis=0)}, {centers_um.max(axis=0)}]")
+
                 # Create TWO sets of gsplats - same positions, different covariances!
                 n_splats = len(centers)
 
