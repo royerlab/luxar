@@ -112,6 +112,8 @@ vi.mock('three', () => ({
       boundingBox: null,
       boundingSphere: null,
       dispose: vi.fn(),
+      computeBoundingBox: vi.fn(),
+      computeBoundingSphere: vi.fn(),
     };
   }),
   InstancedBufferGeometry: vi.fn().mockImplementation(() => {
@@ -929,6 +931,8 @@ describe('SceneLoader', () => {
         dispose: vi.fn(),
         boundingBox: { clone: vi.fn().mockReturnThis() },
         boundingSphere: null,
+        computeBoundingBox: vi.fn(),
+        computeBoundingSphere: vi.fn(),
       };
       const mockPoints = {
         name: '/test_points',
@@ -945,11 +949,12 @@ describe('SceneLoader', () => {
         colors: new Float32Array([1, 1, 1, 1, 1, 1]),
         radii: new Float32Array([0.5, 0.5]),
         sharpness: new Float32Array([2.0, 2.0]),
+        pointCount: 2,
+        ndim: 3,
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
           bounds: { clone: vi.fn().mockReturnThis() },
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
@@ -967,6 +972,8 @@ describe('SceneLoader', () => {
         dispose: disposeSpy,
         boundingBox: { clone: vi.fn().mockReturnThis() },
         boundingSphere: null,
+        computeBoundingBox: vi.fn(),
+        computeBoundingSphere: vi.fn(),
       };
       const mockPoints = {
         name: '/test_points',
@@ -982,11 +989,12 @@ describe('SceneLoader', () => {
         colors: new Float32Array([1, 1, 1]),
         radii: new Float32Array([0.5]),
         sharpness: new Float32Array([2.0]),
+        pointCount: 1,
+        ndim: 3,
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
           bounds: { clone: vi.fn().mockReturnThis() },
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
@@ -1005,6 +1013,8 @@ describe('SceneLoader', () => {
         dispose: vi.fn(),
         boundingBox: mockBoundingBox,
         boundingSphere: mockBoundingSphere,
+        computeBoundingBox: vi.fn(),
+        computeBoundingSphere: vi.fn(),
       };
       const mockPoints = {
         name: '/test_points',
@@ -1021,6 +1031,8 @@ describe('SceneLoader', () => {
         colors: new Float32Array([1, 1, 1]),
         radii: new Float32Array([0.5]),
         sharpness: new Float32Array([2.0]),
+        pointCount: 1,
+        ndim: 3,
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
@@ -1042,6 +1054,8 @@ describe('SceneLoader', () => {
         dispose: vi.fn(),
         boundingBox: null,
         boundingSphere: null,
+        computeBoundingBox: vi.fn(),
+        computeBoundingSphere: vi.fn(),
       };
       const mockPoints = {
         name: '/test_points',
@@ -1057,6 +1071,8 @@ describe('SceneLoader', () => {
         colors: new Float32Array([]),
         radii: new Float32Array([]),
         sharpness: new Float32Array([]),
+        pointCount: 0,
+        ndim: 4,
         metadata: {
           totalPoints: 1000,
           loadedPoints: 0, // No points visible at current slice
@@ -1185,7 +1201,7 @@ describe('SceneLoader', () => {
 
       // Should not throw, just log info
       expect(() => {
-        (sceneLoader as any).validatePointsData(emptyData);
+        (sceneLoader as any).validateLoadedPointsData(emptyData);
       }).not.toThrow();
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Empty dataset detected'));
@@ -1204,7 +1220,7 @@ describe('SceneLoader', () => {
       };
 
       expect(() => {
-        (sceneLoader as any).validatePointsData(malformedData);
+        (sceneLoader as any).validateLoadedPointsData(malformedData);
       }).toThrow('not divisible by 3');
     });
 
@@ -1223,7 +1239,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validatePointsData(data);
+      (sceneLoader as any).validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Colors length mismatch'),
@@ -1246,7 +1262,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validatePointsData(data);
+      (sceneLoader as any).validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Radii length mismatch'),
@@ -1269,7 +1285,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validatePointsData(data);
+      (sceneLoader as any).validateLoadedPointsData(data);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Sharpness length mismatch'),
@@ -1294,7 +1310,7 @@ describe('SceneLoader', () => {
 
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      (sceneLoader as any).validatePointsData(validData);
+      (sceneLoader as any).validateLoadedPointsData(validData);
 
       // Should not have any warnings (only info/log messages)
       const warnCalls = consoleSpy.mock.calls.filter((call) =>

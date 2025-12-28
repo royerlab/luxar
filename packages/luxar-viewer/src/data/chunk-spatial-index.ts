@@ -21,12 +21,10 @@
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
 import { log, Modules } from '../utils/log';
+import type { PointRange } from './data-loader-types';
 
-/** Point range [start, end) for loading data */
-export interface PointRange {
-  start: number;
-  end: number;
-}
+// Re-export for backward compatibility
+export type { PointRange };
 
 /** Chunk-based spatial index structure */
 export interface ChunkSpatialIndex {

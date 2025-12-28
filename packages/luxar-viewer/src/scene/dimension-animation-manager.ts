@@ -62,6 +62,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** Cached dimension ranges for performance */
   private dimensionRanges: [number, number][] | null = null;
 
+  /** Tracks if a dimension update is currently in progress (for frame sync) */
+  private isUpdating = false;
+
   /**
    * Create dimension animation manager
    *
@@ -124,11 +127,21 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /**
    * Update a single dimension's animation
    *
+   * Includes frame synchronization: if a data update is still in progress,
+   * this method skips the frame to prevent advancing animation faster than
+   * data loading can keep up. This ensures complete rendering of each frame.
+   *
    * @param dimIndex - Dimension index to update
    * @param currentTime - Current timestamp in milliseconds
    */
   private updateDimension(dimIndex: number, currentTime: number): void {
     try {
+      // Skip if a previous update is still loading data
+      // This ensures we don't advance animation faster than data can load
+      if (this.isUpdating) {
+        return;
+      }
+
       const state = this.animationStates.get(dimIndex);
       if (!state) {
         log.warning(Modules.ANIMATION, `No state for dimension ${dimIndex}`);
@@ -219,8 +232,23 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         });
       }
 
-      // Update dimension value
+      // Mark update in progress (prevents advancing to next frame until data loads)
+      this.isUpdating = true;
+
+      // Update dimension value (triggers async data loading via listeners)
       this.sceneDimsManager.setDimensionValue(dimIndex, nextValue);
+
+      // Track completion for next frame synchronization
+      // This ensures animation waits for data loading before advancing
+      this.sceneDimsManager
+        .waitForUpdate()
+        .then(() => {
+          this.isUpdating = false;
+        })
+        .catch((error) => {
+          log.error(Modules.ANIMATION, 'Dimension update failed', error);
+          this.isUpdating = false;
+        });
 
       // Update last update time
       state.lastUpdateTime = currentTime;

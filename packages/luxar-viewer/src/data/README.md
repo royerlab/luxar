@@ -31,14 +31,29 @@ data/
 ├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
 ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
 ├── lines-chunk-spatial-index.ts   # Dual spatial index for lines (vertices + segments)
+├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
 ├── range-cache.ts                 # Intelligent caching for range-based queries
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
 ├── directory-navigator.ts         # Multi-strategy server directory browsing
 ├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
 ├── data-loader-types.ts           # TypeScript interfaces and types
+├── data-accumulator.ts            # Zero-allocation buffer pooling
+├── geometry-update-manager.ts     # GPU buffer & geometry updates (extracted from SceneLoader)
+├── loader-orchestrator.ts         # Loader factory & lifecycle (extracted from SceneLoader)
+├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
 ├── index.ts                       # Package exports
-└── README.md                      # This documentation
+├── README.md                      # This documentation
+│
+├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
+│   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
+│   ├── range-loader.ts            # Unified encoding dispatch
+│   ├── spatial-query-builder.ts   # Spatial query utilities
+│   └── transferable-accumulator.ts # Zero-allocation buffer management
+│
+└── (related: ../workers/)         # Web Worker infrastructure
+    ├── worker-pool.ts             # Pool manager with load balancing
+    └── data-worker.ts             # Worker with WASM acceleration
 ```
 
 ### State Management Architecture
@@ -79,6 +94,57 @@ The data package uses a **clean singleton pattern** for instance management, com
 - **Centralized Management**: Single source of truth
 
 **Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
+
+### Architecture Refactoring (Modular Design)
+
+The SceneLoader has been refactored into focused, testable modules:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SceneLoader (Facade)                      │
+│  Coordinates loading and provides public API                │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+    ┌──────────┼──────────┬──────────────────┐
+    ▼          ▼          ▼                  ▼
+┌─────────┐ ┌─────────┐ ┌─────────────────┐ ┌─────────────┐
+│ Scene   │ │ Loader  │ │ Geometry Update │ │ Data        │
+│ Graph   │ │ Orch.   │ │ Manager         │ │ Accumulators│
+│ Builder │ │         │ │                 │ │             │
+└─────────┘ └─────────┘ └─────────────────┘ └─────────────┘
+```
+
+**SceneGraphBuilder** (`scene-graph-builder.ts`):
+
+- Builds hierarchical scene structure from Zarr metadata
+- Pure data structure building (no THREE.js dependencies)
+- Enumerates store contents
+
+**LoaderOrchestrator** (`loader-orchestrator.ts`):
+
+- Factory for Points/Lines/GSplats loaders
+- Loader lifecycle management
+- Failed loader tracking and retry support
+- Aggregated statistics collection
+
+**GeometryUpdateManager** (`geometry-update-manager.ts`):
+
+- GPU buffer pool integration
+- THREE.js geometry creation and updates
+- Worker-based projection for large datasets
+- Material caching and data validation
+
+**Data Accumulators** (`data-accumulator.ts`):
+
+- Zero-allocation buffer pooling for Points/Lines/GSplats
+- Multi-type support (Float32, Uint8, Uint16)
+- Eliminates per-frame allocations, reduces GC pressure
+
+**Benefits of Modular Design**:
+
+- **Testability**: Each module tested independently (88+ new tests)
+- **Maintainability**: Clear responsibility boundaries
+- **Reduced Complexity**: SceneLoader reduced from ~2000 to ~800 lines
 
 ---
 
@@ -386,6 +452,45 @@ opacity: child.opacity ?? parent.opacity ?? 1.0;
 gamma: child.gamma ?? parent.gamma ?? 1.0;
 blending_mode: child.blending_mode ?? parent.blending_mode ?? 'additive';
 ```
+
+### Web Worker Offloading
+
+CPU-intensive operations are offloaded to Web Workers for parallel execution:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     DATA LOADERS                             │
+│  (point/lines/gsplats-spatial-index-loader.ts)              │
+│                          │                                   │
+│                          ▼                                   │
+│              ┌───────────────────────┐                       │
+│              │      WorkerPool       │                       │
+│              │   (1-N DataWorkers)   │                       │
+│              │           │           │                       │
+│              │           ▼           │                       │
+│              │  ┌─────────────────┐  │                       │
+│              │  │   WASM Module   │  │                       │
+│              │  │  (or TypeScript │  │                       │
+│              │  │    fallback)    │  │                       │
+│              │  └─────────────────┘  │                       │
+│              └───────────────────────┘                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Operations offloaded to workers**:
+
+- Spatial index queries (chunk bounding box intersection)
+- nD visibility computation (hypersphere/ellipsoid intersection)
+- Encoded data decoding (quantized, LUT, broadcasted)
+- nD → 3D projection with visibility filtering
+
+**Performance benefits**:
+
+- Non-blocking main thread (smooth UI during data loading)
+- WASM acceleration (3-5x faster than TypeScript)
+- Automatic fallback if WASM unavailable
+
+See `src/workers/WORKER_INFRASTRUCTURE_STATUS.md` and `src/wasm/rust/README.md` for details.
 
 ---
 
@@ -874,7 +979,43 @@ location /data/ {
 | `showMonitor()`             | Show data loading monitor UI              |
 | `hideMonitor()`             | Hide data loading monitor UI              |
 | `toggleMonitor()`           | Toggle data loading monitor UI            |
+| `retryFailedLoader(nodeId)` | Retry a failed loader                     |
+| `retryAllFailedLoaders()`   | Retry all failed loaders                  |
 | `dispose()`                 | Clean up all resources                    |
+
+### Scene Graph Builder (scene-graph-builder.ts)
+
+| Class/Method                  | Description                            |
+| ----------------------------- | -------------------------------------- |
+| `SceneGraphBuilder`           | Builds scene hierarchy from Zarr       |
+| `constructor(store, rootLoc)` | Create builder with store and location |
+| `buildSceneGraph(rootAttrs)`  | Build complete scene graph             |
+| `getNodesOfType(node, type)`  | Get all nodes of a specific type       |
+
+### Loader Orchestrator (loader-orchestrator.ts)
+
+| Class/Method                     | Description                      |
+| -------------------------------- | -------------------------------- |
+| `LoaderOrchestrator`             | Creates and manages data loaders |
+| `constructor(config)`            | Create orchestrator with config  |
+| `createPointsLoader(node, loc)`  | Create Points loader             |
+| `createLinesLoader(node, loc)`   | Create Lines loader              |
+| `createGSplatsLoader(node, loc)` | Create GSplats loader            |
+| `getFailedLoaders()`             | Get map of failed loaders        |
+| `getAggregatedStats(type)`       | Get aggregated accumulator stats |
+| `dispose()`                      | Dispose all loaders              |
+
+### Geometry Update Manager (geometry-update-manager.ts)
+
+| Class/Method                        | Description                         |
+| ----------------------------------- | ----------------------------------- |
+| `GeometryUpdateManager`             | GPU buffer and geometry management  |
+| `constructor(gpuPool, profiler?)`   | Create with GPU pool reference      |
+| `createPointsGeometry(data)`        | Create THREE.js geometry for points |
+| `updatePointsGeometry(mesh, data)`  | Update existing points geometry     |
+| `updateLinesGeometry(mesh, data)`   | Update lines geometry               |
+| `updateGSplatsGeometry(mesh, data)` | Update GSplats geometry             |
+| `dispose()`                         | Clean up resources                  |
 
 ### Point Spatial Index Loader (point-spatial-index-loader.ts)
 

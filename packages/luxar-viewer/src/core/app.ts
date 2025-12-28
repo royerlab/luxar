@@ -11,6 +11,7 @@ import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { LowPowerIndicator } from '../ui/components/low-power-indicator';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -424,10 +425,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-                ndim: dims.ndim,
-                displayed: dims.displayed,
-                currentStep: dims.currentStep,
-              }
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
             : null,
           camera: {
             position: {
@@ -455,16 +456,14 @@ export class LuxarApp {
       },
 
       // Helper to get scene loader manager (for cache inspection)
-      getSceneLoader: async () => {
-        const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+      getSceneLoader: () => {
         return SceneLoaderManager.getInstance();
       },
 
       // Cache-specific helpers
       cache: {
         // Get current cache statistics
-        getStats: async () => {
-          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+        getStats: () => {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
@@ -474,8 +473,7 @@ export class LuxarApp {
         },
 
         // List all cached datasets
-        listDatasets: async () => {
-          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+        listDatasets: () => {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
@@ -485,8 +483,7 @@ export class LuxarApp {
         },
 
         // Clear L1 cache only
-        clearL1: async () => {
-          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
+        clearL1: () => {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
@@ -499,7 +496,6 @@ export class LuxarApp {
 
         // Clear L2 cache only
         clearL2: async () => {
-          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {
@@ -512,7 +508,6 @@ export class LuxarApp {
 
         // Clear all caches
         clearAll: async () => {
-          const { SceneLoaderManager } = await import('../data/scene-loader-manager');
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
           if (!loader || !(loader as any).cachingStore) {

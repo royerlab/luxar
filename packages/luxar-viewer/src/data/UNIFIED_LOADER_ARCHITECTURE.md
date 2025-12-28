@@ -70,7 +70,7 @@ class TransferableAccumulator<T extends AccumulatorData> {
       this.buffers = this.allocateBuffers(this.capacity);
     }
     const detached = this.buffers;
-    this.buffers = null;  // Ownership transferred
+    this.buffers = null; // Ownership transferred
     return detached;
   }
 
@@ -243,10 +243,7 @@ async function projectPointsTo3D(params: {
   projectIntoBuffers(rawData, viewState, buffers);
 
   // Transfer buffers back (zero-copy)
-  return transfer(
-    { data: buildResult(buffers), buffers },
-    getTransferables(buffers)
-  );
+  return transfer({ data: buildResult(buffers), buffers }, getTransferables(buffers));
 }
 ```
 
@@ -284,24 +281,28 @@ src/data/
 ## Migration Strategy
 
 ### Phase 1: Extract Shared Logic (Non-breaking)
+
 1. Create `ArrayLoader` class
 2. Create `BaseSpatialLoader` class
 3. Existing loaders extend base class, delegate to shared code
 4. No behavior change, just code organization
 
 ### Phase 2: Implement TransferableAccumulator (Non-breaking)
+
 1. Create `TransferableAccumulator` alongside existing accumulators
 2. Add `inputBuffers` parameter to worker functions
 3. Points loader uses new pattern first (proof of concept)
 4. Verify performance parity
 
 ### Phase 3: Unify All Loaders
+
 1. Lines loader adopts unified pattern
 2. GSplats loader adopts unified pattern
 3. Remove projection from scene-loader
 4. Update documentation
 
 ### Phase 4: Cleanup
+
 1. Remove old accumulator code
 2. Remove duplicated functions
 3. Update tests
@@ -310,13 +311,13 @@ src/data/
 
 ## Performance Expectations
 
-| Scenario | Current | After Refactoring |
-|----------|---------|-------------------|
-| Small 3D dataset (<1K) | Main thread, zero-alloc | Main thread, zero-alloc |
+| Scenario               | Current                               | After Refactoring               |
+| ---------------------- | ------------------------------------- | ------------------------------- |
+| Small 3D dataset (<1K) | Main thread, zero-alloc               | Main thread, zero-alloc         |
 | Large 3D dataset (>1K) | Main thread (blocked by accumulators) | Worker, zero-alloc after warmup |
-| nD dataset navigation | Main thread per-frame | Worker, zero-alloc after warmup |
-| Memory churn | Low (accumulators) | Low (transferable reuse) |
-| Main thread blocking | Moderate-High | Low (worker offload) |
+| nD dataset navigation  | Main thread per-frame                 | Worker, zero-alloc after warmup |
+| Memory churn           | Low (accumulators)                    | Low (transferable reuse)        |
+| Main thread blocking   | Moderate-High                         | Low (worker offload)            |
 
 ---
 

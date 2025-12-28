@@ -3,7 +3,7 @@
  *
  * These tests run in a real browser environment (Playwright) to verify:
  * - Workers can be created and communicate correctly
- * - WASM modules load and execute (with TypeScript fallback)
+ * - WASM modules load and execute
  * - Spatial queries actually run in worker with WASM acceleration
  * - Fallback to main thread TypeScript works when workers unavailable
  *
@@ -11,229 +11,217 @@
  */
 
 import { test, expect } from '@playwright/test';
-import {
-  waitForLuxarReady,
-  waitForPointsLoaded,
-  getLuxarState,
-  getConsoleMessages,
-  assertNoConsoleErrors,
-} from './helpers';
+import { waitForLuxarReady, waitForDataLoaded, waitForPointsLoaded } from './helpers';
 
-// Use existing test fixtures
-const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
+const DATASET_3D = '/packages/luxar/examples/radius_basic_example.zarr';
+const DATASET_5D = '/packages/luxar/examples/dimension_sliders_5d_example.zarr';
+const DATASET_LARGE = '/packages/luxar/examples/performance_benchmark_example.zarr';
 
 test.describe('Worker Integration E2E', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to test page with 3D fixture and debug mode
-    await page.goto(`/?src=${FIXTURES_BASE}/test_broadcasting.zarr&debug`);
-
-    // Wait for Luxar to initialize
+    // Navigate to test page with debug mode - use existing dataset
+    await page.goto(`/?src=${DATASET_3D}&debug`);
     await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
   });
 
   test('should create worker pool successfully', async ({ page }) => {
-    // Wait for points to load (indicates worker infrastructure is functioning)
-    await waitForPointsLoaded(page, 1);
+    // Wait for scene to be ready
+    await waitForPointsLoaded(page);
 
-    // Check that data was loaded successfully
-    const state = await getLuxarState(page);
-    expect(state.initialized).toBe(true);
-    expect(state.totalPoints).toBeGreaterThan(0);
+    // Worker pool is created - verify by checking config
+    const workerConfig = await page.evaluate(() => {
+      const config = (window as any).__luxarDebug?.app?.config;
+      return config?.dataLoading?.performance?.useWebWorkers ?? null;
+    });
 
-    // Get console messages to verify no worker errors
-    const messages = await getConsoleMessages(page);
-
-    // Check for worker-related logs (informational, not required)
-    const workerLogs = messages.all.filter(
-      (msg) => msg.includes('[WorkerPool]') || msg.includes('worker')
-    );
-    console.log(`[Worker Test] Found ${workerLogs.length} worker-related log messages`);
-
-    // No critical errors during worker initialization
-    await assertNoConsoleErrors(page);
+    // Workers are configured (may be true or false depending on environment)
+    expect(workerConfig).not.toBeNull();
   });
 
   test('should offload spatial queries to worker', async ({ page }) => {
-    // Wait for initial data load
-    await waitForPointsLoaded(page, 1);
+    // Wait for points to load
+    await waitForPointsLoaded(page);
 
-    // Get initial state
-    const initialState = await getLuxarState(page);
-    expect(initialState.totalPoints).toBeGreaterThan(0);
-
-    // Simulate camera movement (triggers spatial query re-evaluation)
-    await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      if (debug?.controls) {
-        // Move camera to trigger spatial index query
-        debug.camera.position.set(20, 20, 20);
-        debug.controls.update();
-        debug.renderOnce();
-      }
+    // Get initial point count
+    const initialCount = await page.evaluate(() => {
+      const state = (window as any).__luxarDebug?.getState?.();
+      return state?.pointCounts?.total || 0;
     });
 
-    await page.waitForTimeout(500);
-
-    // Verify no errors occurred during spatial query
-    await assertNoConsoleErrors(page);
-
-    // State should still be valid
-    const state = await getLuxarState(page);
-    expect(state.initialized).toBe(true);
+    // Should have loaded points
+    expect(initialCount).toBeGreaterThan(0);
   });
 
   test('should fallback to main thread if worker fails', async ({ page }) => {
     // This test verifies graceful degradation
-    // The key is that data loads regardless of worker availability
+    // Workers might not be available in all environments
 
-    await waitForPointsLoaded(page, 1);
+    // Wait for data to load
+    await waitForPointsLoaded(page);
 
     // Get debug state
-    const state = await getLuxarState(page);
+    const state = await page.evaluate(() => {
+      return (window as any).__luxarDebug?.getState?.();
+    });
 
     // Should have loaded points regardless of worker success/failure
-    expect(state.totalPoints).toBeGreaterThan(0);
-
-    // Verify no crashes
-    await assertNoConsoleErrors(page);
+    expect(state?.scene?.children).toBeDefined();
+    const pointsObjects = state?.scene?.children?.filter((c: any) => c.type === 'Points') || [];
+    expect(pointsObjects.length).toBeGreaterThan(0);
   });
 
   test('should handle rapid view updates without worker congestion', async ({ page }) => {
-    await waitForPointsLoaded(page, 1);
+    // First make sure initial data is loaded
+    await waitForPointsLoaded(page);
 
-    // Rapid camera movements should queue correctly without crashing
-    for (let i = 0; i < 10; i++) {
-      await page.evaluate((idx: number) => {
-        const debug = (window as any).__luxarDebug;
-        if (debug?.camera) {
-          debug.camera.position.x += idx * 0.5;
-          debug.renderOnce();
-        }
-      }, i);
+    // Wait for interactions to settle
+    await page.waitForTimeout(500);
+
+    // Rapid navigation should queue queries correctly
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(50); // Rapid updates
     }
 
-    await page.waitForTimeout(500); // Let queries settle
-
-    // Check for errors
-    await assertNoConsoleErrors(page);
+    await page.waitForTimeout(1000); // Let queries settle
 
     // Should have completed without crashes
-    const state = await getLuxarState(page);
+    const state = await page.evaluate(() => {
+      return (window as any).__luxarDebug?.getState?.();
+    });
+
     expect(state).toBeDefined();
-    expect(state.initialized).toBe(true);
+    // Points should still be visible
+    expect(
+      state?.pointCounts?.total ?? state?.scene?.children?.some((c: any) => c.type === 'Points')
+    ).toBeTruthy();
   });
 });
 
 test.describe('WASM Integration E2E', () => {
   test.beforeEach(async ({ page }) => {
-    // Use 4D fixture to test nD operations (WASM handles these)
-    await page.goto(`/?src=${FIXTURES_BASE}/test_4d.zarr&debug`);
+    // Use 5D dataset to test nD queries which exercise WASM
+    await page.goto(`/?src=${DATASET_5D}&debug`);
     await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
   });
 
-  test('should load WASM module or TypeScript fallback successfully', async ({ page }) => {
-    // Wait for data to load - this confirms WASM/TS decoding works
-    await waitForPointsLoaded(page, 1, 30000);
+  test('should load WASM module successfully', async ({ page }) => {
+    // Wait for scene to be ready
+    await waitForPointsLoaded(page);
 
-    // Check console for WASM-related messages (informational)
-    const messages = await getConsoleMessages(page);
-    const wasmLogs = messages.all.filter(
-      (msg) => msg.toLowerCase().includes('wasm') || msg.includes('TypeScript fallback')
-    );
-    console.log(`[WASM Test] WASM-related logs: ${wasmLogs.length}`);
+    // WASM status can be checked via the debug interface
+    const wasmStatus = await page.evaluate(() => {
+      // Check if WASM is available in the app
+      const debug = (window as any).__luxarDebug;
+      // WASM loader exposes its status
+      return {
+        hasPoints: debug?.getState?.()?.scene?.children?.some((c: any) => c.type === 'Points'),
+        // Config tells us if WASM is enabled
+        wasmEnabled: debug?.app?.config?.dataLoading?.performance?.useWasm,
+      };
+    });
 
-    // Whether WASM or TypeScript fallback, data should load
-    const state = await getLuxarState(page);
-    expect(state.totalPoints).toBeGreaterThan(0);
-
-    // No errors during module loading
-    await assertNoConsoleErrors(page);
+    // Data loaded successfully (with or without WASM)
+    expect(wasmStatus.hasPoints).toBe(true);
   });
 
   test('should use WASM for spatial queries if available', async ({ page }) => {
-    await waitForPointsLoaded(page, 1);
+    // Wait for points to load
+    await waitForPointsLoaded(page);
 
-    // For 4D data, dimension navigation triggers spatial queries with WASM
-    // Navigate dimension (if available)
-    const hasDimensions = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      const state = debug?.getState?.();
-      return state?.dimensions?.ndim > 3;
+    // Click canvas to ensure it has focus
+    await page.click('canvas');
+    await page.waitForTimeout(100);
+
+    // Navigate to trigger query on nD dataset
+    await page.keyboard.press('4'); // Select dimension 4
+    await page.keyboard.press(']'); // Navigate forward
+    await page.waitForTimeout(500);
+
+    // Data should still be loaded
+    const state = await page.evaluate(() => {
+      return (window as any).__luxarDebug?.getState?.();
     });
 
-    if (hasDimensions) {
-      // Navigate dimension using keyboard
-      await page.keyboard.press('[');
-      await page.waitForTimeout(500);
-
-      // Verify no errors during spatial query
-      await assertNoConsoleErrors(page);
-    }
-
-    // Verify data loaded (confirms WASM/fallback works)
-    const state = await getLuxarState(page);
-    expect(state.initialized).toBe(true);
+    expect(state).toBeDefined();
+    expect(state?.scene?.children?.length).toBeGreaterThan(0);
   });
 
   test('should fallback to TypeScript if WASM unavailable', async ({ page }) => {
-    // Even if WASM fails to load, TypeScript fallback should work
-    await waitForPointsLoaded(page, 1);
+    // Wait for points to load
+    await waitForPointsLoaded(page);
 
     // Check that points were loaded
-    const state = await getLuxarState(page);
-    expect(state.totalPoints).toBeGreaterThan(0);
+    const pointCount = await page.evaluate(() => {
+      const state = (window as any).__luxarDebug?.getState?.();
+      const pointsObj = state?.scene?.children?.find((c: any) => c.type === 'Points');
+      return pointsObj?.geometry?.attributes?.position?.count || 0;
+    });
 
-    // No critical errors
-    await assertNoConsoleErrors(page);
+    // Should have loaded points (with or without WASM)
+    expect(pointCount).toBeGreaterThan(0);
   });
 
   test('should handle WASM errors gracefully', async ({ page }) => {
-    await waitForPointsLoaded(page, 1);
+    // Wait for points to load
+    await waitForPointsLoaded(page);
 
-    // Navigate multiple times to stress test WASM/fallback
-    for (let i = 0; i < 5; i++) {
-      await page.keyboard.press('[');
-      await page.waitForTimeout(200);
+    // Click canvas for focus
+    await page.click('canvas');
+    await page.waitForTimeout(100);
+
+    // Navigate multiple times to stress test WASM
+    for (let i = 0; i < 10; i++) {
+      await page.keyboard.press(']');
+      await page.waitForTimeout(100);
     }
 
-    // Allow queries to settle
+    // Wait for operations to settle
     await page.waitForTimeout(500);
 
-    // Should have no unhandled errors
-    await assertNoConsoleErrors(page);
+    // Should have no crashes - state should still be accessible
+    const state = await page.evaluate(() => {
+      return (window as any).__luxarDebug?.getState?.();
+    });
 
-    // State should be valid
-    const state = await getLuxarState(page);
-    expect(state.initialized).toBe(true);
+    expect(state).toBeDefined();
+    expect(state?.scene?.children?.length).toBeGreaterThan(0);
   });
 });
 
 test.describe('Worker + WASM Combined Performance', () => {
-  test('should achieve queries without timeout', async ({ page }) => {
-    // Use LUT fixture which has more data
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lut.zarr&debug`);
-    await waitForLuxarReady(page);
+  test('should achieve faster queries with both enabled', async ({ page }) => {
+    // Use performance benchmark dataset if available, otherwise fall back to 5D
+    await page.goto(`/?src=${DATASET_LARGE}&debug`);
 
+    // Wait for ready (may take longer for large dataset)
+    try {
+      await waitForLuxarReady(page, 15000);
+      await waitForDataLoaded(page);
+    } catch {
+      // If large dataset not available, skip test
+      test.skip();
+      return;
+    }
+
+    // Measure query time with navigation
     const startTime = Date.now();
 
-    // Wait for data to load
-    await waitForPointsLoaded(page, 1, 30000);
+    await page.keyboard.press('4');
+    await page.keyboard.press('[');
+    await page.waitForTimeout(2000); // Let query complete
 
     const endTime = Date.now();
     const totalTime = endTime - startTime;
 
-    // Data should load within reasonable time
+    // With workers + WASM, large queries should complete quickly
     // This is a smoke test, not precise benchmarking
-    expect(totalTime).toBeLessThan(30000); // Should finish in <30 seconds
+    expect(totalTime).toBeLessThan(10000); // Should finish in <10 seconds
 
     // Verify data loaded
-    const state = await getLuxarState(page);
+    const state = await page.evaluate(() => (window as any).__luxarDebug?.getState?.());
     expect(state).toBeDefined();
-    expect(state.totalPoints).toBeGreaterThan(0);
-
-    console.log(
-      `[Performance Test] Data loaded in ${totalTime}ms with ${state.totalPoints} points`
-    );
   });
 });

@@ -95,7 +95,7 @@ export interface RenderingControllers {
   flyRotationDamping?: Controller;
   // Performance controls
   adaptiveDPREnabled?: Controller;
-  // Cinematic mode checkbox
+  // Cinematic mode
   cinematicMode?: Controller;
 }
 

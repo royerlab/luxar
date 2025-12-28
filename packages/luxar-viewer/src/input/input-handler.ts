@@ -51,6 +51,7 @@ import {
   mapKeyToDimension,
 } from './input-handler-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { updateSceneForDimensions, cycleDataMonitor, hideDataMonitor } from '../data';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -297,14 +298,16 @@ export class InputHandler {
       this.dimensionSliders.setAnimationManager(this.animationManager);
     }
 
-    // Listen for dimension changes
-    sceneDimsManager.addListener(() => {
-      this.updateAllNDNodes();
+    // Listen for dimension changes (returns Promise for animation synchronization)
+    sceneDimsManager.addListener(async () => {
+      // Update sliders immediately (sync UI feedback)
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
       // Trigger animation to render the changes
       this.animationController.startAnimation();
+      // Await data loading - this allows animation to synchronize
+      await this.updateAllNDNodes();
     });
 
     // Trigger initial update now that listener is registered
@@ -473,7 +476,6 @@ export class InputHandler {
     }
 
     // Use the new loader architecture's update mechanism
-    const { updateSceneForDimensions } = await import('../data');
     await updateSceneForDimensions(dims, this.sceneManager.scene as unknown as THREE.Group);
 
     // Trigger re-render after update
@@ -661,19 +663,12 @@ export class InputHandler {
    * Handle cycling the data loading monitor (hidden → mini → expanded → hidden).
    *
    * Extracted to a method to support binding registration.
-   * Uses dynamic import to avoid loading data module unless needed.
    *
    * @private
    */
   private handleDataMonitorCycle(): void {
-    import('../data')
-      .then(({ cycleDataMonitor }) => {
-        cycleDataMonitor();
-        log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
-      })
-      .catch((error) => {
-        log.error(Modules.INPUT, 'Failed to cycle data monitor:', error);
-      });
+    cycleDataMonitor();
+    log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
   }
 
   /**
@@ -1380,13 +1375,7 @@ export class InputHandler {
     }
 
     // Close data loading monitor
-    import('../data')
-      .then(({ hideDataMonitor }) => {
-        hideDataMonitor();
-      })
-      .catch((error) => {
-        log.error(Modules.INPUT, 'Failed to hide data monitor:', error);
-      });
+    hideDataMonitor();
 
     // Close dimension sliders
     if (this.dimensionSliders?.getIsVisible()) {

@@ -42,25 +42,25 @@ describe('ViewStateManager', () => {
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
       expect(viewState.displayDims).toEqual([2, 3, 4]); // x, y, z
-      expect(viewState.slicePosition[0]).toBe(0); // time: start at minimum of [0, 100]
-      expect(viewState.slicePosition[1]).toBe(0); // channel: start at minimum of [0, 4]
+      expect(viewState.slicePosition[0]).toBe(0); // time: starts at minimum of [0, 100]
+      expect(viewState.slicePosition[1]).toBe(0); // channel: starts at minimum of [0, 4]
       expect(viewState.slicePosition[2]).toBe(0); // x: displayed, starts at 0
       expect(viewState.tolerance[0]).toBe(0); // time: discrete, exact match
       expect(viewState.tolerance[1]).toBe(0); // channel: discrete, exact match
       expect(viewState.tolerance[2]).toBe(0); // x: displayed, no tolerance
     });
 
-    it('should use floor() for discrete dimension centers', () => {
+    it('should use floor() for discrete dimension initial position', () => {
       const sceneDims: SceneDimensions = {
         dimensions: [
-          { name: 'frames', unit: '', scale: 1.0, range: [0, 9], display: false, discrete: true }, // Center = 4.5 → floor = 4
+          { name: 'frames', unit: '', scale: 1.0, range: [0, 9], display: false, discrete: true }, // Starts at minimum = 0
           { name: 'x', unit: 'px', scale: 1.0, display: true },
         ],
       };
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(0); // Start at minimum of range [0, 9]
+      expect(viewState.slicePosition[0]).toBe(0); // Discrete dims start at range minimum
     });
 
     it('should handle continuous non-displayed dimensions', () => {
@@ -73,7 +73,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(400); // Start at minimum of [400, 700]
+      expect(viewState.slicePosition[0]).toBe(400); // Starts at minimum of [400, 700]
       expect(viewState.tolerance[0]).toBeGreaterThan(0); // Should have default tolerance
     });
 
@@ -221,7 +221,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(0); // Start at minimum of range
+      expect(viewState.slicePosition[0]).toBe(0); // Starts at minimum
     });
 
     it('should handle negative ranges correctly', () => {
@@ -234,7 +234,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(-100); // Start at minimum of [-100, -50]
+      expect(viewState.slicePosition[0]).toBe(-100); // Starts at minimum of [-100, -50]
     });
 
     it('should handle fractional discrete dimension ranges', () => {
@@ -255,7 +255,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(0); // floor(0.5) = 0, start at minimum
+      expect(viewState.slicePosition[0]).toBe(0); // floor(0.5) = 0 (starts at minimum, floored)
     });
   });
 

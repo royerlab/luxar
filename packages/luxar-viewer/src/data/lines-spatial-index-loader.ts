@@ -34,16 +34,43 @@ import type {
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
-import { LinesDataAccumulator } from './data-accumulator';
-import { config as _appConfig } from '../config';
+import { RangeLoader, type LoadRange } from './loaders';
+import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
+import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
-import { getFallback, type WasmModule } from '../wasm';
+import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
+import { initWasm, getFallback } from '../wasm';
+import type { WasmModule } from '../wasm/types';
 
-// WASM module cache for synchronous access on main thread
+// ============================================================================
+// WASM Module Caching for Hot Path Optimization
+// ============================================================================
+
+/** Cached WASM module instance (lazily initialized) */
 let wasmModuleCache: WasmModule | null = null;
+let wasmInitPromise: Promise<WasmModule> | null = null;
 
 /**
- * Get WASM module synchronously (uses cached instance or fallback).
+ * Get the WASM module, initializing if necessary.
+ * Uses caching to avoid repeated initialization overhead.
+ */
+async function getWasmModule(): Promise<WasmModule> {
+  if (wasmModuleCache) {
+    return wasmModuleCache;
+  }
+
+  if (!wasmInitPromise) {
+    wasmInitPromise = initWasm().then((module) => {
+      wasmModuleCache = module;
+      return module;
+    });
+  }
+
+  return wasmInitPromise;
+}
+
+/**
+ * Get the WASM module synchronously (returns fallback if not yet initialized).
  * Used in hot paths where async is not desirable.
  */
 function getWasmModuleSync(): WasmModule {
@@ -53,17 +80,6 @@ function getWasmModuleSync(): WasmModule {
   // Return fallback if WASM not yet loaded
   return getFallback();
 }
-
-// Initialize WASM module asynchronously in background
-(async () => {
-  try {
-    const { initWasm } = await import('../wasm');
-    wasmModuleCache = await initWasm();
-  } catch (error) {
-    // Fallback will be used
-    console.warn('[LinesSpatialIndexLoader] WASM init failed, using fallback:', error);
-  }
-})();
 
 /**
  * Lines data loader using spatial indices for efficient nD queries.
@@ -80,7 +96,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
   private initLock = false;
-  private decoder: ArrayDecoder;
+  private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
   // Data accumulator for object pooling (Phase 1 optimization)
@@ -98,12 +114,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
-    zarrStore?: zarr.Readable
+    zarrStore?: zarr.Readable,
+    profiler?: UpdateProfiler
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
-    this.decoder = new ArrayDecoder(refRegistry || new ArrayRefRegistry());
+    this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    // profiler parameter kept for API compatibility; session is passed directly to methods
+    void profiler;
   }
 
   /**
@@ -173,7 +192,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
     // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
-    if (_appConfig.dataLoading.performance.useAccumulators) {
+    if (appConfig.dataLoading.performance.useAccumulators) {
       const metadata = attrs as LinesMetadata;
       const totalSegments = this.chunkIndex?.metadata.n_segments || metadata.n_segments || 0;
       const totalVertices = this.chunkIndex?.metadata.n_vertices || metadata.n_vertices || 0;
@@ -181,17 +200,17 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
       // Estimate initial capacity (at least 1024 segments, or ~10% of total)
       const initialSegmentCap = Math.min(
-        _appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        appConfig.dataLoading.performance.initialAccumulatorCapacity,
         Math.max(512, Math.ceil(totalSegments / 10))
       );
       const initialVertexCap = Math.min(
-        _appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        appConfig.dataLoading.performance.initialAccumulatorCapacity,
         Math.max(1024, Math.ceil(totalVertices / 10))
       );
 
       this._accumulator = new LinesDataAccumulator(initialVertexCap, initialSegmentCap, ndim);
 
-      if (_appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+      if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
         const stats = this._accumulator.getStats();
         log.info(
           Modules.DATA_ACCUMULATOR,
@@ -205,8 +224,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
   /**
    * Load lines data for the given view state
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async loadLines(viewState: LinesViewState): Promise<LoadedLinesData> {
+  async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
     // Prevent race conditions during initialization
     if (!this.initPromise && !this.initLock) {
       this.initLock = true;
@@ -226,7 +247,17 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
     // Phase 1: Query segment chunks and load segments (Phase 2: async for worker support)
-    const segmentRanges = await this.queryVisibleSegmentRanges(viewState);
+    let segmentRanges: SegmentRange[];
+    if (session) {
+      const querySession = session.begin('Spatial Query');
+      try {
+        segmentRanges = await this.queryVisibleSegmentRanges(viewState);
+      } finally {
+        querySession.end();
+      }
+    } else {
+      segmentRanges = await this.queryVisibleSegmentRanges(viewState);
+    }
 
     if (segmentRanges.length === 0) {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible segments - returning empty lines data');
@@ -239,7 +270,17 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       Modules.SPATIAL_INDEX_LOADER,
       `Loading segments for ${segmentRanges.length} ranges`
     );
-    const segmentData = await this.loadSegmentRanges(segmentRanges);
+    let segmentData: Uint32Array;
+    if (session) {
+      const loadSegSession = session.begin('Load Segments');
+      try {
+        segmentData = await this.loadSegmentRanges(segmentRanges);
+      } finally {
+        loadSegSession.end();
+      }
+    } else {
+      segmentData = await this.loadSegmentRanges(segmentRanges);
+    }
 
     // Collect unique vertex indices from loaded segments
     const uniqueVertexIndices = new Set<number>();
@@ -286,22 +327,50 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     // Phase 1 DEEP Integration: Load directly to accumulator if enabled (ZERO allocations!)
-    // DISABLED: Accumulator path has a bug causing particle tracks to be invisible
-    // TODO: Debug and re-enable after fixing the clipping issue
-    const useAccumulator = false; // this._accumulator && _appConfig.dataLoading.performance.useAccumulators;
+    // BUG FIXED: Segment capacity was estimated incorrectly (1.5:1 ratio instead of ~1:1 for particle tracks)
+    // Now passing actual segment count to ensureCapacity() to avoid buffer truncation.
+    const useAccumulator = this._accumulator && appConfig.dataLoading.performance.useAccumulators;
 
     if (useAccumulator && this._accumulator) {
-      // Ensure capacity FIRST using ACTUAL vertex count (not estimated!)
+      // Ensure capacity FIRST using ACTUAL counts (not estimated!)
       const segmentCount = segmentData.length / 2;
       const actualVertexCount = sortedIndices.length; // ACTUAL count from unique indices!
-      this._accumulator.ensureCapacity(actualVertexCount); // FIXED: Pass actual vertex count
+      // FIXED: Pass BOTH vertex count AND segment count to avoid buffer truncation
+      // For particle tracks, N vertices → N-1 segments (ratio ~1:1, not 1.5:1)
+      this._accumulator.ensureCapacity(actualVertexCount, segmentCount);
 
-      // Get direct buffer references
+      // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
+      // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
+      // IMPORTANT: For encoded arrays, use encoding.original_dtype NOT the zarr array dtype!
+      // The zarr array dtype is the quantized format (e.g., uint8), but loadColorRanges
+      // returns the original dtype from encoding metadata (e.g., float32 for HDR colors).
+      if (this.arrays.colors) {
+        const colorAttrs = this.arrays.colors.attrs as unknown as ArrayMetadata;
+        const originalDtype = colorAttrs?.encoding?.original_dtype;
+        const colorDtype = originalDtype || String(this.arrays.colors.dtype);
+        const colorType = this.getExpectedColorType(colorDtype);
+        // Create a small typed array to initialize accumulator types
+        const sampleColors =
+          colorType === 'Uint8Array'
+            ? new Uint8Array(3)
+            : colorType === 'Uint16Array'
+              ? new Uint16Array(3)
+              : new Float32Array(3);
+        this._accumulator.fill(0, 0, {
+          positions: new Float32Array(attrs.ndim),
+          segments: new Uint32Array(2),
+          widths: new Float32Array(1),
+          colors: sampleColors,
+          sharpness: this.arrays.sharpness ? new Float32Array(1) : undefined,
+        });
+      }
+
+      // Get direct buffer references (now colorBuffer has correct type!)
       const vertexBuffer = this._accumulator['vertexBuffer'] as Float32Array;
       const segmentBuffer = this._accumulator['segmentBuffer'] as Uint32Array;
       const widthBuffer = this._accumulator['widthBuffer'] as Float32Array;
       const colorBuffer = this.arrays.colors
-        ? (this._accumulator['colorBuffer'] as Float32Array)
+        ? (this._accumulator['colorBuffer'] as Float32Array | Uint8Array | Uint16Array)
         : null;
       const sharpnessBuffer = this.arrays.sharpness
         ? (this._accumulator['sharpnessBuffer'] as Float32Array)
@@ -317,8 +386,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         widthBuffer.fill(1.0, 0, sortedIndices.length);
       }
 
+      // Load colors if present
+      // NOTE: For encoded arrays, loadColorRanges uses Float32 intermediate buffer
+      // then converts to original dtype - it may return a different buffer than targetBuffer.
+      // We load without target buffer and copy the result to ensure correctness.
       if (colorBuffer) {
-        await this.loadVertexRanges('colors', mergedVertexRanges, 3, colorBuffer);
+        const loadedColors = await this.loadColorRanges(mergedVertexRanges);
+        // Copy loaded colors to accumulator's colorBuffer
+        // Note: TypedArray.set() handles type conversion automatically
+        colorBuffer.set(loadedColors as ArrayLike<number>);
       }
 
       if (sharpnessBuffer) {
@@ -346,22 +422,41 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const vertexCount = vertexIndexMap.size;
 
       // Return from accumulator (subarrays, zero copy!)
-      // Data already in buffers, no fill() needed!
-      // segmentCount already defined above for ensureCapacity
       return this._accumulator.getData(segmentCount, vertexCount);
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
-    const vertices = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
-    const widths = this.arrays.widths
-      ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
-      : this.createDefaultWidths(sortedIndices.length);
-    const colors = this.arrays.colors
-      ? await this.loadVertexRanges('colors', mergedVertexRanges, 3)
-      : null;
-    const sharpness = this.arrays.sharpness
-      ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
-      : null;
+    let vertexPositions: Float32Array;
+    let widths: Float32Array;
+    let colors: Float32Array | Uint8Array | Uint16Array | null = null;
+    let sharpness: Float32Array | null = null;
+
+    if (session) {
+      const loadVertSession = session.begin('Load Vertices');
+      try {
+        vertexPositions = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
+        widths = this.arrays.widths
+          ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
+          : this.createDefaultWidths(sortedIndices.length);
+        // Use multi-type loadColorRanges for colors
+        colors = this.arrays.colors ? await this.loadColorRanges(mergedVertexRanges) : null;
+        sharpness = this.arrays.sharpness
+          ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
+          : null;
+      } finally {
+        loadVertSession.end();
+      }
+    } else {
+      vertexPositions = await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim);
+      widths = this.arrays.widths
+        ? await this.loadVertexRanges('widths', mergedVertexRanges, 1)
+        : this.createDefaultWidths(sortedIndices.length);
+      // Use multi-type loadColorRanges for colors
+      colors = this.arrays.colors ? await this.loadColorRanges(mergedVertexRanges) : null;
+      sharpness = this.arrays.sharpness
+        ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
+        : null;
+    }
 
     // Build global → local index mapping
     const vertexIndexMap = new Map<number, number>();
@@ -384,7 +479,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Fallback: Return new object
     return {
-      vertices,
+      positions: vertexPositions,
       segments: remappedSegments,
       widths,
       colors,
@@ -399,9 +494,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * Update view for new position.
    * Note: extend_to_all optimization is handled at scene-loader level,
    * which skips calling this method entirely for fully-extended nodes.
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async updateView(viewState: LinesViewState): Promise<LoadedLinesData> {
-    return this.loadLines(viewState);
+  async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
+    return this.loadLines(viewState, session);
   }
 
   /**
@@ -464,7 +561,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Query segment chunks (worker or main thread based on config)
     let chunkIndices: number[];
 
-    if (_appConfig.dataLoading.performance.useWebWorkers) {
+    if (appConfig.dataLoading.performance.useWebWorkers) {
       // Phase 2: Use worker for spatial queries
       try {
         const worker = await getWorkerPool().getWorker();
@@ -507,25 +604,16 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     if (!this.arrays.segments) {
       throw new Error('Segments array not initialized');
     }
-    // Capture reference for use in closure (helps TypeScript narrowing)
-    const segmentsArray = this.arrays.segments;
 
     // Calculate total segments to load
     const totalSegments = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const output = new Uint32Array(totalSegments * 2);
 
-    // PARALLEL FETCH: Load all segment chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
-      const sliceSpec = [slice(range.start, range.end), slice(null)] as zarr.Slice[];
-      return get(segmentsArray, sliceSpec);
-    });
-
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL WRITE: Process chunks in order (maintains correct destOffset)
     let destOffset = 0;
 
-    for (const data of chunks) {
+    for (const range of ranges) {
+      const sliceSpec = [slice(range.start, range.end), slice(null)] as zarr.Slice[];
+      const data = await get(this.arrays.segments, sliceSpec);
       // Data can be typed array or ArrayBuffer-like, handle both
       const segmentData =
         data.data instanceof Uint32Array
@@ -540,20 +628,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   /**
-   * Load vertex attribute data for given ranges with optimized encoding handling.
+   * Load vertex ranges with optional target buffer for zero-allocation operation.
    *
-   * This method handles different encoding types efficiently:
-   * - Broadcasted: Load single value, replicate to all vertices
-   * - Quantized: Load only needed ranges of quantized data, dequantize those
-   * - LUT: Load only needed ranges of indices, decode with LUT from metadata
-   * - Array ref: Resolve target, apply optimized loading based on target encoding
-   * - Direct: Load ranges directly from zarr
-   *
-   * CRITICAL: For encoded arrays, we load ONLY the needed ranges, not the full array!
-   * This provides massive performance improvement for large animated datasets.
-   */
-  /**
-   * Load vertex ranges with optional target buffer for zero-allocation operation
+   * Uses RangeLoader for unified encoding dispatch (broadcasted, quantized, lut, direct).
+   * Array references are handled specially (need zarrStore access to resolve target).
    */
   private async loadVertexRanges(
     arrayName: string,
@@ -569,254 +647,275 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const totalVertices = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const totalElements = totalVertices * elementsPerVertex;
 
-    // Check for different encoding types
-    const attrs = array.attrs as unknown as ArrayMetadata;
-    const isBroadcasted = ArrayDecoder.isBroadcasted(attrs);
-    const isQuantized = ArrayDecoder.isQuantizedEncoding(attrs);
-    const isLUTEncoded = ArrayDecoder.isLUTEncoded(attrs);
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
-
-    // Determine actual elements per vertex from array shape
-    const shape = array.shape;
-    const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
-
     // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
     const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
-    let destOffset = 0;
 
-    if (isBroadcasted) {
-      // Broadcasted encoding: Load single value and replicate to all vertices
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Broadcasted array ${arrayName}: replicating single value to ${totalVertices} vertices`
-      );
+    // Check for array_ref - needs special handling (zarrStore access to resolve target)
+    const attrs = array.attrs as unknown as ArrayMetadata;
+    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
-      const fullData = await get(array);
-      const broadcastValue = fullData.data as Float32Array | Uint8Array;
-
-      for (let i = 0; i < totalVertices; i++) {
-        for (let j = 0; j < actualElementsPerVertex; j++) {
-          output[i * actualElementsPerVertex + j] = broadcastValue[j] || broadcastValue[0];
-        }
-      }
-    } else if (isQuantized) {
-      // Quantized encoding: Load only needed ranges of quantized data, then dequantize
-      const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs);
-      if (!quantMetadata) {
-        throw new Error(
-          `Lines: Quantization metadata missing for ${arrayName}. This should not happen if isQuantizedEncoding returned true.`
-        );
-      }
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalVertices} values)`
-      );
-
-      // PARALLEL FETCH: Load all quantized chunks simultaneously
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL DECODE: Process in order
-      for (const chunkData of chunks) {
-        const quantizedData = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-        const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
-
-        output.set(dequantized, destOffset);
-        destOffset += dequantized.length;
-      }
-    } else if (isLUTEncoded) {
-      // LUT encoding: Load only the range of indices, then decode with LUT from metadata
-      const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
-      if (!lutMetadata) {
-        throw new Error(
-          `Lines: LUT metadata missing for ${arrayName}. This should not happen if isLUTEncoded returned true.`
-        );
-      }
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Lines: LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalVertices} indices → ${totalElements} elements)`
-      );
-
-      // PARALLEL FETCH: Load all index chunks simultaneously
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL DECODE: Process in order
-      for (const chunkData of chunks) {
-        const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-        const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
-
-        output.set(decoded, destOffset);
-        destOffset += decoded.length;
-      }
-    } else if (isArrayRef) {
-      // Array reference: Resolve target and apply optimized range loading based on target encoding
+    if (isArrayRef) {
+      // Array reference: Resolve target and use RangeLoader for target
       const targetPath = attrs.encoding!.target!;
-
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Array ref: ${arrayName} → ${targetPath} (resolving with optimized range loading)`
+        `Lines: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
       );
 
       const storeToUse = this.zarrStore || this.zarrLocation.store;
       const zarrRootLoc = zarr.root(storeToUse);
-
       const targetLoc = zarrRootLoc.resolve(targetPath);
       const targetArray = await zarr.open(targetLoc, { kind: 'array' });
       const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
 
-      if (ArrayDecoder.isQuantizedEncoding(targetAttrs)) {
-        // Target is quantized → use quantized range loading!
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Lines: Array ref target is quantized (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-        );
+      // Determine actual elements per vertex from target array shape
+      const targetShape = targetArray.shape;
+      const actualElementsPerVertex = targetShape.length === 2 ? targetShape[1] : 1;
 
-        const quantMeta = ArrayDecoder.getQuantizationMetadata(targetAttrs);
-        if (!quantMeta) {
-          throw new Error(
-            `Lines: Quantization metadata missing for array_ref target: ${targetPath}`
-          );
-        }
+      // Use RangeLoader for target
+      const encoding = RangeLoader.detectEncoding(targetAttrs);
+      log.info(Modules.SPATIAL_INDEX_LOADER, `Lines: Array ref target encoding: ${encoding}`);
 
-        // PARALLEL FETCH: Load all quantized chunks from target simultaneously
-        const chunkPromises = ranges.map((range) => {
-          const sliceSpec: zarr.Slice[] =
-            targetArray.shape.length === 2
-              ? [slice(range.start, range.end), slice(null)]
-              : [slice(range.start, range.end)];
-          return get(targetArray, sliceSpec);
-        });
-
-        const chunks = await Promise.all(chunkPromises);
-
-        // SEQUENTIAL DECODE
-        for (const quantizedData of chunks) {
-          const dequantized = this.decoder.dequantizeRange(
-            quantizedData.data as Uint8Array | Uint16Array,
-            quantMeta
-          );
-
-          output.set(dequantized, destOffset);
-          destOffset += dequantized.length;
-        }
-      } else if (ArrayDecoder.isLUTEncoded(targetAttrs)) {
-        // Target is LUT → use LUT range loading!
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Lines: Array ref target is LUT (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-        );
-
-        const lutMetadata = ArrayDecoder.getLUTMetadata(targetAttrs);
-        if (!lutMetadata) {
-          throw new Error(`Lines: LUT metadata missing for array_ref target: ${targetPath}`);
-        }
-
-        // PARALLEL FETCH: Load all LUT index chunks from target simultaneously
-        const chunkPromises = ranges.map((range) => {
-          const sliceSpec: zarr.Slice[] =
-            targetArray.shape.length === 2
-              ? [slice(range.start, range.end), slice(null)]
-              : [slice(range.start, range.end)];
-          return get(targetArray, sliceSpec);
-        });
-
-        const chunks = await Promise.all(chunkPromises);
-
-        // SEQUENTIAL DECODE
-        for (const chunkData of chunks) {
-          const decoded = this.decoder.decodeLUTIndices(
-            chunkData.data as Float32Array | Uint8Array | Uint16Array,
-            lutMetadata
-          );
-
-          output.set(decoded, destOffset);
-          destOffset += decoded.length;
-        }
-      } else if (ArrayDecoder.isBroadcasted(targetAttrs)) {
-        // Target is broadcasted → load once, replicate!
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          'Lines: Array ref target is broadcasted (loading single value)'
-        );
-
-        const fullData = await get(targetArray);
-        const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
-
-        for (let i = 0; i < totalVertices; i++) {
-          for (let j = 0; j < actualElementsPerVertex; j++) {
-            output[i * actualElementsPerVertex + j] = broadcastValue[j] || broadcastValue[0];
-          }
-        }
-      } else {
-        // Target is direct or unknown encoding → decode full target, extract ranges
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Lines: Array ref target is direct/unknown (${ArrayDecoder.getEncodingMode(targetAttrs)}) - using full decode`
-        );
-
-        const decoded = await this.decoder.decode(
-          targetArray,
-          targetAttrs,
-          totalElements,
-          zarrRootLoc
-        );
-
-        for (const range of ranges) {
-          const rangeSize = (range.end - range.start) * actualElementsPerVertex;
-          const srcOffset = range.start * actualElementsPerVertex;
-
-          output.set(decoded.subarray(srcOffset, srcOffset + rangeSize), destOffset);
-          destOffset += rangeSize;
-        }
-      }
-    } else {
-      // Direct arrays: load ranges directly from zarr
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Direct array loading: ${arrayName}, ${ranges.length} ranges (${totalVertices} vertices)`
+      await this.rangeLoader.loadRanges(
+        targetArray,
+        targetAttrs,
+        ranges as LoadRange[],
+        output,
+        totalVertices,
+        actualElementsPerVertex
       );
 
-      // PARALLEL FETCH: Load all chunks simultaneously
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL WRITE
-      for (const data of chunks) {
-        const floatData =
-          data.data instanceof Float32Array
-            ? data.data
-            : new Float32Array(data.data as unknown as ArrayBufferLike);
-
-        output.set(floatData, destOffset);
-        destOffset += floatData.length;
-      }
+      return output;
     }
 
+    // Use RangeLoader for all other encodings (broadcasted, quantized, lut, direct)
+    // Determine actual elements per vertex from array shape
+    const shape = array.shape;
+    const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
+
+    await this.rangeLoader.loadRanges(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      output,
+      totalVertices,
+      actualElementsPerVertex
+    );
+
     return output;
+  }
+
+  /**
+   * Load color ranges with multi-type support (preserves original_dtype)
+   *
+   * This method handles the full encoding/decoding pipeline for colors,
+   * including original_dtype restoration for encoded arrays.
+   */
+  private async loadColorRanges(
+    ranges: SegmentRange[],
+    targetBuffer?: Float32Array | Uint8Array | Uint16Array
+  ): Promise<Float32Array | Uint8Array | Uint16Array> {
+    const array = this.arrays.colors;
+    if (!array) {
+      throw new Error('Colors array not initialized');
+    }
+
+    const totalVertices = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const totalElements = totalVertices * 3; // RGB
+
+    const attrs = array.attrs as unknown as ArrayMetadata;
+    const isEncoded =
+      ArrayDecoder.isQuantizedEncoding(attrs) ||
+      ArrayDecoder.isLUTEncoded(attrs) ||
+      ArrayDecoder.isBroadcasted(attrs);
+    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
+
+    // For direct (unencoded) arrays, preserve native type
+    if (!isEncoded && !isArrayRef) {
+      const dtype = String(array.dtype);
+
+      // Use target buffer if provided and type matches, otherwise allocate
+      const expectedType = this.getExpectedColorType(dtype);
+      const output =
+        targetBuffer && this.colorBufferTypeMatches(targetBuffer, expectedType)
+          ? targetBuffer
+          : this.allocateColorBuffer(totalElements, false, dtype);
+
+      // Load directly with type preservation
+      await this.loadDirectColorRanges(array, ranges, output);
+      return output;
+    }
+
+    // For encoded arrays or array_ref, decode to Float32Array then restore original_dtype
+    const decodedFloat32 =
+      targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
+
+    if (isArrayRef) {
+      // Resolve array_ref and load target
+      const targetPath = attrs.encoding!.target!;
+      const storeToUse = this.zarrStore || this.zarrLocation.store;
+      const zarrRootLoc = zarr.root(storeToUse);
+      const targetLoc = zarrRootLoc.resolve(targetPath);
+      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+      await this.rangeLoader.loadRanges(
+        targetArray,
+        targetAttrs,
+        ranges as LoadRange[],
+        decodedFloat32,
+        totalVertices,
+        3
+      );
+
+      // Restore original_dtype from array_ref encoding
+      return this.restoreOriginalDtype(
+        decodedFloat32,
+        attrs.encoding?.original_dtype,
+        totalElements
+      );
+    }
+
+    // Use RangeLoader for encoded arrays
+    const shape = array.shape;
+    const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
+
+    await this.rangeLoader.loadRanges(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      decodedFloat32,
+      totalVertices,
+      actualElementsPerVertex
+    );
+
+    // Restore original_dtype for encoded arrays
+    return this.restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
+  }
+
+  /**
+   * Allocate color buffer based on dtype
+   */
+  private allocateColorBuffer(
+    totalElements: number,
+    isEncoded: boolean,
+    dtype: string
+  ): Float32Array | Uint8Array | Uint16Array {
+    if (isEncoded) {
+      return new Float32Array(totalElements);
+    }
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
+      return new Uint8Array(totalElements);
+    }
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
+      return new Uint16Array(totalElements);
+    }
+    return new Float32Array(totalElements);
+  }
+
+  /**
+   * Get expected color buffer type from dtype string
+   */
+  private getExpectedColorType(dtype: string): 'Float32Array' | 'Uint8Array' | 'Uint16Array' {
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
+      return 'Uint8Array';
+    }
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
+      return 'Uint16Array';
+    }
+    return 'Float32Array';
+  }
+
+  /**
+   * Check if target buffer type matches expected type
+   */
+  private colorBufferTypeMatches(
+    buffer: Float32Array | Uint8Array | Uint16Array,
+    expectedType: 'Float32Array' | 'Uint8Array' | 'Uint16Array'
+  ): boolean {
+    if (expectedType === 'Uint8Array') return buffer instanceof Uint8Array;
+    if (expectedType === 'Uint16Array') return buffer instanceof Uint16Array;
+    return buffer instanceof Float32Array;
+  }
+
+  /**
+   * Load direct (unencoded) color ranges with type preservation
+   */
+  private async loadDirectColorRanges(
+    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    ranges: SegmentRange[],
+    output: Float32Array | Uint8Array | Uint16Array
+  ): Promise<void> {
+    let destOffset = 0;
+    const shape = array.shape;
+
+    for (const range of ranges) {
+      const sliceSpec: zarr.Slice[] =
+        shape.length === 2
+          ? [slice(range.start, range.end), slice(null)]
+          : [slice(range.start, range.end)];
+
+      const chunkData = await get(array, sliceSpec);
+      const data = chunkData.data;
+
+      // Copy data preserving type (no conversion!)
+      if (output instanceof Float32Array && data instanceof Float32Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
+        output.set(data, destOffset);
+      } else {
+        // Fallback: convert values (not buffer reinterpretation!)
+        const float32Data =
+          data instanceof Float32Array ? data : new Float32Array(data as ArrayLike<number>);
+        (output as Float32Array).set(float32Data, destOffset);
+      }
+
+      destOffset += (range.end - range.start) * 3;
+    }
+  }
+
+  /**
+   * Restore original dtype for encoded arrays
+   */
+  private restoreOriginalDtype(
+    decodedFloat32: Float32Array,
+    originalDtype: string | undefined,
+    totalElements: number
+  ): Float32Array | Uint8Array | Uint16Array {
+    if (!originalDtype) {
+      return decodedFloat32;
+    }
+
+    if (
+      originalDtype === 'uint8' ||
+      originalDtype === '|u1' ||
+      originalDtype === '<u1' ||
+      originalDtype === '>u1'
+    ) {
+      const uint8Output = new Uint8Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+      }
+      return uint8Output;
+    }
+
+    if (
+      originalDtype === 'uint16' ||
+      originalDtype === '|u2' ||
+      originalDtype === '<u2' ||
+      originalDtype === '>u2'
+    ) {
+      const uint16Output = new Uint16Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+      }
+      return uint16Output;
+    }
+
+    // For float32/float64 or unspecified, keep as Float32Array
+    return decodedFloat32;
   }
 
   /**
@@ -833,7 +932,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
     return {
-      vertices: new Float32Array(0),
+      positions: new Float32Array(0),
       segments: new Uint32Array(0),
       widths: new Float32Array(0),
       colors: null,
@@ -842,6 +941,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       vertexCount: 0,
       ndim: attrs.ndim,
     };
+  }
+
+  /**
+   * Get accumulator stats for memory monitoring
+   */
+  getAccumulatorStats(): AccumulatorStats | null {
+    return this._accumulator?.getStats() ?? null;
   }
 
   /**
@@ -1002,7 +1108,27 @@ export function buildInstanceBuffers(
   tolerance: number[],
   displayDims: number[]
 ): ProcessedLinesData {
-  const { vertices, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+
+  // DEBUG: Log input data for particle tracks investigation
+  if (segmentCount > 10000) {
+    console.log('[DEBUG buildInstanceBuffers] Input:');
+    console.log('  segmentCount:', segmentCount);
+    console.log(
+      '  positions.length:',
+      positions.length,
+      '(should be',
+      segmentCount * 2 * ndim,
+      ')'
+    );
+    console.log('  segments.length:', segments.length, '(should be', segmentCount * 2, ')');
+    console.log('  ndim:', ndim);
+    console.log('  slicePosition:', slicePosition);
+    console.log('  tolerance:', tolerance);
+    console.log('  displayDims:', displayDims);
+    console.log('  First vertex:', Array.from(positions.slice(0, ndim)));
+    console.log('  First segment indices:', segments[0], segments[1]);
+  }
 
   // Pre-allocate output arrays (may be smaller after clipping)
   const maxSegments = segmentCount;
@@ -1019,6 +1145,7 @@ export function buildInstanceBuffers(
   const endClipped = new Uint8Array(maxSegments);
 
   let outIdx = 0;
+  let firstClippedReason = null;
 
   for (let i = 0; i < segmentCount; i++) {
     // Get vertex indices (local space)
@@ -1026,12 +1153,22 @@ export function buildInstanceBuffers(
     const v1 = segments[i * 2 + 1];
 
     // Extract nD positions
-    const p1 = Array.from(vertices.slice(v0 * ndim, (v0 + 1) * ndim));
-    const p2 = Array.from(vertices.slice(v1 * ndim, (v1 + 1) * ndim));
+    const p1 = Array.from(positions.slice(v0 * ndim, (v0 + 1) * ndim));
+    const p2 = Array.from(positions.slice(v1 * ndim, (v1 + 1) * ndim));
+
+    // DEBUG: Log first few segments for particle tracks
+    if (segmentCount > 10000 && i < 3) {
+      console.log(`  Segment ${i}: v0=${v0}, v1=${v1}, p1=[${p1}], p2=[${p2}]`);
+    }
 
     // Clip to slice
     const clipped = clipSegmentToSlice(p1, p2, slicePosition, tolerance, displayDims);
-    if (!clipped.visible) continue;
+    if (!clipped.visible) {
+      if (segmentCount > 10000 && !firstClippedReason) {
+        firstClippedReason = `Segment ${i} clipped: p1=[${p1}], p2=[${p2}]`;
+      }
+      continue;
+    }
 
     // Write 3D positions
     startPositions.set(clipped.p1, outIdx * 3);
@@ -1067,6 +1204,22 @@ export function buildInstanceBuffers(
     outIdx++;
   }
 
+  // DEBUG: Log results for particle tracks
+  if (segmentCount > 10000) {
+    console.log('[DEBUG buildInstanceBuffers] Output:');
+    console.log('  Input segments:', segmentCount, '→ Output segments:', outIdx);
+    console.log('  Clipped rate:', ((1 - outIdx / segmentCount) * 100).toFixed(1), '%');
+    if (firstClippedReason) {
+      console.log('  First clip reason:', firstClippedReason);
+    }
+    if (outIdx > 0) {
+      console.log('  First output segment:', {
+        p1: Array.from(startPositions.slice(0, 3)),
+        p2: Array.from(endPositions.slice(0, 3)),
+      });
+    }
+  }
+
   // Trim arrays to actual size
   return {
     startPositions: startPositions.slice(0, outIdx * 3),
@@ -1087,8 +1240,13 @@ export function buildInstanceBuffers(
 /**
  * WASM-accelerated version of buildInstanceBuffers.
  *
- * Uses WASM batch functions for 20-25x speedup on large datasets.
- * Falls back to TypeScript if WASM unavailable.
+ * Uses batch WASM functions for significantly faster nD clipping:
+ * - clip_segments_batch: Process all segments at once
+ * - interpolate_clipped_positions: Batch position interpolation
+ * - interpolate_scalars_batch: Batch width/sharpness interpolation
+ * - interpolate_colors_batch: Batch color interpolation
+ * - calculate_segment_lengths: Batch length calculation
+ * - mark_clipped_endpoints: Batch endpoint marking
  *
  * @param loadedData - Raw lines data from loader
  * @param slicePosition - Current position in nD space
@@ -1102,7 +1260,7 @@ export function buildInstanceBuffersWASM(
   tolerance: number[],
   displayDims: number[]
 ): ProcessedLinesData {
-  const { vertices, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
 
   // Get WASM module (uses cached instance or fallback)
   const wasm = getWasmModuleSync();
@@ -1112,16 +1270,13 @@ export function buildInstanceBuffersWASM(
   const toleranceF32 = new Float32Array(tolerance);
   const displayDimsU32 = new Uint32Array(displayDims);
 
-  // Pre-allocate output arrays (may be smaller after clipping)
-  const maxSegments = segmentCount;
-
-  // Step 1: Batch clip all segments using WASM
-  const visibility = new Uint8Array(maxSegments);
-  const t1Params = new Float32Array(maxSegments);
-  const t2Params = new Float32Array(maxSegments);
+  // Phase 1: Batch clip all segments
+  const visibility = new Uint8Array(segmentCount);
+  const t1Params = new Float32Array(segmentCount);
+  const t2Params = new Float32Array(segmentCount);
 
   const visibleCount = wasm.clip_segments_batch(
-    vertices,
+    positions,
     segments,
     slicePosF32,
     toleranceF32,
@@ -1133,8 +1288,8 @@ export function buildInstanceBuffersWASM(
     t2Params
   );
 
+  // Early exit if no visible segments
   if (visibleCount === 0) {
-    // No visible segments - return empty buffers
     return {
       startPositions: new Float32Array(0),
       endPositions: new Float32Array(0),
@@ -1151,12 +1306,22 @@ export function buildInstanceBuffersWASM(
     };
   }
 
-  // Step 2: Interpolate clipped positions to 3D using WASM
+  // Phase 2: Allocate output buffers for visible segments
   const startPositions = new Float32Array(visibleCount * 3);
   const endPositions = new Float32Array(visibleCount * 3);
+  const startColors = new Float32Array(visibleCount * 3);
+  const endColors = new Float32Array(visibleCount * 3);
+  const startWidths = new Float32Array(visibleCount);
+  const endWidths = new Float32Array(visibleCount);
+  const startSharpness = new Float32Array(visibleCount);
+  const endSharpness = new Float32Array(visibleCount);
+  const segmentLengths = new Float32Array(visibleCount);
+  const startClipped = new Uint8Array(visibleCount);
+  const endClipped = new Uint8Array(visibleCount);
 
+  // Phase 3: Interpolate clipped positions to 3D
   wasm.interpolate_clipped_positions(
-    vertices,
+    positions,
     segments,
     visibility,
     t1Params,
@@ -1168,13 +1333,22 @@ export function buildInstanceBuffersWASM(
     endPositions
   );
 
-  // Step 3: Interpolate colors using WASM (or use default white)
-  const startColors = new Float32Array(visibleCount * 3);
-  const endColors = new Float32Array(visibleCount * 3);
-
+  // Phase 4: Interpolate colors
   if (colors) {
+    // WASM expects Float32Array, convert and normalize if needed
+    let colorsF32: Float32Array;
+    if (colors instanceof Float32Array) {
+      colorsF32 = colors;
+    } else {
+      // Normalize Uint8 (0-255) or Uint16 (0-65535) to Float32 (0-1)
+      colorsF32 = new Float32Array(colors.length);
+      const normFactor = colors instanceof Uint8Array ? 1 / 255 : 1 / 65535;
+      for (let i = 0; i < colors.length; i++) {
+        colorsF32[i] = colors[i] * normFactor;
+      }
+    }
     wasm.interpolate_colors_batch(
-      colors,
+      colorsF32,
       segments,
       visibility,
       t1Params,
@@ -1185,15 +1359,11 @@ export function buildInstanceBuffersWASM(
     );
   } else {
     // Default white color
-    const whiteColor = new Float32Array([1, 1, 1]);
-    wasm.decode_broadcasted(whiteColor, visibleCount, 3, startColors);
-    wasm.decode_broadcasted(whiteColor, visibleCount, 3, endColors);
+    startColors.fill(1.0);
+    endColors.fill(1.0);
   }
 
-  // Step 4: Interpolate widths using WASM
-  const startWidths = new Float32Array(visibleCount);
-  const endWidths = new Float32Array(visibleCount);
-
+  // Phase 5: Interpolate widths
   wasm.interpolate_scalars_batch(
     widths,
     segments,
@@ -1205,10 +1375,7 @@ export function buildInstanceBuffersWASM(
     endWidths
   );
 
-  // Step 5: Interpolate sharpness using WASM (or use default 1.0)
-  const startSharpness = new Float32Array(visibleCount);
-  const endSharpness = new Float32Array(visibleCount);
-
+  // Phase 6: Interpolate sharpness
   if (sharpness) {
     wasm.interpolate_scalars_batch(
       sharpness,
@@ -1221,21 +1388,23 @@ export function buildInstanceBuffersWASM(
       endSharpness
     );
   } else {
-    // Default sharpness 1.0
-    const defaultSharpness = new Float32Array([1.0]);
-    wasm.decode_broadcasted(defaultSharpness, visibleCount, 1, startSharpness);
-    wasm.decode_broadcasted(defaultSharpness, visibleCount, 1, endSharpness);
+    // Default sharpness of 1.0
+    startSharpness.fill(1.0);
+    endSharpness.fill(1.0);
   }
 
-  // Step 6: Calculate 3D segment lengths using WASM
-  const segmentLengths = new Float32Array(visibleCount);
+  // Phase 7: Calculate segment lengths
   wasm.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 7: Mark clipped endpoints using WASM
-  const startClipped = new Uint8Array(visibleCount);
-  const endClipped = new Uint8Array(visibleCount);
-
-  wasm.mark_clipped_endpoints(visibility, t1Params, t2Params, segmentCount, startClipped, endClipped);
+  // Phase 8: Mark clipped endpoints
+  wasm.mark_clipped_endpoints(
+    visibility,
+    t1Params,
+    t2Params,
+    segmentCount,
+    startClipped,
+    endClipped
+  );
 
   return {
     startPositions,
@@ -1251,4 +1420,13 @@ export function buildInstanceBuffersWASM(
     endClipped,
     segmentCount: visibleCount,
   };
+}
+
+/**
+ * Initialize WASM module for hot path optimization.
+ * Call this early in application startup to ensure WASM is ready when needed.
+ */
+export async function initLinesWASM(): Promise<void> {
+  await getWasmModule();
+  log.info(Modules.SPATIAL_INDEX_LOADER, 'WASM module initialized for lines clipping');
 }

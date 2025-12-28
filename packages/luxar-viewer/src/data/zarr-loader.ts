@@ -156,7 +156,7 @@ function logSceneStats(scene: THREE.Group): void {
       if (positions) {
         totalPoints += positions.count;
       }
-      if (obj.userData.node?.hasSpatialIndex) {
+      if (obj.userData.attrs?.has_spatial_index || obj.userData.spatialIndex) {
         usedSpatialIndex++;
       }
     }

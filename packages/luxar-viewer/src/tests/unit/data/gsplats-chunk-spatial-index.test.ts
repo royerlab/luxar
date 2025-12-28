@@ -206,14 +206,22 @@ describe('computeGSplatsTolerance', () => {
 });
 
 describe('computeToleranceFromViewState', () => {
-  it('should use provided tolerance if available', () => {
+  it('should always compute fresh tolerance from dimensions (ignore viewState.tolerance)', () => {
+    // GSplats always computes fresh tolerance - doesn't use viewState.tolerance
+    // because that's designed for points slicing, not gsplats spatial queries
     const viewState: GSplatsViewState = {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0],
-      tolerance: [1, 2, 3],
+      tolerance: [1, 2, 3], // This is IGNORED for gsplats
+      dimensions: [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+      ],
     };
     const result = computeToleranceFromViewState(viewState);
-    expect(result).toEqual([1, 2, 3]);
+    // Should return default tolerance (1e10) for displayed dimensions
+    expect(result).toEqual([1e10, 1e10, 1e10]);
   });
 
   it('should compute tolerance from dimensions if not provided', () => {

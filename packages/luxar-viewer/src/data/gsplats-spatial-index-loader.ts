@@ -11,7 +11,6 @@
  */
 
 import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
 import { log, Modules, LogEmoji } from '../utils/log';
 import {
   loadGSplatsChunkSpatialIndex,
@@ -30,10 +29,12 @@ import type {
 } from '../types/gsplats';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { RangeLoader, type LoadRange } from './loaders';
 import { choleskyPackedSize } from '../types/gsplats';
-import { GSplatsDataAccumulator } from './data-accumulator';
+import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
+import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -49,7 +50,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
   private initLock = false;
-  private decoder: ArrayDecoder;
+  private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
   // Data accumulator for object pooling (Phase 1 optimization)
@@ -67,12 +68,15 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
-    zarrStore?: zarr.Readable
+    zarrStore?: zarr.Readable,
+    profiler?: UpdateProfiler
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
-    this.decoder = new ArrayDecoder(refRegistry || new ArrayRefRegistry());
+    this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    // profiler parameter kept for API compatibility; session is passed directly to methods
+    void profiler;
   }
 
   /**
@@ -169,8 +173,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   /**
    * Load gsplats data for the given view state
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async loadGSplats(viewState: GSplatsViewState): Promise<LoadedGSplatsData> {
+  async loadGSplats(
+    viewState: GSplatsViewState,
+    session?: UpdateSession
+  ): Promise<LoadedGSplatsData> {
     // Prevent race conditions during initialization
     if (!this.initPromise && !this.initLock) {
       this.initLock = true;
@@ -190,7 +199,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
 
     // Query visible splat ranges (Phase 2: async for worker support)
-    const splatRanges = await this.queryVisibleSplatRanges(viewState);
+    let splatRanges: SplatRange[];
+    if (session) {
+      const querySession = session.begin('Spatial Query');
+      try {
+        splatRanges = await this.queryVisibleSplatRanges(viewState);
+      } finally {
+        querySession.end();
+      }
+    } else {
+      splatRanges = await this.queryVisibleSplatRanges(viewState);
+    }
 
     if (splatRanges.length === 0) {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
@@ -211,12 +230,34 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // Ensure capacity FIRST
       this._accumulator.ensureCapacity(totalSplats);
 
-      // Get direct buffer references for zero-allocation loading
+      // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
+      // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
+      if (this.arrays.colors) {
+        const colorDtype = String(this.arrays.colors.dtype);
+        const colorType = this.getExpectedColorType(colorDtype);
+        // Create a small typed array to initialize accumulator types
+        const sampleColors =
+          colorType === 'Uint8Array'
+            ? new Uint8Array(3)
+            : colorType === 'Uint16Array'
+              ? new Uint16Array(3)
+              : new Float32Array(3);
+        this._accumulator.fill(0, {
+          positions: new Float32Array(attrs.ndim),
+          amplitudes: new Float32Array(1),
+          choleskyFactors: new Float32Array(choleskyPackedSize(attrs.ndim)),
+          colors: sampleColors,
+          sharpness: this.arrays.sharpness ? new Float32Array(1) : undefined,
+        });
+      }
+
+      // Get direct buffer references for zero-allocation loading (now colorBuffer has correct type!)
       const centerBuffer = this._accumulator['centerBuffer'] as Float32Array;
       const amplitudeBuffer = this._accumulator['amplitudeBuffer'] as Float32Array;
       const choleskyBuffer = this._accumulator['choleskyBuffer'] as Float32Array;
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
+      // Note: Nested timing disabled due to async context issues - top-level timing captures total
       await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
       await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
       await this.loadArrayRanges(
@@ -228,8 +269,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Load optional arrays directly to accumulator
       if (this.arrays.colors) {
-        const colorBuffer = this._accumulator['colorBuffer'] as Float32Array;
-        await this.loadArrayRanges('colors', splatRanges, 3, colorBuffer);
+        // Use loadColorRanges for proper multi-type handling
+        const colorBuffer = this._accumulator['colorBuffer'] as
+          | Float32Array
+          | Uint8Array
+          | Uint16Array;
+        await this.loadColorRanges(splatRanges, colorBuffer);
       }
       if (this.arrays.sharpness) {
         const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
@@ -242,21 +287,49 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
-    const centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
-    const amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
-    const choleskyFactors = await this.loadArrayRanges(
-      'cholesky_factors',
-      splatRanges,
-      choleskyPackedSize(attrs.ndim)
-    );
+    let centers: Float32Array;
+    let amplitudes: Float32Array;
+    let choleskyFactors: Float32Array;
+    let colors: Float32Array | Uint8Array | Uint16Array | null = null;
+    let sharpness: Float32Array | null = null;
 
-    const colors = this.arrays.colors ? await this.loadArrayRanges('colors', splatRanges, 3) : null;
-    const sharpness = this.arrays.sharpness
-      ? await this.loadArrayRanges('sharpness', splatRanges, 1)
-      : null;
+    if (session) {
+      const loadSession = session.begin('Load Arrays');
+      try {
+        centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
+        amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
+        choleskyFactors = await this.loadArrayRanges(
+          'cholesky_factors',
+          splatRanges,
+          choleskyPackedSize(attrs.ndim)
+        );
+
+        // Use multi-type loadColorRanges for colors
+        colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
+        sharpness = this.arrays.sharpness
+          ? await this.loadArrayRanges('sharpness', splatRanges, 1)
+          : null;
+      } finally {
+        loadSession.end();
+      }
+    } else {
+      centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
+      amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
+      choleskyFactors = await this.loadArrayRanges(
+        'cholesky_factors',
+        splatRanges,
+        choleskyPackedSize(attrs.ndim)
+      );
+
+      // Use multi-type loadColorRanges for colors
+      colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
+      sharpness = this.arrays.sharpness
+        ? await this.loadArrayRanges('sharpness', splatRanges, 1)
+        : null;
+    }
 
     return {
-      centers,
+      positions: centers,
       amplitudes,
       choleskyFactors,
       colors,
@@ -268,9 +341,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   /**
    * Update view for new position.
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async updateView(viewState: GSplatsViewState): Promise<LoadedGSplatsData> {
-    return this.loadGSplats(viewState);
+  async updateView(
+    viewState: GSplatsViewState,
+    session?: UpdateSession
+  ): Promise<LoadedGSplatsData> {
+    return this.loadGSplats(viewState, session);
   }
 
   /**
@@ -353,17 +431,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Load array data for given splat ranges with optimized encoding handling.
+   * Load array ranges with optional target buffer for zero-allocation operation.
    *
-   * Handles different encoding types efficiently:
-   * - Broadcasted: Load single value, replicate to all splats
-   * - Quantized: Load only needed ranges, then dequantize
-   * - LUT: Load only needed ranges of indices, decode with LUT
-   * - Array ref: Resolve target, apply optimized loading
-   * - Direct: Load ranges directly from zarr
-   */
-  /**
-   * Load array ranges with optional target buffer for zero-allocation operation
+   * Uses RangeLoader for unified encoding dispatch (broadcasted, quantized, lut, direct).
+   * Array references are handled specially (need zarrStore access to resolve target).
    *
    * @param arrayName - Name of array to load
    * @param ranges - Ranges to load
@@ -385,262 +456,276 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const totalElements = totalSplats * elementsPerSplat;
 
-    // Check for different encoding types
-    const attrs = array.attrs as unknown as ArrayMetadata;
-    const isBroadcasted = ArrayDecoder.isBroadcasted(attrs);
-    const isQuantized = ArrayDecoder.isQuantizedEncoding(attrs);
-    const isLUTEncoded = ArrayDecoder.isLUTEncoded(attrs);
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
-
-    // Get array shape for slice specification
-    const shape = array.shape;
-
     // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
     const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
-    let destOffset = 0;
 
-    if (isBroadcasted) {
-      // Broadcasted encoding: Load single value and replicate to all splats
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Broadcasted array ${arrayName}: replicating single value to ${totalSplats} splats`
-      );
+    // Check for array_ref - needs special handling (zarrStore access to resolve target)
+    const attrs = array.attrs as unknown as ArrayMetadata;
+    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
-      const fullData = await get(array);
-      const broadcastValue = fullData.data as Float32Array | Uint8Array;
-      const broadcastLen = broadcastValue.length;
-
-      // Use elementsPerSplat (caller's expectation) for output indexing
-      // Use modulo to handle cases where broadcast value has fewer elements than expected
-      for (let i = 0; i < totalSplats; i++) {
-        for (let j = 0; j < elementsPerSplat; j++) {
-          output[i * elementsPerSplat + j] = broadcastValue[j % broadcastLen] ?? broadcastValue[0];
-        }
-      }
-    } else if (isQuantized) {
-      // Quantized encoding: Load only needed ranges of quantized data, then dequantize
-      const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs);
-      if (!quantMetadata) {
-        throw new Error(
-          `GSplats: Quantization metadata missing for ${arrayName}. ` +
-            'This should not happen if isQuantizedEncoding returned true.'
-        );
-      }
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalSplats} values)`
-      );
-
-      // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL DECODE: Process chunks in order
-      for (const chunkData of chunks) {
-        const quantizedData = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-        const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
-
-        output.set(dequantized, destOffset);
-        destOffset += dequantized.length;
-      }
-    } else if (isLUTEncoded) {
-      // LUT encoding: Load only the range of indices, then decode with LUT from metadata
-      const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
-      if (!lutMetadata) {
-        throw new Error(
-          `GSplats: LUT metadata missing for ${arrayName}. ` +
-            'This should not happen if isLUTEncoded returned true.'
-        );
-      }
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalSplats} indices → ${totalElements} elements)`
-      );
-
-      // PARALLEL FETCH: Load all index chunks simultaneously
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL DECODE: Process chunks in order
-      for (const chunkData of chunks) {
-        const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-        const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
-
-        output.set(decoded, destOffset);
-        destOffset += decoded.length;
-      }
-    } else if (isArrayRef) {
-      // Array reference: Resolve target and apply optimized range loading based on target encoding
+    if (isArrayRef) {
+      // Array reference: Resolve target and use RangeLoader for target
       const targetPath = attrs.encoding!.target!;
-
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Array ref: ${arrayName} → ${targetPath} (resolving with optimized range loading)`
+        `GSplats: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
       );
 
       const storeToUse = this.zarrStore || this.zarrLocation.store;
       const zarrRootLoc = zarr.root(storeToUse);
-
       const targetLoc = zarrRootLoc.resolve(targetPath);
       const targetArray = await zarr.open(targetLoc, { kind: 'array' });
       const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
 
-      if (ArrayDecoder.isQuantizedEncoding(targetAttrs)) {
-        // Target is quantized → use quantized range loading
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `GSplats: Array ref target is quantized (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-        );
+      // Determine actual elements per splat from target array shape
+      const targetShape = targetArray.shape;
+      const actualElementsPerSplat = targetShape.length === 2 ? targetShape[1] : 1;
 
-        const quantMeta = ArrayDecoder.getQuantizationMetadata(targetAttrs);
-        if (!quantMeta) {
-          throw new Error(
-            `GSplats: Quantization metadata missing for array_ref target: ${targetPath}`
-          );
-        }
+      // Use RangeLoader for target
+      const encoding = RangeLoader.detectEncoding(targetAttrs);
+      log.info(Modules.SPATIAL_INDEX_LOADER, `GSplats: Array ref target encoding: ${encoding}`);
 
-        // PARALLEL FETCH: Load all quantized chunks from target
-        const chunkPromises = ranges.map((range) => {
-          const sliceSpec: zarr.Slice[] =
-            targetArray.shape.length === 2
-              ? [slice(range.start, range.end), slice(null)]
-              : [slice(range.start, range.end)];
-          return get(targetArray, sliceSpec);
-        });
-
-        const chunks = await Promise.all(chunkPromises);
-
-        // SEQUENTIAL DECODE
-        for (const quantizedData of chunks) {
-          const dequantized = this.decoder.dequantizeRange(
-            quantizedData.data as Uint8Array | Uint16Array,
-            quantMeta
-          );
-
-          output.set(dequantized, destOffset);
-          destOffset += dequantized.length;
-        }
-      } else if (ArrayDecoder.isLUTEncoded(targetAttrs)) {
-        // Target is LUT → use LUT range loading
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `GSplats: Array ref target is LUT (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-        );
-
-        const lutMetadata = ArrayDecoder.getLUTMetadata(targetAttrs);
-        if (!lutMetadata) {
-          throw new Error(`GSplats: LUT metadata missing for array_ref target: ${targetPath}`);
-        }
-
-        // PARALLEL FETCH: Load all LUT index chunks from target
-        const chunkPromises = ranges.map((range) => {
-          const sliceSpec: zarr.Slice[] =
-            targetArray.shape.length === 2
-              ? [slice(range.start, range.end), slice(null)]
-              : [slice(range.start, range.end)];
-          return get(targetArray, sliceSpec);
-        });
-
-        const chunks = await Promise.all(chunkPromises);
-
-        // SEQUENTIAL DECODE
-        for (const chunkData of chunks) {
-          const decoded = this.decoder.decodeLUTIndices(
-            chunkData.data as Float32Array | Uint8Array | Uint16Array,
-            lutMetadata
-          );
-
-          output.set(decoded, destOffset);
-          destOffset += decoded.length;
-        }
-      } else if (ArrayDecoder.isBroadcasted(targetAttrs)) {
-        // Target is broadcasted → load once, replicate
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          'GSplats: Array ref target is broadcasted (loading single value)'
-        );
-
-        const fullData = await get(targetArray);
-        const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
-        const broadcastLen = broadcastValue.length;
-
-        // Use elementsPerSplat (caller's expectation) for output indexing
-        for (let i = 0; i < totalSplats; i++) {
-          for (let j = 0; j < elementsPerSplat; j++) {
-            output[i * elementsPerSplat + j] =
-              broadcastValue[j % broadcastLen] ?? broadcastValue[0];
-          }
-        }
-      } else {
-        // Target is direct or unknown encoding → decode full target, extract ranges
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `GSplats: Array ref target is direct/unknown (${ArrayDecoder.getEncodingMode(targetAttrs)}) - using full decode`
-        );
-
-        const decoded = await this.decoder.decode(
-          targetArray,
-          targetAttrs,
-          totalElements,
-          zarrRootLoc
-        );
-
-        // Use elementsPerSplat (caller's expectation) for indexing
-        for (const range of ranges) {
-          const rangeSize = (range.end - range.start) * elementsPerSplat;
-          const srcOffset = range.start * elementsPerSplat;
-
-          output.set(decoded.subarray(srcOffset, srcOffset + rangeSize), destOffset);
-          destOffset += rangeSize;
-        }
-      }
-    } else {
-      // Direct arrays: load ranges directly from zarr
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Direct array loading: ${arrayName}, ${ranges.length} ranges (${totalSplats} splats)`
+      await this.rangeLoader.loadRanges(
+        targetArray,
+        targetAttrs,
+        ranges as LoadRange[],
+        output,
+        totalSplats,
+        actualElementsPerSplat
       );
 
-      // PARALLEL FETCH: Load all chunks simultaneously
-      const chunkPromises = ranges.map((range) => {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        return get(array, sliceSpec);
-      });
-
-      const chunks = await Promise.all(chunkPromises);
-
-      // SEQUENTIAL WRITE
-      for (const data of chunks) {
-        const floatData =
-          data.data instanceof Float32Array
-            ? data.data
-            : new Float32Array(data.data as unknown as ArrayBufferLike);
-
-        output.set(floatData, destOffset);
-        destOffset += floatData.length;
-      }
+      return output;
     }
 
+    // Use RangeLoader for all other encodings (broadcasted, quantized, lut, direct)
+    // Determine actual elements per splat from array shape
+    const shape = array.shape;
+    const actualElementsPerSplat = shape.length === 2 ? shape[1] : 1;
+
+    await this.rangeLoader.loadRanges(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      output,
+      totalSplats,
+      actualElementsPerSplat
+    );
+
     return output;
+  }
+
+  /**
+   * Load color ranges with multi-type support (preserves original_dtype)
+   *
+   * This method handles the full encoding/decoding pipeline for colors,
+   * including original_dtype restoration for encoded arrays.
+   */
+  private async loadColorRanges(
+    ranges: SplatRange[],
+    targetBuffer?: Float32Array | Uint8Array | Uint16Array
+  ): Promise<Float32Array | Uint8Array | Uint16Array> {
+    const array = this.arrays.colors;
+    if (!array) {
+      throw new Error('Colors array not initialized');
+    }
+
+    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const totalElements = totalSplats * 3; // RGB
+
+    const attrs = array.attrs as unknown as ArrayMetadata;
+    const isEncoded =
+      ArrayDecoder.isQuantizedEncoding(attrs) ||
+      ArrayDecoder.isLUTEncoded(attrs) ||
+      ArrayDecoder.isBroadcasted(attrs);
+    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
+
+    // For direct (unencoded) arrays, preserve native type
+    if (!isEncoded && !isArrayRef) {
+      const dtype = String(array.dtype);
+
+      // Use target buffer if provided and type matches, otherwise allocate
+      const expectedType = this.getExpectedColorType(dtype);
+      const output =
+        targetBuffer && this.colorBufferTypeMatches(targetBuffer, expectedType)
+          ? targetBuffer
+          : this.allocateColorBuffer(totalElements, false, dtype);
+
+      // Load directly with type preservation
+      await this.loadDirectColorRanges(array, ranges, output);
+      return output;
+    }
+
+    // For encoded arrays or array_ref, decode to Float32Array then restore original_dtype
+    const decodedFloat32 =
+      targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
+
+    if (isArrayRef) {
+      // Resolve array_ref and load target
+      const targetPath = attrs.encoding!.target!;
+      const storeToUse = this.zarrStore || this.zarrLocation.store;
+      const zarrRootLoc = zarr.root(storeToUse);
+      const targetLoc = zarrRootLoc.resolve(targetPath);
+      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+      await this.rangeLoader.loadRanges(
+        targetArray,
+        targetAttrs,
+        ranges as LoadRange[],
+        decodedFloat32,
+        totalSplats,
+        3
+      );
+
+      // Restore original_dtype from array_ref encoding
+      return this.restoreOriginalDtype(
+        decodedFloat32,
+        attrs.encoding?.original_dtype,
+        totalElements
+      );
+    }
+
+    // Use RangeLoader for encoded arrays
+    const shape = array.shape;
+    const actualElementsPerSplat = shape.length === 2 ? shape[1] : 1;
+
+    await this.rangeLoader.loadRanges(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      decodedFloat32,
+      totalSplats,
+      actualElementsPerSplat
+    );
+
+    // Restore original_dtype for encoded arrays
+    return this.restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
+  }
+
+  /**
+   * Allocate color buffer based on dtype
+   */
+  private allocateColorBuffer(
+    totalElements: number,
+    isEncoded: boolean,
+    dtype: string
+  ): Float32Array | Uint8Array | Uint16Array {
+    if (isEncoded) {
+      return new Float32Array(totalElements);
+    }
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
+      return new Uint8Array(totalElements);
+    }
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
+      return new Uint16Array(totalElements);
+    }
+    return new Float32Array(totalElements);
+  }
+
+  /**
+   * Get expected color buffer type from dtype string
+   */
+  private getExpectedColorType(dtype: string): 'Float32Array' | 'Uint8Array' | 'Uint16Array' {
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
+      return 'Uint8Array';
+    }
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
+      return 'Uint16Array';
+    }
+    return 'Float32Array';
+  }
+
+  /**
+   * Check if target buffer type matches expected type
+   */
+  private colorBufferTypeMatches(
+    buffer: Float32Array | Uint8Array | Uint16Array,
+    expectedType: 'Float32Array' | 'Uint8Array' | 'Uint16Array'
+  ): boolean {
+    if (expectedType === 'Uint8Array') return buffer instanceof Uint8Array;
+    if (expectedType === 'Uint16Array') return buffer instanceof Uint16Array;
+    return buffer instanceof Float32Array;
+  }
+
+  /**
+   * Load direct (unencoded) color ranges with type preservation
+   */
+  private async loadDirectColorRanges(
+    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    ranges: SplatRange[],
+    output: Float32Array | Uint8Array | Uint16Array
+  ): Promise<void> {
+    const { get, slice } = await import('zarrita');
+    let destOffset = 0;
+    const shape = array.shape;
+
+    for (const range of ranges) {
+      const sliceSpec: zarr.Slice[] =
+        shape.length === 2
+          ? [slice(range.start, range.end), slice(null)]
+          : [slice(range.start, range.end)];
+
+      const chunkData = await get(array, sliceSpec);
+      const data = chunkData.data;
+
+      // Copy data preserving type (no conversion!)
+      if (output instanceof Float32Array && data instanceof Float32Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
+        output.set(data, destOffset);
+      } else {
+        // Fallback: convert values (not buffer reinterpretation!)
+        const float32Data =
+          data instanceof Float32Array ? data : new Float32Array(data as ArrayLike<number>);
+        (output as Float32Array).set(float32Data, destOffset);
+      }
+
+      destOffset += (range.end - range.start) * 3;
+    }
+  }
+
+  /**
+   * Restore original dtype for encoded arrays
+   */
+  private restoreOriginalDtype(
+    decodedFloat32: Float32Array,
+    originalDtype: string | undefined,
+    totalElements: number
+  ): Float32Array | Uint8Array | Uint16Array {
+    if (!originalDtype) {
+      return decodedFloat32;
+    }
+
+    if (
+      originalDtype === 'uint8' ||
+      originalDtype === '|u1' ||
+      originalDtype === '<u1' ||
+      originalDtype === '>u1'
+    ) {
+      const uint8Output = new Uint8Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+      }
+      return uint8Output;
+    }
+
+    if (
+      originalDtype === 'uint16' ||
+      originalDtype === '|u2' ||
+      originalDtype === '<u2' ||
+      originalDtype === '>u2'
+    ) {
+      const uint16Output = new Uint16Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+      }
+      return uint16Output;
+    }
+
+    // For float32/float64 or unspecified, keep as Float32Array
+    return decodedFloat32;
   }
 
   /**
@@ -648,7 +733,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    */
   private createEmptyGSplatsData(attrs: GSplatsMetadata): LoadedGSplatsData {
     return {
-      centers: new Float32Array(0),
+      positions: new Float32Array(0),
       amplitudes: new Float32Array(0),
       choleskyFactors: new Float32Array(0),
       colors: null,
@@ -656,6 +741,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       splatCount: 0,
       ndim: attrs.ndim,
     };
+  }
+
+  /**
+   * Get accumulator stats for memory monitoring
+   */
+  getAccumulatorStats(): AccumulatorStats | null {
+    return this._accumulator?.getStats() ?? null;
   }
 
   /**

@@ -299,8 +299,8 @@ export const config: AppConfig = {
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
       // Adaptive resolution
       adaptiveDPREnabled: true, // Adaptive resolution enabled by default
-      // Cinematic mode checkbox (multi-effect toggle)
-      cinematicMode: false, // Cinematic mode disabled by default
+      // Cinematic mode (disabled by default)
+      cinematicMode: false,
     },
   },
 
@@ -453,7 +453,7 @@ export const config: AppConfig = {
       // Workers ARE integrated in hot path: see *-spatial-index-loader.ts
       // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
       useWebWorkers: true, // ✅ ACTIVATED - Offloads spatial queries to worker
-      workerCount: 1,
+      workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
 
       // Phase 3: WASM Acceleration - Documentation flag
       // Actual WASM loading is automatic via initWasm() when workers enabled
@@ -469,7 +469,7 @@ export const config: AppConfig = {
       gpuPoolEvictionFrames: 300,
 
       // Debugging
-      enablePerformanceMonitoring: true,
+      enablePerformanceMonitoring: false,
     },
   },
 

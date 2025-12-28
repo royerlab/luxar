@@ -9,28 +9,27 @@
  *
  * Based on Performance Optimization Specification v3.6.0
  *
- * ✅ IMPLEMENTATION STATUS (Phase 1):
+ * ✅ IMPLEMENTATION STATUS (Phase 1 - ALL LOADING PHASES COMPLETE):
  * - Infrastructure: COMPLETE ✅
  * - Multi-type support: COMPLETE ✅ (Float32/Uint8/Uint16)
  * - Unit tests: COMPLETE ✅ (26 tests, >95% coverage)
- * - Deep integration (Points): COMPLETE ✅ (zero-allocation operation)
- * - Deep integration (Lines): DEFERRED ⏸️ (infrastructure ready)
- * - Deep integration (GSplats): DEFERRED ⏸️ (infrastructure ready)
+ * - Deep integration (Points): COMPLETE ✅ (zero-allocation loading)
+ * - Deep integration (Lines): COMPLETE ✅ (zero-allocation loading, bug fixed 2025-12-27)
+ * - Deep integration (GSplats): COMPLETE ✅ (zero-allocation loading)
  *
- * Points loader uses deep integration (point-spatial-index-loader.ts lines 417-470):
- * - Writes directly to accumulator buffers during nD→3D projection
- * - Compacts data in-place during zero-radius filtering
- * - Returns zero-copy subarrays from accumulator.getData()
- * - Achieves complete zero-allocation operation in hot path
+ * All three loaders now use deep integration for LOADING phase:
+ * - Write directly to accumulator buffers during data loading
+ * - Return zero-copy subarrays from accumulator.getData()
+ * - Achieve complete zero-allocation operation in loading hot path
  *
- * Lines/GSplats loaders have infrastructure but use standard allocation paths.
- * Integration deferred pending future optimization cycles (similar pattern to Points).
+ * Processing phases (buildInstanceBuffers, processGSplats) analyzed and determined
+ * to be optimal with current two-pass algorithms - accumulator NOT recommended.
  *
  * See src/data/DATA_ACCUMULATOR_STATUS.md for detailed status and performance metrics.
  */
 
 import * as THREE from 'three';
-import type { PointsData, PositionArray, ColorArray, ScalarArray } from './data-loader-types';
+import type { LoadedPointsData, PositionArray, ColorArray, ScalarArray } from './data-loader-types';
 import type { LoadedLinesData } from '../types/lines';
 import type { LoadedGSplatsData } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
@@ -49,7 +48,7 @@ export interface DataAccumulator<TData> {
    * Get data view (subarray of internal buffers)
    *
    * Signature varies by type:
-   * - Points: getData(count: number): PointsData
+   * - Points: getData(count: number): LoadedPointsData
    * - Lines: getData(segmentCount: number, vertexCount: number): LoadedLinesData
    * - GSplats: getData(count: number): LoadedGSplatsData
    */
@@ -101,7 +100,7 @@ interface PointsAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class PointsDataAccumulator implements DataAccumulator<PointsData> {
+export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPointsData> {
   // Persistent buffers (typed based on data)
   private positionBuffer: Float32Array; // Always Float32
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
@@ -137,7 +136,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
    *
    * @example
    * ```typescript
-   * const accumulator = new PointsDataAccumulator(8192, 4, 10000);
+   * const accumulator = new LoadedPointsDataAccumulator(8192, 4, 10000);
    * accumulator.ensureCapacity(5000);
    * accumulator.fill(0, { positions, colors, radii, sharpness });
    * const data = accumulator.getData(5000);
@@ -186,7 +185,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
 
     log.info(
       Modules.DATA_ACCUMULATOR,
-      `Growing PointsDataAccumulator: ${this.capacity} → ${newCapacity} points`
+      `Growing LoadedPointsDataAccumulator: ${this.capacity} → ${newCapacity} points`
     );
 
     // Allocate new buffers with SAME types as current (type-preserving growth)
@@ -246,13 +245,13 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   }
 
   /**
-   * Get PointsData with NATIVE types (zero-copy subarrays)
+   * Get LoadedPointsData with NATIVE types (zero-copy subarrays)
    *
    * Returns views (subarrays) into accumulator buffers with native types preserved.
    * No conversion or copying occurs. Computes fresh bounds from positions.
    *
    * @param count - Number of points to return (must be ≤ capacity)
-   * @returns PointsData with subarrays pointing to accumulator buffers
+   * @returns LoadedPointsData with subarrays pointing to accumulator buffers
    * @throws Error if count > capacity
    *
    * @example
@@ -264,7 +263,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
    * console.log('Dtype:', data.metadata.dtypes.colors); // 'uint8', 'uint16', or 'float32'
    * ```
    */
-  getData(count: number): PointsData {
+  getData(count: number): LoadedPointsData {
     if (count > this.capacity) {
       throw new Error(`Cannot get ${count} points from accumulator with capacity ${this.capacity}`);
     }
@@ -279,7 +278,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
       bounds.expandByPoint(new THREE.Vector3(x, y, z));
     }
 
-    // Return PointsData with NATIVE types (matches what was filled!)
+    // Return LoadedPointsData with NATIVE types (matches what was filled!)
     return {
       positions: this.positionBuffer.subarray(0, count * 3) as PositionArray,
       colors: this.hasColors ? (this.colorBuffer.subarray(0, count * 3) as ColorArray) : undefined,
@@ -287,11 +286,12 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
       sharpness: this.hasSharpness
         ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
         : undefined,
+      pointCount: count,
+      ndim: this.ndim,
       metadata: {
         totalPoints: this.totalPoints,
         loadedPoints: count,
         bounds, // Use freshly computed bounds
-        ndim: this.ndim,
         usedSpatialIndex: this.usedSpatialIndex,
         dtypes: {
           positions: 'float32',
@@ -311,7 +311,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   /**
    * Detect and initialize buffer types on first fill
    */
-  private initializeTypes(data: Partial<PointsData>): void {
+  private initializeTypes(data: Partial<LoadedPointsData>): void {
     if (this.types) return; // Already initialized
 
     const types: PointsAccumulatorTypes = {
@@ -373,7 +373,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
    * });
    * ```
    */
-  fill(offset: number, data: Partial<PointsData>): void {
+  fill(offset: number, data: Partial<LoadedPointsData>): void {
     // Initialize types on first fill
     this.initializeTypes(data);
 
@@ -460,18 +460,36 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
 }
 
 /**
- * Lines data accumulator (CORRECTED STRUCTURE!)
+ * Attribute types for Lines accumulator (matches GPU buffer pool pattern)
+ */
+interface LinesAccumulatorTypes {
+  position: 'Float32Array';
+  color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
+  width: 'Float32Array';
+  sharpness: 'Float32Array';
+}
+
+/**
+ * Lines data accumulator with FULL multi-type support
  *
  * CRITICAL: Flat buffers matching types/lines.ts:170-194
  * CRITICAL: widths is PER-VERTEX (N,), NOT per-segment!
+ *
+ * Handles Float32Array, Uint8Array, and Uint16Array for colors natively (no conversion)
+ * to maintain memory efficiency and consistency with multi-type GPU buffer pool.
+ *
+ * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
 export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
   // FLAT buffers (not nested!)
   private vertexBuffer: Float32Array; // ndim-dimensional vertices
   private segmentBuffer: Uint32Array; // index pairs
   private widthBuffer: Float32Array; // PER-VERTEX widths (N,) - NOT per-segment!
-  private colorBuffer: Float32Array; // RGB Float32 per-vertex (always allocated)
+  private colorBuffer: Float32Array | Uint8Array | Uint16Array; // RGB per-vertex (multi-type!)
   private sharpnessBuffer: Float32Array; // per-vertex (always allocated)
+
+  // Type tracking (like Points accumulator)
+  private types: LinesAccumulatorTypes | null = null;
 
   // Track whether data actually has colors/sharpness
   private hasColors = false;
@@ -491,6 +509,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
 
     // Always allocate buffers (persistent, never null)
     // NOTE: widths is per-VERTEX, allocated with vertexCapacity!
+    // Start with Float32Array (will be replaced on first fill with actual types)
     this.vertexBuffer = new Float32Array(initialVertexCapacity * ndim);
     this.segmentBuffer = new Uint32Array(initialSegmentCapacity * 2);
     this.widthBuffer = new Float32Array(initialVertexCapacity); // PER-VERTEX!
@@ -500,11 +519,48 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
     this.allocations++;
   }
 
-  ensureCapacity(needed: number): boolean {
-    // Lines: 'needed' parameter is now ACTUAL vertex count (not segment count!)
-    // FIXED: Pass actual vertex count directly - no estimation needed
-    const neededVertices = needed;
-    const neededSegments = Math.ceil(needed / 1.5); // Estimate segments from actual vertices
+  /**
+   * Initialize types from first data fill (like Points accumulator)
+   */
+  private initializeTypes(data: Partial<LoadedLinesData>): void {
+    if (this.types) return; // Already initialized
+
+    const types: LinesAccumulatorTypes = {
+      position: 'Float32Array',
+      color:
+        data.colors instanceof Uint8Array
+          ? 'Uint8Array'
+          : data.colors instanceof Uint16Array
+            ? 'Uint16Array'
+            : 'Float32Array',
+      width: 'Float32Array',
+      sharpness: 'Float32Array',
+    };
+
+    this.types = types;
+
+    // Recreate color buffer with correct type (only if types differ from initial Float32)
+    if (types.color === 'Uint8Array') {
+      this.colorBuffer = new Uint8Array(this.vertexCapacity * 3);
+    } else if (types.color === 'Uint16Array') {
+      this.colorBuffer = new Uint16Array(this.vertexCapacity * 3);
+    }
+  }
+
+  /**
+   * Ensure capacity for both vertices and segments.
+   *
+   * @param vertexCount - Actual vertex count needed
+   * @param segmentCount - Optional actual segment count (if not provided, estimates from vertex count)
+   * @returns true if buffers grew
+   *
+   * IMPORTANT: For particle tracks (N vertices, N-1 segments), the ratio is ~1:1 not 1.5:1.
+   * Always pass actual segment count when known to avoid silent buffer truncation!
+   */
+  ensureCapacity(vertexCount: number, segmentCount?: number): boolean {
+    const neededVertices = vertexCount;
+    // Use actual segment count if provided, otherwise estimate (may be too small!)
+    const neededSegments = segmentCount ?? Math.ceil(vertexCount / 1.5);
 
     let grew = false;
 
@@ -515,22 +571,39 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
         newVertexCap = Math.ceil(newVertexCap * 1.5);
       }
 
+      log.info(
+        Modules.DATA_ACCUMULATOR,
+        `Growing LinesDataAccumulator: ${this.vertexCapacity} → ${newVertexCap} vertices`
+      );
+
       const newVertexBuf = new Float32Array(newVertexCap * this.ndim);
       const newWidthBuf = new Float32Array(newVertexCap); // PER-VERTEX!
-      const newColorBuf = new Float32Array(newVertexCap * 3); // RGB
       const newSharpnessBuf = new Float32Array(newVertexCap);
 
       newVertexBuf.set(this.vertexBuffer);
       newWidthBuf.set(this.widthBuffer); // widths grow with vertices
-      newColorBuf.set(this.colorBuffer);
       newSharpnessBuf.set(this.sharpnessBuffer);
 
       this.vertexBuffer = newVertexBuf;
       this.widthBuffer = newWidthBuf;
-      this.colorBuffer = newColorBuf;
       this.sharpnessBuffer = newSharpnessBuf;
-      this.vertexCapacity = newVertexCap;
 
+      // Color: Type-preserving growth (like Points accumulator)
+      if (this.colorBuffer instanceof Uint8Array) {
+        const newColorBuf = new Uint8Array(newVertexCap * 3);
+        newColorBuf.set(this.colorBuffer);
+        this.colorBuffer = newColorBuf;
+      } else if (this.colorBuffer instanceof Uint16Array) {
+        const newColorBuf = new Uint16Array(newVertexCap * 3);
+        newColorBuf.set(this.colorBuffer);
+        this.colorBuffer = newColorBuf;
+      } else {
+        const newColorBuf = new Float32Array(newVertexCap * 3);
+        newColorBuf.set(this.colorBuffer);
+        this.colorBuffer = newColorBuf;
+      }
+
+      this.vertexCapacity = newVertexCap;
       grew = true;
     }
 
@@ -565,7 +638,7 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
   getData(segmentCount: number, vertexCount: number): LoadedLinesData {
     return {
       // FLAT structure (not nested)
-      vertices: this.vertexBuffer.subarray(0, vertexCount * this.ndim),
+      positions: this.vertexBuffer.subarray(0, vertexCount * this.ndim),
       segments: this.segmentBuffer.subarray(0, segmentCount * 2),
       widths: this.widthBuffer.subarray(0, vertexCount), // PER-VERTEX! Not segmentCount!
       colors: this.hasColors ? this.colorBuffer.subarray(0, vertexCount * 3) : null,
@@ -577,12 +650,21 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
   }
 
   /**
-   * CORRECTED: fill with proper tracking of data presence
+   * Fill accumulator buffers with multi-type support
+   *
+   * Detects attribute types on first fill and creates appropriately-typed buffers.
+   * Subsequent fills must use matching types. Preserves native types (no conversion).
+   *
    * NOTE: widths uses vertexOffset (per-vertex), NOT segmentOffset!
    */
   fill(segmentOffset: number, vertexOffset: number, data: Partial<LoadedLinesData>): void {
-    if (data.vertices) {
-      this.vertexBuffer.set(data.vertices, vertexOffset * this.ndim);
+    // Initialize types on first fill with colors
+    if (data.colors) {
+      this.initializeTypes(data);
+    }
+
+    if (data.positions) {
+      this.vertexBuffer.set(data.positions, vertexOffset * this.ndim);
     }
     if (data.segments) {
       this.segmentBuffer.set(data.segments, segmentOffset * 2);
@@ -593,7 +675,14 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
     }
     if (data.colors) {
       this.hasColors = true;
-      this.colorBuffer.set(data.colors, vertexOffset * 3);
+      // Multi-type support: set with correct type (no conversion!)
+      if (data.colors instanceof Uint8Array) {
+        (this.colorBuffer as Uint8Array).set(data.colors, vertexOffset * 3);
+      } else if (data.colors instanceof Uint16Array) {
+        (this.colorBuffer as Uint16Array).set(data.colors, vertexOffset * 3);
+      } else {
+        (this.colorBuffer as Float32Array).set(data.colors, vertexOffset * 3);
+      }
     }
     if (data.sharpness) {
       this.hasSharpness = true;
@@ -622,22 +711,42 @@ export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
     this.sharpnessBuffer = new Float32Array(0);
     this.vertexCapacity = 0;
     this.segmentCapacity = 0;
+    this.types = null;
     this.hasColors = false;
     this.hasSharpness = false;
   }
 }
 
 /**
- * GSplats data accumulator (CORRECTED FIELD NAMES!)
+ * Attribute types for GSplats accumulator (matches GPU buffer pool pattern)
+ */
+interface GSplatsAccumulatorTypes {
+  position: 'Float32Array';
+  amplitude: 'Float32Array';
+  cholesky: 'Float32Array';
+  color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
+  sharpness: 'Float32Array';
+}
+
+/**
+ * GSplats data accumulator with FULL multi-type support
  *
  * CRITICAL FIX: camelCase choleskyFactors (not snake_case cholesky_factors)
+ *
+ * Handles Float32Array, Uint8Array, and Uint16Array for colors natively (no conversion)
+ * to maintain memory efficiency and consistency with multi-type GPU buffer pool.
+ *
+ * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
 export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData> {
   private centerBuffer: Float32Array;
   private amplitudeBuffer: Float32Array;
   private choleskyBuffer: Float32Array; // CORRECT: for choleskyFactors field
-  private colorBuffer: Float32Array; // RGB Float32 (always allocated)
+  private colorBuffer: Float32Array | Uint8Array | Uint16Array; // RGB (multi-type!)
   private sharpnessBuffer: Float32Array; // always allocated
+
+  // Type tracking (like Points accumulator)
+  private types: GSplatsAccumulatorTypes | null = null;
 
   // Track whether data has colors/sharpness
   private hasColors = false;
@@ -655,6 +764,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.ndim = ndim;
     this.choleskySize = (ndim * (ndim + 1)) / 2;
 
+    // Start with Float32Array (will be replaced on first fill with actual types)
     this.centerBuffer = new Float32Array(initialCapacity * ndim);
     this.amplitudeBuffer = new Float32Array(initialCapacity);
     this.choleskyBuffer = new Float32Array(initialCapacity * this.choleskySize);
@@ -662,6 +772,35 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.sharpnessBuffer = new Float32Array(initialCapacity);
 
     this.allocations++;
+  }
+
+  /**
+   * Initialize types from first data fill (like Points accumulator)
+   */
+  private initializeTypes(data: Partial<LoadedGSplatsData>): void {
+    if (this.types) return; // Already initialized
+
+    const types: GSplatsAccumulatorTypes = {
+      position: 'Float32Array',
+      amplitude: 'Float32Array',
+      cholesky: 'Float32Array',
+      color:
+        data.colors instanceof Uint8Array
+          ? 'Uint8Array'
+          : data.colors instanceof Uint16Array
+            ? 'Uint16Array'
+            : 'Float32Array',
+      sharpness: 'Float32Array',
+    };
+
+    this.types = types;
+
+    // Recreate color buffer with correct type (only if types differ from initial Float32)
+    if (types.color === 'Uint8Array') {
+      this.colorBuffer = new Uint8Array(this.capacity * 3);
+    } else if (types.color === 'Uint16Array') {
+      this.colorBuffer = new Uint16Array(this.capacity * 3);
+    }
   }
 
   ensureCapacity(needed: number): boolean {
@@ -680,22 +819,34 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     const newCenters = new Float32Array(newCapacity * this.ndim);
     const newAmplitudes = new Float32Array(newCapacity);
     const newCholesky = new Float32Array(newCapacity * this.choleskySize);
-    const newColors = new Float32Array(newCapacity * 3); // RGB
     const newSharpness = new Float32Array(newCapacity);
 
     newCenters.set(this.centerBuffer);
     newAmplitudes.set(this.amplitudeBuffer);
     newCholesky.set(this.choleskyBuffer);
-    newColors.set(this.colorBuffer); // Always allocated, never null
-    newSharpness.set(this.sharpnessBuffer); // Always allocated, never null
+    newSharpness.set(this.sharpnessBuffer);
 
     this.centerBuffer = newCenters;
     this.amplitudeBuffer = newAmplitudes;
     this.choleskyBuffer = newCholesky;
-    this.colorBuffer = newColors;
     this.sharpnessBuffer = newSharpness;
-    this.capacity = newCapacity;
 
+    // Color: Type-preserving growth (like Points accumulator)
+    if (this.colorBuffer instanceof Uint8Array) {
+      const newColors = new Uint8Array(newCapacity * 3);
+      newColors.set(this.colorBuffer);
+      this.colorBuffer = newColors;
+    } else if (this.colorBuffer instanceof Uint16Array) {
+      const newColors = new Uint16Array(newCapacity * 3);
+      newColors.set(this.colorBuffer);
+      this.colorBuffer = newColors;
+    } else {
+      const newColors = new Float32Array(newCapacity * 3);
+      newColors.set(this.colorBuffer);
+      this.colorBuffer = newColors;
+    }
+
+    this.capacity = newCapacity;
     this.allocations++;
     this.totalGrowths++;
 
@@ -707,7 +858,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
    */
   getData(count: number): LoadedGSplatsData {
     return {
-      centers: this.centerBuffer.subarray(0, count * this.ndim),
+      positions: this.centerBuffer.subarray(0, count * this.ndim),
       amplitudes: this.amplitudeBuffer.subarray(0, count),
       choleskyFactors: this.choleskyBuffer.subarray(0, count * this.choleskySize), // CORRECT: camelCase!
       colors: this.hasColors ? this.colorBuffer.subarray(0, count * 3) : null, // Nullable based on data presence
@@ -717,9 +868,20 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     };
   }
 
+  /**
+   * Fill accumulator buffers with multi-type support
+   *
+   * Detects attribute types on first fill and creates appropriately-typed buffers.
+   * Subsequent fills must use matching types. Preserves native types (no conversion).
+   */
   fill(offset: number, data: Partial<LoadedGSplatsData>): void {
-    if (data.centers) {
-      this.centerBuffer.set(data.centers, offset * this.ndim);
+    // Initialize types on first fill with colors
+    if (data.colors) {
+      this.initializeTypes(data);
+    }
+
+    if (data.positions) {
+      this.centerBuffer.set(data.positions, offset * this.ndim);
     }
     if (data.amplitudes) {
       this.amplitudeBuffer.set(data.amplitudes, offset);
@@ -730,7 +892,14 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     }
     if (data.colors) {
       this.hasColors = true; // Mark as present
-      this.colorBuffer.set(data.colors, offset * 3);
+      // Multi-type support: set with correct type (no conversion!)
+      if (data.colors instanceof Uint8Array) {
+        (this.colorBuffer as Uint8Array).set(data.colors, offset * 3);
+      } else if (data.colors instanceof Uint16Array) {
+        (this.colorBuffer as Uint16Array).set(data.colors, offset * 3);
+      } else {
+        (this.colorBuffer as Float32Array).set(data.colors, offset * 3);
+      }
     }
     if (data.sharpness) {
       this.hasSharpness = true; // Mark as present
@@ -761,6 +930,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData
     this.colorBuffer = new Float32Array(0);
     this.sharpnessBuffer = new Float32Array(0);
     this.capacity = 0;
+    this.types = null;
     this.hasColors = false;
     this.hasSharpness = false;
   }

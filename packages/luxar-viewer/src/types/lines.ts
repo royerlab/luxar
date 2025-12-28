@@ -169,16 +169,17 @@ export interface SegmentRange {
  */
 export interface LoadedLinesData {
   /** Vertex positions (N vertices * ndim dimensions), flattened row-major */
-  vertices: Float32Array;
+  positions: Float32Array;
 
-  /** Segment index pairs (M segments * 2) - local indices into vertices */
+  /** Segment index pairs (M segments * 2) - local indices into positions array */
   segments: Uint32Array;
 
   /** Vertex widths (N,) or (1,) if broadcast */
   widths: Float32Array;
 
-  /** Vertex colors (N * 3) RGB, null if not present */
-  colors: Float32Array | null;
+  /** Vertex colors (N * 3) RGB, null if not present
+   * Supports Float32Array (HDR), Uint8Array (SDR), or Uint16Array */
+  colors: Float32Array | Uint8Array | Uint16Array | null;
 
   /** Vertex sharpness (N,) null if not present */
   sharpness: Float32Array | null;
@@ -272,6 +273,8 @@ export interface ClippedSegment {
 // Scene Integration Types
 // ============================================================================
 
+import type { UpdateSession } from '../profiling/update-profiler';
+
 /**
  * Data loader interface for Lines nodes.
  *
@@ -279,10 +282,10 @@ export interface ClippedSegment {
  */
 export interface LinesDataLoader {
   /** Load lines data for the given view state */
-  loadLines(viewState: LinesViewState): Promise<LoadedLinesData>;
+  loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData>;
 
   /** Update existing data for a new view state */
-  updateView(viewState: LinesViewState): Promise<LoadedLinesData>;
+  updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData>;
 
   /** Clean up resources */
   dispose(): void;

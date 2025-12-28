@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { existsSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import {
   clipSegmentToSlice,
   buildInstanceBuffers,
@@ -7,7 +10,14 @@ import {
   lerpVec3,
   distance3D,
 } from '../../../data/lines-spatial-index-loader';
-import type { LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
+import type { LoadedLinesData } from '../../../types/lines';
+
+// Check if WASM files exist for comparison tests
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
+const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
+const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
 
 describe('clipSegmentToSlice', () => {
   // Default 3D display setup: display dims [0, 1, 2] (XYZ)
@@ -250,7 +260,7 @@ describe('distance3D', () => {
 describe('buildInstanceBuffers', () => {
   it('should transform loaded data to GPU-ready format', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
+      positions: new Float32Array([
         0,
         0,
         0, // v0
@@ -311,7 +321,7 @@ describe('buildInstanceBuffers', () => {
   it('should handle clipped segments', () => {
     // 4D segment that crosses the slice
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
+      positions: new Float32Array([
         0,
         0,
         0,
@@ -359,7 +369,7 @@ describe('buildInstanceBuffers', () => {
 
   it('should filter out invisible segments', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
+      positions: new Float32Array([
         0,
         0,
         0,
@@ -400,7 +410,7 @@ describe('buildInstanceBuffers', () => {
 
   it('should use default colors when colors is null', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([0, 0, 0, 10, 10, 10]),
+      positions: new Float32Array([0, 0, 0, 10, 10, 10]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       colors: null, // No colors
@@ -419,7 +429,7 @@ describe('buildInstanceBuffers', () => {
 
   it('should use default sharpness when sharpness is null', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([0, 0, 0, 10, 10, 10]),
+      positions: new Float32Array([0, 0, 0, 10, 10, 10]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       colors: null,
@@ -438,7 +448,7 @@ describe('buildInstanceBuffers', () => {
 
   it('should handle empty input', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array(0),
+      positions: new Float32Array(0),
       segments: new Uint32Array(0),
       widths: new Float32Array(0),
       colors: null,
@@ -456,84 +466,161 @@ describe('buildInstanceBuffers', () => {
 });
 
 // ============================================================================
-// buildInstanceBuffersWASM - WASM vs TypeScript Comparison Tests
+// WASM vs TypeScript Comparison Tests
 // ============================================================================
 
-describe('buildInstanceBuffersWASM vs TypeScript', () => {
+describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffers', () => {
+  // Initialize WASM module before tests
+  beforeAll(async () => {
+    if (!wasmFilesExist) return;
+
+    try {
+      // Load WASM binary
+      const wasmBinary = readFileSync(wasmBinaryPath);
+      // Dynamic import for ES module
+      const wasm = await import(wasmJsPath);
+      wasm.initSync({ module: wasmBinary });
+    } catch (error) {
+      console.error('Failed to load WASM module:', error);
+    }
+  });
+
   /**
-   * Helper to compare two ProcessedLinesData results
+   * Helper to compare ProcessedLinesData from both implementations
    */
-  function compareResults(wasm: ProcessedLinesData, ts: ProcessedLinesData, tolerance = 1e-5): void {
-    expect(wasm.segmentCount).toBe(ts.segmentCount);
+  function compareResults(
+    tsResult: ReturnType<typeof buildInstanceBuffers>,
+    wasmResult: ReturnType<typeof buildInstanceBuffersWASM>,
+    tolerance = 1e-5
+  ) {
+    // Segment counts must match
+    expect(wasmResult.segmentCount).toBe(tsResult.segmentCount);
 
-    const count = wasm.segmentCount;
-    if (count === 0) return;
+    // Compare all arrays with tolerance for floating point
+    const compareArrays = (
+      name: string,
+      ts: Float32Array | Uint8Array,
+      wasm: Float32Array | Uint8Array
+    ) => {
+      expect(wasm.length).toBe(ts.length);
+      for (let i = 0; i < ts.length; i++) {
+        if (Math.abs(ts[i] - wasm[i]) > tolerance) {
+          throw new Error(`${name}[${i}] differs: TS=${ts[i]}, WASM=${wasm[i]}`);
+        }
+      }
+    };
 
-    // Compare positions
-    for (let i = 0; i < count * 3; i++) {
-      expect(Math.abs(wasm.startPositions[i] - ts.startPositions[i])).toBeLessThan(tolerance);
-      expect(Math.abs(wasm.endPositions[i] - ts.endPositions[i])).toBeLessThan(tolerance);
-    }
-
-    // Compare widths
-    for (let i = 0; i < count; i++) {
-      expect(Math.abs(wasm.startWidths[i] - ts.startWidths[i])).toBeLessThan(tolerance);
-      expect(Math.abs(wasm.endWidths[i] - ts.endWidths[i])).toBeLessThan(tolerance);
-    }
-
-    // Compare colors
-    for (let i = 0; i < count * 3; i++) {
-      expect(Math.abs(wasm.startColors[i] - ts.startColors[i])).toBeLessThan(tolerance);
-      expect(Math.abs(wasm.endColors[i] - ts.endColors[i])).toBeLessThan(tolerance);
-    }
-
-    // Compare sharpness
-    for (let i = 0; i < count; i++) {
-      expect(Math.abs(wasm.startSharpness[i] - ts.startSharpness[i])).toBeLessThan(tolerance);
-      expect(Math.abs(wasm.endSharpness[i] - ts.endSharpness[i])).toBeLessThan(tolerance);
-    }
-
-    // Compare segment lengths
-    for (let i = 0; i < count; i++) {
-      expect(Math.abs(wasm.segmentLengths[i] - ts.segmentLengths[i])).toBeLessThan(tolerance);
-    }
-
-    // Compare clipped flags
-    for (let i = 0; i < count; i++) {
-      expect(wasm.startClipped[i]).toBe(ts.startClipped[i]);
-      expect(wasm.endClipped[i]).toBe(ts.endClipped[i]);
-    }
+    compareArrays('startPositions', tsResult.startPositions, wasmResult.startPositions);
+    compareArrays('endPositions', tsResult.endPositions, wasmResult.endPositions);
+    compareArrays('startColors', tsResult.startColors, wasmResult.startColors);
+    compareArrays('endColors', tsResult.endColors, wasmResult.endColors);
+    compareArrays('startWidths', tsResult.startWidths, wasmResult.startWidths);
+    compareArrays('endWidths', tsResult.endWidths, wasmResult.endWidths);
+    compareArrays('startSharpness', tsResult.startSharpness, wasmResult.startSharpness);
+    compareArrays('endSharpness', tsResult.endSharpness, wasmResult.endSharpness);
+    compareArrays('segmentLengths', tsResult.segmentLengths, wasmResult.segmentLengths);
+    compareArrays('startClipped', tsResult.startClipped, wasmResult.startClipped);
+    compareArrays('endClipped', tsResult.endClipped, wasmResult.endClipped);
   }
 
-  it('should match TypeScript for simple 3D data', () => {
+  it('should produce identical results for simple 3D data', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([0, 0, 0, 10, 10, 10, 20, 20, 20]),
+      positions: new Float32Array([
+        0,
+        0,
+        0, // v0
+        10,
+        10,
+        10, // v1
+        20,
+        20,
+        20, // v2
+      ]),
       segments: new Uint32Array([0, 1, 1, 2]),
       widths: new Float32Array([0.1, 0.2, 0.3]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      colors: new Float32Array([
+        1,
+        0,
+        0, // Red
+        0,
+        1,
+        0, // Green
+        0,
+        0,
+        1, // Blue
+      ]),
       sharpness: new Float32Array([0.5, 0.8, 1.0]),
       segmentCount: 2,
       vertexCount: 3,
       ndim: 3,
     };
 
-    const tsResult = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const slicePos = [0, 0, 0];
+    const tolerance = [1e10, 1e10, 1e10];
+    const displayDims = [0, 1, 2];
 
-    compareResults(wasmResult, tsResult);
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
   });
 
-  it('should match TypeScript for 4D data with clipping', () => {
+  it('should produce identical results for 4D data with clipping', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 0, // v0
-        10, 10, 10, 10, // v1
-        20, 20, 20, 5, // v2 (in slice)
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        0, // v0: dim3 = 0
+        10,
+        10,
+        10,
+        10, // v1: dim3 = 10
       ]),
-      segments: new Uint32Array([0, 1, 1, 2]),
-      widths: new Float32Array([0.1, 0.2, 0.3]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-      sharpness: new Float32Array([0.5, 0.8, 1.0]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.3]),
+      colors: new Float32Array([1, 0, 0, 0, 0, 1]),
+      sharpness: new Float32Array([0.0, 1.0]),
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 4,
+    };
+
+    const slicePos = [0, 0, 0, 5];
+    const tolerance = [1e10, 1e10, 1e10, 0.5];
+    const displayDims = [0, 1, 2];
+
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
+  });
+
+  it('should produce identical results when filtering invisible segments', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        0, // v0: dim3 = 0 (outside)
+        10,
+        10,
+        10,
+        2, // v1: dim3 = 2 (outside, same side)
+        20,
+        20,
+        20,
+        5, // v2: dim3 = 5 (inside)
+      ]),
+      segments: new Uint32Array([
+        0,
+        1, // Invisible (both below)
+        1,
+        2, // Visible (crosses slice)
+      ]),
+      widths: new Float32Array([0.1, 0.1, 0.1]),
+      colors: null,
+      sharpness: null,
       segmentCount: 2,
       vertexCount: 3,
       ndim: 4,
@@ -546,20 +633,109 @@ describe('buildInstanceBuffersWASM vs TypeScript', () => {
     const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
     const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
 
-    compareResults(wasmResult, tsResult);
+    compareResults(tsResult, wasmResult);
+    expect(tsResult.segmentCount).toBe(1); // Only one visible
   });
 
-  it('should match TypeScript for 5D data with multiple slices', () => {
+  it('should produce identical results with null colors (default white)', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 5, 10, // v0
-        10, 10, 10, 5, 10, // v1
-        20, 20, 20, 6, 11, // v2
+      positions: new Float32Array([0, 0, 0, 10, 10, 10]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.1]),
+      colors: null,
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+
+    const slicePos = [0, 0, 0];
+    const tolerance = [1e10, 1e10, 1e10];
+    const displayDims = [0, 1, 2];
+
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
+    // Verify default white
+    expect(Array.from(wasmResult.startColors.slice(0, 3))).toEqual([1, 1, 1]);
+  });
+
+  it('should produce identical results with null sharpness (default 1.0)', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([0, 0, 0, 10, 10, 10]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.1]),
+      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+
+    const slicePos = [0, 0, 0];
+    const tolerance = [1e10, 1e10, 1e10];
+    const displayDims = [0, 1, 2];
+
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
+    // Verify default sharpness
+    expect(wasmResult.startSharpness[0]).toBe(1.0);
+  });
+
+  it('should produce identical results with empty input', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array(0),
+      segments: new Uint32Array(0),
+      widths: new Float32Array(0),
+      colors: null,
+      sharpness: null,
+      segmentCount: 0,
+      vertexCount: 0,
+      ndim: 3,
+    };
+
+    const slicePos = [0, 0, 0];
+    const tolerance = [1e10, 1e10, 1e10];
+    const displayDims = [0, 1, 2];
+
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
+    expect(wasmResult.segmentCount).toBe(0);
+  });
+
+  it('should produce identical results for 5D data with multiple slice dimensions', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        5,
+        10, // v0: in slice
+        10,
+        10,
+        10,
+        5,
+        10, // v1: in slice
+        20,
+        20,
+        20,
+        0,
+        20, // v2: out of slice
       ]),
-      segments: new Uint32Array([0, 1, 1, 2]),
+      segments: new Uint32Array([
+        0,
+        1, // Visible (both in)
+        1,
+        2, // Clips on both dim3 and dim4
+      ]),
       widths: new Float32Array([0.1, 0.2, 0.3]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-      sharpness: new Float32Array([0.5, 0.8, 1.0]),
+      sharpness: new Float32Array([0.5, 0.7, 0.9]),
       segmentCount: 2,
       vertexCount: 3,
       ndim: 5,
@@ -572,118 +748,42 @@ describe('buildInstanceBuffersWASM vs TypeScript', () => {
     const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
     const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
 
-    compareResults(wasmResult, tsResult);
+    compareResults(tsResult, wasmResult);
   });
 
-  it('should match TypeScript for null color attributes', () => {
-    const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([0, 0, 0, 10, 10, 10]),
-      segments: new Uint32Array([0, 1]),
-      widths: new Float32Array([0.1, 0.2]),
-      colors: null, // No colors provided
-      sharpness: new Float32Array([0.5, 0.8]),
-      segmentCount: 1,
-      vertexCount: 2,
-      ndim: 3,
-    };
-
-    const tsResult = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
-
-    compareResults(wasmResult, tsResult);
-  });
-
-  it('should match TypeScript for null sharpness attributes', () => {
-    const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([0, 0, 0, 10, 10, 10]),
-      segments: new Uint32Array([0, 1]),
-      widths: new Float32Array([0.1, 0.2]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      sharpness: null, // No sharpness provided
-      segmentCount: 1,
-      vertexCount: 2,
-      ndim: 3,
-    };
-
-    const tsResult = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
-
-    compareResults(wasmResult, tsResult);
-  });
-
-  it('should match TypeScript for all 5 clipping cases', () => {
-    // Test data covering all cases: A, B, C, D, E
-    const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 5, // v0: IN (Case A endpoint)
-        10, 10, 10, 5, // v1: IN (Case A endpoint)
-        20, 20, 20, 10, // v2: OUT above (Case B endpoint)
-        30, 30, 30, 0, // v3: OUT below (Case C endpoint)
-        40, 40, 40, 15, // v4: OUT far above (Case E endpoint)
-        50, 50, 50, 20, // v5: OUT far above (Case E endpoint)
-      ]),
-      segments: new Uint32Array([
-        0, 1, // Case A: both in
-        1, 2, // Case B: p1 in, p2 out
-        3, 1, // Case C: p1 out, p2 in
-        3, 2, // Case D: both out, opposite sides
-        4, 5, // Case E: both out, same side
-      ]),
-      widths: new Float32Array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
-      colors: new Float32Array([
-        1, 0, 0, // Red
-        0, 1, 0, // Green
-        0, 0, 1, // Blue
-        1, 1, 0, // Yellow
-        1, 0, 1, // Magenta
-        0, 1, 1, // Cyan
-      ]),
-      sharpness: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
-      segmentCount: 5,
-      vertexCount: 6,
-      ndim: 4,
-    };
-
-    const slicePos = [0, 0, 0, 5];
-    const tolerance = [1e10, 1e10, 1e10, 0.5];
-    const displayDims = [0, 1, 2];
-
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
-
-    compareResults(wasmResult, tsResult);
-  });
-
-  it('should match TypeScript for stress test with 100+ segments', () => {
-    const numVertices = 200;
+  it('should produce identical results for many segments (stress test)', () => {
+    // Generate 100 segments
     const numSegments = 100;
+    const numVertices = numSegments + 1;
 
-    // Generate test data
-    const vertices = new Float32Array(numVertices * 4);
+    const positions = new Float32Array(numVertices * 4);
     const segments = new Uint32Array(numSegments * 2);
     const widths = new Float32Array(numVertices);
     const colors = new Float32Array(numVertices * 3);
     const sharpness = new Float32Array(numVertices);
 
     for (let i = 0; i < numVertices; i++) {
-      vertices[i * 4 + 0] = Math.sin(i * 0.1) * 10;
-      vertices[i * 4 + 1] = Math.cos(i * 0.1) * 10;
-      vertices[i * 4 + 2] = i * 0.5;
-      vertices[i * 4 + 3] = Math.sin(i * 0.05) * 5 + 5; // Varies around slice position
-      widths[i] = 0.1 + (i % 10) * 0.01;
-      colors[i * 3 + 0] = Math.sin(i * 0.2);
-      colors[i * 3 + 1] = Math.cos(i * 0.2);
-      colors[i * 3 + 2] = Math.sin(i * 0.3);
-      sharpness[i] = 0.5 + (i % 5) * 0.1;
+      // Create a spiral path in 3D with varying dim3
+      const angle = (i / numVertices) * Math.PI * 4;
+      positions[i * 4] = Math.cos(angle) * 10;
+      positions[i * 4 + 1] = Math.sin(angle) * 10;
+      positions[i * 4 + 2] = i;
+      positions[i * 4 + 3] = Math.sin(angle * 0.5) * 2 + 5; // Oscillates around 5
+
+      widths[i] = 0.1 + (i / numVertices) * 0.2;
+      colors[i * 3] = i / numVertices;
+      colors[i * 3 + 1] = 1 - i / numVertices;
+      colors[i * 3 + 2] = 0.5;
+      sharpness[i] = 0.5 + (i / numVertices) * 0.5;
     }
 
     for (let i = 0; i < numSegments; i++) {
-      segments[i * 2] = i * 2;
-      segments[i * 2 + 1] = i * 2 + 1;
+      segments[i * 2] = i;
+      segments[i * 2 + 1] = i + 1;
     }
 
     const loadedData: LoadedLinesData = {
-      vertices,
+      positions,
       segments,
       widths,
       colors,
@@ -693,87 +793,34 @@ describe('buildInstanceBuffersWASM vs TypeScript', () => {
       ndim: 4,
     };
 
-    const slicePos = [0, 0, 0, 5];
+    const slicePos = [0, 0, 50, 5];
     const tolerance = [1e10, 1e10, 1e10, 1.0];
     const displayDims = [0, 1, 2];
 
     const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
     const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
 
-    compareResults(wasmResult, tsResult);
+    compareResults(tsResult, wasmResult);
   });
 
-  it('should match TypeScript for 6D data', () => {
+  it('should produce identical results with both endpoints clipped (Case D)', () => {
     const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 5, 10, 15, // v0
-        10, 10, 10, 5, 10, 15, // v1
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        0, // v0: dim3 = 0 (below)
+        10,
+        10,
+        10,
+        10, // v1: dim3 = 10 (above)
       ]),
       segments: new Uint32Array([0, 1]),
-      widths: new Float32Array([0.1, 0.2]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      sharpness: new Float32Array([0.5, 0.8]),
+      widths: new Float32Array([0.1, 0.3]),
+      colors: new Float32Array([1, 0, 0, 0, 0, 1]),
+      sharpness: new Float32Array([0.0, 1.0]),
       segmentCount: 1,
       vertexCount: 2,
-      ndim: 6,
-    };
-
-    const slicePos = [0, 0, 0, 5, 10, 15];
-    const tolerance = [1e10, 1e10, 1e10, 0.5, 1.0, 2.0];
-    const displayDims = [0, 1, 2];
-
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
-
-    compareResults(wasmResult, tsResult);
-  });
-
-  it('should match TypeScript when all segments are filtered', () => {
-    const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 0, // v0: far from slice
-        10, 10, 10, 0, // v1: far from slice
-      ]),
-      segments: new Uint32Array([0, 1]),
-      widths: new Float32Array([0.1, 0.2]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      sharpness: new Float32Array([0.5, 0.8]),
-      segmentCount: 1,
-      vertexCount: 2,
-      ndim: 4,
-    };
-
-    const slicePos = [0, 0, 0, 10]; // Slice far from vertices
-    const tolerance = [1e10, 1e10, 1e10, 0.5];
-    const displayDims = [0, 1, 2];
-
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
-
-    expect(wasmResult.segmentCount).toBe(0);
-    expect(tsResult.segmentCount).toBe(0);
-    compareResults(wasmResult, tsResult);
-  });
-
-  it('should match TypeScript for mixed visibility (some visible, some not)', () => {
-    const loadedData: LoadedLinesData = {
-      vertices: new Float32Array([
-        0, 0, 0, 5, // v0: in
-        10, 10, 10, 5, // v1: in
-        20, 20, 20, 0, // v2: out
-        30, 30, 30, 0, // v3: out
-        40, 40, 40, 5, // v4: in
-      ]),
-      segments: new Uint32Array([
-        0, 1, // Visible
-        2, 3, // Invisible
-        1, 4, // Visible
-      ]),
-      widths: new Float32Array([0.1, 0.1, 0.1, 0.1, 0.1]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1]),
-      sharpness: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5]),
-      segmentCount: 3,
-      vertexCount: 5,
       ndim: 4,
     };
 
@@ -784,8 +831,42 @@ describe('buildInstanceBuffersWASM vs TypeScript', () => {
     const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
     const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
 
-    expect(wasmResult.segmentCount).toBe(2); // Only 2 visible
-    expect(tsResult.segmentCount).toBe(2);
-    compareResults(wasmResult, tsResult);
+    compareResults(tsResult, wasmResult);
+
+    // Both endpoints should be clipped
+    expect(wasmResult.startClipped[0]).toBe(1);
+    expect(wasmResult.endClipped[0]).toBe(1);
+  });
+
+  it('should produce identical results with all segments invisible (Case E)', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([
+        0,
+        0,
+        0,
+        0, // v0: dim3 = 0
+        10,
+        10,
+        10,
+        1, // v1: dim3 = 1 (both below slice at 5)
+      ]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.1]),
+      colors: null,
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 4,
+    };
+
+    const slicePos = [0, 0, 0, 5];
+    const tolerance = [1e10, 1e10, 1e10, 0.5];
+    const displayDims = [0, 1, 2];
+
+    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+
+    compareResults(tsResult, wasmResult);
+    expect(wasmResult.segmentCount).toBe(0);
   });
 });

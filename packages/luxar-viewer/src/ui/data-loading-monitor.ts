@@ -203,7 +203,6 @@ export class DataLoadingMonitor {
 
     // Analyze metrics for recommendations
     this.advisor.analyzeMetrics(metrics);
-
   }
 
   /**

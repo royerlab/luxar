@@ -7,16 +7,15 @@
 
 ## Executive Summary
 
-The Luxar Rust/WASM module is **well-engineered and production-ready** with 2,471 lines of Rust code, 41 native Rust unit tests (including dimension limit validation), and 59+ TypeScript comparison tests. The dual testing strategy (Rust native + TypeScript parity) ensures both correctness and cross-language compatibility.
+The Luxar Rust/WASM module is **well-engineered and production-ready** with 2,471 lines of Rust code, 39 native Rust unit tests, and 59+ TypeScript comparison tests. The dual testing strategy (Rust native + TypeScript parity) ensures both correctness and cross-language compatibility.
 
 **Key Metrics:**
 - Rust source files: 10
 - Rust LOC: 2,471
-- Rust unit tests: 41 (was 39, +2 for dimension limits)
+- Rust unit tests: 39
 - TypeScript comparison tests: 59+
 - Public WASM functions: 34
 - Coverage: 100% of exported functions
-- Dimension limit: 16 (validated with boundary tests)
 
 ---
 

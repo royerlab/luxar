@@ -4,22 +4,18 @@
  * Phase 2: Worker infrastructure with TypeScript WASM fallbacks
  * Phase 3: Upgrade to actual WASM module for 3-5x speedup
  *
- * CRITICAL: ArrayDecoder stays on main thread (needs zarr.Array objects)!
- *
  * Worker Responsibilities:
  * - Spatial index queries (chunk bounding box tests)
  * - nD visibility computation (hypersphere intersection testing)
- * - nD to 3D projection (points, lines, GSplats)
- * - Data decoding (quantized, LUT, log-space)
- * - Effective radii calculation for sliced hyperspheres
+ * - Array decoding (LUT, quantization, log-space) - CPU intensive!
  *
  * NOT handled here (stays on main thread):
- * - Zarr chunk fetching (async IO)
- * - ArrayDecoder decoding (needs zarr context)
+ * - Zarr chunk fetching (needs caching store)
  * - Accumulator buffer management
+ * - GPU buffer updates
  */
 
-import { expose } from 'comlink';
+import { expose, transfer } from 'comlink';
 import { initWasm, type WasmModule } from '../wasm';
 
 // Worker-side persistent state
@@ -27,11 +23,6 @@ let wasmModule: WasmModule | null = null;
 
 // Persistent buffers (avoid per-task allocations)
 let visibilityMaskBuffer: Uint8Array | null = null;
-let effectiveRadiiBuffer: Float32Array | null = null;
-let positions3DBuffer: Float32Array | null = null;
-let attenuationBuffer: Float32Array | null = null;
-let t1Buffer: Float32Array | null = null;
-let t2Buffer: Float32Array | null = null;
 
 /**
  * Initialize worker (called once at startup)
@@ -56,18 +47,9 @@ async function initialize(): Promise<void> {
 
   // Pre-allocate visibility buffer (will grow as needed)
   visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
-  effectiveRadiiBuffer = new Float32Array(100000);
-  positions3DBuffer = new Float32Array(300000); // 100K * 3
-  attenuationBuffer = new Float32Array(100000);
-  t1Buffer = new Float32Array(100000);
-  t2Buffer = new Float32Array(100000);
 
   console.log('[DataWorker] Ready');
 }
-
-// ============================================================================
-// SPATIAL INDEX QUERIES
-// ============================================================================
 
 /**
  * Task 1: Query spatial index (generic for all types)
@@ -102,10 +84,6 @@ async function querySpatialIndex(params: {
 
   return matchingChunks.subarray(0, count);
 }
-
-// ============================================================================
-// ND VISIBILITY COMPUTATION
-// ============================================================================
 
 /**
  * Task 2: Compute nD visibility for Points
@@ -230,186 +208,287 @@ async function computeNDVisibilityGSplats(params: {
 }
 
 // ============================================================================
-// PROJECTION FUNCTIONS - nD to 3D
+// PROJECTION FUNCTIONS (nD → 3D, CPU-intensive)
 // ============================================================================
 
 /**
- * Project Points from nD to 3D.
- *
- * Pipeline:
- * 1. extract_3d_positions() - Extract 3D from nD
- * 2. calculate_effective_radii() - Compute visible radii
- * 3. radii_to_visibility_mask() - Create visibility mask
- * 4. compact_by_mask() - Filter positions (call 1)
- * 5. compact_by_mask() - Filter radii (call 2)
- * 6. compact_by_mask() - Filter sharpness (call 3)
- * 7. calculate_bounds_3d() - Compute axis-aligned bounds
+ * Configuration for effective radius calculation (passed from main thread)
  */
-async function projectPointsTo3D(params: {
-  positions: Float32Array;
-  radii: Float32Array;
-  sharpness?: Float32Array;
-  displayDims: Uint32Array;
-  slicePosition: Float32Array;
-  spatialExtendDims: Uint8Array;
-  ndim: number;
-  numPoints: number;
-  minRadius?: number;
-}): Promise<{
-  positions3D: Float32Array;
-  radii: Float32Array;
-  sharpness?: Float32Array;
-  bounds: Float32Array;
-  visibleCount: number;
-}> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
-
-  const {
-    positions,
-    radii,
-    sharpness,
-    displayDims,
-    slicePosition,
-    spatialExtendDims,
-    ndim,
-    numPoints,
-    minRadius = 0.0001,
-  } = params;
-
-  // Ensure buffer capacity
-  if (!positions3DBuffer || positions3DBuffer.length < numPoints * 3) {
-    positions3DBuffer = new Float32Array(Math.ceil(numPoints * 1.5 * 3));
-  }
-  if (!effectiveRadiiBuffer || effectiveRadiiBuffer.length < numPoints) {
-    effectiveRadiiBuffer = new Float32Array(Math.ceil(numPoints * 1.5));
-  }
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numPoints) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numPoints * 1.5));
-  }
-
-  // Step 1: Extract 3D positions from nD
-  wasmModule.extract_3d_positions(
-    positions,
-    displayDims,
-    ndim,
-    numPoints,
-    positions3DBuffer
-  );
-
-  // Step 2: Calculate effective radii for sliced hyperspheres
-  wasmModule.calculate_effective_radii(
-    positions,
-    radii,
-    displayDims,
-    slicePosition,
-    spatialExtendDims,
-    ndim,
-    numPoints,
-    effectiveRadiiBuffer
-  );
-
-  // Step 3: Create visibility mask from effective radii
-  const visibleCount = wasmModule.radii_to_visibility_mask(
-    effectiveRadiiBuffer,
-    minRadius,
-    numPoints,
-    visibilityMaskBuffer
-  );
-
-  if (visibleCount === 0) {
-    return {
-      positions3D: new Float32Array(0),
-      radii: new Float32Array(0),
-      sharpness: sharpness ? new Float32Array(0) : undefined,
-      bounds: new Float32Array([0, 0, 0, 0, 0, 0]),
-      visibleCount: 0,
-    };
-  }
-
-  // Step 4: Compact positions by visibility mask
-  const compactedPositions = new Float32Array(visibleCount * 3);
-  wasmModule.compact_by_mask(
-    positions3DBuffer,
-    visibilityMaskBuffer,
-    numPoints,
-    3,
-    compactedPositions
-  );
-
-  // Step 5: Compact radii by visibility mask
-  const compactedRadii = new Float32Array(visibleCount);
-  wasmModule.compact_by_mask(
-    effectiveRadiiBuffer,
-    visibilityMaskBuffer,
-    numPoints,
-    1,
-    compactedRadii
-  );
-
-  // Step 6: Compact sharpness if provided
-  let compactedSharpness: Float32Array | undefined;
-  if (sharpness) {
-    compactedSharpness = new Float32Array(visibleCount);
-    wasmModule.compact_by_mask(
-      sharpness,
-      visibilityMaskBuffer,
-      numPoints,
-      1,
-      compactedSharpness
-    );
-  }
-
-  // Step 7: Calculate bounds for visible points
-  const bounds = new Float32Array(6);
-  wasmModule.calculate_bounds_3d(compactedPositions, visibleCount, bounds);
-
-  return {
-    positions3D: compactedPositions,
-    radii: compactedRadii,
-    sharpness: compactedSharpness,
-    bounds,
-    visibleCount,
-  };
+interface EffectiveRadiusConfig {
+  spatialExtendDims: boolean[];
+  maxRadius: number;
 }
 
 /**
- * Project Lines from nD to 3D.
+ * View state for projection (subset of main thread ViewState)
+ */
+interface ProjectionViewState {
+  displayDims: number[];
+  slicePosition: number[];
+  tolerance: number[];
+}
+
+/**
+ * Pre-allocated output buffers for TransferableAccumulator pattern.
+ * When provided, projection writes directly to these buffers for zero-allocation.
+ */
+interface PointsOutputBuffers {
+  positions3D: Float32Array;
+  colors?: Float32Array | Uint8Array | Uint16Array | null;
+  radii?: Float32Array | null;
+  sharpness?: Float32Array | null;
+}
+
+/**
+ * Project Points from nD to 3D with visibility filtering
  *
- * Pipeline (7 WASM batch functions):
- * 1. clip_segments_batch() - Clip all segments to nD slice
- * 2. interpolate_clipped_positions() - Project clipped positions to 3D
- * 3. interpolate_colors_batch() - Interpolate colors at clipped endpoints
- * 4. interpolate_scalars_batch() - Interpolate widths (call 1)
- * 5. interpolate_scalars_batch() - Interpolate sharpness (call 2)
- * 6. calculate_segment_lengths() - Compute 3D segment lengths
- * 7. mark_clipped_endpoints() - Track which endpoints were clipped
+ * This function:
+ * 1. Extracts 3D positions from nD using displayDims
+ * 2. Calculates effective radii (if config provided)
+ * 3. Filters out zero-radius points
+ * 4. Returns compacted arrays ready for GPU
+ *
+ * TransferableAccumulator pattern:
+ * - If `outputBuffers` provided, writes directly to those buffers (zero-allocation)
+ * - If not, allocates new arrays (legacy behavior)
+ * - Returns `outputBuffers` for transfer back to main thread
+ */
+async function projectPointsTo3D(params: {
+  positions: Float32Array;
+  colors: Float32Array | Uint8Array | Uint16Array | null;
+  radii: Float32Array | null;
+  sharpness: Float32Array | null;
+  viewState: ProjectionViewState;
+  effectiveRadiusConfig: EffectiveRadiusConfig | null;
+  ndim: number;
+  numPoints: number;
+  /** Optional pre-allocated buffers for zero-allocation (TransferableAccumulator) */
+  outputBuffers?: PointsOutputBuffers;
+}): Promise<{
+  positions3D: Float32Array;
+  colors: Float32Array | Uint8Array | Uint16Array | null;
+  radii: Float32Array | null;
+  sharpness: Float32Array | null;
+  visibleCount: number;
+  bounds: { min: [number, number, number]; max: [number, number, number] };
+  /** Returned for TransferableAccumulator - same as input if provided */
+  outputBuffers?: PointsOutputBuffers;
+}> {
+  const {
+    positions,
+    colors,
+    radii,
+    sharpness,
+    viewState,
+    effectiveRadiusConfig,
+    ndim,
+    numPoints,
+    outputBuffers,
+  } = params;
+  const { displayDims, slicePosition } = viewState;
+
+  // Determine if using pre-allocated buffers (TransferableAccumulator pattern)
+  const usePreallocated = !!outputBuffers;
+
+  // Step 1: Extract 3D positions from nD using WASM
+  // Use pre-allocated buffer if available, otherwise allocate
+  const positions3D =
+    usePreallocated && outputBuffers.positions3D.length >= numPoints * 3
+      ? outputBuffers.positions3D
+      : new Float32Array(numPoints * 3);
+
+  // Use WASM for 3D extraction (faster for large arrays)
+  const displayDimsU32 = new Uint32Array(displayDims);
+  wasmModule!.extract_3d_positions(positions, displayDimsU32, ndim, numPoints, positions3D);
+
+  // Step 2: Calculate effective radii (if config provided and radii exist) using WASM
+  let effectiveRadii: Float32Array | null = null;
+  let usedEffectiveRadius = false;
+
+  if (radii && effectiveRadiusConfig) {
+    effectiveRadii = new Float32Array(numPoints);
+    // Convert to WASM-compatible arrays
+    const slicePositionF32 = new Float32Array(slicePosition);
+    const spatialExtendDimsU8 = new Uint8Array(
+      effectiveRadiusConfig.spatialExtendDims.map((b) => (b ? 1 : 0))
+    );
+
+    // Use WASM for effective radius calculation
+    wasmModule!.calculate_effective_radii(
+      positions,
+      radii,
+      displayDimsU32,
+      slicePositionF32,
+      spatialExtendDimsU8,
+      ndim,
+      numPoints,
+      effectiveRadii
+    );
+    usedEffectiveRadius = true;
+  } else if (radii) {
+    // No effective radius config - just copy radii
+    effectiveRadii = new Float32Array(radii);
+  }
+
+  // Step 3: Filter out zero-radius points using WASM
+  let visibleCount = numPoints;
+  let filteredPositions3D = positions3D;
+  let filteredColors: Float32Array | Uint8Array | Uint16Array | null = colors;
+  let filteredRadii = effectiveRadii;
+  let filteredSharpness = sharpness;
+
+  if (usedEffectiveRadius && effectiveRadii) {
+    const threshold = 0.0001;
+
+    // Create visibility mask using WASM
+    const visibilityMask = new Uint8Array(numPoints);
+    visibleCount = wasmModule!.radii_to_visibility_mask(
+      effectiveRadii,
+      threshold,
+      numPoints,
+      visibilityMask
+    );
+
+    if (visibleCount < numPoints && visibleCount > 0) {
+      // Compact positions using WASM
+      filteredPositions3D = new Float32Array(visibleCount * 3);
+      wasmModule!.compact_by_mask(positions3D, visibilityMask, numPoints, 3, filteredPositions3D);
+
+      // Compact radii using WASM
+      filteredRadii = new Float32Array(visibleCount);
+      wasmModule!.compact_by_mask(effectiveRadii, visibilityMask, numPoints, 1, filteredRadii);
+
+      // Compact colors (keep TypeScript for multi-type support)
+      if (colors) {
+        // Build valid indices for color compaction (colors can be Uint8/Uint16/Float32)
+        const validIndices: number[] = [];
+        for (let i = 0; i < numPoints; i++) {
+          if (visibilityMask[i] !== 0) validIndices.push(i);
+        }
+
+        if (colors instanceof Uint8Array) {
+          filteredColors = new Uint8Array(visibleCount * 3);
+        } else if (colors instanceof Uint16Array) {
+          filteredColors = new Uint16Array(visibleCount * 3);
+        } else {
+          filteredColors = new Float32Array(visibleCount * 3);
+        }
+        for (let i = 0; i < visibleCount; i++) {
+          const srcIdx = validIndices[i];
+          filteredColors[i * 3] = colors[srcIdx * 3];
+          filteredColors[i * 3 + 1] = colors[srcIdx * 3 + 1];
+          filteredColors[i * 3 + 2] = colors[srcIdx * 3 + 2];
+        }
+      }
+
+      // Compact sharpness using WASM
+      if (sharpness) {
+        filteredSharpness = new Float32Array(visibleCount);
+        wasmModule!.compact_by_mask(sharpness, visibilityMask, numPoints, 1, filteredSharpness);
+      }
+    } else if (visibleCount === 0) {
+      // All filtered out - preserve original color type for empty arrays
+      filteredPositions3D = new Float32Array(0);
+      filteredRadii = new Float32Array(0);
+      if (colors) {
+        if (colors instanceof Uint8Array) {
+          filteredColors = new Uint8Array(0);
+        } else if (colors instanceof Uint16Array) {
+          filteredColors = new Uint16Array(0);
+        } else {
+          filteredColors = new Float32Array(0);
+        }
+      } else {
+        filteredColors = null;
+      }
+      filteredSharpness = sharpness ? new Float32Array(0) : null;
+    }
+  }
+
+  // Step 4: Calculate bounds using WASM
+  const boundsOutput = new Float32Array(6);
+  wasmModule!.calculate_bounds_3d(filteredPositions3D, visibleCount, boundsOutput);
+
+  const bounds = {
+    min: [boundsOutput[0], boundsOutput[1], boundsOutput[2]] as [number, number, number],
+    max: [boundsOutput[3], boundsOutput[4], boundsOutput[5]] as [number, number, number],
+  };
+
+  // Build transferable list (cast to ArrayBuffer since we only use regular ArrayBuffers)
+  const transferables: ArrayBuffer[] = [filteredPositions3D.buffer as ArrayBuffer];
+  if (filteredColors) transferables.push(filteredColors.buffer as ArrayBuffer);
+  if (filteredRadii) transferables.push(filteredRadii.buffer as ArrayBuffer);
+  if (filteredSharpness) transferables.push(filteredSharpness.buffer as ArrayBuffer);
+
+  // Build result with optional outputBuffers for TransferableAccumulator
+  const result: {
+    positions3D: Float32Array;
+    colors: Float32Array | Uint8Array | Uint16Array | null;
+    radii: Float32Array | null;
+    sharpness: Float32Array | null;
+    visibleCount: number;
+    bounds: { min: [number, number, number]; max: [number, number, number] };
+    outputBuffers?: PointsOutputBuffers;
+  } = {
+    positions3D: filteredPositions3D,
+    colors: filteredColors,
+    radii: filteredRadii,
+    sharpness: filteredSharpness,
+    visibleCount,
+    bounds,
+  };
+
+  // If using TransferableAccumulator pattern, include outputBuffers for adoption
+  if (usePreallocated && outputBuffers) {
+    // Update outputBuffers with the actual buffers used (may be same or different due to filtering)
+    result.outputBuffers = {
+      positions3D: filteredPositions3D,
+      colors: filteredColors,
+      radii: filteredRadii,
+      sharpness: filteredSharpness,
+    };
+  }
+
+  return transfer(result, transferables);
+}
+
+// Note: calculateEffectiveRadiiWorker removed - using WASM calculate_effective_radii instead
+
+/**
+ * Project Lines from nD to 3D with segment clipping.
+ *
+ * This function implements the same algorithm as buildInstanceBuffers but in a worker:
+ * 1. Clips all segments to the nD slice using WASM batch functions
+ * 2. Projects clipped endpoints to 3D
+ * 3. Interpolates per-vertex attributes (colors, widths, sharpness)
+ * 4. Calculates segment lengths and tracks clipping
+ *
+ * WASM batch functions provide 3-5x speedup over per-segment TypeScript loops.
  */
 async function projectLinesTo3D(params: {
   positions: Float32Array;
   segments: Uint32Array;
-  colors?: Float32Array;
-  widths?: Float32Array;
-  sharpness?: Float32Array;
-  displayDims: Uint32Array;
-  slicePosition: Float32Array;
-  tolerance: Float32Array;
+  widths: Float32Array;
+  colors: Float32Array | Uint8Array | Uint16Array | null;
+  sharpness: Float32Array | null;
+  slicePosition: number[];
+  tolerance: number[];
+  displayDims: number[];
   ndim: number;
-  numSegments: number;
+  segmentCount: number;
 }): Promise<{
   startPositions: Float32Array;
   endPositions: Float32Array;
-  startColors?: Float32Array;
-  endColors?: Float32Array;
-  startWidths?: Float32Array;
-  endWidths?: Float32Array;
-  startSharpness?: Float32Array;
-  endSharpness?: Float32Array;
+  startColors: Float32Array;
+  endColors: Float32Array;
+  startWidths: Float32Array;
+  endWidths: Float32Array;
+  startSharpness: Float32Array;
+  endSharpness: Float32Array;
   segmentLengths: Float32Array;
   startClipped: Uint8Array;
   endClipped: Uint8Array;
-  visibleCount: number;
+  visibleSegmentCount: number;
 }> {
   if (!wasmModule) {
     throw new Error('[DataWorker] Not initialized - call initialize() first');
@@ -418,192 +497,242 @@ async function projectLinesTo3D(params: {
   const {
     positions,
     segments,
-    colors,
     widths,
+    colors,
     sharpness,
-    displayDims,
     slicePosition,
     tolerance,
+    displayDims,
     ndim,
-    numSegments,
+    segmentCount,
   } = params;
 
-  // Ensure buffer capacity
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numSegments * 1.5));
-  }
-  if (!t1Buffer || t1Buffer.length < numSegments) {
-    t1Buffer = new Float32Array(Math.ceil(numSegments * 1.5));
-  }
-  if (!t2Buffer || t2Buffer.length < numSegments) {
-    t2Buffer = new Float32Array(Math.ceil(numSegments * 1.5));
-  }
+  // Convert input arrays to WASM-compatible formats
+  const slicePosF32 = new Float32Array(slicePosition);
+  const toleranceF32 = new Float32Array(tolerance);
+  const displayDimsU32 = new Uint32Array(displayDims);
 
-  // Step 1: Clip all segments and get interpolation parameters
+  // Step 1: Batch clip all segments using WASM
+  const visibility = new Uint8Array(segmentCount);
+  const t1Params = new Float32Array(segmentCount);
+  const t2Params = new Float32Array(segmentCount);
+
   const visibleCount = wasmModule.clip_segments_batch(
     positions,
     segments,
-    slicePosition,
-    tolerance,
-    displayDims,
+    slicePosF32,
+    toleranceF32,
+    displayDimsU32,
     ndim,
-    numSegments,
-    visibilityMaskBuffer,
-    t1Buffer,
-    t2Buffer
+    segmentCount,
+    visibility,
+    t1Params,
+    t2Params
   );
 
+  // Early exit if no visible segments
   if (visibleCount === 0) {
-    return {
-      startPositions: new Float32Array(0),
-      endPositions: new Float32Array(0),
-      startColors: colors ? new Float32Array(0) : undefined,
-      endColors: colors ? new Float32Array(0) : undefined,
-      startWidths: widths ? new Float32Array(0) : undefined,
-      endWidths: widths ? new Float32Array(0) : undefined,
-      startSharpness: sharpness ? new Float32Array(0) : undefined,
-      endSharpness: sharpness ? new Float32Array(0) : undefined,
-      segmentLengths: new Float32Array(0),
-      startClipped: new Uint8Array(0),
-      endClipped: new Uint8Array(0),
-      visibleCount: 0,
-    };
+    const emptyPositions = new Float32Array(0);
+    const emptyColors = new Float32Array(0);
+    const emptyScalars = new Float32Array(0);
+    const emptyFlags = new Uint8Array(0);
+
+    return transfer(
+      {
+        startPositions: emptyPositions,
+        endPositions: new Float32Array(0),
+        startColors: emptyColors,
+        endColors: new Float32Array(0),
+        startWidths: emptyScalars,
+        endWidths: new Float32Array(0),
+        startSharpness: new Float32Array(0),
+        endSharpness: new Float32Array(0),
+        segmentLengths: new Float32Array(0),
+        startClipped: emptyFlags,
+        endClipped: new Uint8Array(0),
+        visibleSegmentCount: 0,
+      },
+      [emptyPositions.buffer, emptyColors.buffer, emptyScalars.buffer, emptyFlags.buffer]
+    );
   }
 
-  // Step 2: Interpolate clipped positions to 3D
+  // Step 2: Interpolate clipped positions to 3D using WASM
   const startPositions = new Float32Array(visibleCount * 3);
   const endPositions = new Float32Array(visibleCount * 3);
+
   wasmModule.interpolate_clipped_positions(
     positions,
     segments,
-    visibilityMaskBuffer,
-    t1Buffer,
-    t2Buffer,
-    displayDims,
+    visibility,
+    t1Params,
+    t2Params,
+    displayDimsU32,
     ndim,
-    numSegments,
+    segmentCount,
     startPositions,
     endPositions
   );
 
-  // Step 3: Interpolate colors if provided
-  let startColors: Float32Array | undefined;
-  let endColors: Float32Array | undefined;
+  // Step 3: Interpolate colors using WASM
+  // Convert colors to Float32Array if needed (WASM expects Float32Array)
+  const startColors = new Float32Array(visibleCount * 3);
+  const endColors = new Float32Array(visibleCount * 3);
+
   if (colors) {
-    startColors = new Float32Array(visibleCount * 3);
-    endColors = new Float32Array(visibleCount * 3);
+    // Convert to Float32Array if not already
+    let colorsF32: Float32Array;
+    if (colors instanceof Float32Array) {
+      colorsF32 = colors;
+    } else {
+      // Convert Uint8Array or Uint16Array to Float32Array
+      colorsF32 = new Float32Array(colors.length);
+      for (let i = 0; i < colors.length; i++) {
+        colorsF32[i] = colors[i];
+      }
+    }
+
     wasmModule.interpolate_colors_batch(
-      colors,
+      colorsF32,
       segments,
-      visibilityMaskBuffer,
-      t1Buffer,
-      t2Buffer,
-      numSegments,
+      visibility,
+      t1Params,
+      t2Params,
+      segmentCount,
       startColors,
       endColors
     );
+  } else {
+    // Default to white (1, 1, 1)
+    for (let i = 0; i < visibleCount; i++) {
+      startColors[i * 3] = 1.0;
+      startColors[i * 3 + 1] = 1.0;
+      startColors[i * 3 + 2] = 1.0;
+      endColors[i * 3] = 1.0;
+      endColors[i * 3 + 1] = 1.0;
+      endColors[i * 3 + 2] = 1.0;
+    }
   }
 
-  // Step 4: Interpolate widths if provided
-  let startWidths: Float32Array | undefined;
-  let endWidths: Float32Array | undefined;
-  if (widths) {
-    startWidths = new Float32Array(visibleCount);
-    endWidths = new Float32Array(visibleCount);
-    wasmModule.interpolate_scalars_batch(
-      widths,
-      segments,
-      visibilityMaskBuffer,
-      t1Buffer,
-      t2Buffer,
-      numSegments,
-      startWidths,
-      endWidths
-    );
-  }
+  // Step 4: Interpolate widths using WASM
+  const startWidths = new Float32Array(visibleCount);
+  const endWidths = new Float32Array(visibleCount);
 
-  // Step 5: Interpolate sharpness if provided
-  let startSharpness: Float32Array | undefined;
-  let endSharpness: Float32Array | undefined;
+  wasmModule.interpolate_scalars_batch(
+    widths,
+    segments,
+    visibility,
+    t1Params,
+    t2Params,
+    segmentCount,
+    startWidths,
+    endWidths
+  );
+
+  // Step 5: Interpolate sharpness using WASM
+  const startSharpness = new Float32Array(visibleCount);
+  const endSharpness = new Float32Array(visibleCount);
+
   if (sharpness) {
-    startSharpness = new Float32Array(visibleCount);
-    endSharpness = new Float32Array(visibleCount);
     wasmModule.interpolate_scalars_batch(
       sharpness,
       segments,
-      visibilityMaskBuffer,
-      t1Buffer,
-      t2Buffer,
-      numSegments,
+      visibility,
+      t1Params,
+      t2Params,
+      segmentCount,
       startSharpness,
       endSharpness
     );
+  } else {
+    // Default sharpness is 1.0
+    startSharpness.fill(1.0);
+    endSharpness.fill(1.0);
   }
 
-  // Step 6: Calculate 3D segment lengths
+  // Step 6: Calculate segment lengths using WASM
   const segmentLengths = new Float32Array(visibleCount);
-  wasmModule.calculate_segment_lengths(
-    startPositions,
-    endPositions,
-    visibleCount,
-    segmentLengths
-  );
+  wasmModule.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 7: Mark clipped endpoints
+  // Step 7: Mark clipped endpoints using WASM
   const startClipped = new Uint8Array(visibleCount);
   const endClipped = new Uint8Array(visibleCount);
+
   wasmModule.mark_clipped_endpoints(
-    visibilityMaskBuffer,
-    t1Buffer,
-    t2Buffer,
-    numSegments,
+    visibility,
+    t1Params,
+    t2Params,
+    segmentCount,
     startClipped,
     endClipped
   );
 
-  return {
-    startPositions,
-    endPositions,
-    startColors,
-    endColors,
-    startWidths,
-    endWidths,
-    startSharpness,
-    endSharpness,
-    segmentLengths,
-    startClipped,
-    endClipped,
-    visibleCount,
-  };
+  // Build transferable list
+  const transferables: ArrayBuffer[] = [
+    startPositions.buffer as ArrayBuffer,
+    endPositions.buffer as ArrayBuffer,
+    startColors.buffer as ArrayBuffer,
+    endColors.buffer as ArrayBuffer,
+    startWidths.buffer as ArrayBuffer,
+    endWidths.buffer as ArrayBuffer,
+    startSharpness.buffer as ArrayBuffer,
+    endSharpness.buffer as ArrayBuffer,
+    segmentLengths.buffer as ArrayBuffer,
+    startClipped.buffer as ArrayBuffer,
+    endClipped.buffer as ArrayBuffer,
+  ];
+
+  return transfer(
+    {
+      startPositions,
+      endPositions,
+      startColors,
+      endColors,
+      startWidths,
+      endWidths,
+      startSharpness,
+      endSharpness,
+      segmentLengths,
+      startClipped,
+      endClipped,
+      visibleSegmentCount: visibleCount,
+    },
+    transferables
+  );
 }
 
+// Note: clipSegmentToSliceWorker and lerpWorker removed - using WASM batch functions instead
+
+// ============================================================================
+// GSPLATS PROJECTION (nD → 3D with WASM batch functions)
+// ============================================================================
+
 /**
- * Project GSplats from nD to 3D.
+ * Project GSplats from nD to 3D with Mahalanobis-based visibility filtering.
  *
- * Pipeline (6 WASM batch functions):
- * 1. compute_gsplats_attenuation() - Compute visibility + attenuation for all splats
- * 2. extract_3d_positions() - Extract 3D centers from nD
- * 3. compact_by_mask() - Compact centers by visibility
- * 4. extract_visible_cholesky_3d() - Extract 3D Cholesky submatrices
- * 5. compact_attenuated_amplitudes() - Compact amplitudes with attenuation
- * 6. compact_by_mask() - Compact colors and sharpness
+ * This function uses WASM batch functions for high performance:
+ * 1. compute_gsplats_attenuation - computes visibility and attenuation for all splats
+ * 2. extract_3d_positions - extracts 3D centers (via display dims)
+ * 3. extract_visible_cholesky_3d - extracts 3D Cholesky submatrices
+ * 4. compact_attenuated_amplitudes - compacts amplitudes by visibility
+ * 5. compact_by_mask - compacts other arrays by visibility
+ *
+ * WASM batch functions provide 3-5x speedup over per-splat TypeScript loops.
  */
 async function projectGSplatsTo3D(params: {
-  centers: Float32Array;
+  positions: Float32Array;
   choleskyFactors: Float32Array;
   amplitudes: Float32Array;
-  colors?: Float32Array;
-  sharpness: Float32Array;
-  displayDims: Uint32Array;
-  slicePosition: Float32Array;
+  colors: Float32Array | Uint8Array | Uint16Array | null;
+  sharpness: Float32Array | null;
+  displayDims: number[];
+  slicePosition: number[];
   ndim: number;
-  numSplats: number;
-  minAmplitude?: number;
+  splatCount: number;
 }): Promise<{
   centers3D: Float32Array;
   choleskyFactors3D: Float32Array;
   amplitudes: Float32Array;
-  colors?: Float32Array;
+  colors: Float32Array;
   sharpness: Float32Array;
   visibleCount: number;
 }> {
@@ -612,7 +741,7 @@ async function projectGSplatsTo3D(params: {
   }
 
   const {
-    centers,
+    positions,
     choleskyFactors,
     amplitudes,
     colors,
@@ -620,296 +749,282 @@ async function projectGSplatsTo3D(params: {
     displayDims,
     slicePosition,
     ndim,
-    numSplats,
-    minAmplitude = 0.001,
+    splatCount,
   } = params;
-
-  // Ensure buffer capacity
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSplats) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numSplats * 1.5));
-  }
-  if (!attenuationBuffer || attenuationBuffer.length < numSplats) {
-    attenuationBuffer = new Float32Array(Math.ceil(numSplats * 1.5));
-  }
-  if (!positions3DBuffer || positions3DBuffer.length < numSplats * 3) {
-    positions3DBuffer = new Float32Array(Math.ceil(numSplats * 1.5 * 3));
-  }
 
   // Compute hidden dimensions (all dims not in displayDims)
   const hiddenDims: number[] = [];
-  const displaySet = new Set(Array.from(displayDims));
   for (let d = 0; d < ndim; d++) {
-    if (!displaySet.has(d)) {
+    if (!displayDims.includes(d)) {
       hiddenDims.push(d);
     }
   }
-  const hiddenDimsArray = new Uint32Array(hiddenDims);
 
-  // Step 1: Compute attenuation and visibility for all splats
-  const visibleCount = wasmModule.compute_gsplats_attenuation(
-    centers,
-    choleskyFactors,
-    amplitudes,
-    sharpness,
-    slicePosition,
-    hiddenDimsArray,
-    ndim,
-    numSplats,
-    minAmplitude,
-    visibilityMaskBuffer,
-    attenuationBuffer
-  );
+  // Sort dimensions for consistent submatrix extraction
+  const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
+  const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
 
-  if (visibleCount === 0) {
-    return {
-      centers3D: new Float32Array(0),
-      choleskyFactors3D: new Float32Array(0),
-      amplitudes: new Float32Array(0),
-      colors: colors ? new Float32Array(0) : undefined,
-      sharpness: new Float32Array(0),
-      visibleCount: 0,
-    };
+  // Convert to WASM-compatible arrays
+  const slicePosF32 = new Float32Array(slicePosition);
+  const hiddenDimsU32 = new Uint32Array(sortedHiddenDims);
+  const displayDimsU32 = new Uint32Array(sortedDisplayDims);
+
+  // Minimum amplitude threshold
+  const minAmplitude = 1e-6;
+
+  // Prepare sharpness array (default to 2.0 if not provided)
+  let sharpnessF32: Float32Array;
+  if (sharpness) {
+    sharpnessF32 = sharpness;
+  } else {
+    sharpnessF32 = new Float32Array(splatCount);
+    sharpnessF32.fill(2.0);
   }
 
-  // Step 2: Extract 3D positions from nD centers
-  wasmModule.extract_3d_positions(
-    centers,
-    displayDims,
-    ndim,
-    numSplats,
-    positions3DBuffer
-  );
+  // Step 1: Compute attenuation and visibility for all splats using WASM
+  const visibility = new Uint8Array(splatCount);
+  const attenuation = new Float32Array(splatCount);
 
-  // Step 3: Compact centers by visibility
-  const compactedCenters = new Float32Array(visibleCount * 3);
-  wasmModule.compact_by_mask(
-    positions3DBuffer,
-    visibilityMaskBuffer,
-    numSplats,
-    3,
-    compactedCenters
-  );
-
-  // Step 4: Extract 3D Cholesky submatrices for visible splats
-  const compactedCholesky = new Float32Array(visibleCount * 6); // 3x3 packed = 6 elements
-  wasmModule.extract_visible_cholesky_3d(
+  const visibleCount = wasmModule.compute_gsplats_attenuation(
+    positions,
     choleskyFactors,
-    visibilityMaskBuffer,
-    displayDims,
-    ndim,
-    numSplats,
-    compactedCholesky
-  );
-
-  // Step 5: Compact amplitudes with attenuation applied
-  const compactedAmplitudes = new Float32Array(visibleCount);
-  wasmModule.compact_attenuated_amplitudes(
     amplitudes,
-    attenuationBuffer,
-    visibilityMaskBuffer,
-    numSplats,
-    compactedAmplitudes
+    sharpnessF32,
+    slicePosF32,
+    hiddenDimsU32,
+    ndim,
+    splatCount,
+    minAmplitude,
+    visibility,
+    attenuation
   );
 
-  // Step 6: Compact colors if provided
-  let compactedColors: Float32Array | undefined;
-  if (colors) {
-    compactedColors = new Float32Array(visibleCount * 3);
-    wasmModule.compact_by_mask(
-      colors,
-      visibilityMaskBuffer,
-      numSplats,
-      3,
-      compactedColors
+  // Early exit if no visible splats
+  if (visibleCount === 0) {
+    const emptyF32 = new Float32Array(0);
+    return transfer(
+      {
+        centers3D: emptyF32,
+        choleskyFactors3D: new Float32Array(0),
+        amplitudes: new Float32Array(0),
+        colors: new Float32Array(0),
+        sharpness: new Float32Array(0),
+        visibleCount: 0,
+      },
+      [emptyF32.buffer]
     );
   }
 
-  // Step 7: Compact sharpness
-  const compactedSharpness = new Float32Array(visibleCount);
-  wasmModule.compact_by_mask(
-    sharpness,
-    visibilityMaskBuffer,
-    numSplats,
-    1,
-    compactedSharpness
+  // Step 2: Extract 3D centers using WASM
+  // First extract all centers, then compact by visibility
+  const allCenters3D = new Float32Array(splatCount * 3);
+  wasmModule.extract_3d_positions(positions, displayDimsU32, ndim, splatCount, allCenters3D);
+
+  // Compact centers by visibility
+  const centers3D = new Float32Array(visibleCount * 3);
+  wasmModule.compact_by_mask(allCenters3D, visibility, splatCount, 3, centers3D);
+
+  // Step 3: Extract 3D Cholesky submatrices for visible splats using WASM
+  const choleskyFactors3D = new Float32Array(visibleCount * 6);
+  wasmModule.extract_visible_cholesky_3d(
+    choleskyFactors,
+    visibility,
+    displayDimsU32,
+    ndim,
+    splatCount,
+    choleskyFactors3D
   );
 
-  return {
-    centers3D: compactedCenters,
-    choleskyFactors3D: compactedCholesky,
-    amplitudes: compactedAmplitudes,
-    colors: compactedColors,
-    sharpness: compactedSharpness,
-    visibleCount,
-  };
+  // Step 4: Compact attenuated amplitudes using WASM
+  const outAmplitudes = new Float32Array(visibleCount);
+  wasmModule.compact_attenuated_amplitudes(
+    amplitudes,
+    attenuation,
+    visibility,
+    splatCount,
+    outAmplitudes
+  );
+
+  // Step 5: Compact sharpness using WASM
+  const outSharpness = new Float32Array(visibleCount);
+  wasmModule.compact_by_mask(sharpnessF32, visibility, splatCount, 1, outSharpness);
+
+  // Step 6: Handle colors
+  const outColors = new Float32Array(visibleCount * 3);
+  if (colors) {
+    // Convert to Float32Array if needed
+    let colorsF32: Float32Array;
+    if (colors instanceof Float32Array) {
+      colorsF32 = colors;
+    } else {
+      colorsF32 = new Float32Array(colors.length);
+      for (let i = 0; i < colors.length; i++) {
+        colorsF32[i] = colors[i];
+      }
+    }
+    // Compact colors by visibility
+    wasmModule.compact_by_mask(colorsF32, visibility, splatCount, 3, outColors);
+  } else {
+    // Default to white
+    for (let i = 0; i < visibleCount; i++) {
+      outColors[i * 3] = 1.0;
+      outColors[i * 3 + 1] = 1.0;
+      outColors[i * 3 + 2] = 1.0;
+    }
+  }
+
+  // Build transferable list
+  const transferables: ArrayBuffer[] = [
+    centers3D.buffer as ArrayBuffer,
+    choleskyFactors3D.buffer as ArrayBuffer,
+    outAmplitudes.buffer as ArrayBuffer,
+    outColors.buffer as ArrayBuffer,
+    outSharpness.buffer as ArrayBuffer,
+  ];
+
+  return transfer(
+    {
+      centers3D,
+      choleskyFactors3D,
+      amplitudes: outAmplitudes,
+      colors: outColors,
+      sharpness: outSharpness,
+      visibleCount,
+    },
+    transferables
+  );
 }
+
+// Note: packedIndexWorker, extractCholeskySubmatrixWorker, mahalanobisDistanceWorker removed - using WASM batch functions instead
 
 // ============================================================================
-// DECODE FUNCTIONS - Dequantize compressed data formats
+// DECODING FUNCTIONS (WASM-accelerated, CPU-intensive, offloaded from main thread)
 // ============================================================================
 
 /**
- * Decode quantized uint8 to float32.
- * Maps [0,255] -> [minVal,maxVal]
+ * Decode quantized data (uint8/uint16) to float32 using WASM.
+ *
+ * Main thread fetches raw bytes from cache, worker dequantizes via WASM.
+ * Uses Comlink.transfer for zero-copy return.
+ *
+ * WASM provides 2-3x speedup for large arrays (>10K elements).
  */
-async function decodeQuantizedU8(params: {
-  data: Uint8Array;
-  minVal: number;
-  maxVal: number;
+async function decodeQuantized(params: {
+  data: Uint8Array | Uint16Array;
+  bounds: [number, number];
+  dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
   if (!wasmModule) {
     throw new Error('[DataWorker] Not initialized - call initialize() first');
   }
 
-  const { data, minVal, maxVal } = params;
-  const output = new Float32Array(data.length);
+  const { data, bounds, dtype } = params;
+  const [minVal, maxVal] = bounds;
 
-  wasmModule.decode_quantized_u8(data, minVal, maxVal, output);
+  const result = new Float32Array(data.length);
 
-  return output;
-}
-
-/**
- * Decode quantized uint16 to float32.
- * Maps [0,65535] -> [minVal,maxVal]
- */
-async function decodeQuantizedU16(params: {
-  data: Uint16Array;
-  minVal: number;
-  maxVal: number;
-}): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
+  // Use WASM for decoding
+  if (dtype === 'uint8') {
+    wasmModule.decode_quantized_u8(data as Uint8Array, minVal, maxVal, result);
+  } else {
+    wasmModule.decode_quantized_u16(data as Uint16Array, minVal, maxVal, result);
   }
 
-  const { data, minVal, maxVal } = params;
-  const output = new Float32Array(data.length);
-
-  wasmModule.decode_quantized_u16(data, minVal, maxVal, output);
-
-  return output;
+  // Transfer ownership to main thread (zero-copy)
+  return transfer(result, [result.buffer]);
 }
 
 /**
- * Decode log-space quantized uint8.
- * Result = expm1(normalized * maxLog)
+ * Decode log-space quantized data (uint8/uint16) to float32 using WASM.
+ *
+ * Used for positive scalars with wide dynamic range (e.g., radii).
+ * Decoding: expm1(normalized * maxLog)
+ *
+ * WASM provides 2-3x speedup for large arrays.
  */
-async function decodeLogScalarU8(params: {
-  data: Uint8Array;
+async function decodeLogScalar(params: {
+  data: Uint8Array | Uint16Array;
   maxLog: number;
+  dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
   if (!wasmModule) {
     throw new Error('[DataWorker] Not initialized - call initialize() first');
   }
 
-  const { data, maxLog } = params;
-  const output = new Float32Array(data.length);
+  const { data, maxLog, dtype } = params;
 
-  wasmModule.decode_log_scalar_u8(data, maxLog, output);
+  const result = new Float32Array(data.length);
 
-  return output;
-}
-
-/**
- * Decode log-space quantized uint16.
- * Result = expm1(normalized * maxLog)
- */
-async function decodeLogScalarU16(params: {
-  data: Uint16Array;
-  maxLog: number;
-}): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
+  // Use WASM for decoding
+  if (dtype === 'uint8') {
+    wasmModule.decode_log_scalar_u8(data as Uint8Array, maxLog, result);
+  } else {
+    wasmModule.decode_log_scalar_u16(data as Uint16Array, maxLog, result);
   }
 
-  const { data, maxLog } = params;
-  const output = new Float32Array(data.length);
-
-  wasmModule.decode_log_scalar_u16(data, maxLog, output);
-
-  return output;
+  // Transfer ownership to main thread (zero-copy)
+  return transfer(result, [result.buffer]);
 }
 
 /**
- * Decode LUT indices (uint8) to scalar float values.
+ * Decode LUT-encoded data (indices → values via lookup table) using WASM.
+ *
+ * Supports two modes:
+ * - "row": One index per row → k values (e.g., one index per point → xyz)
+ * - "scalar": One index per element → 1 value
+ *
+ * WASM provides 2-4x speedup for large arrays.
  */
-async function decodeLUTScalarU8(params: {
-  indices: Uint8Array;
-  lut: Float32Array;
-}): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
-
-  const { indices, lut } = params;
-  const output = new Float32Array(indices.length);
-
-  wasmModule.decode_lut_scalar_u8(indices, lut, output);
-
-  return output;
-}
-
-/**
- * Decode LUT indices (uint16) to scalar float values.
- */
-async function decodeLUTScalarU16(params: {
-  indices: Uint16Array;
-  lut: Float32Array;
-}): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
-
-  const { indices, lut } = params;
-  const output = new Float32Array(indices.length);
-
-  wasmModule.decode_lut_scalar_u16(indices, lut, output);
-
-  return output;
-}
-
-/**
- * Decode LUT indices (uint8) to k-element vectors.
- */
-async function decodeLUTRowU8(params: {
-  indices: Uint8Array;
-  lut: Float32Array;
+async function decodeLUT(params: {
+  indices: Uint8Array | Uint16Array;
+  lut: number[];
   k: number;
+  lutMode: 'row' | 'scalar';
+  dtype?: 'uint8' | 'uint16'; // Optional - inferred from indices type if not provided
 }): Promise<Float32Array> {
   if (!wasmModule) {
     throw new Error('[DataWorker] Not initialized - call initialize() first');
   }
 
-  const { indices, lut, k } = params;
-  const output = new Float32Array(indices.length * k);
+  const { indices, lut, k, lutMode } = params;
+  // Infer dtype from indices type if not explicitly provided
+  const dtype = params.dtype ?? (indices instanceof Uint8Array ? 'uint8' : 'uint16');
+  const n = indices.length;
 
-  wasmModule.decode_lut_row_u8(indices, lut, k, output);
+  // Convert LUT to Float32Array for WASM
+  const lutF32 = new Float32Array(lut);
 
-  return output;
-}
+  if (lutMode === 'scalar') {
+    // Scalar mode: one index per element, output size = n
+    const result = new Float32Array(n);
 
-/**
- * Decode LUT indices (uint16) to k-element vectors.
- */
-async function decodeLUTRowU16(params: {
-  indices: Uint16Array;
-  lut: Float32Array;
-  k: number;
-}): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
+    if (dtype === 'uint8') {
+      wasmModule.decode_lut_scalar_u8(indices as Uint8Array, lutF32, result);
+    } else {
+      wasmModule.decode_lut_scalar_u16(indices as Uint16Array, lutF32, result);
+    }
+
+    return transfer(result, [result.buffer]);
+  } else {
+    // Row mode: one index per row, output size = n * k
+    const result = new Float32Array(n * k);
+
+    if (dtype === 'uint8') {
+      wasmModule.decode_lut_row_u8(indices as Uint8Array, lutF32, k, result);
+    } else {
+      wasmModule.decode_lut_row_u16(indices as Uint16Array, lutF32, k, result);
+    }
+
+    return transfer(result, [result.buffer]);
   }
-
-  const { indices, lut, k } = params;
-  const output = new Float32Array(indices.length * k);
-
-  wasmModule.decode_lut_row_u16(indices, lut, k, output);
-
-  return output;
 }
 
 /**
- * Broadcast a value to all points.
+ * Decode broadcasted data (single value replicated to all points) using WASM.
+ *
+ * Used for uniform attributes (e.g., all points same color).
+ *
+ * WASM provides speedup for large point counts.
  */
 async function decodeBroadcasted(params: {
   value: Float32Array;
@@ -921,46 +1036,39 @@ async function decodeBroadcasted(params: {
   }
 
   const { value, numPoints, elementsPerPoint } = params;
-  const output = new Float32Array(numPoints * elementsPerPoint);
+  const result = new Float32Array(numPoints * elementsPerPoint);
 
-  wasmModule.decode_broadcasted(value, numPoints, elementsPerPoint, output);
+  // Use WASM for broadcasting
+  wasmModule.decode_broadcasted(value, numPoints, elementsPerPoint, result);
 
-  return output;
+  return transfer(result, [result.buffer]);
 }
+
+// ============================================================================
 
 /**
  * Expose worker API via Comlink
- * NO ArrayDecoder methods - those stay on main thread!
  */
 const workerAPI = {
-  // Initialization
   initialize,
-
-  // Spatial queries
   querySpatialIndex,
-
-  // nD visibility computation
   computeNDVisibilityPoints,
   computeNDVisibilityLines,
   computeNDVisibilityGSplats,
-
-  // Projection functions
+  // Decoding functions (main thread fetches, worker decodes)
+  decodeQuantized,
+  decodeLogScalar,
+  decodeLUT,
+  decodeBroadcasted,
+  // Projection functions (nD → 3D, CPU-intensive)
   projectPointsTo3D,
   projectLinesTo3D,
   projectGSplatsTo3D,
-
-  // Decode functions
-  decodeQuantizedU8,
-  decodeQuantizedU16,
-  decodeLogScalarU8,
-  decodeLogScalarU16,
-  decodeLUTScalarU8,
-  decodeLUTScalarU16,
-  decodeLUTRowU8,
-  decodeLUTRowU16,
-  decodeBroadcasted,
 };
 
 expose(workerAPI);
 
 export type DataWorkerAPI = typeof workerAPI;
+
+// Export types for TransferableAccumulator pattern
+export type { PointsOutputBuffers };

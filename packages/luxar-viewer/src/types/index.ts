@@ -10,6 +10,16 @@
 export type { DimensionMetadata, SimpleDims } from './dims';
 export { initializeDims, getDimensionRanges } from './dims';
 
+// Points types
+export type {
+  PointsMetadata,
+  PointsChunkSpatialIndex,
+  PointsViewState,
+  PointsDataLoader,
+  PointsUserData,
+} from './points';
+export { isPointsMetadata, isPointsUserData } from './points';
+
 // Lines types
 export type {
   OrderingMetadata,
