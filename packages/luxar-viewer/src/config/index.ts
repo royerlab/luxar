@@ -469,7 +469,7 @@ export const config: AppConfig = {
       gpuPoolEvictionFrames: 300,
 
       // Debugging
-      enablePerformanceMonitoring: false,
+      enablePerformanceMonitoring: true,
     },
   },
 
