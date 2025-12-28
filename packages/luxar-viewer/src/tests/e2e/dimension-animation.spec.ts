@@ -556,25 +556,18 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('4');
     await page.waitForTimeout(100);
 
-    // Set loop mode to once and high FPS
-
-    // Wait for play button to be visible, then right-click to open context menu
-    const playButton3 = await page.locator('.luxar-dimension-slider__play-btn').first();
-    await playButton3.waitFor({ state: 'visible', timeout: 5000 });
-    await playButton3.click({ button: 'right' });
-    await page.waitForTimeout(200);
-
-    // Select once mode
-    await page.click('text=Once');
+    // Set loop mode to once and high FPS using direct API calls (more reliable than UI)
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const animManager = debug?.inputHandler?.animationManager;
+      if (animManager) {
+        animManager.setLoopMode(3, 'once');
+        animManager.setTargetFPS(3, 60);
+      }
+    });
     await page.waitForTimeout(100);
 
-    // Right-click again to set FPS
-    await playButton3.click({ button: 'right' });
-    await page.waitForTimeout(200);
-    await page.click('text=60 FPS');
-    await page.waitForTimeout(200);
-
-    // Jump to near end (not quite at end)
+    // Get max value and jump to near end (not quite at end)
     const maxValue = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const sceneDimsManager = debug?.sceneDimsManager;
@@ -582,30 +575,65 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       return ranges?.[3]?.[1] ?? 10;
     });
 
+    // Set position to max - 2, leaving some distance to animate
     await page.evaluate((max: number) => {
       const debug = (window as any).__luxarDebug;
       const sceneDimsManager = debug?.sceneDimsManager;
       sceneDimsManager?.setDimensionValue(3, Math.max(0, max - 2));
     }, maxValue);
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(300);
 
     // Start animation
     await page.keyboard.press('k');
     await page.waitForTimeout(200);
 
-    // Wait for animation to complete - wait for it to actually stop instead of fixed timeout
+    // Verify animation started
+    const startedPlaying = await isAnimating(page, 3);
+    expect(startedPlaying).toBe(true);
+
+    // Wait for animation to complete
     // The "once" mode should stop when reaching the end
-    try {
-      await page.waitForFunction(
-        () => {
-          const debug = (window as any).__luxarDebug;
-          const mgr = debug?.sceneDimsManager?.animationManager;
-          return mgr ? !mgr.isAnimating(3) : false;
-        },
-        { timeout: 10000 }
-      );
-    } catch {
-      // If timeout, check current state for debugging
+    // At 60 FPS, 2 steps should complete in ~33ms per step, but allow for loading delays
+    // Use a poll loop for better debugging
+    let attempts = 0;
+    const maxAttempts = 100; // 10 seconds with 100ms intervals
+    let stopped = false;
+    while (attempts < maxAttempts && !stopped) {
+      stopped = await page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        const mgr = debug?.inputHandler?.animationManager;
+        return mgr ? !mgr.isAnimating(3) : true; // If no manager, consider stopped
+      });
+      if (!stopped) {
+        await page.waitForTimeout(100);
+        attempts++;
+      }
+    }
+
+    // Get debug info if still not stopped
+    if (!stopped) {
+      const debugInfo = await page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        const mgr = debug?.inputHandler?.animationManager;
+        const state = mgr?.getState(3);
+        const sceneDims = debug?.sceneDimsManager;
+        const dims = sceneDims?.getDims();
+        return {
+          hasManager: !!mgr,
+          isAnimating: mgr?.isAnimating(3),
+          state: state
+            ? {
+                isPlaying: state.isPlaying,
+                loopMode: state.loopMode,
+                direction: state.direction,
+                targetFPS: state.targetFPS,
+              }
+            : null,
+          currentValue: dims?.currentStep?.[3],
+          ranges: sceneDims?.getDimensionRanges(),
+        };
+      });
+      console.log('Animation debug info:', JSON.stringify(debugInfo, null, 2));
     }
 
     // Animation should have stopped
@@ -645,7 +673,8 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     // Right-click again to set FPS
     await playButton4.click({ button: 'right' });
     await page.waitForTimeout(200);
-    await page.click('text=60 FPS');
+    // Use specific selector to avoid matching resolution indicator
+    await page.click('.luxar-dimension-slider__context-item:has-text("60 FPS")');
     await page.waitForTimeout(200);
 
     // Jump to near end

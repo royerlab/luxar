@@ -10,7 +10,7 @@ import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { LowPowerIndicator } from '../ui/components/low-power-indicator';
+import { ResolutionIndicator } from '../ui/components/resolution-indicator';
 import { SceneLoaderManager } from '../data/scene-loader-manager';
 
 export class LuxarApp {
@@ -19,7 +19,7 @@ export class LuxarApp {
   private inputHandler!: InputHandler;
   private renderingControls!: RenderingControls;
   private adaptiveDPRManager!: AdaptiveDPRManager;
-  private lowPowerIndicator!: LowPowerIndicator;
+  private resolutionIndicator!: ResolutionIndicator;
   private datasetBrowser?: DatasetBrowser;
   private isInitialized = false;
   private boundCleanup: (() => void) | null = null;
@@ -122,14 +122,17 @@ export class LuxarApp {
       this.adaptiveDPRManager.setRenderer(this.sceneManager);
       this.animationController.setAdaptiveDPRManager(this.adaptiveDPRManager);
 
-      // Initialize low power indicator and connect to DPR manager
-      this.lowPowerIndicator = new LowPowerIndicator();
-      this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isLowPowerMode) => {
-        if (isLowPowerMode) {
-          this.lowPowerIndicator.show(dpr);
+      // Initialize resolution indicator and connect to DPR manager
+      this.resolutionIndicator = new ResolutionIndicator();
+      // Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
+      const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
+      this.resolutionIndicator.setTargetFPS(displayTargetFPS);
+      this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
+        if (isReducedResolution) {
+          this.resolutionIndicator.show(dpr);
         } else {
-          // Reset the indicator so it can show again on next low power mode activation
-          this.lowPowerIndicator.reset();
+          // Reset the indicator so it can show again on next reduced resolution mode activation
+          this.resolutionIndicator.reset();
         }
       });
 
@@ -403,7 +406,15 @@ export class LuxarApp {
         scene.traverse((object) => {
           if (object.type === 'Points') {
             const geometry = (object as any).geometry;
-            const pointCount = geometry?.attributes?.position?.count || 0;
+            // Use drawRange.count if set (GPU buffer pool uses drawRange to limit rendering)
+            // Fall back to position.count for geometries without drawRange
+            const drawRangeCount = geometry?.drawRange?.count;
+            const bufferCount = geometry?.attributes?.position?.count || 0;
+            // Infinity means "draw all", so use buffer count in that case
+            const pointCount =
+              drawRangeCount !== undefined && drawRangeCount !== Infinity
+                ? Math.min(drawRangeCount, bufferCount)
+                : bufferCount;
             totalPoints += pointCount;
 
             pointClouds.push({
@@ -425,10 +436,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-              ndim: dims.ndim,
-              displayed: dims.displayed,
-              currentStep: dims.currentStep,
-            }
+                ndim: dims.ndim,
+                displayed: dims.displayed,
+                currentStep: dims.currentStep,
+              }
             : null,
           camera: {
             position: {
@@ -571,9 +582,9 @@ export class LuxarApp {
         this.adaptiveDPRManager.dispose();
       }
 
-      // Clean up low power indicator
-      if (this.lowPowerIndicator) {
-        this.lowPowerIndicator.dispose();
+      // Clean up resolution indicator
+      if (this.resolutionIndicator) {
+        this.resolutionIndicator.dispose();
       }
 
       // Clean up input handlers
