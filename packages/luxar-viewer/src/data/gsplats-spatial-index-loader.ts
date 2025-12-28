@@ -429,19 +429,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Quantized range loading: ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode, loading ${totalSplats} values)`
+        `GSplats: Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalSplats} values)`
       );
 
-      // Load only the needed ranges of quantized data
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const chunkData = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL DECODE: Process chunks in order
+      for (const chunkData of chunks) {
         const quantizedData = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-
         const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
 
         output.set(dequantized, destOffset);
@@ -459,19 +463,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: LUT range loading: ${arrayName} (loading ${totalSplats} indices, decoding to ${totalElements} elements)`
+        `GSplats: LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalSplats} indices → ${totalElements} elements)`
       );
 
-      // Load only the needed ranges of indices
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all index chunks simultaneously
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const chunkData = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL DECODE: Process chunks in order
+      for (const chunkData of chunks) {
         const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-
         const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
 
         output.set(decoded, destOffset);
@@ -507,13 +515,19 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           );
         }
 
-        for (const range of ranges) {
+        // PARALLEL FETCH: Load all quantized chunks from target
+        const chunkPromises = ranges.map((range) => {
           const sliceSpec: zarr.Slice[] =
             targetArray.shape.length === 2
               ? [slice(range.start, range.end), slice(null)]
               : [slice(range.start, range.end)];
+          return get(targetArray, sliceSpec);
+        });
 
-          const quantizedData = await get(targetArray, sliceSpec);
+        const chunks = await Promise.all(chunkPromises);
+
+        // SEQUENTIAL DECODE
+        for (const quantizedData of chunks) {
           const dequantized = this.decoder.dequantizeRange(
             quantizedData.data as Uint8Array | Uint16Array,
             quantMeta
@@ -534,13 +548,19 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           throw new Error(`GSplats: LUT metadata missing for array_ref target: ${targetPath}`);
         }
 
-        for (const range of ranges) {
+        // PARALLEL FETCH: Load all LUT index chunks from target
+        const chunkPromises = ranges.map((range) => {
           const sliceSpec: zarr.Slice[] =
             targetArray.shape.length === 2
               ? [slice(range.start, range.end), slice(null)]
               : [slice(range.start, range.end)];
+          return get(targetArray, sliceSpec);
+        });
 
-          const chunkData = await get(targetArray, sliceSpec);
+        const chunks = await Promise.all(chunkPromises);
+
+        // SEQUENTIAL DECODE
+        for (const chunkData of chunks) {
           const decoded = this.decoder.decodeLUTIndices(
             chunkData.data as Float32Array | Uint8Array | Uint16Array,
             lutMetadata
@@ -594,16 +614,22 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // Direct arrays: load ranges directly from zarr
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `GSplats: Direct array loading: ${arrayName} (${totalSplats} splats)`
+        `GSplats: Direct array loading: ${arrayName}, ${ranges.length} ranges (${totalSplats} splats)`
       );
 
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all chunks simultaneously
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const data = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL WRITE
+      for (const data of chunks) {
         const floatData =
           data.data instanceof Float32Array
             ? data.data
