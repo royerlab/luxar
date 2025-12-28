@@ -1010,7 +1010,7 @@ These diagrams are rendered automatically in:
 npm install -g @mermaid-js/mermaid-cli
 
 # Generate PNG/SVG
-mmdc -i VIEWER_ARCHITECTURE_DIAGRAMS.md -o diagrams.pdf
+mmdc -i ARCHITECTURE-DIAGRAMS.md -o diagrams.pdf
 ```
 
 ---
