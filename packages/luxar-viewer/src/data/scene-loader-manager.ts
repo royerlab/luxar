@@ -4,10 +4,13 @@
  * This manager provides a clean way to access SceneLoader instances without
  * polluting the global window object. It uses a singleton pattern with
  * explicit instance management.
+ *
+ * Also owns the UpdateProfiler singleton for timing scene updates.
  */
 
 import { SceneLoader } from './scene-loader';
 import { LoaderConfig } from './data-loader-types';
+import { UpdateProfiler } from '../profiling/update-profiler';
 
 /**
  * Manager for SceneLoader instances.
@@ -19,9 +22,25 @@ export class SceneLoaderManager {
   private defaultLoaderId: string | null = null;
 
   /**
+   * Update profiler for timing scene updates
+   * Singleton owned by the manager, shared with all loaders
+   */
+  private readonly profiler: UpdateProfiler;
+
+  /**
    * Private constructor to enforce singleton pattern
    */
-  private constructor() {}
+  private constructor() {
+    this.profiler = new UpdateProfiler();
+  }
+
+  /**
+   * Get the update profiler instance
+   * Used by DataLoadingMonitor to display timing data
+   */
+  getProfiler(): UpdateProfiler {
+    return this.profiler;
+  }
 
   /**
    * Get the singleton instance of SceneLoaderManager
@@ -51,7 +70,8 @@ export class SceneLoaderManager {
       this.destroyLoader(id);
     }
 
-    const loader = new SceneLoader(config, id);
+    // Pass the profiler to the loader
+    const loader = new SceneLoader(config, id, this.profiler);
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {

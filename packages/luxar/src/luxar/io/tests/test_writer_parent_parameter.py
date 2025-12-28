@@ -8,11 +8,11 @@ incorrect API usage in test. The parent parameter works when using:
 This test suite guards against regressions in hierarchy creation.
 """
 
-from pathlib import Path
-
 import numpy as np
 import zarr
+from pathlib import Path
 
+from luxar import Scene
 from luxar.core.dimensions import Dimensions
 
 
@@ -22,7 +22,6 @@ def test_points_with_parent_creates_correct_hierarchy(tmp_path: Path) -> None:
 
     # Create scene using compiler (recommended pattern)
     from luxar.io.compiler import LuxarZarrCompiler
-
     with LuxarZarrCompiler(output_path) as compiler:
         scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -31,28 +30,23 @@ def test_points_with_parent_creates_correct_hierarchy(tmp_path: Path) -> None:
 
         # Create group and add points to it
         group_a = scene_node.add_group("GroupA")
-        compiler.write_points(
-            "GroupA/GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32)
-        )
+        compiler.write_points("GroupA/GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32))
 
         # Create nested group and add points
-        _group_b = group_a.add_group("GroupB")
-        compiler.write_points(
-            "GroupA/GroupB/GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32)
-        )
+        group_b = group_a.add_group("GroupB")
+        compiler.write_points("GroupA/GroupB/GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32))
 
     # Verify zarr structure
-    store = zarr.open(str(output_path), mode="r")
+    store = zarr.open(str(output_path), mode='r')
 
     # Check the actual zarr hierarchy
     print("\nZarr hierarchy:")
-
     def print_tree(group, indent=0):
         for key in sorted(group.group_keys()):
             child = group[key]
-            node_type = child.attrs.get("type", "group")
+            node_type = child.attrs.get('type', 'group')
             print("  " * indent + f"- {key} ({node_type})")
-            if node_type == "group":
+            if node_type == 'group':
                 print_tree(child, indent + 1)
 
     print_tree(store)
@@ -80,22 +74,20 @@ def test_reader_reflects_correct_hierarchy(tmp_path: Path) -> None:
 
     # Create scene with hierarchy
     from luxar.io.compiler import LuxarZarrCompiler
-
     with LuxarZarrCompiler(output_path) as compiler:
         scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
 
         compiler.write_points("Root1", np.array([[0, 0, 0]], dtype=np.float32))
 
-        _group_a = scene_node.add_group("GroupA")
+        group_a = scene_node.add_group("GroupA")
         compiler.write_points("GroupA/Points1", np.array([[1, 1, 1]], dtype=np.float32))
 
     # Read back
     from luxar.io.reader import LuxarScene
-
     reader = LuxarScene.load(output_path)
 
     nodes = reader.nodes
-    names = [n["name"] for n in nodes]
+    names = [n['name'] for n in nodes]
 
     print("\nReader nodes:")
     for node in nodes:

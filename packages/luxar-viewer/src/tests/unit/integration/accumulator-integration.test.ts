@@ -6,12 +6,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { PointsDataAccumulator } from '../../../data/data-accumulator';
+import { LoadedPointsDataAccumulator } from '../../../data/data-accumulator';
 
 describe('Accumulator Integration Tests', () => {
   describe('Points Loader Integration', () => {
     it('should call accumulator methods when useAccumulators=true', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // Spy on accumulator methods
       const ensureCapacitySpy = vi.spyOn(accumulator, 'ensureCapacity');
@@ -53,7 +53,7 @@ describe('Accumulator Integration Tests', () => {
     });
 
     it('should detect types on first fill', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // First fill with Uint8 colors
       accumulator.fill(0, {
@@ -71,7 +71,7 @@ describe('Accumulator Integration Tests', () => {
     });
 
     it('should return subarrays (views) not copies', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       accumulator.fill(0, {
         positions: new Float32Array([1, 2, 3, 4, 5, 6]),
@@ -94,7 +94,7 @@ describe('Accumulator Integration Tests', () => {
 
   describe('Accumulator Buffer Reuse Verification', () => {
     it('should reuse buffers across multiple loads', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // First load
       accumulator.fill(0, {
@@ -125,7 +125,7 @@ describe('Accumulator Integration Tests', () => {
     });
 
     it('should only allocate on capacity growth', () => {
-      const accumulator = new PointsDataAccumulator(100, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(100, 3, 10000);
 
       // Fill within capacity
       accumulator.fill(0, {
@@ -158,7 +158,7 @@ describe('Accumulator Integration Tests', () => {
 
   describe('Multi-Type Integration', () => {
     it('should preserve types through full pipeline', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // Fill with Uint8 colors
       accumulator.fill(0, {
@@ -182,7 +182,7 @@ describe('Accumulator Integration Tests', () => {
     });
 
     it('should handle type changes (recreate buffers)', () => {
-      const accumulator = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // First fill: Uint8 colors
       accumulator.fill(0, {
@@ -195,7 +195,7 @@ describe('Accumulator Integration Tests', () => {
 
       // Dispose and reinit (simulate loader reset)
       accumulator.dispose();
-      const accumulator2 = new PointsDataAccumulator(1000, 3, 10000);
+      const accumulator2 = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
       // Second fill: Float32 colors (different type)
       accumulator2.fill(0, {

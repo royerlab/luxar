@@ -206,11 +206,14 @@ export function computeGSplatsTolerance(
       // Displayed dimensions: include everything
       tolerance[dim] = 1e10;
     } else {
-      // Hidden dimensions: use step size from dimension metadata if available
-      // Otherwise use default tolerance
+      // Hidden dimensions: check if discrete first
       const dimMeta = dimensions?.[dim];
-      if (dimMeta?.step) {
-        // Use half step as tolerance (splats visible within half a step)
+
+      if (dimMeta?.discrete) {
+        // Discrete dimensions need exact matching (0.5 tolerance for floating point safety)
+        tolerance[dim] = 0.5;
+      } else if (dimMeta?.step) {
+        // Continuous dimensions: use step size as tolerance
         tolerance[dim] = dimMeta.step * defaultTolerance;
       } else {
         tolerance[dim] = defaultTolerance;
@@ -224,15 +227,16 @@ export function computeGSplatsTolerance(
 /**
  * Compute tolerance from GSplatsViewState.
  *
+ * Always computes fresh tolerance for gsplats spatial queries.
+ * Note: viewState.tolerance (from ViewStateManager) is not used because it sets
+ * displayed dimensions to 0, but gsplats need 1e10 for displayed dims to load
+ * all visible data. We always compute fresh using computeGSplatsTolerance.
+ *
  * @param viewState - Current view state
  * @returns Per-dimension tolerance array
  */
 export function computeToleranceFromViewState(viewState: GSplatsViewState): number[] {
-  // If tolerance is already provided, use it
-  if (viewState.tolerance && viewState.tolerance.length > 0) {
-    return viewState.tolerance;
-  }
-
-  // Otherwise compute from dimensions
+  // Always compute fresh tolerance for gsplats - don't use viewState.tolerance
+  // because it's designed for points slicing, not gsplats spatial queries
   return computeGSplatsTolerance(viewState.dimensions, viewState.displayDims);
 }

@@ -3,10 +3,23 @@
 #
 # Phase 3: WASM Acceleration
 # This script compiles the Rust code to WebAssembly and generates JavaScript bindings
+#
+# Usage:
+#   ./build-wasm.sh          # Production build (optimized)
+#   ./build-wasm.sh --dev    # Development build (faster compilation)
 
 set -e  # Exit on error
 
-echo "🦀 Building Luxar WASM module..."
+# Parse arguments
+BUILD_MODE="--release"
+MODE_DESC="production (optimized)"
+
+if [[ "$1" == "--dev" ]]; then
+    BUILD_MODE="--dev"
+    MODE_DESC="development (faster compilation)"
+fi
+
+echo "🦀 Building Luxar WASM module (${MODE_DESC})..."
 
 # Navigate to WASM source directory
 cd "$(dirname "$0")/../src/wasm/rust"
@@ -31,11 +44,11 @@ echo "📦 Running wasm-pack build..."
 # Build with wasm-pack
 # - target web: For browser ES modules
 # - out-dir: Output to public/wasm for Vite to serve
-# - release: Optimized build
+# - release/dev: Build mode based on flag
 wasm-pack build \
   --target web \
   --out-dir ../../../public/wasm \
-  --release \
+  ${BUILD_MODE} \
   --scope luxar
 
 echo "✅ WASM module built successfully!"

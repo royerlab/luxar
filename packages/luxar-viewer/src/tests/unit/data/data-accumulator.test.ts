@@ -4,17 +4,17 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  PointsDataAccumulator,
+  LoadedPointsDataAccumulator,
   LinesDataAccumulator,
   GSplatsDataAccumulator,
 } from '../../../data/data-accumulator';
 import * as THREE from 'three';
 
-describe('PointsDataAccumulator', () => {
-  let accumulator: PointsDataAccumulator;
+describe('LoadedPointsDataAccumulator', () => {
+  let accumulator: LoadedPointsDataAccumulator;
 
   beforeEach(() => {
-    accumulator = new PointsDataAccumulator(1000, 3, 10000);
+    accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
   });
 
   it('should initialize with correct capacity', () => {
@@ -67,7 +67,7 @@ describe('PointsDataAccumulator', () => {
     expect(data.metadata.dtypes!.colors).toBe('uint8');
   });
 
-  it('should return PointsData with correct metadata structure', () => {
+  it('should return LoadedPointsData with correct metadata structure', () => {
     accumulator.fill(0, {
       positions: new Float32Array([1, 2, 3, 4, 5, 6]), // 2 points
       colors: new Uint8Array([255, 0, 0, 0, 255, 0]), // RGB
@@ -81,7 +81,7 @@ describe('PointsDataAccumulator', () => {
     expect(data.metadata).toBeDefined();
     expect(data.metadata.loadedPoints).toBe(2);
     expect(data.metadata.totalPoints).toBe(10000);
-    expect(data.metadata.ndim).toBe(3);
+    expect(data.ndim).toBe(3);
     expect(data.metadata.bounds).toBeInstanceOf(THREE.Box3);
     expect(data.metadata.usedSpatialIndex).toBe(false);
 
@@ -135,7 +135,7 @@ describe('PointsDataAccumulator', () => {
     });
 
     const data = accumulator.getData(1);
-    expect(data.metadata.ndim).toBe(4);
+    expect(data.ndim).toBe(4);
     expect(data.metadata.totalPoints).toBe(50000);
     expect(data.metadata.usedSpatialIndex).toBe(true);
   });
@@ -175,18 +175,36 @@ describe('LinesDataAccumulator', () => {
     expect(stats.allocations).toBe(1);
   });
 
-  it.skip('should grow both vertex and segment capacities', () => {
-    const grew = accumulator.ensureCapacity(600); // 600 segments
+  it('should grow both vertex and segment capacities (estimated)', () => {
+    // ensureCapacity with only vertex count estimates segments
+    // Initial capacity: 1000 vertices, 500 segments
+    const grew = accumulator.ensureCapacity(1200); // 1200 vertices (exceeds 1000)
     expect(grew).toBe(true);
-    // Segments: 600 → 900
-    // Vertices: ceil(600 * 1.5) = 900 → 1350
+    // Vertices: 1000 → 1500 (grew)
+    // Segments: estimated as ceil(1200/1.5) = 800, exceeds 500 → grows
     const stats = accumulator.getStats();
-    expect(stats.capacity).toBeGreaterThanOrEqual(600);
+    expect(stats.capacity).toBeGreaterThanOrEqual(800); // segment capacity
+  });
+
+  it('should use explicit segmentCount when provided', () => {
+    // This tests the bug fix: particle tracks have N vertices → N-1 segments (ratio ~1:1)
+    // The estimate (vertex/1.5) would underestimate segment capacity
+    // Initial capacity: 1000 vertices, 500 segments
+    const accumulator2 = new LinesDataAccumulator(100, 50, 3);
+
+    // Particle track scenario: 150 vertices, 149 segments (ratio ~1:1, not 1.5:1)
+    const grew = accumulator2.ensureCapacity(150, 149);
+    expect(grew).toBe(true);
+
+    // Without explicit segmentCount, estimate would be ceil(150/1.5) = 100
+    // But we passed 149, so segment capacity should be >= 149
+    const stats = accumulator2.getStats();
+    expect(stats.capacity).toBeGreaterThanOrEqual(149); // segment capacity
   });
 
   it('should handle flat LoadedLinesData structure', () => {
     accumulator.fill(0, 0, {
-      vertices: new Float32Array([0, 0, 0, 1, 1, 1]), // 2 vertices, 3D
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]), // 2 vertices, 3D
       segments: new Uint32Array([0, 1]), // 1 segment
       widths: new Float32Array([0.1, 0.1]), // PER-VERTEX widths
       colors: new Float32Array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]), // RGB Float32
@@ -199,7 +217,7 @@ describe('LinesDataAccumulator', () => {
     expect(data.ndim).toBe(3);
 
     // Verify flat structure
-    expect(data.vertices.length).toBe(6); // 2 vertices * 3D
+    expect(data.positions.length).toBe(6); // 2 vertices * 3D
     expect(data.segments.length).toBe(2); // 1 segment * 2 indices
     expect(data.widths.length).toBe(2); // PER-VERTEX!
     expect(data.colors).not.toBeNull();
@@ -210,7 +228,7 @@ describe('LinesDataAccumulator', () => {
 
   it('should handle nullable colors and sharpness', () => {
     accumulator.fill(0, 0, {
-      vertices: new Float32Array([0, 0, 0, 1, 1, 1]),
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       // No colors or sharpness
@@ -224,7 +242,7 @@ describe('LinesDataAccumulator', () => {
   it('should track colors/sharpness presence', () => {
     // First fill without colors
     accumulator.fill(0, 0, {
-      vertices: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1]),
     });
@@ -234,7 +252,7 @@ describe('LinesDataAccumulator', () => {
 
     // Second fill WITH colors
     accumulator.fill(1, 1, {
-      vertices: new Float32Array([1, 1, 1]),
+      positions: new Float32Array([1, 1, 1]),
       segments: new Uint32Array([1, 2]),
       widths: new Float32Array([0.2]),
       colors: new Float32Array([1.0, 0.0, 0.0]),
@@ -246,7 +264,7 @@ describe('LinesDataAccumulator', () => {
 
   it('should use per-vertex widths, not per-segment', () => {
     accumulator.fill(0, 0, {
-      vertices: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 vertices
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 vertices
       segments: new Uint32Array([0, 1, 1, 2]), // 2 segments
       widths: new Float32Array([0.1, 0.2, 0.3]), // 3 widths (PER-VERTEX!)
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -262,7 +280,7 @@ describe('LinesDataAccumulator', () => {
 
   it('should dispose and reset', () => {
     accumulator.fill(0, 0, {
-      vertices: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1]),
     });
@@ -296,7 +314,7 @@ describe('GSplatsDataAccumulator', () => {
 
   it('should use camelCase choleskyFactors', () => {
     accumulator.fill(0, {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]), // 3D: 6 elements
       colors: new Float32Array([1.0, 0.0, 0.0]), // RGB Float32
@@ -312,7 +330,7 @@ describe('GSplatsDataAccumulator', () => {
 
   it('should handle nullable colors and sharpness', () => {
     accumulator.fill(0, {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       // No colors or sharpness
@@ -326,7 +344,7 @@ describe('GSplatsDataAccumulator', () => {
   it('should track colors/sharpness presence', () => {
     // Fill with colors
     accumulator.fill(0, {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1.0, 0.0, 0.0]),
@@ -345,7 +363,7 @@ describe('GSplatsDataAccumulator', () => {
     // 4D: cholesky size = (4 * 5) / 2 = 10
 
     accumulator4D.fill(0, {
-      centers: new Float32Array([0, 0, 0, 0]), // 4D center
+      positions: new Float32Array([0, 0, 0, 0]), // 4D center
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]), // 10 elements
       colors: new Float32Array([1.0, 0.0, 0.0]),
@@ -366,7 +384,7 @@ describe('GSplatsDataAccumulator', () => {
 
   it('should dispose and reset', () => {
     accumulator.fill(0, {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1.0, 0.0, 0.0]),

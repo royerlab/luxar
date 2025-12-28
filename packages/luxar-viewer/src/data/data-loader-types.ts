@@ -25,8 +25,41 @@ export interface ViewState {
   /** Optional camera frustum for view-dependent loading */
   cameraFrustum?: THREE.Frustum;
 
-  /** Dimension metadata for the dataset */
+  /**
+   * Dimension metadata for the dataset.
+   *
+   * **IMPORTANT**: This field is REQUIRED for the `extend_to_all` feature to work.
+   * If `extend_to_all` is configured on a node but dimensions is undefined,
+   * the optimization will silently be skipped.
+   *
+   * Always provide dimensions when using nD datasets with extend_to_all.
+   */
   dimensions?: SimpleDims;
+}
+
+/**
+ * Validates that ViewState has dimensions when extend_to_all is used.
+ * Logs a warning if dimensions is missing.
+ *
+ * @param viewState - The view state to validate
+ * @param extendToAll - The extend_to_all array from node attributes
+ * @param nodePath - Path of the node for logging
+ * @returns true if dimensions is present or extend_to_all is empty
+ */
+export function validateViewStateForExtendToAll(
+  viewState: ViewState,
+  extendToAll: string[] | undefined,
+  nodePath: string
+): boolean {
+  if (extendToAll && extendToAll.length > 0 && !viewState.dimensions) {
+    console.warn(
+      `[ViewState] Node "${nodePath}" has extend_to_all configured but ` +
+        'ViewState.dimensions is undefined. The extend_to_all optimization will be skipped. ' +
+        'Provide dimensions in ViewState for this feature to work.'
+    );
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -39,11 +72,13 @@ export type ColorArray = Float32Array | Uint8Array | Uint16Array;
 export type ScalarArray = Float32Array | Float16Array | Uint8Array;
 
 /**
- * Points data ready for GPU rendering.
+ * Loaded points data ready for GPU rendering.
  * All arrays are properly aligned with the same point ordering.
  * Arrays can be in different data types for memory efficiency.
+ *
+ * Named with "Loaded" prefix for consistency with LoadedLinesData and LoadedGSplatsData.
  */
-export interface PointsData {
+export interface LoadedPointsData {
   /** 3D positions extracted from nD space (size: numPoints * 3) */
   positions: PositionArray;
 
@@ -56,19 +91,22 @@ export interface PointsData {
   /** Point sharpness values (size: numPoints, optional) */
   sharpness?: ScalarArray;
 
+  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
+  pointCount: number;
+
+  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
+  ndim: number;
+
   /** Metadata about the loaded data */
   metadata: {
     /** Total points in the full dataset */
     totalPoints: number;
 
-    /** Number of points actually loaded */
+    /** Number of points actually loaded (also available as top-level pointCount) */
     loadedPoints: number;
 
     /** Bounding box of loaded points */
     bounds: THREE.Box3;
-
-    /** Original nD dimensionality */
-    ndim: number;
 
     /** Whether spatial index was used */
     usedSpatialIndex: boolean;
@@ -86,16 +124,18 @@ export interface PointsData {
   };
 }
 
+import type { UpdateSession } from '../profiling/update-profiler';
+
 /**
  * Core interface for data loaders.
  * Implementations handle different loading strategies (spatial index vs fallback).
  */
 export interface DataLoader {
   /** Load points data for the given view state */
-  loadPoints(viewState: ViewState, session?: any): Promise<PointsData>;
+  loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData>;
 
   /** Update existing data for a new view state */
-  updateView(viewState: ViewState, session?: any): Promise<PointsData>;
+  updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData>;
 
   /** Clean up resources */
   dispose(): void;

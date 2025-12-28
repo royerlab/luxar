@@ -163,8 +163,13 @@ describe('DataLoadingMonitor', () => {
 
       monitor.connectLoader('/test', mockLoader);
 
+      // Process queued events (with polling architecture, events are queued until tick)
+      monitor.show();
+      monitor.forceUpdate();
+
       // Events should be limited to maxEvents (default 1000)
       const events = monitor.getRecentEvents();
+      expect(events.length).toBeGreaterThan(0); // Verify events were actually processed
       expect(events.length).toBeLessThanOrEqual(1000);
     });
   });
@@ -497,7 +502,7 @@ describe('DataLoadingMonitor', () => {
       expect(globalStats.totalMemory).toBe(0);
     });
 
-    it.skip('should clear metrics and queries but keep events', () => {
+    it('should clear metrics and queries but keep events', () => {
       const mockLoader = {
         addEventListener: vi.fn((listener) => {
           // Simulate an event
@@ -538,7 +543,11 @@ describe('DataLoadingMonitor', () => {
       const metricsBefore = monitor.getLoaderMetrics('/test');
       expect(metricsBefore).toBeDefined();
 
-      // Events should exist
+      // Process queued events (with polling architecture, events are queued until tick)
+      monitor.show(); // Make visible so forceUpdate works
+      monitor.forceUpdate();
+
+      // Events should exist after processing
       const eventsBefore = monitor.getRecentEvents();
       expect(eventsBefore.length).toBeGreaterThan(0);
 
@@ -675,7 +684,7 @@ describe('DataLoadingMonitor', () => {
         expect.stringContaining('[DataLoadingMonitor] Disposal completed with errors:')
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to disconnect loader '/failing'")
+        expect.stringContaining('Failed to disconnect loader \'/failing\'')
       );
 
       // Verify that the normal loader was still cleaned up

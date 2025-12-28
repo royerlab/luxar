@@ -12,12 +12,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+# Type alias (defined inline to avoid circular import with typing_utils)
+CategoryList = Optional[List[str]]
+
 # Import shared constants and validation (centralized to avoid duplication)
 from ..typing_utils.constants import CATEGORICAL_STEP
 from ..validation.category_validation import validate_categories as _validate_categories
-
-# Type alias (defined inline to avoid circular import with typing_utils)
-CategoryList = Optional[List[str]]
 
 
 @dataclass

@@ -19,12 +19,12 @@ from .nd import (
     broadcast_to_all_slices,
     validate_dimensional_coverage,
 )
-from .category_validation import validate_categories
 from .types import (
     is_color_array,
     is_position_array,
     is_transform_matrix,
     validate_blending_mode,
+    validate_categories,
     validate_category_indices,
     validate_colors,
     validate_gamma,

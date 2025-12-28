@@ -82,9 +82,7 @@ class TestTransformUtilities:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_axis_rotations(
-        self, rotation_func, angle, input_axis, expected_output, test_id
-    ) -> None:
+    def test_axis_rotations(self, rotation_func, angle, input_axis, expected_output, test_id) -> None:
         """Test axis rotations with various angles and inputs."""
         t = rotation_func(angle)
         rotated = t @ np.array(input_axis)
@@ -113,9 +111,7 @@ class TestTransformUtilities:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_rotate_string_axis_valid(
-        self, axis, angle, expected_func, test_id
-    ) -> None:
+    def test_rotate_string_axis_valid(self, axis, angle, expected_func, test_id) -> None:
         """Test rotation with valid string axis names."""
         assert np.allclose(rotate(angle, axis), expected_func())
 

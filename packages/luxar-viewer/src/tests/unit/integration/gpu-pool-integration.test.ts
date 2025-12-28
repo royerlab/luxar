@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
-import type { PointsData } from '../../../data/data-loader-types';
+import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
 describe('GPU Buffer Pool Integration Tests', () => {
@@ -19,16 +19,17 @@ describe('GPU Buffer Pool Integration Tests', () => {
       const acquireSpy = vi.spyOn(pool, 'acquirePointsGeometry');
 
       // Simulate what scene-loader does (line 1415-1420)
-      const mockData: PointsData = {
+      const mockData: LoadedPointsData = {
         positions: new Float32Array([1, 2, 3, 4, 5, 6]),
         colors: new Uint8Array([255, 128, 0, 128, 255, 0]),
         radii: new Float32Array([0.5, 0.6]),
         sharpness: new Float32Array([2.0, 2.5]),
+        pointCount: 2,
+        ndim: 3,
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
@@ -43,16 +44,17 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should call updatePointsGeometry after acquiring', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const mockData: PointsData = {
+      const mockData: LoadedPointsData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 0, 0]),
         radii: new Float32Array([0.5]),
         sharpness: new Float32Array([2.0]),
+        pointCount: 1,
+        ndim: 3,
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
@@ -73,22 +75,24 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should reuse geometry on subsequent updates (NOT dispose)', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const mockData1: PointsData = {
+      const mockData1: LoadedPointsData = {
         positions: new Float32Array([1, 2, 3, 4, 5, 6]),
         colors: new Float32Array([1, 0, 0, 0, 1, 0]),
         radii: new Float32Array([0.5, 0.6]),
         sharpness: new Float32Array([2.0, 2.5]),
+        pointCount: 2,
+        ndim: 3,
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
 
-      const mockData2: PointsData = {
+      const mockData2: LoadedPointsData = {
         ...mockData1,
+        pointCount: 1,
         metadata: { ...mockData1.metadata, loadedPoints: 1 },
       };
 
@@ -112,23 +116,25 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should reuse geometry when types match', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const data1: PointsData = {
+      const data1: LoadedPointsData = {
         positions: new Float32Array(3000),
         colors: new Uint8Array(3000), // Uint8 colors
         radii: new Float32Array(1000),
         sharpness: new Float32Array(1000),
+        pointCount: 1000,
+        ndim: 3,
         metadata: {
           totalPoints: 1000,
           loadedPoints: 1000,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
 
-      const data2: PointsData = {
+      const data2: LoadedPointsData = {
         ...data1,
         colors: new Uint8Array(2400), // Still Uint8, smaller
+        pointCount: 800,
         metadata: { ...data1.metadata, loadedPoints: 800 },
       };
 
@@ -143,21 +149,22 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should NOT reuse geometry when types differ', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const dataUint8: PointsData = {
+      const dataUint8: LoadedPointsData = {
         positions: new Float32Array(3000),
         colors: new Uint8Array(3000), // Uint8
         radii: new Float32Array(1000),
         sharpness: new Float32Array(1000),
+        pointCount: 1000,
+        ndim: 3,
         metadata: {
           totalPoints: 1000,
           loadedPoints: 1000,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
 
-      const dataFloat: PointsData = {
+      const dataFloat: LoadedPointsData = {
         ...dataUint8,
         colors: new Float32Array(3000), // Float32 (different type!)
       };
@@ -178,26 +185,28 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should handle capacity growth during active use', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const smallData: PointsData = {
+      const smallData: LoadedPointsData = {
         positions: new Float32Array(3000),
         colors: new Float32Array(3000),
         radii: new Float32Array(1000),
         sharpness: new Float32Array(1000),
+        pointCount: 1000,
+        ndim: 3,
         metadata: {
           totalPoints: 1000,
           loadedPoints: 1000,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: true,
         },
       };
 
-      const largeData: PointsData = {
+      const largeData: LoadedPointsData = {
         ...smallData,
         positions: new Float32Array(6000),
         colors: new Float32Array(6000),
         radii: new Float32Array(2000),
         sharpness: new Float32Array(2000),
+        pointCount: 2000,
         metadata: { ...smallData.metadata, loadedPoints: 2000 },
       };
 
@@ -219,14 +228,15 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
       // Acquire and release many geometries
       for (let i = 0; i < 10; i++) {
-        const data: PointsData = {
+        const data: LoadedPointsData = {
           positions: new Float32Array((1000 + i * 100) * 3),
           colors: new Float32Array((1000 + i * 100) * 3),
+          pointCount: 1000 + i * 100,
+          ndim: 3,
           metadata: {
             totalPoints: 1000 + i * 100,
             loadedPoints: 1000 + i * 100,
             bounds: new THREE.Box3(),
-            ndim: 3,
             usedSpatialIndex: true,
           },
         };
@@ -241,11 +251,12 @@ describe('GPU Buffer Pool Integration Tests', () => {
           `/active${i}`,
           {
             positions: new Float32Array(30000),
+            pointCount: 10000,
+            ndim: 3,
             metadata: {
               totalPoints: 10000,
               loadedPoints: 10000,
               bounds: new THREE.Box3(),
-              ndim: 3,
               usedSpatialIndex: true,
             },
           },

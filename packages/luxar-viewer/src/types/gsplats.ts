@@ -143,8 +143,8 @@ export interface SplatRange {
  * - Attributes may need broadcasting (scalar → per-splat)
  */
 export interface LoadedGSplatsData {
-  /** Splat center positions (N splats * ndim dimensions), flattened row-major */
-  centers: Float32Array;
+  /** Splat positions (N splats * ndim dimensions), flattened row-major */
+  positions: Float32Array;
 
   /** Splat amplitudes (N,) */
   amplitudes: Float32Array;
@@ -158,8 +158,9 @@ export interface LoadedGSplatsData {
    */
   choleskyFactors: Float32Array;
 
-  /** Splat colors (N * 3) RGB, null if not present */
-  colors: Float32Array | null;
+  /** Splat colors (N * 3) RGB, null if not present
+   * Supports Float32Array (HDR), Uint8Array (SDR), or Uint16Array */
+  colors: Float32Array | Uint8Array | Uint16Array | null;
 
   /** Splat sharpness (N,), null if not present (defaults to 2.0 = standard Gaussian) */
   sharpness: Float32Array | null;
@@ -207,6 +208,8 @@ export interface ProcessedGSplatsData {
 // Scene Integration Types
 // ============================================================================
 
+import type { UpdateSession } from '../profiling/update-profiler';
+
 /**
  * Data loader interface for GSplats nodes.
  *
@@ -214,10 +217,10 @@ export interface ProcessedGSplatsData {
  */
 export interface GSplatsDataLoader {
   /** Load gsplats data for the given view state */
-  loadGSplats(viewState: GSplatsViewState): Promise<LoadedGSplatsData>;
+  loadGSplats(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
 
   /** Update existing data for a new view state */
-  updateView(viewState: GSplatsViewState): Promise<LoadedGSplatsData>;
+  updateView(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
 
   /** Clean up resources */
   dispose(): void;

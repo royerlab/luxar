@@ -28,7 +28,7 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
-import type { PointsData } from '../data/data-loader-types';
+import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
 
 /**
@@ -66,13 +66,34 @@ interface PooledBuffer {
   attributeTypes?: PointsAttributeTypes;
 }
 
+/**
+ * Per-type buffer pool statistics
+ */
+export interface TypePoolStats {
+  allocations: number;
+  reuses: number;
+  evictions: number;
+  activeBuffers: number;
+  pooledBuffers: number;
+}
+
+/**
+ * Overall pool statistics with per-type breakdown
+ */
 export interface PoolStats {
+  // Global totals
   allocations: number;
   reuses: number;
   evictions: number;
   capacityGrowths: number;
   activeBuffers: number;
   pooledBuffers: number;
+  // Per-type breakdown
+  byType: {
+    points: TypePoolStats;
+    lines: TypePoolStats;
+    gsplats: TypePoolStats;
+  };
 }
 
 /**
@@ -97,6 +118,13 @@ export class GPUBufferPool {
     reuses: 0,
     evictions: 0,
     capacityGrowths: 0,
+  };
+
+  // Per-type stats tracking
+  private typeStats = {
+    points: { allocations: 0, reuses: 0, evictions: 0 },
+    lines: { allocations: 0, reuses: 0, evictions: 0 },
+    gsplats: { allocations: 0, reuses: 0, evictions: 0 },
   };
 
   constructor(maxPoolSize: number = 20, evictionFrames: number = 300) {
@@ -152,7 +180,7 @@ export class GPUBufferPool {
    */
   acquirePointsGeometry(
     nodeId: string,
-    data: PointsData,
+    data: LoadedPointsData,
     pointCount: number
   ): THREE.BufferGeometry {
     this.frameCount++;
@@ -169,6 +197,7 @@ export class GPUBufferPool {
           // Perfect! Reuse existing (same types, sufficient capacity)
           active.lastUsedFrame = this.frameCount;
           this.stats.reuses++;
+          this.typeStats.points.reuses++;
           return active.geometry as THREE.BufferGeometry;
         } else {
           // Need to grow - reallocate attributes with same types
@@ -203,6 +232,7 @@ export class GPUBufferPool {
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
+          this.typeStats.points.reuses++;
           return candidate.geometry as THREE.BufferGeometry;
         }
       }
@@ -223,6 +253,7 @@ export class GPUBufferPool {
 
     this.activeBuffers.set(nodeId, newBuffer);
     this.stats.allocations++;
+    this.typeStats.points.allocations++;
 
     return geometry;
   }
@@ -249,9 +280,9 @@ export class GPUBufferPool {
   }
 
   /**
-   * Detect attribute types from PointsData
+   * Detect attribute types from LoadedPointsData
    */
-  private detectAttributeTypes(data: PointsData): PointsAttributeTypes {
+  private detectAttributeTypes(data: LoadedPointsData): PointsAttributeTypes {
     return {
       position: 'Float32Array', // Always Float32Array
       color:
@@ -415,7 +446,11 @@ export class GPUBufferPool {
    * mesh.geometry = geometry;  // Assign to mesh (might be same geometry, reused!)
    * ```
    */
-  updatePointsGeometry(geometry: THREE.BufferGeometry, data: PointsData, count: number): void {
+  updatePointsGeometry(
+    geometry: THREE.BufferGeometry,
+    data: LoadedPointsData,
+    count: number
+  ): void {
     // Update positions (always Float32Array)
     const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
     (posAttr.array as Float32Array).set(data.positions.subarray(0, count * 3) as Float32Array);
@@ -460,6 +495,11 @@ export class GPUBufferPool {
 
     // Update draw range
     geometry.setDrawRange(0, count);
+
+    // CRITICAL: Recompute bounding box after position updates
+    // Same issue as Lines/GSplats - positions change per time slice, bounding box must update
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
   }
 
   // =========================================================================
@@ -477,6 +517,7 @@ export class GPUBufferPool {
       if (active.capacity >= segmentCount) {
         active.lastUsedFrame = this.frameCount;
         this.stats.reuses++;
+        this.typeStats.lines.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         this.growLinesGeometry(active.geometry as THREE.InstancedBufferGeometry, segmentCount);
@@ -497,6 +538,7 @@ export class GPUBufferPool {
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
+          this.typeStats.lines.reuses++;
           return candidate.geometry as THREE.InstancedBufferGeometry;
         }
       }
@@ -516,6 +558,7 @@ export class GPUBufferPool {
 
     this.activeBuffers.set(nodeId, newBuffer);
     this.stats.allocations++;
+    this.typeStats.lines.allocations++;
 
     return geometry;
   }
@@ -640,6 +683,34 @@ export class GPUBufferPool {
 
     // Update instance count
     geometry.instanceCount = count;
+
+    // CRITICAL: Recompute bounding box after position updates
+    // Without this, frustum culling uses stale bounds from previous frame/time slice
+    // This causes geometry to disappear when zooming close (small frustum excludes stale box)
+    // Performance: O(n) in segment count, but only runs when geometry updates (not every frame)
+    const positions = new Float32Array(count * 6);
+    for (let i = 0; i < count; i++) {
+      positions[i * 6 + 0] = data.startPositions[i * 3 + 0];
+      positions[i * 6 + 1] = data.startPositions[i * 3 + 1];
+      positions[i * 6 + 2] = data.startPositions[i * 3 + 2];
+      positions[i * 6 + 3] = data.endPositions[i * 3 + 0];
+      positions[i * 6 + 4] = data.endPositions[i * 3 + 1];
+      positions[i * 6 + 5] = data.endPositions[i * 3 + 2];
+    }
+
+    const tempGeometry = new THREE.BufferGeometry();
+    tempGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    tempGeometry.computeBoundingBox();
+    tempGeometry.computeBoundingSphere();
+
+    if (tempGeometry.boundingBox) {
+      geometry.boundingBox = tempGeometry.boundingBox.clone();
+    }
+    if (tempGeometry.boundingSphere) {
+      geometry.boundingSphere = tempGeometry.boundingSphere.clone();
+    }
+
+    tempGeometry.dispose();
   }
 
   // =========================================================================
@@ -657,6 +728,7 @@ export class GPUBufferPool {
       if (active.capacity >= splatCount) {
         active.lastUsedFrame = this.frameCount;
         this.stats.reuses++;
+        this.typeStats.gsplats.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         this.growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
@@ -677,6 +749,7 @@ export class GPUBufferPool {
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
+          this.typeStats.gsplats.reuses++;
           return candidate.geometry as THREE.InstancedBufferGeometry;
         }
       }
@@ -696,6 +769,7 @@ export class GPUBufferPool {
 
     this.activeBuffers.set(nodeId, newBuffer);
     this.stats.allocations++;
+    this.typeStats.gsplats.allocations++;
 
     return geometry;
   }
@@ -804,6 +878,25 @@ export class GPUBufferPool {
     }
 
     geometry.instanceCount = count;
+
+    // CRITICAL: Recompute bounding box from updated center positions
+    // GSplats use aCenter attribute for positions in frustum culling
+    const tempGeometry = new THREE.BufferGeometry();
+    tempGeometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(data.centers3D.subarray(0, count * 3), 3)
+    );
+    tempGeometry.computeBoundingBox();
+    tempGeometry.computeBoundingSphere();
+
+    if (tempGeometry.boundingBox) {
+      geometry.boundingBox = tempGeometry.boundingBox.clone();
+    }
+    if (tempGeometry.boundingSphere) {
+      geometry.boundingSphere = tempGeometry.boundingSphere.clone();
+    }
+
+    tempGeometry.dispose();
   }
 
   // =========================================================================
@@ -843,8 +936,9 @@ export class GPUBufferPool {
     // If pool is over limit, evict aggressively
     const mustEvict = totalPooled > this.maxPoolSize;
 
-    // Helper to evict from a pool
-    const evictFromPool = (pool: Map<number, PooledBuffer[]>) => {
+    // Helper to evict from a pool, returns count evicted
+    const evictFromPool = (pool: Map<number, PooledBuffer[]>): number => {
+      let poolEvicted = 0;
       for (const [bucket, buffers] of pool.entries()) {
         const kept: PooledBuffer[] = [];
 
@@ -855,7 +949,7 @@ export class GPUBufferPool {
           if (framesSinceUse > this.evictionFrames || (mustEvict && framesSinceUse > 60)) {
             // Dispose geometry
             buffer.geometry.dispose();
-            evicted++;
+            poolEvicted++;
           } else {
             kept.push(buffer);
           }
@@ -867,13 +961,18 @@ export class GPUBufferPool {
           pool.delete(bucket);
         }
       }
+      return poolEvicted;
     };
 
-    evictFromPool(this.pointBuffers);
-    evictFromPool(this.lineBuffers);
-    evictFromPool(this.gsplatBuffers);
+    const pointsEvicted = evictFromPool(this.pointBuffers);
+    const linesEvicted = evictFromPool(this.lineBuffers);
+    const gsplatsEvicted = evictFromPool(this.gsplatBuffers);
 
+    evicted = pointsEvicted + linesEvicted + gsplatsEvicted;
     this.stats.evictions += evicted;
+    this.typeStats.points.evictions += pointsEvicted;
+    this.typeStats.lines.evictions += linesEvicted;
+    this.typeStats.gsplats.evictions += gsplatsEvicted;
 
     if (evicted > 0) {
       log.info(Modules.GPU_BUFFER_POOL, `Evicted ${evicted} unused geometries (LRU policy)`);
@@ -883,18 +982,60 @@ export class GPUBufferPool {
   }
 
   /**
-   * Get pool statistics.
+   * Get pool statistics with per-type breakdown.
    */
   getStats(): PoolStats {
-    const pooledBuffers =
-      Array.from(this.pointBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
-      Array.from(this.lineBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
-      Array.from(this.gsplatBuffers.values()).reduce((sum, arr) => sum + arr.length, 0);
+    // Calculate per-type pooled buffers
+    const pointsPooled = Array.from(this.pointBuffers.values()).reduce(
+      (sum, arr) => sum + arr.length,
+      0
+    );
+    const linesPooled = Array.from(this.lineBuffers.values()).reduce(
+      (sum, arr) => sum + arr.length,
+      0
+    );
+    const gsplatsPooled = Array.from(this.gsplatBuffers.values()).reduce(
+      (sum, arr) => sum + arr.length,
+      0
+    );
+
+    // Calculate per-type active buffers
+    let pointsActive = 0;
+    let linesActive = 0;
+    let gsplatsActive = 0;
+    for (const buffer of this.activeBuffers.values()) {
+      if (buffer.type === 'points') pointsActive++;
+      else if (buffer.type === 'lines') linesActive++;
+      else if (buffer.type === 'gsplats') gsplatsActive++;
+    }
 
     return {
       ...this.stats,
       activeBuffers: this.activeBuffers.size,
-      pooledBuffers,
+      pooledBuffers: pointsPooled + linesPooled + gsplatsPooled,
+      byType: {
+        points: {
+          allocations: this.typeStats.points.allocations,
+          reuses: this.typeStats.points.reuses,
+          evictions: this.typeStats.points.evictions,
+          activeBuffers: pointsActive,
+          pooledBuffers: pointsPooled,
+        },
+        lines: {
+          allocations: this.typeStats.lines.allocations,
+          reuses: this.typeStats.lines.reuses,
+          evictions: this.typeStats.lines.evictions,
+          activeBuffers: linesActive,
+          pooledBuffers: linesPooled,
+        },
+        gsplats: {
+          allocations: this.typeStats.gsplats.allocations,
+          reuses: this.typeStats.gsplats.reuses,
+          evictions: this.typeStats.gsplats.evictions,
+          activeBuffers: gsplatsActive,
+          pooledBuffers: gsplatsPooled,
+        },
+      },
     };
   }
 

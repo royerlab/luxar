@@ -32,6 +32,14 @@ export interface EncodingMetadata {
   /** Original shape before encoding [n, k] */
   original_shape?: number[];
 
+  /**
+   * Original dtype before encoding (e.g., "uint8", "float32")
+   * CRITICAL: The decoder must restore this dtype for correct rendering.
+   * - uint8 colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
+   * - float32 colors: Expected to be 0-1, no normalization
+   */
+  original_dtype?: string;
+
   /** Quantization bounds [min, max] (legacy format) */
   bounds?: [number, number];
 

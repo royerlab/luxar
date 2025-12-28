@@ -1,7 +1,7 @@
 # luxar-viewer.data - Technical Specification
 
-**Version**: 1.2.5
-**Last Updated**: 2025-12-15
+**Version**: 1.2.8
+**Last Updated**: 2025-12-27
 
 ## Purpose
 
@@ -1222,14 +1222,14 @@ function computeVertexRangesFromIndices(sortedIndices: number[], chunkSize: numb
 
 ```typescript
 interface LoadedLinesData {
-  vertices: Float32Array; // (N * ndim) vertex positions, flattened row-major
+  positions: Float32Array; // (N * ndim) vertex positions, flattened row-major
   segments: Uint32Array; // (M * 2) index pairs (local indices), flattened
   widths: Float32Array; // (N,) vertex widths
   colors: Float32Array | null; // (N * 3) RGB colors
   sharpness: Float32Array | null; // (N,) sharpness values
   segmentCount: number; // M segments
   vertexCount: number; // N vertices
-  ndim: number; // Dimensionality for interpreting vertices array
+  ndim: number; // Dimensionality for interpreting positions array
 }
 ```
 
@@ -1548,7 +1548,175 @@ function loadAllLines(store: ZarrStore, metadata: LinesMetadata): Promise<Loaded
 
 ---
 
+## 8. Web Worker Offloading
+
+### 8.1 Overview
+
+CPU-intensive data operations are offloaded to Web Workers for parallel execution. This keeps the main thread responsive during data loading and nD navigation.
+
+**Configuration** (enabled by default):
+
+```typescript
+// src/config/index.ts
+dataLoading: {
+  performance: {
+    useWebWorkers: true,   // Enable worker offloading
+    workerCount: 0,        // 0 = auto (hardwareConcurrency - 1)
+  }
+}
+```
+
+### 8.2 Worker Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     MAIN THREAD                              │
+├─────────────────────────────────────────────────────────────┤
+│  Loaders (point/lines/gsplats-spatial-index-loader.ts)      │
+│       │                                                      │
+│       ├──[useWebWorkers=true]──→ WorkerPool (singleton)     │
+│       │                               │                      │
+│       │                     ┌─────────┴─────────┐           │
+│       │                     │    DataWorker     │           │
+│       │                     │  (1-N instances)  │           │
+│       │                     │                   │           │
+│       │                     │  ┌─────────────┐  │           │
+│       │                     │  │ WASM Module │  │           │
+│       │                     │  │ (or TS      │  │           │
+│       │                     │  │  fallback)  │  │           │
+│       │                     │  └─────────────┘  │           │
+│       │                     └───────────────────┘           │
+│       │                               │                      │
+│       ├←───────────────results────────┘                     │
+│       ↓                                                      │
+│  Continue processing...                                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 8.3 Operations Offloaded to Workers
+
+All three loaders (Points, Lines, GSplats) use workers for:
+
+| Operation        | Worker Function       | Description                          |
+| ---------------- | --------------------- | ------------------------------------ |
+| Spatial Query    | `querySpatialIndex()` | Chunk bounding box intersection      |
+| Broadcast Decode | `decodeBroadcasted()` | Replicate single value to N elements |
+| Quantized Decode | `decodeQuantized()`   | Uint8/Uint16 → Float32               |
+| Log-space Decode | `decodeLogScalar()`   | Dequantize with log scale            |
+| LUT Decode       | `decodeLUT()`         | Index → value lookup                 |
+
+Points loader additionally uses:
+
+| Operation     | Worker Function       | Description                       |
+| ------------- | --------------------- | --------------------------------- |
+| 3D Projection | `projectPointsTo3D()` | nD → 3D with visibility filtering |
+
+### 8.4 Worker Pool Management
+
+**File**: `src/workers/worker-pool.ts`
+
+The worker pool provides:
+
+- **Singleton Pattern**: Single global pool instance
+- **Least-Busy Selection**: Routes queries to worker with fewest active tasks
+- **Lazy Initialization**: Workers created on first use
+- **Query Tracking**: Accurate load balancing via `getWorkerWithTracking()`
+- **Error Handling**: Graceful fallback to main thread on failure
+
+```typescript
+// Worker acquisition with tracking
+const { worker, done } = await getWorkerPool().getWorkerWithTracking();
+try {
+  const result = await worker.querySpatialIndex(params);
+  return result;
+} finally {
+  done(); // Release worker back to pool
+}
+```
+
+### 8.5 Fallback Behavior
+
+When workers are disabled or fail:
+
+```typescript
+if (!appConfig.dataLoading.performance.useWebWorkers) {
+  // Main thread fallback
+  return mainThreadQuerySpatialIndex(params);
+}
+
+// Worker path
+const worker = await getWorkerPool().getWorker();
+return worker.querySpatialIndex(params);
+```
+
+### 8.6 Performance Characteristics
+
+**When Workers Help Most**:
+
+- Large datasets (>10K elements)
+- nD datasets requiring visibility filtering
+- Encoded data (quantized, LUT) requiring decoding
+- Multiple concurrent data nodes loading
+
+**When Workers Add Overhead**:
+
+- Small datasets (<1K elements) - serialization overhead
+- Simple 3D datasets without encoding
+- Single node scenes with fast local data
+
+### 8.7 Integration Points
+
+Workers are called at these locations:
+
+**`point-spatial-index-loader.ts`**:
+
+- `queryVisiblePointRanges()` - line ~623 (spatial index query)
+- `projectTo3DUsingWorker()` - line ~1440 (nD to 3D projection)
+
+**`lines-spatial-index-loader.ts`**:
+
+- Spatial query via `getWorkerPool().getWorker()` - line ~534
+
+**`gsplats-spatial-index-loader.ts`**:
+
+- Spatial query via `getWorkerPool().getWorker()` - line ~377
+
+**`loaders/range-loader.ts`** (unified encoding dispatch):
+
+- Broadcast decode - line ~170
+- Quantized decode - line ~235
+- LUT decode - line ~310
+
+**`loaders/spatial-query-builder.ts`**:
+
+- `executeSpatialQuery()` - line ~162
+
+Note: Line numbers are approximate and may shift with code changes. The encoding-specific
+methods (`loadBroadcastedRanges`, `loadQuantizedRanges`, `loadLUTRanges`) have been
+consolidated into `RangeLoader` as part of the unified loader architecture.
+
+---
+
 ## Changelog
+
+- **v1.2.8** (2025-12-27): Web Worker integration documentation
+  - **ADDED**: Section 8 - Web Worker Offloading
+  - Documented worker architecture with pool management
+  - Listed all operations offloaded to workers
+  - Documented integration points in all three loaders
+  - Added fallback behavior specification
+  - Added performance characteristics guidance
+
+- **v1.2.7** (2025-12-25): Points extend_to_all optimization parity with Lines/GSplats
+  - **ADDED**: Scene-loader update skip for fully-extended points nodes
+    - When ALL non-displayed dimensions are in `extend_to_all`, skip entire update
+    - Same optimization that Lines and GSplats already had
+  - **ADDED**: Tolerance override for `extend_to_all` dimensions in Points
+    - Tolerance set to infinity (`1e10`) for extended dimensions before spatial queries
+    - Applied in both initial `loadPoints()` and `updateView()` paths
+  - Points, Lines, and GSplats now all have consistent `extend_to_all` behavior:
+    1. Update skip when fully extended (scene-loader level)
+    2. Tolerance override for extended dimensions (prevents clipping)
 
 - **v1.2.6** (2025-12-10): extend_to_all performance optimization
   - **ADDED**: Scene-loader update skip for fully-extended lines nodes

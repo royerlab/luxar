@@ -38,8 +38,11 @@ export class SceneDimsManager {
   /** Min/max bounds for each dimension derived from metadata */
   private dimensionRanges: Array<[number, number]> | null = null;
 
-  /** Observer callbacks that react to dimension changes */
-  private listeners: Set<() => void> = new Set();
+  /** Observer callbacks that react to dimension changes (can be async) */
+  private listeners: Set<() => void | Promise<void>> = new Set();
+
+  /** Promise tracking pending listener completion (for animation synchronization) */
+  private pendingUpdatePromise: Promise<void> | null = null;
 
   /**
    * Initializes the scene-level dimension state from metadata embedded in the scene.
@@ -237,9 +240,11 @@ export class SceneDimsManager {
    * visualization objects to react automatically to navigation events.
    * Typical subscribers include sliders, points, and status displays.
    *
-   * @param callback - Function to call when dimensions change
+   * Callbacks can be async - they will be awaited when using setDimensionValueAsync().
+   *
+   * @param callback - Function to call when dimensions change (can return Promise)
    */
-  addListener(callback: () => void): void {
+  addListener(callback: () => void | Promise<void>): void {
     this.listeners.add(callback);
   }
 
@@ -250,7 +255,7 @@ export class SceneDimsManager {
    *
    * @param callback - Previously registered callback function
    */
-  removeListener(callback: () => void): void {
+  removeListener(callback: () => void | Promise<void>): void {
     this.listeners.delete(callback);
   }
 
@@ -258,12 +263,39 @@ export class SceneDimsManager {
    * Triggers all registered observer callbacks.
    *
    * This is called internally whenever dimension state changes,
-   * propagating updates throughout the reactive system.
+   * propagating updates throughout the reactive system. Async callbacks
+   * are collected and their completion is tracked via currentUpdatePromise.
    *
    * @private
    */
   private notifyListeners(): void {
-    this.listeners.forEach((callback) => callback());
+    const promises: Promise<void>[] = [];
+
+    this.listeners.forEach((callback) => {
+      const result = callback();
+      if (result instanceof Promise) {
+        promises.push(result);
+      }
+    });
+
+    // Track combined promise for async synchronization
+    if (promises.length > 0) {
+      this.pendingUpdatePromise = Promise.all(promises).then(() => {
+        this.pendingUpdatePromise = null;
+      });
+    }
+  }
+
+  /**
+   * Returns a promise that resolves when all pending listener updates complete.
+   *
+   * Used by animation systems to wait for data loading before advancing frames.
+   * Returns immediately resolved promise if no update is in progress.
+   *
+   * @returns Promise that resolves when pending updates complete
+   */
+  waitForUpdate(): Promise<void> {
+    return this.pendingUpdatePromise || Promise.resolve();
   }
 
   /**

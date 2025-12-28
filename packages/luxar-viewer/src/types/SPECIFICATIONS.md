@@ -1,7 +1,7 @@
 # luxar-viewer.types - Technical Specification
 
-**Version**: 1.2.0
-**Last Updated**: 2025-12-09
+**Version**: 1.3.0
+**Last Updated**: 2025-12-27
 
 ## Purpose
 
@@ -25,6 +25,7 @@ The `luxar-viewer.types` package provides the foundational type system for nD da
 5. [Type Validation](#type-validation)
 6. [Data Structures](#data-structures)
 7. [Lines Types](#lines-types)
+8. [Points Types](#points-types)
 
 ---
 
@@ -936,13 +937,13 @@ interface LinesChunkSpatialIndex {
 ```typescript
 /**
  * Lines data loaded from zarr
- * Segments use LOCAL indices into the loaded vertex arrays
+ * Segments use LOCAL indices into the loaded positions arrays
  */
 interface LoadedLinesData {
   /** Vertex positions (N vertices × ndim dimensions), flattened row-major */
-  vertices: Float32Array;
+  positions: Float32Array;
 
-  /** Segment index pairs (M segments × 2) - local indices into vertices */
+  /** Segment index pairs (M segments × 2) - local indices into positions */
   segments: Uint32Array;
 
   /** Vertex widths (N), or (1) if broadcast */
@@ -1082,7 +1083,247 @@ function isLinesObject(object: THREE.Object3D): object is THREE.Mesh & { userDat
 
 ---
 
+## 8. Points Types
+
+### 8.1 PointsMetadata
+
+**Purpose**: Metadata for Points nodes, read from zarr `.zattrs`.
+
+```typescript
+/**
+ * Points node metadata from zarr .zattrs
+ */
+interface PointsMetadata {
+  /** Node type identifier */
+  type: 'points';
+
+  /** Total point count */
+  n_points: number;
+
+  /** Position dimensionality */
+  ndim: number;
+
+  /** Maximum point radius in world units */
+  max_radius?: number;
+
+  /** Whether colors array is present */
+  has_colors?: boolean;
+
+  /** Whether radii array is present */
+  has_radii?: boolean;
+
+  /** Whether sharpness array is present */
+  has_sharpness?: boolean;
+
+  /** Whether spatial index exists */
+  has_spatial_index?: boolean;
+
+  /** Spatial ordering method */
+  ordering?: 'morton' | 'hilbert' | 'none';
+
+  /** Elements per chunk */
+  chunk_size?: number;
+
+  /** 4x4 transform matrix (column-major for THREE.js) */
+  transform?: number[];
+
+  /** Opacity multiplier */
+  opacity?: number;
+
+  /** Gamma correction */
+  gamma?: number;
+
+  /** Blending mode */
+  blending_mode?: 'additive' | 'normal' | 'max';
+
+  /** List of dimension names to extend visibility across */
+  extend_to_all?: string[];
+}
+```
+
+### 8.2 PointsChunkSpatialIndex
+
+**Purpose**: Spatial index for efficient point queries. Re-exports `ChunkSpatialIndex` from data module.
+
+```typescript
+/**
+ * Chunk-based spatial index for Points
+ * Uses Morton/Hilbert ordering for efficient nD queries
+ */
+type PointsChunkSpatialIndex = ChunkSpatialIndex;
+
+interface ChunkSpatialIndex {
+  /** Metadata from node attributes */
+  metadata: {
+    ordering: 'morton' | 'hilbert';
+    ordering_dims: number[];
+    slice_dims: number[];
+    ordering_bits_per_dim: number;
+    chunk_size: number;
+    total_points: number;
+    total_chunks: number;
+    ndim: number;
+  };
+
+  /** Chunk bounding boxes: shape (num_chunks, ndim, 2) flattened */
+  chunkBounds: Float32Array;
+}
+```
+
+### 8.3 PointsViewState
+
+**Purpose**: View state for points loading, consistent with LinesViewState/GSplatsViewState.
+
+```typescript
+/**
+ * View state for points loading
+ * Uses DimensionMetadata[] for consistency with Lines/GSplats
+ */
+interface PointsViewState {
+  /** Which dimensions to display (max 3, indices into nD space) */
+  displayDims: number[];
+
+  /** Current position in nD space (one value per dimension) */
+  slicePosition: number[];
+
+  /** Tolerance for slicing in each dimension */
+  tolerance: number[];
+
+  /** Dimension metadata for the dataset */
+  dimensions?: DimensionMetadata[];
+}
+```
+
+### 8.4 LoadedPointsData
+
+**Purpose**: Data returned after loading visible points.
+
+```typescript
+/**
+ * Points data loaded from zarr
+ */
+interface LoadedPointsData {
+  /** Point positions (N points × 3 dimensions for display) */
+  positions: PositionArray;
+
+  /** Point colors (N × 3) RGB or (N × 4) RGBA, null if not present */
+  colors?: ColorArray;
+
+  /** Point radii (N), null if not present */
+  radii?: ScalarArray;
+
+  /** Point sharpness (N), null if not present */
+  sharpness?: ScalarArray;
+
+  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
+  pointCount: number;
+
+  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
+  ndim: number;
+
+  /** Additional metadata */
+  metadata: {
+    totalPoints: number;
+    loadedPoints: number;
+    bounds: THREE.Box3;
+    usedSpatialIndex: boolean;
+    dtypes?: { positions?: string; colors?: string; radii?: string; sharpness?: string };
+  };
+}
+```
+
+### 8.5 PointsUserData
+
+**Purpose**: Data attached to THREE.Points objects for scene management.
+
+```typescript
+/**
+ * User data attached to THREE.Points objects in scene.
+ * Follows same pattern as LinesUserData and GSplatsUserData.
+ */
+interface PointsUserData {
+  /** Node type identifier for runtime type checking */
+  nodeType: 'points';
+
+  /** Data loader instance */
+  loader: PointsDataLoader;
+
+  /** Zarr group attributes */
+  attrs: PointsMetadata;
+
+  /** Maximum point radius (for bounding box expansion) */
+  maxRadius?: number;
+
+  /** Spatial index for queries (optional, may not exist for 3D data) */
+  spatialIndex?: PointsChunkSpatialIndex;
+
+  /** Currently visible point count after nD slicing */
+  visiblePointCount?: number;
+}
+```
+
+### 8.6 PointsDataLoader Interface
+
+**Purpose**: Loader interface for Points nodes.
+
+```typescript
+/**
+ * Data loader interface for Points nodes
+ * Standalone interface (doesn't extend DataLoader) for type consistency
+ */
+interface PointsDataLoader {
+  /** Load points data for the given view state */
+  loadPoints(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
+
+  /** Update existing data for a new view state */
+  updateView(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
+
+  /** Clean up resources */
+  dispose(): void;
+}
+```
+
+### 8.7 Type Guards
+
+**Purpose**: Runtime type checking utilities.
+
+```typescript
+/**
+ * Check if metadata is for a Points node
+ */
+function isPointsMetadata(attrs: unknown): attrs is PointsMetadata {
+  return (
+    typeof attrs === 'object' &&
+    attrs !== null &&
+    (attrs as Record<string, unknown>).type === 'points'
+  );
+}
+
+/**
+ * Check if userData indicates a Points object
+ */
+function isPointsUserData(userData: unknown): userData is PointsUserData {
+  return (
+    typeof userData === 'object' &&
+    userData !== null &&
+    (userData as Record<string, unknown>).nodeType === 'points'
+  );
+}
+```
+
+---
+
 ## Changelog
+
+- **v1.3.0** (2025-12-27): Points types (homogenization with Lines/GSplats)
+  - **ADDED**: Section 8 - Points Types
+  - **ADDED**: `PointsMetadata` interface for zarr attributes
+  - **ADDED**: `PointsChunkSpatialIndex` type alias
+  - **ADDED**: `PointsViewState` interface (DimensionMetadata[] for consistency)
+  - **ADDED**: `LoadedPointsData` interface updated with top-level pointCount/ndim
+  - **ADDED**: `PointsUserData` interface for scene management
+  - **ADDED**: `PointsDataLoader` interface
+  - **ADDED**: Type guards (isPointsMetadata, isPointsUserData)
 
 - **v1.2.0** (2025-12-09): Lines types
   - **ADDED**: Section 7 - Lines Types

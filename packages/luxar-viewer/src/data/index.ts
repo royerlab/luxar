@@ -28,7 +28,7 @@ export {
 export type {
   DataLoader,
   ViewState,
-  PointsData,
+  LoadedPointsData,
   LoaderConfig,
   PointRange,
   SceneNode,
@@ -73,3 +73,15 @@ export {
   computeVertexChunksForIndices,
   computeVertexRangesFromIndices,
 } from './lines-chunk-spatial-index';
+
+// Geometry update manager (extracted from SceneLoader for modularity)
+export { GeometryUpdateManager } from './geometry-update-manager';
+export type { GeometryUpdateManagerConfig } from './geometry-update-manager';
+
+// Loader orchestrator (extracted from SceneLoader for modularity)
+export { LoaderOrchestrator } from './loader-orchestrator';
+export type { FailedLoaderInfo, OrchestratorConfig } from './loader-orchestrator';
+
+// Scene graph builder (extracted from SceneLoader for modularity)
+export { SceneGraphBuilder } from './scene-graph-builder';
+export type { StoreEntry } from './scene-graph-builder';
