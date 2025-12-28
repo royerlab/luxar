@@ -1,10 +1,12 @@
 """Tests for Scene class methods not covered elsewhere."""
 
+import warnings
+
 import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 class TestSceneMethods:
@@ -46,8 +48,8 @@ class TestSceneMethods:
     # Test removed: _validate_scene_dimensions is no longer part of the public API
     # Dimension validation is now handled internally during point addition
 
-    def test_scene_infer_dimensions_from_points(self, tmp_path) -> None:
-        """Test that Scene always has dimensions (no longer inferred)."""
+    def test_scene_dimensions_always_set(self, tmp_path) -> None:
+        """Test that Scene always has dimensions from creation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -55,13 +57,152 @@ class TestSceneMethods:
             assert scene.dimensions is not None
             assert len(scene.dimensions.dimensions) == 3
 
-            # Add points - dimensions remain as set during creation
-            positions = np.random.randn(100, 5).astype(np.float32)
+            # Add matching points - should work
+            positions = np.random.randn(100, 3).astype(np.float32)
             scene.add_points("points", positions)
 
             # Dimensions unchanged - still 3D
             assert scene.dimensions is not None
             assert len(scene.dimensions.dimensions) == 3
+
+    def test_dimension_mismatch_error_add_points(self, tmp_path) -> None:
+        """Test that adding points with wrong dimensionality raises error."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # 5D positions to 3D scene should fail
+            positions_5d = np.random.randn(100, 5).astype(np.float32)
+            with pytest.raises(ValueError, match="Dimension mismatch"):
+                scene.add_points("bad_points", positions_5d)
+
+            # 2D positions to 3D scene should also fail
+            positions_2d = np.random.randn(100, 2).astype(np.float32)
+            with pytest.raises(ValueError, match="Dimension mismatch"):
+                scene.add_points("bad_points_2d", positions_2d)
+
+    def test_dimension_mismatch_error_add_lines(self, tmp_path) -> None:
+        """Test that adding lines with wrong dimensionality raises error."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # 4D vertices to 3D scene should fail
+            vertices_4d = np.random.randn(100, 4).astype(np.float32)
+            with pytest.raises(ValueError, match="Dimension mismatch"):
+                scene.add_lines("bad_lines", vertices_4d, widths=0.1)
+
+    def test_dimension_mismatch_error_add_gsplats(self, tmp_path) -> None:
+        """Test that adding gsplats with wrong dimensionality raises error."""
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            # 4D centers to 3D scene should fail
+            centers_4d = np.random.randn(100, 4).astype(np.float32)
+            # Cholesky factors for 4D: k = 4*(4+1)/2 = 10
+            cholesky_4d = np.random.randn(100, 10).astype(np.float32)
+            with pytest.raises(ValueError, match="Dimension mismatch"):
+                scene.add_gsplats(
+                    "bad_gsplats",
+                    centers_4d,
+                    amplitudes=1.0,
+                    cholesky_factors=cholesky_4d,
+                )
+
+    def test_dimension_range_warning(self, tmp_path) -> None:
+        """Test that values outside declared range produce a warning."""
+        dims = Dimensions(
+            [
+                Dimension("x", range=(0, 100)),
+                Dimension("y", range=(0, 100)),
+                Dimension("z", range=(0, 100)),
+            ]
+        )
+
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            # Positions outside declared range should produce warning
+            positions = np.array(
+                [
+                    [50, 50, 50],  # Within range
+                    [150, 50, 50],  # x outside range
+                    [-10, 50, 50],  # x outside range (negative)
+                ],
+                dtype=np.float32,
+            )
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                scene.add_points("out_of_range", positions)
+
+                # Should have warning about x dimension
+                range_warnings = [
+                    warning
+                    for warning in w
+                    if "outside declared range" in str(warning.message)
+                ]
+                assert len(range_warnings) >= 1
+                assert "x" in str(range_warnings[0].message)
+
+    def test_dimension_range_no_warning_when_within(self, tmp_path) -> None:
+        """Test that values within declared range produce no warning."""
+        dims = Dimensions(
+            [
+                Dimension("x", range=(0, 100)),
+                Dimension("y", range=(0, 100)),
+                Dimension("z", range=(0, 100)),
+            ]
+        )
+
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            # Positions within declared range should not produce warning
+            positions = np.array(
+                [
+                    [0, 0, 0],
+                    [50, 50, 50],
+                    [100, 100, 100],
+                ],
+                dtype=np.float32,
+            )
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                scene.add_points("in_range", positions)
+
+                # Should have no warnings about range
+                range_warnings = [
+                    warning
+                    for warning in w
+                    if "outside declared range" in str(warning.message)
+                ]
+                assert len(range_warnings) == 0
+
+    def test_dimension_validation_helpful_error_message(self, tmp_path) -> None:
+        """Test that dimension mismatch error has helpful message."""
+        dims = Dimensions(
+            [
+                Dimension("time", display=False),
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+            ]
+        )
+
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            # 3D positions to 4D scene should fail with helpful message
+            positions_3d = np.random.randn(100, 3).astype(np.float32)
+            with pytest.raises(ValueError) as exc_info:
+                scene.add_points("bad", positions_3d)
+
+            # Check error message contains useful info
+            error_msg = str(exc_info.value)
+            assert "3 columns" in error_msg  # What we got
+            assert "4 dimensions" in error_msg  # What we expected
+            assert "time" in error_msg  # Dimension names
+            assert "(N, 4)" in error_msg  # Expected shape
 
     # Test removed: _apply_dimension_metadata is internal implementation
     # Metadata application is now handled automatically during scene creation

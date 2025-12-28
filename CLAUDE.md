@@ -69,15 +69,16 @@ luxar profiles                   # Network simulation profiles
   /examples/               # Example scripts (*_example.py naming)
 
 /packages/luxar-viewer/    # TypeScript/WebGL viewer
-  /src/                    # Source with per-package READMEs
-  /docs/PLAYWRIGHT_GUIDE.md  # Comprehensive E2E testing guide
+  /src/                    # Source with per-package READMEs and SPECIFICATIONS.md
 
-/docs/                     # Documentation
-  /guides/                 # Organized guides by purpose
-    /user/                 # User guides (format, HDR, testing)
-    /developer/            # Developer guides (style, console, network)
+/docs/                     # All documentation (centralized)
+  /guides/
+    /user/                 # User guides (LUXAR_ZARR_FORMAT.md, HDR_GUIDE.md)
+    /developer/            # Developer guides (style, optimization, architecture)
     /specs/                # Technical specs (cache, dimensions, lines)
+  /testing/                # Testing guides (PLAYWRIGHT_GUIDE.md, analysis)
   /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
+  /archive/                # Historical docs (status reports, old spec versions)
   /api/                    # Sphinx API reference files (.rst)
   /concepts/               # Architecture and concepts (.rst)
   /tutorials/              # Step-by-step tutorials (.rst)
@@ -154,7 +155,7 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
-- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
+- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/testing/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
 Python encoder and TypeScript decoder must stay in sync:
@@ -314,6 +315,16 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ---
 
+
+## version Control
+
+VERY IMPORTANT: Do not bulk-revert files! If you must revert files, do so in a *very* *SURGICAL* manner -- only revert files *you* have modified and that you know do not contain uncommited changes that you are not responsible for! 
+This is super important because other agents are working on the same codebase and you might inadvertently destroy their work!
+
+
+
+---
+
 ## Pre-commit Checklist
 
 ```bash
@@ -352,9 +363,12 @@ Before PR/merge:
 | Topic | Location |
 |-------|----------|
 | E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
-| Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
+| Playwright Full Guide | `docs/testing/PLAYWRIGHT_GUIDE.md` |
+| Testing Guidelines | `docs/testing/TESTING_GUIDELINES.md` |
 | Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |
 | HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
+| Performance Optimization | `docs/guides/developer/PERFORMANCE_OPTIMIZATION_SPEC.md` |
+| WASM Acceleration | `docs/guides/developer/WASM_ANALYSIS.md` |
 | Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
 | Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
 | Changelog | `CHANGELOG.md` |

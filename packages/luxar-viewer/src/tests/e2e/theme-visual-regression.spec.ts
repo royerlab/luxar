@@ -71,17 +71,17 @@ for (const theme of THEMES) {
 
 /**
  * Test dimension sliders in all themes
- * Note: Use 4D dataset to ensure sliders are shown
+ * Note: Use 5D dataset - sliders appear automatically for nD datasets
  */
 for (const theme of THEMES) {
   test(`dimension sliders - ${theme} theme`, async ({ page }) => {
-    // Use a 4D dataset to ensure dimension sliders appear (use local for speed)
+    // Use a 5D dataset - dimension sliders appear automatically for nD data
     const testDataUrl =
       'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Wait for app to be fully initialized
+    // Wait for app to be fully initialized and data to load
     await page.waitForFunction(
       () => {
         const debug = (window as any).__luxarDebug;
@@ -91,11 +91,10 @@ for (const theme of THEMES) {
       { timeout: 45000 }
     );
 
-    // Press N to show dimension sliders
-    await page.keyboard.press('n');
-
+    // For 5D datasets, dimension sliders appear automatically (no need to press 'n')
+    // The 'n' key toggles visibility - so pressing it would HIDE the sliders
     const dimensionSliders = page.locator('.luxar-dimension-sliders');
-    await expect(dimensionSliders).toBeVisible({ timeout: 2000 });
+    await expect(dimensionSliders).toBeVisible({ timeout: 5000 });
 
     // Take screenshot
     await expect(dimensionSliders).toHaveScreenshot(`dimension-sliders-${theme}.png`);
@@ -103,10 +102,10 @@ for (const theme of THEMES) {
 }
 
 /**
- * Test data loading monitor (mini view) in all themes
+ * Test data loading monitor (compact view) in all themes
  */
 for (const theme of THEMES) {
-  test(`data monitor mini - ${theme} theme`, async ({ page }) => {
+  test(`data monitor compact - ${theme} theme`, async ({ page }) => {
     const testDataUrl =
       'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
@@ -122,17 +121,17 @@ for (const theme of THEMES) {
       { timeout: 45000 }
     );
 
-    // Press M to cycle to mini view
+    // Press M to cycle to compact view (data monitor starts hidden, first M shows compact)
     await page.keyboard.press('m');
 
-    // Wait for mini monitor to appear
-    await page.waitForSelector('.luxar-data-monitor--mini', { timeout: 2000 });
+    // Wait for compact monitor to appear
+    await page.waitForSelector('.luxar-data-monitor--compact', { timeout: 5000 });
 
-    const dataMonitor = page.locator('.luxar-data-monitor--mini');
+    const dataMonitor = page.locator('.luxar-data-monitor--compact');
     await expect(dataMonitor).toBeVisible();
 
     // Take screenshot
-    await expect(dataMonitor).toHaveScreenshot(`data-monitor-mini-${theme}.png`);
+    await expect(dataMonitor).toHaveScreenshot(`data-monitor-compact-${theme}.png`);
   });
 }
 

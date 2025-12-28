@@ -159,7 +159,7 @@ def create_per_splat_optimizer_setup(
     amsgrad: bool = False,
     # Scheduler-specific arguments
     patience: int = 10,
-    lr_reduction_factor: float = 0.5,
+    factor: float = 0.5,
     threshold: float = 1e-4,
     cooldown: int = 0,
     min_lr: float = 1e-8,
@@ -206,7 +206,7 @@ def create_per_splat_optimizer_setup(
     if scheduler_type == "plateau":
         scheduler_kwargs = {
             "patience": patience,
-            "factor": lr_reduction_factor,  # Renamed for clarity in API
+            "factor": factor,
             "threshold": threshold,
             "cooldown": cooldown,
             "min_lr": min_lr,

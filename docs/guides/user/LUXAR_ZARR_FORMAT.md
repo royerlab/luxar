@@ -471,7 +471,18 @@ Dimensions are categorized by two key properties:
 2. **Continuous vs Discrete:**
    - **Continuous dimensions**: Can take any value in their range
    - **Discrete dimensions**: Represent categorical data or specific values (e.g., channels, time frames)
-   - Discrete dimensions use exact matching (tolerance = 0) during queries
+   - Discrete dimensions use half-step tolerance (`step/2`) during queries
+
+**Best Practice for Discrete Dimension Ranges:**
+
+For discrete dimensions, the declared `range` should match the actual data extent. The viewer initializes to `rangeMin`, so if your range starts before your first data point, the initial view will show no data.
+
+Example: If you have time frames at values [1, 2, 3, ...] but set `range=(0, N)`, the viewer initializes at 0 where no data exists. Set `range=(1, N)` instead.
+
+The compiler will emit a warning if it detects this misalignment. For discrete dimensions with a defined step:
+- Query tolerance = `step / 2`
+- Declared range min should be ≥ (first data point - tolerance)
+- Declared range max should be ≤ (last data point + tolerance)
 
 #### Dimension Attributes
 Each dimension in `scene_dimensions` contains:

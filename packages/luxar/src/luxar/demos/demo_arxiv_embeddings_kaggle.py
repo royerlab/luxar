@@ -90,8 +90,6 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
-
-
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -169,7 +167,9 @@ def download_kaggle_dataset(
         aprint("")
         aprint("⏱️  This is a ONE-TIME download (~30 GB, 10-15 minutes)")
         aprint("⏱️  Subsequent runs will use cached file instantly!")
-        aprint("⏱️  Download will auto-retry on network errors and can resume if interrupted")
+        aprint(
+            "⏱️  Download will auto-retry on network errors and can resume if interrupted"
+        )
         aprint("")
 
         try:
@@ -190,7 +190,7 @@ def download_kaggle_dataset(
             if output_path.exists():
                 partial_size = output_path.stat().st_size
                 aprint(f"   Partial download saved: {partial_size / (1024**2):.1f} MB")
-                aprint(f"   Run again to resume from this point")
+                aprint("   Run again to resume from this point")
             raise
 
     return output_path
@@ -213,7 +213,7 @@ def load_metadata_lookup(metadata_path: Path, cache_path: Path | None = None) ->
     if cache_path and cache_path.exists():
         with asection("Loading cached metadata lookup"):
             aprint(f"Cache: {cache_path}")
-            with open(cache_path, 'rb') as f:
+            with open(cache_path, "rb") as f:
                 metadata_by_id = pickle.load(f)
             aprint(f"✓ Loaded {len(metadata_by_id):,} papers instantly!")
         return metadata_by_id
@@ -225,31 +225,31 @@ def load_metadata_lookup(metadata_path: Path, cache_path: Path | None = None) ->
 
         metadata_by_id = {}
 
-        with open(metadata_path, 'r') as f:
+        with open(metadata_path, "r") as f:
             for i, line in enumerate(f):
                 if i % 100000 == 0 and i > 0:
                     aprint(f"  Loaded {i:,} papers...")
 
                 try:
                     paper = json.loads(line)
-                    paper_id = paper['id']
-                    categories = paper.get('categories', '')
+                    paper_id = paper["id"]
+                    categories = paper.get("categories", "")
 
                     # Get primary category
-                    primary_cat = categories.split()[0] if categories else 'unknown'
+                    primary_cat = categories.split()[0] if categories else "unknown"
 
                     meta_info = {
-                        'category': primary_cat,
-                        'title': paper.get('title', 'Unknown')[:100],
-                        'year': paper.get('update_date', '2020-01-01')[:4]
+                        "category": primary_cat,
+                        "title": paper.get("title", "Unknown")[:100],
+                        "year": paper.get("update_date", "2020-01-01")[:4],
                     }
 
                     # Store with original ID
                     metadata_by_id[paper_id] = meta_info
 
                     # Also store variants (handle format differences)
-                    if paper_id.startswith('0'):
-                        metadata_by_id[paper_id.lstrip('0')] = meta_info
+                    if paper_id.startswith("0"):
+                        metadata_by_id[paper_id.lstrip("0")] = meta_info
 
                 except (json.JSONDecodeError, KeyError):
                     continue
@@ -260,7 +260,7 @@ def load_metadata_lookup(metadata_path: Path, cache_path: Path | None = None) ->
         if cache_path:
             aprint("Saving to cache...")
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache_path, 'wb') as f:
+            with open(cache_path, "wb") as f:
                 pickle.dump(metadata_by_id, f)
             aprint(f"✓ Cached to {cache_path}")
             aprint("  Future runs will load instantly (<1 second)!")
@@ -301,19 +301,19 @@ def load_arxiv_dataset_local(
         aprint(f"ZIP file: {zip_path}")
         aprint(f"Size: {zip_path.stat().st_size / (1024**3):.1f} GB")
 
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zipfile.ZipFile(zip_path, "r") as zf:
             aprint(f"Files in ZIP: {', '.join(zf.namelist())}")
 
             # Load metadata from CSV
             aprint("Loading papers.csv...")
-            with zf.open('papers.csv') as f:
+            with zf.open("papers.csv") as f:
                 papers_df = pd.read_csv(f, nrows=sample_size)
 
             aprint(f"✓ Loaded {len(papers_df):,} paper metadata entries")
 
             # Load embeddings from binary file
             aprint("Loading vectors.dat (binary embeddings)...")
-            with zf.open('vectors.dat') as f:
+            with zf.open("vectors.dat") as f:
                 # Read binary data
                 # Format: each embedding is 3072 float32 values (12,288 bytes)
                 embedding_dim = 3072
@@ -327,16 +327,16 @@ def load_arxiv_dataset_local(
                         break
 
                     # Unpack floats
-                    emb = struct.unpack(f'{embedding_dim}f', emb_bytes)
+                    emb = struct.unpack(f"{embedding_dim}f", emb_bytes)
                     embeddings.append(list(emb))
 
                     if (i + 1) % 10000 == 0:
-                        aprint(f"  Loaded {i+1:,} embeddings...")
+                        aprint(f"  Loaded {i + 1:,} embeddings...")
 
             aprint(f"✓ Loaded {len(embeddings):,} embeddings")
 
         # Match paper IDs with metadata to get real categories
-        paper_ids = papers_df['id'].tolist()[:len(embeddings)]
+        paper_ids = papers_df["id"].tolist()[: len(embeddings)]
 
         aprint(f"Matching {len(paper_ids):,} paper IDs with metadata...")
         titles = []
@@ -349,16 +349,20 @@ def load_arxiv_dataset_local(
 
             if pid_str in metadata_lookup:
                 meta = metadata_lookup[pid_str]
-                titles.append(meta['title'])
+                titles.append(meta["title"])
                 # Extract main category (e.g., "cs.AI" -> "cs")
-                cat = meta['category'].split('.')[0] if '.' in meta['category'] else meta['category']
+                cat = (
+                    meta["category"].split(".")[0]
+                    if "." in meta["category"]
+                    else meta["category"]
+                )
                 categories.append(cat)
-                years.append(int(meta['year']))
+                years.append(int(meta["year"]))
                 matched += 1
             else:
                 # Fallback for unmatched
                 titles.append(f"arXiv:{pid_str}")
-                categories.append('other')
+                categories.append("other")
                 years.append(2015)
 
         match_rate = matched / len(paper_ids) * 100 if paper_ids else 0
@@ -481,7 +485,9 @@ def generate_paper_landscape(
         if dataset_cache.exists():
             size_gb = dataset_cache.stat().st_size / (1024**3)
             if size_gb < expected_emb_size_gb * 0.9:  # Allow 10% variance
-                aprint(f"⚠️  Cached embeddings incomplete ({size_gb:.1f} GB / ~{expected_emb_size_gb} GB)")
+                aprint(
+                    f"⚠️  Cached embeddings incomplete ({size_gb:.1f} GB / ~{expected_emb_size_gb} GB)"
+                )
                 aprint("   Deleting and re-downloading...")
                 dataset_cache.unlink()
             else:
@@ -509,23 +515,28 @@ def generate_paper_landscape(
                 aprint("Downloading arXiv metadata (1.5GB compressed)...")
                 download_kaggle_dataset(
                     meta_zip,
-                    url="https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv"
+                    url="https://www.kaggle.com/api/v1/datasets/download/Cornell-University/arxiv",
                 )
 
             # Extract metadata
             import zipfile
+
             aprint("Extracting metadata...")
-            with zipfile.ZipFile(meta_zip, 'r') as zf:
-                zf.extract('arxiv-metadata-oai-snapshot.json', metadata_cache.parent)
+            with zipfile.ZipFile(meta_zip, "r") as zf:
+                zf.extract("arxiv-metadata-oai-snapshot.json", metadata_cache.parent)
                 # Rename to cache location
-                extracted = metadata_cache.parent / 'arxiv-metadata-oai-snapshot.json'
+                extracted = metadata_cache.parent / "arxiv-metadata-oai-snapshot.json"
                 if extracted.exists():
                     extracted.rename(metadata_cache)
             aprint(f"✓ Metadata extracted to {metadata_cache}")
 
         # Load metadata lookup (with caching!)
-        metadata_lookup_cache = Path.home() / ".cache" / "luxar" / "arxiv_metadata_lookup.pkl"
-        metadata_lookup = load_metadata_lookup(metadata_cache, cache_path=metadata_lookup_cache)
+        metadata_lookup_cache = (
+            Path.home() / ".cache" / "luxar" / "arxiv_metadata_lookup.pkl"
+        )
+        metadata_lookup = load_metadata_lookup(
+            metadata_cache, cache_path=metadata_lookup_cache
+        )
 
         # Load from cached ZIP with metadata matching
         embeddings_list, titles, categories, years = load_arxiv_dataset_local(
@@ -542,7 +553,9 @@ def generate_paper_landscape(
         positions = reduce_embeddings_umap(embeddings, n_components=3)
 
         # Cache UMAP results for instant future runs
-        aprint(f"[DEBUG] About to cache. cache_file={cache_file}, cache_dir={cache_dir}")
+        aprint(
+            f"[DEBUG] About to cache. cache_file={cache_file}, cache_dir={cache_dir}"
+        )
         with asection("Saving UMAP cache"):
             if cache_file:
                 aprint(f"Cache path: {cache_file}")
@@ -552,8 +565,8 @@ def generate_paper_landscape(
                     categories=np.array(categories),
                     years=np.array(years),
                 )
-                aprint(f"✓ UMAP cached successfully!")
-                aprint(f"  Next run with same sample size will be INSTANT!")
+                aprint("✓ UMAP cached successfully!")
+                aprint("  Next run with same sample size will be INSTANT!")
             else:
                 aprint("⚠️  Cache not enabled (--use-cache flag needed)")
 
@@ -623,7 +636,7 @@ def main() -> None:
     """Main demo entry point."""
     sample_size = DEFAULT_SAMPLE_SIZE
     category_filter = None
-    use_cache = True  # Caching is ALWAYS on by default!
+    _use_cache = True  # Caching is ALWAYS on by default!
 
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):

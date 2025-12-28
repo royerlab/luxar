@@ -5,11 +5,9 @@ These tests actually start the server, make HTTP requests, and verify responses.
 Following the principle from TESTING_GUIDELINES.md: mock only external dependencies.
 """
 
-import json
 import socket
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -49,7 +47,9 @@ def test_server(sample_scene, available_port):
     server_started = threading.Event()
 
     def run_server():
-        config = uvicorn.Config(app, host="127.0.0.1", port=available_port, log_level="error")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=available_port, log_level="error"
+        )
         server = uvicorn.Server(config)
 
         # Signal that server is starting
@@ -71,7 +71,9 @@ def test_server(sample_scene, available_port):
     max_retries = 10
     for i in range(max_retries):
         try:
-            response = requests.get(f"http://127.0.0.1:{available_port}/health", timeout=1)
+            response = requests.get(
+                f"http://127.0.0.1:{available_port}/health", timeout=1
+            )
             if response.status_code == 200:
                 break
         except requests.exceptions.RequestException:
@@ -109,7 +111,9 @@ class TestServeIntegration:
         metadata = response.json()
 
         # Verify expected metadata structure
-        assert metadata["luxar_version"] == "0.1"  # Changed from "version" to "luxar_version"
+        assert (
+            metadata["luxar_version"] == "0.1"
+        )  # Changed from "version" to "luxar_version"
         assert "scene_dimensions" in metadata
 
     def test_zarr_group_listing(self, test_server):
@@ -311,10 +315,30 @@ class TestDemoCommand:
 
         # Run twice with same seed
         result1 = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output1), "--points", "50", "--seed", "42"]
+            app,
+            [
+                "demo",
+                "--no-serve",
+                "--output",
+                str(output1),
+                "--points",
+                "50",
+                "--seed",
+                "42",
+            ],
         )
         result2 = runner.invoke(
-            app, ["demo", "--no-serve", "--output", str(output2), "--points", "50", "--seed", "42"]
+            app,
+            [
+                "demo",
+                "--no-serve",
+                "--output",
+                str(output2),
+                "--points",
+                "50",
+                "--seed",
+                "42",
+            ],
         )
 
         assert result1.exit_code == 0
@@ -392,7 +416,7 @@ class TestServePerformance:
         # Create a larger scene
         store_path = tmp_path / "large_scene.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            _scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.random.rand(10000, 3).astype(np.float32)
             compiler.write_points("LargePoints", positions)
 
@@ -429,4 +453,6 @@ class TestServePerformance:
         # Performance check: 95th percentile should be under 1 second
         times = sorted([r[1] for r in results])
         p95 = times[int(len(times) * 0.95)]
-        assert p95 < 1.0, f"95th percentile response time {p95:.2f}s exceeds 1s threshold"
+        assert p95 < 1.0, (
+            f"95th percentile response time {p95:.2f}s exceeds 1s threshold"
+        )

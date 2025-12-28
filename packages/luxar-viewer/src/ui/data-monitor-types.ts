@@ -236,7 +236,7 @@ export interface GlobalStats {
 export interface MonitorUIState {
   isVisible: boolean;
   isExpanded: boolean;
-  activeTab: 'overview' | 'cache' | 'performance' | 'insights'; // Removed 'spatial' as it's not implemented
+  activeTab: 'overview' | 'cache' | 'memory' | 'performance' | 'insights';
   selectedLoader?: string;
   timeRange: number; // Seconds of history to show
   spatialViewDimensions?: [number, number]; // Which 2D slice to show (for future use)

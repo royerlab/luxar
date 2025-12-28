@@ -9,8 +9,6 @@ These tests verify that demo scripts:
 5. Follow naming conventions
 """
 
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -82,7 +80,9 @@ class TestDemoOutputValidation:
                 has_positions = True
                 positions = group["positions"]
                 assert positions.shape[1] >= 3, "Positions must be at least 3D"
-                assert positions.shape[0] == 100, f"Expected 100 points, got {positions.shape[0]}"
+                assert positions.shape[0] == 100, (
+                    f"Expected 100 points, got {positions.shape[0]}"
+                )
                 break
 
         assert has_positions, "No positions array found in zarr store"
@@ -94,8 +94,9 @@ class TestDemoParameterHandling:
     def test_demo_with_seed_reproducibility(self):
         """Test that same seed produces same output."""
         # Use the demo utility function directly for reproducibility testing
-        from luxar.utils.demos import create_lorenz_attractor
         import tempfile
+
+        from luxar.utils.demos import create_lorenz_attractor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output1 = Path(tmpdir) / "seed_test1.zarr"
@@ -120,13 +121,16 @@ class TestDemoParameterHandling:
             pos2 = find_positions(store2)
 
             assert pos1 is not None and pos2 is not None
-            assert np.allclose(pos1, pos2), "Same seed should produce identical positions"
+            assert np.allclose(pos1, pos2), (
+                "Same seed should produce identical positions"
+            )
 
     def test_demo_point_count_parameter(self):
         """Test that demo generation respects point count."""
         # Use the demo utility function directly instead of CLI
-        from luxar.utils.demos import create_lorenz_attractor
         import tempfile
+
+        from luxar.utils.demos import create_lorenz_attractor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.zarr"
@@ -142,11 +146,14 @@ class TestDemoParameterHandling:
                     if "positions" in store[key]:
                         positions = store[key]["positions"]
                         actual_count = positions.shape[0]
-                        assert actual_count == n_points, f"Expected {n_points} points, got {actual_count}"
+                        assert actual_count == n_points, (
+                            f"Expected {n_points} points, got {actual_count}"
+                        )
                         break
 
                 # Clean up for next iteration
                 import shutil
+
                 if output_path.exists():
                     shutil.rmtree(output_path)
 
@@ -157,16 +164,20 @@ class TestDemoNamingConventions:
     def test_all_demos_follow_naming_pattern(self):
         """Verify all demo files follow demo_*.py pattern."""
         all_py_files = list(DEMOS_DIR.glob("*.py"))
-        demo_files = [f for f in all_py_files if f.name.startswith("demo_")]
+        _demo_files = [f for f in all_py_files if f.name.startswith("demo_")]
 
         # Filter out test files and __init__
         non_demo_files = [
-            f for f in all_py_files if not f.name.startswith("demo_") and f.name != "__init__.py"
+            f
+            for f in all_py_files
+            if not f.name.startswith("demo_") and f.name != "__init__.py"
         ]
 
         # Should have no non-demo python files (except __init__.py)
         test_files = [f for f in non_demo_files if "test" not in f.name.lower()]
-        assert len(test_files) == 0, f"Found non-demo files: {[f.name for f in test_files]}"
+        assert len(test_files) == 0, (
+            f"Found non-demo files: {[f.name for f in test_files]}"
+        )
 
     def test_demo_scripts_have_docstrings(self):
         """Verify demo scripts have module docstrings."""
@@ -174,7 +185,9 @@ class TestDemoNamingConventions:
             with open(demo_script) as f:
                 content = f.read()
                 # Should have triple-quoted docstring near top
-                assert '"""' in content or "'''" in content, f"{demo_script.name} missing docstring"
+                assert '"""' in content or "'''" in content, (
+                    f"{demo_script.name} missing docstring"
+                )
 
 
 class TestDemoErrorHandling:
@@ -186,7 +199,9 @@ class TestDemoErrorHandling:
 
         # Try to write to invalid path
         with pytest.raises((OSError, PermissionError, ValueError, KeyError)):
-            create_lorenz_attractor("/invalid/nonexistent/path/output.zarr", n_points=10)
+            create_lorenz_attractor(
+                "/invalid/nonexistent/path/output.zarr", n_points=10
+            )
 
     def test_demo_with_zero_points(self, demo_output_dir):
         """Test demo handles zero points edge case."""
@@ -230,7 +245,9 @@ class TestDemoOutputQuality:
                 # If colors exist, verify they're valid
                 if "colors" in store[key]:
                     colors = np.array(store[key]["colors"])
-                    assert colors.shape[0] == positions.shape[0], "Color/position count mismatch"
+                    assert colors.shape[0] == positions.shape[0], (
+                        "Color/position count mismatch"
+                    )
                     assert np.all(colors >= 0), "Colors contain negative values"
 
                 break

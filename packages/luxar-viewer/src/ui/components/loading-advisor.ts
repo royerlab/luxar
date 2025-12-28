@@ -6,6 +6,7 @@
  */
 
 import type { MonitorEvent, Recommendation, LoaderMetrics } from '../data-monitor-types';
+import type { MemoryMetrics } from '../data-monitor-templates';
 import { config } from '../../config';
 
 const PerformanceThresholds = config.dataLoading.monitor.thresholds;
@@ -240,6 +241,87 @@ export class LoadingAdvisor {
     toRemove.forEach((id) => this.recommendations.delete(id));
 
     // Note: Cache hit rate analysis removed (L0 cache removed)
+  }
+
+  /**
+   * Analyze memory metrics for GPU buffer pool and accumulators
+   */
+  analyzeMemoryMetrics(metrics: MemoryMetrics): void {
+    // Analyze GPU buffer pool
+    if (metrics.gpuPool) {
+      const { allocations, reuses, byType } = metrics.gpuPool;
+      const total = allocations + reuses;
+      const reuseRate = total > 0 ? reuses / total : 1;
+
+      // Check overall reuse rate
+      if (total > 10 && reuseRate < 0.5) {
+        this.addLowReuseRateRecommendation(reuseRate, 'overall');
+      }
+
+      // Check per-type reuse rates
+      for (const type of ['points', 'lines', 'gsplats'] as const) {
+        const typeStats = byType[type];
+        const typeTotal = typeStats.allocations + typeStats.reuses;
+        const typeReuseRate = typeTotal > 0 ? typeStats.reuses / typeTotal : 1;
+
+        if (typeTotal > 5 && typeReuseRate < 0.2) {
+          this.addLowReuseRateRecommendation(typeReuseRate, type);
+        }
+      }
+    }
+
+    // Analyze accumulators
+    for (const type of ['points', 'lines', 'gsplats'] as const) {
+      const stats = metrics.accumulators[type];
+      if (stats && stats.growthEvents > 5) {
+        this.addExcessiveGrowthRecommendation(type, stats.growthEvents);
+      }
+    }
+  }
+
+  /**
+   * Add low GPU buffer reuse rate recommendation
+   */
+  private addLowReuseRateRecommendation(rate: number, type: string): void {
+    const id = `low-gpu-reuse-${type}`;
+    const percentage = (rate * 100).toFixed(0);
+    const severity = rate < 0.2 ? 'error' : 'warning';
+
+    const rec: Recommendation = {
+      id,
+      severity: severity as 'warning' | 'error',
+      category: 'memory',
+      title: `Low GPU Buffer Reuse (${type})`,
+      message: `Only ${percentage}% buffer reuse for ${type}`,
+      suggestion: 'Frequent allocations may cause frame drops. Check for buffer lifecycle issues.',
+      metric: 'gpuReuseRate',
+      value: rate,
+      threshold: 0.5,
+    };
+
+    this.recommendations.set(rec.id, rec);
+  }
+
+  /**
+   * Add excessive accumulator growth recommendation
+   */
+  private addExcessiveGrowthRecommendation(type: string, growthEvents: number): void {
+    const id = `excessive-growth-${type}`;
+    const severity = growthEvents > 10 ? 'error' : 'warning';
+
+    const rec: Recommendation = {
+      id,
+      severity: severity as 'warning' | 'error',
+      category: 'memory',
+      title: `Excessive Accumulator Growth (${type})`,
+      message: `${type} accumulator grew ${growthEvents} times`,
+      suggestion: 'Initial capacity may be too small. Memory fragmentation likely.',
+      metric: 'growthEvents',
+      value: growthEvents,
+      threshold: 5,
+    };
+
+    this.recommendations.set(rec.id, rec);
   }
 
   /**

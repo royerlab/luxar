@@ -291,7 +291,7 @@ export class DimensionSliders {
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
 
-    // Separate dimensions by type: sliders (continuous + many categorical) vs dropdowns (few categorical)
+    // Separate dimensions by type: sliders (continuous + many categorical) vs dropdowns (few categorical/discrete)
     const sliderDims: number[] = [];
     const dropdownDims: number[] = [];
 
@@ -299,9 +299,20 @@ export class DimensionSliders {
       if (!this.dims.displayed.includes(i)) {
         const dimMeta = this.dims.metadata?.[i];
         const categories = dimMeta?.categories;
+        const isDiscrete = dimMeta?.discrete || false;
+        const range = this.dimensionRanges[i];
+        const step = dimMeta?.step ?? 1;
 
-        // Categorical with < 10 categories → dropdown (at bottom)
+        // Calculate number of discrete values in range
+        const numDiscreteValues =
+          range && step > 0 ? Math.floor((range[1] - range[0]) / step) + 1 : 0;
+
+        // Categorical with explicit labels and < 10 categories → dropdown (at bottom)
         if (categories && categories.length < 10) {
+          dropdownDims.push(i);
+        }
+        // Discrete dimension with small range (< 10 values) → dropdown with numeric labels
+        else if (isDiscrete && numDiscreteValues > 0 && numDiscreteValues < 10) {
           dropdownDims.push(i);
         }
         // Otherwise → slider (at top)
@@ -358,7 +369,12 @@ export class DimensionSliders {
   private createDropdownInGrid(dimIndex: number, gridContainer: HTMLElement): void {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const categories = dimMeta?.categories;
-    if (!categories) return;
+    const range = this.dimensionRanges[dimIndex];
+    const step = dimMeta?.step ?? 1;
+    const isDiscrete = dimMeta?.discrete || false;
+
+    // Must have either categories or be a discrete dimension with valid range
+    if (!categories && !(isDiscrete && range)) return;
 
     // Container for this dropdown (will be a grid item)
     const dropdownItem = document.createElement('div');
@@ -366,7 +382,7 @@ export class DimensionSliders {
 
     // Compact label with dimension name (smaller, consistent with sliders)
     const label = document.createElement('div');
-    label.className = dimMeta.description
+    label.className = dimMeta?.description
       ? 'luxar-dimension-dropdown__label luxar-dimension-dropdown__label--with-tooltip'
       : 'luxar-dimension-dropdown__label';
 
@@ -374,7 +390,7 @@ export class DimensionSliders {
     label.textContent = name;
 
     // Add tooltip with description if available
-    if (dimMeta.description) {
+    if (dimMeta?.description) {
       label.title = dimMeta.description;
     }
 
@@ -386,14 +402,27 @@ export class DimensionSliders {
     // Note: Hover/focus states now handled by CSS :hover and :focus pseudo-classes
     // No need for JavaScript event handlers for styling!
 
-    // Populate dropdown with categories
-    categories.forEach((category, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = category;
-      option.title = `${category} (index: ${index})`;
-      dropdown.appendChild(option);
-    });
+    // Populate dropdown with categories or generate from range
+    if (categories) {
+      // Use explicit category labels
+      categories.forEach((category, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = category;
+        option.title = `${category} (index: ${index})`;
+        dropdown.appendChild(option);
+      });
+    } else {
+      // Generate numeric options from range for discrete dimensions
+      const [min, max] = range;
+      for (let value = min; value <= max; value += step) {
+        const option = document.createElement('option');
+        option.value = String(value);
+        option.textContent = String(Math.round(value)); // Round for display
+        option.title = `Value: ${value}`;
+        dropdown.appendChild(option);
+      }
+    }
 
     // Set initial value
     const currentValue = Math.round(this.dims.currentStep[dimIndex]);

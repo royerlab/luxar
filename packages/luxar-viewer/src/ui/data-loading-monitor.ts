@@ -23,8 +23,10 @@ import type {
   SceneGraphState,
 } from './data-monitor-types';
 
-import { PerformanceTimeline } from './components/performance-timeline';
+// Performance timeline removed - now using hierarchical timing panel
 import { LoadingAdvisor } from './components/loading-advisor';
+import { EventQueue } from './components/event-queue';
+import { PollingLoop } from './components/polling-loop';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
@@ -35,7 +37,7 @@ const MonitorLimits = config.dataLoading.monitor.limits;
 // All styling now handled by CSS classes in data-loading-monitor.css
 
 // Helper functions
-const VALID_TABS = ['overview', 'cache', 'performance', 'insights'] as const;
+const VALID_TABS = ['overview', 'cache', 'memory', 'performance', 'insights'] as const;
 type ValidTab = (typeof VALID_TABS)[number];
 function isValidTab(tab: string): tab is ValidTab {
   return VALID_TABS.includes(tab as ValidTab);
@@ -45,9 +47,20 @@ import {
   renderLoaderItem,
   renderOverviewContent,
   renderCacheContent,
+  renderMemoryContent,
   renderInsightsContent,
   renderSceneGraphTree,
+  type MemoryMetrics,
 } from './data-monitor-templates';
+
+import {
+  renderHierarchicalTimingPanel,
+  attachTimingPanelHandlers,
+  updateTimingPanelValues,
+  isInteractionLocked,
+} from './components/hierarchical-timing-panel';
+
+import type { UpdateProfiler } from '../profiling/update-profiler';
 
 /**
  * Main Data Loading Monitor class
@@ -61,7 +74,6 @@ export class DataLoadingMonitor {
   private queries = new Map<string, QueryInfo>();
 
   // UI Components
-  private timeline: PerformanceTimeline;
   private advisor: LoadingAdvisor;
 
   // Configuration
@@ -75,9 +87,9 @@ export class DataLoadingMonitor {
     timeRange: MonitorTimings.defaultTimeRange,
   };
 
-  // Update tracking
-  private updateTimer: number | null = null;
-  private lastUpdateTime = 0;
+  // Polling-based update system (decoupled from event emission)
+  private pollingLoop: PollingLoop;
+  private eventQueue: EventQueue<MonitorEvent>;
 
   // Performance optimization
   private lastEventCleanup = 0;
@@ -95,14 +107,33 @@ export class DataLoadingMonitor {
   };
   private ratesCacheTimeout = MonitorTimings.ratesCacheTimeout;
 
-  // Event listener for external updates
-  private eventListener = this.handleLoaderEvent.bind(this);
+  // Event listener for external updates (non-blocking - just queues events)
+  private eventListener = (event: MonitorEvent) => {
+    this.eventQueue.push(event);
+  };
 
   // UI event handler bound to this instance
   private uiEventHandler = this.handleUIEvent.bind(this);
 
   // Cache stats provider for L1/L2 cache metrics
   private cacheStatsProvider: CacheStatsProvider | null = null;
+
+  // GPU buffer pool reference for dynamic stats retrieval
+  private gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null = null;
+
+  // Update profiler reference for hierarchical timing display
+  private profiler: UpdateProfiler | null = null;
+
+  // Accumulator providers for dynamic stats retrieval
+  private accumulatorProviders: {
+    points: { getStats: () => NonNullable<MemoryMetrics['accumulators']['points']> } | null;
+    lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
+    gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
+  } = {
+      points: null,
+      lines: null,
+      gsplats: null,
+    };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -142,8 +173,16 @@ export class DataLoadingMonitor {
     };
 
     // Initialize components
-    this.timeline = new PerformanceTimeline();
     this.advisor = new LoadingAdvisor();
+
+    // Initialize polling system (decoupled from event emission)
+    this.eventQueue = new EventQueue<MonitorEvent>(this.config.maxEvents);
+    this.pollingLoop = new PollingLoop({
+      interval: this.config.updateInterval,
+      onTick: () => this.onPollingTick(),
+      onStart: () => log.info(Modules.DATA_MONITOR, 'Polling started'),
+      onStop: () => log.info(Modules.DATA_MONITOR, 'Polling stopped'),
+    });
 
     // Create UI
     this.createUI();
@@ -165,10 +204,6 @@ export class DataLoadingMonitor {
     // Analyze metrics for recommendations
     this.advisor.analyzeMetrics(metrics);
 
-    // Schedule an update if visible to show the new loader
-    if (this.uiState.isVisible) {
-      this.scheduleUpdate();
-    }
   }
 
   /**
@@ -199,7 +234,6 @@ export class DataLoadingMonitor {
     this.queries.clear();
 
     // Reset components
-    this.timeline.clear();
     this.advisor.clear();
 
     // Update UI to reflect cleared state if visible
@@ -218,6 +252,45 @@ export class DataLoadingMonitor {
     this.cacheStatsProvider = provider;
     if (provider) {
       log.info(Modules.DATA_MONITOR, 'Cache stats provider connected');
+    }
+  }
+
+  /**
+   * Set the GPU buffer pool provider for Memory tab stats.
+   * The provider should have a getStats() method that returns PoolStats.
+   */
+  public setGPUBufferPoolProvider(
+    provider: { getStats: () => MemoryMetrics['gpuPool'] } | null
+  ): void {
+    this.gpuBufferPoolProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'GPU buffer pool provider connected');
+    }
+  }
+
+  /**
+   * Set the update profiler for Performance tab timing display.
+   * The profiler tracks hierarchical timing of scene updates.
+   */
+  public setProfiler(profiler: UpdateProfiler | null): void {
+    this.profiler = profiler;
+    if (profiler) {
+      log.info(Modules.DATA_MONITOR, 'Update profiler connected');
+    }
+  }
+
+  /**
+   * Set an accumulator provider for Memory tab stats.
+   * @param type - The type of accumulator ('points', 'lines', or 'gsplats')
+   * @param provider - The accumulator with a getStats() method
+   */
+  public setAccumulatorProvider(
+    type: 'points' | 'lines' | 'gsplats',
+    provider: { getStats: () => NonNullable<MemoryMetrics['accumulators']['points']> } | null
+  ): void {
+    this.accumulatorProviders[type] = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, `${type} accumulator provider connected`);
     }
   }
 
@@ -343,10 +416,6 @@ export class DataLoadingMonitor {
    */
   public updateVisibleSegments(count: number): void {
     this.sceneGraphState.visibleSegments = count;
-    // Schedule UI update if visible
-    if (this.uiState.isVisible) {
-      this.scheduleUpdate();
-    }
   }
 
   /**
@@ -355,27 +424,46 @@ export class DataLoadingMonitor {
    */
   public updateVisibleSplats(count: number): void {
     this.sceneGraphState.visibleSplats = count;
-    // Schedule UI update if visible
-    if (this.uiState.isVisible) {
-      this.scheduleUpdate();
-    }
   }
 
   /**
-   * Handle events from loaders
+   * Polling tick handler - called periodically by the polling loop.
+   * This is the main update entry point that:
+   * 1. Drains and processes queued events (batch processing)
+   * 2. Pulls fresh stats from providers
+   * 3. Updates the UI
    */
-  private handleLoaderEvent(event: MonitorEvent): void {
-    // Store event
-    this.events.push(event);
-    if (this.events.length > this.config.maxEvents) {
-      this.events.shift();
+  private onPollingTick(): void {
+    // Skip if monitor is not visible
+    if (!this.uiState.isVisible) return;
+
+    // 1. Drain and process all queued events (batch processing)
+    const queuedEvents = this.eventQueue.drain();
+    for (const event of queuedEvents) {
+      this.processEvent(event);
     }
 
-    // Clean old events periodically by time
+    // 2. Clean old events periodically
     const now = Date.now();
     if (now - this.lastEventCleanup > this.eventCleanupInterval) {
       this.cleanOldEvents();
       this.lastEventCleanup = now;
+    }
+
+    // 3. Update UI (this also pulls fresh stats from providers)
+    this.updateUI();
+  }
+
+  /**
+   * Process a single event (called from polling tick, not from loaders).
+   * This is now decoupled from event emission - events are batched and
+   * processed during the polling tick.
+   */
+  private processEvent(event: MonitorEvent): void {
+    // Store event in history
+    this.events.push(event);
+    if (this.events.length > this.config.maxEvents) {
+      this.events.shift();
     }
 
     // Update metrics
@@ -385,9 +473,6 @@ export class DataLoadingMonitor {
     if (event.type === 'query') {
       this.trackQuery(event);
     }
-
-    // Update components (timeline will batch its own rendering)
-    this.timeline.addEvent(event);
 
     // Check for issues
     if (this.config.showRecommendations) {
@@ -401,9 +486,6 @@ export class DataLoadingMonitor {
 
     // Invalidate cached rates
     this.cachedRates.lastCalculated = 0;
-
-    // Schedule UI update
-    this.scheduleUpdate();
   }
 
   /**
@@ -498,39 +580,15 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Schedule UI update
-   */
-  private scheduleUpdate(): void {
-    // Skip if monitor is not visible
-    if (!this.uiState.isVisible) return;
-
-    if (this.updateTimer !== null) return;
-
-    const now = Date.now();
-    const timeSinceLastUpdate = now - this.lastUpdateTime;
-
-    if (timeSinceLastUpdate >= this.config.updateInterval) {
-      this.updateUI();
-    } else {
-      this.updateTimer = window.setTimeout(() => {
-        this.updateTimer = null;
-        this.updateUI();
-      }, this.config.updateInterval - timeSinceLastUpdate);
-    }
-  }
-
-  /**
-   * Force an immediate UI update
-   * Used when scene changes or loaders are connected
+   * Force an immediate UI update.
+   * Used when scene changes or loaders are connected.
+   * Triggers an immediate polling tick to process any queued events
+   * and refresh the UI.
    */
   public forceUpdate(): void {
     if (this.uiState.isVisible) {
-      // Cancel any pending update
-      if (this.updateTimer !== null) {
-        clearTimeout(this.updateTimer);
-        this.updateTimer = null;
-      }
-      this.updateUI();
+      // Process any queued events and update UI immediately
+      this.onPollingTick();
     }
   }
 
@@ -538,8 +596,6 @@ export class DataLoadingMonitor {
    * Update UI
    */
   private updateUI(): void {
-    this.lastUpdateTime = Date.now();
-
     if (!this.uiState.isVisible || !this.panel) return;
 
     // Update based on current view
@@ -724,9 +780,9 @@ export class DataLoadingMonitor {
     // Cache reference to content container for efficient updates
     this.contentContainer = this.panel.querySelector('.luxar-data-monitor__content');
 
-    // Reinitialize component canvases if needed
-    if (this.uiState.activeTab === 'performance') {
-      this.timeline.initializeCanvas('timeline-canvas');
+    // Attach timing panel handlers if on performance tab
+    if (this.uiState.activeTab === 'performance' && this.contentContainer) {
+      attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
     }
 
     // Add hover effects to header buttons (only once)
@@ -739,10 +795,28 @@ export class DataLoadingMonitor {
   private updateDetailedView(): void {
     if (!this.panel) return;
 
+    // Skip full updates if user is interacting with the timing panel
+    if (this.uiState.activeTab === 'performance' && isInteractionLocked()) {
+      // Only update timing values, skip full re-render
+      if (this.contentContainer && this.profiler) {
+        const timingData = this.profiler.getTimings();
+        if (timingData.count > 0) {
+          updateTimingPanelValues(this.contentContainer, timingData);
+        }
+      }
+      return;
+    }
+
     // Update metrics from all loaders first
     for (const [path, loader] of this.loaders) {
       const metrics = loader.getMetrics();
       this.metrics.set(path, metrics);
+    }
+
+    // Analyze memory metrics for recommendations
+    if (this.config.showRecommendations) {
+      const memoryMetrics = this.getMemoryMetrics();
+      this.advisor.analyzeMemoryMetrics(memoryMetrics);
     }
 
     // If structure doesn't exist yet, build it
@@ -751,12 +825,26 @@ export class DataLoadingMonitor {
       return;
     }
 
-    // Only update the content area (much faster than rebuilding everything)
+    // For performance tab, try incremental update first to preserve expand/collapse state
+    if (this.uiState.activeTab === 'performance' && this.profiler) {
+      const timingData = this.profiler.getTimings();
+      if (timingData.count > 0) {
+        // Try incremental update (preserves DOM structure and click handlers)
+        const updated = updateTimingPanelValues(this.contentContainer, timingData);
+        if (updated) {
+          // Incremental update succeeded, no need to re-render
+          return;
+        }
+        // Fall through to full re-render if structure changed
+      }
+    }
+
+    // Full re-render for other tabs or when timing structure changes
     this.contentContainer.innerHTML = this.renderTabContent();
 
-    // Reinitialize canvas if on performance tab
+    // Attach timing panel handlers if on performance tab
     if (this.uiState.activeTab === 'performance') {
-      this.timeline.initializeCanvas('timeline-canvas');
+      attachTimingPanelHandlers(this.contentContainer, () => this.updateUI());
     }
   }
 
@@ -776,6 +864,7 @@ export class DataLoadingMonitor {
     const tabs = [
       { id: 'overview', label: 'Overview', icon: '📊' },
       { id: 'cache', label: 'Cache', icon: '💾' },
+      { id: 'memory', label: 'Memory', icon: '🧠' },
       { id: 'performance', label: 'Performance', icon: '⚡' },
       { id: 'insights', label: 'Insights', icon: '💡' },
     ];
@@ -803,6 +892,8 @@ export class DataLoadingMonitor {
         return this.renderOverviewTab();
       case 'cache':
         return this.renderCacheTab();
+      case 'memory':
+        return this.renderMemoryTab();
       case 'performance':
         return this.renderPerformanceTab();
       case 'insights':
@@ -848,22 +939,56 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Render performance tab
+   * Render memory tab with GPU buffer pool and accumulator stats
+   */
+  private renderMemoryTab(): string {
+    // Get fresh stats from providers
+    const metrics = this.getMemoryMetrics();
+    return renderMemoryContent(metrics);
+  }
+
+  /**
+   * Get memory metrics from providers
+   */
+  private getMemoryMetrics(): MemoryMetrics {
+    return {
+      gpuPool: this.gpuBufferPoolProvider?.getStats() ?? null,
+      accumulators: {
+        points: this.accumulatorProviders.points?.getStats() ?? null,
+        lines: this.accumulatorProviders.lines?.getStats() ?? null,
+        gsplats: this.accumulatorProviders.gsplats?.getStats() ?? null,
+      },
+    };
+  }
+
+  /**
+   * Render performance tab with hierarchical timing panel
    */
   private renderPerformanceTab(): string {
+    // Get timing data from profiler
+    const timingData = this.profiler?.getTimings();
+
+    if (!timingData) {
+      return `
+        <div class="luxar-performance-content">
+          <div class="timing-panel timing-empty">
+            <div class="timing-empty-message">
+              Profiler not connected. Timing data will appear here once the scene is loaded.
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="luxar-performance-content">
-        <canvas id="timeline-canvas" class="luxar-performance-canvas"></canvas>
+        ${renderHierarchicalTimingPanel(timingData)}
 
-        <div class="luxar-performance-info">
-          Performance timeline (1 minute window)
-        </div>
-
-        <!-- Recent events -->
-        <div class="luxar-event-log">
-          <h4 class="luxar-event-log__title">Recent Events</h4>
+        <!-- Recent events (collapsed by default) -->
+        <details class="luxar-event-log">
+          <summary class="luxar-event-log__title">Recent Events</summary>
           ${this.renderRecentEvents()}
-        </div>
+        </details>
       </div>
     `;
   }
@@ -875,11 +1000,6 @@ export class DataLoadingMonitor {
     const recommendations = this.advisor.getRecommendations();
     return renderInsightsContent(recommendations);
   }
-
-  /**
-   * Render loader list
-   */
-  // Removed unused renderLoaderList method - functionality moved to renderCompactLoaderList
 
   /**
    * Render recent events
@@ -1137,8 +1257,6 @@ export class DataLoadingMonitor {
     this.cachedRates.lastCalculated = now;
   }
 
-  // Individual rate calculation methods removed - use calculateRates() and cachedRates directly
-
   private renderCompactLoaderList(): string {
     const loaderEntries = Array.from(this.metrics.entries());
 
@@ -1260,19 +1378,26 @@ export class DataLoadingMonitor {
 
   public setTimeRange(range: string): void {
     this.uiState.timeRange = parseInt(range);
-    this.timeline.setTimeRange(this.uiState.timeRange);
+    // Timeline removed - time range is tracked but no longer used
     this.updateUI();
   }
 
+  /**
+   * Start the polling loop for periodic updates.
+   * Called when the monitor becomes visible.
+   */
   private startUpdating(): void {
+    // Update immediately, then start polling
     this.updateUI();
+    this.pollingLoop.start();
   }
 
+  /**
+   * Stop the polling loop.
+   * Called when the monitor is hidden.
+   */
   private stopUpdating(): void {
-    if (this.updateTimer !== null) {
-      clearTimeout(this.updateTimer);
-      this.updateTimer = null;
-    }
+    this.pollingLoop.stop();
   }
 
   // Utility methods
@@ -1339,11 +1464,12 @@ export class DataLoadingMonitor {
   public dispose(): void {
     const errors: Error[] = [];
 
-    // Step 1: Stop update timer (safe operation)
+    // Step 1: Stop polling loop and clear event queue (safe operation)
     try {
       this.stopUpdating();
+      this.eventQueue.clear();
     } catch (error) {
-      errors.push(new Error(`Failed to stop update timer: ${error}`));
+      errors.push(new Error(`Failed to stop polling loop: ${error}`));
     }
 
     // Step 2: Disconnect all loaders (critical for memory cleanup)
@@ -1404,15 +1530,7 @@ export class DataLoadingMonitor {
       this.panel = null;
     }
 
-    // Step 4: Clean up components (important for animation frame cleanup)
-    try {
-      if (this.timeline && typeof this.timeline.dispose === 'function') {
-        this.timeline.dispose();
-      }
-    } catch (error) {
-      errors.push(new Error(`Failed to dispose timeline: ${error}`));
-    }
-
+    // Step 4: Clean up components
     try {
       if (this.advisor && typeof this.advisor.dispose === 'function') {
         this.advisor.dispose();

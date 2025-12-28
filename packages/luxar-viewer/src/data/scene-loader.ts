@@ -44,6 +44,7 @@ import {
   packCholeskyForShader,
 } from '../rendering/gsplat-material';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
+import { UpdateProfiler } from '../profiling/update-profiler';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -66,6 +67,9 @@ export class SceneLoader {
   private rootGroup: THREE.Group | null = null;
   private monitorId: string | null = null;
   private arrayRefRegistry: ArrayRefRegistry;
+
+  // Performance profiling for hierarchical timing display
+  private profiler: UpdateProfiler | null = null;
 
   // Phase 4: GPU buffer pool for geometry reuse ✅ INTEGRATED
   // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
@@ -102,6 +106,12 @@ export class SceneLoader {
       );
     }
 
+    // Initialize profiler for performance timing
+    if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+      this.profiler = new UpdateProfiler();
+      log.info(Modules.SCENE_LOADER, 'Performance profiler initialized');
+    }
+
     // Use the DataMonitorManager to get or create a monitor
     if (typeof document !== 'undefined' && config.enableMonitor !== false) {
       const monitorManager = DataMonitorManager.getInstance();
@@ -112,6 +122,15 @@ export class SceneLoader {
         monitorManager.createMonitor(monitorId, document.body);
       }
       this.monitorId = monitorId;
+
+      // Connect profiler to monitor for Performance tab
+      if (this.profiler) {
+        const monitor = monitorManager.getMonitor(monitorId);
+        if (monitor) {
+          monitor.setProfiler(this.profiler);
+          log.info(Modules.SCENE_LOADER, 'Profiler connected to monitor');
+        }
+      }
     }
   }
 
@@ -300,8 +319,13 @@ export class SceneLoader {
     const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
     log.update(Modules.SCENE_LOADER, `Updating view for ${totalLoaders} loaders`);
 
-    // Update points loaders
-    const pointsUpdates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
+    // Begin profiling cycle
+    this.profiler?.beginUpdate();
+
+    try {
+      // Update points loaders
+      const pointsUpdates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
+        const updateFn = async (session: any) => {
       try {
         const points = await loader.updateView(this.viewState);
         if (points) {
@@ -877,8 +901,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-          .fill(0)
-          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+            .fill(0)
+            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions

@@ -50,7 +50,7 @@ export interface PackedGSplatsData {
  * Tracks the TypedArray type for each attribute to enable proper reuse
  */
 interface PointsAttributeTypes {
-  position: 'Float32Array';  // Always Float32Array for positions
+  position: 'Float32Array'; // Always Float32Array for positions
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   radius: 'Float32Array' | 'Uint8Array';
   sharpness: 'Float32Array' | 'Uint8Array';
@@ -150,7 +150,11 @@ export class GPUBufferPool {
    * // geom3 !== geom1 (different types, can't reuse)
    * ```
    */
-  acquirePointsGeometry(nodeId: string, data: PointsData, pointCount: number): THREE.BufferGeometry {
+  acquirePointsGeometry(
+    nodeId: string,
+    data: PointsData,
+    pointCount: number
+  ): THREE.BufferGeometry {
     this.frameCount++;
 
     // Detect attribute types from data
@@ -168,7 +172,11 @@ export class GPUBufferPool {
           return active.geometry as THREE.BufferGeometry;
         } else {
           // Need to grow - reallocate attributes with same types
-          this.growPointsGeometry(active.geometry as THREE.BufferGeometry, pointCount, active.attributeTypes);
+          this.growPointsGeometry(
+            active.geometry as THREE.BufferGeometry,
+            pointCount,
+            active.attributeTypes
+          );
           active.capacity = Math.ceil(pointCount * 1.5);
           active.lastUsedFrame = this.frameCount;
           this.stats.capacityGrowths++;
@@ -184,9 +192,11 @@ export class GPUBufferPool {
     for (const pooled of this.pointBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
-        if (candidate.attributeTypes &&
-            candidate.capacity >= pointCount &&
-            this.attributeTypesMatch(candidate.attributeTypes, types)) {
+        if (
+          candidate.attributeTypes &&
+          candidate.capacity >= pointCount &&
+          this.attributeTypesMatch(candidate.attributeTypes, types)
+        ) {
           // Found suitable geometry with matching types!
           pooled.splice(i, 1);
           candidate.inUse = true;
@@ -243,9 +253,13 @@ export class GPUBufferPool {
    */
   private detectAttributeTypes(data: PointsData): PointsAttributeTypes {
     return {
-      position: 'Float32Array',  // Always Float32Array
-      color: data.colors instanceof Uint8Array ? 'Uint8Array' :
-        data.colors instanceof Uint16Array ? 'Uint16Array' : 'Float32Array',
+      position: 'Float32Array', // Always Float32Array
+      color:
+        data.colors instanceof Uint8Array
+          ? 'Uint8Array'
+          : data.colors instanceof Uint16Array
+            ? 'Uint16Array'
+            : 'Float32Array',
       radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
       sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
     };
@@ -254,7 +268,10 @@ export class GPUBufferPool {
   /**
    * Create Points geometry with type-specific attributes
    */
-  private createPointsGeometry(capacity: number, types: PointsAttributeTypes): THREE.BufferGeometry {
+  private createPointsGeometry(
+    capacity: number,
+    types: PointsAttributeTypes
+  ): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     // Position: Always Float32Array
@@ -331,7 +348,11 @@ export class GPUBufferPool {
       newCol.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute('color', newCol);
     } else if (types.color === 'Uint16Array') {
-      const newCol = new THREE.BufferAttribute(new Uint16Array(newCapacity * 3), 3, colorNormalized);
+      const newCol = new THREE.BufferAttribute(
+        new Uint16Array(newCapacity * 3),
+        3,
+        colorNormalized
+      );
       (newCol.array as Uint16Array).set(oldCol.array as Uint16Array);
       newCol.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute('color', newCol);
@@ -361,7 +382,11 @@ export class GPUBufferPool {
     const oldSharp = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
     const sharpnessNormalized = types.sharpness === 'Uint8Array';
     if (types.sharpness === 'Uint8Array') {
-      const newSharp = new THREE.BufferAttribute(new Uint8Array(newCapacity), 1, sharpnessNormalized);
+      const newSharp = new THREE.BufferAttribute(
+        new Uint8Array(newCapacity),
+        1,
+        sharpnessNormalized
+      );
       (newSharp.array as Uint8Array).set(oldSharp.array as Uint8Array);
       newSharp.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute('sharpness', newSharp);
@@ -555,10 +580,7 @@ export class GPUBufferPool {
   /**
    * Grow Lines geometry to new capacity.
    */
-  private growLinesGeometry(
-    geometry: THREE.InstancedBufferGeometry,
-    neededCount: number
-  ): void {
+  private growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
 
     const attrNames = [
@@ -720,10 +742,7 @@ export class GPUBufferPool {
     ] as const;
 
     for (const [name, size] of attrs) {
-      const attr = new THREE.InstancedBufferAttribute(
-        new Float32Array(splatCapacity * size),
-        size
-      );
+      const attr = new THREE.InstancedBufferAttribute(new Float32Array(splatCapacity * size), size);
       attr.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute(name, attr);
     }
@@ -734,10 +753,7 @@ export class GPUBufferPool {
   /**
    * Grow GSplats geometry to new capacity.
    */
-  private growGSplatsGeometry(
-    geometry: THREE.InstancedBufferGeometry,
-    neededCount: number
-  ): void {
+  private growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
 
     const attrNames = [

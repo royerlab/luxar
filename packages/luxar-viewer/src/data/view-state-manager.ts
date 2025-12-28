@@ -136,8 +136,8 @@ export class ViewStateManager {
       if (!displayed.includes(i) && range) {
         // FIXED: Use minimum of range (leftmost slider position) for time dimensions
         // This ensures time starts at 0 and matches dimension slider initialization
-        const [rangeMin, _rangeMax] = range;
-        let initialValue = rangeMin;  // Start at minimum, not center!
+        const rangeMin = range[0];
+        let initialValue = rangeMin; // Start at minimum, not center!
 
         // For discrete dimensions, floor to nearest integer
         // Use floor instead of round to avoid edge cases

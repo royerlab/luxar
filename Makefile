@@ -62,9 +62,27 @@ test-python:  ## Run Python tests (alias for test)
 test-cov:  ## Run Python tests with coverage report
 	hatch run test-cov
 
-test-all:  ## Run all tests (Python and TypeScript with fresh fixtures)
+test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
 	@echo "🐍 Running Python tests..."
 	hatch run test
+	@echo ""
+	@echo "🦀 Checking Rust/WASM tests..."
+	@if command -v cargo >/dev/null 2>&1; then \
+		echo "Running Rust unit tests..."; \
+		cd packages/luxar-viewer && pnpm test:wasm; \
+		echo ""; \
+		if command -v wasm-pack >/dev/null 2>&1; then \
+			echo "Building WASM module for TypeScript comparison tests..."; \
+			cd packages/luxar-viewer && pnpm build:wasm; \
+		else \
+			echo "⚠️  wasm-pack not found - WASM comparison tests will be skipped"; \
+			echo "   Run 'make setup-rust' to enable full WASM testing"; \
+		fi; \
+	else \
+		echo "⚠️  cargo not found - Rust/WASM tests will be skipped"; \
+		echo "   Run 'make setup-rust' to enable full WASM testing"; \
+	fi
+	@echo ""
 	@echo "🔬 Generating TypeScript test fixtures..."
 	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 	@echo "📘 Running TypeScript tests..."
@@ -312,7 +330,7 @@ wasm-test:  ## Run Rust unit tests for WASM module
 wasm-clean:  ## Clean WASM build artifacts
 	@echo "🧹 Cleaning WASM artifacts..."
 	rm -rf packages/luxar-viewer/public/wasm/
-	rm -rf packages/luxar-viewer/src/workers/wasm/target/
+	rm -rf packages/luxar-viewer/src/wasm/rust/target/
 	@echo "✅ WASM artifacts cleaned!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests

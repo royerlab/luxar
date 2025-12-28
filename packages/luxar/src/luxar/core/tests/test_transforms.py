@@ -62,40 +62,33 @@ class TestTransformUtilities:
         t[np.diag_indices(4)] = 0
         assert np.allclose(t, 0)
 
-    def test_rotate_x(self) -> None:
-        """Test rotation around X axis."""
-        # 90 degree rotation
-        t = rotate_x(90)
-
-        # Should rotate Y to Z
-        y_axis = np.array([0, 1, 0, 0])
-        rotated = t @ y_axis
-        assert np.allclose(rotated[:3], [0, 0, 1], atol=1e-6)
-
-        # 180 degree rotation
-        t = rotate_x(180)
-        rotated = t @ y_axis
-        assert np.allclose(rotated[:3], [0, -1, 0], atol=1e-6)
-
-    def test_rotate_y(self) -> None:
-        """Test rotation around Y axis."""
-        # 90 degree rotation
-        t = rotate_y(90)
-
-        # Should rotate Z to X
-        z_axis = np.array([0, 0, 1, 0])
-        rotated = t @ z_axis
-        assert np.allclose(rotated[:3], [1, 0, 0], atol=1e-6)
-
-    def test_rotate_z(self) -> None:
-        """Test rotation around Z axis."""
-        # 90 degree rotation
-        t = rotate_z(90)
-
-        # Should rotate X to Y
-        x_axis = np.array([1, 0, 0, 0])
-        rotated = t @ x_axis
-        assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)
+    @pytest.mark.parametrize(
+        "rotation_func,angle,input_axis,expected_output,test_id",
+        [
+            # X-axis rotations: Y -> Z, Z -> -Y
+            (rotate_x, 90, [0, 1, 0, 0], [0, 0, 1], "x_90_y_to_z"),
+            (rotate_x, 180, [0, 1, 0, 0], [0, -1, 0], "x_180_y_to_neg_y"),
+            (rotate_x, 90, [0, 0, 1, 0], [0, -1, 0], "x_90_z_to_neg_y"),
+            (rotate_x, 270, [0, 1, 0, 0], [0, 0, -1], "x_270_y_to_neg_z"),
+            # Y-axis rotations: Z -> X, X -> -Z
+            (rotate_y, 90, [0, 0, 1, 0], [1, 0, 0], "y_90_z_to_x"),
+            (rotate_y, 180, [1, 0, 0, 0], [-1, 0, 0], "y_180_x_to_neg_x"),
+            (rotate_y, 90, [1, 0, 0, 0], [0, 0, -1], "y_90_x_to_neg_z"),
+            # Z-axis rotations: X -> Y, Y -> -X
+            (rotate_z, 90, [1, 0, 0, 0], [0, 1, 0], "z_90_x_to_y"),
+            (rotate_z, 180, [1, 0, 0, 0], [-1, 0, 0], "z_180_x_to_neg_x"),
+            (rotate_z, 90, [0, 1, 0, 0], [-1, 0, 0], "z_90_y_to_neg_x"),
+            (rotate_z, -90, [1, 0, 0, 0], [0, -1, 0], "z_neg90_x_to_neg_y"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_axis_rotations(
+        self, rotation_func, angle, input_axis, expected_output, test_id
+    ) -> None:
+        """Test axis rotations with various angles and inputs."""
+        t = rotation_func(angle)
+        rotated = t @ np.array(input_axis)
+        assert np.allclose(rotated[:3], expected_output, atol=1e-6)
 
     def test_rotate_arbitrary_axis(self) -> None:
         """Test rotation around arbitrary axis."""
@@ -108,14 +101,33 @@ class TestTransformUtilities:
         rotated = t @ x_axis
         assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)  # X -> Y
 
-    def test_rotate_string_axis(self) -> None:
-        """Test rotation with string axis names."""
-        assert np.allclose(rotate(45, "x"), rotate_x(45))
-        assert np.allclose(rotate(45, "Y"), rotate_y(45))
-        assert np.allclose(rotate(45, "Z"), rotate_z(45))
+    @pytest.mark.parametrize(
+        "axis,angle,expected_func,test_id",
+        [
+            ("x", 45, lambda: rotate_x(45), "axis_x_lower"),
+            ("X", 45, lambda: rotate_x(45), "axis_x_upper"),
+            ("y", 90, lambda: rotate_y(90), "axis_y_lower"),
+            ("Y", 30, lambda: rotate_y(30), "axis_y_upper"),
+            ("z", 180, lambda: rotate_z(180), "axis_z_lower"),
+            ("Z", -45, lambda: rotate_z(-45), "axis_z_upper"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_rotate_string_axis_valid(
+        self, axis, angle, expected_func, test_id
+    ) -> None:
+        """Test rotation with valid string axis names."""
+        assert np.allclose(rotate(angle, axis), expected_func())
 
+    @pytest.mark.parametrize(
+        "invalid_axis",
+        ["w", "a", "xx", "xy", ""],
+        ids=["w", "a", "xx", "xy", "empty"],
+    )
+    def test_rotate_string_axis_invalid(self, invalid_axis) -> None:
+        """Test rotation with invalid string axis names."""
         with pytest.raises(ValueError):
-            rotate(45, "w")  # Invalid axis
+            rotate(45, invalid_axis)
 
     def test_compose(self) -> None:
         """Test transform composition."""
@@ -224,24 +236,36 @@ class TestTransformUtilities:
             f"Three-transform composition failed: expected {expected[:3]}, got {result[:3]}"
         )
 
-    def test_inverse(self) -> None:
-        """Test transform inversion."""
-        # Translation inverse
-        t = translate(5, 3, -2)
+    @pytest.mark.parametrize(
+        "transform_factory,test_id",
+        [
+            # Translation inverses
+            (lambda: translate(5, 3, -2), "translate_xyz"),
+            (lambda: translate(0, 0, 10), "translate_z_only"),
+            (lambda: translate(-100, 50, 0), "translate_large"),
+            # Rotation inverses
+            (lambda: rotate_z(45), "rotate_z_45"),
+            (lambda: rotate_x(90), "rotate_x_90"),
+            (lambda: rotate_y(180), "rotate_y_180"),
+            (lambda: rotate(30, "x"), "rotate_x_30"),
+            # Scale inverses
+            (lambda: scale(2, 4, 0.5), "scale_non_uniform"),
+            (lambda: scale(uniform=3.0), "scale_uniform"),
+            (lambda: scale(0.1, 0.1, 0.1), "scale_small"),
+            # Combined transforms
+            (lambda: compose(translate(5, 0, 0), rotate_z(45)), "translate_rotate"),
+            (lambda: compose(rotate_x(30), scale(2, 2, 2)), "rotate_scale"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_inverse_valid(self, transform_factory, test_id) -> None:
+        """Test that inverse(T) @ T = identity for various transforms."""
+        t = transform_factory()
         t_inv = inverse(t)
         assert np.allclose(compose(t, t_inv), identity(), atol=1e-6)
 
-        # Rotation inverse
-        t = rotate_z(45)
-        t_inv = inverse(t)
-        assert np.allclose(compose(t, t_inv), identity(), atol=1e-6)
-
-        # Scale inverse
-        t = scale(2, 4, 0.5)
-        t_inv = inverse(t)
-        assert np.allclose(compose(t, t_inv), identity(), atol=1e-6)
-
-        # Non-invertible matrix
+    def test_inverse_non_invertible(self) -> None:
+        """Test that non-invertible matrices raise ValueError."""
         bad = np.zeros((4, 4), dtype=np.float32)
         with pytest.raises(ValueError):
             inverse(bad)

@@ -53,8 +53,8 @@ from arbol import Arbol, aprint, asection
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.models.gsplats.metal import is_metal_available
+from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
@@ -303,9 +303,12 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     # Auto-detect best device (Metal on Apple Silicon for 3-7x speedup!)
     if DEVICE is None:
         import torch
+
         if USE_METAL and is_metal_available() and torch.backends.mps.is_available():
             DEVICE = "mps"
-            aprint("🚀 Metal acceleration available - using MPS device for 3-7x speedup!")
+            aprint(
+                "🚀 Metal acceleration available - using MPS device for 3-7x speedup!"
+            )
         elif torch.cuda.is_available():
             DEVICE = "cuda"
             aprint("Using CUDA device")

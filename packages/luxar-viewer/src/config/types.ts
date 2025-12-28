@@ -494,6 +494,8 @@ export interface RenderingSettings {
   flyRotationDamping?: number;
   // Adaptive resolution
   adaptiveDPREnabled: boolean;
+  // Cinematic mode checkbox (multi-effect toggle)
+  cinematicMode: boolean;
 }
 
 /**

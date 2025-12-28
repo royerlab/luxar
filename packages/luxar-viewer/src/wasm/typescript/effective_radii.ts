@@ -1,0 +1,96 @@
+/**
+ * Effective radius calculation for nD hypersphere slicing.
+ *
+ * TypeScript reference implementation matching effective_radii.rs
+ *
+ * When an nD hypersphere of radius R is intersected by a hyperplane at distance D,
+ * the effective radius in the slice is: R_effective = sqrt(R² - D²)
+ */
+
+/**
+ * Calculate effective radii for nD points when sliced.
+ *
+ * @param positions - Point positions [numPoints * ndim]
+ * @param radii - Original point radii [numPoints]
+ * @param displayDims - Dimensions to display (typically [0,1,2]) [numDisplayDims]
+ * @param slicePosition - Current slice position [ndim]
+ * @param spatialExtendDims - Which dims are spatial (1) vs discrete (0) [ndim]
+ * @param ndim - Total number of dimensions
+ * @param numPoints - Number of points
+ * @param output - Output effective radii [numPoints]
+ * @returns Number of points with non-zero effective radius (visible points)
+ */
+export function calculate_effective_radii(
+  positions: Float32Array,
+  radii: Float32Array,
+  displayDims: Uint32Array,
+  slicePosition: Float32Array,
+  spatialExtendDims: Uint8Array,
+  ndim: number,
+  numPoints: number,
+  output: Float32Array
+): number {
+  const discreteTolerance = 0.5;
+  let visibleCount = 0;
+
+  // Create display dims lookup set
+  const isDisplayDim = new Set<number>();
+  for (let i = 0; i < displayDims.length; i++) {
+    isDisplayDim.add(displayDims[i]);
+  }
+
+  for (let i = 0; i < numPoints; i++) {
+    const originalRadius = radii[i];
+    const posOffset = i * ndim;
+
+    // Check discrete dimensions for exact match
+    let discreteMatch = true;
+    for (let d = 0; d < ndim; d++) {
+      if (isDisplayDim.has(d)) continue;
+
+      // Check if this is a spatial or discrete dimension
+      const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
+
+      if (!isSpatial) {
+        // Discrete dimension: must match exactly (within tolerance)
+        const value = positions[posOffset + d];
+        const target = slicePosition[d];
+        if (Math.abs(value - target) > discreteTolerance) {
+          discreteMatch = false;
+          break;
+        }
+      }
+    }
+
+    if (!discreteMatch) {
+      output[i] = 0;
+      continue;
+    }
+
+    // Calculate squared distance in non-displayed spatial dimensions
+    let distanceSquared = 0;
+    for (let d = 0; d < ndim; d++) {
+      if (isDisplayDim.has(d)) continue;
+
+      const isSpatial = d < spatialExtendDims.length ? spatialExtendDims[d] !== 0 : true;
+
+      if (isSpatial) {
+        const value = positions[posOffset + d];
+        const target = slicePosition[d];
+        const diff = value - target;
+        distanceSquared += diff * diff;
+      }
+    }
+
+    // Apply Pythagorean theorem: R_effective = sqrt(R² - D²)
+    const radiusSquared = originalRadius * originalRadius;
+    if (distanceSquared >= radiusSquared) {
+      output[i] = 0;
+    } else {
+      output[i] = Math.sqrt(radiusSquared - distanceSquared);
+      visibleCount++;
+    }
+  }
+
+  return visibleCount;
+}
