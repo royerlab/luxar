@@ -173,13 +173,15 @@ projectGSplatsTo3D() Pipeline:
 
 ## 3. Test Coverage
 
-### 3.1 Test Summary (113 WASM tests passing)
+### 3.1 Test Summary (154 tests passing)
 
 | Test File | Tests | Description |
 |-----------|:-----:|-------------|
-| `wasm-comparison.test.ts` | 62 | TypeScript fallback correctness |
-| `wasm-vs-typescript.test.ts` | 37 | WASM vs TypeScript exactness |
-| `wasm-performance.test.ts` | 14 | Performance benchmarks |
+| `wasm-comparison.test.ts` | 59 | TypeScript fallback correctness |
+| `wasm-vs-typescript.test.ts` | 34 | WASM vs TypeScript exactness |
+| `spatial-query-builder.test.ts` | 24 | Unified query infrastructure |
+| `transferable-accumulator.test.ts` | 27 | Buffer management |
+| `integration-example.test.ts` | 10 | Full pipeline examples |
 
 ### 3.2 Rust Unit Tests (39 tests)
 
@@ -390,7 +392,7 @@ Actual benchmark results from `wasm-performance.test.ts`:
 | File | Purpose |
 |------|---------|
 | `src/wasm/index.ts` | WASM loader with fallback |
-| `src/wasm/types.ts` | WasmModule interface (34 methods) |
+| `src/wasm/types.ts` | WasmModule interface (38 methods) |
 | `src/wasm/typescript/index.ts` | TypeScriptFallback class |
 | `src/wasm/rust/src/lib.rs` | Rust entry point |
 | `src/workers/data-worker.ts` | Worker WASM integration |
@@ -401,10 +403,10 @@ Actual benchmark results from `wasm-performance.test.ts`:
 
 | File | Tests |
 |------|:-----:|
-| `src/tests/unit/wasm/wasm-comparison.test.ts` | 62 |
-| `src/tests/unit/wasm/wasm-vs-typescript.test.ts` | 37 |
-| `src/tests/unit/wasm/wasm-performance.test.ts` | 14 |
+| `src/tests/unit/wasm/wasm-comparison.test.ts` | 59 |
+| `src/tests/unit/wasm/wasm-vs-typescript.test.ts` | 34 |
 | `src/tests/unit/data/lines-clipping.test.ts` | 33 |
+| `src/tests/unit/data/loaders/*.test.ts` | 61 |
 
 ---
 
