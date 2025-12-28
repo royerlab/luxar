@@ -122,7 +122,7 @@ export class ViewStateManager {
 
   /**
    * Calculate initial slice position for all dimensions
-   * Uses center of range to maximize visibility
+   * Uses minimum of range (start at beginning for time-like dimensions)
    */
   private static calculateInitialSlice(
     metadata: DimensionMetadata[],
@@ -136,7 +136,7 @@ export class ViewStateManager {
       if (!displayed.includes(i) && range) {
         // FIXED: Use minimum of range (leftmost slider position) for time dimensions
         // This ensures time starts at 0 and matches dimension slider initialization
-        const rangeMin = range[0];
+        const [rangeMin] = range;
         let initialValue = rangeMin; // Start at minimum, not center!
 
         // For discrete dimensions, floor to nearest integer

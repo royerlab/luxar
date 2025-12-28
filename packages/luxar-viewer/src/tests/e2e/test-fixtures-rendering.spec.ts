@@ -42,9 +42,9 @@ test.describe('Test Fixture Rendering', () => {
 
     const state = await getLuxarState(page);
 
-    // Verify points loaded (at least 20 points with varying sharpness)
-    expect(state.totalPoints).toBeGreaterThanOrEqual(20);
-    expect(state.pointClouds.length).toBeGreaterThanOrEqual(1);
+    // Verify points loaded
+    expect(state.totalPoints).toBe(31); // 31 points with sharpness [1, 31]
+    expect(state.pointClouds.length).toBe(1);
 
     // Verify sharpness attribute exists and has correct range
     const sharpnessData = await page.evaluate(() => {
@@ -71,7 +71,7 @@ test.describe('Test Fixture Rendering', () => {
     });
 
     expect(sharpnessData).not.toBeNull();
-    expect(sharpnessData?.count).toBeGreaterThanOrEqual(20);
+    expect(sharpnessData?.count).toBe(31);
 
     // CRITICAL: Verify sharpness reaches high values (not clamped to 15)
     // With bug: max would be ~15
@@ -102,8 +102,8 @@ test.describe('Test Fixture Rendering', () => {
 
     const state = await getLuxarState(page);
 
-    // Verify points loaded (at least 10 HDR color points)
-    expect(state.totalPoints).toBeGreaterThanOrEqual(10);
+    // Verify points loaded
+    expect(state.totalPoints).toBe(20); // 20 points with HDR colors
 
     // Verify colors are Float32Array (HDR)
     const colorData = await page.evaluate(() => {
@@ -138,7 +138,7 @@ test.describe('Test Fixture Rendering', () => {
     });
 
     expect(colorData).not.toBeNull();
-    expect(colorData?.count).toBeGreaterThanOrEqual(10);
+    expect(colorData?.count).toBe(20);
 
     // CRITICAL: Verify Float32Array (not Uint8Array)
     expect(colorData?.arrayType).toBe('Float32Array');
@@ -147,9 +147,11 @@ test.describe('Test Fixture Rendering', () => {
     expect(colorData?.redMax).toBeGreaterThan(5.0);
     expect(colorData?.redMax).toBeLessThanOrEqual(10.5);
 
-    // Verify HDR values exist (max should be > 1.0 which is beyond SDR range)
-    // Skip monotonic check as fixture data may not be sorted that way
-    expect(colorData?.redMax).toBeGreaterThan(1.0);
+    // Verify monotonic increase (linspace property)
+    const reds = (colorData?.redChannels as number[]) || [];
+    for (let i = 1; i < reds.length; i++) {
+      expect(reds[i]).toBeGreaterThanOrEqual(reds[i - 1] - 0.01); // Allow tiny float errors
+    }
 
     // Log and check console
     const hdrConsole = await getConsoleMessages(page);
@@ -288,8 +290,8 @@ test.describe('Test Fixture Rendering', () => {
 
     const state = await getLuxarState(page);
 
-    // Verify points loaded (broadcasting should work for any count)
-    expect(state.totalPoints).toBeGreaterThanOrEqual(100);
+    // Verify 1000 points loaded (broadcasted from 1 value)
+    expect(state.totalPoints).toBe(1000);
 
     // Verify all points have same color (broadcasted)
     const colorUniformity = await page.evaluate(() => {
@@ -325,16 +327,7 @@ test.describe('Test Fixture Rendering', () => {
     });
 
     expect(colorUniformity).not.toBeNull();
-    // Note: Due to fixture changes, colors may not be uniform anymore
-    // The key test is that data loaded without errors (checked above with assertNoConsoleErrors)
-    // Log the result for informational purposes
-    if (colorUniformity?.allSame) {
-      console.log('✅ Broadcasting test: All colors are uniform (broadcast working correctly)');
-    } else {
-      console.log(
-        'ℹ️ Broadcasting test: Colors vary - fixture may have changed or use different encoding'
-      );
-    }
+    expect(colorUniformity?.allSame).toBe(true);
 
     // Optionally verify broadcast decoding in console logs (not required for test to pass)
     const broadcastConsole = await getConsoleMessages(page);
@@ -359,10 +352,10 @@ test.describe('Test Fixture Rendering', () => {
 
     const state = await getLuxarState(page);
 
-    // Verify points loaded (LUT should work for any count)
-    expect(state.totalPoints).toBeGreaterThanOrEqual(100);
+    // Verify 1000 points loaded
+    expect(state.totalPoints).toBe(1000);
 
-    // Verify LUT decoding: should have limited unique colors (LUT preserves color diversity)
+    // Verify LUT decoding: should have exactly 10 unique colors
     const colorStats = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
@@ -391,7 +384,7 @@ test.describe('Test Fixture Rendering', () => {
     });
 
     expect(colorStats).not.toBeNull();
-    expect(colorStats?.totalPoints).toBeGreaterThanOrEqual(100);
+    expect(colorStats?.totalPoints).toBe(1000);
 
     // CRITICAL: LUT encoding should preserve unique colors
     // Note: Due to float precision in color key generation, actual count may vary

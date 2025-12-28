@@ -241,7 +241,7 @@ describe('GSplats Type Definitions', () => {
   describe('LoadedGSplatsData interface', () => {
     it('should represent raw loaded gsplats data', () => {
       const data = {
-        centers: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 splats * 3D
+        positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 splats * 3D
         amplitudes: new Float32Array([1.0, 0.5, 0.8]),
         choleskyFactors: new Float32Array([
           1,
@@ -271,13 +271,13 @@ describe('GSplats Type Definitions', () => {
 
       expect(data.splatCount).toBe(3);
       expect(data.ndim).toBe(3);
-      expect(data.centers.length).toBe(9); // 3 splats * 3 dims
+      expect(data.positions.length).toBe(9); // 3 splats * 3 dims
       expect(data.choleskyFactors.length).toBe(18); // 3 splats * 6 elements
     });
 
     it('should allow null colors and sharpness', () => {
       const data = {
-        centers: new Float32Array([0, 0, 0]),
+        positions: new Float32Array([0, 0, 0]),
         amplitudes: new Float32Array([1.0]),
         choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
         colors: null,

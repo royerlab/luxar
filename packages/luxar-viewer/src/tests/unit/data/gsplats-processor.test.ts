@@ -9,7 +9,7 @@ import type { LoadedGSplatsData, GSplatsViewState } from '../../../types/gsplats
 describe('processGSplats3DOnly', () => {
   it('should copy 3D data directly', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       amplitudes: new Float32Array([1.0, 0.5, 0.3]),
       choleskyFactors: new Float32Array([
         1,
@@ -57,7 +57,7 @@ describe('processGSplats3DOnly', () => {
 
   it('should default sharpness to 2.0 if not present', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
@@ -73,7 +73,7 @@ describe('processGSplats3DOnly', () => {
 
   it('should default colors to white if not present', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
@@ -91,7 +91,7 @@ describe('processGSplats3DOnly', () => {
 
   it('should throw for non-3D data', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0, 0]),
+      positions: new Float32Array([0, 0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
@@ -107,7 +107,7 @@ describe('processGSplats3DOnly', () => {
 describe('processGSplatsTo3D', () => {
   it('should process 3D data with no hidden dims', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0, 1, 1, 1]),
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
@@ -134,7 +134,7 @@ describe('processGSplatsTo3D', () => {
     const loaded: LoadedGSplatsData = {
       // Splat at (0,0,0,0) - on the slice
       // Splat at (0,0,0,10) - 10 units from slice in dim 3
-      centers: new Float32Array([0, 0, 0, 0, 0, 0, 0, 10]),
+      positions: new Float32Array([0, 0, 0, 0, 0, 0, 0, 10]),
       amplitudes: new Float32Array([1.0, 1.0]),
       // 4D Cholesky has 10 elements: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
       // Use identity-like covariance (σ=1 in all dims)
@@ -187,7 +187,7 @@ describe('processGSplatsTo3D', () => {
   it('should extract correct 3D submatrix from higher-dim Cholesky', () => {
     // 4D data, display dims [0, 1, 2]
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([1, 2, 3, 0]), // 4D center
+      positions: new Float32Array([1, 2, 3, 0]), // 4D center
       amplitudes: new Float32Array([1.0]),
       // 4D Cholesky (10 elements): [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
       // Set specific values to verify extraction
@@ -229,7 +229,7 @@ describe('processGSplatsTo3D', () => {
   it('should extract 3D center using display dimensions', () => {
     // 5D data, display dims [1, 3, 4]
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([10, 20, 30, 40, 50]), // 5D center
+      positions: new Float32Array([10, 20, 30, 40, 50]), // 5D center
       amplitudes: new Float32Array([1.0]),
       // Minimal valid Cholesky for 5D (15 elements)
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
@@ -257,7 +257,7 @@ describe('processGSplatsTo3D', () => {
 describe('processGSplats', () => {
   it('should use optimized path for standard 3D data', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,
@@ -280,7 +280,7 @@ describe('processGSplats', () => {
 
   it('should use general path for non-standard display dims', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([10, 20, 30]),
+      positions: new Float32Array([10, 20, 30]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: new Float32Array([1, 0, 0]),
@@ -308,7 +308,7 @@ describe('processGSplats', () => {
 
   it('should use general path for higher-dimensional data', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0, 0]),
+      positions: new Float32Array([0, 0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1]),
       colors: null,
@@ -332,7 +332,7 @@ describe('processGSplats', () => {
 describe('edge cases', () => {
   it('should handle empty input', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array(0),
+      positions: new Float32Array(0),
       amplitudes: new Float32Array(0),
       choleskyFactors: new Float32Array(0),
       colors: null,
@@ -355,7 +355,7 @@ describe('edge cases', () => {
 
   it('should filter out splats with zero amplitude', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0, 1, 1, 1]),
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
       amplitudes: new Float32Array([1.0, 0.0]), // Second has zero amplitude
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       colors: null,
@@ -380,7 +380,7 @@ describe('edge cases', () => {
 
   it('should use default sharpness 2.0 when not provided', () => {
     const loaded: LoadedGSplatsData = {
-      centers: new Float32Array([0, 0, 0]),
+      positions: new Float32Array([0, 0, 0]),
       amplitudes: new Float32Array([1.0]),
       choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
       colors: null,

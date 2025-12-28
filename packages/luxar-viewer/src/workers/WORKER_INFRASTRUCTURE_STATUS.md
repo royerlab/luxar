@@ -66,18 +66,18 @@ dataLoading: {
 
 ### All Loaders (Points, Lines, GSplats)
 
-| Operation | Worker Function | Fallback |
-|-----------|----------------|----------|
+| Operation           | Worker Function       | Fallback    |
+| ------------------- | --------------------- | ----------- |
 | Spatial Index Query | `querySpatialIndex()` | Main thread |
-| Broadcast Decoding | `decodeBroadcasted()` | Main thread |
-| Quantized Decoding | `decodeQuantized()` | Main thread |
-| Log-space Decoding | `decodeLogScalar()` | Main thread |
-| LUT Decoding | `decodeLUT()` | Main thread |
+| Broadcast Decoding  | `decodeBroadcasted()` | Main thread |
+| Quantized Decoding  | `decodeQuantized()`   | Main thread |
+| Log-space Decoding  | `decodeLogScalar()`   | Main thread |
+| LUT Decoding        | `decodeLUT()`         | Main thread |
 
 ### Points Loader Only
 
-| Operation | Worker Function | Fallback |
-|-----------|----------------|----------|
+| Operation     | Worker Function       | Fallback    |
+| ------------- | --------------------- | ----------- |
 | 3D Projection | `projectPointsTo3D()` | Main thread |
 
 ### TransferableAccumulator Support (NEW)
@@ -100,6 +100,7 @@ accumulator.adopt(result.outputBuffers);
 ```
 
 **Key Benefits**:
+
 - Zero-allocation in steady state (after warmup)
 - Zero-copy buffer transfer via `Comlink.transfer()`
 - Enables BOTH accumulator pattern AND worker CPU offload
@@ -166,24 +167,26 @@ public/wasm/               # Built WASM output
 
 ## WASM Module Status
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Rust Source | ✅ Complete | 39/39 unit tests passing |
-| Build Output | ✅ Built | `public/wasm/luxar_wasm_bg.wasm` (44KB) |
-| TypeScript Fallback | ✅ Complete | Full parity with Rust implementation |
-| SIMD Optimization | ✅ Enabled | via wasm-opt |
+| Component           | Status      | Notes                                   |
+| ------------------- | ----------- | --------------------------------------- |
+| Rust Source         | ✅ Complete | 39/39 unit tests passing                |
+| Build Output        | ✅ Built    | `public/wasm/luxar_wasm_bg.wasm` (44KB) |
+| TypeScript Fallback | ✅ Complete | Full parity with Rust implementation    |
+| SIMD Optimization   | ✅ Enabled  | via wasm-opt                            |
 
 ---
 
 ## Performance Characteristics
 
 ### When Workers Help Most
+
 - Large datasets (>10K points)
 - nD datasets with visibility filtering
 - Quantized/LUT encoded data requiring decoding
 - Multiple concurrent nodes loading
 
 ### When Workers Add Overhead
+
 - Small datasets (<1K points) - Comlink serialization overhead
 - Simple 3D datasets without encoding - no decoding needed
 - Single node scenes - no parallelization benefit
@@ -221,6 +224,7 @@ config.dataLoading.performance.useWebWorkers = false;
 Workers are integrated in these loader methods:
 
 ### `point-spatial-index-loader.ts`
+
 - `queryVisiblePointRanges()` - line 723
 - `loadBroadcastedRanges()` - line 845
 - `loadQuantizedRanges()` - line 925
@@ -228,12 +232,14 @@ Workers are integrated in these loader methods:
 - `projectTo3DUsingWorker()` - line 1705
 
 ### `lines-spatial-index-loader.ts`
+
 - `queryVisibleRanges()` - line 528
 - `loadBroadcastedRanges()` - line 670
 - `loadQuantizedRanges()` - line 727
 - `loadLUTRanges()` - line 796
 
 ### `gsplats-spatial-index-loader.ts`
+
 - `queryVisibleRanges()` - line 372
 - `loadBroadcastedRanges()` - line 482
 - `loadQuantizedRanges()` - line 540

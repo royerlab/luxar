@@ -315,7 +315,7 @@ describe('Data Monitor Integration', () => {
   });
 
   describe('Monitor event flow', () => {
-    it.skip('should receive and process loader events', () => {
+    it('should receive and process loader events', () => {
       const manager = DataMonitorManager.getInstance();
       const monitor = manager.createMonitor('test', document.body);
 
@@ -352,7 +352,9 @@ describe('Data Monitor Integration', () => {
       monitor.connectLoader('/test', mockLoader);
       expect(eventListener).toBeDefined();
 
-      // Send events
+      // Make monitor visible and send events
+      monitor.show();
+
       if (eventListener) {
         (eventListener as (event: MonitorEvent) => void)({
           type: 'query',
@@ -369,6 +371,9 @@ describe('Data Monitor Integration', () => {
         });
       }
 
+      // Force process queued events
+      monitor.forceUpdate();
+
       // Verify events were processed
       const events = monitor.getRecentEvents();
       expect(events.length).toBeGreaterThanOrEqual(2);
@@ -376,7 +381,7 @@ describe('Data Monitor Integration', () => {
       expect(events.some((e) => e.type === 'cache-hit')).toBe(true);
     });
 
-    it.skip('should update metrics based on events', () => {
+    it('should update metrics based on events', () => {
       const manager = DataMonitorManager.getInstance();
       const monitor = manager.createMonitor('test', document.body);
 
@@ -410,6 +415,9 @@ describe('Data Monitor Integration', () => {
       };
 
       monitor.connectLoader('/test', mockLoader);
+
+      // Make monitor visible before sending events
+      monitor.show();
 
       // Send events to update metrics
       if (eventListener) {
@@ -470,10 +478,14 @@ describe('Data Monitor Integration', () => {
         });
       }
 
-      // Check global stats reflect both getMetrics and events
+      // Force process queued events
+      monitor.forceUpdate();
+
+      // Check global stats - metrics are refreshed from loader.getMetrics() on each UI update
+      // So totalQueries reflects what the loader reports, not event counts
       const stats = monitor.getGlobalStats();
-      // Note: queries are counted both in getMetrics (2) and events (2) = 4 total
-      expect(stats.totalQueries).toBe(4); // 2 from getMetrics + 2 from events
+      // UI refresh calls loader.getMetrics() which returns queries: 2
+      expect(stats.totalQueries).toBe(2);
       // L0 cache removed - cache hits should now be 0
       expect(stats.totalCacheHits).toBe(0);
       expect(stats.globalCacheHitRate).toBe(0);

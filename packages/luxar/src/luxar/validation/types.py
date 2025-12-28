@@ -15,10 +15,11 @@ from typing import Any, List, Optional, cast
 
 import numpy as np
 
-from ..typing_utils.aliases import PositionArray, TransformMatrix
+from ..typing_utils.aliases import CategoryList, PositionArray, TransformMatrix
 from ..typing_utils.constants import (
     GAMMA_MAX,
     GAMMA_MIN,
+    MIN_CATEGORIES,
     OPACITY_MAX,
     OPACITY_MIN,
 )
@@ -342,6 +343,7 @@ def is_transform_matrix(obj: Any) -> bool:
 
 
 # Import shared category validation (centralized to avoid duplication)
+from .category_validation import validate_categories
 
 
 def validate_category_indices(

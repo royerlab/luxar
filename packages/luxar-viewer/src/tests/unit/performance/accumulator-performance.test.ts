@@ -6,13 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PointsDataAccumulator } from '../../../data/data-accumulator';
+import { LoadedPointsDataAccumulator } from '../../../data/data-accumulator';
 
 describe('Accumulator Performance Regression Tests', () => {
-  let accumulator: PointsDataAccumulator;
+  let accumulator: LoadedPointsDataAccumulator;
 
   beforeEach(() => {
-    accumulator = new PointsDataAccumulator(1000, 3, 10000);
+    accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
   });
 
   describe('Zero-Allocation Operation', () => {
@@ -92,7 +92,7 @@ describe('Accumulator Performance Regression Tests', () => {
   describe('Memory Efficiency', () => {
     it('should track accurate memory usage', () => {
       const capacity = 1000;
-      const acc = new PointsDataAccumulator(capacity, 3, 10000);
+      const acc = new LoadedPointsDataAccumulator(capacity, 3, 10000);
 
       const stats = acc.getStats();
 
@@ -154,7 +154,7 @@ describe('Accumulator Performance Regression Tests', () => {
 
   describe('Growth Strategy Validation', () => {
     it('should grow by exactly 1.5x until reaching needed capacity', () => {
-      const acc = new PointsDataAccumulator(100, 3, 10000);
+      const acc = new LoadedPointsDataAccumulator(100, 3, 10000);
 
       // Grow to 5000
       acc.ensureCapacity(5000);
@@ -168,7 +168,7 @@ describe('Accumulator Performance Regression Tests', () => {
     });
 
     it('should track growth events correctly', () => {
-      const acc = new PointsDataAccumulator(100, 3, 10000);
+      const acc = new LoadedPointsDataAccumulator(100, 3, 10000);
 
       acc.ensureCapacity(200); // 1 growth
       acc.ensureCapacity(300); // 1 more growth

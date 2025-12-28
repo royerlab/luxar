@@ -16,6 +16,8 @@
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
 import { log, Modules } from '../../utils/log';
+import { config as appConfig } from '../../config';
+import { getWorkerPool } from '../../workers/worker-pool';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder';
 
 /**
@@ -133,12 +135,18 @@ export class RangeLoader {
    */
   private async loadBroadcasted(
     array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    _attrs: ArrayMetadata,
+    attrs: ArrayMetadata,
     output: Float32Array,
     totalElements: number,
     elementsPerItem: number
   ): Promise<void> {
-    log.info(this.config.logModule, `Broadcasted: replicating to ${totalElements} elements`);
+    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
+    const arrayName = attrs.encoding?.name || 'broadcasted';
+
+    log.info(
+      this.config.logModule,
+      `Broadcasted: replicating to ${totalElements} elements (worker=${useWorkers})`
+    );
 
     // Fetch single value (cached via TwoLevelCachingStore)
     const fullData = await get(array);
@@ -148,7 +156,27 @@ export class RangeLoader {
     const valueAsFloat32 =
       broadcastValue instanceof Float32Array ? broadcastValue : new Float32Array(broadcastValue);
 
-    // Replicate on main thread (simple operation, not worth worker overhead)
+    if (useWorkers && totalElements > this.config.workerThreshold) {
+      try {
+        const worker = await getWorkerPool().getWorker();
+        const decoded = await worker.decodeBroadcasted({
+          value: valueAsFloat32,
+          numPoints: totalElements,
+          elementsPerPoint: elementsPerItem,
+        });
+        output.set(decoded);
+        return;
+      } catch (error) {
+        log.warning(
+          this.config.logModule,
+          `Worker broadcast failed for ${arrayName}, falling back to main thread:`,
+          error
+        );
+        // Fall through to main thread
+      }
+    }
+
+    // Main thread replication
     for (let i = 0; i < totalElements; i++) {
       for (let j = 0; j < elementsPerItem; j++) {
         output[i * elementsPerItem + j] = valueAsFloat32[j] ?? valueAsFloat32[0];
@@ -158,8 +186,6 @@ export class RangeLoader {
 
   /**
    * Load quantized array ranges and dequantize
-   *
-   * OPTIMIZATION: Fetches all chunks in parallel, then decodes sequentially
    */
   private async loadQuantized(
     array: zarr.Array<zarr.DataType, zarr.FetchStore>,
@@ -172,33 +198,57 @@ export class RangeLoader {
       throw new Error('Quantization metadata missing');
     }
 
+    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     log.info(
       this.config.logModule,
-      `Quantized: ${totalPoints} values, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)})`
+      `Quantized: ${totalPoints} values (${ArrayDecoder.getEncodingMode(attrs)}, worker=${useWorkers})`
     );
 
+    let destOffset = 0;
     const shape = array.shape;
 
-    // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
+    for (const range of ranges) {
       const sliceSpec: zarr.Slice[] =
         shape.length === 2
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
 
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
-    // NOTE: Decoding stays on main thread - workers only handle spatial queries
-    let destOffset = 0;
-
-    for (const chunkData of chunks) {
+      // Main thread fetches (cached via TwoLevelCachingStore)
+      const chunkData = await get(array, sliceSpec);
       const quantizedData = chunkData.data as Uint8Array | Uint16Array;
-      const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
+
+      let dequantized: Float32Array;
+
+      if (useWorkers && totalPoints > this.config.workerThreshold) {
+        try {
+          const worker = await getWorkerPool().getWorker();
+
+          if (quantMetadata.isLogSpace) {
+            dequantized = await worker.decodeLogScalar({
+              data: quantizedData,
+              maxLog: quantMetadata.bounds[1],
+              dtype: this.normalizeDtype(quantMetadata.dtype),
+            });
+          } else {
+            dequantized = await worker.decodeQuantized({
+              data: quantizedData,
+              bounds: quantMetadata.bounds,
+              dtype: this.normalizeDtype(quantMetadata.dtype),
+            });
+          }
+        } catch (error) {
+          log.warning(
+            this.config.logModule,
+            'Worker decoding failed, falling back to main thread:',
+            error
+          );
+          dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
+        }
+      } else {
+        dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
+      }
 
       output.set(dequantized, destOffset);
       destOffset += dequantized.length;
@@ -209,8 +259,6 @@ export class RangeLoader {
 
   /**
    * Load LUT-encoded array ranges and decode
-   *
-   * OPTIMIZATION: Fetches all chunks in parallel, then decodes sequentially
    */
   private async loadLUT(
     array: zarr.Array<zarr.DataType, zarr.FetchStore>,
@@ -223,30 +271,50 @@ export class RangeLoader {
       throw new Error('LUT metadata missing');
     }
 
+    const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     log.info(
       this.config.logModule,
-      `LUT: ${totalPoints} indices, ${ranges.length} ranges, k=${lutMetadata.k}, mode=${lutMetadata.lutMode}`
+      `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${useWorkers})`
     );
 
-    // NOTE: flatLUT not needed - decoder handles LUT internally
+    // Flatten LUT once (shared across all ranges)
+    const flatLUT: number[] = Array.isArray(lutMetadata.lut[0])
+      ? (lutMetadata.lut as number[][]).flat()
+      : (lutMetadata.lut as number[]);
 
-    // PARALLEL FETCH: Load all index chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
-      const sliceSpec: zarr.Slice[] = [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
-
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
-    // NOTE: Decoding stays on main thread - workers only handle spatial queries
     let destOffset = 0;
 
-    for (const chunkData of chunks) {
+    for (const range of ranges) {
+      const sliceSpec: zarr.Slice[] = [slice(range.start, range.end)];
+
+      // Main thread fetches indices
+      const chunkData = await get(array, sliceSpec);
       const indices = chunkData.data as Uint8Array | Uint16Array;
-      const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
+
+      let decoded: Float32Array;
+
+      if (useWorkers && totalPoints > this.config.workerThreshold) {
+        try {
+          const worker = await getWorkerPool().getWorker();
+          decoded = await worker.decodeLUT({
+            indices,
+            lut: flatLUT,
+            k: lutMetadata.k,
+            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+          });
+        } catch (error) {
+          log.warning(
+            this.config.logModule,
+            'Worker LUT decode failed, falling back to main thread:',
+            error
+          );
+          decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
+        }
+      } else {
+        decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
+      }
 
       output.set(decoded, destOffset);
       destOffset += decoded.length;
@@ -281,33 +349,24 @@ export class RangeLoader {
 
   /**
    * Load direct (unencoded) array ranges
-   *
-   * OPTIMIZATION: Fetches all chunks in parallel, then writes sequentially
    */
   private async loadDirect(
     array: zarr.Array<zarr.DataType, zarr.FetchStore>,
     ranges: LoadRange[],
     output: Float32Array
   ): Promise<number> {
-    log.info(this.config.logModule, `Direct: loading ${ranges.length} ranges in parallel`);
+    log.info(this.config.logModule, `Direct: loading ${ranges.length} ranges`);
 
+    let destOffset = 0;
     const shape = array.shape;
 
-    // PARALLEL FETCH: Load all chunks simultaneously
-    const chunkDataPromises = ranges.map((range) => {
+    for (const range of ranges) {
       const sliceSpec: zarr.Slice[] =
         shape.length === 2
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
 
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL WRITE: Process chunks in order (maintains correct destOffset)
-    let destOffset = 0;
-
-    for (const chunkData of chunks) {
+      const chunkData = await get(array, sliceSpec);
       const data = chunkData.data;
 
       // Convert to Float32Array if needed (with value conversion, not buffer reinterpretation)
@@ -324,6 +383,20 @@ export class RangeLoader {
     }
 
     return destOffset;
+  }
+
+  /**
+   * Normalize dtype string to worker-compatible format
+   *
+   * Handles all NumPy dtype string variants:
+   * - 'uint8', '|u1', '<u1', '>u1' → 'uint8'
+   * - 'uint16', '|u2', '<u2', '>u2' → 'uint16'
+   */
+  private normalizeDtype(dtype: string): 'uint8' | 'uint16' {
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') return 'uint8';
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2')
+      return 'uint16';
+    return 'uint8';
   }
 
   /**

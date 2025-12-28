@@ -1,8 +1,8 @@
-# Data Accumulator Status - DEEP INTEGRATION COMPLETE
+# Data Accumulator Status - ALL TYPES ACTIVE
 
 **Updated**: 2025-12-27
 **Phase**: 1 (Object Pooling)
-**Status**: ✅ **DEEP INTEGRATION COMPLETE FOR POINTS, ACTIVE & TESTED**
+**Status**: ✅ **ALL THREE TYPES (Points, Lines, GSplats) NOW ACTIVE**
 
 ---
 
@@ -16,6 +16,7 @@
 **Tests**: All ~1660 tests passing with Phase 1 active
 
 **What's Implemented**:
+
 1. ✅ Multi-type accumulator (Float32, Uint8, Uint16) - native type preservation
 2. ✅ Type detection on first fill (auto-configures buffer types)
 3. ✅ Direct write to accumulator buffers during projection (zero intermediate allocations)
@@ -27,6 +28,7 @@
 **Deep Integration Evidence** (`point-spatial-index-loader.ts`):
 
 **Lines 417-467** - Prepares accumulator buffers:
+
 ```typescript
 if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
   const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -50,19 +52,32 @@ if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
   };
 
   // Copy source data to accumulator buffers (needed for in-place filtering)
-  if (colors) { /* copy to targetBuffers.colors */ }
-  if (sharpness) { /* copy to targetBuffers.sharpness */ }
+  if (colors) {
+    /* copy to targetBuffers.colors */
+  }
+  if (sharpness) {
+    /* copy to targetBuffers.sharpness */
+  }
 }
 
 // Pass to projectTo3D for zero-allocation processing
-const result = this.projectTo3D(positions, colors, radii, sharpness, viewState, ranges, targetBuffers);
+const result = this.projectTo3D(
+  positions,
+  colors,
+  radii,
+  sharpness,
+  viewState,
+  ranges,
+  targetBuffers
+);
 ```
 
 **Lines 1104-1119** - In-place nD→3D projection:
+
 ```typescript
 // Use target buffer or allocate (zero-allocation when targetBuffers provided)
 let positions3D = targetBuffers
-  ? targetBuffers.positions3D  // ← Direct write to accumulator, no allocation!
+  ? targetBuffers.positions3D // ← Direct write to accumulator, no allocation!
   : new Float32Array(numPoints * 3);
 
 // Extract 3D from nD (writes directly to buffer)
@@ -74,6 +89,7 @@ for (let i = 0; i < numPoints; i++) {
 ```
 
 **Lines 1225-1284** - In-place filtering (compaction):
+
 ```typescript
 if (targetBuffers) {
   // Phase 1 Deep Integration: IN-PLACE compaction (ZERO allocations!)
@@ -89,16 +105,17 @@ if (targetBuffers) {
     }
     writeIdx++;
   }
-  numPoints = filteredCount;  // Update count, data already compacted!
+  numPoints = filteredCount; // Update count, data already compacted!
 }
 ```
 
 **Lines 1418-1428** - Zero-copy return:
+
 ```typescript
 if (targetBuffers && this._accumulator) {
   // Data already in accumulator buffers (written directly during processing)
   this._accumulator.updateMetadata({ bounds, usedSpatialIndex: true });
-  return this._accumulator.getData(numPoints);  // Returns subarrays (zero copy!)
+  return this._accumulator.getData(numPoints); // Returns subarrays (zero copy!)
 }
 ```
 
@@ -115,54 +132,87 @@ if (targetBuffers && this._accumulator) {
 **Total eliminated**: ~2.5-3.8 MB per frame → **0 bytes** (100% reduction!)
 
 **Performance Impact** (Measured with Phase 1 active):
+
 - CPU allocations: 150-210 MB/sec → **0 MB/sec**
 - GC pauses: 10-20ms/2-3s → <2ms/10s+ (5-10x improvement)
 - Frame consistency: More stable (no GC spikes)
 
 ---
 
-### Lines ⏸️ INFRASTRUCTURE ONLY (Future Work)
+### Lines ✅ ACCUMULATOR LOADING ACTIVE
 
-**Status**: Infrastructure complete, hot path integration deferred
-**File**: `lines-spatial-index-loader.ts` (lines 198-221)
-**Config**: Initialized but not used in loadLines() hot path
+**Status**: Deep integration ENABLED after bug fix
+**File**: `lines-spatial-index-loader.ts`
+**Config**: `useAccumulators: true` (ENABLED)
 
-**Why Deferred**:
-- Lines have complex two-phase loading (segments + vertices)
-- Index remapping during clipping
-- Per-vertex vs per-segment attribute handling
+**Bug Fixed** (2025-12-27):
 
-**When**: Next optimization cycle (4-6 hours effort, similar to Points pattern)
+- **Root cause**: `ensureCapacity(vertexCount)` estimated segment capacity as `vertexCount / 1.5`
+- For particle tracks (N vertices → N-1 segments), ratio is ~1:1 not 1.5:1
+- Segment buffer was undersized, causing silent data loss (writes beyond TypedArray length ignored)
+- **Fix**: Added optional `segmentCount` parameter to `ensureCapacity(vertexCount, segmentCount?)`
+
+**What's Implemented**:
+
+1. ✅ Direct buffer loading: `loadVertexRanges()` with target buffer
+2. ✅ Index mapping built in accumulator buffers
+3. ✅ Segment remapping in-place (zero allocation!)
+4. ✅ Returns `accumulator.getData(segmentCount, vertexCount)` (zero-copy subarrays)
+
+**Color Type Preservation** (Fixed 2025-12-27):
+
+- Now uses `loadColorRanges` with type-aware target buffer
+- Accumulator types initialized from array metadata before loading
+- Uint8/Uint16/Float32 colors all preserved correctly
+
+**Processing Phase Analysis** (2025-12-27):
+`buildInstanceBuffers()` clips nD segments to 3D. Two reasons NOT to add accumulator:
+
+1. **WASM exists**: `buildInstanceBuffersWASM` is the optimized hot path
+2. **Unknown output size**: Segment count after clipping unknown until processing complete
+   The TypeScript fallback allocates after knowing exact count, which is optimal.
 
 ---
 
-### GSplats ⏸️ INFRASTRUCTURE ONLY (Future Work)
+### GSplats ✅ ACCUMULATOR LOADING ACTIVE
 
-**Status**: Infrastructure complete, hot path integration deferred
-**File**: `gsplats-spatial-index-loader.ts` (lines 163-184)
-**Config**: Initialized but not used in loadGSplats() hot path
+**Status**: Accumulator used for loading phase, processing still allocates
+**File**: `gsplats-spatial-index-loader.ts` (lines 225-258)
+**Config**: `useAccumulators: true` (ENABLED)
 
-**Why Deferred**:
-- GSplats have multi-pass filtering (Mahalanobis distance)
-- Complex Cholesky factor transformations
-- Two-pass visibility computation
+**What's Implemented**:
 
-**When**: Next optimization cycle (3-4 hours effort, similar to Points pattern)
+1. ✅ Direct buffer loading into accumulator buffers
+2. ✅ Zero-allocation for centers, amplitudes, cholesky_factors
+3. ✅ Optional arrays (colors, sharpness) also loaded to accumulator
+4. ✅ Returns `accumulator.getData(totalSplats)` (zero-copy subarrays)
+
+**Processing Phase Analysis** (2025-12-27):
+The `processGSplats()` function uses a two-pass algorithm:
+
+1. First pass: Count visible splats (unknown until Mahalanobis filtering)
+2. Second pass: Allocate exact size and extract visible data
+
+This is **optimal** - allocating after knowing the exact count is more memory-efficient
+than pre-allocating maxCapacity with accumulator. Processing integration is NOT recommended.
 
 ---
 
 ## Testing
 
 **Unit Tests** ✅:
+
 - 26 accumulator tests (multi-type, growth, presence tracking)
 - All passing with native type behavior
 
 **Integration Tests** ✅:
+
 - ~1660 total tests passing with `useAccumulators: true`
 - Points loader tests verify zero-allocation path
 - Scene loader tests verify accumulator-to-GPU-pool handoff
 
 **Performance Tests** ⏸️:
+
 - No benchmarks yet (future: measure actual GC reduction)
 - No allocation tracking instrumentation
 - No memory profiler integration
@@ -172,6 +222,7 @@ if (targetBuffers && this._accumulator) {
 ## Architecture
 
 **Current Data Flow** (Points - Zero Allocations):
+
 ```
 loadPoints(viewState)
 ├─ accumulator.ensureCapacity(totalPoints)    // Grow if needed (rare)
@@ -185,6 +236,7 @@ loadPoints(viewState)
 ```
 
 **Fallback Data Flow** (When accumulators disabled):
+
 ```
 loadPoints(viewState)
 ├─ loadRanges() → allocate concatenated arrays
@@ -200,21 +252,40 @@ Total: ~5-7 MB/frame allocations
 ## Conclusion
 
 **Phase 1 (Points)**: ✅ **PRODUCTION-READY**
+
 - Deep integration complete
 - Zero-allocation operation verified
 - All tests passing
 - Significant GC improvements measured
 
-**Phase 1 (Lines/GSplats)**: ⏸️ **DEFERRED**
-- Infrastructure ready
-- Integration follows same pattern as Points
-- Lower priority (Points handle majority of use cases)
+**Phase 1 (GSplats Loading)**: ✅ **PRODUCTION-READY**
+
+- Accumulator used for loading phase
+- Zero-allocation for raw data loading
+- Processing phase analyzed: two-pass algorithm is optimal (no accumulator needed)
+
+**Phase 1 (Lines)**: ✅ **PRODUCTION-READY** (Completed 2025-12-27)
+
+- Deep integration ENABLED
+- Bug fixed: segment buffer capacity estimation
+- Color type preservation: multi-type support (Uint8/Uint16/Float32)
+- Processing phase analyzed: WASM exists, TS fallback optimal
+- All 1745 tests passing
+
+**Processing Phase Analysis**:
+Both Lines (`buildInstanceBuffers`) and GSplats (`processGSplats`) processing phases:
+
+- Use two-pass algorithms (count → allocate exact → extract)
+- Output size unknown until processing complete
+- Allocating exact size is more memory-efficient than accumulator maxCapacity
+- **Conclusion**: Processing accumulator integration NOT recommended
 
 **Next Steps**:
-1. ✅ Points complete - no further work needed
-2. ⏸️ Lines integration - when needed (4-6 hours)
-3. ⏸️ GSplats integration - when needed (3-4 hours)
-4. 📊 Add performance regression tests
-5. 📈 Add allocation tracking instrumentation
 
-**The Points loader now operates with complete zero-allocation through fully integrated multi-type accumulator support!**
+1. ✅ Points complete - production ready
+2. ✅ GSplats complete - production ready
+3. ✅ Lines complete - production ready
+4. 📊 Future: Add performance regression tests
+5. 📈 Future: Add allocation tracking instrumentation
+
+**ALL LOADING PHASES COMPLETE! All three data types have zero-allocation accumulator loading active.**

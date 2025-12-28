@@ -499,45 +499,85 @@ async updateView(viewState: Partial<ViewState>): Promise<void> {
 }
 ```
 
-### 6.3 Loader Integration (Current Implementation)
+### 6.3 Loader Integration (Chunk Load Breakdown)
 
-Each spatial index loader instruments its main operations via the session parameter:
+Loaders receive the profiler reference and use `time()` for clean nesting:
 
 ```typescript
-// In PointSpatialIndexLoader.loadData()
-async loadData(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-  // Step 1: Spatial query
-  const querySession = session?.begin('Spatial Query');
-  const ranges = await this.queryVisiblePointRanges(viewState);
-  querySession?.end();
+// In PointSpatialIndexLoader
+class PointSpatialIndexLoader {
+  constructor(private profiler: UpdateProfiler) {}
 
-  // Step 2: Load arrays
-  const loadSession = session?.begin('Load Arrays');
-  const { positions, colors, radii, sharpness } = await this.loadArrayRanges(ranges);
-  loadSession?.end();
+  async loadChunks(ranges: PointRange[]): Promise<PointsData> {
+    let l1Hits = 0,
+      l2Hits = 0,
+      networkFetches = 0;
 
-  // Step 3: Project to 3D
-  const projectSession = session?.begin('Project to 3D');
-  const result = await this.projectTo3DUsingWorker(positions, colors, radii, sharpness, viewState);
-  projectSession?.end();
+    for (const range of ranges) {
+      const key = this.getCacheKey(range);
 
-  session?.setMetadata({ points: result.visibleCount });
-  return result;
+      // Try L1 - each time() call nests under parent "Chunk Load"
+      const l1Result = this.profiler.time('L1 Cache', () => this.l1Cache.get(key));
+      if (l1Result) {
+        l1Hits++;
+        continue;
+      }
+
+      // Try L2
+      const l2Result = await this.profiler.time('L2 Cache', () => this.l2Cache.get(key));
+      if (l2Result) {
+        l2Hits++;
+        continue;
+      }
+
+      // Network fetch
+      await this.profiler.time('Network Fetch', () => this.fetchFromNetwork(range));
+      networkFetches++;
+    }
+
+    // Set metadata on the current session (the "Chunk Load" session)
+    this.profiler.current().setMetadata({
+      cacheHits: l1Hits + l2Hits,
+      cacheMisses: networkFetches,
+    });
+
+    // ... rest of loading
+  }
 }
 ```
 
-Lines and GSplats loaders follow the same pattern with their respective operations
-(Load Segments, Load Vertices for Lines; Load Arrays for GSplats).
+**Note**: The `time()` helper handles both sync and async functions automatically. Promises are handled with `.finally()` to ensure timing ends even if the function throws.
 
-### 6.4 Future Enhancement: Detailed Breakdown
+### 6.4 GPU Upload Breakdown
 
-The following detailed breakdown could be added in the future:
+```typescript
+// In SceneLoader.updatePointsGeometry()
+private updatePointsGeometry(
+  path: string,
+  data: PointsData,
+  session?: UpdateSession
+): void {
+  if (this._gpuBufferPool) {
+    // Pool acquire
+    const acquireSession = session?.begin('Pool Acquire');
+    const geometry = this._gpuBufferPool.acquirePointsGeometry(path, data, count);
+    acquireSession?.end();
 
-- L1 Cache / L2 Cache / Network Fetch timing
-- GPU Upload breakdown (Pool Acquire, TypedArray Copy, Bounding Box)
-- Decompression timing
+    // TypedArray copy
+    const copySession = session?.begin('TypedArray Copy');
+    this._gpuBufferPool.updatePointsGeometry(geometry, data, count);
+    copySession?.end();
 
-Currently, caching is handled by TwoLevelCachingStore and isn't separately instrumented.
+    // Bounding box
+    const bboxSession = session?.begin('Bounding Box');
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    bboxSession?.end();
+
+    points.geometry = geometry;
+  }
+}
+```
 
 ### 6.5 DataLoadingMonitor Integration
 
@@ -582,7 +622,7 @@ private renderPerformanceTab(): string {
 
 ## 7. UI Specification
 
-### 7.1 Panel Layout (Current Implementation)
+### 7.1 Panel Layout
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -590,17 +630,19 @@ private renderPerformanceTab(): string {
 ├─────────────────────────────────────────────────────────────────┤
 │ ▼ Total Update                               47.3ms   52.1ms   │
 │   ▼ Points (/scene/nuclei)     50K pts       32.1ms   35.4ms   │
-│     ├─ Spatial Query                          2.3ms    2.8ms   │
-│     ├─ Load Arrays                           18.2ms   20.1ms   │
-│     └─ Project to 3D                          6.3ms    6.2ms   │
-│   ▼ Lines (/scene/tracks)      12K segs      12.4ms   13.8ms   │
-│     ├─ Spatial Query                          1.1ms    1.3ms   │
-│     ├─ Load Segments                          2.8ms    3.1ms   │
-│     ├─ Load Vertices                          5.2ms    5.8ms   │
-│     └─ Project to 3D                          3.3ms    3.6ms   │
-│   ▼ GSplats (/scene/gaussians) 5K splats     8.2ms    9.1ms   │
-│     ├─ Spatial Query                          0.8ms    1.0ms   │
-│     └─ Load Arrays                            7.4ms    8.1ms   │
+│     ├─ Skip Check                             0.1ms    0.1ms   │
+│     ├─ Spatial Query           5 chunks       2.3ms    2.8ms   │
+│     ▼ Chunk Load               80% cache     18.2ms   20.1ms   │
+│       ├─ L1 Cache              3 hits         0.1ms    0.1ms   │
+│       ├─ L2 Cache              1 hit          0.8ms    0.9ms   │
+│       └─ Network Fetch         1 req        17.3ms   19.1ms   │ ← RED
+│     ├─ Decompress                             4.2ms    5.1ms   │
+│     ├─ Accumulate                             1.1ms    1.2ms   │
+│     ▼ GPU Upload                              6.3ms    6.2ms   │
+│       ├─ Pool Acquire                         0.1ms    0.1ms   │
+│       ├─ TypedArray Copy                      2.8ms    2.9ms   │
+│       └─ Bounding Box                         3.4ms    3.2ms   │
+│   ► Lines (/scene/tracks)      12K segs      12.4ms   13.8ms   │
 │   ─ Skip: extend_to_all (/scene/detector)       —        —     │
 ├─────────────────────────────────────────────────────────────────┤
 │ ● Normal  ● >16ms (60fps)  ○ Skipped          42 updates       │

@@ -12,6 +12,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import ArrayDecoder, EncodingMode
 from luxar.validation import ValidationError
 
+
 # =============================================================================
 # Position Validation Tests
 # =============================================================================

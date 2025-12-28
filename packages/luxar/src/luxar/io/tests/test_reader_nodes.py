@@ -9,9 +9,9 @@ when used properly (see test_writer_parent_parameter.py).
 This test suite guards against future regressions in node collection.
 """
 
-from pathlib import Path
-
 import numpy as np
+import pytest
+from pathlib import Path
 
 from luxar.core.dimensions import Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
@@ -37,17 +37,11 @@ class TestReaderNodeCollection:
 
             # Create nested groups
             group_a = scene_node.add_group("GroupA")
-            compiler.write_points(
-                "GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32), parent="GroupA"
-            )
+            compiler.write_points("GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32), parent="GroupA")
 
             # Create nested group under GroupA
-            _group_b = group_a.add_group("GroupB")
-            compiler.write_points(
-                "GroupBPoints",
-                np.array([[2, 2, 2]], dtype=np.float32),
-                parent="GroupA/GroupB",
-            )
+            group_b = group_a.add_group("GroupB")
+            compiler.write_points("GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="GroupA/GroupB")
 
         # Load and verify
         scene = LuxarScene.load(output_path)
@@ -59,7 +53,7 @@ class TestReaderNodeCollection:
             print(f"  - {node['name']} ({node['type']})")
 
         # Check for duplicates
-        names = [n["name"] for n in nodes]
+        names = [n['name'] for n in nodes]
         duplicates = [name for name in set(names) if names.count(name) > 1]
 
         # Assertion: No duplicates should exist
@@ -76,9 +70,7 @@ class TestReaderNodeCollection:
 
         # Verify each node appears exactly once
         for name in names:
-            assert names.count(name) == 1, (
-                f"Node '{name}' appears {names.count(name)} times"
-            )
+            assert names.count(name) == 1, f"Node '{name}' appears {names.count(name)} times"
 
         # Verify list methods return correct results
         assert len(scene.list_points()) == 3  # RootPoints, GroupAPoints, GroupBPoints
@@ -93,15 +85,13 @@ class TestReaderNodeCollection:
 
             # Add multiple points at root level
             for i in range(5):
-                compiler.write_points(
-                    f"Points{i}", np.random.randn(10, 3).astype(np.float32)
-                )
+                compiler.write_points(f"Points{i}", np.random.randn(10, 3).astype(np.float32))
 
         scene = LuxarScene.load(output_path)
         nodes = scene.nodes
 
         # Check for duplicates
-        names = [n["name"] for n in nodes]
+        names = [n['name'] for n in nodes]
         duplicates = [name for name in set(names) if names.count(name) > 1]
 
         assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"
@@ -123,16 +113,14 @@ class TestReaderNodeCollection:
             compiler.write_lines("RootLines", vertices, widths, line_type="segments")
 
             # Add group with nested content
-            _group = scene_node.add_group("MyGroup")
-            compiler.write_points(
-                "GroupPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="MyGroup"
-            )
+            group = scene_node.add_group("MyGroup")
+            compiler.write_points("GroupPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="MyGroup")
 
         scene = LuxarScene.load(output_path)
         nodes = scene.nodes
 
         # Check for duplicates
-        names = [n["name"] for n in nodes]
+        names = [n['name'] for n in nodes]
         duplicates = [name for name in set(names) if names.count(name) > 1]
 
         assert len(duplicates) == 0, f"Found duplicate nodes: {duplicates}"

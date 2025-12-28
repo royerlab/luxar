@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PointsData } from '../../../data/data-loader-types';
+import { LoadedPointsData } from '../../../data/data-loader-types';
 
 describe('Data Type Support', () => {
   describe('TypedArray type detection', () => {
@@ -60,16 +60,17 @@ describe('Data Type Support', () => {
     });
   });
 
-  describe('PointsData with different dtypes', () => {
+  describe('LoadedPointsData with different dtypes', () => {
     it('should handle Float32Array positions', () => {
       const positions = new Float32Array([1, 2, 3, 4, 5, 6]);
-      const data: PointsData = {
+      const data: LoadedPointsData = {
         positions,
+        pointCount: 2,
+        ndim: 3,
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: false,
           dtypes: {
             positions: 'float32',
@@ -85,14 +86,15 @@ describe('Data Type Support', () => {
       const positions = new Float32Array([1, 2, 3]);
       const colors = new Uint8Array([255, 128, 0]);
 
-      const data: PointsData = {
+      const data: LoadedPointsData = {
         positions,
         colors,
+        pointCount: 1,
+        ndim: 3,
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: false,
           dtypes: {
             positions: 'float32',
@@ -111,16 +113,17 @@ describe('Data Type Support', () => {
       const radii = new Uint8Array([255, 128]);
       const sharpness = new Float32Array([2.0, 3.0]);
 
-      const data: PointsData = {
+      const data: LoadedPointsData = {
         positions,
         colors,
         radii,
         sharpness,
+        pointCount: 2,
+        ndim: 3,
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
           bounds: new THREE.Box3(),
-          ndim: 3,
           usedSpatialIndex: false,
           dtypes: {
             positions: 'float32',

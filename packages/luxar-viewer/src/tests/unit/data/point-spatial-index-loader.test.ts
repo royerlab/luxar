@@ -417,7 +417,7 @@ describe('PointSpatialIndexLoader', () => {
       // Check that projection happened (should have 3D positions)
       expect(result.positions).toBeDefined();
       expect(result.positions.length % 3).toBe(0); // Multiple of 3 for 3D points
-      expect(result.metadata.ndim).toBe(4); // Original dimensionality preserved in metadata
+      expect(result.ndim).toBe(4); // Original dimensionality preserved
     });
 
     it('should handle different display dimension combinations', async () => {
@@ -429,7 +429,7 @@ describe('PointSpatialIndexLoader', () => {
 
       const result = await loader.loadPoints(viewState);
 
-      expect(result.metadata.ndim).toBe(4);
+      expect(result.ndim).toBe(4);
       expect(result.positions).toBeDefined();
     });
 
@@ -668,8 +668,11 @@ describe('PointSpatialIndexLoader', () => {
 
       const result = await loader.loadPoints(viewState);
 
-      // Should keep uint8 as is for efficiency (with normalized flag in BufferAttribute)
+      // Direct (unencoded) arrays preserve native type for correct rendering
+      // THREE.js normalizes Uint8Array colors (0-255 → 0-1 in shader)
       expect(result.colors).toBeInstanceOf(Uint8Array);
+      expect(result.colors![0]).toBe(255);
+      expect(result.colors![1]).toBe(0);
     });
 
     it('should keep float32 data as is', async () => {
@@ -682,6 +685,45 @@ describe('PointSpatialIndexLoader', () => {
       const result = await loader.loadPoints(viewState);
 
       expect(result.positions).toBeInstanceOf(Float32Array);
+    });
+
+    it('should restore original_dtype for encoded arrays', async () => {
+      // Mock encoded colors with original_dtype=uint8
+      // This simulates quantized uint8 colors being decoded
+      mockArrays.colors.attrs = {
+        encoding: {
+          name: 'quantized_uint8',
+          bounds: [0, 255],
+          original_dtype: 'uint8',
+          original_shape: [2, 3],
+        },
+      };
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === mockArrays.colors) {
+          // RangeLoader decodes quantized data to float, values in 0-255 range
+          return Promise.resolve({
+            data: new Float32Array([255, 0, 0, 0, 255, 0]), // Red, Green as floats
+          });
+        }
+        return Promise.resolve({
+          data: new Float32Array(array === mockArrays.positions ? 8 : 2),
+        });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      // CRITICAL: original_dtype=uint8 should be restored for correct rendering
+      // THREE.js normalizes Uint8Array colors (0-255 → 0-1 in shader)
+      expect(result.colors).toBeInstanceOf(Uint8Array);
+      expect(result.colors![0]).toBe(255);
+      expect(result.colors![1]).toBe(0);
     });
   });
 

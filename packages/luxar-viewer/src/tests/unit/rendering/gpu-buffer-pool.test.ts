@@ -4,17 +4,17 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
-import type { PointsData } from '../../../data/data-loader-types';
+import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
 describe('GPUBufferPool', () => {
   let pool: GPUBufferPool;
 
-  // Helper to create mock PointsData
-  const createMockPointsData = (
+  // Helper to create mock LoadedPointsData
+  const createMockLoadedPointsData = (
     count: number,
     colorType: 'Float32Array' | 'Uint8Array' | 'Uint16Array' = 'Float32Array'
-  ): PointsData => {
+  ): LoadedPointsData => {
     const colors =
       colorType === 'Uint8Array'
         ? new Uint8Array(count * 3).fill(128)
@@ -27,11 +27,12 @@ describe('GPUBufferPool', () => {
       colors,
       radii: new Float32Array(count).fill(1.0),
       sharpness: new Float32Array(count).fill(2.0),
+      pointCount: count,
+      ndim: 3,
       metadata: {
         totalPoints: count,
         loadedPoints: count,
         bounds: new THREE.Box3(),
-        ndim: 3,
         usedSpatialIndex: true,
       },
     };
@@ -43,7 +44,7 @@ describe('GPUBufferPool', () => {
 
   describe('Points Geometry', () => {
     it('should allocate new geometry on first request', () => {
-      const data = createMockPointsData(1000);
+      const data = createMockLoadedPointsData(1000);
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
       expect(geom).toBeInstanceOf(THREE.BufferGeometry);
       expect(geom.getAttribute('position')).toBeDefined();
@@ -57,8 +58,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse geometry when requesting same node again', () => {
-      const data1 = createMockPointsData(1000);
-      const data2 = createMockPointsData(900);
+      const data1 = createMockLoadedPointsData(1000);
+      const data2 = createMockLoadedPointsData(900);
       const geom1 = pool.acquirePointsGeometry('node1', data1, 1000);
       const geom2 = pool.acquirePointsGeometry('node1', data2, 900); // Same node, smaller count
 
@@ -69,8 +70,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should grow geometry when count exceeds capacity', () => {
-      const data1 = createMockPointsData(1000);
-      const data2 = createMockPointsData(2000);
+      const data1 = createMockLoadedPointsData(1000);
+      const data2 = createMockLoadedPointsData(2000);
       const geom1 = pool.acquirePointsGeometry('node1', data1, 1000); // Capacity ~1500
       const geom2 = pool.acquirePointsGeometry('node1', data2, 2000); // Needs >1500
 
@@ -80,7 +81,7 @@ describe('GPUBufferPool', () => {
     });
 
     it('should release geometry back to pool', () => {
-      const data = createMockPointsData(1000);
+      const data = createMockLoadedPointsData(1000);
       pool.acquirePointsGeometry('node1', data, 1000);
       pool.releasePointsGeometry('node1');
 
@@ -90,8 +91,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse released geometry for new node', () => {
-      const data1 = createMockPointsData(1000);
-      const data2 = createMockPointsData(800);
+      const data1 = createMockLoadedPointsData(1000);
+      const data2 = createMockLoadedPointsData(800);
       pool.acquirePointsGeometry('node1', data1, 1000);
       pool.releasePointsGeometry('node1');
 
@@ -161,15 +162,15 @@ describe('GPUBufferPool', () => {
 
       // Acquire and release several different-sized geometries
       // This ensures they go to different buckets and won't be reused
-      testPool.acquirePointsGeometry('node1', createMockPointsData(1000), 1000);
+      testPool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
       testPool.releasePointsGeometry('node1');
 
-      testPool.acquirePointsGeometry('node2', createMockPointsData(10000), 10000);
+      testPool.acquirePointsGeometry('node2', createMockLoadedPointsData(10000), 10000);
       testPool.releasePointsGeometry('node2');
 
       // Advance frameCount by 3 frames without touching the pooled geometries
       for (let i = 0; i < 3; i++) {
-        testPool.acquirePointsGeometry(`active${i}`, createMockPointsData(100000), 100000); // Different size bucket
+        testPool.acquirePointsGeometry(`active${i}`, createMockLoadedPointsData(100000), 100000); // Different size bucket
         // Don't release - keep active
       }
 
@@ -180,7 +181,7 @@ describe('GPUBufferPool', () => {
     });
 
     it('should dispose all geometries on pool disposal', () => {
-      pool.acquirePointsGeometry('node1', createMockPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
       pool.acquireLinesGeometry('line1', 500);
       pool.acquireGSplatsGeometry('splat1', 300);
 
@@ -195,9 +196,9 @@ describe('GPUBufferPool', () => {
   describe('Size Bucketing', () => {
     it('should use appropriate size buckets', () => {
       // Acquire geometries of different sizes
-      pool.acquirePointsGeometry('small', createMockPointsData(500), 500); // → 1K bucket
-      pool.acquirePointsGeometry('medium', createMockPointsData(3000), 3000); // → 5K bucket
-      pool.acquirePointsGeometry('large', createMockPointsData(20000), 20000); // → 50K bucket
+      pool.acquirePointsGeometry('small', createMockLoadedPointsData(500), 500); // → 1K bucket
+      pool.acquirePointsGeometry('medium', createMockLoadedPointsData(3000), 3000); // → 5K bucket
+      pool.acquirePointsGeometry('large', createMockLoadedPointsData(20000), 20000); // → 50K bucket
 
       // Release them
       pool.releasePointsGeometry('small');
@@ -205,8 +206,8 @@ describe('GPUBufferPool', () => {
       pool.releasePointsGeometry('large');
 
       // Acquire similar sizes - should reuse from correct buckets
-      pool.acquirePointsGeometry('small2', createMockPointsData(600), 600); // Should reuse from 1K bucket
-      pool.acquirePointsGeometry('medium2', createMockPointsData(4000), 4000); // Should reuse from 5K bucket
+      pool.acquirePointsGeometry('small2', createMockLoadedPointsData(600), 600); // Should reuse from 1K bucket
+      pool.acquirePointsGeometry('medium2', createMockLoadedPointsData(4000), 4000); // Should reuse from 5K bucket
 
       const stats = pool.getStats();
       expect(stats.reuses).toBeGreaterThanOrEqual(2);
@@ -216,22 +217,22 @@ describe('GPUBufferPool', () => {
   describe('Statistics Tracking', () => {
     it('should track allocations, reuses, and evictions', () => {
       // Allocate
-      pool.acquirePointsGeometry('node1', createMockPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
       expect(pool.getStats().allocations).toBe(1);
 
       // Reuse
-      pool.acquirePointsGeometry('node1', createMockPointsData(900), 900);
+      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(900), 900);
       expect(pool.getStats().reuses).toBe(1);
 
       // Growth
-      pool.acquirePointsGeometry('node1', createMockPointsData(3000), 3000);
+      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(3000), 3000);
       expect(pool.getStats().capacityGrowths).toBe(1);
 
       // Eviction (tested separately due to frame requirements)
     });
 
     it('should track active vs pooled buffers', () => {
-      pool.acquirePointsGeometry('node1', createMockPointsData(1000), 1000);
+      pool.acquirePointsGeometry('node1', createMockLoadedPointsData(1000), 1000);
       pool.acquireLinesGeometry('line1', 500);
 
       let stats = pool.getStats();
@@ -248,7 +249,7 @@ describe('GPUBufferPool', () => {
 
   describe('Multi-Type Support', () => {
     it('should create geometry with Uint8Array colors', () => {
-      const data = createMockPointsData(1000, 'Uint8Array');
+      const data = createMockLoadedPointsData(1000, 'Uint8Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
 
       const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
@@ -257,7 +258,7 @@ describe('GPUBufferPool', () => {
     });
 
     it('should create geometry with Uint16Array colors', () => {
-      const data = createMockPointsData(1000, 'Uint16Array');
+      const data = createMockLoadedPointsData(1000, 'Uint16Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
 
       const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
@@ -266,8 +267,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should NOT reuse geometry when types differ', () => {
-      const dataFloat = createMockPointsData(1000, 'Float32Array');
-      const dataUint8 = createMockPointsData(900, 'Uint8Array');
+      const dataFloat = createMockLoadedPointsData(1000, 'Float32Array');
+      const dataUint8 = createMockLoadedPointsData(900, 'Uint8Array');
 
       pool.acquirePointsGeometry('node1', dataFloat, 1000);
       pool.releasePointsGeometry('node1');
@@ -281,8 +282,8 @@ describe('GPUBufferPool', () => {
     });
 
     it('should reuse geometry when types match', () => {
-      const data1 = createMockPointsData(1000, 'Uint8Array');
-      const data2 = createMockPointsData(900, 'Uint8Array'); // Same type
+      const data1 = createMockLoadedPointsData(1000, 'Uint8Array');
+      const data2 = createMockLoadedPointsData(900, 'Uint8Array'); // Same type
 
       pool.acquirePointsGeometry('node1', data1, 1000);
       pool.releasePointsGeometry('node1');

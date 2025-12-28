@@ -234,10 +234,7 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
  * Attach click handlers for expand/collapse
  * Call this after rendering the panel
  */
-export function attachTimingPanelHandlers(
-  container: HTMLElement,
-  onUpdate: () => void
-): void {
+export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () => void): void {
   container.querySelectorAll('.timing-expand').forEach((el) => {
     // Avoid adding duplicate listeners by checking for marker
     if ((el as HTMLElement).dataset.hasListener) return;

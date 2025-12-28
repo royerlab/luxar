@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
-import type { PointsData } from '../../../data/data-loader-types';
+import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
 describe('GPU Buffer Pool Performance Regression Tests', () => {
@@ -17,7 +17,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
   const createMockData = (
     count: number,
     colorType: 'Float32Array' | 'Uint8Array' = 'Float32Array'
-  ): PointsData => ({
+  ): LoadedPointsData => ({
     positions: new Float32Array(count * 3).fill(1),
     colors:
       colorType === 'Uint8Array'
@@ -25,11 +25,12 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         : new Float32Array(count * 3).fill(0.5),
     radii: new Float32Array(count).fill(0.5),
     sharpness: new Float32Array(count).fill(2.0),
+    pointCount: count,
+    ndim: 3,
     metadata: {
       totalPoints: count,
       loadedPoints: count,
       bounds: new THREE.Box3(),
-      ndim: 3,
       usedSpatialIndex: true,
     },
   });

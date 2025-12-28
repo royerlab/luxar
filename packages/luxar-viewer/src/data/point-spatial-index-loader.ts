@@ -13,7 +13,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import {
   DataLoader,
   ViewState,
-  PointsData,
+  LoadedPointsData,
   LoaderConfig,
   PointRange,
   SceneNode,
@@ -42,10 +42,13 @@ import type {
   QueryInfo,
 } from '../ui/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { RangeLoader, type LoadRange } from './loaders';
 import type { ZarrSceneAttrs } from '../types/zarr';
-import { PointsDataAccumulator } from './data-accumulator';
+import type { PointsMetadata } from '../types/points';
+import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
+import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
@@ -72,11 +75,11 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     sharpness?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
-  // Array decoder for handling encoded arrays
-  private decoder: ArrayDecoder;
+  // Range loader for unified encoding dispatch (replaces decoder for range-based loading)
+  private rangeLoader: RangeLoader;
 
   // Data accumulator for object pooling (Phase 1 optimization)
-  private _accumulator: PointsDataAccumulator | null = null;
+  private _accumulator: LoadedPointsDataAccumulator | null = null;
 
   // Monitoring
   private eventListeners = new Set<MonitorEventListener>();
@@ -85,17 +88,28 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private lastQueryCells = 0;
   private zarrStore: zarr.Readable | null = null;
 
+  /**
+   * Get node attributes with proper PointsMetadata typing.
+   * This provides type-safe access to point node attributes.
+   */
+  private get attrs(): PointsMetadata {
+    return this.node.attrs as unknown as PointsMetadata;
+  }
+
   constructor(
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
     _config: LoaderConfig = {},
     refRegistry?: ArrayRefRegistry,
-    zarrStore?: zarr.Readable
+    zarrStore?: zarr.Readable,
+    profiler?: UpdateProfiler
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
-    this.decoder = new ArrayDecoder(refRegistry || new ArrayRefRegistry());
+    this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    // profiler parameter kept for API compatibility; session is passed directly to methods
+    void profiler;
 
     // Initialize metrics
     this.metrics = {
@@ -199,7 +213,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       if (spatialExtendDims) {
         this._effectiveRadiusConfig = {
           spatialExtendDims: spatialExtendDims,
-          maxRadius: this.node.attrs.max_radius || appConfig.dataLoading.spatial.defaultMaxRadius,
+          maxRadius: this.attrs.max_radius || appConfig.dataLoading.spatial.defaultMaxRadius,
         };
 
         // Log which dimensions are spatial
@@ -275,13 +289,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         Math.max(1024, Math.ceil(totalPoints / 10)) // At least 1024, or ~10% of total
       );
 
-      this._accumulator = new PointsDataAccumulator(initialCapacity, ndim, totalPoints);
+      this._accumulator = new LoadedPointsDataAccumulator(initialCapacity, ndim, totalPoints);
 
       if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
         const stats = this._accumulator.getStats();
         log.info(
           Modules.DATA_ACCUMULATOR,
-          `Initialized PointsDataAccumulator for ${this.node.path}: ` +
+          `Initialized LoadedPointsDataAccumulator for ${this.node.path}: ` +
             `capacity=${stats.capacity}, ndim=${ndim}, totalPoints=${totalPoints} ` +
             '(infrastructure-only, hot path integration in Phase 2)'
         );
@@ -291,8 +305,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   /**
    * Load points data for the given view state
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async loadPoints(viewState: ViewState, session?: any): Promise<PointsData> {
+  async loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     const startTime = Date.now();
     const queryId = `${this.node.path}-${startTime}`;
 
@@ -324,9 +340,17 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Query spatial index for visible ranges (Phase 2: async for worker support)
-      const querySession = session?.begin('Spatial Query');
-      const ranges = await this.queryVisibleRanges(viewState);
-      querySession?.end();
+      let ranges: PointRange[];
+      if (session) {
+        const querySession = session.begin('Spatial Query');
+        try {
+          ranges = await this.queryVisiblePointRanges(viewState);
+        } finally {
+          querySession.end();
+        }
+      } else {
+        ranges = await this.queryVisiblePointRanges(viewState);
+      }
 
       // Emit query event
       const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -363,47 +387,99 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       if (ranges.length === 0) {
         // No visible points - return empty dataset
         this.activeQueries.delete(queryId);
-        return this.createEmptyPoints(viewState);
+        return this.createEmptyPointsData(viewState);
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
-      const loadSession = session?.begin('Load Arrays');
+      // Load sequentially to prevent browser resource exhaustion (ERR_INSUFFICIENT_RESOURCES)
+      // This is especially important for large datasets with many chunks
+      let positions: Float32Array | Uint8Array | Uint16Array | Float16Array;
+      let colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
+      let radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
+      let sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
 
-      log.info(
-        LogEmoji.LOAD,
-        Modules.SPATIAL_INDEX_LOADER,
-        `Loading positions for ${ranges.length} ranges`
-      );
-      const positions = await this.loadRanges('positions', ranges);
+      if (session) {
+        const loadSession = session.begin('Load Arrays');
+        try {
+          log.info(
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading positions for ${ranges.length} ranges`
+          );
+          const positionsResult = await this.loadRanges('positions', ranges);
+          if (!positionsResult) {
+            throw new Error('Failed to load positions array');
+          }
+          positions = positionsResult;
 
-      const colors = this.arrays.colors
-        ? (log.info(
+          if (this.arrays.colors) {
+            log.info(
+              LogEmoji.LOAD,
+              Modules.SPATIAL_INDEX_LOADER,
+              `Loading colors for ${ranges.length} ranges`
+            );
+            colors = await this.loadRanges('colors', ranges);
+          }
+
+          if (this.arrays.radii) {
+            log.info(
+              LogEmoji.LOAD,
+              Modules.SPATIAL_INDEX_LOADER,
+              `Loading radii for ${ranges.length} ranges`
+            );
+            radii = await this.loadRanges('radii', ranges);
+          }
+
+          if (this.arrays.sharpness) {
+            log.info(
+              LogEmoji.LOAD,
+              Modules.SPATIAL_INDEX_LOADER,
+              `Loading sharpness for ${ranges.length} ranges`
+            );
+            sharpness = await this.loadRanges('sharpness', ranges);
+          }
+        } finally {
+          loadSession.end();
+        }
+      } else {
+        log.info(
+          LogEmoji.LOAD,
+          Modules.SPATIAL_INDEX_LOADER,
+          `Loading positions for ${ranges.length} ranges`
+        );
+        const positionsResult = await this.loadRanges('positions', ranges);
+        if (!positionsResult) {
+          throw new Error('Failed to load positions array');
+        }
+        positions = positionsResult;
+
+        if (this.arrays.colors) {
+          log.info(
             LogEmoji.LOAD,
             Modules.SPATIAL_INDEX_LOADER,
             `Loading colors for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('colors', ranges))
-        : null;
+          );
+          colors = await this.loadRanges('colors', ranges);
+        }
 
-      const radii = this.arrays.radii
-        ? (log.info(
+        if (this.arrays.radii) {
+          log.info(
             LogEmoji.LOAD,
             Modules.SPATIAL_INDEX_LOADER,
             `Loading radii for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('radii', ranges))
-        : null;
+          );
+          radii = await this.loadRanges('radii', ranges);
+        }
 
-      const sharpness = this.arrays.sharpness
-        ? (log.info(
+        if (this.arrays.sharpness) {
+          log.info(
             LogEmoji.LOAD,
             Modules.SPATIAL_INDEX_LOADER,
             `Loading sharpness for ${ranges.length} ranges`
-          ),
-          await this.loadRanges('sharpness', ranges))
-        : null;
-
-      loadSession?.end();
+          );
+          sharpness = await this.loadRanges('sharpness', ranges);
+        }
+      }
 
       // Update query status
       const query = this.activeQueries.get(queryId);
@@ -481,18 +557,65 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         }
       }
 
-      // Project to 3D display space (ZERO allocations when targetBuffers provided!)
-      const projectSession = session?.begin('Project to 3D');
-      const result = this.projectTo3D(
-        positions,
-        colors,
-        radii,
-        sharpness,
-        viewState,
-        ranges,
-        targetBuffers
-      );
-      projectSession?.end();
+      // Project to 3D display space
+      // Strategy:
+      // - If accumulators enabled: use main thread (ZERO allocations via targetBuffers)
+      // - If workers enabled AND no accumulators: use worker (offloads CPU, zero-copy transfer)
+      // - Otherwise: main thread (fallback)
+      let result: LoadedPointsData;
+      const useWorkerProjection =
+        appConfig.dataLoading.performance.useWebWorkers &&
+        !appConfig.dataLoading.performance.useAccumulators &&
+        totalPoints > 1000; // Only worth it for larger datasets
+
+      if (session) {
+        const projectSession = session.begin('Project to 3D');
+        try {
+          if (useWorkerProjection) {
+            result = await this.projectTo3DUsingWorker(
+              positions,
+              colors,
+              radii,
+              sharpness,
+              viewState,
+              ranges
+            );
+          } else {
+            result = this.projectTo3D(
+              positions,
+              colors,
+              radii,
+              sharpness,
+              viewState,
+              ranges,
+              targetBuffers
+            );
+          }
+        } finally {
+          projectSession.end();
+        }
+      } else {
+        if (useWorkerProjection) {
+          result = await this.projectTo3DUsingWorker(
+            positions,
+            colors,
+            radii,
+            sharpness,
+            viewState,
+            ranges
+          );
+        } else {
+          result = this.projectTo3D(
+            positions,
+            colors,
+            radii,
+            sharpness,
+            viewState,
+            ranges,
+            targetBuffers
+          );
+        }
+      }
 
       // Clean up completed query
       this.activeQueries.delete(queryId);
@@ -526,8 +649,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   /**
    * Update view for new position (more efficient than full reload)
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
    */
-  async updateView(viewState: ViewState, session?: any): Promise<PointsData> {
+  async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     // For now, just reload everything
     // TODO: Implement incremental updates
     return this.loadPoints(viewState, session);
@@ -537,7 +662,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Query spatial index for visible point ranges
    * Phase 2: Made async to support worker-based queries
    */
-  private async queryVisibleRanges(viewState: ViewState): Promise<PointRange[]> {
+  private async queryVisiblePointRanges(viewState: ViewState): Promise<PointRange[]> {
     // Check if this node has extend_to_all dimensions
     const extendDims = this.node.attrs.extend_to_all || [];
 
@@ -714,13 +839,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     // For direct arrays, preserve native type
-    if (dtype === 'uint8' || dtype === '|u1') {
+    // Handle all numpy dtype string variants (byte-order prefixes: < little, > big, | native)
+    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
       return new Uint8Array(totalElements);
     }
-    if (dtype === 'uint16' || dtype === '<u2' || dtype === '>u2') {
+    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
       return new Uint16Array(totalElements);
     }
-    if (dtype === 'float16' || dtype === '<f2' || dtype === '>f2') {
+    if (dtype === 'float16' || dtype === '|f2' || dtype === '<f2' || dtype === '>f2') {
       // Float16 with fallback
       if (typeof (globalThis as any).Float16Array !== 'undefined') {
         return new (globalThis as any).Float16Array(totalElements);
@@ -731,145 +857,17 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Load broadcasted array (single value replicated to all points).
-   */
-  private async loadBroadcastedRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    arrayName: string,
-    output: Float32Array,
-    totalPoints: number,
-    actualElementsPerPoint: number
-  ): Promise<void> {
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Broadcasted array ${arrayName}: replicating single value to ${totalPoints} points`
-    );
-
-    const fullData = await get(array);
-    const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
-
-    // Replicate to all points
-    for (let i = 0; i < totalPoints; i++) {
-      for (let j = 0; j < actualElementsPerPoint; j++) {
-        output[i * actualElementsPerPoint + j] = broadcastValue[j] || broadcastValue[0];
-      }
-    }
-  }
-
-  /**
-   * Load quantized array ranges and dequantize.
-   */
-  private async loadQuantizedRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    arrayName: string,
-    attrs: ArrayMetadata,
-    ranges: PointRange[],
-    output: Float32Array,
-    totalPoints: number
-  ): Promise<number> {
-    const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs);
-    if (!quantMetadata) {
-      throw new Error(`Quantization metadata missing for ${arrayName}`);
-    }
-
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalPoints} values)`
-    );
-
-    const shape = array.shape;
-
-    // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
-
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
-    let destOffset = 0;
-
-    for (const chunkData of chunks) {
-      const quantizedData = chunkData.data as Uint8Array | Uint16Array;
-      const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
-
-      output.set(dequantized, destOffset);
-      destOffset += dequantized.length;
-    }
-
-    return destOffset;
-  }
-
-  /**
-   * Load LUT-encoded array ranges and decode with lookup table.
-   */
-  private async loadLUTRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    arrayName: string,
-    attrs: ArrayMetadata,
-    ranges: PointRange[],
-    output: Float32Array,
-    totalPoints: number,
-    totalElements: number
-  ): Promise<number> {
-    const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
-    if (!lutMetadata) {
-      throw new Error(`LUT metadata missing for ${arrayName}`);
-    }
-
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalPoints} indices → ${totalElements} elements)`
-    );
-
-    const shape = array.shape;
-
-    // PARALLEL FETCH: Load all index chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
-
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
-    let destOffset = 0;
-
-    for (const chunkData of chunks) {
-      const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-      const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
-
-      output.set(decoded, destOffset);
-      destOffset += decoded.length;
-    }
-
-    return destOffset;
-  }
-
-  /**
-   * Load array reference by resolving target and applying appropriate strategy.
+   * Load array reference by resolving target and using RangeLoader.
    */
   private async loadArrayRefRanges(
-    _array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    arrayName: string,
     attrs: ArrayMetadata,
-    ranges: PointRange[],
+    ranges: LoadRange[],
     output: Float32Array,
     totalPoints: number,
     actualElementsPerPoint: number
   ): Promise<number> {
     const targetPath = attrs.encoding!.target!;
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Array ref: ${arrayName} → ${targetPath} (optimized range loading)`
-    );
+    log.info(Modules.SPATIAL_INDEX_LOADER, `Array ref: → ${targetPath} (using RangeLoader)`);
 
     // Resolve target array
     const storeToUse = this.zarrStore || this.zarrLocation.store;
@@ -878,135 +876,18 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const targetArray = await zarr.open(targetLoc, { kind: 'array' });
     const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
 
-    let destOffset = 0;
+    // Use RangeLoader for target array (handles quantized, lut, broadcasted, direct)
+    const encoding = RangeLoader.detectEncoding(targetAttrs);
+    log.info(Modules.SPATIAL_INDEX_LOADER, `Array ref target encoding: ${encoding}`);
 
-    // Dispatch based on target encoding
-    if (ArrayDecoder.isQuantizedEncoding(targetAttrs)) {
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Array ref target is quantized (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-      );
-      destOffset = await this.loadQuantizedRanges(
-        targetArray,
-        arrayName,
-        targetAttrs,
-        ranges,
-        output,
-        totalPoints
-      );
-    } else if (ArrayDecoder.isLUTEncoded(targetAttrs)) {
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Array ref target is LUT (${ArrayDecoder.getEncodingMode(targetAttrs)})`
-      );
-      destOffset = await this.loadLUTRanges(
-        targetArray,
-        arrayName,
-        targetAttrs,
-        ranges,
-        output,
-        totalPoints,
-        totalPoints * actualElementsPerPoint
-      );
-    } else if (ArrayDecoder.isBroadcasted(targetAttrs)) {
-      log.info(Modules.SPATIAL_INDEX_LOADER, 'Array ref target is broadcasted');
-      await this.loadBroadcastedRanges(
-        targetArray,
-        arrayName,
-        output,
-        totalPoints,
-        actualElementsPerPoint
-      );
-      destOffset = output.length;
-    } else {
-      // Direct or unknown encoding
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Array ref target is direct/unknown (${ArrayDecoder.getEncodingMode(targetAttrs)}) - full decode`
-      );
-
-      const decoded = await this.decoder.decode(
-        targetArray,
-        targetAttrs,
-        totalPoints * actualElementsPerPoint,
-        zarrRootLoc
-      );
-
-      for (const range of ranges) {
-        const rangeSize = (range.end - range.start) * actualElementsPerPoint;
-        const srcOffset = range.start * actualElementsPerPoint;
-        output.set(decoded.subarray(srcOffset, srcOffset + rangeSize), destOffset);
-        destOffset += rangeSize;
-      }
-    }
-
-    return destOffset;
-  }
-
-  /**
-   * Load encoded array (generic fallback path).
-   */
-  private async loadGenericEncodedRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    arrayName: string,
-    attrs: ArrayMetadata,
-    ranges: PointRange[],
-    output: Float32Array,
-    totalElements: number,
-    actualElementsPerPoint: number
-  ): Promise<number> {
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Decoding ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} - generic path)`
+    return this.rangeLoader.loadRanges(
+      targetArray,
+      targetAttrs,
+      ranges,
+      output,
+      totalPoints,
+      actualElementsPerPoint
     );
-
-    const storeToUse = this.zarrStore || this.zarrLocation.store;
-    const zarrRootLoc = zarr.root(storeToUse);
-    const decoded = await this.decoder.decode(array, attrs, totalElements, zarrRootLoc);
-
-    let destOffset = 0;
-    for (const range of ranges) {
-      const rangeSize = (range.end - range.start) * actualElementsPerPoint;
-      const srcOffset = range.start * actualElementsPerPoint;
-      output.set(decoded.subarray(srcOffset, srcOffset + rangeSize), destOffset);
-      destOffset += rangeSize;
-    }
-
-    return destOffset;
-  }
-
-  /**
-   * Load direct (non-encoded) array ranges.
-   */
-  private async loadDirectRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    ranges: PointRange[],
-    output: Float32Array | Uint8Array | Uint16Array | Float16Array
-  ): Promise<number> {
-    const shape = array.shape;
-
-    // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
-    const chunkDataPromises = ranges.map((range) => {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
-      return get(array, sliceSpec);
-    });
-
-    const chunks = await Promise.all(chunkDataPromises);
-
-    // SEQUENTIAL WRITE: Process chunks in order (maintains correct destOffset)
-    let destOffset = 0;
-
-    for (const chunkData of chunks) {
-      const data = chunkData.data as Float32Array | Uint8Array | Uint16Array | Float16Array;
-
-      output.set(data, destOffset);
-      destOffset += data.length;
-    }
-
-    return destOffset;
   }
 
   /**
@@ -1035,6 +916,50 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         latency: loadTime,
       },
     });
+  }
+
+  /**
+   * Load direct (unencoded) array ranges preserving native type.
+   *
+   * CRITICAL: This method preserves the native array type (Uint8Array, Float32Array, etc.)
+   * because the rendering pipeline depends on actual types:
+   * - Uint8Array colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
+   * - Float32Array colors: Expected to be 0-1, no normalization
+   */
+  private async loadDirectRanges(
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
+    ranges: PointRange[],
+    output: Float32Array | Uint8Array | Uint16Array | Float16Array
+  ): Promise<void> {
+    const shape = array.shape;
+    let destOffset = 0;
+
+    for (const range of ranges) {
+      const sliceSpec: zarr.Slice[] =
+        shape.length === 2
+          ? [slice(range.start, range.end), slice(null)]
+          : [slice(range.start, range.end)];
+
+      const chunkData = await get(array, sliceSpec);
+      const data = chunkData.data;
+
+      // Copy data preserving type (no conversion)
+      if (output instanceof Float32Array && data instanceof Float32Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
+        output.set(data, destOffset);
+      } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
+        output.set(data, destOffset);
+      } else {
+        // Fallback: convert if types don't match (shouldn't happen with proper dtype detection)
+        const len = (data as ArrayLike<number>).length;
+        for (let i = 0; i < len; i++) {
+          (output as any)[destOffset + i] = (data as ArrayLike<number>)[i];
+        }
+      }
+
+      destOffset += (data as ArrayLike<number>).length;
+    }
   }
 
   /**
@@ -1083,71 +1008,131 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       );
     }
 
-    // Allocate output buffer
-    const output = this.allocateOutputBuffer(totalElements, isEncoded, array.dtype);
-
-    // Dispatch to appropriate loading strategy
-    const isLUTEncoded = ArrayDecoder.isLUTEncoded(attrs);
-    const isBroadcasted = ArrayDecoder.isBroadcasted(attrs);
-    const isQuantized = ArrayDecoder.isQuantizedEncoding(attrs);
+    // Handle array_ref specially (needs zarrStore access to resolve target)
     const isArrayRef = ArrayDecoder.isArrayRef(attrs);
-
-    // Dispatch to appropriate loading strategy based on encoding type
-    if (isBroadcasted) {
-      await this.loadBroadcastedRanges(
-        array,
-        arrayName,
-        output as Float32Array,
-        totalPoints,
-        actualElementsPerPoint
-      );
-    } else if (isQuantized) {
-      await this.loadQuantizedRanges(
-        array,
-        arrayName,
-        attrs,
-        ranges,
-        output as Float32Array,
-        totalPoints
-      );
-    } else if (isLUTEncoded) {
-      await this.loadLUTRanges(
-        array,
-        arrayName,
-        attrs,
-        ranges,
-        output as Float32Array,
-        totalPoints,
-        totalElements
-      );
-    } else if (isArrayRef) {
+    if (isArrayRef) {
+      const decodedFloat32 = new Float32Array(totalElements);
       await this.loadArrayRefRanges(
-        array,
-        arrayName,
         attrs,
-        ranges,
-        output as Float32Array,
+        ranges as LoadRange[],
+        decodedFloat32,
         totalPoints,
         actualElementsPerPoint
       );
-    } else if (isEncoded) {
-      await this.loadGenericEncodedRanges(
-        array,
-        arrayName,
-        attrs,
-        ranges,
-        output as Float32Array,
-        totalElements,
-        actualElementsPerPoint
-      );
-    } else {
-      await this.loadDirectRanges(array, ranges, output);
+
+      // array_ref also has original_dtype - restore it!
+      // Python str(np.dtype('uint8')) returns 'uint8', but handle all variants for safety
+      const originalDtype = attrs.encoding?.original_dtype;
+      let output: Float32Array | Uint8Array | Uint16Array | Float16Array = decodedFloat32;
+
+      if (
+        originalDtype === 'uint8' ||
+        originalDtype === '|u1' ||
+        originalDtype === '<u1' ||
+        originalDtype === '>u1'
+      ) {
+        const uint8Output = new Uint8Array(totalElements);
+        for (let i = 0; i < totalElements; i++) {
+          uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+        }
+        output = uint8Output;
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Restored original_dtype=uint8 for array_ref ${arrayName} (${totalElements} elements)`
+        );
+      } else if (
+        originalDtype === 'uint16' ||
+        originalDtype === '|u2' ||
+        originalDtype === '<u2' ||
+        originalDtype === '>u2'
+      ) {
+        const uint16Output = new Uint16Array(totalElements);
+        for (let i = 0; i < totalElements; i++) {
+          uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+        }
+        output = uint16Output;
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Restored original_dtype=uint16 for array_ref ${arrayName} (${totalElements} elements)`
+        );
+      }
+
+      this.recordLoadMetrics(arrayName, totalPoints, output);
+      return output;
     }
+
+    // Detect encoding type to decide loading strategy
+    const encoding = RangeLoader.detectEncoding(attrs);
+
+    // CRITICAL: For direct (unencoded) arrays, preserve native type!
+    // Rendering pipeline depends on actual array type:
+    // - Uint8Array colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
+    // - Float32Array colors: Expected to be 0-1, no normalization
+    // Converting Uint8Array(255) to Float32Array(255.0) would make colors ~255x too bright!
+    if (encoding === 'direct') {
+      const output = this.allocateOutputBuffer(totalElements, false, array.dtype);
+      await this.loadDirectRanges(array, ranges, output);
+      this.recordLoadMetrics(arrayName, totalPoints, output);
+      return output;
+    }
+
+    // Use RangeLoader for encoded arrays (broadcasted, quantized, lut)
+    // Decode to Float32Array first (decoding math produces floats)
+    const decodedFloat32 = new Float32Array(totalElements);
+    await this.rangeLoader.loadRanges(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      decodedFloat32,
+      totalPoints,
+      actualElementsPerPoint
+    );
+
+    // CRITICAL: Restore original dtype for correct rendering!
+    // Python encoder stores original_dtype, decoder must restore it:
+    // - uint8 colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
+    // - float32 colors: Expected to be 0-1, no normalization
+    // Python str(np.dtype('uint8')) returns 'uint8', but handle all variants for safety
+    const originalDtype = attrs.encoding?.original_dtype;
+    let output: Float32Array | Uint8Array | Uint16Array | Float16Array = decodedFloat32;
+
+    if (
+      originalDtype === 'uint8' ||
+      originalDtype === '|u1' ||
+      originalDtype === '<u1' ||
+      originalDtype === '>u1'
+    ) {
+      // Convert float32 → uint8 (values should already be in 0-255 range)
+      const uint8Output = new Uint8Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+      }
+      output = uint8Output;
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Restored original_dtype=uint8 for ${arrayName} (${totalElements} elements)`
+      );
+    } else if (
+      originalDtype === 'uint16' ||
+      originalDtype === '|u2' ||
+      originalDtype === '<u2' ||
+      originalDtype === '>u2'
+    ) {
+      // Convert float32 → uint16
+      const uint16Output = new Uint16Array(totalElements);
+      for (let i = 0; i < totalElements; i++) {
+        uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+      }
+      output = uint16Output;
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Restored original_dtype=uint16 for ${arrayName} (${totalElements} elements)`
+      );
+    }
+    // For float32/float64 or unspecified, keep as Float32Array
 
     // Update metrics and emit load event
     this.recordLoadMetrics(arrayName, totalPoints, output);
-
-    // Return in native format for efficiency - geometry can handle both
     return output;
   }
 
@@ -1171,7 +1156,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       radii: ScalarArray;
       sharpness: ScalarArray;
     } | null
-  ): PointsData {
+  ): LoadedPointsData {
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     if (!positions) {
@@ -1469,7 +1454,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
           `All ${numPoints} points have zero effective radius - no points visible at this slice`
         );
         // Return empty points - this is the correct behavior
-        return this.createEmptyPoints(viewState);
+        return this.createEmptyPointsData(viewState);
       }
     }
 
@@ -1486,7 +1471,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       return this._accumulator.getData(numPoints);
     }
 
-    // Fallback: Create new PointsData object (when accumulator disabled)
+    // Fallback: Create new LoadedPointsData object (when accumulator disabled)
     const dtypes = {
       positions: this.node.attrs.position_dtype as string | undefined,
       colors: this.node.attrs.color_dtype as string | undefined,
@@ -1499,11 +1484,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       colors: colors as ColorArray | undefined,
       radii: finalRadii as ScalarArray | undefined,
       sharpness: sharpness as ScalarArray | undefined,
+      pointCount: numPoints,
+      ndim,
       metadata: {
         totalPoints: this.node.attrs.n_points || totalPoints,
         loadedPoints: numPoints,
         bounds,
-        ndim,
         usedSpatialIndex: true,
         usedEffectiveRadius,
         dtypes,
@@ -1512,9 +1498,162 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
+   * Project nD points to 3D display space using a web worker
+   *
+   * This offloads CPU-intensive projection work to a worker thread:
+   * - nD → 3D coordinate extraction
+   * - Effective radius calculation
+   * - Zero-radius point filtering
+   * - Bounds calculation
+   *
+   * Uses Comlink.transfer() for zero-copy ArrayBuffer transfer.
+   */
+  private async projectTo3DUsingWorker(
+    positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
+    viewState: ViewState,
+    ranges: PointRange[]
+  ): Promise<LoadedPointsData> {
+    const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+
+    if (!positions) {
+      throw new Error('Positions data is required for points');
+    }
+
+    // Calculate ndim from actual positions array
+    const ndim =
+      totalPoints > 0
+        ? Math.round(positions.length / totalPoints)
+        : this.chunkIndex?.metadata.ndim || 3;
+
+    // Convert positions to Float32Array if needed (positions must be Float32)
+    const positionsFloat32 =
+      positions instanceof Float32Array ? positions : new Float32Array(positions);
+
+    // Colors: Keep native type! Worker and GPU buffer pool support multi-type (Uint8/Uint16/Float32)
+    // THREE.js handles normalization in shader via normalized attribute flag
+    // Float16Array needs conversion to Float32Array (worker doesn't support Float16)
+    // Note: Float16 values are already in float range, no normalization needed
+    let colorsMultiType: Float32Array | Uint8Array | Uint16Array | null = null;
+    if (colors) {
+      if (colors instanceof Float16Array) {
+        // Convert Float16 to Float32 (no normalization - already in float range)
+        colorsMultiType = new Float32Array(colors);
+      } else {
+        colorsMultiType = colors;
+      }
+    }
+
+    // Radii/sharpness: Convert to Float32Array (no normalization needed - already world units)
+    const radiiFloat32 = radii
+      ? radii instanceof Float32Array
+        ? radii
+        : new Float32Array(radii)
+      : null;
+
+    const sharpnessFloat32 = sharpness
+      ? sharpness instanceof Float32Array
+        ? sharpness
+        : new Float32Array(sharpness)
+      : null;
+
+    // Build effective radius config for worker
+    let workerEffectiveRadiusConfig: { spatialExtendDims: boolean[]; maxRadius: number } | null =
+      null;
+    if (this._effectiveRadiusConfig && radiiFloat32) {
+      // Check if we should apply effective radius
+      if (shouldApplyEffectiveRadius(this._effectiveRadiusConfig, viewState.displayDims, true)) {
+        workerEffectiveRadiusConfig = {
+          spatialExtendDims: this._effectiveRadiusConfig.spatialExtendDims,
+          maxRadius: this._effectiveRadiusConfig.maxRadius,
+        };
+      }
+    }
+
+    try {
+      const worker = await getWorkerPool().getWorker();
+
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Projecting ${totalPoints} points to 3D using worker (ndim=${ndim})`
+      );
+
+      const workerResult = await worker.projectPointsTo3D({
+        positions: positionsFloat32,
+        colors: colorsMultiType,
+        radii: radiiFloat32,
+        sharpness: sharpnessFloat32,
+        viewState: {
+          displayDims: viewState.displayDims,
+          slicePosition: viewState.slicePosition,
+          tolerance: viewState.tolerance,
+        },
+        effectiveRadiusConfig: workerEffectiveRadiusConfig,
+        ndim,
+        numPoints: totalPoints,
+      });
+
+      // Handle empty result
+      if (workerResult.visibleCount === 0) {
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Worker projection: all ${totalPoints} points have zero effective radius`
+        );
+        return this.createEmptyPointsData(viewState);
+      }
+
+      // Build THREE.Box3 from worker bounds
+      const bounds = new THREE.Box3(
+        new THREE.Vector3(...workerResult.bounds.min),
+        new THREE.Vector3(...workerResult.bounds.max)
+      );
+
+      log.info(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Worker projection complete: ${workerResult.visibleCount}/${totalPoints} visible points`
+      );
+
+      // Get dtype metadata from node attributes
+      const dtypes = {
+        positions: this.node.attrs.position_dtype as string | undefined,
+        colors: this.node.attrs.color_dtype as string | undefined,
+        radii: this.node.attrs.radius_dtype as string | undefined,
+        sharpness: this.node.attrs.sharpness_dtype as string | undefined,
+      };
+
+      return {
+        positions: workerResult.positions3D as PositionArray,
+        colors: workerResult.colors as ColorArray | undefined,
+        radii: workerResult.radii as ScalarArray | undefined,
+        sharpness: workerResult.sharpness as ScalarArray | undefined,
+        pointCount: workerResult.visibleCount,
+        ndim,
+        metadata: {
+          totalPoints: this.node.attrs.n_points || totalPoints,
+          loadedPoints: workerResult.visibleCount,
+          bounds,
+          usedSpatialIndex: true,
+          usedEffectiveRadius: !!workerEffectiveRadiusConfig,
+          dtypes,
+        },
+      };
+    } catch (error) {
+      // Fallback to main thread on worker failure
+      log.warning(
+        Modules.SPATIAL_INDEX_LOADER,
+        'Worker projection failed, falling back to main thread:',
+        error
+      );
+      return this.projectTo3D(positions, colors, radii, sharpness, viewState, ranges, null);
+    }
+  }
+
+  /**
    * Create empty points when no points are visible
    */
-  private createEmptyPoints(viewState: ViewState): PointsData {
+  private createEmptyPointsData(viewState: ViewState): LoadedPointsData {
     // Note: viewState parameter kept for future use when we might need
     // dimension-aware empty points (e.g., different ndim based on view)
     void viewState; // Explicitly mark as intentionally unused for now
@@ -1529,11 +1668,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     return {
       positions: new Float32Array(0) as PositionArray,
+      pointCount: 0,
+      ndim: this.chunkIndex?.metadata.ndim || 3,
       metadata: {
         totalPoints: this.node.attrs.n_points || 0,
         loadedPoints: 0,
         bounds: new THREE.Box3(),
-        ndim: this.chunkIndex?.metadata.ndim || 3,
         usedSpatialIndex: true,
         dtypes,
       },
@@ -1674,6 +1814,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       );
       return null;
     }
+  }
+
+  /**
+   * Get accumulator stats for memory monitoring
+   */
+  getAccumulatorStats(): AccumulatorStats | null {
+    return this._accumulator?.getStats() ?? null;
   }
 
   /**

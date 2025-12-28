@@ -74,54 +74,55 @@ src/wasm/
 
 ### 2.1 Complete Function Inventory
 
-| Module | Function | Rust | TS | Worker | Direct |
-|--------|----------|:----:|:--:|:------:|:------:|
-| **spatial** | `query_chunks_for_view` | ✅ | ✅ | ✅ | ❌ |
-| **points** | `compute_nd_visibility_points` | ✅ | ✅ | ✅ | ❌ |
-| **lines** | `compute_nd_visibility_lines` | ✅ | ✅ | ✅ | ❌ |
-| **gsplats** | `compute_nd_visibility_gsplats` | ✅ | ✅ | ✅ | ❌ |
-| **effective_radii** | `calculate_effective_radii` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_quantized_u8` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_quantized_u16` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_log_scalar_u8` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_log_scalar_u16` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_lut_scalar_u8` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_lut_scalar_u16` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_lut_row_u8` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_lut_row_u16` | ✅ | ✅ | ✅ | ❌ |
-| **decode** | `decode_broadcasted` | ✅ | ✅ | ✅ | ❌ |
-| **projection** | `extract_3d_positions` | ✅ | ✅ | ✅ | ❌ |
-| **projection** | `calculate_bounds_3d` | ✅ | ✅ | ✅ | ❌ |
-| **projection** | `compact_by_mask` | ✅ | ✅ | ✅ | ❌ |
-| **projection** | `count_visible` | ✅ | ✅ | ❌ | ❌ |
-| **projection** | `radii_to_visibility_mask` | ✅ | ✅ | ✅ | ❌ |
-| **gsplats_proc** | `mahalanobis_distance` | ✅ | ✅ | ❌ | ❌ |
-| **gsplats_proc** | `extract_cholesky_submatrix` | ✅ | ✅ | ❌ | ❌ |
-| **gsplats_proc** | `compute_gsplats_attenuation` | ✅ | ✅ | ✅ | ❌ |
-| **gsplats_proc** | `extract_visible_cholesky_3d` | ✅ | ✅ | ✅ | ❌ |
-| **gsplats_proc** | `compact_attenuated_amplitudes` | ✅ | ✅ | ✅ | ❌ |
-| **lines_clip** | `clip_segment_single` | ✅ | ✅ | ❌ | ✅ |
-| **lines_clip** | `clip_segments_batch` | ✅ | ✅ | ✅ | ✅ |
-| **lines_clip** | `interpolate_clipped_positions` | ✅ | ✅ | ✅ | ✅ |
-| **lines_clip** | `lerp` | ✅ | ✅ | ❌ | ✅ |
-| **lines_clip** | `lerp_vec3` | ✅ | ✅ | ❌ | ✅ |
-| **lines_clip** | `distance_3d` | ✅ | ✅ | ❌ | ✅ |
-| **lines_clip** | `interpolate_scalars_batch` | ✅ | ✅ | ✅ | ✅ |
-| **lines_clip** | `interpolate_colors_batch` | ✅ | ✅ | ✅ | ✅ |
-| **lines_clip** | `calculate_segment_lengths` | ✅ | ✅ | ✅ | ✅ |
-| **lines_clip** | `mark_clipped_endpoints` | ✅ | ✅ | ✅ | ✅ |
+| Module              | Function                        | Rust | TS  | Worker | Direct |
+| ------------------- | ------------------------------- | :--: | :-: | :----: | :----: |
+| **spatial**         | `query_chunks_for_view`         |  ✅  | ✅  |   ✅   |   ❌   |
+| **points**          | `compute_nd_visibility_points`  |  ✅  | ✅  |   ✅   |   ❌   |
+| **lines**           | `compute_nd_visibility_lines`   |  ✅  | ✅  |   ✅   |   ❌   |
+| **gsplats**         | `compute_nd_visibility_gsplats` |  ✅  | ✅  |   ✅   |   ❌   |
+| **effective_radii** | `calculate_effective_radii`     |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_quantized_u8`           |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_quantized_u16`          |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_log_scalar_u8`          |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_log_scalar_u16`         |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_lut_scalar_u8`          |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_lut_scalar_u16`         |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_lut_row_u8`             |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_lut_row_u16`            |  ✅  | ✅  |   ✅   |   ❌   |
+| **decode**          | `decode_broadcasted`            |  ✅  | ✅  |   ✅   |   ❌   |
+| **projection**      | `extract_3d_positions`          |  ✅  | ✅  |   ✅   |   ❌   |
+| **projection**      | `calculate_bounds_3d`           |  ✅  | ✅  |   ✅   |   ❌   |
+| **projection**      | `compact_by_mask`               |  ✅  | ✅  |   ✅   |   ❌   |
+| **projection**      | `count_visible`                 |  ✅  | ✅  |   ❌   |   ❌   |
+| **projection**      | `radii_to_visibility_mask`      |  ✅  | ✅  |   ✅   |   ❌   |
+| **gsplats_proc**    | `mahalanobis_distance`          |  ✅  | ✅  |   ❌   |   ❌   |
+| **gsplats_proc**    | `extract_cholesky_submatrix`    |  ✅  | ✅  |   ❌   |   ❌   |
+| **gsplats_proc**    | `compute_gsplats_attenuation`   |  ✅  | ✅  |   ✅   |   ❌   |
+| **gsplats_proc**    | `extract_visible_cholesky_3d`   |  ✅  | ✅  |   ✅   |   ❌   |
+| **gsplats_proc**    | `compact_attenuated_amplitudes` |  ✅  | ✅  |   ✅   |   ❌   |
+| **lines_clip**      | `clip_segment_single`           |  ✅  | ✅  |   ❌   |   ✅   |
+| **lines_clip**      | `clip_segments_batch`           |  ✅  | ✅  |   ✅   |   ✅   |
+| **lines_clip**      | `interpolate_clipped_positions` |  ✅  | ✅  |   ✅   |   ✅   |
+| **lines_clip**      | `lerp`                          |  ✅  | ✅  |   ❌   |   ✅   |
+| **lines_clip**      | `lerp_vec3`                     |  ✅  | ✅  |   ❌   |   ✅   |
+| **lines_clip**      | `distance_3d`                   |  ✅  | ✅  |   ❌   |   ✅   |
+| **lines_clip**      | `interpolate_scalars_batch`     |  ✅  | ✅  |   ✅   |   ✅   |
+| **lines_clip**      | `interpolate_colors_batch`      |  ✅  | ✅  |   ✅   |   ✅   |
+| **lines_clip**      | `calculate_segment_lengths`     |  ✅  | ✅  |   ✅   |   ✅   |
+| **lines_clip**      | `mark_clipped_endpoints`        |  ✅  | ✅  |   ✅   |   ✅   |
 
 **Legend:**
+
 - **Worker**: Called via `data-worker.ts` (runs in Web Worker with WASM)
 - **Direct**: Called directly via `getWasmModuleSync()` on main thread
 
 ### 2.2 Integration Status (Updated 2025-12-27)
 
-| Loader | WASM Integration | Method |
-|--------|-----------------|--------|
-| **Points** | ✅ Full WASM | Visibility, projection, bounds, compaction, effective radii |
-| **Lines** | ✅ Full WASM | `buildInstanceBuffersWASM` + worker `projectLinesTo3D` with 7 batch functions |
-| **GSplats** | ✅ Full WASM | Worker `projectGSplatsTo3D` with 6 batch functions |
+| Loader      | WASM Integration | Method                                                                        |
+| ----------- | ---------------- | ----------------------------------------------------------------------------- |
+| **Points**  | ✅ Full WASM     | Visibility, projection, bounds, compaction, effective radii                   |
+| **Lines**   | ✅ Full WASM     | `buildInstanceBuffersWASM` + worker `projectLinesTo3D` with 7 batch functions |
+| **GSplats** | ✅ Full WASM     | Worker `projectGSplatsTo3D` with 6 batch functions                            |
 
 ### 2.3 Worker `projectPointsTo3D` WASM Pipeline (Updated 2025-12-27)
 
@@ -175,13 +176,13 @@ projectGSplatsTo3D() Pipeline:
 
 ### 3.1 Test Summary (154 tests passing)
 
-| Test File | Tests | Description |
-|-----------|:-----:|-------------|
-| `wasm-comparison.test.ts` | 59 | TypeScript fallback correctness |
-| `wasm-vs-typescript.test.ts` | 34 | WASM vs TypeScript exactness |
-| `spatial-query-builder.test.ts` | 24 | Unified query infrastructure |
-| `transferable-accumulator.test.ts` | 27 | Buffer management |
-| `integration-example.test.ts` | 10 | Full pipeline examples |
+| Test File                          | Tests | Description                     |
+| ---------------------------------- | :---: | ------------------------------- |
+| `wasm-comparison.test.ts`          |  59   | TypeScript fallback correctness |
+| `wasm-vs-typescript.test.ts`       |  34   | WASM vs TypeScript exactness    |
+| `spatial-query-builder.test.ts`    |  24   | Unified query infrastructure    |
+| `transferable-accumulator.test.ts` |  27   | Buffer management               |
+| `integration-example.test.ts`      |  10   | Full pipeline examples          |
 
 ### 3.2 Rust Unit Tests (39 tests)
 
@@ -201,6 +202,7 @@ cargo test (all passing)
 ### 3.3 Lines Clipping Comparison Tests (33 tests)
 
 Additional tests in `lines-clipping.test.ts` verify `buildInstanceBuffersWASM` produces identical results to TypeScript reference for:
+
 - Simple 3D/4D/5D data
 - All 5 clipping cases (A-E)
 - Null attribute handling
@@ -222,6 +224,7 @@ src/data/loaders/
 ```
 
 **Benefits for WASM:**
+
 1. **Shared Query Logic**: `SpatialQueryBuilder` uses worker pool which calls WASM
 2. **Zero-Allocation Pattern**: `TransferableAccumulator` enables buffer reuse with workers
 3. **Worker + WASM**: Workers automatically initialize WASM at startup
@@ -261,6 +264,7 @@ fn validate_ndim(ndim: usize, function_name: &str) {
 ```
 
 **Functions with validation:**
+
 - `calculate_effective_radii`
 - `mahalanobis_distance`
 - `compute_gsplats_attenuation`
@@ -275,16 +279,18 @@ fn validate_ndim(ndim: usize, function_name: &str) {
 Manual SIMD using the `wide` crate was tested but showed **worse performance** than simple loops:
 
 | `decode_quantized_u8` | Manual SIMD (`wide`) | Simple Loop |
-|-----------------------|----------------------|-------------|
-| 50K elements | 8.50x | **20.00x** |
-| 200K elements | 7.60x | **18.50x** |
+| --------------------- | -------------------- | ----------- |
+| 50K elements          | 8.50x                | **20.00x**  |
+| 200K elements         | 7.60x                | **18.50x**  |
 
 **Why Manual SIMD Hurt Performance**:
+
 1. The `wide` crate uses portable SIMD that doesn't map efficiently to WASM SIMD128
 2. Loading individual u8 values to create `f32x4` vectors adds overhead
 3. LLVM's auto-vectorization is highly optimized for simple loops
 
 **Current Configuration**:
+
 - Build uses `-Ctarget-feature=+simd128` via `.cargo/config.toml`
 - wasm-opt runs with `--enable-simd` for further optimization
 - Simple loops allow compiler to generate optimal WASM SIMD code
@@ -314,13 +320,13 @@ Actual benchmark results from `wasm-performance.test.ts`:
 
 ### 6.1 Measured Speedups
 
-| Function | 5K elements | 50K elements | 200K elements |
-|----------|:-----------:|:------------:|:-------------:|
-| `decode_quantized_u8` | 2.00x | 3.33x | **18.67x** |
-| `query_chunks_for_view` | 1.50x | 1.15x | - |
-| `compute_nd_visibility_points` | 2.33x | 1.77x | 1.13x |
-| `clip_segments_batch` | **21.47x** | **25.58x** | - |
-| `calculate_effective_radii` | 3.25x | 4.26x | 4.16x |
+| Function                       | 5K elements | 50K elements | 200K elements |
+| ------------------------------ | :---------: | :----------: | :-----------: |
+| `decode_quantized_u8`          |    2.00x    |    3.33x     |  **18.67x**   |
+| `query_chunks_for_view`        |    1.50x    |    1.15x     |       -       |
+| `compute_nd_visibility_points` |    2.33x    |    1.77x     |     1.13x     |
+| `clip_segments_batch`          | **21.47x**  |  **25.58x**  |       -       |
+| `calculate_effective_radii`    |    3.25x    |    4.26x     |     4.16x     |
 
 **Average speedup: 6.97x**
 
@@ -333,11 +339,11 @@ Actual benchmark results from `wasm-performance.test.ts`:
 
 ### 6.3 Where WASM Adds Overhead
 
-| Operation | Reason |
-|-----------|--------|
-| Single `lerp()` call | JS native is faster |
-| <1000 elements | Call overhead dominates |
-| Complex object marshaling | Flat arrays preferred |
+| Operation                 | Reason                  |
+| ------------------------- | ----------------------- |
+| Single `lerp()` call      | JS native is faster     |
+| <1000 elements            | Call overhead dominates |
+| Complex object marshaling | Flat arrays preferred   |
 
 ---
 
@@ -345,21 +351,21 @@ Actual benchmark results from `wasm-performance.test.ts`:
 
 ### 7.1 Strengths
 
-| Aspect | Rating | Notes |
-|--------|:------:|-------|
-| **Rust/TS Parity** | ⭐⭐⭐⭐⭐ | 100% API match |
-| **Test Coverage** | ⭐⭐⭐⭐⭐ | 154 tests, stress tests included |
-| **Error Handling** | ⭐⭐⭐⭐ | Graceful fallback to TypeScript |
-| **Integration** | ⭐⭐⭐⭐ | Workers use WASM, Lines direct path |
-| **Documentation** | ⭐⭐⭐⭐ | Good JSDoc and Rust docs |
+| Aspect             |   Rating   | Notes                               |
+| ------------------ | :--------: | ----------------------------------- |
+| **Rust/TS Parity** | ⭐⭐⭐⭐⭐ | 100% API match                      |
+| **Test Coverage**  | ⭐⭐⭐⭐⭐ | 154 tests, stress tests included    |
+| **Error Handling** |  ⭐⭐⭐⭐  | Graceful fallback to TypeScript     |
+| **Integration**    |  ⭐⭐⭐⭐  | Workers use WASM, Lines direct path |
+| **Documentation**  |  ⭐⭐⭐⭐  | Good JSDoc and Rust docs            |
 
 ### 7.2 Weaknesses (Updated 2025-12-27)
 
-| Aspect | Rating | Notes |
-|--------|:------:|-------|
-| **SIMD Usage** | ⭐⭐⭐⭐ | Compiler auto-vectorization with simd128 enabled |
-| **Dimension Limits** | ⭐⭐⭐⭐ | Documented, validated at runtime |
-| **Decode Integration** | ⭐⭐⭐⭐⭐ | All decode functions now use WASM in workers |
+| Aspect                  |   Rating   | Notes                                                |
+| ----------------------- | :--------: | ---------------------------------------------------- |
+| **SIMD Usage**          |  ⭐⭐⭐⭐  | Compiler auto-vectorization with simd128 enabled     |
+| **Dimension Limits**    |  ⭐⭐⭐⭐  | Documented, validated at runtime                     |
+| **Decode Integration**  | ⭐⭐⭐⭐⭐ | All decode functions now use WASM in workers         |
 | **Performance Metrics** | ⭐⭐⭐⭐⭐ | Comprehensive benchmarks in wasm-performance.test.ts |
 
 ---
@@ -389,24 +395,24 @@ Actual benchmark results from `wasm-performance.test.ts`:
 
 ### Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/wasm/index.ts` | WASM loader with fallback |
-| `src/wasm/types.ts` | WasmModule interface (38 methods) |
-| `src/wasm/typescript/index.ts` | TypeScriptFallback class |
-| `src/wasm/rust/src/lib.rs` | Rust entry point |
-| `src/workers/data-worker.ts` | Worker WASM integration |
-| `src/data/lines-spatial-index-loader.ts` | Direct WASM hot path |
-| `src/data/loaders/` | New unified loader infrastructure |
+| File                                     | Purpose                           |
+| ---------------------------------------- | --------------------------------- |
+| `src/wasm/index.ts`                      | WASM loader with fallback         |
+| `src/wasm/types.ts`                      | WasmModule interface (38 methods) |
+| `src/wasm/typescript/index.ts`           | TypeScriptFallback class          |
+| `src/wasm/rust/src/lib.rs`               | Rust entry point                  |
+| `src/workers/data-worker.ts`             | Worker WASM integration           |
+| `src/data/lines-spatial-index-loader.ts` | Direct WASM hot path              |
+| `src/data/loaders/`                      | New unified loader infrastructure |
 
 ### Test Files
 
-| File | Tests |
-|------|:-----:|
-| `src/tests/unit/wasm/wasm-comparison.test.ts` | 59 |
-| `src/tests/unit/wasm/wasm-vs-typescript.test.ts` | 34 |
-| `src/tests/unit/data/lines-clipping.test.ts` | 33 |
-| `src/tests/unit/data/loaders/*.test.ts` | 61 |
+| File                                             | Tests |
+| ------------------------------------------------ | :---: |
+| `src/tests/unit/wasm/wasm-comparison.test.ts`    |  59   |
+| `src/tests/unit/wasm/wasm-vs-typescript.test.ts` |  34   |
+| `src/tests/unit/data/lines-clipping.test.ts`     |  33   |
+| `src/tests/unit/data/loaders/*.test.ts`          |  61   |
 
 ---
 

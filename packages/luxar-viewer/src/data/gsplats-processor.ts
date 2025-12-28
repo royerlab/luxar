@@ -147,7 +147,9 @@ export function processGSplatsTo3D(
     if (sortedHiddenDims.length > 0) {
       // Extract hidden dimension center components
       const centerOffset = i * ndim;
-      const diff = sortedHiddenDims.map((d) => slicePosition[d] - loaded.centers[centerOffset + d]);
+      const diff = sortedHiddenDims.map(
+        (d) => slicePosition[d] - loaded.positions[centerOffset + d]
+      );
 
       // Extract hidden Cholesky submatrix
       const hiddenCholesky = new Float32Array(hiddenPackedSize);
@@ -191,7 +193,7 @@ export function processGSplatsTo3D(
     // Extract 3D center using SORTED display dimensions (must match Cholesky order)
     const dstCenterOffset = outIdx * 3;
     for (let d = 0; d < 3 && d < sortedDisplayDims.length; d++) {
-      centers3D[dstCenterOffset + d] = loaded.centers[srcCenterOffset + sortedDisplayDims[d]];
+      centers3D[dstCenterOffset + d] = loaded.positions[srcCenterOffset + sortedDisplayDims[d]];
     }
 
     // Extract 3D Cholesky submatrix
@@ -211,7 +213,7 @@ export function processGSplatsTo3D(
     let attenuation = 1.0;
     if (sortedHiddenDims.length > 0) {
       const diff = sortedHiddenDims.map(
-        (d) => slicePosition[d] - loaded.centers[srcCenterOffset + d]
+        (d) => slicePosition[d] - loaded.positions[srcCenterOffset + d]
       );
       const hiddenCholesky = new Float32Array(hiddenPackedSize);
       extractCholeskySubmatrix(
@@ -228,13 +230,20 @@ export function processGSplatsTo3D(
 
     amplitudes[outIdx] = loaded.amplitudes[srcIdx] * attenuation;
 
-    // Copy colors (default to white if not present)
+    // Copy colors with normalization (default to white if not present)
     const srcColorOffset = srcIdx * 3;
     const dstColorOffset = outIdx * 3;
     if (loaded.colors) {
-      colors[dstColorOffset] = loaded.colors[srcColorOffset];
-      colors[dstColorOffset + 1] = loaded.colors[srcColorOffset + 1];
-      colors[dstColorOffset + 2] = loaded.colors[srcColorOffset + 2];
+      // Normalize Uint8 (0-255) and Uint16 (0-65535) to Float32 (0-1)
+      const normFactor =
+        loaded.colors instanceof Uint8Array
+          ? 1 / 255
+          : loaded.colors instanceof Uint16Array
+            ? 1 / 65535
+            : 1;
+      colors[dstColorOffset] = loaded.colors[srcColorOffset] * normFactor;
+      colors[dstColorOffset + 1] = loaded.colors[srcColorOffset + 1] * normFactor;
+      colors[dstColorOffset + 2] = loaded.colors[srcColorOffset + 2] * normFactor;
     } else {
       colors[dstColorOffset] = 1.0;
       colors[dstColorOffset + 1] = 1.0;
@@ -276,7 +285,7 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
   const colors = new Float32Array(splatCount * 3);
 
   // Copy centers (already 3D)
-  centers3D.set(loaded.centers);
+  centers3D.set(loaded.positions);
 
   // Copy Cholesky factors (already 3D, 6 elements per splat)
   choleskyFactors3D.set(loaded.choleskyFactors);
@@ -291,9 +300,17 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
     sharpness.fill(2.0);
   }
 
-  // Copy colors (default to white if not present)
+  // Copy colors with normalization (default to white if not present)
   if (loaded.colors) {
-    colors.set(loaded.colors);
+    // Normalize Uint8 (0-255) and Uint16 (0-65535) to Float32 (0-1)
+    if (loaded.colors instanceof Float32Array) {
+      colors.set(loaded.colors);
+    } else {
+      const normFactor = loaded.colors instanceof Uint8Array ? 1 / 255 : 1 / 65535;
+      for (let i = 0; i < loaded.colors.length; i++) {
+        colors[i] = loaded.colors[i] * normFactor;
+      }
+    }
   } else {
     for (let i = 0; i < splatCount; i++) {
       colors[i * 3] = 1.0;

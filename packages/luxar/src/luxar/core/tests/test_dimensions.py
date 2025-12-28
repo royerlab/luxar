@@ -220,9 +220,7 @@ class TestDimensions:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_position_validation_invalid(
-        self, positions_factory, error_pattern, test_id
-    ) -> None:
+    def test_position_validation_invalid(self, positions_factory, error_pattern, test_id) -> None:
         """Test position validation with various invalid inputs."""
         dims = Dimensions(
             [Dimension("x", range=(-10, 10)), Dimension("y", range=(-5, 5))]
@@ -404,9 +402,7 @@ class TestCategoricalDimensions:
         ],
         ids=lambda x: x if isinstance(x, str) else None,
     )
-    def test_invalid_categories_rejected(
-        self, categories, error_pattern, test_id
-    ) -> None:
+    def test_invalid_categories_rejected(self, categories, error_pattern, test_id) -> None:
         """Test that various invalid category configurations are rejected."""
         with pytest.raises(ValueError, match=error_pattern):
             Dimension("channel", categories=categories, display=False)

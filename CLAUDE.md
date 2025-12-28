@@ -69,16 +69,15 @@ luxar profiles                   # Network simulation profiles
   /examples/               # Example scripts (*_example.py naming)
 
 /packages/luxar-viewer/    # TypeScript/WebGL viewer
-  /src/                    # Source with per-package READMEs and SPECIFICATIONS.md
+  /src/                    # Source with per-package READMEs
+  /docs/PLAYWRIGHT_GUIDE.md  # Comprehensive E2E testing guide
 
-/docs/                     # All documentation (centralized)
-  /guides/
-    /user/                 # User guides (LUXAR_ZARR_FORMAT.md, HDR_GUIDE.md)
-    /developer/            # Developer guides (style, optimization, architecture)
+/docs/                     # Documentation
+  /guides/                 # Organized guides by purpose
+    /user/                 # User guides (format, HDR, testing)
+    /developer/            # Developer guides (style, console, network)
     /specs/                # Technical specs (cache, dimensions, lines)
-  /testing/                # Testing guides (PLAYWRIGHT_GUIDE.md, analysis)
   /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
-  /archive/                # Historical docs (status reports, old spec versions)
   /api/                    # Sphinx API reference files (.rst)
   /concepts/               # Architecture and concepts (.rst)
   /tutorials/              # Step-by-step tutorials (.rst)
@@ -151,11 +150,38 @@ pnpm agent:debug                  # AI debugging (see console logs)
 pnpm agent:debug:visible          # AI debugging with visible browser
 ```
 
+**Running E2E tests in chunks (RECOMMENDED):**
+Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic:
+```bash
+# Basic functionality
+npx playwright test basic-rendering.spec.ts data-loading.spec.ts
+
+# Scene & transforms
+npx playwright test scene-integration.spec.ts transform-hierarchy.spec.ts
+
+# nD navigation & dimensions
+npx playwright test nd-navigation.spec.ts dimension-initialization.spec.ts dimension-animation.spec.ts
+
+# Worker & WASM
+npx playwright test worker-wasm-integration.spec.ts
+
+# Test fixtures (run generate-fixtures first!)
+pnpm test:generate-fixtures
+npx playwright test test-fixtures-rendering.spec.ts
+
+# Keyboard & input
+npx playwright test keyboard-input-system.spec.ts controls-interaction.spec.ts
+
+# Visual regression
+npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
+```
+
 **Key E2E rules**:
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
-- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/testing/PLAYWRIGHT_GUIDE.md` for details
+- Run `pnpm test:generate-fixtures` before test-fixtures tests
+- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
 Python encoder and TypeScript decoder must stay in sync:
@@ -227,6 +253,36 @@ result = result @ transform  # Correct
 - 4D/nD datasets may show 0 points depending on slice position
 - Use 3D datasets for general-purpose loading tests
 - For nD tests, navigate to slices known to have points
+
+### Data Source URLs Must NOT Have Trailing Slash
+When loading data via URL, **never include a trailing slash**:
+```bash
+# ❌ WRONG - trailing slash breaks data loading
+http://localhost:5173/?src=http://127.0.0.1:8005/
+
+# ✅ CORRECT - no trailing slash
+http://localhost:5173/?src=http://127.0.0.1:8005
+```
+The zarr loader interprets trailing slashes as path components, causing 404s.
+
+### WASM 16-Dimension Limit
+WASM functions use fixed-size arrays (for performance) and support **maximum 16 dimensions**.
+- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `compute_gsplats_attenuation`
+- Error message: `"ndim=X exceeds maximum supported dimensions (16)"`
+- For >16D data: TypeScript fallback is used automatically (slower but works)
+- If you need >16D with WASM performance, reduce dimensions via PCA or feature selection
+
+### ViewState.dimensions for extend_to_all
+The `dimensions` field in ViewState is **required** for `extend_to_all` to work:
+```typescript
+// If extend_to_all is set but dimensions is undefined, the optimization is silently skipped
+const viewState: ViewState = {
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 5],
+  dimensions: dims,  // REQUIRED for extend_to_all!
+};
+```
 
 ---
 
@@ -315,16 +371,6 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ---
 
-
-## version Control
-
-VERY IMPORTANT: Do not bulk-revert files! If you must revert files, do so in a *very* *SURGICAL* manner -- only revert files *you* have modified and that you know do not contain uncommited changes that you are not responsible for! 
-This is super important because other agents are working on the same codebase and you might inadvertently destroy their work!
-
-
-
----
-
 ## Pre-commit Checklist
 
 ```bash
@@ -363,12 +409,9 @@ Before PR/merge:
 | Topic | Location |
 |-------|----------|
 | E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
-| Playwright Full Guide | `docs/testing/PLAYWRIGHT_GUIDE.md` |
-| Testing Guidelines | `docs/testing/TESTING_GUIDELINES.md` |
+| Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
 | Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |
 | HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
-| Performance Optimization | `docs/guides/developer/PERFORMANCE_OPTIMIZATION_SPEC.md` |
-| WASM Acceleration | `docs/guides/developer/WASM_ANALYSIS.md` |
 | Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
 | Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
 | Changelog | `CHANGELOG.md` |

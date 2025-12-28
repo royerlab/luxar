@@ -11,13 +11,11 @@ The Luxar Python testing infrastructure is **mature and well-organized** with 87
 
 **Key Metrics:**
 - Test files: 87
-- Test functions: 1,608+ (increased via parametrization)
+- Test functions: 1,541
 - Lines of test code: 30,991
 - Source files: 113 (non-test, non-init)
 - Test-to-source ratio: ~35%
 - Coverage threshold: 80%
-- Parametrized test uses: 11+ (was 3)
-- Centralized fixtures: `conftest.py` created
 
 ---
 

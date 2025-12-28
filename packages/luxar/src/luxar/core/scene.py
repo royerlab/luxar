@@ -8,11 +8,7 @@ from __future__ import annotations
 
 import warnings
 from os import PathLike
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
-
-if TYPE_CHECKING:
-    from ..gsplats.fit_result import GSplatData
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 from arbol import aprint
@@ -541,7 +537,9 @@ class Scene(Node):
         from luxar.gsplats.fit_result import GSplatData
 
         if not isinstance(result, GSplatData):
-            raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
+            raise TypeError(
+                f"Expected GSplatData, got {type(result).__name__}"
+            )
 
         # Extract arrays from result
         return self.add_gsplats(
