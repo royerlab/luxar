@@ -139,7 +139,9 @@ def search_papers_by_field(
     batch_size = 100  # API limit per request
 
     with asection(f"Querying {field} papers"):
-        aprint(f"Searching for papers (limit={limit}, min_citations={min_citations})...")
+        aprint(
+            f"Searching for papers (limit={limit}, min_citations={min_citations})..."
+        )
 
         while len(papers) < limit:
             try:
@@ -321,7 +323,9 @@ def download_papers_across_fields(
     return all_papers
 
 
-def prepare_paper_data(papers: list[dict]) -> tuple[list[str], list[str], list[int], list[int]]:
+def prepare_paper_data(
+    papers: list[dict],
+) -> tuple[list[str], list[str], list[int], list[int]]:
     """Extract relevant data from papers.
 
     Args:
@@ -461,9 +465,7 @@ def generate_paper_landscape(
         for field in primary_fields:
             field_counts[field] = field_counts.get(field, 0) + 1
         for field, count in sorted(field_counts.items(), key=lambda x: -x[1])[:10]:
-            (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(
-                int
-            )
+            (FIELD_COLORS.get(field, FIELD_COLORS["Other"]) * 255).astype(int)
             aprint(f"  {field}: {count} papers")
 
         # Radii based on citation count (log scale)
@@ -536,7 +538,9 @@ def main() -> None:
                 "chem": "Chemistry",
                 "eng": "Engineering",
             }
-            field_list = [field_map.get(f.strip(), f.strip()) for f in field_str.split(",")]
+            field_list = [
+                field_map.get(f.strip(), f.strip()) for f in field_str.split(",")
+            ]
 
     aprint("=" * 70)
     aprint("ARXIV PAPER EMBEDDINGS - LANDSCAPE OF KNOWLEDGE")

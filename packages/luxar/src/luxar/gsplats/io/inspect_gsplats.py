@@ -249,7 +249,11 @@ def render_gsplats_to_volume(
             [
                 [cholesky_factors[i, 0], 0, 0],
                 [cholesky_factors[i, 1], cholesky_factors[i, 2], 0],
-                [cholesky_factors[i, 3], cholesky_factors[i, 4], cholesky_factors[i, 5]],
+                [
+                    cholesky_factors[i, 3],
+                    cholesky_factors[i, 4],
+                    cholesky_factors[i, 5],
+                ],
             ]
         )
 

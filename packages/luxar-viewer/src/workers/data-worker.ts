@@ -18,7 +18,7 @@
  */
 
 import { expose } from 'comlink';
-import { initWasm, type WasmModule } from './wasm-bindings';
+import { initWasm, type WasmModule } from '../wasm';
 
 // Worker-side persistent state
 let wasmModule: WasmModule | null = null;

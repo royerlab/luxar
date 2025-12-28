@@ -369,9 +369,7 @@ def _ensure_minimum_seeds(
             # We want to KEEP seeds, not aggressively filter them
             from luxar.gsplats.seeds.utils import combine_seeds
 
-            combined = combine_seeds(
-                initial_seeds, gaussian_seeds, min_distance=0.5
-            )
+            combined = combine_seeds(initial_seeds, gaussian_seeds, min_distance=0.5)
             current_seeds = combined
             if verbose:
                 aprint(
@@ -423,8 +421,7 @@ def _ensure_minimum_seeds(
 
         if verbose:
             aprint(
-                f"Subsampled to {target_count} seeds "
-                f"(spatial diversity + intensity)"
+                f"Subsampled to {target_count} seeds (spatial diversity + intensity)"
             )
 
     return current_seeds
@@ -477,6 +474,7 @@ def _add_grid_fallback_seeds(
     ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
 
     import itertools
+
     for coords in itertools.product(*ranges):
         grid_coords.append(coords)
 

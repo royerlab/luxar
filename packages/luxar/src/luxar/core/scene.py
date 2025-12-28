@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import warnings
 from os import PathLike
-from typing import Any, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from ..gsplats.fit_result import GSplatData
 
 import numpy as np
 from arbol import aprint
@@ -200,7 +204,8 @@ class Scene(Node):
             ndim = positions.shape[1]
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
-            # Dimensions are managed only at scene level - no per-node validation needed
+            # Validate data dimensions against scene dimensions
+            self._validate_data_dimensions(positions, name, data_type="positions")
 
             # Handle extend_to_all based on user specification
             final_extend_dims: List[str] = []
@@ -350,6 +355,9 @@ class Scene(Node):
                 f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
             )
 
+            # Validate data dimensions against scene dimensions
+            self._validate_data_dimensions(vertices, name, data_type="vertices")
+
             # Handle extend_to_all based on user specification
             final_extend_dims: List[str] = []
 
@@ -468,6 +476,9 @@ class Scene(Node):
             ndim = centers.shape[1]
             aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
 
+            # Validate data dimensions against scene dimensions
+            self._validate_data_dimensions(centers, name, data_type="centers")
+
             # Pass data directly - ArrayEncoder handles scalar/array conversion
             parent_node = parent or self
 
@@ -530,9 +541,7 @@ class Scene(Node):
         from luxar.gsplats.fit_result import GSplatData
 
         if not isinstance(result, GSplatData):
-            raise TypeError(
-                f"Expected GSplatData, got {type(result).__name__}"
-            )
+            raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
 
         # Extract arrays from result
         return self.add_gsplats(
@@ -653,6 +662,64 @@ class Scene(Node):
                         candidates.append(dim.name)
 
         return candidates
+
+    def _validate_data_dimensions(
+        self,
+        positions: np.ndarray,
+        node_name: str,
+        data_type: str = "positions",
+    ) -> None:
+        """Validate that data dimensions match scene dimensions.
+
+        This method performs two levels of validation:
+        1. HARD ERROR: Dimensionality mismatch (data columns != scene dimensions)
+        2. WARNING: Values outside declared dimension ranges
+
+        Args:
+            positions: Position/vertex/center array to validate (shape N x D)
+            node_name: Name of the node being added (for error messages)
+            data_type: Type of data ("positions", "vertices", "centers")
+
+        Raises:
+            ValueError: If dimensionality doesn't match scene dimensions
+        """
+        if self._dimensions is None:
+            return
+
+        data_ndim = positions.shape[1]
+        scene_ndim = self._dimensions.ndim
+
+        # HARD ERROR: dimensionality mismatch
+        if data_ndim != scene_ndim:
+            dim_names = self._dimensions.names
+            raise ValueError(
+                f"Dimension mismatch for '{node_name}': {data_type} array has "
+                f"{data_ndim} columns, but scene has {scene_ndim} dimensions "
+                f"({dim_names}).\n"
+                f"Expected {data_type} shape: (N, {scene_ndim})\n"
+                f"Got {data_type} shape: {positions.shape}"
+            )
+
+        # WARNING: values outside declared ranges
+        # Skip range check for empty arrays (min/max would fail)
+        if positions.shape[0] == 0:
+            return
+
+        for i, dim in enumerate(self._dimensions.dimensions):
+            if dim.range is not None:
+                col = positions[:, i]
+                min_val, max_val = float(col.min()), float(col.max())
+                range_min, range_max = dim.range
+
+                if min_val < range_min or max_val > range_max:
+                    warnings.warn(
+                        f"'{node_name}' {data_type}: dimension '{dim.name}' has values "
+                        f"[{min_val:.4g}, {max_val:.4g}] outside declared range "
+                        f"[{range_min}, {range_max}]. "
+                        f"Consider adjusting the dimension range or data values.",
+                        UserWarning,
+                        stacklevel=3,  # Point to the add_points/add_lines/add_gsplats call
+                    )
 
     def get_store_path(self) -> str:
         """Get the path to the backing Zarr store.

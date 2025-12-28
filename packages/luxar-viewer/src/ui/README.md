@@ -38,7 +38,7 @@ ui/
 ├── helpers.ts                   # Help overlays and tooltips
 ├── components/                  # Reusable UI components
 │   ├── loading-advisor.ts       # Smart recommendations engine
-│   └── performance-timeline.ts  # Real-time performance graphs
+│   └── hierarchical-timing-panel.ts  # Hierarchical timing breakdown UI
 └── README.md                    # This documentation
 ```
 

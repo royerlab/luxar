@@ -9,7 +9,7 @@ set -e  # Exit on error
 echo "🦀 Building Luxar WASM module..."
 
 # Navigate to WASM source directory
-cd "$(dirname "$0")/../src/workers/wasm"
+cd "$(dirname "$0")/../src/wasm/rust"
 
 # Check if wasm-pack is installed
 if ! command -v wasm-pack &> /dev/null; then

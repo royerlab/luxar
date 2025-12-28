@@ -236,9 +236,7 @@ def run_optimization_loop(
             aprint("✓ Optimization terminated: CONVERGENCE ACHIEVED")
         elif early_stopped:
             aprint("⏹ Optimization terminated: EARLY STOPPING (no improvement)")
-            aprint(
-                f"  No improvement for {config.early_stop_patience} iterations"
-            )
+            aprint(f"  No improvement for {config.early_stop_patience} iterations")
             aprint(
                 f"  Best state from iteration {best_iteration}: "
                 f"max_abs_error={best_max_abs_error:.6f}"

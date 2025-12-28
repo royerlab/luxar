@@ -37,40 +37,49 @@ class TestDimension:
         assert dim.discrete is True
         assert dim.description == "Time dimension"
 
-    def test_dimension_validation(self) -> None:
-        """Test dimension parameter validation."""
-        # Invalid range
-        with pytest.raises(ValueError, match="Range must be a tuple"):
-            Dimension("x", range=[0, 1, 2])
+    @pytest.mark.parametrize(
+        "kwargs,error_pattern,test_id",
+        [
+            # Range validation
+            ({"range": [0, 1, 2]}, "Range must be a tuple", "range_not_tuple"),
+            ({"range": (10, 5)}, "min must be less than max", "range_min_gt_max"),
+            ({"range": (5, 5)}, "min must be less than max", "range_equal"),
+            # Step validation
+            ({"step": -1}, "Step size must be positive", "step_negative"),
+            ({"step": 0}, "Step size must be positive", "step_zero"),
+            # Scale validation
+            ({"scale": 0}, "Scale must be positive", "scale_zero"),
+            ({"scale": -1}, "Scale must be positive", "scale_negative"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_dimension_validation(self, kwargs, error_pattern, test_id) -> None:
+        """Test dimension parameter validation with various invalid inputs."""
+        with pytest.raises(ValueError, match=error_pattern):
+            Dimension("x", **kwargs)
 
-        with pytest.raises(ValueError, match="min must be less than max"):
-            Dimension("x", range=(10, 5))
-
-        # Invalid step
-        with pytest.raises(ValueError, match="Step size must be positive"):
-            Dimension("x", step=-1)
-
-        # Invalid scale
-        with pytest.raises(ValueError, match="Scale must be positive"):
-            Dimension("x", scale=0)
-
-    def test_get_step(self) -> None:
-        """Test automatic step calculation."""
-        # Explicit step
-        dim = Dimension("x", step=0.25)
-        assert dim.get_step() == 0.25
-
-        # Discrete dimension
-        dim = Dimension("channel", discrete=True)
-        assert dim.get_step() == 1.0
-
-        # Auto-calculated from range
-        dim = Dimension("y", range=(0, 100))
-        assert dim.get_step() == 1.0  # 1% of range
-
-        # Default fallback
-        dim = Dimension("z")
-        assert dim.get_step() == 0.1
+    @pytest.mark.parametrize(
+        "kwargs,expected_step,test_id",
+        [
+            # Explicit step takes precedence
+            ({"step": 0.25}, 0.25, "explicit_step"),
+            ({"step": 5.0}, 5.0, "explicit_step_large"),
+            # Discrete dimensions default to 1.0
+            ({"discrete": True}, 1.0, "discrete_default"),
+            ({"discrete": True, "step": 2.0}, 2.0, "discrete_explicit_step"),
+            # Auto-calculated from range (1% of range)
+            ({"range": (0, 100)}, 1.0, "range_100"),
+            ({"range": (0, 1000)}, 10.0, "range_1000"),
+            ({"range": (-50, 50)}, 1.0, "range_symmetric"),
+            # Default fallback when no step, discrete, or range
+            ({}, 0.1, "default_fallback"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_get_step(self, kwargs, expected_step, test_id) -> None:
+        """Test automatic step calculation with various configurations."""
+        dim = Dimension("x", **kwargs)
+        assert dim.get_step() == expected_step
 
     def test_dimension_serialization(self) -> None:
         """Test to_dict and from_dict."""
@@ -106,26 +115,60 @@ class TestDimensions:
         assert dims.displayed == [0, 1, 2]
         assert dims.non_displayed == []
 
-    def test_dimension_validation(self) -> None:
-        """Test dimensions validation rules."""
-        # Duplicate names
-        with pytest.raises(ValueError, match="must be unique"):
-            Dimensions([Dimension("x"), Dimension("x")])  # Duplicate
-
-        # Too many displayed
-        with pytest.raises(ValueError, match="Maximum 3 dimensions"):
-            Dimensions(
-                [
+    @pytest.mark.parametrize(
+        "dims_factory,error_pattern,test_id",
+        [
+            # Duplicate names
+            (
+                lambda: [Dimension("x"), Dimension("x")],
+                "must be unique",
+                "duplicate_names",
+            ),
+            (
+                lambda: [Dimension("a"), Dimension("b"), Dimension("a")],
+                "must be unique",
+                "duplicate_names_three",
+            ),
+            # Too many displayed (max 3)
+            (
+                lambda: [
                     Dimension("x", display=True),
                     Dimension("y", display=True),
                     Dimension("z", display=True),
-                    Dimension("t", display=True),  # 4th displayed
-                ]
-            )
-
-        # None displayed
-        with pytest.raises(ValueError, match="At least one dimension"):
-            Dimensions([Dimension("x", display=False), Dimension("y", display=False)])
+                    Dimension("t", display=True),
+                ],
+                "Maximum 3 dimensions",
+                "four_displayed",
+            ),
+            (
+                lambda: [
+                    Dimension("a", display=True),
+                    Dimension("b", display=True),
+                    Dimension("c", display=True),
+                    Dimension("d", display=True),
+                    Dimension("e", display=True),
+                ],
+                "Maximum 3 dimensions",
+                "five_displayed",
+            ),
+            # None displayed
+            (
+                lambda: [Dimension("x", display=False), Dimension("y", display=False)],
+                "At least one dimension",
+                "none_displayed",
+            ),
+            (
+                lambda: [Dimension("a", display=False)],
+                "At least one dimension",
+                "single_not_displayed",
+            ),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_dimensions_validation(self, dims_factory, error_pattern, test_id) -> None:
+        """Test dimensions validation rules with various invalid configurations."""
+        with pytest.raises(ValueError, match=error_pattern):
+            Dimensions(dims_factory())
 
     def test_dimension_access(self) -> None:
         """Test accessing dimensions."""
@@ -151,28 +194,41 @@ class TestDimensions:
         with pytest.raises(ValueError, match="not found"):
             dims.get_index("z")
 
-    def test_position_validation(self) -> None:
-        """Test validating positions against dimensions."""
+    def test_position_validation_valid(self) -> None:
+        """Test that valid positions pass validation."""
         dims = Dimensions(
             [Dimension("x", range=(-10, 10)), Dimension("y", range=(-5, 5))]
         )
-
-        # Valid positions
+        # Valid positions - should not raise
         positions = np.array([[0, 0], [5, 2], [-5, -2]])
-        dims.validate_positions(positions)  # Should not raise
+        dims.validate_positions(positions)
 
-        # Wrong shape
-        with pytest.raises(ValueError, match="must be a 2D array"):
-            dims.validate_positions(np.array([1, 2, 3]))
-
-        # Wrong number of dimensions
-        with pytest.raises(ValueError, match="has 3 dimensions"):
-            dims.validate_positions(np.array([[1, 2, 3]]))
-
-        # Out of range
-        positions = np.array([[15, 0]])  # x=15 > 10
-        with pytest.raises(ValueError, match="outside range"):
-            dims.validate_positions(positions)
+    @pytest.mark.parametrize(
+        "positions_factory,error_pattern,test_id",
+        [
+            # Wrong shape (1D instead of 2D)
+            (lambda: np.array([1, 2, 3]), "must be a 2D array", "shape_1d"),
+            (lambda: np.array(5), "must be a 2D array", "shape_scalar"),
+            # Wrong number of dimensions (3 instead of 2)
+            (lambda: np.array([[1, 2, 3]]), "has 3 dimensions", "ndim_mismatch_3"),
+            (lambda: np.array([[1]]), "has 1 dimensions", "ndim_mismatch_1"),
+            # Out of range values
+            (lambda: np.array([[15, 0]]), "outside range", "out_of_range_x_high"),
+            (lambda: np.array([[-15, 0]]), "outside range", "out_of_range_x_low"),
+            (lambda: np.array([[0, 10]]), "outside range", "out_of_range_y_high"),
+            (lambda: np.array([[0, -10]]), "outside range", "out_of_range_y_low"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_position_validation_invalid(
+        self, positions_factory, error_pattern, test_id
+    ) -> None:
+        """Test position validation with various invalid inputs."""
+        dims = Dimensions(
+            [Dimension("x", range=(-10, 10)), Dimension("y", range=(-5, 5))]
+        )
+        with pytest.raises(ValueError, match=error_pattern):
+            dims.validate_positions(positions_factory())
 
     def test_dimensions_serialization(self) -> None:
         """Test serialization of dimension collections."""
@@ -332,19 +388,28 @@ class TestCategoricalDimensions:
         assert dim.is_categorical is False
         assert dim.categories is None
 
-    def test_invalid_categories_rejected(self) -> None:
-        """Test that invalid categories are rejected."""
-        # Empty categories list
-        with pytest.raises(ValueError, match="must have at least 1 element"):
-            Dimension("channel", categories=[], display=False)
-
-        # Duplicate categories
-        with pytest.raises(ValueError, match="duplicate category name"):
-            Dimension("channel", categories=["A", "B", "A"], display=False)
-
-        # Empty string category
-        with pytest.raises(ValueError, match="is empty string"):
-            Dimension("channel", categories=["A", "", "C"], display=False)
+    @pytest.mark.parametrize(
+        "categories,error_pattern,test_id",
+        [
+            # Empty categories list
+            ([], "must have at least 1 element", "empty_list"),
+            # Duplicate categories
+            (["A", "B", "A"], "duplicate category name", "duplicate_ABA"),
+            (["X", "X"], "duplicate category name", "duplicate_XX"),
+            (["foo", "bar", "baz", "foo"], "duplicate category name", "duplicate_last"),
+            # Empty string category
+            (["A", "", "C"], "is empty string", "empty_middle"),
+            (["", "B", "C"], "is empty string", "empty_first"),
+            (["A", "B", ""], "is empty string", "empty_last"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_invalid_categories_rejected(
+        self, categories, error_pattern, test_id
+    ) -> None:
+        """Test that various invalid category configurations are rejected."""
+        with pytest.raises(ValueError, match=error_pattern):
+            Dimension("channel", categories=categories, display=False)
 
     def test_categorical_in_dimensions_collection(self) -> None:
         """Test categorical dimension in a Dimensions collection."""

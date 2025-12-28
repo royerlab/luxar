@@ -237,16 +237,20 @@ describe('GPU Buffer Pool Integration Tests', () => {
 
       // Advance frames
       for (let i = 0; i < 5; i++) {
-        pool.acquirePointsGeometry(`/active${i}`, {
-          positions: new Float32Array(30000),
-          metadata: {
-            totalPoints: 10000,
-            loadedPoints: 10000,
-            bounds: new THREE.Box3(),
-            ndim: 3,
-            usedSpatialIndex: true,
+        pool.acquirePointsGeometry(
+          `/active${i}`,
+          {
+            positions: new Float32Array(30000),
+            metadata: {
+              totalPoints: 10000,
+              loadedPoints: 10000,
+              bounds: new THREE.Box3(),
+              ndim: 3,
+              usedSpatialIndex: true,
+            },
           },
-        }, 10000);
+          10000
+        );
       }
 
       // Evict

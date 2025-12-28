@@ -142,37 +142,47 @@ class TestSceneErrorHandling:
                     scene.add_points("bad", np.zeros((10, 10, 3)))
 
     def test_add_points_dimension_validation(self) -> None:
-        """Test that we can write points of any dimension without validation.
+        """Test that dimension mismatches are caught at write time.
 
-        The new API intentionally does not validate dimensions at write time,
-        allowing flexibility for nD datasets. This test verifies that behavior.
+        The API validates dimensions when adding data to scenes, catching
+        mismatches early with helpful error messages.
         """
+        import warnings
+
         with tempfile.TemporaryDirectory() as tmpdir:
             dims = Dimensions(
                 [Dimension("x", range=(-10, 10)), Dimension("y", range=(-10, 10))]
             )
             with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
-                compiler.create_scene(dimensions=dims)
+                scene = compiler.create_scene(dimensions=dims)
 
-                # 2D points - matches scene dimensions
+                # 2D points - matches scene dimensions: should succeed
                 good_positions = np.random.uniform(-5, 5, (100, 2)).astype(np.float32)
-                compiler.write_points("2d_points", good_positions)
+                scene.add_points("2d_points", good_positions)
 
-                # 3D points - different from scene dimensions (allowed in new API)
+                # 3D points - mismatches scene dimensions: should fail
                 positions_3d = np.random.randn(100, 3).astype(np.float32)
-                compiler.write_points("3d_points", positions_3d)  # Should succeed
+                with pytest.raises(ValueError, match="Dimension mismatch"):
+                    scene.add_points("3d_points", positions_3d)
 
-                # Points outside range (also allowed - no range validation)
-                out_of_range = good_positions.copy()
-                out_of_range[0, 0] = 20  # x > 10
-                compiler.write_points("out_of_range", out_of_range)  # Should succeed
+                # Points outside range - warns but succeeds
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter("always")
+                    out_of_range = good_positions.copy()
+                    out_of_range[0, 0] = 20  # x > 10
+                    scene.add_points("out_of_range", out_of_range)
+                    # Should produce a warning about out-of-range values
+                    range_warnings = [
+                        x for x in w if "outside declared range" in str(x.message)
+                    ]
+                    assert len(range_warnings) >= 1
 
-            # Verify all were written
+            # Verify matching points were written, mismatched was not
             import zarr
 
             store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="r")
             assert "2d_points" in store
-            assert "3d_points" in store
+            assert "3d_points" not in store  # Dimension mismatch prevented writing
             assert "out_of_range" in store
 
     def test_scene_initialization_errors(self) -> None:
@@ -308,34 +318,46 @@ class TestRecoveryStrategies:
             assert "also_valid" in store
             assert "invalid" not in store
 
-    def test_dimension_inference_fallback(self) -> None:
-        """Test that scene dimensions are optional and points of any dimension work."""
+    def test_dimension_validation_enforced(self) -> None:
+        """Test that scene dimensions are validated when adding data.
+
+        When a scene has dimensions defined, data must match those dimensions.
+        Mismatched dimensions raise ValueError with helpful error messages.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path = Path(tmpdir) / "test.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
-                # Create scene without explicit dimensions
+                # Create scene with 3D dimensions
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-                # Add 5D points
-                positions_5d = np.random.randn(100, 5).astype(np.float32)
-                scene.add_points("points_5d", positions_5d)
-
-                # Add 3D points - different dimensions are allowed
+                # Add 3D points - matches scene dimensions: should succeed
                 positions_3d = np.random.randn(50, 3).astype(np.float32)
                 scene.add_points("points_3d", positions_3d)
 
-                # Add 7D points - also allowed
-                positions_7d = np.random.randn(25, 7).astype(np.float32)
-                scene.add_points("points_7d", positions_7d)
+                # Add 5D points - mismatches scene dimensions: should fail
+                positions_5d = np.random.randn(100, 5).astype(np.float32)
+                with pytest.raises(ValueError, match="Dimension mismatch"):
+                    scene.add_points("points_5d", positions_5d)
 
-            # Verify all points were written with their respective dimensions
+                # Add 7D points - also mismatches: should fail
+                positions_7d = np.random.randn(25, 7).astype(np.float32)
+                with pytest.raises(ValueError, match="Dimension mismatch"):
+                    scene.add_points("points_7d", positions_7d)
+
+                # Add 2D points - also mismatches: should fail
+                positions_2d = np.random.randn(30, 2).astype(np.float32)
+                with pytest.raises(ValueError, match="Dimension mismatch"):
+                    scene.add_points("points_2d", positions_2d)
+
+            # Verify only matching points were written
             import zarr
 
             store = zarr.open_group(zarr_path, mode="r")
-            assert store["points_5d/positions"].shape == (100, 5)
             assert store["points_3d/positions"].shape == (50, 3)
-            assert store["points_7d/positions"].shape == (25, 7)
+            assert "points_5d" not in store
+            assert "points_7d" not in store
+            assert "points_2d" not in store
 
 
 if __name__ == "__main__":

@@ -299,6 +299,8 @@ export const config: AppConfig = {
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
       // Adaptive resolution
       adaptiveDPREnabled: true, // Adaptive resolution enabled by default
+      // Cinematic mode checkbox (multi-effect toggle)
+      cinematicMode: false, // Cinematic mode disabled by default
     },
   },
 

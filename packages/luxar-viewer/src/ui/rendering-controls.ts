@@ -366,6 +366,9 @@ export class RenderingControls {
       controller.updateDisplay();
     });
 
+    // Update cinematic mode checkbox based on reset effects state
+    this.updateCinematicModeCheckbox();
+
     // Update folder visibility based on control type
     this.updateNavigationControls(this.settings.controlType);
 
@@ -572,6 +575,29 @@ export class RenderingControls {
 
     // Store controller references
     this.controllers.adaptiveDPREnabled = adaptiveToggle;
+
+    // Cinematic Mode checkbox (added before reset button)
+    const cinematicModeControl = this.gui
+      .add(this.settings, 'cinematicMode')
+      .name('🎬 Cinematic Mode')
+      .onChange(() => {
+        this.toggleCinematicMode();
+        // Update the checkbox to reflect the actual state after toggle
+        this.updateCinematicModeCheckbox();
+      });
+
+    cinematicModeControl.domElement.setAttribute(
+      'title',
+      'Cinematic Mode: Film-like visual preset (C key)\n' +
+        '• Enables detector noise (film grain)\n' +
+        '• Enables vignette (darkened corners)\n' +
+        '• Enables chromatic lens distortion\n' +
+        '• Switches to 35mm wide-angle FOV\n' +
+        '• Press C to toggle quickly'
+    );
+
+    // Store controller reference for programmatic updates
+    this.controllers.cinematicMode = cinematicModeControl;
 
     // Reset to Defaults button at root level (added last to appear at bottom)
     const resetButton = {
@@ -784,6 +810,9 @@ export class RenderingControls {
           this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
         }
 
+        // Update cinematic mode checkbox based on loaded effects state
+        this.updateCinematicModeCheckbox();
+
         log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
       } else {
         log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
@@ -940,6 +969,9 @@ export class RenderingControls {
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
     });
+
+    // Update cinematic mode checkbox based on current effects state
+    this.updateCinematicModeCheckbox();
 
     // Update folder visibility based on current control type
     this.updateNavigationControls(currentControlType);
@@ -1201,6 +1233,28 @@ export class RenderingControls {
   }
 
   /**
+   * Update the cinematic mode checkbox to reflect the current state
+   * Called after toggleCinematicMode or when 'C' key is pressed
+   */
+  private updateCinematicModeCheckbox(): void {
+    // Determine cinematic mode state based on majority of effects
+    const cinematicEffects = [
+      this.settings.detectorNoiseEnabled,
+      this.settings.vignetteEnabled,
+      this.settings.chromaticLensDistortionEnabled,
+    ];
+
+    const enabledCount = cinematicEffects.filter(Boolean).length;
+    const isEnabled = enabledCount >= cinematicEffects.length / 2;
+
+    // Update the setting and GUI controller
+    this.settings.cinematicMode = isEnabled;
+    if (this.controllers.cinematicMode) {
+      this.controllers.cinematicMode.updateDisplay();
+    }
+  }
+
+  /**
    * Toggle cinematic mode (film-like visual preset).
    *
    * Triggered by C key. Uses intelligent majority-vote algorithm to determine
@@ -1337,6 +1391,9 @@ export class RenderingControls {
     if (this.settings.detectorNoiseEnabled) {
       this.animationController?.startAnimation();
     }
+
+    // Update cinematic mode checkbox to reflect the new state
+    this.updateCinematicModeCheckbox();
 
     // Log the action
     const modeText = shouldEnableAll ? 'enabled' : 'disabled';

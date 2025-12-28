@@ -273,8 +273,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const vertexBuffer = this._accumulator['vertexBuffer'] as Float32Array;
       const segmentBuffer = this._accumulator['segmentBuffer'] as Uint32Array;
       const widthBuffer = this._accumulator['widthBuffer'] as Float32Array;
-      const colorBuffer = this.arrays.colors ? (this._accumulator['colorBuffer'] as Float32Array) : null;
-      const sharpnessBuffer = this.arrays.sharpness ? (this._accumulator['sharpnessBuffer'] as Float32Array) : null;
+      const colorBuffer = this.arrays.colors
+        ? (this._accumulator['colorBuffer'] as Float32Array)
+        : null;
+      const sharpnessBuffer = this.arrays.sharpness
+        ? (this._accumulator['sharpnessBuffer'] as Float32Array)
+        : null;
 
       // Load directly into accumulator buffers (ZERO intermediate allocations!)
       await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer);
@@ -476,16 +480,25 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     if (!this.arrays.segments) {
       throw new Error('Segments array not initialized');
     }
+    // Capture reference for use in closure (helps TypeScript narrowing)
+    const segmentsArray = this.arrays.segments;
 
     // Calculate total segments to load
     const totalSegments = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const output = new Uint32Array(totalSegments * 2);
 
+    // PARALLEL FETCH: Load all segment chunks simultaneously (I/O parallelism)
+    const chunkDataPromises = ranges.map((range) => {
+      const sliceSpec = [slice(range.start, range.end), slice(null)] as zarr.Slice[];
+      return get(segmentsArray, sliceSpec);
+    });
+
+    const chunks = await Promise.all(chunkDataPromises);
+
+    // SEQUENTIAL WRITE: Process chunks in order (maintains correct destOffset)
     let destOffset = 0;
 
-    for (const range of ranges) {
-      const sliceSpec = [slice(range.start, range.end), slice(null)] as zarr.Slice[];
-      const data = await get(this.arrays.segments, sliceSpec);
+    for (const data of chunks) {
       // Data can be typed array or ArrayBuffer-like, handle both
       const segmentData =
         data.data instanceof Uint32Array
@@ -570,19 +583,23 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Quantized range loading: ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)} mode, loading ${totalVertices} values)`
+        `Lines: Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalVertices} values)`
       );
 
-      // Load only the needed ranges of quantized data (NOT the full array!)
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all quantized chunks simultaneously
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const chunkData = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL DECODE: Process in order
+      for (const chunkData of chunks) {
         const quantizedData = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-
         const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
 
         output.set(dequantized, destOffset);
@@ -599,19 +616,23 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Lines: LUT range loading: ${arrayName} (loading ${totalVertices} indices, decoding to ${totalElements} elements)`
+        `Lines: LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalVertices} indices → ${totalElements} elements)`
       );
 
-      // Load only the needed ranges of indices (NOT the full array!)
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all index chunks simultaneously
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const chunkData = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL DECODE: Process in order
+      for (const chunkData of chunks) {
         const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
-
         const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
 
         output.set(decoded, destOffset);
@@ -647,13 +668,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           );
         }
 
-        for (const range of ranges) {
+        // PARALLEL FETCH: Load all quantized chunks from target simultaneously
+        const chunkPromises = ranges.map((range) => {
           const sliceSpec: zarr.Slice[] =
             targetArray.shape.length === 2
               ? [slice(range.start, range.end), slice(null)]
               : [slice(range.start, range.end)];
+          return get(targetArray, sliceSpec);
+        });
 
-          const quantizedData = await get(targetArray, sliceSpec);
+        const chunks = await Promise.all(chunkPromises);
+
+        // SEQUENTIAL DECODE
+        for (const quantizedData of chunks) {
           const dequantized = this.decoder.dequantizeRange(
             quantizedData.data as Uint8Array | Uint16Array,
             quantMeta
@@ -674,13 +701,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           throw new Error(`Lines: LUT metadata missing for array_ref target: ${targetPath}`);
         }
 
-        for (const range of ranges) {
+        // PARALLEL FETCH: Load all LUT index chunks from target simultaneously
+        const chunkPromises = ranges.map((range) => {
           const sliceSpec: zarr.Slice[] =
             targetArray.shape.length === 2
               ? [slice(range.start, range.end), slice(null)]
               : [slice(range.start, range.end)];
+          return get(targetArray, sliceSpec);
+        });
 
-          const chunkData = await get(targetArray, sliceSpec);
+        const chunks = await Promise.all(chunkPromises);
+
+        // SEQUENTIAL DECODE
+        for (const chunkData of chunks) {
           const decoded = this.decoder.decodeLUTIndices(
             chunkData.data as Float32Array | Uint8Array | Uint16Array,
             lutMetadata

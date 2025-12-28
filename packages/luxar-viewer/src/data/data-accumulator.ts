@@ -103,7 +103,7 @@ interface PointsAccumulatorTypes {
  */
 export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   // Persistent buffers (typed based on data)
-  private positionBuffer: Float32Array;  // Always Float32
+  private positionBuffer: Float32Array; // Always Float32
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
   private radiiBuffer: Float32Array | Uint8Array;
   private sharpnessBuffer: Float32Array | Uint8Array;
@@ -266,9 +266,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
    */
   getData(count: number): PointsData {
     if (count > this.capacity) {
-      throw new Error(
-        `Cannot get ${count} points from accumulator with capacity ${this.capacity}`
-      );
+      throw new Error(`Cannot get ${count} points from accumulator with capacity ${this.capacity}`);
     }
 
     // Compute bounds from loaded positions
@@ -286,7 +284,9 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
       positions: this.positionBuffer.subarray(0, count * 3) as PositionArray,
       colors: this.hasColors ? (this.colorBuffer.subarray(0, count * 3) as ColorArray) : undefined,
       radii: this.hasRadii ? (this.radiiBuffer.subarray(0, count) as ScalarArray) : undefined,
-      sharpness: this.hasSharpness ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray) : undefined,
+      sharpness: this.hasSharpness
+        ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
+        : undefined,
       metadata: {
         totalPoints: this.totalPoints,
         loadedPoints: count,
@@ -295,8 +295,12 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
         usedSpatialIndex: this.usedSpatialIndex,
         dtypes: {
           positions: 'float32',
-          colors: this.types?.color === 'Uint8Array' ? 'uint8' :
-            this.types?.color === 'Uint16Array' ? 'uint16' : 'float32',
+          colors:
+            this.types?.color === 'Uint8Array'
+              ? 'uint8'
+              : this.types?.color === 'Uint16Array'
+                ? 'uint16'
+                : 'float32',
           radii: this.types?.radius === 'Uint8Array' ? 'uint8' : 'float32',
           sharpness: this.types?.sharpness === 'Uint8Array' ? 'uint8' : 'float32',
         },
@@ -312,8 +316,12 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
 
     const types: PointsAccumulatorTypes = {
       position: 'Float32Array',
-      color: data.colors instanceof Uint8Array ? 'Uint8Array' :
-        data.colors instanceof Uint16Array ? 'Uint16Array' : 'Float32Array',
+      color:
+        data.colors instanceof Uint8Array
+          ? 'Uint8Array'
+          : data.colors instanceof Uint16Array
+            ? 'Uint16Array'
+            : 'Float32Array',
       radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
       sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
     };
@@ -423,8 +431,7 @@ export class PointsDataAccumulator implements DataAccumulator<PointsData> {
   }): void {
     if (metadata.ndim !== undefined) this.ndim = metadata.ndim;
     if (metadata.totalPoints !== undefined) this.totalPoints = metadata.totalPoints;
-    if (metadata.usedSpatialIndex !== undefined)
-      this.usedSpatialIndex = metadata.usedSpatialIndex;
+    if (metadata.usedSpatialIndex !== undefined) this.usedSpatialIndex = metadata.usedSpatialIndex;
     // Don't update bounds via updateMetadata - getData() computes it from positions
     // This avoids potential corruption from external bounds objects
   }
