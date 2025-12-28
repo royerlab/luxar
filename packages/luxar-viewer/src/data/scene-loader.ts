@@ -325,72 +325,91 @@ export class SceneLoader {
     try {
       // Update points loaders
       const pointsUpdates = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
-        const updateFn = async (session: any) => {
-      try {
-        const points = await loader.updateView(this.viewState);
-        if (points) {
-          this.updatePointsGeometry(path, points);
-        }
-        this.failedLoaders.delete(path);
-      } catch (error) {
-        const errorInfo = this.failedLoaders.get(path);
-        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-        this.failedLoaders.set(path, {
-          error: error as Error,
-          timestamp: Date.now(),
-          retryCount,
-        });
-        log.error(
-          Modules.SCENE_LOADER,
-          `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-        );
-      }
-    });
-
-    // Update lines loaders
-    const linesUpdates = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
-      try {
-        // Get mesh to check extend_to_all attribute
-        const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-        const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-        const extendDims: string[] = attrs?.extend_to_all || [];
-
-        // Check if we can skip this update (extend_to_all optimization)
-        if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-          const dims = this.viewState.dimensions.metadata;
-          const nonDisplayedDims = dims
-            .filter(
-              (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-            )
-            .map((d: { name?: string }) => d.name)
-            .filter((name: string | undefined): name is string => !!name);
-
-          const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-            extendDims.includes(dimName)
-          );
-
-          if (isFullyExtended) {
-            // All non-displayed dimensions are extended - geometry is unchanged
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping update for ${path} - all non-displayed dims are extended`
-            );
-            return;
+        try {
+          if (this.profiler) {
+            await this.profiler.timeTopLevel(`Points (${path})`, async (session) => {
+              const points = await loader.updateView(this.viewState);
+              if (points) {
+                this.updatePointsGeometry(path, points);
+                session.setMetadata({ points: points.metadata.loadedPoints });
+              }
+            });
+          } else {
+            const points = await loader.updateView(this.viewState);
+            if (points) {
+              this.updatePointsGeometry(path, points);
+            }
           }
+          this.failedLoaders.delete(path);
+        } catch (error) {
+          const errorInfo = this.failedLoaders.get(path);
+          const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+          this.failedLoaders.set(path, {
+            error: error as Error,
+            timestamp: Date.now(),
+            retryCount,
+          });
+          log.error(
+            Modules.SCENE_LOADER,
+            `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+          );
         }
+      });
 
-        const linesViewState = {
-          displayDims: this.viewState.displayDims,
-          slicePosition: this.viewState.slicePosition,
-          tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions?.metadata,
-        };
+      // Update lines loaders
+      const linesUpdates = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
+        try {
+          const updateFn = async (session: any) => {
+            // Get mesh to check extend_to_all attribute
+            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+            const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+            const extendDims: string[] = attrs?.extend_to_all || [];
 
-        const data = await loader.updateView(linesViewState);
-        if (data) {
-          this.updateLinesGeometry(path, data, linesViewState);
-        }
-        this.failedLoaders.delete(path);
+            // Check if we can skip this update (extend_to_all optimization)
+            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+              const dims = this.viewState.dimensions.metadata;
+              const nonDisplayedDims = dims
+                .filter(
+                  (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
+                )
+                .map((d: { name?: string }) => d.name)
+                .filter((name: string | undefined): name is string => !!name);
+
+              const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+                extendDims.includes(dimName)
+              );
+
+              if (isFullyExtended) {
+                // All non-displayed dimensions are extended - geometry is unchanged
+                log.info(
+                  Modules.SCENE_LOADER,
+                  `Skipping update for ${path} - all non-displayed dims are extended`
+                );
+                session.markSkipped('extend_to_all');
+                return;
+              }
+            }
+
+            const linesViewState = {
+              displayDims: this.viewState.displayDims,
+              slicePosition: this.viewState.slicePosition,
+              tolerance: this.viewState.tolerance,
+              dimensions: this.viewState.dimensions?.metadata,
+            };
+
+            const data = await loader.updateView(linesViewState);
+            if (data) {
+              this.updateLinesGeometry(path, data, linesViewState);
+              session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
+            }
+          };
+
+          if (this.profiler) {
+            await this.profiler.timeTopLevel(`Lines (${path})`, updateFn);
+          } else {
+            await updateFn({ markSkipped: () => {}, setMetadata: () => {} });
+          }
+          this.failedLoaders.delete(path);
       } catch (error) {
         const errorInfo = this.failedLoaders.get(path);
         const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -406,50 +425,60 @@ export class SceneLoader {
       }
     });
 
-    // Update gsplat loaders
-    const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(async ([path, loader]) => {
-      try {
-        // Get mesh to check extend_to_all attribute
-        const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-        const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-        const extendDims: string[] = attrs?.extend_to_all || [];
+      // Update gsplat loaders
+      const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(async ([path, loader]) => {
+        try {
+          const updateFn = async (session: any) => {
+            // Get mesh to check extend_to_all attribute
+            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+            const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+            const extendDims: string[] = attrs?.extend_to_all || [];
 
-        // Check if we can skip this update (extend_to_all optimization)
-        if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-          const dims = this.viewState.dimensions.metadata;
-          const nonDisplayedDims = dims
-            .filter(
-              (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-            )
-            .map((d: { name?: string }) => d.name)
-            .filter((name: string | undefined): name is string => !!name);
+            // Check if we can skip this update (extend_to_all optimization)
+            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+              const dims = this.viewState.dimensions.metadata;
+              const nonDisplayedDims = dims
+                .filter(
+                  (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
+                )
+                .map((d: { name?: string }) => d.name)
+                .filter((name: string | undefined): name is string => !!name);
 
-          const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-            extendDims.includes(dimName)
-          );
+              const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+                extendDims.includes(dimName)
+              );
 
-          if (isFullyExtended) {
-            // All non-displayed dimensions are extended - geometry is unchanged
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-            );
-            return;
+              if (isFullyExtended) {
+                // All non-displayed dimensions are extended - geometry is unchanged
+                log.info(
+                  Modules.SCENE_LOADER,
+                  `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+                );
+                session.markSkipped('extend_to_all');
+                return;
+              }
+            }
+
+            const gsplatsViewState: GSplatsViewState = {
+              displayDims: this.viewState.displayDims,
+              slicePosition: this.viewState.slicePosition,
+              tolerance: this.viewState.tolerance,
+              dimensions: this.viewState.dimensions?.metadata,
+            };
+
+            const data = await loader.updateView(gsplatsViewState);
+            if (data) {
+              this.updateGSplatsGeometry(path, data, gsplatsViewState);
+              session.setMetadata({ splats: data.splatCount });
+            }
+          };
+
+          if (this.profiler) {
+            await this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
+          } else {
+            await updateFn({ markSkipped: () => {}, setMetadata: () => {} });
           }
-        }
-
-        const gsplatsViewState: GSplatsViewState = {
-          displayDims: this.viewState.displayDims,
-          slicePosition: this.viewState.slicePosition,
-          tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions?.metadata,
-        };
-
-        const data = await loader.updateView(gsplatsViewState);
-        if (data) {
-          this.updateGSplatsGeometry(path, data, gsplatsViewState);
-        }
-        this.failedLoaders.delete(path);
+          this.failedLoaders.delete(path);
       } catch (error) {
         const errorInfo = this.failedLoaders.get(path);
         const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -465,22 +494,26 @@ export class SceneLoader {
       }
     });
 
-    await Promise.all([...pointsUpdates, ...linesUpdates, ...gsplatsUpdates]);
+      await Promise.all([...pointsUpdates, ...linesUpdates, ...gsplatsUpdates]);
 
-    // Update monitor with total visible segments across all lines nodes
-    this.updateVisibleCountsInMonitor();
+      // Update monitor with total visible segments across all lines nodes
+      this.updateVisibleCountsInMonitor();
 
-    // Warn user if any loaders failed
-    if (this.failedLoaders.size > 0) {
-      const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
-      log.warning(
-        Modules.SCENE_LOADER,
-        `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
-      );
-      console.warn(
-        `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
-          'Check browser console for details. Data may be incomplete.'
-      );
+      // Warn user if any loaders failed
+      if (this.failedLoaders.size > 0) {
+        const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
+        log.warning(
+          Modules.SCENE_LOADER,
+          `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
+        );
+        console.warn(
+          `[SceneLoader] Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
+            'Check browser console for details. Data may be incomplete.'
+        );
+      }
+    } finally {
+      // End profiling cycle (always, even if errors)
+      this.profiler?.endUpdate();
     }
   }
 
