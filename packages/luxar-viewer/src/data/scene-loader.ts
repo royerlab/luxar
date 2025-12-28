@@ -9,7 +9,11 @@ import * as zarr from 'zarrita';
 import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
-import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
+import {
+  LinesSpatialIndexLoader,
+  buildInstanceBuffers,
+  buildInstanceBuffersWASM,
+} from './lines-spatial-index-loader';
 import { computeLinesTolerance } from './lines-chunk-spatial-index';
 import { DataLoader, ViewState, SceneNode, LoaderConfig, PointsData } from './data-loader-types';
 import type { SceneGraphNode } from '../ui/data-monitor-types';
@@ -410,89 +414,91 @@ export class SceneLoader {
             await updateFn({ markSkipped: () => {}, setMetadata: () => {} });
           }
           this.failedLoaders.delete(path);
-      } catch (error) {
-        const errorInfo = this.failedLoaders.get(path);
-        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-        this.failedLoaders.set(path, {
-          error: error as Error,
-          timestamp: Date.now(),
-          retryCount,
-        });
-        log.error(
-          Modules.SCENE_LOADER,
-          `Failed to update lines ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-        );
-      }
-    });
+        } catch (error) {
+          const errorInfo = this.failedLoaders.get(path);
+          const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+          this.failedLoaders.set(path, {
+            error: error as Error,
+            timestamp: Date.now(),
+            retryCount,
+          });
+          log.error(
+            Modules.SCENE_LOADER,
+            `Failed to update lines ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+          );
+        }
+      });
 
       // Update gsplat loaders
-      const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(async ([path, loader]) => {
-        try {
-          const updateFn = async (session: any) => {
-            // Get mesh to check extend_to_all attribute
-            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-            const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-            const extendDims: string[] = attrs?.extend_to_all || [];
+      const gsplatsUpdates = Array.from(this.gsplatLoaders.entries()).map(
+        async ([path, loader]) => {
+          try {
+            const updateFn = async (session: any) => {
+              // Get mesh to check extend_to_all attribute
+              const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+              const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+              const extendDims: string[] = attrs?.extend_to_all || [];
 
-            // Check if we can skip this update (extend_to_all optimization)
-            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-              const dims = this.viewState.dimensions.metadata;
-              const nonDisplayedDims = dims
-                .filter(
-                  (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-                )
-                .map((d: { name?: string }) => d.name)
-                .filter((name: string | undefined): name is string => !!name);
+              // Check if we can skip this update (extend_to_all optimization)
+              if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+                const dims = this.viewState.dimensions.metadata;
+                const nonDisplayedDims = dims
+                  .filter(
+                    (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
+                  )
+                  .map((d: { name?: string }) => d.name)
+                  .filter((name: string | undefined): name is string => !!name);
 
-              const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-                extendDims.includes(dimName)
-              );
-
-              if (isFullyExtended) {
-                // All non-displayed dimensions are extended - geometry is unchanged
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+                const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+                  extendDims.includes(dimName)
                 );
-                session.markSkipped('extend_to_all');
-                return;
-              }
-            }
 
-            const gsplatsViewState: GSplatsViewState = {
-              displayDims: this.viewState.displayDims,
-              slicePosition: this.viewState.slicePosition,
-              tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions?.metadata,
+                if (isFullyExtended) {
+                  // All non-displayed dimensions are extended - geometry is unchanged
+                  log.info(
+                    Modules.SCENE_LOADER,
+                    `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+                  );
+                  session.markSkipped('extend_to_all');
+                  return;
+                }
+              }
+
+              const gsplatsViewState: GSplatsViewState = {
+                displayDims: this.viewState.displayDims,
+                slicePosition: this.viewState.slicePosition,
+                tolerance: this.viewState.tolerance,
+                dimensions: this.viewState.dimensions?.metadata,
+              };
+
+              const data = await loader.updateView(gsplatsViewState);
+              if (data) {
+                this.updateGSplatsGeometry(path, data, gsplatsViewState);
+                session.setMetadata({ splats: data.splatCount });
+              }
             };
 
-            const data = await loader.updateView(gsplatsViewState);
-            if (data) {
-              this.updateGSplatsGeometry(path, data, gsplatsViewState);
-              session.setMetadata({ splats: data.splatCount });
+            if (this.profiler) {
+              await this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
+            } else {
+              await updateFn({ markSkipped: () => {}, setMetadata: () => {} });
             }
-          };
-
-          if (this.profiler) {
-            await this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
-          } else {
-            await updateFn({ markSkipped: () => {}, setMetadata: () => {} });
+            this.failedLoaders.delete(path);
+          } catch (error) {
+            const errorInfo = this.failedLoaders.get(path);
+            const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+            this.failedLoaders.set(path, {
+              error: error as Error,
+              timestamp: Date.now(),
+              retryCount,
+            });
+            log.error(
+              Modules.SCENE_LOADER,
+              `Failed to update gsplats ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+            );
           }
-          this.failedLoaders.delete(path);
-      } catch (error) {
-        const errorInfo = this.failedLoaders.get(path);
-        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-        this.failedLoaders.set(path, {
-          error: error as Error,
-          timestamp: Date.now(),
-          retryCount,
-        });
-        log.error(
-          Modules.SCENE_LOADER,
-          `Failed to update gsplats ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-        );
-      }
-    });
+        }
+      );
 
       await Promise.all([...pointsUpdates, ...linesUpdates, ...gsplatsUpdates]);
 
@@ -580,12 +586,11 @@ export class SceneLoader {
       }
     }
 
-    const processed = buildInstanceBuffers(
-      data,
-      viewState.slicePosition,
-      tolerance,
-      viewState.displayDims
-    );
+    // Use WASM-accelerated processing if enabled (20-25x speedup on large datasets)
+    const useWasm = appConfig.dataLoading.performance.useWASM;
+    const processed = useWasm
+      ? buildInstanceBuffersWASM(data, viewState.slicePosition, tolerance, viewState.displayDims)
+      : buildInstanceBuffers(data, viewState.slicePosition, tolerance, viewState.displayDims);
 
     // Phase 4: Use GPU buffer pool if enabled
     if (this._gpuBufferPool) {
@@ -934,8 +939,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -952,12 +957,21 @@ export class SceneLoader {
         }
       }
 
-      const processed = buildInstanceBuffers(
-        data,
-        linesViewState.slicePosition,
-        tolerance,
-        linesViewState.displayDims
-      );
+      // Use WASM-accelerated processing if enabled (20-25x speedup on large datasets)
+      const useWasm = appConfig.dataLoading.performance.useWASM;
+      const processed = useWasm
+        ? buildInstanceBuffersWASM(
+          data,
+          linesViewState.slicePosition,
+          tolerance,
+          linesViewState.displayDims
+        )
+        : buildInstanceBuffers(
+          data,
+          linesViewState.slicePosition,
+          tolerance,
+          linesViewState.displayDims
+        );
 
       // Create material
       const material = materialManager.getLineMaterial({
