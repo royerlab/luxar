@@ -763,16 +763,22 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // Direct arrays: load ranges directly from zarr
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Lines: Direct array loading: ${arrayName} (${totalVertices} vertices)`
+        `Lines: Direct array loading: ${arrayName}, ${ranges.length} ranges (${totalVertices} vertices)`
       );
 
-      for (const range of ranges) {
+      // PARALLEL FETCH: Load all chunks simultaneously
+      const chunkPromises = ranges.map((range) => {
         const sliceSpec: zarr.Slice[] =
           shape.length === 2
             ? [slice(range.start, range.end), slice(null)]
             : [slice(range.start, range.end)];
+        return get(array, sliceSpec);
+      });
 
-        const data = await get(array, sliceSpec);
+      const chunks = await Promise.all(chunkPromises);
+
+      // SEQUENTIAL WRITE
+      for (const data of chunks) {
         const floatData =
           data.data instanceof Float32Array
             ? data.data
