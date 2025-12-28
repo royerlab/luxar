@@ -221,21 +221,23 @@ config.dataLoading.performance.useWebWorkers = false;
 Workers are integrated in these loader methods:
 
 ### `point-spatial-index-loader.ts`
-- `queryVisiblePointRanges()` - line ~623 (spatial query via worker)
-- `getWorkerPool().getWorker()` - line ~727 (broadcasts, quantized, LUT decoding)
-- `projectTo3DUsingWorker()` - line ~1440 (nD to 3D projection)
+- `queryVisiblePointRanges()` - line 723
+- `loadBroadcastedRanges()` - line 845
+- `loadQuantizedRanges()` - line 925
+- `loadLUTRanges()` - line 1017
+- `projectTo3DUsingWorker()` - line 1705
 
 ### `lines-spatial-index-loader.ts`
-- `queryVisibleSegmentRanges()` - line ~474 (spatial query)
-- `getWorkerPool().getWorker()` - line ~534 (spatial query dispatch)
+- `queryVisibleRanges()` - line 528
+- `loadBroadcastedRanges()` - line 670
+- `loadQuantizedRanges()` - line 727
+- `loadLUTRanges()` - line 796
 
 ### `gsplats-spatial-index-loader.ts`
-- `queryVisibleSplatRanges()` - line ~330 (spatial query)
-- `getWorkerPool().getWorker()` - line ~377 (spatial query dispatch)
-
-### `loaders/range-loader.ts` (unified encoding dispatch)
-- All loaders now use RangeLoader for broadcast/quantized/LUT decoding
-- Worker calls at lines ~170, ~235, ~310
+- `queryVisibleRanges()` - line 372
+- `loadBroadcastedRanges()` - line 482
+- `loadQuantizedRanges()` - line 540
+- `loadLUTRanges()` - line 610
 
 ---
 
@@ -248,4 +250,4 @@ Workers are integrated in these loader methods:
 - **2025-12-27**: Added TransferableAccumulator pattern and unified loaders module
   - New `src/data/loaders/` module with shared components
   - `projectPointsTo3D()` now supports `outputBuffers` for zero-allocation
-  - 61 unit tests for loaders infrastructure (3 test files)
+  - 51 new unit tests for loaders infrastructure

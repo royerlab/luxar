@@ -18,6 +18,9 @@
 
 use wasm_bindgen::prelude::*;
 
+/// Maximum dimensions supported (matches other modules)
+const MAX_DIMS: usize = 16;
+
 /// Clip a single segment to the nD slice and return interpolation parameters.
 ///
 /// Returns (visible, t1, t2) where:
@@ -40,11 +43,16 @@ pub fn clip_segment_single(
     let mut t1: f32 = 0.0;
     let mut t2: f32 = 1.0;
 
-    // Convert display dims to a set for quick lookup
-    let display_set: std::collections::HashSet<u32> = display_dims.iter().copied().collect();
+    // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
+    let mut is_display_dim = [false; MAX_DIMS];
+    for &d in display_dims {
+        if (d as usize) < MAX_DIMS {
+            is_display_dim[d as usize] = true;
+        }
+    }
 
     for dim in 0..ndim {
-        if display_set.contains(&(dim as u32)) {
+        if is_display_dim[dim] {
             continue; // Skip displayed dimensions
         }
 
@@ -78,8 +86,10 @@ pub fn clip_segment_single(
             continue; // Parallel to slice
         }
 
-        let t_min = (slice_min - v1) / dv;
-        let t_max = (slice_max - v1) / dv;
+        // OPTIMIZATION: Avoid two divisions - use reciprocal multiplication
+        let inv_dv = 1.0 / dv;
+        let t_min = (slice_min - v1) * inv_dv;
+        let t_max = (slice_max - v1) * inv_dv;
 
         // Clip t1 (entry) and t2 (exit)
         if dv > 0.0 {
@@ -129,7 +139,13 @@ pub fn clip_segments_batch(
     output_t1: &mut [f32],
     output_t2: &mut [f32],
 ) -> u32 {
-    let display_set: std::collections::HashSet<u32> = display_dims.iter().copied().collect();
+    // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
+    let mut is_display_dim = [false; MAX_DIMS];
+    for &d in display_dims {
+        if (d as usize) < MAX_DIMS {
+            is_display_dim[d as usize] = true;
+        }
+    }
     let mut visible_count: u32 = 0;
 
     for seg_idx in 0..num_segments {
@@ -144,7 +160,7 @@ pub fn clip_segments_batch(
         let mut visible = true;
 
         for dim in 0..ndim {
-            if display_set.contains(&(dim as u32)) {
+            if is_display_dim[dim] {
                 continue;
             }
 
@@ -177,8 +193,10 @@ pub fn clip_segments_batch(
                 continue;
             }
 
-            let t_min = (slice_min - v1_val) / dv;
-            let t_max = (slice_max - v1_val) / dv;
+            // OPTIMIZATION: Avoid two divisions - use reciprocal multiplication
+            let inv_dv = 1.0 / dv;
+            let t_min = (slice_min - v1_val) * inv_dv;
+            let t_max = (slice_max - v1_val) * inv_dv;
 
             if dv > 0.0 {
                 t1 = t1.max(t_min);
@@ -392,13 +410,28 @@ pub fn interpolate_colors_batch(
         let t1 = t1_params[seg_idx];
         let t2 = t2_params[seg_idx];
 
-        for c in 0..3 {
-            let c0 = colors[v0 * 3 + c];
-            let c1 = colors[v1 * 3 + c];
+        // OPTIMIZATION: Unrolled loop for RGB (better cache performance)
+        let base0 = v0 * 3;
+        let base1 = v1 * 3;
+        let out_base = out_idx * 3;
 
-            output_start[out_idx * 3 + c] = c0 + t1 * (c1 - c0);
-            output_end[out_idx * 3 + c] = c0 + t2 * (c1 - c0);
-        }
+        // Red
+        let c0 = colors[base0];
+        let c1 = colors[base1];
+        output_start[out_base] = c0 + t1 * (c1 - c0);
+        output_end[out_base] = c0 + t2 * (c1 - c0);
+
+        // Green
+        let c0 = colors[base0 + 1];
+        let c1 = colors[base1 + 1];
+        output_start[out_base + 1] = c0 + t1 * (c1 - c0);
+        output_end[out_base + 1] = c0 + t2 * (c1 - c0);
+
+        // Blue
+        let c0 = colors[base0 + 2];
+        let c1 = colors[base1 + 2];
+        output_start[out_base + 2] = c0 + t1 * (c1 - c0);
+        output_end[out_base + 2] = c0 + t2 * (c1 - c0);
 
         out_idx += 1;
     }
