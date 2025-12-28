@@ -60,10 +60,18 @@ test.describe('Test Fixture Rendering', () => {
         return null;
       }
 
-      const sharpnessAttr = points.geometry.attributes.sharpness;
-      const array = Array.from(sharpnessAttr.array) as number[];
+      const geometry = points.geometry;
+      const sharpnessAttr = geometry.attributes.sharpness;
+      // Use drawRange to get actual point count (buffer may be larger due to reuse)
+      const drawRangeCount = geometry.drawRange?.count;
+      const actualCount =
+        drawRangeCount !== undefined && drawRangeCount !== Infinity
+          ? Math.min(drawRangeCount, sharpnessAttr.count)
+          : sharpnessAttr.count;
+      // Only sample values within the draw range
+      const array = Array.from(sharpnessAttr.array.subarray(0, actualCount)) as number[];
       return {
-        count: sharpnessAttr.count,
+        count: actualCount,
         min: Math.min(...array),
         max: Math.max(...array),
         isNormalized: sharpnessAttr.normalized,
@@ -119,8 +127,16 @@ test.describe('Test Fixture Rendering', () => {
         return null;
       }
 
-      const colorAttr = points.geometry.attributes.color;
-      const array = Array.from(colorAttr.array) as number[];
+      const geometry = points.geometry;
+      const colorAttr = geometry.attributes.color;
+      // Use drawRange to get actual point count (buffer may be larger due to reuse)
+      const drawRangeCount = geometry.drawRange?.count;
+      const actualCount =
+        drawRangeCount !== undefined && drawRangeCount !== Infinity
+          ? Math.min(drawRangeCount, colorAttr.count)
+          : colorAttr.count;
+      // Only sample color values within the draw range (3 components per point)
+      const array = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
 
       // Extract red channel values (every 3rd value starting at 0)
       const redChannels: number[] = [];
@@ -129,7 +145,7 @@ test.describe('Test Fixture Rendering', () => {
       }
 
       return {
-        count: colorAttr.count,
+        count: actualCount,
         arrayType: colorAttr.array.constructor.name,
         redMin: Math.min(...redChannels),
         redMax: Math.max(...redChannels),
@@ -307,7 +323,16 @@ test.describe('Test Fixture Rendering', () => {
         return null;
       }
 
-      const colors = points.geometry.attributes.color.array;
+      const geometry = points.geometry;
+      const colorAttr = geometry.attributes.color;
+      // Use drawRange to get actual point count (buffer may be larger due to reuse)
+      const drawRangeCount = geometry.drawRange?.count;
+      const actualCount =
+        drawRangeCount !== undefined && drawRangeCount !== Infinity
+          ? Math.min(drawRangeCount, colorAttr.count)
+          : colorAttr.count;
+      // Only sample color values within the draw range
+      const colors = colorAttr.array.subarray(0, actualCount * 3);
       const firstColor = [colors[0], colors[1], colors[2]];
 
       // Check if all colors match the first color
@@ -369,7 +394,16 @@ test.describe('Test Fixture Rendering', () => {
         return null;
       }
 
-      const colors = points.geometry.attributes.color.array;
+      const geometry = points.geometry;
+      const colorAttr = geometry.attributes.color;
+      // Use drawRange to get actual point count (buffer may be larger due to reuse)
+      const drawRangeCount = geometry.drawRange?.count;
+      const actualCount =
+        drawRangeCount !== undefined && drawRangeCount !== Infinity
+          ? Math.min(drawRangeCount, colorAttr.count)
+          : colorAttr.count;
+      // Only sample color values within the draw range
+      const colors = colorAttr.array.subarray(0, actualCount * 3);
       const uniqueColors = new Set<string>();
 
       for (let i = 0; i < colors.length; i += 3) {
@@ -378,7 +412,7 @@ test.describe('Test Fixture Rendering', () => {
       }
 
       return {
-        totalPoints: colors.length / 3,
+        totalPoints: actualCount,
         uniqueColors: uniqueColors.size,
       };
     });
