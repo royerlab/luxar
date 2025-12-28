@@ -8,7 +8,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
 describe('Worker Integration Tests (Mocked)', () => {
-
   describe('Worker Pool Initialization', () => {
     it('should initialize worker when useWebWorkers=true', async () => {
       // Verify config structure exists

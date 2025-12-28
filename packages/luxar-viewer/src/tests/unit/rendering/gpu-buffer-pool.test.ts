@@ -16,9 +16,11 @@ describe('GPUBufferPool', () => {
     colorType: 'Float32Array' | 'Uint8Array' | 'Uint16Array' = 'Float32Array'
   ): PointsData => {
     const colors =
-      colorType === 'Uint8Array' ? new Uint8Array(count * 3).fill(128) :
-        colorType === 'Uint16Array' ? new Uint16Array(count * 3).fill(32768) :
-          new Float32Array(count * 3).fill(0.5);
+      colorType === 'Uint8Array'
+        ? new Uint8Array(count * 3).fill(128)
+        : colorType === 'Uint16Array'
+          ? new Uint16Array(count * 3).fill(32768)
+          : new Float32Array(count * 3).fill(0.5);
 
     return {
       positions: new Float32Array(count * 3),

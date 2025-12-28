@@ -401,27 +401,42 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     // Wait for dimension sliders to initialize
     await page.waitForTimeout(1000);
 
-    // Check initial slider visibility
+    // Check initial slider visibility (not existence - the element exists but may be hidden)
     const initialVisible = await page.evaluate(() => {
-      const sliders = document.querySelector('[class*="dimension-slider"]');
-      return !!sliders;
+      const sliders = document.querySelector('.luxar-dimension-sliders');
+      if (!sliders) return false;
+      // Check if actually visible (not display: none)
+      return window.getComputedStyle(sliders).display !== 'none';
     });
 
-    // Toggle sliders
+    // For 5D dataset, sliders should start visible
+    expect(initialVisible).toBe(true);
+
+    // Toggle sliders (hide them)
     await page.keyboard.press('n');
     await page.waitForTimeout(300);
 
-    const afterToggle = await page.evaluate(() => {
-      const sliders = document.querySelector('[class*="dimension-slider"]');
-      return !!sliders;
+    const afterFirstToggle = await page.evaluate(() => {
+      const sliders = document.querySelector('.luxar-dimension-sliders');
+      if (!sliders) return false;
+      return window.getComputedStyle(sliders).display !== 'none';
     });
 
-    // For nD datasets, should have sliders and should toggle
-    // (For 3D datasets, N key has no effect)
-    if (initialVisible) {
-      // If sliders exist, toggle should work
-      expect(afterToggle).toBe(!initialVisible);
-    }
+    // After toggle, should be hidden
+    expect(afterFirstToggle).toBe(false);
+
+    // Toggle again (show them)
+    await page.keyboard.press('n');
+    await page.waitForTimeout(300);
+
+    const afterSecondToggle = await page.evaluate(() => {
+      const sliders = document.querySelector('.luxar-dimension-sliders');
+      if (!sliders) return false;
+      return window.getComputedStyle(sliders).display !== 'none';
+    });
+
+    // After second toggle, should be visible again
+    expect(afterSecondToggle).toBe(true);
   });
 });
 

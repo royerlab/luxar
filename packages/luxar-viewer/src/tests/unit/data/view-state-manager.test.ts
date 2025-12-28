@@ -42,8 +42,8 @@ describe('ViewStateManager', () => {
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
       expect(viewState.displayDims).toEqual([2, 3, 4]); // x, y, z
-      expect(viewState.slicePosition[0]).toBe(50); // time: center of [0, 100]
-      expect(viewState.slicePosition[1]).toBe(2); // channel: floor(center of [0, 4])
+      expect(viewState.slicePosition[0]).toBe(0); // time: start at minimum of [0, 100]
+      expect(viewState.slicePosition[1]).toBe(0); // channel: start at minimum of [0, 4]
       expect(viewState.slicePosition[2]).toBe(0); // x: displayed, starts at 0
       expect(viewState.tolerance[0]).toBe(0); // time: discrete, exact match
       expect(viewState.tolerance[1]).toBe(0); // channel: discrete, exact match
@@ -60,7 +60,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(4); // floor(4.5) = 4, not 5
+      expect(viewState.slicePosition[0]).toBe(0); // Start at minimum of range [0, 9]
     });
 
     it('should handle continuous non-displayed dimensions', () => {
@@ -73,7 +73,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(550); // Center of [400, 700]
+      expect(viewState.slicePosition[0]).toBe(400); // Start at minimum of [400, 700]
       expect(viewState.tolerance[0]).toBeGreaterThan(0); // Should have default tolerance
     });
 
@@ -221,7 +221,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(500000); // Center
+      expect(viewState.slicePosition[0]).toBe(0); // Start at minimum of range
     });
 
     it('should handle negative ranges correctly', () => {
@@ -234,7 +234,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(-75); // Center of [-100, -50]
+      expect(viewState.slicePosition[0]).toBe(-100); // Start at minimum of [-100, -50]
     });
 
     it('should handle fractional discrete dimension ranges', () => {
@@ -255,7 +255,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      expect(viewState.slicePosition[0]).toBe(3); // floor((0.5 + 5.5) / 2) = floor(3) = 3
+      expect(viewState.slicePosition[0]).toBe(0); // floor(0.5) = 0, start at minimum
     });
   });
 

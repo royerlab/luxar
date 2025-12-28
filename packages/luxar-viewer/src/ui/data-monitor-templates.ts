@@ -565,6 +565,249 @@ export function renderInsightsContent(recommendations: Recommendation[]): string
   `;
 }
 
+/**
+ * Memory metrics for GPU buffer pool (per-type)
+ */
+export interface GPUPoolTypeStats {
+  allocations: number;
+  reuses: number;
+  evictions: number;
+  activeBuffers: number;
+  pooledBuffers: number;
+}
+
+/**
+ * Memory metrics for GPU buffer pool
+ */
+export interface GPUPoolStats {
+  allocations: number;
+  reuses: number;
+  evictions: number;
+  capacityGrowths: number;
+  activeBuffers: number;
+  pooledBuffers: number;
+  byType: {
+    points: GPUPoolTypeStats;
+    lines: GPUPoolTypeStats;
+    gsplats: GPUPoolTypeStats;
+  };
+}
+
+/**
+ * Memory metrics for data accumulators
+ */
+export interface AccumulatorStats {
+  capacity: number;
+  allocations: number;
+  growthEvents: number;
+  memoryMB: number;
+}
+
+/**
+ * Combined memory metrics for the Memory tab
+ */
+export interface MemoryMetrics {
+  gpuPool: GPUPoolStats | null;
+  accumulators: {
+    points: AccumulatorStats | null;
+    lines: AccumulatorStats | null;
+    gsplats: AccumulatorStats | null;
+  };
+}
+
+/**
+ * Helper to calculate reuse rate percentage
+ */
+function calculateReuseRate(allocations: number, reuses: number): number {
+  const total = allocations + reuses;
+  return total > 0 ? (reuses / total) * 100 : 0;
+}
+
+/**
+ * Get color class for reuse rate
+ */
+function getReuseRateColorClass(rate: number): string {
+  if (rate >= 80) return getColorClass('success');
+  if (rate >= 50) return getColorClass('warning');
+  return getColorClass('error');
+}
+
+/**
+ * Template for memory tab content with GPU buffer pool and accumulators
+ */
+export function renderMemoryContent(metrics: MemoryMetrics): string {
+  const { gpuPool, accumulators } = metrics;
+
+  // Calculate total memory from accumulators
+  const totalAccumulatorMemory =
+    (accumulators.points?.memoryMB ?? 0) +
+    (accumulators.lines?.memoryMB ?? 0) +
+    (accumulators.gsplats?.memoryMB ?? 0);
+
+  // GPU Pool section
+  const gpuPoolSection = gpuPool ? renderGPUPoolSection(gpuPool) : `
+    <div class="luxar-memory-section">
+      <div class="luxar-memory-section__header">
+        <span class="luxar-memory-section__icon">⬡</span>
+        <span class="luxar-memory-section__title">GPU BUFFER POOL</span>
+      </div>
+      <div class="luxar-memory-section__empty">Not initialized</div>
+    </div>
+  `;
+
+  // Accumulators section
+  const accumulatorsSection = renderAccumulatorsSection(accumulators);
+
+  // Total summary
+  const totalAllocations = gpuPool
+    ? gpuPool.allocations
+    : 0;
+  const totalReuses = gpuPool
+    ? gpuPool.reuses
+    : 0;
+  const overallReuseRate = calculateReuseRate(totalAllocations, totalReuses);
+
+  return `
+    <div class="memory-content">
+      ${gpuPoolSection}
+      ${accumulatorsSection}
+      <div class="luxar-memory-total">
+        <span class="luxar-memory-total__label">Total:</span>
+        <span class="luxar-memory-total__value">
+          ${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccumulatorMemory.toFixed(1)}MB
+        </span>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render GPU buffer pool section with per-type table
+ */
+function renderGPUPoolSection(stats: GPUPoolStats): string {
+  const types = ['points', 'lines', 'gsplats'] as const;
+
+  const rows = types.map((type) => {
+    const typeStats = stats.byType[type];
+    const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
+    const hasData = typeStats.allocations > 0 || typeStats.reuses > 0 || typeStats.activeBuffers > 0;
+    const reuseColorClass = hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed');
+
+    return `
+      <tr class="luxar-memory-table__row">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${reuseColorClass}">
+          ${hasData ? `${reuseRate.toFixed(0)}%` : '—'}
+        </td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+          ${hasData ? typeStats.activeBuffers : '—'}
+        </td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+          ${hasData ? typeStats.pooledBuffers : '—'}
+        </td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+          ${hasData ? typeStats.allocations : '—'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="luxar-memory-section">
+      <div class="luxar-memory-section__header">
+        <span class="luxar-memory-section__icon">⬡</span>
+        <span class="luxar-memory-section__title">GPU BUFFER POOL</span>
+      </div>
+      <table class="luxar-memory-table">
+        <thead>
+          <tr class="luxar-memory-table__header-row">
+            <th class="luxar-memory-table__header">TYPE</th>
+            <th class="luxar-memory-table__header">REUSE %</th>
+            <th class="luxar-memory-table__header">ACTIVE</th>
+            <th class="luxar-memory-table__header">POOLED</th>
+            <th class="luxar-memory-table__header">ALLOCS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+      <div class="luxar-memory-section__summary">
+        Total: ${stats.allocations} allocs · ${stats.reuses} reuses · ${stats.evictions} evicted
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render accumulators section with per-type table
+ */
+function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']): string {
+  const types = ['points', 'lines', 'gsplats'] as const;
+
+  const rows = types.map((type) => {
+    const stats = accumulators[type];
+    const hasData = stats !== null && stats.capacity > 0;
+
+    return `
+      <tr class="luxar-memory-table__row">
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+          ${hasData ? formatNumber(stats.capacity) : '—'}
+        </td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value">
+          ${hasData ? `${stats.memoryMB.toFixed(1)}MB` : '—'}
+        </td>
+        <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${hasData && stats.growthEvents > 5 ? getColorClass('warning') : ''}">
+          ${hasData ? stats.growthEvents : '—'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Calculate totals
+  const totalMemory =
+    (accumulators.points?.memoryMB ?? 0) +
+    (accumulators.lines?.memoryMB ?? 0) +
+    (accumulators.gsplats?.memoryMB ?? 0);
+  const totalAllocations =
+    (accumulators.points?.allocations ?? 0) +
+    (accumulators.lines?.allocations ?? 0) +
+    (accumulators.gsplats?.allocations ?? 0);
+
+  return `
+    <div class="luxar-memory-section">
+      <div class="luxar-memory-section__header">
+        <span class="luxar-memory-section__icon">⚡</span>
+        <span class="luxar-memory-section__title">DATA ACCUMULATORS</span>
+      </div>
+      <table class="luxar-memory-table">
+        <thead>
+          <tr class="luxar-memory-table__header-row">
+            <th class="luxar-memory-table__header">TYPE</th>
+            <th class="luxar-memory-table__header">CAPACITY</th>
+            <th class="luxar-memory-table__header">MEMORY</th>
+            <th class="luxar-memory-table__header">GROWS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+      <div class="luxar-memory-section__summary">
+        Total: ${totalMemory.toFixed(1)}MB · ${totalAllocations} allocations
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Capitalize first letter
+ */
+function capitalize(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 // Helper functions
 
 function formatNumber(n: number): string {

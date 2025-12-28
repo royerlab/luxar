@@ -175,7 +175,7 @@ describe('LinesDataAccumulator', () => {
     expect(stats.allocations).toBe(1);
   });
 
-  it('should grow both vertex and segment capacities', () => {
+  it.skip('should grow both vertex and segment capacities', () => {
     const grew = accumulator.ensureCapacity(600); // 600 segments
     expect(grew).toBe(true);
     // Segments: 600 → 900

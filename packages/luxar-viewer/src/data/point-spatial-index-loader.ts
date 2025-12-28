@@ -268,8 +268,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
     // See src/data/DATA_ACCUMULATOR_STATUS.md for details.
     if (appConfig.dataLoading.performance.useAccumulators) {
-      const totalPoints =
-        this.chunkIndex?.metadata.total_points || this.totalPointsNoIndex || 0;
+      const totalPoints = this.chunkIndex?.metadata.total_points || this.totalPointsNoIndex || 0;
       const ndim = this.chunkIndex?.metadata.ndim || this.arrays.positions?.shape[1] || 3;
       const initialCapacity = Math.min(
         appConfig.dataLoading.performance.initialAccumulatorCapacity,
@@ -377,29 +376,29 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       const colors = this.arrays.colors
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading colors for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('colors', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading colors for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('colors', ranges))
         : null;
 
       const radii = this.arrays.radii
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading radii for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('radii', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading radii for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('radii', ranges))
         : null;
 
       const sharpness = this.arrays.sharpness
         ? (log.info(
-          LogEmoji.LOAD,
-          Modules.SPATIAL_INDEX_LOADER,
-          `Loading sharpness for ${ranges.length} ranges`
-        ),
-        await this.loadRanges('sharpness', ranges))
+            LogEmoji.LOAD,
+            Modules.SPATIAL_INDEX_LOADER,
+            `Loading sharpness for ${ranges.length} ranges`
+          ),
+          await this.loadRanges('sharpness', ranges))
         : null;
 
       // Update query status
@@ -432,9 +431,15 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         if (!this._accumulator['types']) {
           this._accumulator.fill(0, {
             positions: new Float32Array(3),
-            colors: colors ? (colors.subarray(0, Math.min(3, colors.length)) as ColorArray) : undefined,
-            radii: radii ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray) : undefined,
-            sharpness: sharpness ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray) : undefined,
+            colors: colors
+              ? (colors.subarray(0, Math.min(3, colors.length)) as ColorArray)
+              : undefined,
+            radii: radii
+              ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray)
+              : undefined,
+            sharpness: sharpness
+              ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray)
+              : undefined,
           });
         }
 
@@ -452,7 +457,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
             (targetBuffers.colors as Uint8Array).set(colors);
           } else if (colors instanceof Uint16Array && targetBuffers.colors instanceof Uint16Array) {
             (targetBuffers.colors as Uint16Array).set(colors);
-          } else if (colors instanceof Float32Array && targetBuffers.colors instanceof Float32Array) {
+          } else if (
+            colors instanceof Float32Array &&
+            targetBuffers.colors instanceof Float32Array
+          ) {
             (targetBuffers.colors as Float32Array).set(colors as Float32Array);
           }
         }
@@ -460,14 +468,25 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         if (sharpness) {
           if (sharpness instanceof Uint8Array && targetBuffers.sharpness instanceof Uint8Array) {
             (targetBuffers.sharpness as Uint8Array).set(sharpness);
-          } else if (sharpness instanceof Float32Array && targetBuffers.sharpness instanceof Float32Array) {
+          } else if (
+            sharpness instanceof Float32Array &&
+            targetBuffers.sharpness instanceof Float32Array
+          ) {
             (targetBuffers.sharpness as Float32Array).set(sharpness as Float32Array);
           }
         }
       }
 
       // Project to 3D display space (ZERO allocations when targetBuffers provided!)
-      const result = this.projectTo3D(positions, colors, radii, sharpness, viewState, ranges, targetBuffers);
+      const result = this.projectTo3D(
+        positions,
+        colors,
+        radii,
+        sharpness,
+        viewState,
+        ranges,
+        targetBuffers
+      );
 
       // Clean up completed query
       this.activeQueries.delete(queryId);
@@ -749,19 +768,26 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     log.info(
       Modules.SPATIAL_INDEX_LOADER,
-      `Quantized range loading: ${arrayName} (${ArrayDecoder.getEncodingMode(attrs)}, ${totalPoints} values)`
+      `Quantized range loading: ${arrayName}, ${ranges.length} ranges (${ArrayDecoder.getEncodingMode(attrs)}, ${totalPoints} values)`
     );
 
-    let destOffset = 0;
     const shape = array.shape;
 
-    for (const range of ranges) {
+    // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
+    const chunkDataPromises = ranges.map((range) => {
       const sliceSpec: zarr.Slice[] =
         shape.length === 2
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
+      return get(array, sliceSpec);
+    });
 
-      const chunkData = await get(array, sliceSpec);
+    const chunks = await Promise.all(chunkDataPromises);
+
+    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
+    let destOffset = 0;
+
+    for (const chunkData of chunks) {
       const quantizedData = chunkData.data as Uint8Array | Uint16Array;
       const dequantized = this.decoder.dequantizeRange(quantizedData, quantMetadata);
 
@@ -791,19 +817,26 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     log.info(
       Modules.SPATIAL_INDEX_LOADER,
-      `LUT range loading: ${arrayName} (loading ${totalPoints} indices, decoding to ${totalElements} elements)`
+      `LUT range loading: ${arrayName}, ${ranges.length} ranges (${totalPoints} indices → ${totalElements} elements)`
     );
 
-    let destOffset = 0;
     const shape = array.shape;
 
-    for (const range of ranges) {
+    // PARALLEL FETCH: Load all index chunks simultaneously (I/O parallelism)
+    const chunkDataPromises = ranges.map((range) => {
       const sliceSpec: zarr.Slice[] =
         shape.length === 2
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
+      return get(array, sliceSpec);
+    });
 
-      const chunkData = await get(array, sliceSpec);
+    const chunks = await Promise.all(chunkDataPromises);
+
+    // SEQUENTIAL DECODE: Process chunks in order (maintains correct destOffset)
+    let destOffset = 0;
+
+    for (const chunkData of chunks) {
       const indices = chunkData.data as Float32Array | Uint8Array | Uint16Array;
       const decoded = this.decoder.decodeLUTIndices(indices, lutMetadata);
 
@@ -944,16 +977,23 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     ranges: PointRange[],
     output: Float32Array | Uint8Array | Uint16Array | Float16Array
   ): Promise<number> {
-    let destOffset = 0;
     const shape = array.shape;
 
-    for (const range of ranges) {
+    // PARALLEL FETCH: Load all chunks simultaneously (I/O parallelism)
+    const chunkDataPromises = ranges.map((range) => {
       const sliceSpec: zarr.Slice[] =
         shape.length === 2
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
+      return get(array, sliceSpec);
+    });
 
-      const chunkData = await get(array, sliceSpec);
+    const chunks = await Promise.all(chunkDataPromises);
+
+    // SEQUENTIAL WRITE: Process chunks in order (maintains correct destOffset)
+    let destOffset = 0;
+
+    for (const chunkData of chunks) {
       const data = chunkData.data as Float32Array | Uint8Array | Uint16Array | Float16Array;
 
       output.set(data, destOffset);
@@ -1153,9 +1193,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const { displayDims } = viewState;
 
     // Use target buffer or allocate new (zero-allocation when targetBuffers provided)
-    let positions3D = targetBuffers
-      ? targetBuffers.positions3D
-      : new Float32Array(numPoints * 3);
+    let positions3D = targetBuffers ? targetBuffers.positions3D : new Float32Array(numPoints * 3);
 
     // Extract 3D positions from nD data (write directly to buffer)
     for (let i = 0; i < numPoints; i++) {
@@ -1304,12 +1342,18 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
                   cb[writeIdx * 3] = cb[readIdx * 3];
                   cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
                   cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
-                } else if (colors instanceof Uint16Array && targetBuffers.colors instanceof Uint16Array) {
+                } else if (
+                  colors instanceof Uint16Array &&
+                  targetBuffers.colors instanceof Uint16Array
+                ) {
                   const cb = targetBuffers.colors as Uint16Array;
                   cb[writeIdx * 3] = cb[readIdx * 3];
                   cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
                   cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
-                } else if (colors instanceof Float32Array && targetBuffers.colors instanceof Float32Array) {
+                } else if (
+                  colors instanceof Float32Array &&
+                  targetBuffers.colors instanceof Float32Array
+                ) {
                   const cb = targetBuffers.colors as Float32Array;
                   cb[writeIdx * 3] = cb[readIdx * 3];
                   cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
@@ -1319,12 +1363,20 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
               // Compact sharpness (type-preserving)
               if (sharpness && targetBuffers.sharpness) {
-                if (sharpness instanceof Uint8Array && targetBuffers.sharpness instanceof Uint8Array) {
-                  (targetBuffers.sharpness as Uint8Array)[writeIdx] =
-                    (targetBuffers.sharpness as Uint8Array)[readIdx];
-                } else if (sharpness instanceof Float32Array && targetBuffers.sharpness instanceof Float32Array) {
-                  (targetBuffers.sharpness as Float32Array)[writeIdx] =
-                    (targetBuffers.sharpness as Float32Array)[readIdx];
+                if (
+                  sharpness instanceof Uint8Array &&
+                  targetBuffers.sharpness instanceof Uint8Array
+                ) {
+                  (targetBuffers.sharpness as Uint8Array)[writeIdx] = (
+                    targetBuffers.sharpness as Uint8Array
+                  )[readIdx];
+                } else if (
+                  sharpness instanceof Float32Array &&
+                  targetBuffers.sharpness instanceof Float32Array
+                ) {
+                  (targetBuffers.sharpness as Float32Array)[writeIdx] = (
+                    targetBuffers.sharpness as Float32Array
+                  )[readIdx];
                 }
               }
             }

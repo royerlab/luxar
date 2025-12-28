@@ -86,7 +86,9 @@ def initialize_optimization(
                 if config.verbose:
                     from arbol import aprint
 
-                    aprint("Using Metal-accelerated model (3-7x faster on Apple Silicon)")
+                    aprint(
+                        "Using Metal-accelerated model (3-7x faster on Apple Silicon)"
+                    )
             else:
                 # Metal not available, fall back
                 use_metal = False

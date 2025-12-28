@@ -1,12 +1,24 @@
+"""Tests for point data validation.
+
+This module tests the validation of positions, colors, radii, and sharpness
+parameters when adding points to a scene.
+"""
+
 import numpy as np
 import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.encoding import EncodingMode
+from luxar.encoding import ArrayDecoder, EncodingMode
+from luxar.validation import ValidationError
+
+# =============================================================================
+# Position Validation Tests
+# =============================================================================
 
 
 def test_bad_positions_shape(tmp_path) -> None:
+    """Positions must be 2D array with shape (N, ndim)."""
     store = tmp_path / "bad.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -15,6 +27,7 @@ def test_bad_positions_shape(tmp_path) -> None:
 
 
 def test_mismatched_colors(tmp_path) -> None:
+    """Colors array length must match positions."""
     store = tmp_path / "bad2.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -24,24 +37,63 @@ def test_mismatched_colors(tmp_path) -> None:
             scene.add_points("Nope", pos, col, parent=scene)
 
 
+# =============================================================================
+# Radii Validation Tests (Parametrized)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "radii_factory,error_pattern,test_id",
+    [
+        # Negative values
+        (
+            lambda: np.random.uniform(-1.0, 1.0, 100).astype(np.float32),
+            "Radii must be positive",
+            "negative_values",
+        ),
+        # Wrong count (50 instead of 100)
+        (
+            lambda: np.random.uniform(0.1, 2.0, 50).astype(np.float32),
+            "doesn't match number of points",
+            "count_mismatch",
+        ),
+        # Wrong shape (2D instead of 1D)
+        (
+            lambda: np.random.uniform(0.1, 2.0, (100, 2)).astype(np.float32),
+            "Expected 1D array",
+            "wrong_shape",
+        ),
+        # All zeros (edge case)
+        (
+            lambda: np.zeros(100, dtype=np.float32),
+            "Radii must be positive",
+            "all_zeros",
+        ),
+    ],
+    ids=lambda x: x if isinstance(x, str) else None,
+)
+def test_invalid_radii(tmp_path, radii_factory, error_pattern, test_id) -> None:
+    """Test that various invalid radii configurations raise ValidationError."""
+    store = tmp_path / f"invalid_radii_{test_id}.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        positions = np.random.randn(100, 3).astype(np.float32)
+
+        with pytest.raises(ValidationError, match=error_pattern):
+            compiler.write_points("test", positions, radii=radii_factory())
+
+
 def test_valid_radii(tmp_path) -> None:
     """Test that valid radii are accepted and stored correctly."""
-    from luxar.encoding import ArrayDecoder
-
     store = tmp_path / "radii_test.zarr"
-    # Use PRECISION mode to preserve float32 and avoid quantization
-    # Disable spatial indexing to preserve array order for comparison
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
-
         positions = np.random.randn(100, 3).astype(np.float32)
         radii = np.random.uniform(0.1, 2.0, 100).astype(np.float32)
-
         compiler.write_points("test", positions, radii=radii)
 
-    # Verify radii were stored (use decoder to handle any encoding)
     root = zarr.open_group(store, mode="r")
     assert "test/radii" in root
 
@@ -50,72 +102,63 @@ def test_valid_radii(tmp_path) -> None:
     np.testing.assert_array_equal(stored_radii, radii)
 
 
-def test_negative_radii(tmp_path) -> None:
-    """Radii with negative values should fail."""
-    store = tmp_path / "negative_radii.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-
-        positions = np.random.randn(100, 3).astype(np.float32)
-        radii = np.random.uniform(-1.0, 1.0, 100).astype(np.float32)  # Some negative
-
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="Radii must be positive"):
-            compiler.write_points("test", positions, radii=radii)
+# =============================================================================
+# Sharpness Validation Tests (Parametrized)
+# =============================================================================
 
 
-def test_mismatched_radii(tmp_path) -> None:
-    """Radii with wrong number of points should fail."""
-    store = tmp_path / "mismatched_radii.zarr"
+@pytest.mark.parametrize(
+    "sharpness_factory,error_pattern,test_id",
+    [
+        # Negative values
+        (
+            lambda: np.random.uniform(-1.0, 1.0, 100).astype(np.float32),
+            "Sharpness must be positive",
+            "negative_values",
+        ),
+        # Wrong count (50 instead of 100)
+        (
+            lambda: np.random.uniform(0.5, 10.0, 50).astype(np.float32),
+            "doesn't match",
+            "count_mismatch",
+        ),
+        # Wrong shape (2D instead of 1D)
+        (
+            lambda: np.random.uniform(0.5, 10.0, (100, 2)).astype(np.float32),
+            "Expected 1D array",
+            "wrong_shape",
+        ),
+        # All zeros (edge case)
+        (
+            lambda: np.zeros(100, dtype=np.float32),
+            "Sharpness must be positive",
+            "all_zeros",
+        ),
+    ],
+    ids=lambda x: x if isinstance(x, str) else None,
+)
+def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) -> None:
+    """Test that various invalid sharpness configurations raise ValidationError."""
+    store = tmp_path / f"invalid_sharpness_{test_id}.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
-
         positions = np.random.randn(100, 3).astype(np.float32)
-        radii = np.random.uniform(0.1, 2.0, 50).astype(np.float32)  # Wrong N
 
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="doesn't match number of points"):
-            compiler.write_points("test", positions, radii=radii)
-
-
-def test_wrong_shape_radii(tmp_path) -> None:
-    """Radii with wrong dimensions should fail."""
-    store = tmp_path / "wrong_shape_radii.zarr"
-    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-
-        positions = np.random.randn(100, 3).astype(np.float32)
-        radii = np.random.uniform(0.1, 2.0, (100, 2)).astype(np.float32)  # Wrong shape
-
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="Expected 1D array"):
-            compiler.write_points("test", positions, radii=radii)
+        with pytest.raises(ValidationError, match=error_pattern):
+            compiler.write_points("test", positions, sharpness=sharpness_factory())
 
 
 def test_valid_sharpness(tmp_path) -> None:
     """Test that valid sharpness values are accepted and stored correctly."""
-    from luxar.encoding import ArrayDecoder
-
     store = tmp_path / "sharpness_test.zarr"
-    # Use PRECISION mode to preserve float32 and avoid quantization
-    # Disable spatial indexing to preserve array order for comparison
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
-
         positions = np.random.randn(100, 3).astype(np.float32)
         sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
-
         compiler.write_points("test", positions, sharpness=sharpness)
 
-    # Verify sharpness was stored (use decoder to handle any encoding)
     root = zarr.open_group(store, mode="r")
     assert "test/sharpness" in root
 
@@ -124,69 +167,14 @@ def test_valid_sharpness(tmp_path) -> None:
     np.testing.assert_array_equal(stored_sharpness, sharpness)
 
 
-def test_negative_sharpness(tmp_path) -> None:
-    """Sharpness with negative values should fail."""
-    store = tmp_path / "negative_sharpness.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-
-        positions = np.random.randn(100, 3).astype(np.float32)
-        sharpness = np.random.uniform(-1.0, 1.0, 100).astype(
-            np.float32
-        )  # Some negative
-
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="Sharpness must be positive"):
-            compiler.write_points("test", positions, sharpness=sharpness)
-
-
-def test_mismatched_sharpness(tmp_path) -> None:
-    """Sharpness with wrong number of points should fail."""
-    store = tmp_path / "mismatched_sharpness.zarr"
-    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-
-        positions = np.random.randn(100, 3).astype(np.float32)
-        sharpness = np.random.uniform(0.5, 10.0, 50).astype(np.float32)  # Wrong N
-
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="doesn't match"):
-            compiler.write_points("test", positions, sharpness=sharpness)
-
-
-def test_wrong_shape_sharpness(tmp_path) -> None:
-    """Sharpness with wrong dimensions should fail."""
-    store = tmp_path / "wrong_shape_sharpness.zarr"
-    with LuxarZarrCompiler(store) as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-
-        positions = np.random.randn(100, 3).astype(np.float32)
-        sharpness = np.random.uniform(0.5, 10.0, (100, 2)).astype(
-            np.float32
-        )  # Wrong shape
-
-        # Our new validation provides more helpful error messages
-        from luxar.validation import ValidationError
-
-        with pytest.raises(ValidationError, match="Expected 1D array"):
-            compiler.write_points("test", positions, sharpness=sharpness)
-
-
 def test_sharpness_warning(tmp_path) -> None:
     """Test that out-of-range sharpness values trigger a warning."""
     store = tmp_path / "sharpness_warning.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
-
         positions = np.random.randn(100, 3).astype(np.float32)
         # Mix of values including out-of-range
-        sharpness = np.array([0.3, 2.0, 15.0] * 33 + [5.0]).astype(
-            np.float32
-        )  # 100 values
+        sharpness = np.array([0.3, 2.0, 15.0] * 33 + [5.0]).astype(np.float32)
 
         with pytest.warns(UserWarning, match="Using extreme sharpness values"):
             compiler.write_points("test", positions, sharpness=sharpness)

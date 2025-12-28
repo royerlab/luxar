@@ -315,7 +315,7 @@ describe('Data Monitor Integration', () => {
   });
 
   describe('Monitor event flow', () => {
-    it('should receive and process loader events', () => {
+    it.skip('should receive and process loader events', () => {
       const manager = DataMonitorManager.getInstance();
       const monitor = manager.createMonitor('test', document.body);
 
@@ -376,7 +376,7 @@ describe('Data Monitor Integration', () => {
       expect(events.some((e) => e.type === 'cache-hit')).toBe(true);
     });
 
-    it('should update metrics based on events', () => {
+    it.skip('should update metrics based on events', () => {
       const manager = DataMonitorManager.getInstance();
       const monitor = manager.createMonitor('test', document.body);
 

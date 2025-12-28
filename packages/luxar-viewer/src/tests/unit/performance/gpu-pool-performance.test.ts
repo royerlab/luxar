@@ -14,11 +14,15 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
   let pool: GPUBufferPool;
 
   // Helper to create mock data
-  const createMockData = (count: number, colorType: 'Float32Array' | 'Uint8Array' = 'Float32Array'): PointsData => ({
+  const createMockData = (
+    count: number,
+    colorType: 'Float32Array' | 'Uint8Array' = 'Float32Array'
+  ): PointsData => ({
     positions: new Float32Array(count * 3).fill(1),
-    colors: colorType === 'Uint8Array'
-      ? new Uint8Array(count * 3).fill(128)
-      : new Float32Array(count * 3).fill(0.5),
+    colors:
+      colorType === 'Uint8Array'
+        ? new Uint8Array(count * 3).fill(128)
+        : new Float32Array(count * 3).fill(0.5),
     radii: new Float32Array(count).fill(0.5),
     sharpness: new Float32Array(count).fill(2.0),
     metadata: {
@@ -203,8 +207,16 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       // 1000 points with Uint8 colors = 3KB
       // 1000 points with Float32 colors = 12KB
 
-      const geomUint8 = pool.acquirePointsGeometry('node1', createMockData(1000, 'Uint8Array'), 1000);
-      const geomFloat = pool.acquirePointsGeometry('node2', createMockData(1000, 'Float32Array'), 1000);
+      const geomUint8 = pool.acquirePointsGeometry(
+        'node1',
+        createMockData(1000, 'Uint8Array'),
+        1000
+      );
+      const geomFloat = pool.acquirePointsGeometry(
+        'node2',
+        createMockData(1000, 'Float32Array'),
+        1000
+      );
 
       const colUint8 = geomUint8.getAttribute('color') as THREE.BufferAttribute;
       const colFloat = geomFloat.getAttribute('color') as THREE.BufferAttribute;

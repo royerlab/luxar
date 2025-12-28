@@ -65,9 +65,9 @@ async function getDimensionValue(page: any, dimIndex: number): Promise<number> {
     // Fallback: Try to read from UI slider if currentStep isn't available
     // Find the slider for this dimension (non-displayed dimensions have sliders)
     const sliders = document.querySelectorAll('.luxar-dimension-slider input[type="range"]');
-    const navigableDims = dims.displayed ?
-      Array.from({length: dims.ndim}, (_, i) => i).filter(i => !dims.displayed.includes(i)) :
-      [];
+    const navigableDims = dims.displayed
+      ? Array.from({ length: dims.ndim }, (_, i) => i).filter((i) => !dims.displayed.includes(i))
+      : [];
     const sliderIndex = navigableDims.indexOf(idx);
 
     if (sliderIndex >= 0 && sliders[sliderIndex]) {
