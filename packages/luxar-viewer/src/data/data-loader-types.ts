@@ -92,10 +92,10 @@ export interface PointsData {
  */
 export interface DataLoader {
   /** Load points data for the given view state */
-  loadPoints(viewState: ViewState): Promise<PointsData>;
+  loadPoints(viewState: ViewState, session?: any): Promise<PointsData>;
 
   /** Update existing data for a new view state */
-  updateView(viewState: ViewState): Promise<PointsData>;
+  updateView(viewState: ViewState, session?: any): Promise<PointsData>;
 
   /** Clean up resources */
   dispose(): void;
