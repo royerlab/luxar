@@ -328,7 +328,7 @@ export class SceneLoader {
         try {
           if (this.profiler) {
             await this.profiler.timeTopLevel(`Points (${path})`, async (session) => {
-              const points = await loader.updateView(this.viewState);
+              const points = await loader.updateView(this.viewState, session);
               if (points) {
                 this.updatePointsGeometry(path, points);
                 session.setMetadata({ points: points.metadata.loadedPoints });

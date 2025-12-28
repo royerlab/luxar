@@ -292,7 +292,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   /**
    * Load points data for the given view state
    */
-  async loadPoints(viewState: ViewState): Promise<PointsData> {
+  async loadPoints(viewState: ViewState, session?: any): Promise<PointsData> {
     const startTime = Date.now();
     const queryId = `${this.node.path}-${startTime}`;
 
@@ -324,7 +324,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Query spatial index for visible ranges (Phase 2: async for worker support)
+      const querySession = session?.begin('Spatial Query');
       const ranges = await this.queryVisibleRanges(viewState);
+      querySession?.end();
 
       // Emit query event
       const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -365,8 +367,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
-      // Load sequentially to prevent browser resource exhaustion (ERR_INSUFFICIENT_RESOURCES)
-      // This is especially important for large datasets with many chunks
+      const loadSession = session?.begin('Load Arrays');
+
       log.info(
         LogEmoji.LOAD,
         Modules.SPATIAL_INDEX_LOADER,
@@ -400,6 +402,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
           ),
           await this.loadRanges('sharpness', ranges))
         : null;
+
+      loadSession?.end();
 
       // Update query status
       const query = this.activeQueries.get(queryId);
@@ -478,6 +482,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Project to 3D display space (ZERO allocations when targetBuffers provided!)
+      const projectSession = session?.begin('Project to 3D');
       const result = this.projectTo3D(
         positions,
         colors,
@@ -487,6 +492,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         ranges,
         targetBuffers
       );
+      projectSession?.end();
 
       // Clean up completed query
       this.activeQueries.delete(queryId);
@@ -521,10 +527,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   /**
    * Update view for new position (more efficient than full reload)
    */
-  async updateView(viewState: ViewState): Promise<PointsData> {
+  async updateView(viewState: ViewState, session?: any): Promise<PointsData> {
     // For now, just reload everything
     // TODO: Implement incremental updates
-    return this.loadPoints(viewState);
+    return this.loadPoints(viewState, session);
   }
 
   /**
