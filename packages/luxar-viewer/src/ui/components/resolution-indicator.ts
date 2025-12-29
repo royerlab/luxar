@@ -1,30 +1,31 @@
 /**
- * Low Power Mode Indicator Component
+ * Resolution Indicator Component
  *
  * A subtle visual indicator that appears when the adaptive DPR system
  * has reduced rendering resolution to maintain smooth frame rates.
  *
- * Shows a lightning bolt icon and "Low Power Mode" text with the current
- * DPR value. Automatically shows/hides based on the AdaptiveDPRManager state.
+ * Shows a scaling icon and "Resolution Scaled to X% to maintain Y fps" text.
+ * Automatically shows/hides based on the AdaptiveDPRManager state.
  */
 
 import { log, Modules } from '../../utils/log';
 
 /**
- * Manages the low power mode indicator UI
+ * Manages the resolution indicator UI
  */
-export class LowPowerIndicator {
+export class ResolutionIndicator {
   private element: HTMLDivElement | null = null;
   private isVisible: boolean = false;
   private hideTimeout: ReturnType<typeof setTimeout> | null = null;
   private autoHideTimeout: ReturnType<typeof setTimeout> | null = null;
   private hasShownForCurrentMode: boolean = false;
+  private targetFPS: number = 60; // Default, will be set from config
 
   /** Duration to show the indicator before auto-hiding (ms) */
   private static readonly AUTO_HIDE_DELAY = 4000;
 
   /**
-   * Create the low power indicator
+   * Create the resolution indicator
    * The indicator is created lazily when first shown
    */
   constructor() {
@@ -40,11 +41,10 @@ export class LowPowerIndicator {
     }
 
     this.element = document.createElement('div');
-    this.element.className = 'luxar-low-power-indicator luxar-low-power-indicator--hidden';
+    this.element.className = 'luxar-resolution-indicator luxar-resolution-indicator--hidden';
     this.element.innerHTML = `
-      <span class="luxar-low-power-indicator__icon">⚡</span>
-      <span class="luxar-low-power-indicator__text">Low Power Mode</span>
-      <span class="luxar-low-power-indicator__dpr"></span>
+      <span class="luxar-resolution-indicator__icon">&#x21C5;</span>
+      <span class="luxar-resolution-indicator__text"></span>
     `;
 
     // Hide initially
@@ -56,10 +56,19 @@ export class LowPowerIndicator {
   }
 
   /**
+   * Set the target FPS for display purposes
+   *
+   * @param fps - Target FPS from config
+   */
+  setTargetFPS(fps: number): void {
+    this.targetFPS = fps;
+  }
+
+  /**
    * Show the indicator with optional DPR value
    *
-   * Only shows once per low power mode activation. After showing for 4 seconds,
-   * the indicator auto-hides. Call reset() when exiting low power mode to allow
+   * Only shows once per reduced resolution mode activation. After showing for 4 seconds,
+   * the indicator auto-hides. Call reset() when exiting reduced resolution mode to allow
    * the indicator to show again on next activation.
    *
    * @param dpr - Current device pixel ratio to display
@@ -71,8 +80,8 @@ export class LowPowerIndicator {
     }
 
     if (this.isVisible) {
-      // Just update DPR if already visible
-      this.updateDPR(dpr);
+      // Just update text if already visible
+      this.updateText(dpr);
       return;
     }
 
@@ -84,22 +93,22 @@ export class LowPowerIndicator {
 
     const element = this.ensureElement();
 
-    // Update DPR display
-    this.updateDPR(dpr);
+    // Update text display
+    this.updateText(dpr);
 
     // Show with animation
     element.style.display = 'flex';
-    element.classList.remove('luxar-low-power-indicator--hidden');
+    element.classList.remove('luxar-resolution-indicator--hidden');
 
     this.isVisible = true;
     this.hasShownForCurrentMode = true;
-    log.info(Modules.ADAPTIVE_DPR, 'Low power indicator shown (will auto-hide in 4s)');
+    log.info(Modules.ADAPTIVE_DPR, 'Resolution indicator shown (will auto-hide in 4s)');
 
     // Auto-hide after 4 seconds
     this.autoHideTimeout = setTimeout(() => {
       this.hide();
       this.autoHideTimeout = null;
-    }, LowPowerIndicator.AUTO_HIDE_DELAY);
+    }, ResolutionIndicator.AUTO_HIDE_DELAY);
   }
 
   /**
@@ -121,7 +130,7 @@ export class LowPowerIndicator {
     }
 
     // Start hide animation
-    this.element.classList.add('luxar-low-power-indicator--hidden');
+    this.element.classList.add('luxar-resolution-indicator--hidden');
 
     // Remove from DOM after animation completes
     this.hideTimeout = setTimeout(() => {
@@ -132,14 +141,14 @@ export class LowPowerIndicator {
     }, 300); // Match animation duration
 
     this.isVisible = false;
-    log.info(Modules.ADAPTIVE_DPR, 'Low power indicator hidden');
+    log.info(Modules.ADAPTIVE_DPR, 'Resolution indicator hidden');
   }
 
   /**
-   * Reset the indicator state when exiting low power mode
+   * Reset the indicator state when exiting reduced resolution mode
    *
-   * This allows the indicator to show again on the next low power mode activation.
-   * Should be called when low power mode is turned OFF.
+   * This allows the indicator to show again on the next reduced resolution mode activation.
+   * Should be called when reduced resolution mode is turned OFF.
    */
   reset(): void {
     this.hasShownForCurrentMode = false;
@@ -150,16 +159,21 @@ export class LowPowerIndicator {
   }
 
   /**
-   * Update the DPR display value
+   * Update the text display
    *
    * @param dpr - Current device pixel ratio
    */
-  updateDPR(dpr?: number): void {
+  private updateText(dpr?: number): void {
     if (!this.element) return;
 
-    const dprElement = this.element.querySelector('.luxar-low-power-indicator__dpr');
-    if (dprElement) {
-      dprElement.textContent = dpr !== undefined ? `(${(dpr * 100).toFixed(0)}%)` : '';
+    const textElement = this.element.querySelector('.luxar-resolution-indicator__text');
+    if (textElement) {
+      if (dpr !== undefined) {
+        const percentage = (dpr * 100).toFixed(0);
+        textElement.textContent = `Resolution Scaled to ${percentage}% to maintain ${this.targetFPS} fps`;
+      } else {
+        textElement.textContent = `Resolution Scaled to maintain ${this.targetFPS} fps`;
+      }
     }
   }
 
@@ -191,6 +205,6 @@ export class LowPowerIndicator {
 
     this.isVisible = false;
     this.hasShownForCurrentMode = false;
-    log.info(Modules.ADAPTIVE_DPR, 'Low power indicator disposed');
+    log.info(Modules.ADAPTIVE_DPR, 'Resolution indicator disposed');
   }
 }

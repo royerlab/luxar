@@ -1915,11 +1915,11 @@ function renderLoop() {
 
 ---
 
-## 14. Low Power Indicator
+## 14. Resolution Indicator
 
 ### 14.1 Purpose
 
-A subtle visual indicator that appears when the adaptive DPR system has reduced rendering resolution to maintain smooth frame rates. Provides feedback to users that the system is operating in "low power mode" with reduced quality.
+A subtle visual indicator that appears when the adaptive DPR system has reduced rendering resolution to maintain smooth frame rates. Provides feedback to users that the system has scaled resolution to maintain target FPS.
 
 ### 14.2 Architecture
 
@@ -1928,12 +1928,13 @@ A subtle visual indicator that appears when the adaptive DPR system has reduced 
 - Lazy creation (DOM element created only when first shown)
 - Auto-hide after 4 seconds per activation
 - Single show per mode activation (prevents visual spam)
-- Reset mechanism when exiting low power mode
+- Reset mechanism when exiting reduced resolution mode
+- Displays target FPS from config (not hardcoded)
 
 **Component Lifecycle**:
 
 ```
-Low Power Mode Activated
+Reduced Resolution Mode Activated
   ↓
 show(dpr) called
   ↓
@@ -1947,7 +1948,7 @@ Start 4-second auto-hide timer
   ↓
 Timer expires → hide()
   ↓
-Low Power Mode Deactivated
+Reduced Resolution Mode Deactivated
   ↓
 reset() called → hasShownForCurrentMode = false
 ```
@@ -1955,10 +1956,16 @@ reset() called → hasShownForCurrentMode = false
 ### 14.3 Public API
 
 ```typescript
-class LowPowerIndicator {
+class ResolutionIndicator {
+  /**
+   * Set the target FPS for display purposes.
+   * @param fps - Target FPS from config
+   */
+  setTargetFPS(fps: number): void;
+
   /**
    * Show the indicator with optional DPR value.
-   * Only shows once per low power mode activation.
+   * Only shows once per reduced resolution mode activation.
    * Auto-hides after 4 seconds.
    * @param dpr - Current device pixel ratio to display
    */
@@ -1970,15 +1977,10 @@ class LowPowerIndicator {
   hide(): void;
 
   /**
-   * Reset state when exiting low power mode.
+   * Reset state when exiting reduced resolution mode.
    * Allows indicator to show again on next activation.
    */
   reset(): void;
-
-  /**
-   * Update the DPR display value (while visible).
-   */
-  updateDPR(dpr?: number): void;
 
   /**
    * Check if the indicator is currently visible.
@@ -1995,10 +1997,9 @@ class LowPowerIndicator {
 ### 14.4 DOM Structure
 
 ```html
-<div class="luxar-low-power-indicator luxar-low-power-indicator--hidden">
-  <span class="luxar-low-power-indicator__icon">⚡</span>
-  <span class="luxar-low-power-indicator__text">Low Power Mode</span>
-  <span class="luxar-low-power-indicator__dpr">(75%)</span>
+<div class="luxar-resolution-indicator luxar-resolution-indicator--hidden">
+  <span class="luxar-resolution-indicator__icon">&#x21C5;</span>
+  <span class="luxar-resolution-indicator__text">Resolution Scaled to 75% to maintain 60 fps</span>
 </div>
 ```
 
@@ -2006,22 +2007,35 @@ class LowPowerIndicator {
 
 ```typescript
 // In app.ts initialization
-this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isLowPowerMode) => {
-  if (isLowPowerMode) {
-    this.lowPowerIndicator.show(dpr);
+this.resolutionIndicator = new ResolutionIndicator();
+// Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
+const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
+this.resolutionIndicator.setTargetFPS(displayTargetFPS);
+this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
+  if (isReducedResolution) {
+    this.resolutionIndicator.show(dpr);
   } else {
-    // Exiting low power mode - reset indicator state
-    this.lowPowerIndicator.reset();
+    // Exiting reduced resolution mode - reset indicator state
+    this.resolutionIndicator.reset();
   }
 });
 ```
 
+**Display FPS Calculation**:
+
+The config uses hysteresis thresholds (targetFPS=55, maxFPS=58) to prevent rapid toggling, but users expect to see the actual target (60 fps). We compute the display value by rounding `maxFPS` up to the nearest 5:
+
+- `maxFPS = 58` → displays "60 fps"
+- `maxFPS = 48` → displays "50 fps"
+- `maxFPS = 118` → displays "120 fps" (high refresh rate)
+
 **Rationale**:
 
-- The indicator shows briefly (4 seconds) when entering low power mode to inform the user
+- The indicator shows briefly (4 seconds) when entering reduced resolution mode to inform the user
 - It doesn't stay visible permanently because that would be distracting
-- The reset() call when exiting ensures the indicator can show again if low power mode reactivates
+- The reset() call when exiting ensures the indicator can show again if reduced resolution mode reactivates
 - The "once per activation" behavior prevents rapid show/hide cycling during FPS fluctuations
+- The display FPS is derived from config, not hardcoded, adapting to different refresh rate targets
 
 ---
 
@@ -2158,14 +2172,22 @@ interface BufferedMessage {
 
 ## Changelog
 
-- **v1.4.0** (2025-12-17): Adaptive resolution and low power mode
+- **v1.5.0** (2025-12-28): Resolution indicator terminology fix
+  - **RENAMED**: "Low Power Indicator" → "Resolution Indicator" (terminology was misleading)
+  - **RENAMED**: `LowPowerIndicator` class → `ResolutionIndicator`
+  - **RENAMED**: `isLowPowerMode` → `isReducedResolution` throughout codebase
+  - **CHANGED**: Message now shows "Resolution Scaled to X% to maintain Y fps" (Y from config)
+  - **ADDED**: `setTargetFPS(fps)` method to set target FPS from config
+  - **CHANGED**: Icon from ⚡ to ⇅ (scaling arrows, more accurate)
+
+- **v1.4.0** (2025-12-17): Adaptive resolution and reduced resolution mode
   - **ADDED**: Section 5.8 "Adaptive Resolution Controls" - Manual DPR control when adaptive mode is OFF
-  - **ADDED**: Section 14 "Low Power Indicator" - New component with auto-hide behavior
+  - **ADDED**: Section 14 "Resolution Indicator" - New component with auto-hide behavior
   - **ADDED**: Folder emoji prefixes for visual identification (🕹️ Navigation, 🎥 Camera, etc.)
   - **CHANGED**: Updated to use custom GUI library (lil-gui replacement) for theme integration
   - **IMPROVED**: Manual DPR slider when adaptive resolution is disabled
   - **IMPROVED**: FPS display hidden when adaptive mode is OFF (no longer shows "0")
-  - **IMPROVED**: Low power indicator auto-hides after 4 seconds per activation
+  - **IMPROVED**: Resolution indicator auto-hides after 4 seconds per activation
 
 - **v1.3.0** (2025-12-10): Logarithmic HDR intensity slider
   - **ADDED**: Section 5.2a "Logarithmic Slider Pattern" documenting the shadow property approach

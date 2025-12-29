@@ -367,9 +367,10 @@ export class PostProcessingManager {
       return name === 'ChromaticLensDistortion'; // UV transformation effects
     };
 
-    const isConvolutionEffect = (_name: string): boolean => {
-      // No convolution effects currently used (ChromaticLensDistortion is UV-based)
-      return false;
+    const isConvolutionEffect = (name: string): boolean => {
+      // Bloom uses mipmapBlur which samples multiple texels - it's a convolution effect
+      // Convolution effects are incompatible with UV transform effects in the same pass
+      return name === 'Bloom';
     };
 
     for (const { effect, name } of orderedEffects) {
@@ -511,6 +512,57 @@ export class PostProcessingManager {
       `Bloom updated: strength=${currentStrength.toFixed(2)}, ` +
         `radius=${currentRadius.toFixed(2)}, threshold=${currentThreshold.toFixed(2)}`
     );
+  }
+
+  /**
+   * Enable or disable bloom effect.
+   *
+   * When disabled, the bloom effect is removed from the pipeline to save GPU cycles.
+   * When re-enabled, the effect is recreated with current settings.
+   *
+   * @param enabled - Whether to enable bloom
+   * @param strength - Bloom intensity (optional, uses current/default if not provided)
+   * @param radius - Bloom spread radius (optional)
+   * @param threshold - Luminance threshold (optional)
+   */
+  setBloomEnabled(enabled: boolean, strength?: number, radius?: number, threshold?: number): void {
+    if (enabled && !this.bloomEffect) {
+      // Create bloom effect with provided or default settings
+      this.bloomEffect = new BloomEffect({
+        intensity: strength ?? config.renderingControls.defaults.bloomStrength,
+        luminanceThreshold: threshold ?? config.renderingControls.defaults.bloomThreshold,
+        luminanceSmoothing: 0.01,
+        mipmapBlur: true,
+        kernelSize: KernelSize.LARGE,
+        blendFunction: BlendFunction.ADD,
+        levels: this.bloomLevels,
+      }) as BloomEffectTyped;
+
+      // Set radius on mipmapBlurPass after creation
+      const bloom = this.bloomEffect as any;
+      if (bloom.mipmapBlurPass) {
+        bloom.mipmapBlurPass.radius = radius ?? config.renderingControls.defaults.bloomRadius;
+      }
+
+      this.rebuildEffectPass();
+      log.success(Modules.POST_PROCESSING, 'Bloom enabled');
+    } else if (!enabled && this.bloomEffect) {
+      this.safeDisposeEffect(this.bloomEffect, 'Bloom');
+      this.bloomEffect = undefined;
+      this.rebuildEffectPass();
+      log.info(Modules.POST_PROCESSING, 'Bloom disabled');
+    }
+    // If enabled and effect already exists, just update settings
+    else if (enabled && this.bloomEffect) {
+      this.updateBloomSettings(strength, radius, threshold);
+    }
+  }
+
+  /**
+   * Check if bloom effect is currently enabled.
+   */
+  isBloomEnabled(): boolean {
+    return !!this.bloomEffect;
   }
 
   /**
@@ -1074,7 +1126,7 @@ export class PostProcessingManager {
     ao: boolean;
     lensDistortion: boolean;
     chromaticLensDistortion: boolean;
-    } {
+  } {
     const toneMappingNames: Record<ToneMappingMode, string> = {
       [ToneMappingMode.LINEAR]: 'Linear',
       [ToneMappingMode.REINHARD]: 'Reinhard',
@@ -1264,52 +1316,52 @@ export class PostProcessingManager {
       bloom:
         this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
           ? {
-            intensity: bloom.intensity,
-            luminanceThreshold: bloom.luminanceMaterial?.threshold,
-            radius: bloom.mipmapBlurPass?.radius,
-          }
+              intensity: bloom.intensity,
+              luminanceThreshold: bloom.luminanceMaterial?.threshold,
+              radius: bloom.mipmapBlurPass?.radius,
+            }
           : null,
       toneMapping:
         this.toneMappingEffect && isToneMappingEffectTyped(this.toneMappingEffect)
           ? {
-            mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
-          }
+              mode: this.toneMappingEffect.mode,
+              whitePoint: this.toneMappingEffect.uniforms?.whitePoint?.value,
+            }
           : null,
       dof:
         this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
           ? {
-            enabled: true,
-            bokehScale: this.dofEffect.bokehScale,
-            focusDistance:
+              enabled: true,
+              bokehScale: this.dofEffect.bokehScale,
+              focusDistance:
                 this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-          }
+            }
           : null,
       vignette:
         this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
           ? {
-            darkness: this.vignetteEffect.darkness,
-            offset: this.vignetteEffect.offset,
-          }
+              darkness: this.vignetteEffect.darkness,
+              offset: this.vignetteEffect.offset,
+            }
           : null,
       chromaticLensDistortion:
         this.chromaticLensDistortionEffect &&
         isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
           ? {
-            distortion: this.chromaticLensDistortionEffect.distortion.clone(),
-            principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
-            focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
-            skew: this.chromaticLensDistortionEffect.skew,
-            dispersion: this.chromaticLensDistortionEffect.dispersion,
-          }
+              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
+              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
+              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
+              skew: this.chromaticLensDistortionEffect.skew,
+              dispersion: this.chromaticLensDistortionEffect.dispersion,
+            }
           : null,
       detectorNoise:
         this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
           ? {
-            readoutSigma: this.detectorNoiseEffect.readoutSigma,
-            photonGain: this.detectorNoiseEffect.photonGain,
-            fpnSigma: this.detectorNoiseEffect.fpnSigma,
-          }
+              readoutSigma: this.detectorNoiseEffect.readoutSigma,
+              photonGain: this.detectorNoiseEffect.photonGain,
+              fpnSigma: this.detectorNoiseEffect.fpnSigma,
+            }
           : null,
       // Save AA states
       ao: this.aoEffect ? { enabled: true } : null,

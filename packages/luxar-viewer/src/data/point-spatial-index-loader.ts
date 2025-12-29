@@ -391,94 +391,38 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       // Load all arrays with the SAME ranges (critical for alignment!)
-      // Load sequentially to prevent browser resource exhaustion (ERR_INSUFFICIENT_RESOURCES)
-      // This is especially important for large datasets with many chunks
-      let positions: Float32Array | Uint8Array | Uint16Array | Float16Array;
-      let colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
-      let radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
-      let sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null = null;
+      // IMPORTANT: Sequential loading is intentional and optimal here because:
+      // 1. Each loadRanges() internally fetches ranges sequentially
+      // 2. Parallel attribute loading causes HTTP connection pool saturation (browser limit: 6)
+      // 3. Sequential ensures each attribute gets full connection pool bandwidth
+      // True parallelism would require a unified request queue with bounded concurrency.
+      type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
+      let positions: ArrayType;
+      let colors: ArrayType | null = null;
+      let radii: ArrayType | null = null;
+      let sharpness: ArrayType | null = null;
 
-      if (session) {
-        const loadSession = session.begin('Load Arrays');
-        try {
-          log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading positions for ${ranges.length} ranges`
-          );
-          const positionsResult = await this.loadRanges('positions', ranges);
-          if (!positionsResult) {
-            throw new Error('Failed to load positions array');
-          }
-          positions = positionsResult;
-
-          if (this.arrays.colors) {
-            log.info(
-              LogEmoji.LOAD,
-              Modules.SPATIAL_INDEX_LOADER,
-              `Loading colors for ${ranges.length} ranges`
-            );
-            colors = await this.loadRanges('colors', ranges);
-          }
-
-          if (this.arrays.radii) {
-            log.info(
-              LogEmoji.LOAD,
-              Modules.SPATIAL_INDEX_LOADER,
-              `Loading radii for ${ranges.length} ranges`
-            );
-            radii = await this.loadRanges('radii', ranges);
-          }
-
-          if (this.arrays.sharpness) {
-            log.info(
-              LogEmoji.LOAD,
-              Modules.SPATIAL_INDEX_LOADER,
-              `Loading sharpness for ${ranges.length} ranges`
-            );
-            sharpness = await this.loadRanges('sharpness', ranges);
-          }
-        } finally {
-          loadSession.end();
-        }
-      } else {
+      const loadSession = session?.begin('Load Arrays');
+      try {
         log.info(
           LogEmoji.LOAD,
           Modules.SPATIAL_INDEX_LOADER,
-          `Loading positions for ${ranges.length} ranges`
+          `Loading attributes sequentially for ${ranges.length} ranges`
         );
+
+        // Load positions (required)
         const positionsResult = await this.loadRanges('positions', ranges);
         if (!positionsResult) {
           throw new Error('Failed to load positions array');
         }
         positions = positionsResult;
 
-        if (this.arrays.colors) {
-          log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading colors for ${ranges.length} ranges`
-          );
-          colors = await this.loadRanges('colors', ranges);
-        }
-
-        if (this.arrays.radii) {
-          log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading radii for ${ranges.length} ranges`
-          );
-          radii = await this.loadRanges('radii', ranges);
-        }
-
-        if (this.arrays.sharpness) {
-          log.info(
-            LogEmoji.LOAD,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Loading sharpness for ${ranges.length} ranges`
-          );
-          sharpness = await this.loadRanges('sharpness', ranges);
-        }
+        // Load optional attributes
+        colors = this.arrays.colors ? await this.loadRanges('colors', ranges) : null;
+        radii = this.arrays.radii ? await this.loadRanges('radii', ranges) : null;
+        sharpness = this.arrays.sharpness ? await this.loadRanges('sharpness', ranges) : null;
+      } finally {
+        loadSession?.end();
       }
 
       // Update query status

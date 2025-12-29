@@ -32,14 +32,14 @@ export interface AdaptiveDPRState {
   enabled: boolean;
   currentDPR: number;
   currentFPS: number;
-  isLowPowerMode: boolean;
+  isReducedResolution: boolean;
   nativeDPR: number;
 }
 
 /**
  * Callback type for DPR change notifications
  */
-export type DPRChangeCallback = (dpr: number, isLowPowerMode: boolean) => void;
+export type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => void;
 
 /**
  * Manages adaptive pixel ratio for performance optimization
@@ -58,7 +58,7 @@ export class AdaptiveDPRManager {
   private isEnabled: boolean;
   private lastEvaluationTime: number = 0;
   private highFPSStartTime: number | null = null;
-  private isLowPowerMode: boolean = false;
+  private isReducedResolution: boolean = false;
 
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
@@ -175,9 +175,9 @@ export class AdaptiveDPRManager {
     this.currentDPR = newDPR;
     this.applyDPR();
 
-    // Update low power mode status
-    const wasLowPowerMode = this.isLowPowerMode;
-    this.isLowPowerMode = newDPR < this.nativeDPR * 0.95;
+    // Update reduced resolution mode status
+    const wasReducedResolution = this.isReducedResolution;
+    this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -186,8 +186,8 @@ export class AdaptiveDPRManager {
     );
 
     // Notify callback
-    if (this.onDPRChange && (wasLowPowerMode !== this.isLowPowerMode || true)) {
-      this.onDPRChange(newDPR, this.isLowPowerMode);
+    if (this.onDPRChange && (wasReducedResolution !== this.isReducedResolution || true)) {
+      this.onDPRChange(newDPR, this.isReducedResolution);
     }
   }
 
@@ -205,8 +205,8 @@ export class AdaptiveDPRManager {
     this.currentDPR = newDPR;
     this.applyDPR();
 
-    // Update low power mode status
-    this.isLowPowerMode = newDPR < this.nativeDPR * 0.95;
+    // Update reduced resolution mode status
+    this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -216,7 +216,7 @@ export class AdaptiveDPRManager {
 
     // Notify callback
     if (this.onDPRChange) {
-      this.onDPRChange(newDPR, this.isLowPowerMode);
+      this.onDPRChange(newDPR, this.isReducedResolution);
     }
   }
 
@@ -243,7 +243,7 @@ export class AdaptiveDPRManager {
       // Reset to native DPR when disabled
       this.currentDPR = this.nativeDPR;
       this.applyDPR();
-      this.isLowPowerMode = false;
+      this.isReducedResolution = false;
       this.highFPSStartTime = null;
       this.frameTimestamps = [];
 
@@ -267,7 +267,7 @@ export class AdaptiveDPRManager {
 
   /**
    * Register callback for DPR changes
-   * Used by UI components to show/hide low power indicator
+   * Used by UI components to show/hide resolution indicator
    *
    * @param callback - Function to call when DPR changes
    */
@@ -283,7 +283,7 @@ export class AdaptiveDPRManager {
       enabled: this.isEnabled,
       currentDPR: this.currentDPR,
       currentFPS: this.getCurrentFPS(),
-      isLowPowerMode: this.isLowPowerMode,
+      isReducedResolution: this.isReducedResolution,
       nativeDPR: this.nativeDPR,
     };
   }
@@ -326,10 +326,10 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Check if currently in low power mode
+   * Check if currently in reduced resolution mode
    */
-  getIsLowPowerMode(): boolean {
-    return this.isLowPowerMode;
+  getIsReducedResolution(): boolean {
+    return this.isReducedResolution;
   }
 
   /**

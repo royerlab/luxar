@@ -37,6 +37,29 @@ export function setupPostProcessingControls(
   const bloomFolder = effectsFolder.addFolder('Bloom');
   bloomFolder.close(); // Closed by default like all other effects
 
+  const bloomEnabledControl = bloomFolder
+    .add(settings, 'bloomEnabled')
+    .name('Enabled')
+    .onChange((value: boolean) => {
+      postProcessing.setBloomEnabled(
+        value,
+        settings.bloomStrength,
+        settings.bloomRadius,
+        settings.bloomThreshold
+      );
+      saveSettings();
+      triggerAnimation();
+    });
+
+  // Set tooltip for bloom enabled
+  bloomEnabledControl.domElement.setAttribute(
+    'title',
+    'Bloom Effect: HDR glow/light bleeding\n' +
+      '• Creates realistic light halo around bright areas\n' +
+      '• Works best with HDR colors\n' +
+      '• Disable for performance boost'
+  );
+
   const bloomThresholdControl = bloomFolder
     .add(settings, 'bloomThreshold', 0, 1, 0.01)
     .name('Threshold')

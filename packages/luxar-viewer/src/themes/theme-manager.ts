@@ -13,7 +13,13 @@ import { darkTheme } from './themes/dark.theme';
 import { lightTheme } from './themes/light.theme';
 import { frostedGlassTheme } from './themes/frosted-glass.theme';
 import { liquidGlassTheme } from './themes/liquid-glass.theme';
-import { injectGlassFilters, removeGlassFilters } from './glass-filters';
+import {
+  injectGlassFilters,
+  removeGlassFilters,
+  injectGlassRefractionLayers,
+  removeGlassRefractionLayers,
+  setupGlassRefractionObserver,
+} from './glass-filters';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -36,6 +42,9 @@ export class ThemeManager {
 
   /** LocalStorage key for theme persistence */
   private readonly STORAGE_KEY = 'luxar-theme';
+
+  /** Cleanup function for the glass refraction observer */
+  private glassRefractionObserverCleanup: (() => void) | null = null;
 
   /**
    * Private constructor (singleton pattern)
@@ -99,6 +108,14 @@ export class ThemeManager {
 
     // Remove data-theme attribute
     document.documentElement.removeAttribute('data-theme');
+
+    // Clean up glass refraction observer and layers
+    if (this.glassRefractionObserverCleanup) {
+      this.glassRefractionObserverCleanup();
+      this.glassRefractionObserverCleanup = null;
+    }
+    removeGlassRefractionLayers();
+    removeGlassFilters();
 
     // Clear current theme
     this.currentTheme = null;
@@ -215,8 +232,15 @@ export class ThemeManager {
     // Clear old theme CSS variables (remove all --luxar-* variables)
     this.clearThemeVariables();
 
-    // Remove any existing glass filters
+    // Remove any existing glass filters and refraction layers
     removeGlassFilters();
+    removeGlassRefractionLayers();
+
+    // Clean up existing glass refraction observer
+    if (this.glassRefractionObserverCleanup) {
+      this.glassRefractionObserverCleanup();
+      this.glassRefractionObserverCleanup = null;
+    }
 
     // Set data-theme attribute for theme-specific CSS overrides
     root.setAttribute('data-theme', theme.id);
@@ -224,6 +248,15 @@ export class ThemeManager {
     // Inject glass distortion filters for Liquid Glass theme
     if (theme.id === 'liquid-glass') {
       injectGlassFilters(); // Uses default params, adjustable in glass-filters.ts
+
+      // Inject real DOM elements for glass refraction (SVG filters don't work on pseudo-elements)
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        injectGlassRefractionLayers();
+      });
+
+      // Set up observer to inject refraction layers for dynamically created panels
+      this.glassRefractionObserverCleanup = setupGlassRefractionObserver();
     }
 
     // Inject CSS custom properties

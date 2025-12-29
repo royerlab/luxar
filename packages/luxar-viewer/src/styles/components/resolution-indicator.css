@@ -1,5 +1,5 @@
 /**
- * Low Power Mode Indicator Component Styles
+ * Resolution Indicator Component Styles
  *
  * A subtle indicator that appears when adaptive DPR has reduced
  * rendering resolution for performance reasons.
@@ -9,7 +9,7 @@
 /* NOTE: Use unique animation names to avoid conflicting with global luxar-fade-in
    in utilities.css (which only animates opacity without transform) */
 
-@keyframes luxar-low-power-fade-in {
+@keyframes luxar-resolution-fade-in {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -20,7 +20,7 @@
   }
 }
 
-@keyframes luxar-low-power-fade-out {
+@keyframes luxar-resolution-fade-out {
   from {
     opacity: 1;
     transform: translateY(0);
@@ -31,9 +31,9 @@
   }
 }
 
-/* ========== Low Power Indicator ========== */
+/* ========== Resolution Indicator ========== */
 
-.luxar-low-power-indicator {
+.luxar-resolution-indicator {
   /* Positioning */
   position: fixed;
   bottom: var(--luxar-spacing-10);
@@ -62,29 +62,23 @@
   z-index: var(--luxar-z-notification);
 
   /* Animation */
-  animation: luxar-low-power-fade-in 0.3s ease-out forwards;
+  animation: luxar-resolution-fade-in 0.3s ease-out forwards;
 
   /* Interaction */
   pointer-events: none;
   user-select: none;
 }
 
-.luxar-low-power-indicator--hidden {
-  animation: luxar-low-power-fade-out 0.3s ease-out forwards;
+.luxar-resolution-indicator--hidden {
+  animation: luxar-resolution-fade-out 0.3s ease-out forwards;
 }
 
-.luxar-low-power-indicator__icon {
+.luxar-resolution-indicator__icon {
   font-size: var(--luxar-text-md);
   line-height: 1;
 }
 
-.luxar-low-power-indicator__text {
+.luxar-resolution-indicator__text {
   color: var(--luxar-text-secondary);
   white-space: nowrap;
-}
-
-.luxar-low-power-indicator__dpr {
-  color: var(--luxar-text-tertiary);
-  font-size: var(--luxar-text-xs);
-  margin-left: var(--luxar-spacing-2);
 }
