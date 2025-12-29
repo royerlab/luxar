@@ -1516,7 +1516,7 @@ class AdaptiveDPRManager {
   getCurrentDPR(): number;
   getNativeDPR(): number;
   getCurrentFPS(): number;
-  getIsLowPowerMode(): boolean;
+  getIsReducedResolution(): boolean;
   getState(): AdaptiveDPRState;
 
   // Callbacks
@@ -1529,11 +1529,11 @@ interface AdaptiveDPRState {
   enabled: boolean;
   currentDPR: number;
   currentFPS: number;
-  isLowPowerMode: boolean;
+  isReducedResolution: boolean;
   nativeDPR: number;
 }
 
-type DPRChangeCallback = (dpr: number, isLowPowerMode: boolean) => void;
+type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => void;
 ```
 
 ### 8.4 Configuration
@@ -1585,26 +1585,33 @@ setAdaptivePixelRatio(dpr: number): void {
 }
 ```
 
-### 8.7 Low Power Mode Detection
+### 8.7 Reduced Resolution Mode Detection
 
-A device is in "low power mode" when DPR is reduced below 95% of native:
+Resolution is considered "reduced" when DPR is below 95% of native:
 
 ```typescript
-this.isLowPowerMode = newDPR < this.nativeDPR * 0.95;
+this.isReducedResolution = newDPR < this.nativeDPR * 0.95;
 ```
 
-This status is passed to UI components (LowPowerIndicator) via the callback.
+This status is passed to UI components (ResolutionIndicator) via the callback.
 
 ---
 
 ## Changelog
+
+- **v1.3.8** (2025-12-28): Terminology fix - "Low Power Mode" → "Reduced Resolution"
+  - **RENAMED**: `isLowPowerMode` → `isReducedResolution` throughout codebase
+  - **RENAMED**: `getIsLowPowerMode()` → `getIsReducedResolution()`
+  - **RENAMED**: Section 8.7 "Low Power Mode Detection" → "Reduced Resolution Mode Detection"
+  - **RENAMED**: Callback parameter from `isLowPowerMode` to `isReducedResolution`
+  - **RATIONALE**: "Low Power Mode" was misleading (suggests battery saving, not resolution scaling)
 
 - **v1.3.7** (2025-12-17): Adaptive resolution system and DPR-based noise scaling
   - **ADDED**: Section 8 "Adaptive Resolution System" documenting AdaptiveDPRManager
     - Dynamic DPR adjustment based on real-time FPS
     - Hysteresis algorithm to prevent rapid toggling
     - Manual DPR control when adaptive mode is disabled
-    - Low power mode detection (DPR < 95% native)
+    - Reduced resolution mode detection (DPR < 95% native)
     - Integration with SceneManager and PostProcessingManager
   - **ADDED**: DPR-based noise scaling for perceptual consistency at reduced resolutions
     - Noise parameters (readoutSigma, photonGain, fpnSigma) scale linearly with DPR

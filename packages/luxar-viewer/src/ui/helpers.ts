@@ -446,9 +446,14 @@ export function showHelpOverlay() {
   footerNote.className = 'luxar-help-overlay__footer';
   footerNote.textContent = 'Click anywhere or press Esc to close';
 
-  helpDiv.appendChild(header);
-  helpDiv.appendChild(controlsList);
-  helpDiv.appendChild(footerNote);
+  // Create scroll wrapper (separates scrolling from glass effect container)
+  const scrollWrapper = document.createElement('div');
+  scrollWrapper.className = 'luxar-help-overlay__scroll';
+  scrollWrapper.appendChild(header);
+  scrollWrapper.appendChild(controlsList);
+  scrollWrapper.appendChild(footerNote);
+
+  helpDiv.appendChild(scrollWrapper);
 
   // Track whether we're in the process of closing to prevent race conditions
   let isClosing = false;

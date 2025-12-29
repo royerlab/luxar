@@ -138,6 +138,7 @@ describe('RenderingControls', () => {
 
     // Setup mock post-processing
     mockPostProcessing = {
+      setBloomEnabled: vi.fn(),
       updateBloomSettings: vi.fn(),
       setBloomLevels: vi.fn(),
       setSSAAEnabled: vi.fn(),
@@ -469,7 +470,7 @@ describe('RenderingControls', () => {
       expect(mockSceneManager.setFlyRotationSpeed).toHaveBeenCalled();
 
       // Verify: Post-processing settings applied
-      expect(mockPostProcessing.updateBloomSettings).toHaveBeenCalled();
+      expect(mockPostProcessing.setBloomEnabled).toHaveBeenCalled();
       expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(false, expect.any(String));
     });
   });
@@ -522,8 +523,9 @@ describe('RenderingControls', () => {
       expect(mockSceneManager.setFlyMovementSpeed).toHaveBeenCalledWith(4.0);
       expect(mockSceneManager.setFlyRotationSpeed).toHaveBeenCalledWith(3.0);
 
-      // Verify: Post-processing settings applied
-      expect(mockPostProcessing.updateBloomSettings).toHaveBeenCalledWith(
+      // Verify: Post-processing settings applied (setBloomEnabled is called with enabled + params)
+      expect(mockPostProcessing.setBloomEnabled).toHaveBeenCalledWith(
+        expect.any(Boolean),
         1.8,
         expect.any(Number),
         expect.any(Number)

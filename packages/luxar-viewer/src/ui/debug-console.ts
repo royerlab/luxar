@@ -117,23 +117,31 @@ export class DebugConsole {
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'luxar-debug-console';
+    // Note: Resize handles are now child elements (not pseudo-elements)
+    // to allow ::before/::after for liquid glass effect
     panel.innerHTML = `
-      <div class="luxar-debug-console__header">
-        <div class="luxar-debug-console__title">Debug Console</div>
-        <div class="luxar-debug-console__controls">
-          <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." />
-          <button class="luxar-debug-console__clear-btn" title="Clear console">Clear</button>
-          <button class="luxar-debug-console__copy-btn" title="Copy all to clipboard">Copy</button>
-          <label class="luxar-debug-console__autoscroll">
-            <input type="checkbox" checked /> Auto-scroll
-          </label>
-          <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">×</button>
+      <div class="luxar-glass-refraction" aria-hidden="true"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--top"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--left"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--corner"></div>
+      <div class="luxar-debug-console__scroll">
+        <div class="luxar-debug-console__header">
+          <div class="luxar-debug-console__title">Debug Console</div>
+          <div class="luxar-debug-console__controls">
+            <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." />
+            <button class="luxar-debug-console__clear-btn" title="Clear console">Clear</button>
+            <button class="luxar-debug-console__copy-btn" title="Copy all to clipboard">Copy</button>
+            <label class="luxar-debug-console__autoscroll">
+              <input type="checkbox" checked /> Auto-scroll
+            </label>
+            <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">×</button>
+          </div>
         </div>
-      </div>
-      <div class="luxar-debug-console__content"></div>
-      <div class="luxar-debug-console__status">
-        <span class="message-count">0 messages</span>
-        <span class="filter-status"></span>
+        <div class="luxar-debug-console__content"></div>
+        <div class="luxar-debug-console__status">
+          <span class="message-count">0 messages</span>
+          <span class="filter-status"></span>
+        </div>
       </div>
     `;
 

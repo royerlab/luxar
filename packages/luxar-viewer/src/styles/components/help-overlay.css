@@ -19,7 +19,6 @@
   background: var(--luxar-bg-secondary);
   color: var(--luxar-text-primary);
   border-radius: var(--luxar-radius-md);
-  padding: var(--luxar-spacing-8);
 
   /* Typography */
   font-family: var(--luxar-font-base);
@@ -30,13 +29,43 @@
   box-shadow: var(--luxar-shadow-lg);
   z-index: var(--luxar-z-modal);
 
-  /* Behavior */
-  overflow-y: auto;
+  /* NO overflow here - allows pseudo-elements for glass effect */
+  overflow: visible;
   outline: none !important;
 
-  /* Animation */
-  opacity: 0;
-  animation: luxar-fade-in 0.15s ease forwards;
+  /* Animation removed - opacity + animation interferes with SVG filter in liquid glass theme */
+  /* opacity: 0; */
+  /* animation: luxar-fade-in 0.15s ease forwards; */
+}
+
+/**
+ * Inner Scrollable Container
+ * Contains header, content, and footer - handles all scrolling
+ */
+.luxar-help-overlay__scroll {
+  /* Spacing */
+  padding: var(--luxar-spacing-8);
+
+  /* Scrolling behavior (moved from .luxar-help-overlay) */
+  overflow-y: auto;
+  max-height: 80vh;
+
+  /* Scrollbar styling */
+  scrollbar-width: thin;
+  scrollbar-color: var(--luxar-success) transparent;
+}
+
+.luxar-help-overlay__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.luxar-help-overlay__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.luxar-help-overlay__scroll::-webkit-scrollbar-thumb {
+  background: var(--luxar-success);
+  border-radius: var(--luxar-radius-full);
 }
 
 /* Header */

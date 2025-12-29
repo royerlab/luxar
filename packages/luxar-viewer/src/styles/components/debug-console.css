@@ -3,6 +3,14 @@
  *
  * In-app developer console for viewing browser console output.
  * Used by DebugConsole class in ui/debug-console.ts
+ *
+ * Structure (for liquid glass pseudo-element support):
+ * - .luxar-debug-console (outer glass container, no overflow)
+ *   - .luxar-debug-console__resize-handle--top (child element, not pseudo)
+ *   - .luxar-debug-console__resize-handle--left (child element, not pseudo)
+ *   - .luxar-debug-console__resize-handle--corner (child element, not pseudo)
+ *   - .luxar-debug-console__scroll (inner scrollable container)
+ *     - header, content, status
  */
 
 .luxar-debug-console {
@@ -13,23 +21,38 @@
   height: 400px;
   background: var(--luxar-bg-secondary);
   border-radius: var(--luxar-radius-md);
-  display: flex;
-  flex-direction: column;
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-md);
   z-index: 150;
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
 
-  /* Animation */
-  opacity: 0;
-  animation: luxar-fade-in 0.15s ease forwards;
+  /* NO overflow - allows pseudo-elements for glass effect */
+  overflow: visible;
+
+  /* Animation removed - opacity + animation interferes with SVG filter in liquid glass theme */
+  /* opacity: 0; */
+  /* animation: luxar-fade-in 0.15s ease forwards; */
 }
 
-/* Resize handles */
-.luxar-debug-console::before {
-  content: '';
+/**
+ * Inner Scrollable Container
+ * Contains header, content, and status - handles layout
+ */
+.luxar-debug-console__scroll {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* Resize handles (child elements instead of pseudo-elements) */
+.luxar-debug-console__resize-handle {
   position: absolute;
+  z-index: 10;
+}
+
+.luxar-debug-console__resize-handle--top {
   top: 0;
   left: 0;
   right: 0;
@@ -37,14 +60,20 @@
   cursor: ns-resize;
 }
 
-.luxar-debug-console::after {
-  content: '';
-  position: absolute;
+.luxar-debug-console__resize-handle--left {
   top: 0;
   left: 0;
   bottom: 0;
   width: 4px;
   cursor: ew-resize;
+}
+
+.luxar-debug-console__resize-handle--corner {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
 }
 
 /* Header */

@@ -25,10 +25,10 @@ export interface GlassFilterParams {
  * EASILY ADJUSTABLE - Change these to customize the glass effect!
  */
 export const defaultGlassParams: GlassFilterParams = {
-  blurRadius: 25, // Soft, thick edge curve
-  refractionScale: 40, // Strong but not extreme refraction
-  chromaticStrength: 2, // Visible color splitting (rainbow edges)
-  specularIntensity: 0.3, // Subtle rim light (optional, set to 0 to disable)
+  blurRadius: 35, // Soft, thick edge curve (increased for more visible effect)
+  refractionScale: 80, // Strong refraction (doubled for testing)
+  chromaticStrength: 5, // Strong color splitting (rainbow edges)
+  specularIntensity: 0.5, // Brighter rim light
 };
 
 /**
@@ -187,8 +187,8 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
           result="final"/>
 
         ${
-  params.specularIntensity && params.specularIntensity > 0
-    ? `
+          params.specularIntensity && params.specularIntensity > 0
+            ? `
         <!-- OPTIONAL: Specular Rim Light (glossy highlight) -->
         <feGaussianBlur in="heightMap" stdDeviation="5" result="specMap"/>
         <feColorMatrix
@@ -209,8 +209,8 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
           in2="SourceAlpha"
           operator="in"/>
         `
-    : ''
-}
+            : ''
+        }
 
       </filter>
     </defs>
@@ -236,4 +236,99 @@ export function removeGlassFilters(): void {
 export function updateGlassFilters(params: Partial<GlassFilterParams>): void {
   removeGlassFilters();
   injectGlassFilters({ ...defaultGlassParams, ...params });
+}
+
+/**
+ * CSS selectors for glass-enabled panels
+ * These elements will receive the real DOM refraction layer
+ */
+const GLASS_PANEL_SELECTORS = [
+  '.luxar-help-overlay',
+  '.luxar-error-dialog',
+  '.luxar-dataset-browser',
+  '.luxar-debug-console',
+  '.luxar-data-monitor',
+  '.luxar-dimension-sliders',
+  '.luxar-gui',
+];
+
+/**
+ * Inject real DOM elements for the glass refraction layer
+ *
+ * SVG filters on ::before pseudo-elements don't work reliably across browsers.
+ * This function creates real DOM elements that can properly receive the SVG filter.
+ *
+ * Must be called after the glass panels are created in the DOM.
+ */
+export function injectGlassRefractionLayers(): void {
+  GLASS_PANEL_SELECTORS.forEach((selector) => {
+    const panels = document.querySelectorAll(selector);
+    panels.forEach((panel) => {
+      // Skip if already has a refraction layer
+      if (panel.querySelector('.luxar-glass-refraction')) {
+        return;
+      }
+
+      // Create the refraction layer element
+      const refractionLayer = document.createElement('div');
+      refractionLayer.className = 'luxar-glass-refraction';
+      refractionLayer.setAttribute('aria-hidden', 'true');
+
+      // Insert as first child so it's behind all content
+      panel.insertBefore(refractionLayer, panel.firstChild);
+    });
+  });
+}
+
+/**
+ * Remove all glass refraction layer elements from the DOM
+ */
+export function removeGlassRefractionLayers(): void {
+  const layers = document.querySelectorAll('.luxar-glass-refraction');
+  layers.forEach((layer) => layer.remove());
+}
+
+/**
+ * Set up a MutationObserver to automatically inject glass refraction layers
+ * when new glass-enabled panels are added to the DOM.
+ *
+ * Returns a cleanup function to disconnect the observer.
+ */
+export function setupGlassRefractionObserver(): () => void {
+  const observer = new MutationObserver((mutations) => {
+    let shouldInject = false;
+
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        // Check if any added nodes match our glass panel selectors
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) {
+            for (const selector of GLASS_PANEL_SELECTORS) {
+              if (node.matches(selector) || node.querySelector(selector)) {
+                shouldInject = true;
+                break;
+              }
+            }
+          }
+        });
+      }
+
+      if (shouldInject) break;
+    }
+
+    if (shouldInject) {
+      // Small delay to ensure DOM is fully updated
+      requestAnimationFrame(() => {
+        injectGlassRefractionLayers();
+      });
+    }
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // Return cleanup function
+  return () => observer.disconnect();
 }
