@@ -17,15 +17,16 @@
   backdrop-filter: var(--luxar-blur-md);
   border-radius: var(--luxar-radius-md);
   box-shadow: var(--luxar-shadow-md);
-  overflow: hidden;
+  /* NO overflow: hidden - allows pseudo-elements for glass effect */
+  overflow: visible;
   user-select: none;
   -webkit-user-select: none;
   pointer-events: auto;
   box-sizing: border-box;
 
-  /* Animation */
-  opacity: 0;
-  animation: luxar-fade-in 0.15s ease forwards;
+  /* Animation removed - opacity + animation interferes with SVG filter in liquid glass theme */
+  /* opacity: 0; */
+  /* animation: luxar-fade-in 0.15s ease forwards; */
 }
 
 /* Position variants */

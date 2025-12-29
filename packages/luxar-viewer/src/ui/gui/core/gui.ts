@@ -72,11 +72,21 @@ export class GUI extends Folder {
 
   /**
    * Create the root DOM element with header and title
+   *
+   * Structure (for liquid glass pseudo-element support):
+   * - .luxar-gui (outer glass container, no overflow)
+   *   - .luxar-gui__scroll (inner scrollable container)
+   *     - .luxar-gui__header
+   *     - .luxar-gui__children
    */
   private createRootElement(): HTMLElement {
     const root = document.createElement('div');
     root.className = 'luxar-gui';
     root.style.width = `${this.guiOptions.width}px`;
+
+    // Scrollable inner container (separates scroll from glass container)
+    const scroll = document.createElement('div');
+    scroll.className = 'luxar-gui__scroll';
 
     // Header element (contains title and optional close button)
     const header = document.createElement('div');
@@ -99,10 +109,12 @@ export class GUI extends Folder {
       header.appendChild(closeBtn);
     }
 
-    root.appendChild(header);
+    scroll.appendChild(header);
 
     // Children container (from Folder base class)
-    root.appendChild(this.childrenContainer);
+    scroll.appendChild(this.childrenContainer);
+
+    root.appendChild(scroll);
 
     return root;
   }

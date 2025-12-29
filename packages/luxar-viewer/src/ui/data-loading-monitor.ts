@@ -130,10 +130,10 @@ export class DataLoadingMonitor {
     lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
     gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
   } = {
-      points: null,
-      lines: null,
-      gsplats: null,
-    };
+    points: null,
+    lines: null,
+    gsplats: null,
+  };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -720,6 +720,7 @@ export class DataLoadingMonitor {
     const hasErrors = recommendations.some((r) => r.severity === 'error');
 
     this.panel.innerHTML = `
+      <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-compact">
         <span class="loader-type" title="Loading mode">
           ${hasSpatialIndex ? '🔍' : '📦'}
@@ -754,6 +755,7 @@ export class DataLoadingMonitor {
     if (!this.panel) return;
 
     this.panel.innerHTML = `
+      <div class="luxar-glass-refraction" aria-hidden="true"></div>
       <div class="luxar-monitor-detailed">
         <!-- Header -->
         <div class="luxar-data-monitor__header">

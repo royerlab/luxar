@@ -1,27 +1,32 @@
 /**
  * Liquid Glass Theme Overrides
  *
- * Two-layer glass effect:
- * - ::before = SVG refraction filter (geometry-aware background distortion)
+ * Three-layer glass effect:
+ * - .luxar-glass-refraction = Real DOM element with SVG refraction filter (required for cross-browser support)
+ * - ::before = Backdrop blur layer (saturation boost, no SVG filter)
  * - ::after = Liquid shine layer (glossy highlights and edge glow)
+ *
+ * Note: SVG filters on ::before pseudo-elements don't work reliably in all browsers.
+ * Using a real DOM element for the refraction layer ensures consistent behavior.
  *
  * Inspired by Apple's liquid glass and https://dev.to/kevinbism/recreating-apples-liquid-glass-effect-with-pure-css-3gpl
  */
 
-/* Base overrides for components that support pseudo-element approach */
+/* Base overrides for components that support the glass effect */
 [data-theme='liquid-glass'] .luxar-help-overlay,
 [data-theme='liquid-glass'] .luxar-error-dialog,
 [data-theme='liquid-glass'] .luxar-dataset-browser,
 [data-theme='liquid-glass'] .luxar-debug-console,
 [data-theme='liquid-glass'] .luxar-data-monitor,
-[data-theme='liquid-glass'] .luxar-dimension-sliders {
-  /* Create stacking context for pseudo-elements */
+[data-theme='liquid-glass'] .luxar-dimension-sliders,
+[data-theme='liquid-glass'] .luxar-gui {
+  /* Create stacking context for layers */
   isolation: isolate;
 
   /* Ensure border doesn't affect sizing/centering */
   box-sizing: border-box;
 
-  /* Transparent - pseudo-elements handle the glass look */
+  /* Transparent - layers handle the glass look */
   background: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -30,38 +35,46 @@
   border: 1px solid rgba(255, 255, 255, 0.5) !important;
 }
 
-/* GUI needs direct styling (overflow:auto breaks pseudo-element approach) */
-[data-theme='liquid-glass'] .luxar-gui {
-  /* Glass tint + backdrop blur */
-  background: rgba(255, 255, 255, 0.12) !important;
-  backdrop-filter: blur(12px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
+/* ==========================================================================
+   LAYER 1: Refraction Layer (Real DOM Element)
+   Provides a gradient background that the SVG filter can process
+   ========================================================================== */
+[data-theme='liquid-glass'] .luxar-glass-refraction {
+  position: absolute;
+  inset: 0;
+  z-index: -3; /* Furthest back */
+  border-radius: inherit;
+  pointer-events: none;
 
-  /* Brighter border */
-  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+  /* Gradient background for the SVG filter to have source pixels */
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 50%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
 
-  /* Liquid shine via box-shadow (since we can't use ::after) */
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    inset 0 1px 1px rgba(255, 255, 255, 0.4),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.1) !important;
+  /* Performance optimization */
+  will-change: transform;
 }
 
 /* ==========================================================================
-   LAYER 1: Refraction Layer (::before)
-   Geometry-aware background distortion using SVG filters
+   LAYER 2: Backdrop Blur + Refraction Layer (::before)
+   Combines backdrop-filter with SVG refraction filter
    ========================================================================== */
 [data-theme='liquid-glass'] .luxar-help-overlay::before,
 [data-theme='liquid-glass'] .luxar-error-dialog::before,
 [data-theme='liquid-glass'] .luxar-dataset-browser::before,
 [data-theme='liquid-glass'] .luxar-debug-console::before,
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::before {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
+[data-theme='liquid-glass'] .luxar-gui::before {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: -2; /* Furthest back - refraction layer */
+  z-index: -2; /* Behind content */
   border-radius: inherit;
+  pointer-events: none;
 
   /* Backdrop with saturation boost for vibrant colors through glass */
   backdrop-filter: blur(2px) saturate(180%);
@@ -70,10 +83,6 @@
   /* SVG filter for geometry-aware refraction */
   filter: url(#luxar-liquid-refraction);
   -webkit-filter: url(#luxar-liquid-refraction);
-
-  /* Performance optimization */
-  transform: translateZ(0);
-  will-change: filter;
 }
 
 /* ==========================================================================
@@ -85,7 +94,8 @@
 [data-theme='liquid-glass'] .luxar-dataset-browser::after,
 [data-theme='liquid-glass'] .luxar-debug-console::after,
 [data-theme='liquid-glass'] .luxar-data-monitor::after,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::after {
+[data-theme='liquid-glass'] .luxar-dimension-sliders::after,
+[data-theme='liquid-glass'] .luxar-gui::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -93,23 +103,23 @@
   border-radius: inherit;
   pointer-events: none;
 
-  /* Glass tint - more visible for better readability */
-  background: rgba(255, 255, 255, 0.15);
+  /* Glass tint - dark tint for text contrast on bright backgrounds */
+  background: rgba(0, 0, 0, 0.55);
 
-  /* Complex inset shadows for liquid shine effect */
-  /* Top-left highlight + bottom edge glow */
+  /* Subtle inset shadows for depth without too much brightness */
+  /* Top-left subtle highlight + soft edge definition */
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.5),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.15),
-    inset 2px 2px 6px rgba(255, 255, 255, 0.2),
-    inset -2px -2px 6px rgba(0, 0, 0, 0.08);
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.1),
+    inset 1px 1px 3px rgba(255, 255, 255, 0.08),
+    inset -1px -1px 3px rgba(0, 0, 0, 0.15);
 
-  /* Brightness boost for glossy feel */
-  filter: brightness(105%);
-  -webkit-filter: brightness(105%);
+  /* No brightness boost - keep natural colors */
+  /* filter: brightness(105%); */
+  /* -webkit-filter: brightness(105%); */
 
-  /* Higher opacity for better visibility */
-  opacity: 0.9;
+  /* Moderate opacity for glass feel without washing out */
+  opacity: 0.7;
 }
 
 /* Note: Adjust refraction parameters in src/themes/glass-filters.ts */
@@ -119,3 +129,270 @@
  * - chromaticStrength: 2 (RGB separation at edges)
  * - specularIntensity: 0.3 (rim light brightness, 0 to disable)
  */
+
+/* ==========================================================================
+   INNER ELEMENT TRANSPARENCY
+   Make inner content cards/sections more transparent so glass effect shows
+   ========================================================================== */
+
+/* Data Loading Monitor inner elements */
+[data-theme='liquid-glass'] .luxar-metric-card,
+[data-theme='liquid-glass'] .luxar-stat-grid__item,
+[data-theme='liquid-glass'] .luxar-secondary-metrics,
+[data-theme='liquid-glass'] .luxar-cache-section,
+[data-theme='liquid-glass'] .luxar-scene-graph__container,
+[data-theme='liquid-glass'] .luxar-loader-item,
+[data-theme='liquid-glass'] .luxar-cache-total,
+[data-theme='liquid-glass'] .luxar-memory-section,
+[data-theme='liquid-glass'] .luxar-timeline-canvas,
+[data-theme='liquid-glass'] .timing-header,
+[data-theme='liquid-glass'] .timing-footer {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: none;
+}
+
+/* Progress bar track - slightly more visible */
+[data-theme='liquid-glass'] .luxar-progress-bar__track {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ==========================================================================
+   GUI INNER ELEMENT STYLING
+   Make GUI controls transparent and glass-like
+   ========================================================================== */
+
+/* GUI folder titles - transparent hover */
+[data-theme='liquid-glass'] .luxar-gui__folder-title:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* GUI controller hover - transparent */
+[data-theme='liquid-glass'] .luxar-gui__controller:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* GUI inputs - more transparent */
+[data-theme='liquid-glass'] .luxar-gui__input,
+[data-theme='liquid-glass'] .luxar-gui__input--number {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__input:hover,
+[data-theme='liquid-glass'] .luxar-gui__input--number:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__input:focus,
+[data-theme='liquid-glass'] .luxar-gui__input--number:focus {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: var(--luxar-success) !important;
+}
+
+/* GUI select - more transparent */
+[data-theme='liquid-glass'] .luxar-gui__select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__select:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__select:focus {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: var(--luxar-success) !important;
+}
+
+/* GUI slider track - subtle */
+[data-theme='liquid-glass'] .luxar-gui__slider {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__slider::-webkit-slider-track {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__slider::-moz-range-track {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* GUI button - glass style */
+[data-theme='liquid-glass'] .luxar-gui__button {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-gui__button:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* ==========================================================================
+   DATA MONITOR TAB STYLING
+   Make tabs more glass-like
+   ========================================================================== */
+
+[data-theme='liquid-glass'] .luxar-data-monitor__tab {
+  border-radius: 8px 8px 0 0;
+}
+
+[data-theme='liquid-glass'] .luxar-data-monitor__tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='liquid-glass'] .luxar-data-monitor__tab--active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ==========================================================================
+   RECOMMENDATION CARDS - More transparent
+   ========================================================================== */
+
+[data-theme='liquid-glass'] .luxar-recommendation--error {
+  background: rgba(255, 59, 48, 0.08) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-recommendation--warning {
+  background: rgba(255, 193, 7, 0.08) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-recommendation--info {
+  background: rgba(33, 150, 243, 0.08) !important;
+}
+
+/* ==========================================================================
+   DEBUG CONSOLE INNER ELEMENT STYLING
+   Make debug console content transparent for glass effect
+   ========================================================================== */
+
+/* Debug console content area - was rgba(0, 0, 0, 0.3), too opaque */
+[data-theme='liquid-glass'] .luxar-debug-console__content {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Debug console filter input */
+[data-theme='liquid-glass'] .luxar-debug-console__filter {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Debug console header border */
+[data-theme='liquid-glass'] .luxar-debug-console__header {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Debug console status bar */
+[data-theme='liquid-glass'] .luxar-debug-console__status {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Console message hover - more transparent */
+[data-theme='liquid-glass'] .luxar-console-message:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Warning and error message backgrounds - more transparent */
+[data-theme='liquid-glass'] .luxar-console-message-warn {
+  background: rgba(255, 193, 7, 0.08) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-console-message-error {
+  background: rgba(244, 67, 54, 0.08) !important;
+}
+
+/* ==========================================================================
+   DATASET BROWSER INNER ELEMENT STYLING
+   Make dataset browser elements transparent for glass effect
+   ========================================================================== */
+
+/* Banner section */
+[data-theme='liquid-glass'] .luxar-dataset-browser__banner {
+  background: rgba(76, 175, 80, 0.06) !important;
+  border-color: rgba(76, 175, 80, 0.15) !important;
+}
+
+/* Code snippet in banner */
+[data-theme='liquid-glass'] .luxar-dataset-browser__banner-code {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Breadcrumb navigation */
+[data-theme='liquid-glass'] .luxar-dataset-browser__breadcrumb {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* File list items */
+[data-theme='liquid-glass'] .luxar-dataset-browser__file-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-dataset-browser__file-item:hover {
+  background: rgba(76, 175, 80, 0.12) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-dataset-browser__file-item--current {
+  background: rgba(76, 175, 80, 0.1) !important;
+  border-color: rgba(76, 175, 80, 0.25) !important;
+}
+
+/* Manual entry input */
+[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input:focus {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--luxar-success) !important;
+}
+
+/* Status bar */
+[data-theme='liquid-glass'] .luxar-dataset-browser__status {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Header border */
+[data-theme='liquid-glass'] .luxar-dataset-browser__header {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* ==========================================================================
+   HELP OVERLAY INNER ELEMENT STYLING
+   Make help overlay elements transparent for glass effect
+   ========================================================================== */
+
+/* Header border */
+[data-theme='liquid-glass'] .luxar-help-overlay__header {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Category content border */
+[data-theme='liquid-glass'] .luxar-help-overlay__category-content {
+  border-color: rgba(76, 175, 80, 0.15) !important;
+}
+
+/* Footer border */
+[data-theme='liquid-glass'] .luxar-help-overlay__footer {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ==========================================================================
+   ERROR DIALOG INNER ELEMENT STYLING
+   Make error dialog elements transparent for glass effect
+   ========================================================================== */
+
+[data-theme='liquid-glass'] .luxar-error-dialog__header {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-error-dialog__content {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+[data-theme='liquid-glass'] .luxar-error-dialog__footer {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}

@@ -981,8 +981,9 @@ export class RenderingControls {
    * Apply current settings to rendering pipeline
    */
   private applySettings(): void {
-    // Apply bloom settings
-    this.postProcessing.updateBloomSettings(
+    // Apply bloom settings (enabled state + parameters)
+    this.postProcessing.setBloomEnabled(
+      this.settings.bloomEnabled,
       this.settings.bloomStrength,
       this.settings.bloomRadius,
       this.settings.bloomThreshold

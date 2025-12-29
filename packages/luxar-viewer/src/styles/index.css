@@ -20,7 +20,7 @@
 @import './components/debug-console.css';
 @import './components/dataset-browser.css';
 @import './components/data-loading-monitor.css';
-@import './components/low-power-indicator.css';
+@import './components/resolution-indicator.css';
 /* (More components will be added as they are migrated) */
 /* @import './components/performance-monitor.css'; */
 
