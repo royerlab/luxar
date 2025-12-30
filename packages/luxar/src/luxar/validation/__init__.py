@@ -14,6 +14,7 @@ from .base import (
     validate_sharpness_for_writing,
     validate_zarr_attributes,
 )
+from .category_validation import validate_categories
 from .nd import (
     DimensionalCoverageError,
     broadcast_to_all_slices,
@@ -24,7 +25,6 @@ from .types import (
     is_position_array,
     is_transform_matrix,
     validate_blending_mode,
-    validate_categories,
     validate_category_indices,
     validate_colors,
     validate_gamma,

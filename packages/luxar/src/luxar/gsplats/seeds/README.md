@@ -32,11 +32,11 @@ def generate_seeds(
 **Parameters**:
 - `V` (np.ndarray): Input n-dimensional image/volume
 - `method` (str): Seed generation method
-  - `"both"`: Automatic selection (combines multiscale + decomposition) - **DEFAULT**
-  - `"multiscale_gaussian"`: Fast multiscale Gaussian peak detection
-  - `"multiscale_decomposition"`: Hierarchical decomposition-based detection
-  - `"combined"`: Explicit combination of both methods
-- `**method_kwargs`: Method-specific parameters passed to underlying functions
+  - `"decomposition"`: Hierarchical scale decomposition-based detection - **DEFAULT**
+  - `"gaussian"`: Fast multiscale Gaussian peak detection
+  - `"both"`: Combines decomposition + gaussian methods
+  - `"moments"`: Full covariance estimation for anisotropic features
+- `**kwargs`: Method-specific parameters passed to underlying functions
 
 **Returns**:
 - `GSplatData`: Seed Gaussian splats with scale-informed shapes:

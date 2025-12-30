@@ -133,6 +133,257 @@ function formatCount(n: number): string {
 }
 
 /**
+ * Node type for aggregation
+ */
+type NodeType = 'Points' | 'Lines' | 'GSplats' | 'Unknown';
+
+/**
+ * Extract node type from entry name (optimized - checks first char)
+ * Entry names look like: "Points (/path)", "Lines (/path)", "GSplats (/path)"
+ */
+function getNodeType(name: string): NodeType {
+  // Fast path: check first character
+  const first = name.charCodeAt(0);
+  if (first === 80 && name.startsWith('Points')) return 'Points'; // 'P'
+  if (first === 76 && name.startsWith('Lines')) return 'Lines'; // 'L'
+  if (first === 71 && name.startsWith('GSplats')) return 'GSplats'; // 'G'
+  return 'Unknown';
+}
+
+/**
+ * Aggregate children entries by node type (optimized single-pass)
+ * Returns a new array with aggregated entries for Points, Lines, GSplats
+ */
+function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
+  if (children.length === 0) return [];
+
+  // Reusable accumulators for each type (pre-allocated)
+  const accumulators: Record<
+    NodeType,
+    {
+      entries: TimingEntry[];
+      lastMs: number;
+      avgMs: number;
+      count: number;
+      overBudget: boolean;
+      allSkipped: boolean;
+      points: number;
+      segments: number;
+      splats: number;
+      childrenByName: Map<string, TimingEntry[]>;
+    }
+  > = {
+    Points: {
+      entries: [],
+      lastMs: 0,
+      avgMs: 0,
+      count: 0,
+      overBudget: false,
+      allSkipped: true,
+      points: 0,
+      segments: 0,
+      splats: 0,
+      childrenByName: new Map(),
+    },
+    Lines: {
+      entries: [],
+      lastMs: 0,
+      avgMs: 0,
+      count: 0,
+      overBudget: false,
+      allSkipped: true,
+      points: 0,
+      segments: 0,
+      splats: 0,
+      childrenByName: new Map(),
+    },
+    GSplats: {
+      entries: [],
+      lastMs: 0,
+      avgMs: 0,
+      count: 0,
+      overBudget: false,
+      allSkipped: true,
+      points: 0,
+      segments: 0,
+      splats: 0,
+      childrenByName: new Map(),
+    },
+    Unknown: {
+      entries: [],
+      lastMs: 0,
+      avgMs: 0,
+      count: 0,
+      overBudget: false,
+      allSkipped: true,
+      points: 0,
+      segments: 0,
+      splats: 0,
+      childrenByName: new Map(),
+    },
+  };
+
+  // Single pass: accumulate all data
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const nodeType = getNodeType(child.name);
+    const acc = accumulators[nodeType];
+
+    acc.entries.push(child);
+
+    // Accumulate timings
+    if (!child.metadata?.skipped) {
+      acc.lastMs += child.lastMs;
+      acc.avgMs += child.avgMs;
+      acc.allSkipped = false;
+    }
+    if (child.count > acc.count) acc.count = child.count;
+    if (child.overBudget) acc.overBudget = true;
+
+    // Accumulate metadata
+    const meta = child.metadata;
+    if (meta) {
+      if (meta.points) acc.points += meta.points;
+      if (meta.segments) acc.segments += meta.segments;
+      if (meta.splats) acc.splats += meta.splats;
+    }
+
+    // Group children by name
+    for (let j = 0; j < child.children.length; j++) {
+      const subChild = child.children[j];
+      let arr = acc.childrenByName.get(subChild.name);
+      if (!arr) {
+        arr = [];
+        acc.childrenByName.set(subChild.name, arr);
+      }
+      arr.push(subChild);
+    }
+  }
+
+  // Build result in order: Points, Lines, GSplats, Unknown
+  const result: TimingEntry[] = [];
+  const typeOrder: NodeType[] = ['Points', 'Lines', 'GSplats', 'Unknown'];
+
+  for (let t = 0; t < typeOrder.length; t++) {
+    const nodeType = typeOrder[t];
+    const acc = accumulators[nodeType];
+    if (acc.entries.length === 0) continue;
+
+    if (nodeType === 'Unknown') {
+      // Pass through unknown types as-is
+      for (let i = 0; i < acc.entries.length; i++) {
+        result.push(acc.entries[i]);
+      }
+      continue;
+    }
+
+    // Build aggregated children
+    const aggregatedChildren: TimingEntry[] = [];
+    for (const [name, childEntries] of acc.childrenByName) {
+      aggregatedChildren.push(aggregateChildEntriesFast(name, childEntries));
+    }
+
+    // Sort by avg time descending (in-place for efficiency)
+    aggregatedChildren.sort((a, b) => b.avgMs - a.avgMs);
+
+    // Build metadata only if needed
+    let metadata: TimingMetadata | undefined;
+    const nodeCount = acc.entries.length;
+    if (
+      acc.allSkipped ||
+      (nodeType === 'Points' && acc.points > 0) ||
+      (nodeType === 'Lines' && acc.segments > 0) ||
+      (nodeType === 'GSplats' && acc.splats > 0) ||
+      nodeCount > 1
+    ) {
+      metadata = {};
+      if (acc.allSkipped) {
+        metadata.skipped = true;
+        metadata.skipReason = acc.entries[0].metadata?.skipReason;
+      }
+      if (nodeType === 'Points' && acc.points > 0) metadata.points = acc.points;
+      if (nodeType === 'Lines' && acc.segments > 0) metadata.segments = acc.segments;
+      if (nodeType === 'GSplats' && acc.splats > 0) metadata.splats = acc.splats;
+      if (nodeCount > 1) metadata.info = `${nodeCount} nodes`;
+    }
+
+    result.push({
+      name: nodeType,
+      lastMs: acc.lastMs,
+      avgMs: acc.avgMs,
+      count: acc.count,
+      children: aggregatedChildren,
+      metadata,
+      overBudget: acc.overBudget || acc.lastMs > 16.67,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Aggregate child entries with same name (optimized, non-recursive for common case)
+ */
+function aggregateChildEntriesFast(name: string, entries: TimingEntry[]): TimingEntry {
+  let totalLastMs = 0;
+  let totalAvgMs = 0;
+  let maxCount = 0;
+  let anyOverBudget = false;
+
+  // Check if any entry has sub-children
+  let hasSubChildren = false;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    totalLastMs += entry.lastMs;
+    totalAvgMs += entry.avgMs;
+    if (entry.count > maxCount) maxCount = entry.count;
+    if (entry.overBudget) anyOverBudget = true;
+    if (entry.children.length > 0) hasSubChildren = true;
+  }
+
+  // Fast path: no sub-children
+  if (!hasSubChildren) {
+    return {
+      name,
+      lastMs: totalLastMs,
+      avgMs: totalAvgMs,
+      count: maxCount,
+      children: [],
+      overBudget: anyOverBudget || totalLastMs > 16.67,
+    };
+  }
+
+  // Slow path: aggregate sub-children recursively
+  const subChildrenByName = new Map<string, TimingEntry[]>();
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    for (let j = 0; j < entry.children.length; j++) {
+      const child = entry.children[j];
+      let arr = subChildrenByName.get(child.name);
+      if (!arr) {
+        arr = [];
+        subChildrenByName.set(child.name, arr);
+      }
+      arr.push(child);
+    }
+  }
+
+  const aggregatedSubChildren: TimingEntry[] = [];
+  for (const [subName, subEntries] of subChildrenByName) {
+    aggregatedSubChildren.push(aggregateChildEntriesFast(subName, subEntries));
+  }
+
+  return {
+    name,
+    lastMs: totalLastMs,
+    avgMs: totalAvgMs,
+    count: maxCount,
+    children: aggregatedSubChildren,
+    overBudget: anyOverBudget || totalLastMs > 16.67,
+  };
+}
+
+/**
  * Render a single timing entry row
  */
 function renderEntry(entry: TimingEntry, depth: number, parentPath: string): string {
@@ -193,7 +444,18 @@ function escapeHtml(str: string): string {
 }
 
 /**
+ * Create an aggregated version of the root entry with children grouped by node type
+ */
+function createAggregatedRoot(root: TimingEntry): TimingEntry {
+  return {
+    ...root,
+    children: aggregateByNodeType(root.children),
+  };
+}
+
+/**
  * Render the complete hierarchical timing panel
+ * Aggregates performance data by node type (Points, Lines, GSplats) instead of individual nodes
  */
 export function renderHierarchicalTimingPanel(root: TimingEntry): string {
   if (root.count === 0) {
@@ -206,6 +468,9 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
     `;
   }
 
+  // Aggregate children by node type for cleaner display
+  const aggregatedRoot = createAggregatedRoot(root);
+
   return `
     <div class="timing-panel">
       <div class="timing-header">
@@ -216,7 +481,7 @@ export function renderHierarchicalTimingPanel(root: TimingEntry): string {
         </div>
       </div>
       <div class="timing-body">
-        ${renderEntry(root, 0, '')}
+        ${renderEntry(aggregatedRoot, 0, '')}
       </div>
       <div class="timing-footer">
         <span class="timing-legend">
@@ -271,7 +536,7 @@ export function attachTimingPanelHandlers(container: HTMLElement, onUpdate: () =
  * This prevents losing expand/collapse state and click handlers during rapid updates.
  *
  * @param container - The container element with the timing panel
- * @param root - The updated timing data
+ * @param root - The updated timing data (will be aggregated to match rendered structure)
  * @returns true if update was successful, false if full re-render is needed
  */
 export function updateTimingPanelValues(container: HTMLElement, root: TimingEntry): boolean {
@@ -284,8 +549,11 @@ export function updateTimingPanelValues(container: HTMLElement, root: TimingEntr
     updateCount.textContent = `${root.count} updates`;
   }
 
+  // Aggregate to match the rendered structure
+  const aggregatedRoot = createAggregatedRoot(root);
+
   // Recursively update values for each entry
-  return updateEntryValues(timingBody as HTMLElement, root, 0, '');
+  return updateEntryValues(timingBody as HTMLElement, aggregatedRoot, 0, '');
 }
 
 /**
