@@ -298,11 +298,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // Load optional arrays directly to accumulator
       if (this.arrays.colors) {
         // Use loadColorRanges for proper multi-type handling
+        // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
+        // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
+        // We MUST use the returned buffer since it contains the decoded colors.
         const colorBuffer = this._accumulator['colorBuffer'] as
           | Float32Array
           | Uint8Array
           | Uint16Array;
-        await this.loadColorRanges(splatRanges, colorBuffer);
+        const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
+
+        // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
+        // we need to update the accumulator with the new buffer
+        if (loadedColors !== colorBuffer) {
+          // Replace accumulator's color buffer with the decoded colors
+          // This handles LUT encoding where decoded output is Float32Array
+          (this._accumulator as unknown as { colorBuffer: typeof loadedColors }).colorBuffer =
+            loadedColors;
+        }
       }
       if (this.arrays.sharpness) {
         const sharpnessBuffer = this._accumulator['sharpnessBuffer'] as Float32Array;
@@ -583,7 +595,20 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       return output;
     }
 
-    // For encoded arrays or array_ref, decode to Float32Array then restore original_dtype
+    // Special case: rgb_uint8/rgb_uint16 encoded colors with matching target buffer
+    // Skip decoding - load raw uint8/uint16 values directly. The gsplat processor
+    // will normalize them (Uint8 [0-255] → Float32 [0-1])
+    const encName = attrs.encoding?.name;
+    if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
+      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      return targetBuffer;
+    }
+    if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
+      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      return targetBuffer;
+    }
+
+    // For other encoded arrays or array_ref, decode to Float32Array then restore original_dtype
     const decodedFloat32 =
       targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
 
