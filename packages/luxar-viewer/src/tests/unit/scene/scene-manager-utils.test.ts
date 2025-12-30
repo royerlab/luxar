@@ -236,7 +236,7 @@ describe('scene-manager-utils', () => {
       expect(planes.far).toBeLessThan(100);
     });
 
-    it('should use distance to nearest surface when inside bounding box', () => {
+    it('should use minimum near plane when inside bounding box', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
@@ -246,9 +246,8 @@ describe('scene-manager-utils', () => {
       const cameraPos = { x: 0, y: 0, z: 8 };
       const planes = calculateClippingPlanes(box, cameraPos);
 
-      // Distance to nearest surface (+Z face at z=10) is 2
-      // near = 2 * 0.1 = 0.2
-      expect(planes.near).toBeCloseTo(0.2, 1);
+      // When inside the bounding box, use MIN_NEAR_PLANE to see all geometry
+      expect(planes.near).toBe(0.0001);
       // farDist = distance to farthest corner (approx sqrt(10² + 10² + 18²) ≈ 23.2)
       // far ≈ 23.2 * 1.5 ≈ 34.8
       expect(planes.far).toBeGreaterThan(30);

@@ -70,6 +70,26 @@ export function wrapWithCache<D extends zarr.DataType>(
         return target;
       }
 
+      // CRITICAL: Direct access for properties that use private fields internally.
+      // zarrita's getters (attrs, shape, dtype, etc.) access private fields like #metadata.
+      // Even with Reflect.get(target, prop, target), the getter can fail because the
+      // property descriptor is retrieved from the proxy, not the original object.
+      // Solution: Access these properties directly on target, bypassing Reflect entirely.
+      if (
+        prop === 'attrs' ||
+        prop === 'shape' ||
+        prop === 'dtype' ||
+        prop === 'chunks' ||
+        prop === 'order' ||
+        prop === 'fill_value' ||
+        prop === 'compressor' ||
+        prop === 'filters' ||
+        prop === 'codec' ||
+        prop === 'codecs'
+      ) {
+        return (target as unknown as Record<string, unknown>)[prop as string];
+      }
+
       // Intercept getChunk() to add caching
       if (prop === 'getChunk') {
         return async function (
