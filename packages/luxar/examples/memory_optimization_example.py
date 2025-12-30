@@ -33,6 +33,7 @@ from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_test_data(n_points: int = 100000):
@@ -110,8 +111,7 @@ def main():
         positions, colors, radii, sharpness = create_test_data(n_points)
 
         # Create output directory
-        output_dir = Path("delme")
-        output_dir.mkdir(exist_ok=True)
+        output_dir = get_examples_output_dir()
 
     with asection("Encoding Mode Comparison"):
         # Test different encoding modes

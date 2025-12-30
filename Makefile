@@ -157,20 +157,22 @@ clean:  ## Clean up temporary files and caches
 	rm -rf packages/luxar-viewer/.parcel-cache/
 	rm -f packages/luxar-viewer/*.tsbuildinfo
 	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
-	@echo "🧹 Cleaning example outputs..."
-	find packages/luxar/examples -name "*.zarr" -type d -exec rm -rf {} +
+	@echo "🧹 Cleaning generated datasets..."
+	rm -rf datasets/
 	rm -rf *.zarr
 	rm -rf zarr_scenes/  # Remove deprecated directory
 	@echo "✅ Clean complete!"
 
-clean-examples:  ## Clean up only example zarr files
-	@echo "🧹 Cleaning example zarr files..."
-	@cd packages/luxar/examples && for zarr in *.zarr; do \
-		if [ -d "$$zarr" ]; then \
-			echo "   Removing $$zarr..."; \
-			rm -rf "$$zarr"; \
-		fi; \
-	done
+clean-examples:  ## Clean up only generated example zarr files
+	@echo "🧹 Cleaning generated datasets..."
+	@if [ -d "datasets/examples" ]; then \
+		for zarr in datasets/examples/*.zarr; do \
+			if [ -d "$$zarr" ]; then \
+				echo "   Removing $$zarr..."; \
+				rm -rf "$$zarr"; \
+			fi; \
+		done; \
+	fi
 	@echo "✅ Example zarr files cleaned!"
 
 # Development setup
@@ -188,13 +190,14 @@ dev-setup:  ## Complete development setup with Hatch
 	@echo "💡 For WASM/Rust support, also run 'make setup-rust'"
 
 # Demo and serving
-demo:  ## Generate a demo dataset (dist/demo.zarr with 100k points)
-	@mkdir -p dist
-	hatch run luxar demo --no-serve --output dist/demo.zarr --points 100000
-	@echo "✅ Demo dataset created at dist/demo.zarr"
+demo:  ## Generate a demo dataset (datasets/demos/demo.zarr with 100k points)
+	@mkdir -p datasets/demos
+	hatch run luxar demo --no-serve --output datasets/demos/demo.zarr --points 100000
+	@echo "✅ Demo dataset created at datasets/demos/demo.zarr"
 
-run-examples:  ## Run all examples to generate zarr files
+run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
 	@echo "🚀 Running all examples to generate zarr files..."
+	@echo "📂 Output directory: datasets/examples/"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l); \
 	count=0; \
@@ -214,8 +217,8 @@ run-examples:  ## Run all examples to generate zarr files
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅ All examples completed!"
 	@echo ""
-	@echo "📁 Generated zarr files in packages/luxar/examples/:"
-	@for zarr in packages/luxar/examples/*.zarr; do \
+	@echo "📁 Generated zarr files in datasets/examples/:"
+	@for zarr in datasets/examples/*.zarr; do \
 		if [ -d "$$zarr" ]; then \
 			size=$$(du -sh "$$zarr" | cut -f1); \
 			name=$$(basename "$$zarr"); \
@@ -226,19 +229,19 @@ run-examples:  ## Run all examples to generate zarr files
 	@echo "💡 To browse the generated datasets, run:"
 	@echo "   make serve-examples"
 
-serve-examples:  ## Serve the examples directory for browsing datasets
-	@echo "🌐 Serving packages/luxar/examples directory at http://localhost:8000/"
+serve-examples:  ## Serve the datasets directory for browsing generated datasets
+	@echo "🌐 Serving datasets/ directory at http://localhost:8000/"
 	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000/"
 	@echo "💡 Press 'O' in the viewer to browse available datasets"
 	@echo ""
-	hatch run luxar serve packages/luxar/examples/
+	hatch run luxar serve datasets/
 
 # Default values for serve-data (override with: make serve-data DATASET=path/to/data.zarr PORT=8080)
-DATASET ?= dist/demo.zarr
+DATASET ?= datasets/demos/demo.zarr
 PORT ?= 8000
 
-serve-data:  ## Serve a dataset (default: dist/demo.zarr, port: 8000)
-	@if [ ! -d "dist/demo.zarr" ]; then \
+serve-data:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 8000)
+	@if [ ! -d "datasets/demos/demo.zarr" ]; then \
 		echo "No demo dataset found. Creating one..."; \
 		$(MAKE) demo; \
 	fi

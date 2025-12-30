@@ -22,12 +22,11 @@ When to use these techniques:
 - Layered: Hierarchical structures, nested organization
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_size_gradient_example(scene, n_points: int = 10000) -> None:
@@ -178,7 +177,7 @@ def create_layered_spheres_example(
 
 def main():
     """Run the radius showcase example."""
-    output_path = Path(__file__).parent / "radius_showcase_example.zarr"
+    output_path = get_examples_output_dir() / "radius_showcase_example.zarr"
 
     aprint(f"Creating radius showcase example at {output_path}")
     aprint(

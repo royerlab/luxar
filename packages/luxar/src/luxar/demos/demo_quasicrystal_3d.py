@@ -91,6 +91,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def create_icosahedral_projection_matrices():  # type: ignore[no-untyped-def]
@@ -404,10 +405,24 @@ def main() -> None:
     aprint("  3. Filter by perpendicular distance")
     aprint("  4. Result: Aperiodic 3D tiling!")
     aprint("")
-    aprint("⏱️  Generation: ~30-60 seconds")
+    aprint("Generation time: ~30-60 seconds")
     aprint("")
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "quasicrystal.zarr"
+        actual_points = generate_quasicrystal_3d(
+            output_path,
+            target_points=target_points,
+        )
+        if actual_points == 0:
+            aprint("\nGeneration failed - no points created")
+            return
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total points: {actual_points:,}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_quasicrystal_") as tmpdir:
         output_path = Path(tmpdir) / "quasicrystal.zarr"
 
@@ -419,7 +434,7 @@ def main() -> None:
         )
 
         if actual_points == 0:
-            aprint("\n❌ Generation failed - no points created")
+            aprint("\nGeneration failed - no points created")
             return
 
         aprint("")
@@ -428,16 +443,16 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Once viewer opens:")
         aprint("")
-        aprint("  • Rotate slowly - look for 5-fold symmetry axes")
-        aprint("  • Zoom in - patterns are self-similar at all scales")
-        aprint("  • No periodic repetition - pattern never repeats!")
-        aprint("  • Colors encode position in 'perpendicular space'")
+        aprint("  - Rotate slowly - look for 5-fold symmetry axes")
+        aprint("  - Zoom in - patterns are self-similar at all scales")
+        aprint("  - No periodic repetition - pattern never repeats!")
+        aprint("  - Colors encode position in 'perpendicular space'")
         aprint("")
         aprint("Things to notice:")
-        aprint("  • Dense, ordered structure (not random)")
-        aprint("  • Local patterns repeat, but global pattern doesn't")
-        aprint("  • 5-fold rotation symmetry (rotate 72°)")
-        aprint("  • Similar to real atomic quasicrystals!")
+        aprint("  - Dense, ordered structure (not random)")
+        aprint("  - Local patterns repeat, but global pattern doesn't")
+        aprint("  - 5-fold rotation symmetry (rotate 72 degrees)")
+        aprint("  - Similar to real atomic quasicrystals!")
         aprint("")
         aprint("Real-world: Al-Mn quasicrystals have this exact structure")
         aprint("  (discovered by Dan Shechtman, Nobel Prize 2011)")
@@ -447,25 +462,21 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             sys.exit(1)
         except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
+            aprint("\nError: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_lorenz_attractor(
@@ -164,7 +165,14 @@ def main() -> None:
     aprint(f"Points: {n_points:,}")
     aprint("")
 
-    # Use temporary directory for demo data
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "lorenz.zarr"
+        generate_lorenz_attractor(output_path, n_points=n_points)
+        aprint(f"✓ Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for demo data (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_lorenz_") as tmpdir:
         output_path = Path(tmpdir) / "lorenz.zarr"
 
@@ -178,10 +186,6 @@ def main() -> None:
         aprint("The viewer will open in your browser automatically.")
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             # Use luxar CLI to serve - it handles server lifecycle

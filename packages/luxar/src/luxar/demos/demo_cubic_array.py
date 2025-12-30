@@ -27,6 +27,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_background_stars(
@@ -204,7 +205,14 @@ def main() -> None:
     aprint("  - Total: 1.5M points")
     aprint("")
 
-    # Create temporary directory for the demo
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "cubic_array.zarr"
+        generate_cubic_array(output_path)
+        aprint(f"✓ Dataset generated at {output_path}")
+        return
+
+    # Create temporary directory for the demo (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_cubic_") as tmpdir:
         output_path = Path(tmpdir) / "cubic_array.zarr"
 
@@ -217,10 +225,6 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Press Ctrl+C when done to stop servers and cleanup")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             # Use luxar CLI to serve the data with viewer

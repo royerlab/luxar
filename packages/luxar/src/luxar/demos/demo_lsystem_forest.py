@@ -46,6 +46,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Turtle Graphics for L-System Interpretation
@@ -780,6 +781,15 @@ def main() -> None:
     aprint(f"Iterations: {iterations} | Trees: {n_trees}")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "forest.zarr"
+        with asection("Generating forest"):
+            generate_forest(output_path, iterations=iterations, n_trees=n_trees)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_forest_") as tmpdir:
         output_path = Path(tmpdir) / "forest.zarr"
 
@@ -811,10 +821,6 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(

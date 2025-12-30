@@ -10,12 +10,11 @@ This example demonstrates:
 - High-density points (200,000 points per frame × 256 frames)
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_spherical_spiral(
@@ -210,8 +209,8 @@ def main():
     aprint(f"Point radius: {point_radius:.4f}")
     aprint(f"Total rotation: {total_rotation:.4f} radians ({10} points)")
 
-    # Output path - ensure it's in the examples directory
-    output_path = Path(__file__).parent / "temporal_spiral_sphere_4d_example.zarr"
+    # Output path
+    output_path = get_examples_output_dir() / "temporal_spiral_sphere_4d_example.zarr"
 
     # Create scene with 4D dimensions (only first 3 displayed)
     with LuxarZarrCompiler(output_path) as compiler:

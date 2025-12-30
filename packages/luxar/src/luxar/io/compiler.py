@@ -717,6 +717,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             group.attrs["ordering"] = "none"
 
+        # Compute and store position bounds (nD bounding box) for dynamic clipping
+        position_bounds = self._compute_position_bounds(vertices)
+        group.attrs["position_bounds"] = position_bounds
+        metadata["position_bounds"] = position_bounds
+
+        # Update scene-level bounds (union of all node bounds)
+        self._update_scene_bounds(position_bounds)
+
         self._metadata_cache[path] = metadata
         aprint(f"✅ Lines written to {path}")
 
@@ -1047,8 +1055,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             default_chunk_size = min(1024, max(64, n_splats))
             group.attrs["chunk_size"] = default_chunk_size
 
-        # Update scene-level bounds (for dynamic clipping planes in viewer)
+        # Compute and store position bounds (nD bounding box) for dynamic clipping
         position_bounds = {"min": center_min, "max": center_max}
+        group.attrs["position_bounds"] = position_bounds
+        metadata["position_bounds"] = position_bounds
+
+        # Update scene-level bounds (union of all node bounds)
         self._update_scene_bounds(position_bounds)
 
         self._metadata_cache[path] = metadata

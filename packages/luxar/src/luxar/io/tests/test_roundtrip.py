@@ -908,6 +908,7 @@ class TestGSplatsRoundTrip:
             "amplitude_range",
             "sharpness_bounds",  # Bug #8: Was missing
             "center_bounds",
+            "position_bounds",  # Required for dynamic clipping
         ]
 
         for field in required_fields:
@@ -930,6 +931,12 @@ class TestGSplatsRoundTrip:
         assert "max" in attrs["sharpness_bounds"]
         assert "min" in attrs["center_bounds"]
         assert "max" in attrs["center_bounds"]
+        assert "min" in attrs["position_bounds"]
+        assert "max" in attrs["position_bounds"]
+
+        # Verify position_bounds has correct dimensionality (3D)
+        assert len(attrs["position_bounds"]["min"]) == 3
+        assert len(attrs["position_bounds"]["max"]) == 3
 
         # Verify sharpness bounds reflect actual data
         assert attrs["sharpness_bounds"]["min"] >= 1.0

@@ -24,12 +24,12 @@ Educational value:
 
 import argparse
 import time
-from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> tuple:
@@ -120,9 +120,7 @@ def main():
 
     # Output filename based on whether spatial index is enabled
     suffix = "_no_index" if args.no_spatial_index else ""
-    output_path = Path(__file__).parent / Path(
-        f"spatial_index_demo{suffix}_example.zarr"
-    )
+    output_path = get_examples_output_dir() / f"spatial_index_demo{suffix}_example.zarr"
 
     # Clean up existing file if present
     if output_path.exists():

@@ -47,6 +47,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def load_zebrahub_umap_data(
@@ -298,7 +299,14 @@ def main() -> None:
     # Load data from remote zarr
     coordinates, attributes = load_zebrahub_umap_data()
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "zebrahub_multiome_peak_umap.zarr"
+        _n_points = create_zebrahub_scene(output_path, coordinates, attributes)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_zebrahub_") as tmpdir:
         output_path = Path(tmpdir) / "zebrahub_umap.zarr"
 
@@ -311,10 +319,10 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Once viewer opens:")
         aprint("")
-        aprint("  • Rotate to explore UMAP structure")
-        aprint("  • Zoom in to see individual cells")
+        aprint("  - Rotate to explore UMAP structure")
+        aprint("  - Zoom in to see individual cells")
         aprint("")
-        aprint("  🔑 Press '1' to select ATTRIBUTE VIEW, then use [/]:")
+        aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
         aprint("     0: Cell Type (30 types)")
         aprint("     1: Chromosome (genomic location)")
         aprint("     2: Leiden Coarse (broad clusters)")
@@ -323,17 +331,13 @@ def main() -> None:
         aprint("     5: Peak Type (4 types)")
         aprint("     6: Timepoint (6 developmental stages)")
         aprint("")
-        aprint("  → Same structure, different colors reveal different biology!")
+        aprint("  Same structure, different colors reveal different biology!")
         aprint("")
         aprint("=" * 70)
         aprint("LAUNCHING VIEWER")
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             # luxar CLI automatically finds available ports
@@ -342,16 +346,16 @@ def main() -> None:
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
-            aprint("💡 Make sure viewer is built")
+            aprint(f"\nError: {e}")
+            aprint("Make sure viewer is built")
             sys.exit(1)
         except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
+            aprint("\nError: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

@@ -15,12 +15,11 @@ Educational value:
 - Essential for understanding point density and packing
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_touching_pairs():
@@ -124,7 +123,7 @@ def create_touching_pairs():
 
 def main():
     """Create a scene demonstrating point size and spacing relationships."""
-    output_path = Path(__file__).parent / "point_spacing_example.zarr"
+    output_path = get_examples_output_dir() / "point_spacing_example.zarr"
 
     aprint(f"Creating point spacing example at {output_path}")
     aprint("This example demonstrates the relationship between point size and spacing")

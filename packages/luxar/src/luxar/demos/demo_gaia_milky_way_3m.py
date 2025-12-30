@@ -128,6 +128,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # Find the data file relative to this script
 SCRIPT_DIR = Path(__file__).parent
@@ -398,7 +399,21 @@ def main() -> None:
     aprint("  from the Galactic Center. You're viewing our galaxy from home!")
     aprint("")
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "galaxy_luxar.zarr"
+        try:
+            with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+                tmp_path = Path(tmpdir)
+                # Extract and convert to Luxar format
+                load_and_convert_gaia_data(DATA_FILE, output_path)
+        except FileNotFoundError as e:
+            aprint(f"\n❌ Error: {e}")
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
         tmp_path = Path(tmpdir)
 
@@ -418,9 +433,9 @@ def main() -> None:
             aprint("  • Zoom IN to see individual stars with colors")
             aprint("")
             aprint("What to Explore:")
-            aprint("  • 🟡 Yellow marker: Our Sun (you are here!)")
-            aprint("  • 🔴 Red marker: Betelgeuse (red supergiant, 168 pc)")
-            aprint("  • 🔵 Blue marker: Rigel (blue supergiant, 265 pc)")
+            aprint("  • Yellow marker: Our Sun (you are here!)")
+            aprint("  • Red marker: Betelgeuse (red supergiant, 168 pc)")
+            aprint("  • Blue marker: Rigel (blue supergiant, 265 pc)")
             aprint("  • Origin (0,0,0): The Galactic Center (8 kpc away)")
             aprint("  • Top-down view: See the disk structure")
             aprint("  • Edge-on view: See how thin the disk is")
@@ -439,10 +454,6 @@ def main() -> None:
             aprint("Press Ctrl+C when done to cleanup.")
             aprint("")
 
-            if "--no-serve" in sys.argv:
-                aprint("✓ Dataset generated successfully (--no-serve mode)")
-                return
-
             # Launch viewer
             subprocess.run(
                 ["luxar", "serve", str(zarr_path), "--viewer", "--open"],
@@ -453,19 +464,19 @@ def main() -> None:
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error launching viewer: {e}")
-            aprint("💡 Make sure viewer is built:")
+            aprint("Make sure viewer is built:")
             aprint("   cd packages/luxar-viewer && pnpm build")
             sys.exit(1)
         except FileNotFoundError as e:
             if "luxar" in str(e):
                 aprint("\n❌ Error: 'luxar' command not found")
-                aprint("💡 Install luxar: pip install -e .")
+                aprint("Install luxar: pip install -e .")
             else:
                 aprint(f"\n❌ Error: {e}")
             sys.exit(1)
 
     aprint("")
-    aprint("✓ Cleanup complete - temporary files removed")
+    aprint("Cleanup complete - temporary files removed")
     aprint("")
     aprint("=" * 70)
     aprint("DATA ATTRIBUTION & SOURCES")

@@ -131,6 +131,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Physics Constants and Detector Geometry
@@ -1528,6 +1529,21 @@ def main() -> None:
     aprint(f"Events: {n_events} | Jets: {n_jets} | Frames: {n_frames}")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "collision_animated.zarr"
+        with asection("Generating animated detector scene"):
+            total_segments, total_points = generate_animated_detector_scene(
+                output_path,
+                n_events=n_events,
+                n_jets_per_event=n_jets,
+                n_frames=n_frames,
+            )
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total: {total_segments:,} segments, {total_points:,} points, {n_frames} frames")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_collision_anim_") as tmpdir:
         output_path = Path(tmpdir) / "collision_animated.zarr"
 
@@ -1549,10 +1565,6 @@ def main() -> None:
         aprint("")
         aprint("Use the TIME slider to watch the collision unfold!")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(

@@ -83,6 +83,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # PDB File Parsing
@@ -644,7 +645,30 @@ def main() -> None:
     aprint(f"  Symmetry: C{n_fold} (8-fold)")
     aprint("")
 
-    # Generate structure
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "nuclear_pore_complex.zarr"
+        try:
+            n_atoms = generate_nuclear_pore_complex(
+                output_path,
+                pdb_id=pdb_id,
+                max_atoms=max_atoms,
+                n_fold=n_fold,
+                representation=representation,
+                color_by=color_by,
+            )
+        except Exception as e:
+            aprint(f"\n Error: {e}")
+            aprint("\nPossible issues:")
+            aprint("  - Network connection failed")
+            aprint("  - PDB ID not found")
+            aprint("  - File format error")
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total atoms: {n_atoms:,}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_npc_") as tmpdir:
         output_path = Path(tmpdir) / "nuclear_pore_complex.zarr"
 
@@ -658,11 +682,11 @@ def main() -> None:
                 color_by=color_by,
             )
         except Exception as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\n Error: {e}")
             aprint("\nPossible issues:")
-            aprint("  • Network connection failed")
-            aprint("  • PDB ID not found")
-            aprint("  • File format error")
+            aprint("  - Network connection failed")
+            aprint("  - PDB ID not found")
+            aprint("  - File format error")
             sys.exit(1)
 
         aprint("")
@@ -671,19 +695,19 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("Navigation:")
-        aprint("  • Top-down (Z-axis): OCTAGONAL RING with CENTRAL PORE! ⬢")
-        aprint("  • Rotate slowly: See 8 distinct colored spokes")
-        aprint("  • Rotate by 45°: Symmetry test - should look identical!")
-        aprint("  • Side view: See Y-shaped Nup107-160 complexes")
+        aprint("  - Top-down (Z-axis): OCTAGONAL RING with CENTRAL PORE!")
+        aprint("  - Rotate slowly: See 8 distinct colored spokes")
+        aprint("  - Rotate by 45 degrees: Symmetry test - should look identical!")
+        aprint("  - Side view: See Y-shaped Nup107-160 complexes")
         aprint("")
         aprint("What to look for:")
-        aprint("  • 8 rainbow-colored spokes arranged in perfect octagon")
-        aprint("  • Central pore/channel in the middle (molecular highway!)")
-        aprint("  • Each spoke is identical (perfect symmetry)")
-        aprint("  • Protein backbone showing 3D architecture")
+        aprint("  - 8 rainbow-colored spokes arranged in perfect octagon")
+        aprint("  - Central pore/channel in the middle (molecular highway!)")
+        aprint("  - Each spoke is identical (perfect symmetry)")
+        aprint("  - Protein backbone showing 3D architecture")
         aprint("")
         aprint("Color guide (spoke mode):")
-        aprint("  Red → Orange → Yellow → Green → Cyan → Blue → Purple → Magenta")
+        aprint("  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta")
         aprint("  (Each color = one of the 8 identical spokes)")
         aprint("")
         aprint(f"Total atoms: {n_atoms:,}")
@@ -695,25 +719,21 @@ def main() -> None:
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             sys.exit(1)
         except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
+            aprint("\nError: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
     aprint("")
     aprint("Try different representations:")
     aprint("  --representation=calpha    (clean backbone trace)")

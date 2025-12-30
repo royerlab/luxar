@@ -8,17 +8,16 @@ This minimal example demonstrates:
 - Perfect starting point for beginners
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def main():
     """Create the simplest possible Luxar scene with a single point."""
-    output_path = Path(__file__).parent / "single_point_example.zarr"
+    output_path = get_examples_output_dir() / "single_point_example.zarr"
 
     aprint(f"Creating single point example at {output_path}")
     aprint("This is the simplest possible Luxar scene!")

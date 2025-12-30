@@ -17,12 +17,12 @@ Educational value:
 """
 
 import time
-from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_node_positions(
@@ -76,7 +76,7 @@ def generate_test_colors(points_per_node: int, color_seed: int) -> np.ndarray:
 
 def main():
     """Run performance benchmark creating large scene with many materials."""
-    output_path = Path(__file__).parent / "performance_benchmark_example.zarr"
+    output_path = get_examples_output_dir() / "performance_benchmark_example.zarr"
 
     with asection("Benchmark Setup and Configuration"):
         aprint(f"Starting performance benchmark at {output_path}")

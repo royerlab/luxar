@@ -89,6 +89,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -653,18 +654,40 @@ def main() -> None:
     try:
         import umap  # noqa: F401
     except ImportError:
-        aprint("❌ Missing dependency: umap-learn")
+        aprint("Missing dependency: umap-learn")
         aprint("")
         aprint("Install with:")
         aprint("  pip install umap-learn")
         aprint("")
         sys.exit(1)
 
+    # ALWAYS use cache
+    cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
+
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "arxiv_papers_kaggle.zarr"
+        try:
+            n_papers = generate_paper_landscape(
+                output_path,
+                sample_size=sample_size,
+                category_filter=category_filter,
+                cache_dir=cache_dir,
+            )
+            if n_papers == 0:
+                return
+        except Exception as e:
+            aprint(f"\nError: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total papers: {n_papers:,}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_kaggle_") as tmpdir:
         output_path = Path(tmpdir) / "arxiv_papers.zarr"
-
-        # ALWAYS use cache (no conditional!)
-        cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_umap"
 
         try:
             n_papers = generate_paper_landscape(
@@ -678,7 +701,7 @@ def main() -> None:
                 return
 
         except Exception as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             import traceback
 
             traceback.print_exc()
@@ -690,10 +713,10 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("Explore the knowledge landscape:")
-        aprint("  • Zoom out: See overall structure of scientific fields")
-        aprint("  • Zoom in: Explore specific research topics")
-        aprint("  • Look for clusters: Papers on same topic group together")
-        aprint("  • Boundaries: Interdisciplinary research")
+        aprint("  - Zoom out: See overall structure of scientific fields")
+        aprint("  - Zoom in: Explore specific research topics")
+        aprint("  - Look for clusters: Papers on same topic group together")
+        aprint("  - Boundaries: Interdisciplinary research")
         aprint("")
         aprint(f"Total papers: {n_papers:,}")
         aprint("")
@@ -703,21 +726,17 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

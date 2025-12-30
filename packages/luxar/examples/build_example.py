@@ -15,6 +15,7 @@ import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
+from luxar.utils.paths import get_examples_output_dir
 
 
 def add_coordinate_axes(scene, length: float = 5.0, n_points: int = 50):
@@ -181,7 +182,7 @@ def build_scene_with_structure(output_path: Path):
 
 def main():
     """Demonstrate different ways to build Luxar scenes programmatically."""
-    base_path = Path(__file__).parent
+    base_path = get_examples_output_dir()
 
     aprint("=" * 60)
     aprint("BUILD EXAMPLE - Programmatic Scene Construction")

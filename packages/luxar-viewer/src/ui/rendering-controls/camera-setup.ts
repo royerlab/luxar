@@ -218,7 +218,7 @@ export function setupCameraControls(
   clippingFolder.close(); // Collapsed by default (advanced setting)
 
   const nearPlaneControl = clippingFolder
-    .add(settings, 'near', 0.001, 10.0, 0.001)
+    .add(settings, 'near', 0.0001, 10.0, 0.0001)
     .name('Near Plane')
     .onChange((value: number) => {
       // Validate near plane is less than far plane
@@ -232,7 +232,7 @@ export function setupCameraControls(
     });
 
   const farPlaneControl = clippingFolder
-    .add(settings, 'far', 10, 10000, 1)
+    .add(settings, 'far', 1, 100000, 1)
     .name('Far Plane')
     .onChange((value: number) => {
       // Validate far plane is greater than near plane

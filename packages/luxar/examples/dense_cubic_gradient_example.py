@@ -16,12 +16,11 @@ Educational value:
 - Perfect for testing rendering quality, camera controls, and navigation
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_cubic_array(
@@ -98,7 +97,7 @@ def create_cubic_array(
 
 def main():
     """Create a dense cubic gradient visualization scene."""
-    output_path = Path(__file__).parent / "dense_cubic_gradient_example.zarr"
+    output_path = get_examples_output_dir() / "dense_cubic_gradient_example.zarr"
 
     aprint(f"Creating dense cubic gradient at {output_path}")
     aprint("This example creates a stunning 100×100×100 grid visualization")

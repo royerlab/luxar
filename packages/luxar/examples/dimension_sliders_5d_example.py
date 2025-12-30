@@ -22,17 +22,16 @@ Key principle:
 - Essential UI pattern for nD data exploration
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def main():
     """Create a 5D scene with slider navigation."""
-    output_path = Path(__file__).parent / "dimension_sliders_5d_example.zarr"
+    output_path = get_examples_output_dir() / "dimension_sliders_5d_example.zarr"
 
     aprint(f"Creating 5D dimension sliders example at {output_path}")
     aprint("This example demonstrates:")
