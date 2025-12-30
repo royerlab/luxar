@@ -258,10 +258,12 @@ export class TwoLevelCachingStore implements AsyncReadable {
       this.networkRequestCount++;
       this.networkBytesTransferred += data.byteLength;
 
-      // Populate both caches
-      this.l1Cache.set(key, data);
-      if (this.enabled && this.l2Store) {
-        this.l2Store.set(key, data).catch(() => {});
+      // Populate caches (only if caching is enabled via URL params)
+      if (this.enabled) {
+        this.l1Cache.set(key, data);
+        if (this.l2Store) {
+          this.l2Store.set(key, data).catch(() => {});
+        }
       }
 
       // Trigger prefetch on L3 fetch

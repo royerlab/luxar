@@ -315,11 +315,9 @@ export function calculateClippingPlanes(
 
   let near: number;
   if (isInside) {
-    // When inside, use distance to nearest surface with small margin
-    // This prevents clipping nearby geometry while inside the scene
-    const surfaceDist = distanceToNearestSurface(cameraPosition, box);
-    // Use 10% of surface distance, but at least MIN_NEAR_PLANE
-    near = Math.max(MIN_NEAR_PLANE, surfaceDist * 0.1);
+    // When inside the bounding box, use minimum near plane
+    // This ensures we can see all geometry around us without clipping
+    near = MIN_NEAR_PLANE;
   } else {
     // When outside, use nearest point distance with margin
     // margin of 0.5 means near = nearDist * 0.5
