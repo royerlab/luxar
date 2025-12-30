@@ -96,6 +96,9 @@ export class RenderingControls {
   /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
   private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
 
+  /** Timer ID for periodic clipping display updates when dynamic clipping is enabled */
+  private clippingDisplayUpdateInterval: ReturnType<typeof setInterval> | null = null;
+
   /**
    * Create rendering controls UI with complete parameter access.
    *
@@ -678,8 +681,11 @@ export class RenderingControls {
   }
 
   /**
-   * Update clipping controls state based on dynamic clipping setting
-   * When dynamic clipping is enabled, grey out manual near/far controls
+   * Update clipping controls state based on dynamic clipping setting.
+   * When dynamic clipping is enabled:
+   * - Grey out manual near/far controls (but keep them visible)
+   * - Start periodic updates to show actual camera clipping values
+   * - Disable pointer events so sliders can't be manually adjusted
    */
   private updateClippingControlsState(dynamicEnabled: boolean): void {
     const opacity = dynamicEnabled ? '0.5' : '1.0';
@@ -698,6 +704,53 @@ export class RenderingControls {
       if (container instanceof HTMLElement) {
         container.style.opacity = opacity;
         container.style.pointerEvents = pointerEvents;
+      }
+    }
+
+    // Clear any existing interval
+    if (this.clippingDisplayUpdateInterval !== null) {
+      clearInterval(this.clippingDisplayUpdateInterval);
+      this.clippingDisplayUpdateInterval = null;
+    }
+
+    // When dynamic clipping is enabled, periodically update slider displays
+    // to show the actual camera clipping values
+    if (dynamicEnabled) {
+      // Initial update
+      this.updateClippingSliderDisplays();
+
+      // Periodic updates every 100ms to keep displays in sync
+      this.clippingDisplayUpdateInterval = setInterval(() => {
+        this.updateClippingSliderDisplays();
+      }, 100);
+    }
+  }
+
+  /**
+   * Update the near/far clipping slider displays to show actual camera values.
+   * Called periodically when dynamic clipping is enabled.
+   */
+  private updateClippingSliderDisplays(): void {
+    const camera = this.sceneManager.camera;
+    if (!camera) return;
+
+    // Update near plane slider display (don't trigger onChange)
+    if (this.controllers.nearPlane) {
+      // Only update if value actually changed to avoid unnecessary DOM updates
+      const currentNear = camera.near;
+      if (Math.abs(this.settings.near - currentNear) > 0.0001) {
+        this.settings.near = currentNear;
+        this.controllers.nearPlane.updateDisplay();
+      }
+    }
+
+    // Update far plane slider display (don't trigger onChange)
+    if (this.controllers.farPlane) {
+      // Only update if value actually changed to avoid unnecessary DOM updates
+      const currentFar = camera.far;
+      if (Math.abs(this.settings.far - currentFar) > 0.1) {
+        this.settings.far = currentFar;
+        this.controllers.farPlane.updateDisplay();
       }
     }
   }
@@ -1415,6 +1468,12 @@ export class RenderingControls {
    * After calling dispose(), the RenderingControls instance cannot be reused.
    */
   dispose(): void {
+    // Clean up clipping display update interval
+    if (this.clippingDisplayUpdateInterval !== null) {
+      clearInterval(this.clippingDisplayUpdateInterval);
+      this.clippingDisplayUpdateInterval = null;
+    }
+
     // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();
   }

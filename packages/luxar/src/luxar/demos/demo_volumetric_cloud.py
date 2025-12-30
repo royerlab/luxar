@@ -34,6 +34,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def simple_noise_3d(
@@ -397,7 +398,14 @@ def main() -> None:
     aprint("  - Higher density threshold for wispy, irregular boundaries")
     aprint("")
 
-    # Use temporary directory for demo data
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "cloud.zarr"
+        generate_volumetric_cloud(output_path, n_candidate_points=n_candidate_points)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_cloud_") as tmpdir:
         output_path = Path(tmpdir) / "cloud.zarr"
 
@@ -411,7 +419,7 @@ def main() -> None:
         aprint("The viewer will open in your browser automatically.")
         aprint("Press Ctrl+C when done to stop and cleanup.")
         aprint("")
-        aprint("💡 VIEWING TIPS:")
+        aprint("VIEWING TIPS:")
         aprint("   - Rotate slowly to appreciate the 3D volumetric structure")
         aprint("   - Notice fractal detail: large puffs contain smaller wisps")
         aprint("   - Very soft edges create realistic cloud appearance")
@@ -422,30 +430,26 @@ def main() -> None:
         aprint("   - Try zooming in to see individual 'cloud particles'")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             # Use luxar CLI to serve - it handles server lifecycle
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"], check=True
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             aprint(
-                "💡 Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
             )
             sys.exit(1)
         except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
-            aprint("💡 Install luxar: pip install -e .")
+            aprint("\nError: 'luxar' command not found")
+            aprint("Install luxar: pip install -e .")
             sys.exit(1)
 
     # Cleanup happens automatically
-    aprint("✓ Cleanup complete - temporary files removed")
+    aprint("Cleanup complete - temporary files removed")
 
 
 if __name__ == "__main__":

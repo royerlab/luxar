@@ -46,6 +46,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_spiral_arm(
@@ -377,12 +378,26 @@ def main() -> None:
     aprint("  • Logarithmic spiral structure")
     aprint("")
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "spiral_galaxy.zarr"
+        generate_spiral_galaxy(
+            output_path,
+            n_stars=n_stars,
+            n_arms=n_arms,
+            arm_stars_ratio=0.70,
+            bulge_stars_ratio=0.25,
+            halo_stars_ratio=0.05,
+        )
+        aprint(f"✓ Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_galaxy_") as tmpdir:
         output_path = Path(tmpdir) / "spiral_galaxy.zarr"
 
         # Generate galaxy
-        _total_stars = generate_spiral_galaxy(
+        generate_spiral_galaxy(
             output_path,
             n_stars=n_stars,
             n_arms=n_arms,
@@ -418,10 +433,6 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(

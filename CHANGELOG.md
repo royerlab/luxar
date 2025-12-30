@@ -31,7 +31,7 @@ All notable changes to Luxar are documented in this file.
 - **Polish**: Frosted Glass theme with Apple-inspired frosted glass design, HDR default 1.0
 - **Implementation**: 22 commits, 4,200+ lines added, 100% complete with final polish
 - **Location**: `src/themes/`, `src/styles/`, UI components
-- **Documentation**: Complete implementation plan in `docs/guides/developer/THEMING_IMPLEMENTATION_PLAN.md`
+- **Documentation**: Complete implementation plan in `docs/archive/developer-archive/THEMING_IMPLEMENTATION_PLAN.md`
 
 ### January 2025
 

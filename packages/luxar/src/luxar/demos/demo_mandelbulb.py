@@ -41,6 +41,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def mandelbulb_distance_estimate(
@@ -289,7 +290,19 @@ def main() -> None:
     aprint("  5. Color by iteration depth (rainbow gradient)")
     aprint("")
 
-    # Use temporary directory for demo data
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "mandelbulb.zarr"
+        n_points = generate_mandelbulb_volumetric(
+            output_path, resolution=resolution, power=power
+        )
+        if n_points == 0:
+            aprint("\n❌ No points generated - try different parameters")
+            return
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_mandelbulb_") as tmpdir:
         output_path = Path(tmpdir) / "mandelbulb.zarr"
 
@@ -312,7 +325,7 @@ def main() -> None:
         aprint("  • Colors show iteration depth (structure complexity)")
         aprint("  • The fractal has infinite detail at all scales!")
         aprint("")
-        aprint("💡 Try different powers:")
+        aprint("Try different powers:")
         aprint("  --power=6  → Rounder, more bulbous")
         aprint("  --power=8  → Classic Mandelbulb (default)")
         aprint("  --power=9  → Sharper, more spiky")
@@ -322,10 +335,6 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             # Launch viewer using luxar CLI
@@ -338,16 +347,16 @@ def main() -> None:
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
             aprint(
-                "💡 Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
+                "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
             )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")
-            aprint("💡 Install luxar: pip install -e .")
+            aprint("Install luxar: pip install -e .")
             sys.exit(1)
 
     # Cleanup happens automatically when TemporaryDirectory context exits
-    aprint("✓ Cleanup complete - temporary files removed")
+    aprint("Cleanup complete - temporary files removed")
 
 
 if __name__ == "__main__":

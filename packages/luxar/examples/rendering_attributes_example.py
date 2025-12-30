@@ -16,12 +16,11 @@ Educational value:
 - Learn best practices for property modification and error handling
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_grid_positions(n_points: int, spacing: float = 1.0) -> np.ndarray:
@@ -47,7 +46,7 @@ def create_grid_positions(n_points: int, spacing: float = 1.0) -> np.ndarray:
 
 def main():
     """Create a scene demonstrating rendering attributes and their modifications."""
-    output_path = Path(__file__).parent / "rendering_attributes_example.zarr"
+    output_path = get_examples_output_dir() / "rendering_attributes_example.zarr"
 
     with asection("Scene Setup and Initialization"):
         aprint(f"Creating rendering attributes demonstration at {output_path}")

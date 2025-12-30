@@ -52,6 +52,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_performance_test_dataset(
@@ -292,17 +293,19 @@ def main() -> None:
 
     aprint("")
 
-    # Use temporary directory for demo data
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if no_serve:
+        output_path = get_demos_output_dir() / "performance_test.zarr"
+        generate_performance_test_dataset(output_path, n_points=n_points)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_network_perf_") as tmpdir:
         output_path = Path(tmpdir) / "performance_test.zarr"
 
         # Generate the dataset
         generate_performance_test_dataset(output_path, n_points=n_points)
-
-        if no_serve:
-            aprint("")
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         # Display serving information
         aprint("")

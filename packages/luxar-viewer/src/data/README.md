@@ -490,7 +490,7 @@ CPU-intensive operations are offloaded to Web Workers for parallel execution:
 - WASM acceleration (3-5x faster than TypeScript)
 - Automatic fallback if WASM unavailable
 
-See `src/workers/WORKER_INFRASTRUCTURE_STATUS.md` and `src/wasm/rust/README.md` for details.
+See `src/wasm/rust/README.md` for WASM details.
 
 ---
 

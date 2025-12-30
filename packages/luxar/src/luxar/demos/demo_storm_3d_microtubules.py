@@ -108,6 +108,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -549,6 +550,7 @@ def create_storm_scene(
     amplitudes: np.ndarray,
     sharpnesses: np.ndarray,
     widefield_volume: np.ndarray | None = None,
+    output_path: Path | None = None,
 ) -> Path:
     """Create Luxar scene with STORM data and optional widefield comparison.
 
@@ -558,14 +560,16 @@ def create_storm_scene(
         amplitudes: Splat amplitudes
         sharpnesses: Splat sharpnesses
         widefield_volume: Optional synthetic widefield volume
+        output_path: Optional path to save the scene (default: examples directory)
 
     Returns:
         Path to output scene
     """
-    # Save to examples directory (permanent location)
-    examples_dir = Path(__file__).parent.parent.parent / "examples"
-    examples_dir.mkdir(parents=True, exist_ok=True)
-    output_path = examples_dir / "storm_3d_microtubules_example.zarr"
+    # Use provided path or save to examples directory (permanent location)
+    if output_path is None:
+        examples_dir = Path(__file__).parent.parent.parent / "examples"
+        examples_dir.mkdir(parents=True, exist_ok=True)
+        output_path = examples_dir / "storm_3d_microtubules_example.zarr"
 
     with asection("Creating Luxar scene"):
         # 4D scene: VIEW (categorical) + X, Y, Z (spatial)
@@ -764,7 +768,19 @@ def main() -> None:
 
         widefield = generate_synthetic_widefield(localizations, volume_shape)
 
-        # Create scene
+        # If --no-serve, use persistent directory; otherwise use examples dir
+        if "--no-serve" in sys.argv:
+            output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
+            scene_path = create_storm_scene(
+                centers, covariances, amplitudes, sharpnesses,
+                widefield_volume=widefield,
+                output_path=output_path,
+            )
+            aprint(f"Dataset generated at {scene_path}")
+            aprint(f"Localizations: {len(centers):,}")
+            return
+
+        # Create scene in examples directory for serving
         scene_path = create_storm_scene(
             centers, covariances, amplitudes, sharpnesses,
             widefield_volume=widefield,
@@ -780,11 +796,11 @@ def main() -> None:
         aprint(f"Microtubule network visible in {len(centers):,} molecular detections!")
         aprint("")
         aprint("In the viewer:")
-        aprint("  • Press '1' to select VIEW dimension")
-        aprint("  • Press '['/']' to toggle Widefield ↔ Super-Resolution")
-        aprint("  • Widefield: Blurry ~250 nm resolution (gray)")
-        aprint("  • Super-res: Sharp ~20 nm resolution (cyan splats)")
-        aprint("  • Zoom in to see individual microtubules!")
+        aprint("  - Press '1' to select VIEW dimension")
+        aprint("  - Press '['/']' to toggle Widefield / Super-Resolution")
+        aprint("  - Widefield: Blurry ~250 nm resolution (gray)")
+        aprint("  - Super-res: Sharp ~20 nm resolution (cyan splats)")
+        aprint("  - Zoom in to see individual microtubules!")
         aprint("")
         aprint("=" * 70)
         aprint("LAUNCHING VIEWER")
@@ -793,24 +809,20 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         subprocess.run(
             ["luxar", "serve", str(scene_path), "--viewer", "--open"],
             check=True,
         )
 
     except KeyboardInterrupt:
-        aprint("\n🛑 Stopping demo...")
+        aprint("\nStopping demo...")
     except Exception as e:
-        aprint(f"\n❌ Error: {e}")
+        aprint(f"\nError: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

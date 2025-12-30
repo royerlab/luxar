@@ -21,12 +21,11 @@ Key principle:
 - High density (200k points) tests rendering performance
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_spherical_spiral(n_points: int = 200000, radius: float = 10.0) -> np.ndarray:
@@ -112,7 +111,7 @@ def calculate_point_radius(n_points: int, sphere_radius: float) -> float:
 
 def main():
     """Create a dense rainbow sphere with spiral point distribution."""
-    output_path = Path(__file__).parent / "rainbow_sphere_spiral_example.zarr"
+    output_path = get_examples_output_dir() / "rainbow_sphere_spiral_example.zarr"
 
     aprint(f"Creating dense rainbow sphere spiral at {output_path}")
     aprint("This example creates a high-density sphere with:")

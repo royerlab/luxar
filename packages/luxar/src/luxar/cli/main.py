@@ -791,17 +791,19 @@ def demo(
     """
     try:
         with asection("Demo Configuration and Generation"):
-            # Validate arguments
-            if not serve and output is None:
-                aprint("❌ Error: --output required when using --no-serve")
-                raise typer.Exit(1)
-
             # Determine output path
             if output is None:
-                # Create temp directory for serving mode
-                temp_dir = Path(tempfile.mkdtemp(prefix="luxar_demo_"))
-                output = temp_dir / f"{demo_type}_demo.zarr"
-                aprint(f"📂 Using temporary directory: {temp_dir}")
+                if serve:
+                    # Create temp directory for serving mode (auto-cleanup on exit)
+                    temp_dir = Path(tempfile.mkdtemp(prefix="luxar_demo_"))
+                    output = temp_dir / f"{demo_type}_demo.zarr"
+                    aprint(f"📂 Using temporary directory: {temp_dir}")
+                else:
+                    # Use persistent datasets/demos/ directory
+                    from luxar.utils.paths import get_demos_output_dir
+
+                    output = get_demos_output_dir() / f"{demo_type}_demo.zarr"
+                    aprint(f"📂 Using datasets directory: {output.parent}")
 
             # Generate demo
             aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")

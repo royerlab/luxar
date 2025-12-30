@@ -21,12 +21,11 @@ Key principle:
 - Dimensions enable automatic range validation
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def main():
@@ -57,7 +56,7 @@ def main():
     )
 
     # Create scene with dimensions
-    output_path = Path(__file__).parent / "scene_dimensions_example.zarr"
+    output_path = get_examples_output_dir() / "scene_dimensions_example.zarr"
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene(dimensions=dims)
 

@@ -133,6 +133,9 @@ vite.config.ts.timestamp-*
 *.zarr/
 *.zarr
 
+# Generated datasets (examples and demos output)
+datasets/
+
 # Large demo data files (>100MB for GitHub)
 packages/luxar/src/luxar/demos/data/milky_way_gaia_8m.zarr.zip
 packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py

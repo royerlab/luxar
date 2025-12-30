@@ -22,12 +22,11 @@ Key principles:
 - Spatial indexing enables efficient loading of relevant points only
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_5d_time_series(
@@ -77,7 +76,7 @@ def main():
     """Create a single 5D scene demonstrating nD points with scene-level dimensions."""
     aprint("Creating 5D nD points demonstration...")
 
-    output_path = Path(__file__).parent / "nd_points_example.zarr"
+    output_path = get_examples_output_dir() / "nd_points_example.zarr"
 
     with LuxarZarrCompiler(output_path) as compiler:
         # Define 5D dimensions: time, x, y, z, channel

@@ -10,12 +10,11 @@ This educational example demonstrates:
 - Educational visualization of hierarchical structures
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_constellation_points(n_points: int, radius: float) -> np.ndarray:
@@ -62,7 +61,7 @@ def create_ring_points(n_points: int, radius: float, height: float = 0.0) -> np.
 
 def main():
     """Create a scene demonstrating hierarchical relationships."""
-    output_path = Path(__file__).parent / "hierarchy_example.zarr"
+    output_path = get_examples_output_dir() / "hierarchy_example.zarr"
 
     with asection("Hierarchy Example Setup"):
         aprint(f"Creating hierarchy demonstration at {output_path}")

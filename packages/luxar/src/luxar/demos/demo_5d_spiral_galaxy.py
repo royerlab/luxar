@@ -37,6 +37,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def generate_5d_spiral_galaxy(
@@ -244,7 +245,20 @@ def main() -> None:
     aprint("  Channel: Stellar population (0=young, 1=intermediate, 2=old)")
     aprint("")
 
-    # Use temporary directory for demo data
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "spiral_galaxy_5d.zarr"
+        generate_5d_spiral_galaxy(
+            output_path,
+            n_points_per_arm=n_points,
+            n_arms=n_arms,
+            n_time_steps=n_time_steps,
+            n_channels=n_channels,
+        )
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_5d_galaxy_") as tmpdir:
         output_path = Path(tmpdir) / "spiral_galaxy_5d.zarr"
 
@@ -270,10 +284,6 @@ def main() -> None:
         aprint("  - Use mouse to orbit/zoom")
         aprint("  - Blue = young stars, Yellow = intermediate, Red = old stars")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(

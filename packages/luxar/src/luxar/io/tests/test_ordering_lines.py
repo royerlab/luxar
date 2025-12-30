@@ -654,3 +654,35 @@ class TestIntegration:
         # Segment ordering should be in (2×D) space
         # For 3D data: ordering_dims should have 6 elements (2×3)
         assert len(s_ord["ordering_dims"]) == 6
+
+    def test_write_lines_stores_position_bounds(self, tmp_path) -> None:
+        """Test that write_lines stores position_bounds for dynamic clipping."""
+        import zarr
+
+        from luxar import LuxarZarrCompiler
+
+        store_path = tmp_path / "test.zarr"
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(
+                dimensions=Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            )
+
+            # Create vertices with known bounds
+            vertices = np.array(
+                [[0.0, 0.0, 0.0], [10.0, 20.0, 30.0], [5.0, 10.0, 15.0]],
+                dtype=np.float32,
+            )
+            scene.add_lines("my_lines", vertices, widths=0.1, line_type="polyline")
+
+        store = zarr.open_group(store_path, mode="r")
+
+        # Verify node-level position_bounds
+        node_bounds = store["my_lines"].attrs["position_bounds"]
+        assert node_bounds["min"] == [0.0, 0.0, 0.0]
+        assert node_bounds["max"] == [10.0, 20.0, 30.0]
+
+        # Verify scene-level position_bounds (should match since single node)
+        scene_bounds = store.attrs["position_bounds"]
+        assert scene_bounds["min"] == [0.0, 0.0, 0.0]
+        assert scene_bounds["max"] == [10.0, 20.0, 30.0]

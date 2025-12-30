@@ -87,6 +87,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -612,12 +613,32 @@ def main() -> None:
         import pandas  # noqa: F401
         import umap  # noqa: F401
     except ImportError as e:
-        aprint(f"❌ Missing dependency: {e}")
+        aprint(f"Missing dependency: {e}")
         aprint("")
         aprint("Install with:")
         aprint("  pip install umap-learn pandas")
         sys.exit(1)
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "protein_landscape.zarr"
+        try:
+            n_proteins = generate_protein_landscape(
+                output_path,
+                sample_size=sample_size,
+            )
+            if n_proteins == 0:
+                return
+        except Exception as e:
+            aprint(f"\nError: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total proteins: {n_proteins:,}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_proteins_") as tmpdir:
         output_path = Path(tmpdir) / "protein_landscape.zarr"
 
@@ -631,7 +652,7 @@ def main() -> None:
                 return
 
         except Exception as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             import traceback
             traceback.print_exc()
             sys.exit(1)
@@ -642,11 +663,11 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("What to look for:")
-        aprint("  • Enzyme clusters (kinases, proteases, etc.)")
-        aprint("  • Structural protein regions")
-        aprint("  • Membrane protein groups")
-        aprint("  • DNA/RNA binding protein clusters")
-        aprint("  • Functional boundaries and overlaps")
+        aprint("  - Enzyme clusters (kinases, proteases, etc.)")
+        aprint("  - Structural protein regions")
+        aprint("  - Membrane protein groups")
+        aprint("  - DNA/RNA binding protein clusters")
+        aprint("  - Functional boundaries and overlaps")
         aprint("")
         aprint("Try this:")
         aprint("  1. Zoom out: See overall functional organization")
@@ -662,21 +683,17 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

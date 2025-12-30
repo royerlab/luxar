@@ -10,12 +10,11 @@ This educational example demonstrates:
 - Educational scene composition
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_spiral_galaxy(n_points: int, radius: float, height: float) -> np.ndarray:
@@ -130,7 +129,7 @@ def create_ring_system(
 
 def main():
     """Create a scene with multiple different points objects."""
-    output_path = Path(__file__).parent / "multiple_objects_example.zarr"
+    output_path = get_examples_output_dir() / "multiple_objects_example.zarr"
 
     with asection("Multiple Objects Example Setup"):
         aprint(f"Creating multiple objects demonstration at {output_path}")

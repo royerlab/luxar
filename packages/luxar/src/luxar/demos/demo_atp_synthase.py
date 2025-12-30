@@ -121,6 +121,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # PDB File Parsing
@@ -546,6 +547,27 @@ def main() -> None:
     aprint(f"PDB ID: {pdb_id}")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "atp_synthase.zarr"
+        try:
+            generate_atp_synthase(
+                output_path,
+                pdb_id=pdb_id,
+                max_atoms=max_atoms,
+                representation=representation,
+                color_by=color_by,
+            )
+        except Exception as e:
+            aprint(f"\n❌ Error: {e}")
+            aprint("\nPossible issues:")
+            aprint("  • Network connection failed")
+            aprint("  • PDB ID not found")
+            aprint("  • File format error")
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
     # Generate structure
     with tempfile.TemporaryDirectory(prefix="luxar_demo_atp_") as tmpdir:
         output_path = Path(tmpdir) / "atp_synthase.zarr"
@@ -596,10 +618,6 @@ def main() -> None:
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
@@ -614,7 +632,7 @@ def main() -> None:
             aprint("\n❌ Error: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
     aprint("")
     aprint("Try different representations:")
     aprint("  --representation=calpha    (clean backbone trace)")

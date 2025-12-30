@@ -336,6 +336,5 @@ pnpm test src/tests/unit/data/loaders/integration-example.test.ts  # 10 tests
 
 ## See Also
 
-- [UNIFIED_LOADER_ARCHITECTURE.md](../UNIFIED_LOADER_ARCHITECTURE.md) - Full architecture proposal
 - [SPECIFICATIONS.md](../SPECIFICATIONS.md) - Data loading specifications
 - [array-decoder.ts](../array-decoder.ts) - Low-level array decoding

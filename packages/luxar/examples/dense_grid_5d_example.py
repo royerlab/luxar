@@ -16,16 +16,15 @@ Educational value:
 - Good test case for spatial index performance
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 import luxar
 from luxar import LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 # Create a 5D scene (X, Y, Z, Time, Channel)
-scene_path = Path(__file__).parent / "dense_grid_5d_example.zarr"
+scene_path = get_examples_output_dir() / "dense_grid_5d_example.zarr"
 
 dimensions = luxar.Dimensions(
     [
