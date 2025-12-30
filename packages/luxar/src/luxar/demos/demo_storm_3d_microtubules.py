@@ -120,12 +120,17 @@ ZENODO_BASE_URL = f"https://zenodo.org/record/{ZENODO_RECORD}/files"
 
 # Default parameters
 DEFAULT_FIELD = 4  # Field of view number
-DEFAULT_MAX_LOCALIZATIONS = 1_000_000  # Limit for demo performance
+DEFAULT_MAX_LOCALIZATIONS = 5_000_000  # Limit for demo performance
 
 # Visualization parameters
 WIDEFIELD_PSF_SIGMA = 150.0  # nm - conventional microscopy PSF width
 PIXEL_SIZE = 106.0  # nm - from dataset metadata
-SUPER_RES_PRECISION_SCALE = 1.5  # Scale factor for localization precision
+# Scale factors for localization precision
+# XY precision is ~8nm, Z precision is ~575nm (from CRLB values)
+# Need large scale factors to make splats visible at 60μm scene scale
+# Target: similar or slightly smaller than widefield (0.15 σ in scene units)
+SUPER_RES_PRECISION_SCALE_XY = 100.0  # Make XY visible (~0.08μm σ)
+SUPER_RES_PRECISION_SCALE_Z = 3.0    # Make Z visible (~0.16μm σ)
 
 # Cache paths
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "storm_data"
@@ -370,6 +375,20 @@ def parse_storm_localizations(
         if 'frame' in df.columns:
             result['frame'] = df['frame'].values
 
+        # Filter out NaN values (some localizations have bad data)
+        if 'x' in result and 'y' in result and 'z' in result:
+            valid_mask = ~(np.isnan(result['x']) | np.isnan(result['y']) | np.isnan(result['z']))
+            # Also filter NaN precision values
+            for prec_key in ['precision_x', 'precision_y', 'precision_z']:
+                if prec_key in result:
+                    valid_mask &= ~np.isnan(result[prec_key])
+            n_invalid = (~valid_mask).sum()
+            if n_invalid > 0:
+                aprint(f"  Filtering {n_invalid:,} invalid (NaN) localizations")
+                for key in result:
+                    result[key] = result[key][valid_mask]
+                aprint(f"  Kept {len(result['x']):,} valid localizations")
+
         aprint("✓ Extracted columns:")
         for key in ['x', 'y', 'z']:
             if key in result:
@@ -417,34 +436,36 @@ def create_gsplats_from_localizations(
             localizations['z'] / PIXEL_SIZE,
         ]).astype(np.float32)
 
-        # Covariance matrices from localization precision
+        # Covariance matrices from localization precision (VECTORIZED for speed)
         # Each localization has uncertainty → diagonal covariance
         # Clamp precision to reasonable bounds (some localizations have crazy values)
-        MAX_PRECISION_XY_NM = 100.0  # 100 nm max uncertainty for XY
-        MAX_PRECISION_Z_NM = 150.0   # 150 nm max uncertainty for Z (slightly worse but not extreme)
+        max_precision_xy_nm = 100.0  # 100 nm max uncertainty for XY
+        max_precision_z_nm = 150.0   # 150 nm max uncertainty for Z
 
-        covariances = []
-        for i in range(n_loc):
-            # Get precision (uncertainty) in each dimension with clamping
-            prec_x = min(localizations.get('precision_x', np.full(n_loc, 20.0))[i], MAX_PRECISION_XY_NM)
-            prec_y = min(localizations.get('precision_y', np.full(n_loc, 20.0))[i], MAX_PRECISION_XY_NM)
-            prec_z = min(localizations.get('precision_z', np.full(n_loc, 50.0))[i], MAX_PRECISION_Z_NM)
+        # Get precision arrays with defaults, then clamp (all vectorized)
+        prec_x = np.clip(
+            localizations.get('precision_x', np.full(n_loc, 20.0, dtype=np.float32)),
+            0, max_precision_xy_nm
+        )
+        prec_y = np.clip(
+            localizations.get('precision_y', np.full(n_loc, 20.0, dtype=np.float32)),
+            0, max_precision_xy_nm
+        )
+        prec_z = np.clip(
+            localizations.get('precision_z', np.full(n_loc, 50.0, dtype=np.float32)),
+            0, max_precision_z_nm
+        )
 
-            # Convert to pixel units
-            sigma_x = prec_x / PIXEL_SIZE
-            sigma_y = prec_y / PIXEL_SIZE
-            sigma_z = prec_z / PIXEL_SIZE
+        # Convert to pixel units and scale for visibility (vectorized)
+        sigma_x = (prec_x / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_XY
+        sigma_y = (prec_y / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_XY
+        sigma_z = (prec_z / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_Z
 
-            # Scale up for visibility
-            sigma_x *= SUPER_RES_PRECISION_SCALE
-            sigma_y *= SUPER_RES_PRECISION_SCALE
-            sigma_z *= SUPER_RES_PRECISION_SCALE
-
-            # Create diagonal covariance matrix (3x3)
-            cov = np.diag([sigma_x**2, sigma_y**2, sigma_z**2])
-            covariances.append(cov)
-
-        covariances = np.array(covariances, dtype=np.float32)
+        # Create diagonal covariance matrices (n_loc, 3, 3) - vectorized
+        covariances = np.zeros((n_loc, 3, 3), dtype=np.float32)
+        covariances[:, 0, 0] = sigma_x ** 2
+        covariances[:, 1, 1] = sigma_y ** 2
+        covariances[:, 2, 2] = sigma_z ** 2
 
         # Amplitudes from photon counts (or uniform if not available)
         if 'photons' in localizations:
@@ -520,9 +541,8 @@ def generate_synthetic_widefield(
         y_voxel = y_voxel[valid]
         z_voxel = z_voxel[valid]
 
-        # Accumulate localizations
-        for x, y, z in zip(x_voxel, y_voxel, z_voxel):
-            volume[x, y, z] += 1
+        # Accumulate localizations (vectorized with np.add.at)
+        np.add.at(volume, (x_voxel, y_voxel, z_voxel), 1)
 
         # Blur with large Gaussian (conventional microscopy PSF)
         from scipy.ndimage import gaussian_filter
