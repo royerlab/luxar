@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Human mitosis image Gaussian splatting demo with interactive compression analysis.
+Human mitosis image Gaussian splatting demo with EXPLICIT seed initialization.
 
-This demo applies Gaussian splatting to the scikit-image human mitosis dataset,
-demonstrating full-covariance fitting with compression analysis via napari.
-Features interactive slider to explore reconstruction quality vs compression ratio.
+This demo showcases the new seeding API where seeds are generated explicitly
+using `seed_from_decomposition()` or `seed_from_gaussian()`, which return
+GSplatData with scale-informed Gaussian shapes. The seeds are then passed
+to `fit_gaussian_splats()` for optimization.
+
+Key difference from demo_splats_mitosis.py:
+- Seeds are generated EXPLICITLY using the new API
+- Shows how scale information flows from seeding to fitting
+- Demonstrates direct control over seed generation parameters
 """
 
 import sys
@@ -18,19 +24,25 @@ from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
+from luxar.gsplats.seeds import (
+    generate_seeds,
+    seed_from_decomposition,
+    seed_from_gaussian,
+)
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
-    aprint("🔬 Human Mitosis Gaussian Splatting Demo (napari disabled)")
+    aprint("🔬 Human Mitosis Demo with Explicit Seeding (napari disabled)")
     aprint("Running all computations without napari visualization...")
 
 # ======= Demo knobs =======
 N_ITERS = 2000  # Number of optimization iterations
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps:0"
 N_FRAMES = 40  # number of compression steps (<= #splats)
-TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
+TRUNCATE_SIG = 3.0  # rendering support truncation (approx +-3 sigma)
+SEED_METHOD = "decomposition"  # "gaussian", "decomposition", "both", or "moments"
 # ==========================
 
 # Setup Arbol
@@ -41,8 +53,9 @@ def ellipse_polygon_from_L(
     mu_yx: np.ndarray, L: np.ndarray, t: float = 2.0, n_pts: int = 64
 ) -> np.ndarray:
     """
-    2D oriented ellipse polygon for the contour (x-μ)^T Σ^{-1} (x-μ) = t^2, with Σ = L L^T.
-    Returns (n_pts, 2) polygon in (y, x).
+    2D oriented ellipse polygon for the contour (x-mu)^T Sigma^{-1} (x-mu) = t^2.
+
+    With Sigma = L L^T, returns (n_pts, 2) polygon in (y, x).
     """
     Sigma = L @ L.T
     evals, evecs = np.linalg.eigh(Sigma)  # principal axes
@@ -54,8 +67,8 @@ def ellipse_polygon_from_L(
     return pts.astype(np.float32)
 
 
-with asection("Human Mitosis Gaussian Splatting Demo"):
-    aprint("🔬 Interactive compression analysis on biological histology data")
+with asection("Human Mitosis Demo with Explicit Seeding"):
+    aprint("🔬 Demonstrating the new explicit seeding API")
 
     with asection("Loading and preprocessing data"):
         # Load human_mitosis and prepare a soft grayscale target
@@ -70,15 +83,79 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
+    # ========== NEW: Explicit seed generation ==========
+    with asection(f"Generating seeds using '{SEED_METHOD}' method"):
+        # The new API returns GSplatData with scale-informed shapes!
+        if SEED_METHOD == "gaussian":
+            # Multiscale Gaussian blob detection
+            seeds = seed_from_gaussian(
+                V,
+                scales=(1.0, 2.0, 4.0, 8.0, 16.0),
+                percentile_thresh=75.0,
+                min_distance=2.0,
+            )
+            aprint("Used seed_from_gaussian() - fast multiscale detection")
+
+        elif SEED_METHOD == "decomposition":
+            # Scale-hierarchical decomposition (most principled)
+            seeds = seed_from_decomposition(
+                V,
+                scales=[1, 2, 4, 8, 16],
+                ignore_finest_k=1,  # Skip finest scale (noise)
+                threshold_rel=0.1,  # Relative threshold (0-1)
+                min_distance=2.0,
+            )
+            aprint("Used seed_from_decomposition() - principled scale separation")
+
+        elif SEED_METHOD == "both":
+            # Combined approach (decomposition + gaussian)
+            seeds = generate_seeds(
+                V,
+                method="both",
+                scales=[1, 2, 4, 8, 16],
+                percentile_thresh=75.0,
+                min_distance=2.0,
+            )
+            aprint("Used generate_seeds(method='both') - hybrid approach")
+
+        elif SEED_METHOD == "moments":
+            # Full covariance estimation (for anisotropic features)
+            from luxar.gsplats.seeds import seed_from_moments
+
+            seeds = seed_from_moments(
+                V,
+                scales=(1, 2, 4, 8),
+                peak_threshold_rel=0.1,  # Relative threshold (0-1)
+                nms_radius_vox=2.0,
+                skip_finest_scales=1,  # Skip finest scale (noise)
+            )
+            aprint("Used seed_from_moments() - full covariance estimation")
+
+        else:
+            raise ValueError(f"Unknown seed method: {SEED_METHOD}")
+
+        # The seeds object is GSplatData with scale-informed parameters!
+        aprint(f"Generated {len(seeds.centers)} seeds")
+        aprint(f"  centers shape: {seeds.centers.shape}")
+        aprint(f"  cholesky_factors shape: {seeds.cholesky_factors.shape}")
+        aprint(f"  amplitudes range: [{seeds.amplitudes.min():.4f}, {seeds.amplitudes.max():.4f}]")
+        aprint(f"  sharpnesses: all {seeds.sharpnesses[0]:.1f} (standard Gaussian)")
+
+        # Show scale distribution from Cholesky factors
+        L_seeds = unpack_tril(seeds.cholesky_factors, 2)  # (N, 2, 2)
+        sigmas = np.sqrt(L_seeds[:, 0, 0] ** 2 + L_seeds[:, 1, 1] ** 2) / np.sqrt(2)
+        aprint(f"  sigma range: [{sigmas.min():.2f}, {sigmas.max():.2f}] (from scale info)")
+
     # Configure dynamic operations
     dynamic_config = DynamicOpsConfig()
     aprint(f"Dynamic operations enabled (step_every={dynamic_config.step_every})")
 
     with asection(f"Fitting Gaussian splats ({N_ITERS} iterations)"):
-        # Fit oriented (full-covariance) Gaussians with auto-candidate generation
+        # Pass the GSplatData seeds directly - the fitter will use
+        # the scale-informed cholesky_factors for initialization!
         result = fit_gaussian_splats(
             V,
-            # seeds auto-generated with intelligent defaults
+            seeds=seeds,  # <-- Pass GSplatData directly!
             n_iters=N_ITERS,
             truncate=TRUNCATE_SIG,
             device=DEVICE,
@@ -97,13 +174,15 @@ with asection("Human Mitosis Gaussian Splatting Demo"):
                 "No splats were fitted; try lowering thresholds or increasing iterations."
             )
 
+        aprint(f"Final splat count: {len(result.amplitudes)} (started with {len(seeds.centers)} seeds)")
+
 # ----- Compression ranking by approximate L2 energy -----
-# ||G||_2^2 = (sqrt(pi))^d * sqrt(det Σ); with Σ = L L^T, sqrt(det Σ) = prod(diag(L))
+# ||G||_2^2 = (sqrt(pi))^d * sqrt(det Sigma); with Sigma = L L^T, sqrt(det Sigma) = prod(diag(L))
 d = 2
 
 # Extract L for energy ranking
 L_full = unpack_tril(result.cholesky_factors, d)  # (N, 2, 2)
-diag_prod = L_full[:, 0, 0] * L_full[:, 1, 1]  # ∏ diag(L) in 2D
+diag_prod = L_full[:, 0, 0] * L_full[:, 1, 1]  # prod diag(L) in 2D
 energy_score = (result.amplitudes**2) * (np.sqrt(np.pi) ** d) * diag_prod
 order = np.argsort(-energy_score)  # descending
 
@@ -195,7 +274,7 @@ if not NO_NAPARI:
 
     # Shapes & points that update with slider
     shapes = viewer.add_shapes(
-        name="oriented 2σ ellipses (kept)",
+        name="oriented 2 sigma ellipses (kept)",
         shape_type="polygon",
         edge_color="cyan",
         edge_width=1,

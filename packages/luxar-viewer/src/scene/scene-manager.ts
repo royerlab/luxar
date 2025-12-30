@@ -22,8 +22,11 @@ import {
 import {
   validateFOV,
   calculateClippingPlanes,
+  calculateDistancesToBoundingBox,
+  distanceToNearestSurface,
   BoundingBox,
-  isPointInBoundingBox,
+  CLIPPING_SAFETY_MARGIN,
+  MIN_NEAR_PLANE,
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
@@ -973,27 +976,26 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Falls back to geometry-based calculation if metadata bounds are not available.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
+    // Get camera position for distance calculations
+    const cameraPos = {
+      x: this.camera.position.x,
+      y: this.camera.position.y,
+      z: this.camera.position.z,
+    };
+
     // Try to get scene bounds from metadata first
     const sceneBounds = this.getSceneBoundsFromMetadata();
 
     if (sceneBounds) {
-      // Get camera distance to scene center
-      const center = new THREE.Vector3(
-        (sceneBounds.min.x + sceneBounds.max.x) / 2,
-        (sceneBounds.min.y + sceneBounds.max.y) / 2,
-        (sceneBounds.min.z + sceneBounds.max.z) / 2
-      );
-      const cameraDistance = this.camera.position.distanceTo(center);
-
-      // Use existing utility function with metadata bounds
-      const { near, far } = calculateClippingPlanes(sceneBounds, cameraDistance);
+      // Use unified utility function with camera position
+      const { near, far } = calculateClippingPlanes(sceneBounds, cameraPos);
 
       // Apply the calculated planes
       this.updateClippingPlanes(near, far);
 
       log.success(
         Modules.SCENE_MANAGER,
-        `Clipping planes set from metadata bounds (near: ${near.toFixed(3)}, far: ${far.toFixed(1)})`
+        `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
       );
 
       return { near, far };
@@ -1007,17 +1009,13 @@ export class SceneManager extends THREE.EventDispatcher<{
       return { near: config.camera.near, far: config.camera.far };
     }
 
-    // Get camera distance to scene center
-    const center = box.getCenter(new THREE.Vector3());
-    const cameraDistance = this.camera.position.distanceTo(center);
-
-    // Use existing utility function
+    // Use unified utility function with camera position
     const { near, far } = calculateClippingPlanes(
       {
         min: { x: box.min.x, y: box.min.y, z: box.min.z },
         max: { x: box.max.x, y: box.max.y, z: box.max.z },
       },
-      cameraDistance
+      cameraPos
     );
 
     // Apply the calculated planes
@@ -1032,6 +1030,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Called each frame by AnimationController to smoothly adjust clipping planes
    * based on camera position relative to scene bounds. This prevents clipping
    * artifacts when navigating and maintains optimal Z-buffer precision.
+   *
+   * Uses unified calculation with CLIPPING_SAFETY_MARGIN (50%) for consistency
+   * with autoAdjustClippingPlanes(). When inside the bounding box, uses distance
+   * to nearest surface to prevent clipping nearby geometry.
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
@@ -1040,18 +1042,32 @@ export class SceneManager extends THREE.EventDispatcher<{
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Calculate distances from camera to bounding box
-    const { nearDist, farDist, isInside } = this.calculateDistancesToBounds(bounds);
+    // Get camera position
+    const cameraPos = {
+      x: this.camera.position.x,
+      y: this.camera.position.y,
+      z: this.camera.position.z,
+    };
 
-    // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
-    // sqrt(3)-1 accounts for cube diagonal (when rotating a cube, corner distance is sqrt(3)× face distance)
-    // +0.1 adds extra 10% safety buffer
-    const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
+    // Calculate distances from camera to bounding box (includes face centers)
+    const { nearDist, farDist, isInside } = calculateDistancesToBoundingBox(cameraPos, bounds);
 
-    // When camera is inside the bounding box, use minimum near plane directly
-    // to avoid clipping nearby points. When outside, apply margin to corner distance.
-    const optimalNear = isInside ? 0.001 : Math.max(0.001, nearDist * (1 - margin));
-    const optimalFar = farDist * (1 + margin); // ~183.2% of distance
+    // Calculate optimal clipping planes using unified margin (50%)
+    let optimalNear: number;
+    if (isInside) {
+      // When inside, use distance to nearest surface with small margin
+      // This prevents clipping nearby geometry while navigating inside the scene
+      const surfaceDist = distanceToNearestSurface(cameraPos, bounds);
+      // Use 10% of surface distance, but at least MIN_NEAR_PLANE
+      optimalNear = Math.max(MIN_NEAR_PLANE, surfaceDist * 0.1);
+    } else {
+      // When outside, use nearest point distance with margin
+      // margin of 0.5 means near = nearDist * 0.5
+      optimalNear = Math.max(MIN_NEAR_PLANE, nearDist * (1 - CLIPPING_SAFETY_MARGIN));
+    }
+
+    // Far plane: farthest point plus margin (~150% of distance)
+    const optimalFar = farDist * (1 + CLIPPING_SAFETY_MARGIN);
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
     const α = this.clippingAdaptSpeed;
@@ -1059,7 +1075,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
 
     // Apply safety clamps
-    this.smoothedNear = Math.max(0.001, this.smoothedNear);
+    this.smoothedNear = Math.max(MIN_NEAR_PLANE, this.smoothedNear);
 
     // Prevent excessive far/near ratio (Z-buffer precision)
     const maxRatio = 100000;
@@ -1078,63 +1094,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
-  /**
-   * Calculate distances from camera to bounding box.
-   *
-   * When the camera is outside the bounding box, returns distances to the
-   * nearest and farthest corners. When the camera is inside the bounding box,
-   * returns the minimum possible near distance to avoid clipping nearby points.
-   *
-   * @param bounds - Scene bounding box
-   * @returns Minimum and maximum distances from camera to box corners,
-   *          with isInside flag indicating if camera is inside the box
-   */
-  private calculateDistancesToBounds(bounds: BoundingBox): {
-    nearDist: number;
-    farDist: number;
-    isInside: boolean;
-  } {
-    const cameraPos = this.camera.position;
-
-    // Check if camera is inside the bounding box
-    const isInside = isPointInBoundingBox(
-      { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z },
-      bounds
-    );
-
-    // Get all 8 corners of bounding box
-    const corners = [
-      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
-      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
-      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
-      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
-      new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
-      new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
-      new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
-      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
-    ];
-
-    // Find min and max distances to corners
-    let nearDist = Infinity;
-    let farDist = 0;
-
-    for (const corner of corners) {
-      const dist = cameraPos.distanceTo(corner);
-      nearDist = Math.min(nearDist, dist);
-      farDist = Math.max(farDist, dist);
-    }
-
-    // If camera is inside the bounding box, use minimum near distance
-    // to avoid clipping nearby points
-    if (isInside) {
-      nearDist = 0.001; // Minimum practical near plane
-    } else {
-      // Ensure minimum near distance for outside case
-      nearDist = Math.max(0.001, nearDist);
-    }
-
-    return { nearDist, farDist, isInside };
-  }
+  // NOTE: calculateDistancesToBounds removed - now using calculateDistancesToBoundingBox
+  // from scene-manager-utils.ts which includes face centers for better accuracy
 
   /**
    * Set dynamic clipping configuration.

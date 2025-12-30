@@ -182,32 +182,174 @@ export function validateFOV(fov: number, min: number = 10, max: number = 120): n
 }
 
 /**
- * Calculates camera clipping planes based on scene bounds
+ * Safety margin for clipping plane calculations.
  *
- * Adds a 10% safety margin to both near and far planes to ensure
- * objects at scene boundaries remain visible during camera movement.
+ * This margin accounts for:
+ * - Rotation: when rotating the camera, different parts of the bounding box become nearest/farthest
+ * - Scene content: points might exist slightly outside computed bounds
+ *
+ * The value 0.5 (50%) provides good safety while maintaining reasonable Z-buffer precision.
+ * Theoretical minimum for a cube is ~42% (1 - 1/sqrt(3)), we use 50% for extra safety.
+ */
+export const CLIPPING_SAFETY_MARGIN = 0.5;
+
+/**
+ * Minimum near plane distance to prevent numerical issues
+ */
+export const MIN_NEAR_PLANE = 0.0001;
+
+/**
+ * Calculate distances from a point to all significant points on a bounding box.
+ *
+ * Returns distances to all 8 corners AND 6 face centers for more accurate
+ * near plane calculation. The nearest face center is often closer than the
+ * nearest corner when the camera is positioned near a face.
+ *
+ * @param point - Camera/observer position
+ * @param box - Bounding box
+ * @returns Object with nearDist, farDist, and isInside flag
+ */
+export function calculateDistancesToBoundingBox(
+  point: { x: number; y: number; z: number },
+  box: BoundingBox
+): { nearDist: number; farDist: number; isInside: boolean } {
+  // Check if point is inside the bounding box
+  const isInside = isPointInBoundingBox(point, box);
+
+  // Get box center and half-sizes
+  const cx = (box.min.x + box.max.x) / 2;
+  const cy = (box.min.y + box.max.y) / 2;
+  const cz = (box.min.z + box.max.z) / 2;
+
+  // All 8 corners
+  const corners = [
+    { x: box.min.x, y: box.min.y, z: box.min.z },
+    { x: box.max.x, y: box.min.y, z: box.min.z },
+    { x: box.min.x, y: box.max.y, z: box.min.z },
+    { x: box.max.x, y: box.max.y, z: box.min.z },
+    { x: box.min.x, y: box.min.y, z: box.max.z },
+    { x: box.max.x, y: box.min.y, z: box.max.z },
+    { x: box.min.x, y: box.max.y, z: box.max.z },
+    { x: box.max.x, y: box.max.y, z: box.max.z },
+  ];
+
+  // 6 face centers (more accurate for near plane when camera faces a side)
+  const faceCenters = [
+    { x: box.min.x, y: cy, z: cz }, // -X face
+    { x: box.max.x, y: cy, z: cz }, // +X face
+    { x: cx, y: box.min.y, z: cz }, // -Y face
+    { x: cx, y: box.max.y, z: cz }, // +Y face
+    { x: cx, y: cy, z: box.min.z }, // -Z face
+    { x: cx, y: cy, z: box.max.z }, // +Z face
+  ];
+
+  // Combine all test points
+  const testPoints = [...corners, ...faceCenters];
+
+  // Find min and max distances
+  let nearDist = Infinity;
+  let farDist = 0;
+
+  for (const p of testPoints) {
+    const dx = point.x - p.x;
+    const dy = point.y - p.y;
+    const dz = point.z - p.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    nearDist = Math.min(nearDist, dist);
+    farDist = Math.max(farDist, dist);
+  }
+
+  return { nearDist, farDist, isInside };
+}
+
+/**
+ * Calculate the minimum distance from a point to the surface of a bounding box.
+ *
+ * When inside the box, this returns the distance to the nearest face.
+ * When outside, this returns 0 (use calculateDistancesToBoundingBox instead).
+ *
+ * @param point - Point position
+ * @param box - Bounding box
+ * @returns Distance to nearest surface (0 if outside)
+ */
+export function distanceToNearestSurface(
+  point: { x: number; y: number; z: number },
+  box: BoundingBox
+): number {
+  if (!isPointInBoundingBox(point, box)) {
+    return 0;
+  }
+
+  // Find minimum distance to each of the 6 faces
+  const distances = [
+    point.x - box.min.x, // distance to -X face
+    box.max.x - point.x, // distance to +X face
+    point.y - box.min.y, // distance to -Y face
+    box.max.y - point.y, // distance to +Y face
+    point.z - box.min.z, // distance to -Z face
+    box.max.z - point.z, // distance to +Z face
+  ];
+
+  return Math.min(...distances);
+}
+
+/**
+ * Calculates camera clipping planes based on scene bounds.
+ *
+ * Uses the same approach as dynamic clipping for consistency:
+ * - Calculates distances to corners AND face centers for accuracy
+ * - Applies safety margin to handle rotation and edge cases
+ * - When inside the box, uses distance to nearest surface
  *
  * @param box - Scene bounding box
- * @param cameraDistance - Distance from camera to center
- * @param margin - Safety margin multiplier (default 0.1 = 10%)
+ * @param cameraPosition - Camera position in world coordinates
+ * @param margin - Safety margin multiplier (default: CLIPPING_SAFETY_MARGIN = 0.5)
  * @returns Near and far clipping plane distances
  */
 export function calculateClippingPlanes(
   box: BoundingBox,
+  cameraPosition: { x: number; y: number; z: number },
+  margin: number = CLIPPING_SAFETY_MARGIN
+): { near: number; far: number } {
+  const { nearDist, farDist, isInside } = calculateDistancesToBoundingBox(cameraPosition, box);
+
+  let near: number;
+  if (isInside) {
+    // When inside, use distance to nearest surface with small margin
+    // This prevents clipping nearby geometry while inside the scene
+    const surfaceDist = distanceToNearestSurface(cameraPosition, box);
+    // Use 10% of surface distance, but at least MIN_NEAR_PLANE
+    near = Math.max(MIN_NEAR_PLANE, surfaceDist * 0.1);
+  } else {
+    // When outside, use nearest point distance with margin
+    // margin of 0.5 means near = nearDist * 0.5
+    near = Math.max(MIN_NEAR_PLANE, nearDist * (1 - margin));
+  }
+
+  // Far plane: farthest point plus margin
+  const far = farDist * (1 + margin);
+
+  return { near, far };
+}
+
+/**
+ * Legacy overload for backward compatibility - uses camera distance to center.
+ * Prefer the version with cameraPosition for better accuracy.
+ *
+ * @deprecated Use calculateClippingPlanes(box, cameraPosition, margin) instead
+ */
+export function calculateClippingPlanesFromDistance(
+  box: BoundingBox,
   cameraDistance: number,
-  margin: number = 0.1
+  margin: number = CLIPPING_SAFETY_MARGIN
 ): { near: number; far: number } {
   const maxDim = getBoundingBoxMaxDimension(box);
 
-  // Near plane: 1% of camera distance, but at least 0.001
-  // Apply margin: reduce near plane by margin% to allow getting closer
-  const baseNear = Math.max(0.001, cameraDistance * 0.01);
-  const near = baseNear / (1 + margin);
+  // Near plane with margin
+  const near = Math.max(MIN_NEAR_PLANE, cameraDistance * (1 - margin));
 
-  // Far plane: camera distance + scene size
-  // Apply margin: increase far plane by margin% to provide extra space
-  const baseFar = cameraDistance + maxDim * 2;
-  const far = baseFar * (1 + margin);
+  // Far plane: camera distance + scene diagonal with margin
+  const far = (cameraDistance + maxDim * 2) * (1 + margin);
 
   return { near, far };
 }
