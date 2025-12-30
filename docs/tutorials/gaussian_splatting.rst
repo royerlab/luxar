@@ -86,9 +86,10 @@ Basic Gaussian Splat Fitting
 
 1. **Seed Generation**: Find initial splat centers
 
-   * ``multiscale_gaussian``: Laplacian of Gaussian feature detection
-   * ``clahe``: CLAHE-enhanced local maxima
-   * ``uniform``: Regular grid (simple, fast)
+   * ``gaussian``: Multiscale Gaussian blob detection (fast)
+   * ``decomposition``: Scale-hierarchical detection (principled)
+   * ``both``: Combined gaussian + decomposition (default, best quality)
+   * ``moments``: Moment-based with full covariance (anisotropic features)
 
 2. **Initialization**: Create splats with reasonable parameters
 
@@ -113,7 +114,7 @@ Seed Selection is Critical
 
 **Why it matters**: Poor initialization → poor fit, slow convergence
 
-**Multiscale Gaussian (Recommended)**:
+**Gaussian Method (Fast)**:
 
 * Detects features at multiple scales (large + small structures)
 * Uses Laplacian of Gaussian pyramid
@@ -152,12 +153,23 @@ Seed Selection is Critical
        }
    )
 
-**Uniform Grid (Fast Baseline)**:
+**Decomposition Method (Principled)**:
 
-* Regular grid of splats
-* No feature detection
-* **Best for**: Quick baseline, evenly distributed data
-* **Tradeoff**: Many splats needed for good fit
+* Scale-hierarchical detection via image decomposition
+* Explicitly separates features by scale (coarse → fine)
+* **Best for**: Noisy data, hierarchical structures
+* **Tradeoff**: Slightly slower than gaussian method
+
+.. code-block:: python
+
+   result = fit_gaussian_splats(
+       image,
+       seed_method="decomposition",
+       seed_kwargs={
+           "scales": [1, 2, 4, 8, 16],  # Decomposition scales
+           "ignore_finest_k": 1,        # Skip finest scale (noise)
+       }
+   )
 
 Optimization Parameters
 -----------------------
@@ -292,7 +304,7 @@ Quality vs Compression Tradeoff
        image,
        n_iters=100,
        lr=0.02,
-       seed_method="uniform",
+       seed_method="gaussian",  # Faster seeding
        # Result: 200 splats, PSNR 28dB, 500× compression
    )
 

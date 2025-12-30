@@ -149,6 +149,11 @@ These practices ensure consistency, maintainability, and usability across all de
     - **Usage**: `python demo_multiscale_fitting.py [--no-napari]`
     - **Best for**: Understanding multi-scale optimization benefits
 
+12. **demo_splats_mitosis_explicit_seeding.py**
+    - **Description**: Demonstrates the new explicit seeding API where seeds are generated using `seed_from_decomposition()`, `seed_from_gaussian()`, or `seed_from_moments()`. Shows how GSplatData with scale-informed shapes flows from seeding to fitting. Includes compression analysis with interactive napari visualization.
+    - **Usage**: `python demo_splats_mitosis_explicit_seeding.py [--no-napari]`
+    - **Best for**: Learning the explicit seeding API and understanding how scale information is preserved from detection to initialization
+
 ### Running Demos
 
 **Standard execution (with napari visualization):**
@@ -175,6 +180,7 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_basic_fitting.py --
 **Learning & Tutorial demos:**
 - `demo_basic_fitting.py` - Start here for API overview
 - `demo_performance_metrics.py` - Understanding optimization behavior and metrics
+- `demo_splats_mitosis_explicit_seeding.py` - Explicit seeding API with GSplatData
 
 **Dimensional Progression (2D → 3D → 4D):**
 - `demo_2d_synthetic_blobs.py` - 2D compression with oriented ellipses

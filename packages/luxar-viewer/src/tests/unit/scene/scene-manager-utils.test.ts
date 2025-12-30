@@ -216,18 +216,42 @@ describe('scene-manager-utils', () => {
   });
 
   describe('calculateClippingPlanes', () => {
-    it('should calculate appropriate clipping planes with 10% margin', () => {
+    it('should calculate appropriate clipping planes when outside bounding box', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
       };
 
-      const planes = calculateClippingPlanes(box, 50);
+      // Camera at z=50, facing center (nearest face center at z=10, distance ~40)
+      const cameraPos = { x: 0, y: 0, z: 50 };
+      const planes = calculateClippingPlanes(box, cameraPos);
 
-      // Base near = 0.5 (1% of distance), with 10% margin = 0.5 / 1.1 ≈ 0.4545
-      expect(planes.near).toBeCloseTo(0.4545, 2);
-      // Base far = 50 + 20*2 = 90, with 10% margin = 90 * 1.1 = 99
-      expect(planes.far).toBeCloseTo(99, 0);
+      // With default 50% margin:
+      // nearDist ≈ 40 (distance to nearest face center at z=10)
+      // near = 40 * (1 - 0.5) = 20
+      expect(planes.near).toBeCloseTo(20, 0);
+      // farDist ≈ 60.8 (distance to farthest corner)
+      // far = 60.8 * 1.5 ≈ 91.2
+      expect(planes.far).toBeGreaterThan(80);
+      expect(planes.far).toBeLessThan(100);
+    });
+
+    it('should use distance to nearest surface when inside bounding box', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+
+      // Camera inside the box, near the +Z face
+      const cameraPos = { x: 0, y: 0, z: 8 };
+      const planes = calculateClippingPlanes(box, cameraPos);
+
+      // Distance to nearest surface (+Z face at z=10) is 2
+      // near = 2 * 0.1 = 0.2
+      expect(planes.near).toBeCloseTo(0.2, 1);
+      // farDist = distance to farthest corner (approx sqrt(10² + 10² + 18²) ≈ 23.2)
+      // far ≈ 23.2 * 1.5 ≈ 34.8
+      expect(planes.far).toBeGreaterThan(30);
     });
 
     it('should enforce minimum near plane', () => {
@@ -236,10 +260,12 @@ describe('scene-manager-utils', () => {
         max: { x: 0.01, y: 0.01, z: 0.01 },
       };
 
-      const planes = calculateClippingPlanes(box, 0.01);
+      // Camera very close to tiny box
+      const cameraPos = { x: 0.005, y: 0.005, z: 0.02 };
+      const planes = calculateClippingPlanes(box, cameraPos);
 
-      // Minimum near is 0.001 / 1.1 ≈ 0.00091
-      expect(planes.near).toBeGreaterThanOrEqual(0.0009);
+      // Minimum near is MIN_NEAR_PLANE = 0.0001
+      expect(planes.near).toBeGreaterThanOrEqual(0.0001);
     });
 
     it('should support custom margin parameter', () => {
@@ -248,15 +274,18 @@ describe('scene-manager-utils', () => {
         max: { x: 10, y: 10, z: 10 },
       };
 
+      // Camera outside at z=50
+      const cameraPos = { x: 0, y: 0, z: 50 };
+
       // With 0% margin (no margin)
-      const noMargin = calculateClippingPlanes(box, 50, 0);
-      expect(noMargin.near).toBeCloseTo(0.5, 2); // Exactly 1% of distance
-      expect(noMargin.far).toBeCloseTo(90, 0); // Exactly distance + 2*maxDim
+      const noMargin = calculateClippingPlanes(box, cameraPos, 0);
+      // nearDist ≈ 40, near = 40 * 1.0 = 40
+      expect(noMargin.near).toBeCloseTo(40, 0);
 
       // With 20% margin
-      const largeMargin = calculateClippingPlanes(box, 50, 0.2);
-      expect(largeMargin.near).toBeCloseTo(0.417, 2); // 0.5 / 1.2
-      expect(largeMargin.far).toBeCloseTo(108, 0); // 90 * 1.2
+      const smallMargin = calculateClippingPlanes(box, cameraPos, 0.2);
+      // near = 40 * 0.8 = 32
+      expect(smallMargin.near).toBeCloseTo(32, 0);
     });
   });
 
