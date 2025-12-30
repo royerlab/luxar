@@ -42,6 +42,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def xor_fractal_4d(
@@ -522,7 +523,14 @@ def main() -> None:
     aprint("   (No iteration - instant geometric computation!)")
     aprint("")
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "fractals_4d.zarr"
+        generate_4d_fractal_dataset(output_path, grid_size=grid_size)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_4d_fractals_") as tmpdir:
         output_path = Path(tmpdir) / "fractals_4d.zarr"
 
@@ -561,10 +569,6 @@ def main() -> None:
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
@@ -575,15 +579,15 @@ def main() -> None:
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
             aprint(
-                "💡 Make sure viewer is built: cd packages/luxar-viewer && pnpm build"
+                "Make sure viewer is built: cd packages/luxar-viewer && pnpm build"
             )
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")
-            aprint("💡 Install: pip install -e .")
+            aprint("Install: pip install -e .")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete - temporary files removed")
+    aprint("Cleanup complete - temporary files removed")
 
 
 if __name__ == "__main__":

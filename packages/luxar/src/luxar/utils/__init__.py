@@ -13,6 +13,12 @@ from .demos import (
     create_random_spheres,
     create_time_series_demo,
 )
+from .paths import (
+    get_datasets_dir,
+    get_demos_output_dir,
+    get_examples_output_dir,
+    get_project_root,
+)
 
 __all__ = [
     # From array
@@ -22,4 +28,9 @@ __all__ = [
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
+    # From paths
+    "get_datasets_dir",
+    "get_demos_output_dir",
+    "get_examples_output_dir",
+    "get_project_root",
 ]

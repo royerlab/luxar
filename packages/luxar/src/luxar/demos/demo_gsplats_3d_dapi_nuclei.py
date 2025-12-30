@@ -102,6 +102,7 @@ from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.models.gsplats.metal import is_metal_available
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -120,7 +121,6 @@ DEVICE = None  # Auto-detect (cuda/mps/cpu)
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
 CACHE_DIR = EXAMPLES_DIR / ".cache"
 CACHE_FILE = CACHE_DIR / "gsplats_dapi_fit.npz"
-OUTPUT_PATH = EXAMPLES_DIR / "gsplats_3d_dapi_nuclei_example.zarr"
 
 # Parse command line flags
 NO_CACHE = "--no-cache" in sys.argv
@@ -288,12 +288,15 @@ def fit_or_load_gsplats(volume):
 # =============================================================================
 
 
-def create_luxar_scene(gsplats_data):
+def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
-    with asection("Creating Luxar Scene"):
-        aprint(f"Output: {OUTPUT_PATH.name}")
+    if output_path is None:
+        output_path = get_demos_output_dir() / "gsplats_3d_dapi_nuclei.zarr"
 
-        with LuxarZarrCompiler(OUTPUT_PATH) as compiler:
+    with asection("Creating Luxar Scene"):
+        aprint(f"Output: {output_path.name}")
+
+        with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add scene metadata
@@ -328,8 +331,8 @@ Controls:
                 blending_mode="additive",
             )
 
-        aprint(f"✓ Scene saved: {OUTPUT_PATH}")
-        return OUTPUT_PATH
+        aprint(f"Scene saved: {output_path}")
+        return output_path
 
 
 def add_reference_points(scene, volume, sample_rate=0.01):
@@ -473,14 +476,17 @@ def main():
     aprint("Real microscopy data + Gaussian Splatting + Web visualization")
     aprint("")
 
+    # Determine output path
+    output_path = get_demos_output_dir() / "gsplats_3d_dapi_nuclei.zarr"
+
     # Serve only mode
     if SERVE_ONLY:
-        if OUTPUT_PATH.exists():
+        if output_path.exists():
             aprint("Serve-only mode: Launching viewer...")
-            serve_scene(OUTPUT_PATH)
+            serve_scene(output_path)
             return
         else:
-            aprint(f"❌ Scene not found: {OUTPUT_PATH}")
+            aprint(f"Scene not found: {output_path}")
             aprint("Run without --serve-only to generate first")
             return
 
@@ -498,14 +504,14 @@ def main():
         aprint("Centering at center-of-mass...")
         gsplats_data = gsplats_data_original.center_at_centroid()
         centroid_check = (gsplats_data.centers.T @ gsplats_data.amplitudes) / gsplats_data.amplitudes.sum()
-        aprint(f"✓ Centered (centroid: [{centroid_check[0]:.3f}, {centroid_check[1]:.3f}, {centroid_check[2]:.3f}])")
+        aprint(f"Centered (centroid: [{centroid_check[0]:.3f}, {centroid_check[1]:.3f}, {centroid_check[2]:.3f}])")
 
         aprint("Reducing brightness by 10x for better visualization...")
         gsplats_data = gsplats_data.scale_intensity(0.1)
-        aprint(f"✓ Brightness scaled to 0.1x (amplitude range: [{gsplats_data.amplitudes.min():.4f}, {gsplats_data.amplitudes.max():.4f}])")
+        aprint(f"Brightness scaled to 0.1x (amplitude range: [{gsplats_data.amplitudes.min():.4f}, {gsplats_data.amplitudes.max():.4f}])")
 
     # Create scene with transformed data
-    scene_path = create_luxar_scene(gsplats_data)
+    scene_path = create_luxar_scene(gsplats_data, output_path)
 
     # Summary
     n_splats = len(gsplats_data.amplitudes)
@@ -514,10 +520,10 @@ def main():
     compression = volume_bytes / splats_bytes
 
     aprint("\n" + "=" * 70)
-    aprint("📊 Compression Summary")
+    aprint("Compression Summary")
     aprint("=" * 70)
     aprint(f"Volume: {volume.shape} = {volume.size:,} voxels")
-    aprint(f"Splats: {n_splats} × 11 floats = {n_splats * 11:,} floats")
+    aprint(f"Splats: {n_splats} x 11 floats = {n_splats * 11:,} floats")
     aprint(f"Raw size: {volume_bytes / 1024 / 1024:.2f} MB")
     aprint(f"Splat size: {splats_bytes / 1024:.2f} KB")
     aprint(f"Compression ratio: {compression:.1f}:1")
@@ -525,13 +531,12 @@ def main():
     aprint("=" * 70)
 
     # Launch viewer
-    if not NO_SERVE:
+    if NO_SERVE:
+        aprint(f"Dataset generated at {scene_path}")
+    else:
         aprint("\nLaunching viewer in 2 seconds...")
         time.sleep(2)
         serve_scene(scene_path)
-    else:
-        aprint(f"\n✓ Scene ready at: {scene_path}")
-        aprint(f"To view: luxar serve {scene_path} --viewer")
 
 
 if __name__ == "__main__":

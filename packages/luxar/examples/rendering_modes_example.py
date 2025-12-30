@@ -9,12 +9,11 @@ This educational example demonstrates:
 - Creating educational visualizations comparing rendering techniques
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.ndarray:
@@ -42,7 +41,7 @@ def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.nda
 
 def main():
     """Create a scene demonstrating different rendering modes and effects."""
-    output_path = Path(__file__).parent / "rendering_modes_example.zarr"
+    output_path = get_examples_output_dir() / "rendering_modes_example.zarr"
 
     aprint(f"Creating rendering modes demonstration at {output_path}")
     aprint("This example shows:")

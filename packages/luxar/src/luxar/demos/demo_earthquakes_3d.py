@@ -97,6 +97,7 @@ from arbol import aprint, asection
 from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -876,6 +877,23 @@ def main() -> None:
     aprint("    🌋 Volcanic regions - often correlate with earthquakes")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "earthquakes.zarr"
+        try:
+            total_points, total_lines = generate_earthquake_scene(
+                output_path, days=days, min_magnitude=min_mag
+            )
+            if total_points == 0:
+                aprint("\n❌ No data generated")
+                return
+        except Exception as e:
+            aprint(f"\n❌ Error: {e}")
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_earthquakes_") as tmpdir:
         output_path = Path(tmpdir) / "earthquakes.zarr"
 
@@ -904,10 +922,10 @@ def main() -> None:
             aprint("  • 9+: Megaquake (rare, extreme destruction)")
             aprint("")
             aprint("Major Earthquake Zones:")
-            aprint("  🔥 Pacific Ring of Fire (90% of world's quakes)")
-            aprint("  🗻 Himalayan belt (India-Asia collision)")
-            aprint("  🌊 Mid-Atlantic Ridge (divergent boundary)")
-            aprint("  ⚡ San Andreas Fault (California transform)")
+            aprint("  Pacific Ring of Fire (90% of world's quakes)")
+            aprint("  Himalayan belt (India-Asia collision)")
+            aprint("  Mid-Atlantic Ridge (divergent boundary)")
+            aprint("  San Andreas Fault (California transform)")
             aprint("")
             aprint("=" * 70)
             aprint("LAUNCHING VIEWER")
@@ -915,10 +933,6 @@ def main() -> None:
             aprint("Rotate the Earth to explore seismic activity patterns!")
             aprint("Press Ctrl+C when done.")
             aprint("")
-
-            if "--no-serve" in sys.argv:
-                aprint("✓ Dataset generated successfully (--no-serve mode)")
-                return
 
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
@@ -929,13 +943,13 @@ def main() -> None:
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error launching viewer: {e}")
-            aprint("💡 Make sure viewer is built:")
+            aprint("Make sure viewer is built:")
             aprint("   cd packages/luxar-viewer && pnpm build")
             sys.exit(1)
         except FileNotFoundError as e:
             if "luxar" in str(e):
                 aprint("\n❌ Error: 'luxar' command not found")
-                aprint("💡 Install luxar: pip install -e .")
+                aprint("Install luxar: pip install -e .")
             else:
                 aprint(f"\n❌ Error: {e}")
             sys.exit(1)
@@ -943,7 +957,7 @@ def main() -> None:
             aprint(f"\n❌ Error: {e}")
             sys.exit(1)
 
-    aprint("\n✓ Cleanup complete - temporary files removed")
+    aprint("\nCleanup complete - temporary files removed")
 
 
 if __name__ == "__main__":

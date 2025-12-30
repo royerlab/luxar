@@ -117,6 +117,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Physics Constants and Detector Geometry
@@ -1247,6 +1248,18 @@ def main() -> None:
     aprint(f"Events: {n_events} | Jets per event: {n_jets}")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "collision.zarr"
+        with asection("Generating detector scene"):
+            total_segments, total_points = generate_detector_scene(
+                output_path, n_events=n_events, n_jets_per_event=n_jets
+            )
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total: {total_segments:,} line segments, {total_points:,} points")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_collision_") as tmpdir:
         output_path = Path(tmpdir) / "collision.zarr"
 
@@ -1277,10 +1290,6 @@ def main() -> None:
         aprint("=" * 70)
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(

@@ -20,6 +20,7 @@ import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def load_cells_data():  # type: ignore[no-untyped-def]
@@ -86,6 +87,54 @@ def main() -> None:
 
     coords, attrs = load_cells_data()
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output = get_demos_output_dir() / "zebrahub_integrated_cells.zarr"
+        with asection("Building Scene"):
+            # Create 2 views (celltype, timepoint)
+            all_pos, all_col = [], []
+
+            for idx, (name, data) in enumerate(attrs.items()):
+                pos_4d = np.column_stack([np.full(len(coords), idx), coords])
+                all_pos.append(pos_4d)
+                all_col.append(attr_to_colors(data))
+                aprint(f"  View {idx}: {name}")
+
+            positions = np.vstack(all_pos)
+            colors = np.vstack(all_col)
+
+            dims = Dimensions(
+                [
+                    Dimension(
+                        "view",
+                        unit="",
+                        categories=["Cell Type", "Timepoint"],
+                        display=False,
+                        description="Categorical view: color by cell type or developmental timepoint",
+                    ),
+                    Dimension("x", unit="UMAP", display=True),
+                    Dimension("y", unit="UMAP", display=True),
+                    Dimension("z", unit="UMAP", display=True),
+                ]
+            )
+
+            with LuxarZarrCompiler(output) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_points(
+                    "Cells",
+                    positions,
+                    colors=colors,
+                    radii=np.full(len(positions), 0.02, dtype=np.float32),
+                    sharpness=np.full(len(positions), 4.0, dtype=np.float32),
+                    opacity=0.8,
+                )
+
+            aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
+
+        aprint(f"Dataset generated at {output}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_cells_") as tmpdir:
         output = Path(tmpdir) / "cells.zarr"
 
@@ -128,17 +177,13 @@ def main() -> None:
                     opacity=0.8,
                 )
 
-            aprint(f"✓ {len(positions):,} total points ({len(coords):,} per view)")
+            aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
 
         aprint("")
-        aprint("🔑 NAVIGATION: Press '1' then [/] to switch:")
+        aprint("NAVIGATION: Press '1' then [/] to switch:")
         aprint("   0: Cell Type (32 types)")
         aprint("   1: Timepoint (6 stages)")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(
@@ -147,7 +192,7 @@ def main() -> None:
         except (KeyboardInterrupt, subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-    aprint("✓ Done")
+    aprint("Done")
 
 
 if __name__ == "__main__":

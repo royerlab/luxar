@@ -26,12 +26,11 @@ When to use:
 - High (5.0-10.0): Technical precision, sharp features, stars
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
@@ -213,7 +212,7 @@ def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
 
 def main():
     """Run the sharpness feature example."""
-    output_path = Path(__file__).parent / "sharpness_showcase_example.zarr"
+    output_path = get_examples_output_dir() / "sharpness_showcase_example.zarr"
 
     aprint(f"Creating sharpness example scene at {output_path}")
     aprint("\nThis example showcases the per-point sharpness feature:")

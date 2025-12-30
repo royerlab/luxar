@@ -9,12 +9,11 @@ This example demonstrates:
 - Proper scene dimension definitions for 4D spatial data
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_4d_hypersphere_points(
@@ -126,7 +125,7 @@ def create_4d_rainbow_colors(positions: np.ndarray) -> np.ndarray:
 
 def main():
     """Create and save a 4D spatial rainbow sphere."""
-    output_path = Path(__file__).parent / "rainbow_sphere_4d_example.zarr"
+    output_path = get_examples_output_dir() / "rainbow_sphere_4d_example.zarr"
 
     aprint(f"├ Creating 4D spatial rainbow sphere at {output_path}")
     aprint("├ This example creates a true 4D hypersphere where:")

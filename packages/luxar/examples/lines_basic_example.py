@@ -13,15 +13,14 @@ Run with:
     hatch run python packages/luxar/examples/lines_basic_example.py
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 # Output path
-output_path = Path(__file__).parent / "lines_basic_example.zarr"
+output_path = get_examples_output_dir() / "lines_basic_example.zarr"
 
 
 def create_spiral_line(n_points: int = 100, radius: float = 5.0, height: float = 10.0):

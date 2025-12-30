@@ -31,6 +31,8 @@ Welcome to Luxar's documentation! Luxar is a high-performance system for compili
    guides/developer/JSDOC_STYLE_GUIDE
    guides/developer/CONSOLE_OUTPUT_STYLE
    guides/developer/NETWORK_SIMULATION_SPEC
+   guides/developer/PLAYWRIGHT_GUIDE
+   guides/developer/TESTING_GUIDELINES
 
 .. toctree::
    :maxdepth: 2

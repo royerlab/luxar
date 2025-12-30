@@ -52,6 +52,7 @@ from arbol import aprint, asection
 from scipy.special import genlaguerre, sph_harm
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 
 def hydrogen_radial_wavefunction(
@@ -316,7 +317,14 @@ def main() -> None:
     aprint("  • 3d: Cloverleaf and complex shapes")
     aprint("")
 
-    # Use temporary directory
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "quantum_orbitals.zarr"
+        generate_quantum_orbitals(output_path, grid_size=grid_size)
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_quantum_") as tmpdir:
         output_path = Path(tmpdir) / "quantum_orbitals.zarr"
 
@@ -356,10 +364,6 @@ def main() -> None:
         aprint("Browser will open automatically. Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
@@ -369,13 +373,13 @@ def main() -> None:
             aprint("\n🛑 Stopping demo...")
         except subprocess.CalledProcessError as e:
             aprint(f"\n❌ Error: {e}")
-            aprint("💡 Make sure viewer is built")
+            aprint("Make sure viewer is built")
             sys.exit(1)
         except FileNotFoundError:
             aprint("\n❌ Error: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
 
 
 if __name__ == "__main__":

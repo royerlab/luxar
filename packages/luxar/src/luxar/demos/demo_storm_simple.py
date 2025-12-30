@@ -15,12 +15,11 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.gsplats.fit_result import GSplatData
+from luxar.utils.paths import get_demos_output_dir
 
 # Paths
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "storm_data"
 CSV_FILE = CACHE_DIR / "Cos7_MT_A647_FOV_4_Localizations.csv"
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "examples"
-OUTPUT_PATH = OUTPUT_DIR / "storm_simple.zarr"
 
 PIXEL_SIZE = 106.0  # nm
 
@@ -80,19 +79,20 @@ def main():
 
         aprint(f"✓ Created {n:,} gsplats")
 
+    # Determine output path based on --no-serve flag
+    output_path = get_demos_output_dir() / "storm_simple.zarr"
+
     # Create scene
     with asection("Creating scene"):
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
         dims = Dimensions(
             [
-                Dimension("x", unit="μm", display=True),
-                Dimension("y", unit="μm", display=True),
-                Dimension("z", unit="μm", display=True),
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
             ]
         )
 
-        with LuxarZarrCompiler(OUTPUT_PATH) as compiler:
+        with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             gsplat_data = GSplatData(
@@ -110,13 +110,15 @@ def main():
                 blending_mode="additive",
             )
 
-        aprint(f"✓ Scene saved: {OUTPUT_PATH}")
+        aprint(f"Scene saved: {output_path}")
 
     # Launch viewer
-    if "--no-serve" not in sys.argv:
-        aprint("\n🚀 Launching viewer...")
+    if "--no-serve" in sys.argv:
+        aprint(f"Dataset generated at {output_path}")
+    else:
+        aprint("\nLaunching viewer...")
         subprocess.run(
-            ["luxar", "serve", str(OUTPUT_PATH), "--viewer", "--open"], check=True
+            ["luxar", "serve", str(output_path), "--viewer", "--open"], check=True
         )
 
 

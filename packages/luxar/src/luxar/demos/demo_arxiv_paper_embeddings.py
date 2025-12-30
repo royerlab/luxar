@@ -87,6 +87,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -571,20 +572,45 @@ def main() -> None:
         import sentence_transformers  # noqa: F401
         import umap  # noqa: F401
     except ImportError as e:
-        aprint(f"❌ Missing dependency: {e}")
+        aprint(f"Missing dependency: {e}")
         aprint("")
         aprint("Install required packages:")
         aprint("  pip install sentence-transformers umap-learn")
         aprint("")
         sys.exit(1)
 
+    # Setup cache
+    cache_dir = None
+    if use_cache:
+        cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_embeddings"
+
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "arxiv_papers.zarr"
+        try:
+            n_papers = generate_paper_landscape(
+                output_path,
+                fields=field_list,
+                papers_per_field=papers_per_field,
+                cache_dir=cache_dir,
+            )
+            if n_papers == 0:
+                aprint("\nNo papers generated")
+                return
+        except Exception as e:
+            aprint(f"\nError: {e}")
+            aprint("\nPossible issues:")
+            aprint("  - Network connection failed")
+            aprint("  - API rate limit exceeded")
+            aprint("  - Missing dependencies (sentence-transformers, umap-learn)")
+            sys.exit(1)
+        aprint(f"Dataset generated at {output_path}")
+        aprint(f"Total papers: {n_papers:,}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_") as tmpdir:
         output_path = Path(tmpdir) / "arxiv_papers.zarr"
-
-        # Setup cache
-        cache_dir = None
-        if use_cache:
-            cache_dir = Path.home() / ".cache" / "luxar" / "arxiv_embeddings"
 
         try:
             n_papers = generate_paper_landscape(
@@ -595,15 +621,15 @@ def main() -> None:
             )
 
             if n_papers == 0:
-                aprint("\n❌ No papers generated")
+                aprint("\nNo papers generated")
                 return
 
         except Exception as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             aprint("\nPossible issues:")
-            aprint("  • Network connection failed")
-            aprint("  • API rate limit exceeded")
-            aprint("  • Missing dependencies (sentence-transformers, umap-learn)")
+            aprint("  - Network connection failed")
+            aprint("  - API rate limit exceeded")
+            aprint("  - Missing dependencies (sentence-transformers, umap-learn)")
             sys.exit(1)
 
         aprint("")
@@ -612,10 +638,10 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("What to look for:")
-        aprint("  • Clusters of related papers (same topic)")
-        aprint("  • Boundaries between fields (interdisciplinary zones)")
-        aprint("  • Large points = highly cited landmark papers")
-        aprint("  • Colors show different research disciplines")
+        aprint("  - Clusters of related papers (same topic)")
+        aprint("  - Boundaries between fields (interdisciplinary zones)")
+        aprint("  - Large points = highly cited landmark papers")
+        aprint("  - Colors show different research disciplines")
         aprint("")
         aprint("Try this:")
         aprint("  1. Zoom out: See the overall structure of knowledge")
@@ -637,30 +663,26 @@ def main() -> None:
         aprint("Press Ctrl+C when done.")
         aprint("")
 
-        if "--no-serve" in sys.argv:
-            aprint("✓ Dataset generated successfully (--no-serve mode)")
-            return
-
         try:
             subprocess.run(
                 ["luxar", "serve", str(output_path), "--viewer", "--open"],
                 check=True,
             )
         except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
+            aprint("\nStopping demo...")
         except subprocess.CalledProcessError as e:
-            aprint(f"\n❌ Error: {e}")
+            aprint(f"\nError: {e}")
             sys.exit(1)
         except FileNotFoundError:
-            aprint("\n❌ Error: 'luxar' command not found")
+            aprint("\nError: 'luxar' command not found")
             sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("Cleanup complete")
     aprint("")
     aprint("Performance tips:")
-    aprint("  • Use --use-cache to skip re-downloading and re-computing")
-    aprint("  • Reduce --papers=N for faster generation")
-    aprint("  • Limit --fields=cs,physics for focused exploration")
+    aprint("  - Use --use-cache to skip re-downloading and re-computing")
+    aprint("  - Reduce --papers=N for faster generation")
+    aprint("  - Limit --fields=cs,physics for focused exploration")
     aprint("")
 
 

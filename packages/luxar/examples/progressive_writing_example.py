@@ -20,18 +20,17 @@ Key principle:
 - Use progressive writing when dataset size is unknown or very large
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions
 from luxar.compiler import LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def main():
     """Demonstrate progressive writing with LuxarZarrCompiler."""
-    output_path = Path(__file__).parent / "progressive_writing_example.zarr"
+    output_path = get_examples_output_dir() / "progressive_writing_example.zarr"
 
     with asection("Scene Setup and Dimensions"):
         # Define dimensions for the scene

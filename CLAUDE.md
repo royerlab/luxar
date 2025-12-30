@@ -70,7 +70,6 @@ luxar profiles                   # Network simulation profiles
 
 /packages/luxar-viewer/    # TypeScript/WebGL viewer
   /src/                    # Source with per-package READMEs
-  /docs/PLAYWRIGHT_GUIDE.md  # Comprehensive E2E testing guide
 
 /docs/                     # Documentation
   /guides/                 # Organized guides by purpose
@@ -181,7 +180,7 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
 - Run `pnpm test:generate-fixtures` before test-fixtures tests
-- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` for details
+- See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/guides/developer/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
 Python encoder and TypeScript decoder must stay in sync:
@@ -409,7 +408,7 @@ Before PR/merge:
 | Topic | Location |
 |-------|----------|
 | E2E Testing Quick Ref | `docs/guides/user/E2E_TESTING_GUIDE.md` |
-| Playwright Full Guide | `packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md` |
+| Playwright Full Guide | `docs/guides/developer/PLAYWRIGHT_GUIDE.md` |
 | Data Format Spec | `docs/guides/user/LUXAR_ZARR_FORMAT.md` |
 | HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
 | Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |

@@ -9,12 +9,11 @@ This example demonstrates:
 - Proper scene-level dimension configuration
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_circle(radius: float = 5, n_points: int = 100) -> np.ndarray:
@@ -138,7 +137,7 @@ def create_cross(size: float = 10, n_points: int = 100) -> np.ndarray:
 
 def main():
     """Create an interactive dimension navigation example."""
-    output_path = Path(__file__).parent / "dimension_navigation_example.zarr"
+    output_path = get_examples_output_dir() / "dimension_navigation_example.zarr"
     aprint(f"Creating dimension navigation example at {output_path}")
 
     # Define shapes and their properties

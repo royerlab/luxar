@@ -9,12 +9,11 @@ This educational example demonstrates:
 - Visualizing coordinate systems and transformations
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_coordinate_axes(length: float = 2.0) -> tuple[np.ndarray, np.ndarray]:
@@ -92,7 +91,7 @@ def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
 
 def main():
     """Create a scene demonstrating various transformations."""
-    output_path = Path(__file__).parent / "transform_example.zarr"
+    output_path = get_examples_output_dir() / "transform_example.zarr"
 
     aprint(f"Creating transform system demonstration at {output_path}")
     aprint("This example shows:")

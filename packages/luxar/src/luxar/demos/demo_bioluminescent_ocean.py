@@ -73,6 +73,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
 # Configuration
@@ -839,6 +840,17 @@ def main() -> None:
     aprint(f"Jellyfish: {n_jellyfish} | Frames: {n_frames}")
     aprint("")
 
+    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    if "--no-serve" in sys.argv:
+        output_path = get_demos_output_dir() / "ocean.zarr"
+        with asection("Generating ocean scene"):
+            generate_ocean_scene(
+                output_path, n_jellyfish=n_jellyfish, n_frames=n_frames
+            )
+        aprint(f"Dataset generated at {output_path}")
+        return
+
+    # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_ocean_") as tmpdir:
         output_path = Path(tmpdir) / "ocean.zarr"
 
@@ -862,10 +874,6 @@ def main() -> None:
         aprint("Use the TIME dimension slider to animate the jellyfish!")
         aprint("Press Ctrl+C when done.")
         aprint("")
-
-        if "--no-serve" in sys.argv:
-            aprint("Dataset generated successfully (--no-serve mode)")
-            return
 
         try:
             subprocess.run(
