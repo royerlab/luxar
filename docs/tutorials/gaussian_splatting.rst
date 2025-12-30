@@ -67,7 +67,7 @@ Basic Gaussian Splat Fitting
        n_iters=300,           # More iterations = better fit
        lr=0.01,               # Learning rate
        loss_type="l1",        # L1 loss is robust to outliers
-       seed_method="multiscale_gaussian"  # Smart initialization
+       seed_method="gaussian"  # Smart initialization
    )
 
    # Results
@@ -124,12 +124,11 @@ Seed Selection is Critical
 
    result = fit_gaussian_splats(
        image,
-       seed_method="multiscale_gaussian",
-       seed_config={
-           "n_scales": 4,           # Number of scale levels
-           "min_feature_size": 2,   # Smallest feature (pixels)
-           "max_feature_size": 16,  # Largest feature
-           "threshold": 0.01        # Feature strength threshold
+       seed_method="gaussian",
+       seed_kwargs={
+           "scales": (2.0, 4.0, 8.0, 16.0),  # Detection scales
+           "percentile_thresh": 75.0,         # Intensity threshold
+           "min_distance": 2.0,               # Min distance between seeds
        }
    )
 
@@ -144,11 +143,12 @@ Seed Selection is Critical
 
    result = fit_gaussian_splats(
        image,
-       seed_method="clahe",
-       seed_config={
-           "kernel_size": 8,     # Local region size
-           "clip_limit": 2.0,    # Contrast limit
-           "threshold": 0.1      # Detection threshold
+       seed_method="gaussian",
+       seed_kwargs={
+           "apply_clahe": True,         # Enable CLAHE preprocessing
+           "clahe_tile_size": 32,       # Local region size
+           "clahe_clip_limit": 16.0,    # Contrast limit
+           "percentile_thresh": 70.0,   # Detection threshold
        }
    )
 
@@ -273,7 +273,7 @@ Quality vs Compression Tradeoff
    # High quality (more splats, more iterations)
    result_hq = fit_gaussian_splats(
        image,
-       seed_method="multiscale_gaussian",
+       seed_method="gaussian",
        n_iters=1000,
        lr=0.005,  # Smaller steps for fine-tuning
        # Result: 2000 splats, PSNR 35dB, 50× compression

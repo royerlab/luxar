@@ -180,7 +180,7 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
                 if dataset_zip.exists():
                     partial_size = dataset_zip.stat().st_size
                     aprint(f"   Partial download saved: {partial_size / (1024**2):.0f} MB")
-                    aprint(f"   Run again to resume from this point")
+                    aprint("   Run again to resume from this point")
                 raise
 
         # Extract if needed
@@ -320,7 +320,7 @@ def load_protein_embeddings(
 
                 aprint(f"✓ Created {n_clusters} functional clusters")
                 for i in range(min(5, n_clusters)):
-                    count = sum(1 for l in cluster_labels if l == i)
+                    count = sum(1 for label in cluster_labels if label == i)
                     aprint(f"  Cluster {i}: {count:,} proteins")
         else:
             func_counts = {}

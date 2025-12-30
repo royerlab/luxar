@@ -83,7 +83,7 @@ CLAHE (Contrast Limited Adaptive Histogram Equalization) enhances local contrast
 **Integration:**
 When `apply_clahe=True`, all processing uses the CLAHE-enhanced image for consistency between detection and refinement.
 
-### Algorithm: `find_seeds_multiscale_gaussian()`
+### Algorithm: `seed_from_gaussian()`
 
 #### High-Level Algorithm
 
@@ -241,7 +241,7 @@ centers = np.array(centers, float)
 ### API Specification
 
 ```python
-def find_seeds_multiscale_gaussian(
+def seed_from_gaussian(
     V: np.ndarray,
     spacing: Optional[Sequence[float]] = None,
     scales: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0),
@@ -365,7 +365,7 @@ For detailed mathematical formulation, see [multiscale/SPECIFICATIONS.md](../mul
 
 **Default**: `ignore_finest_k=1` (skip full-resolution scale only)
 
-### Algorithm: `find_seeds_multiscale_decomposition()`
+### Algorithm: `seed_from_decomposition()`
 
 #### High-Level Algorithm
 
@@ -543,7 +543,7 @@ return candidates_dedup
 ### API Specification
 
 ```python
-def find_seeds_multiscale_decomposition(
+def seed_from_decomposition(
     V: np.ndarray,
     scales: List[int] = [1, 2, 4, 8, 16, 32, 64],
     ignore_finest_k: int = 1,
@@ -1058,8 +1058,8 @@ def combine_seeds(
 1. **Quality matters**: Computational budget allows thorough decomposition
 2. **Noisy data**: Scale filtering provides robust noise suppression
 3. **Hierarchical structure**: Want explicit coarse-to-fine ordering
-4. **Sparse representation**: Prefer fewer, higher-quality candidates
-5. **Energy-based priority**: Want candidates sorted by importance
+4. **Sparse representation**: Prefer fewer, higher-quality seeds
+5. **Energy-based priority**: Want seeds sorted by importance
 6. **Principled approach**: Value mathematically-motivated feature separation
 
 **Use Both (Combined) When:**
@@ -1084,15 +1084,19 @@ The two methods are **complementary**, not competing:
 
 **Combining Both:**
 ```python
-# Generate candidates from both methods
-cand_gaussian = find_seeds_multiscale_gaussian(image, min_distance=3.0)
-cand_decomp = find_seeds_multiscale_decomposition(image, scales=[1,2,4,8])
+# Generate seeds from both methods (returns GSplatData)
+seeds_gaussian = seed_from_gaussian(image, min_distance=3.0)
+seeds_decomp = seed_from_decomposition(image, scales=[1,2,4,8])
 
-# Combine with deduplication
-combined = combine_seeds(cand_gaussian, cand_decomp, min_distance=3.0)
+# Combine centers with deduplication
+combined_centers = combine_seeds(
+    seeds_gaussian.centers,
+    seeds_decomp.centers,
+    min_distance=3.0
+)
 
-# Use for fitting
-params, amps, stats = fit_gaussian_splats(image, seeds=combined)
+# Use for fitting (positions only - fitter initializes shapes)
+result = fit_gaussian_splats(image, seeds=combined_centers)
 ```
 
 **Result:**
@@ -1109,21 +1113,22 @@ params, amps, stats = fit_gaussian_splats(image, seeds=combined)
 **Basic Functionality:**
 ```python
 def test_multiscale_gaussian_2d():
-    """Test basic 2D candidate generation."""
+    """Test basic 2D seed generation."""
     # Create synthetic 2D image with known features
     image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-    
-    candidates = find_seeds_multiscale_gaussian(
+
+    # Returns GSplatData with scale-informed shapes
+    seeds = seed_from_gaussian(
         image,
         scales=(1.0, 2.0, 4.0),
         min_distance=3.0,
         apply_clahe=False,
     )
-    
-    # Should find approximately n_blobs candidates (±tolerance)
-    assert 5 <= len(candidates) <= 15
-    assert candidates.shape[1] == 2  # 2D coordinates
-    assert candidates.dtype == float
+
+    # Should find approximately n_blobs seeds (±tolerance)
+    assert 5 <= len(seeds.centers) <= 15
+    assert seeds.centers.shape[1] == 2  # 2D coordinates
+    assert seeds.centers.dtype == float
 ```
 
 **Parameter Validation:**
@@ -1134,15 +1139,15 @@ def test_multiscale_gaussian_parameter_validation():
     
     # Empty scales
     with pytest.raises(ValueError, match="scales must be a non-empty"):
-        find_seeds_multiscale_gaussian(image, scales=[])
+        seed_from_gaussian(image, scales=[])
     
     # Negative scale
     with pytest.raises(ValueError, match="All scale values must be positive"):
-        find_seeds_multiscale_gaussian(image, scales=[1.0, -2.0])
+        seed_from_gaussian(image, scales=[1.0, -2.0])
     
     # Invalid percentile
     with pytest.raises(ValueError, match="percentile_thresh must be between 0 and 100"):
-        find_seeds_multiscale_gaussian(image, percentile_thresh=150.0)
+        seed_from_gaussian(image, percentile_thresh=150.0)
 ```
 
 **Edge Cases:**
@@ -1151,15 +1156,15 @@ def test_multiscale_gaussian_edge_cases():
     """Test edge cases."""
     # Uniform image → no peaks
     uniform = np.ones((64, 64))
-    candidates = find_seeds_multiscale_gaussian(uniform)
-    assert len(candidates) == 0
-    
-    # Single peak → one candidate
+    seeds = seed_from_gaussian(uniform)
+    assert len(seeds.centers) == 0
+
+    # Single peak → one seed
     single_peak = np.zeros((64, 64))
     single_peak[32, 32] = 1.0
-    candidates = find_seeds_multiscale_gaussian(single_peak, min_distance=1.0)
-    assert len(candidates) >= 1
-    assert np.allclose(candidates[0], [32, 32], atol=2.0)
+    seeds = seed_from_gaussian(single_peak, min_distance=1.0)
+    assert len(seeds.centers) >= 1
+    assert np.allclose(seeds.centers[0], [32, 32], atol=2.0)
 ```
 
 #### Decomposition Tests
@@ -1167,21 +1172,22 @@ def test_multiscale_gaussian_edge_cases():
 **Basic Functionality:**
 ```python
 def test_decomposition_2d():
-    """Test decomposition-based candidate generation in 2D."""
+    """Test decomposition-based seed generation in 2D."""
     image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-    
-    candidates = find_seeds_multiscale_decomposition(
+
+    # Returns GSplatData with scale-informed shapes
+    seeds = seed_from_decomposition(
         image,
         scales=[1, 2, 4],
         ignore_finest_k=1,
         min_distance=3.0,
         decompose_kwargs={'n_iters': 200},  # Fast for testing
     )
-    
-    # Should find candidates (count depends on decomposition quality)
-    assert len(candidates) > 0
-    assert candidates.shape[1] == 2
-    assert candidates.dtype == float
+
+    # Should find seeds (count depends on decomposition quality)
+    assert len(seeds.centers) > 0
+    assert seeds.centers.shape[1] == 2
+    assert seeds.centers.dtype == float
 ```
 
 **ignore_finest_k Validation:**
@@ -1189,29 +1195,29 @@ def test_decomposition_2d():
 def test_decomposition_ignore_finest_k():
     """Test ignore_finest_k parameter."""
     image = create_synthetic_blobs_2d(n_blobs=5, size=64)
-    
+
     # ignore_finest_k = 0: use all scales
-    cand_all = find_seeds_multiscale_decomposition(
+    seeds_all = seed_from_decomposition(
         image, scales=[1, 2, 4], ignore_finest_k=0
     )
-    
+
     # ignore_finest_k = 1: skip finest scale
-    cand_skip1 = find_seeds_multiscale_decomposition(
+    seeds_skip1 = seed_from_decomposition(
         image, scales=[1, 2, 4], ignore_finest_k=1
     )
-    
+
     # ignore_finest_k = 2: skip two finest scales
-    cand_skip2 = find_seeds_multiscale_decomposition(
+    seeds_skip2 = seed_from_decomposition(
         image, scales=[1, 2, 4], ignore_finest_k=2
     )
-    
-    # More filtering → fewer or equal candidates
-    assert len(cand_skip1) <= len(cand_all)
-    assert len(cand_skip2) <= len(cand_skip1)
+
+    # More filtering → fewer or equal seeds
+    assert len(seeds_skip1.centers) <= len(seeds_all.centers)
+    assert len(seeds_skip2.centers) <= len(seeds_skip1.centers)
     
     # Validate warning for ignore_finest_k >= len(scales)
     with pytest.warns(UserWarning):
-        find_seeds_multiscale_decomposition(image, scales=[1, 2], ignore_finest_k=3)
+        seed_from_decomposition(image, scales=[1, 2], ignore_finest_k=3)
 ```
 
 #### Utility Tests
@@ -1311,25 +1317,24 @@ def test_combine_seeds_basic():
 
 **Integration with fit_gaussian_splats:**
 ```python
-def test_candidates_integration_with_fitting():
-    """Test candidates integrate properly with fitting pipeline."""
+def test_seeds_integration_with_fitting():
+    """Test seeds integrate properly with fitting pipeline."""
     image = create_synthetic_blobs_2d(n_blobs=10, size=128)
-    
-    # Generate candidates
-    candidates = find_seeds_multiscale_gaussian(image, min_distance=3.0)
-    
-    # Fit Gaussian splats
-    params, amps, stats = fit_gaussian_splats(
+
+    # Generate seeds (returns GSplatData)
+    seeds = seed_from_gaussian(image, min_distance=3.0)
+
+    # Fit Gaussian splats - passes GSplatData directly
+    result = fit_gaussian_splats(
         image,
-        seeds=candidates,
+        seeds=seeds,  # GSplatData with scale-informed shapes
         n_iters=100,
         enable_dynamic_ops=False,  # Use only provided seeds
     )
-    
+
     # Should have fitted splats
-    assert len(amps) > 0
-    assert len(amps) <= len(candidates)  # May prune some
-    assert stats['converged']
+    assert len(result.amplitudes) > 0
+    assert len(result.amplitudes) <= len(seeds.centers)  # May prune some
 ```
 
 **Cross-Method Comparison:**
@@ -1337,28 +1342,29 @@ def test_candidates_integration_with_fitting():
 def test_methods_comparison():
     """Compare multiscale Gaussian vs decomposition on same image."""
     image = create_synthetic_blobs_2d(n_blobs=20, size=256)
-    
-    cand_gaussian = find_seeds_multiscale_gaussian(
+
+    # Both methods return GSplatData with scale-informed shapes
+    seeds_gaussian = seed_from_gaussian(
         image,
         scales=(1.0, 2.0, 4.0, 8.0),
         min_distance=3.0,
     )
-    
-    cand_decomp = find_seeds_multiscale_decomposition(
+
+    seeds_decomp = seed_from_decomposition(
         image,
         scales=[1, 2, 4, 8],
         ignore_finest_k=1,
         min_distance=3.0,
         decompose_kwargs={'n_iters': 200},
     )
-    
-    # Both should find candidates
-    assert len(cand_gaussian) > 0
-    assert len(cand_decomp) > 0
-    
+
+    # Both should find seeds
+    assert len(seeds_gaussian.centers) > 0
+    assert len(seeds_decomp.centers) > 0
+
     # Gaussian typically finds more (overcomplete)
     # But not guaranteed (depends on parameters)
-    print(f"Gaussian: {len(cand_gaussian)}, Decomposition: {len(cand_decomp)}")
+    print(f"Gaussian: {len(seeds_gaussian.centers)}, Decomposition: {len(seeds_decomp.centers)}")
 ```
 
 ### Dimension-Agnostic Tests
@@ -1370,31 +1376,31 @@ def test_multiscale_gaussian_ndim(ndim):
     """Test multiscale Gaussian in various dimensions."""
     shape = (32,) * ndim
     image = create_synthetic_blobs_nd(n_blobs=5, shape=shape)
-    
-    candidates = find_seeds_multiscale_gaussian(
+
+    seeds = seed_from_gaussian(
         image,
         scales=(2.0, 4.0),
         min_distance=3.0,
     )
-    
-    assert candidates.shape[1] == ndim
-    assert len(candidates) > 0
+
+    assert seeds.centers.shape[1] == ndim
+    assert len(seeds.centers) > 0
 
 @pytest.mark.parametrize("ndim", [1, 2, 3, 4])
 def test_decomposition_ndim(ndim):
     """Test decomposition in various dimensions."""
     shape = (32,) * ndim
     image = create_synthetic_blobs_nd(n_blobs=5, shape=shape)
-    
-    candidates = find_seeds_multiscale_decomposition(
+
+    seeds = seed_from_decomposition(
         image,
         scales=[1, 2, 4],
         ignore_finest_k=1,
         decompose_kwargs={'n_iters': 100},
     )
-    
-    assert candidates.shape[1] == ndim
-    assert len(candidates) > 0
+
+    assert seeds.centers.shape[1] == ndim
+    assert len(seeds.centers) > 0
 ```
 
 ## Implementation Design Decisions
@@ -1494,34 +1500,39 @@ def test_decomposition_ndim(ndim):
 
 **Proposal 1: Two-Stage Detection**
 ```python
-def find_candidates_hybrid(V, **kwargs):
+def seed_hybrid(V, **kwargs):
     # Stage 1: Decomposition for coarse structure (scales 8, 16, 32)
-    coarse = find_seeds_multiscale_decomposition(
+    coarse = seed_from_decomposition(
         V, scales=[8, 16, 32], ignore_finest_k=0
     )
-    
-    # Stage 2: Multiscale Gaussian for fine detail (scales 1.0, 2.0, 4.0)
-    fine = find_seeds_multiscale_gaussian(
+
+    # Stage 2: Gaussian for fine detail (scales 1.0, 2.0, 4.0)
+    fine = seed_from_gaussian(
         V, scales=(1.0, 2.0, 4.0)
     )
-    
-    # Combine with deduplication
-    return combine_seeds(coarse, fine, min_distance=kwargs['min_distance'])
+
+    # Combine centers with deduplication
+    combined_centers = combine_seeds(
+        coarse.centers, fine.centers, min_distance=kwargs['min_distance']
+    )
+    # Note: Loses shape info - consider preserving GSplatData
+    return combined_centers
 ```
 
 **Proposal 2: Adaptive Method Selection**
 ```python
-def find_candidates_adaptive(V, **kwargs):
+def seed_adaptive(V, **kwargs):
     # Analyze image characteristics
     snr = estimate_snr(V)
     complexity = estimate_complexity(V)
-    
+
+    # All methods return GSplatData with scale-informed shapes
     if snr < 5.0:  # Noisy
-        return find_seeds_multiscale_decomposition(V, ignore_finest_k=2)
+        return seed_from_decomposition(V, ignore_finest_k=2)
     elif complexity > 0.7:  # Complex
-        return find_seeds_multiscale_gaussian(V, apply_clahe=True)
+        return seed_from_gaussian(V, apply_clahe=True)
     else:  # Default
-        return find_seeds_multiscale_decomposition(V, ignore_finest_k=1)
+        return seed_from_decomposition(V, ignore_finest_k=1)
 ```
 
 ### Adaptive Parameters
@@ -1578,22 +1589,23 @@ def auto_min_distance(V, target_density=0.001):
 
 **Proposal: Per-Channel Decomposition + Merging**
 ```python
-def find_candidates_multichannel(V_channels, **kwargs):
+def seed_multichannel(V_channels, **kwargs):
     """
-    Generate candidates from multi-channel image.
-    
+    Generate seeds from multi-channel image.
+
     V_channels: list of nD arrays (one per channel)
+    Returns: combined centers (positions only - shape info lost)
     """
-    all_candidates = []
-    
+    all_centers = []
+
     for channel_idx, V in enumerate(V_channels):
-        # Decompose each channel independently
-        cand = find_seeds_multiscale_decomposition(V, **kwargs)
-        all_candidates.append(cand)
-    
-    # Combine across channels with deduplication
-    combined = combine_seeds(*all_candidates, min_distance=kwargs['min_distance'])
-    
+        # Decompose each channel independently (returns GSplatData)
+        seeds = seed_from_decomposition(V, **kwargs)
+        all_centers.append(seeds.centers)
+
+    # Combine centers across channels with deduplication
+    combined = combine_seeds(*all_centers, min_distance=kwargs['min_distance'])
+
     return combined
 ```
 
@@ -1604,20 +1616,21 @@ def find_candidates_multichannel(V_channels, **kwargs):
 
 ### Confidence Scores
 
-**Motivation**: Provide quality metrics for each candidate.
+**Motivation**: Provide quality metrics for each seed.
 
 **Proposal: Multi-Factor Confidence**
 ```python
-def find_candidates_with_confidence(V, **kwargs):
+def seed_with_confidence(V, **kwargs):
     """
-    Return candidates with confidence scores.
-    
-    Returns: (candidates, confidences)
+    Return seeds with confidence scores.
+
+    Returns: (GSplatData, confidences)
     """
-    candidates = find_seeds_multiscale_gaussian(V, **kwargs)
-    
+    seeds = seed_from_gaussian(V, **kwargs)
+    centers = seeds.centers
+
     confidences = []
-    for c in candidates:
+    for c in centers:
         # Factor 1: Peak intensity
         intensity = V[tuple(c.astype(int))]
         
@@ -1648,7 +1661,7 @@ def find_candidates_with_confidence(V, **kwargs):
 
 **Proposal 1: GPU Gaussian Filtering**
 ```python
-def find_seeds_multiscale_gaussian_gpu(V, **kwargs):
+def seed_from_gaussian_gpu(V, **kwargs):
     """
     GPU-accelerated multiscale Gaussian candidate generation.
     """
@@ -1701,17 +1714,18 @@ class CandidateNetworkModel(nn.Module):
         # ... forward pass producing probability map
         pass
 
-def find_candidates_learned(V, model, threshold=0.5):
+def seed_learned(V, model, threshold=0.5):
     """
-    Use trained neural network to predict candidate locations.
+    Use trained neural network to predict seed locations.
+    Returns centers only (positions without shape info).
     """
     # Predict probability map
     prob_map = model(torch.tensor(V))
-    
+
     # Threshold and find peaks
-    candidates = local_maxima(prob_map.numpy(), radius=2, thresh=threshold)
-    
-    return candidates
+    centers = local_maxima(prob_map.numpy(), radius=2, thresh=threshold)
+
+    return centers
 ```
 
 **Training:**

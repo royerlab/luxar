@@ -170,9 +170,11 @@ Strategies for generating initial seed points for splat fitting.
 
 .. autofunction:: luxar.gsplats.seeds.generate_seeds
 
-.. autofunction:: luxar.gsplats.seeds.find_seeds_multiscale_gaussian
+.. autofunction:: luxar.gsplats.seeds.seed_from_gaussian
 
-.. autofunction:: luxar.gsplats.seeds.find_seeds_clahe
+.. autofunction:: luxar.gsplats.seeds.seed_from_decomposition
+
+.. autofunction:: luxar.gsplats.seeds.seed_from_moments
 
 CLAHE Enhancement
 -----------------

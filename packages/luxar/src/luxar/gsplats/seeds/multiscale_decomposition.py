@@ -3,18 +3,20 @@
 Decomposition-based seed generation for Gaussian splatting.
 
 This module provides scale-hierarchical detection via multi-scale image
-decomposition, offering principled scale separation and noise suppression.
+decomposition. Returns GSplatData with scale-informed Gaussian shapes
+where sigma = scale_factor for each detected seed.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from arbol import aprint
 
-from luxar.gsplats.seeds.utils import dedupe_farthest_first, local_maxima
+from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.seeds.utils import local_maxima, sigmas_to_cholesky_isotropic
 
 
-def find_seeds_multiscale_decomposition(
+def seed_from_decomposition(
     V: np.ndarray,
     scales: List[int] = [1, 2, 4, 8, 16, 32, 64],
     ignore_finest_k: int = 1,
@@ -23,86 +25,49 @@ def find_seeds_multiscale_decomposition(
     threshold_rel: float = 0.1,
     decompose_kwargs: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
-) -> np.ndarray:
+) -> GSplatData:
     """
-    Generate seed Gaussian splat locations using multi-scale decomposition.
+    Generate seed Gaussian splats using multi-scale decomposition.
 
     This method decomposes the input image into multiple scales using `decompose_image()`,
-    finds local maxima in each scale (excluding the finest k scales), and returns their
-    positions as seed splat centers. This approach provides principled scale
-    separation and sparse representation compared to overcomplete methods.
-
-    The key advantage is that energy is explicitly distributed across scales through
-    optimization, creating a natural hierarchy from coarse to fine structure.
+    finds local maxima in each scale (excluding the finest k scales), and returns
+    GSplatData with isotropic Gaussians where sigma = scale_factor.
 
     Parameters
     ----------
     V : np.ndarray
         Input n-dimensional image/volume. Shape: (s_0, s_1, ..., s_{n-1}).
-    scales : List[int], optional
-        Scale factors for decomposition. Default: [1, 2, 4, 8, 16, 32, 64].
+    scales : List[int], default=[1, 2, 4, 8, 16, 32, 64]
+        Scale factors for decomposition.
         Scale 1 = full resolution, scale 2 = half resolution, etc.
-    ignore_finest_k : int, optional
-        Number of finest scales to ignore for peak detection. Default: 1.
+        Each seed's sigma is set to the scale at which it was detected.
+    ignore_finest_k : int, default=1
+        Number of finest scales to ignore for peak detection.
         Setting k=1 ignores the full-resolution scale to suppress noise.
-        If k >= len(scales), a warning is issued and k is set to len(scales)-1.
     peaks_per_scale : int or None, optional
-        Maximum number of peaks to extract per scale. If None, extract all peaks
-        above threshold. Default: None (unlimited).
-    min_distance : float, optional
-        Minimum Euclidean distance between seeds (in voxels). Default: 2.0.
-        Closer seeds are deduplicated using farthest-first selection,
-        keeping the higher-energy peak.
-    threshold_rel : float, optional
-        Relative threshold for peak detection (0.0 to 1.0). Default: 0.1.
-        Peaks must be at least threshold_rel * max_intensity_in_scale to be considered.
+        Maximum number of peaks to extract per scale. If None, extract all.
+    min_distance : float, default=2.0
+        Minimum Euclidean distance between seeds (in voxels).
+    threshold_rel : float, default=0.1
+        Relative threshold for peak detection (0.0 to 1.0).
     decompose_kwargs : dict or None, optional
         Additional keyword arguments passed to decompose_image().
-        Common options:
-        - n_iters: optimization iterations (default 500)
-        - energy_weight: hierarchical energy penalty (default 0.01)
-        - loss_type: "l1" (default), "mse", or "poisson"
-        - lr: learning rate (default 0.01)
-    verbose : bool, optional
-        Print progress information. Default: False.
+    verbose : bool, default=False
+        Print progress information.
 
     Returns
     -------
-    seeds : np.ndarray, shape (N, ndim)
-        Seed center coordinates in voxel units (float).
-        Sorted by energy (descending).
+    GSplatData
+        Gaussian splat seeds with:
+        - centers: Peak positions in full resolution coordinates
+        - amplitudes: Peak intensities
+        - cholesky_factors: Isotropic Cholesky factors where sigma = scale_factor
+        - sharpnesses: All set to 2.0 (standard Gaussian)
 
     Notes
     -----
-    - Ignoring the finest k scales (default k=1) suppresses noise and overfitting
-    - Scales are processed from coarse to fine; coarser scales contribute first
-    - Seeds are deduplicated spatially using farthest-first with min_distance
-    - Peak positions are mapped from scale resolution to full resolution
-    - Energy-based sorting ensures high-quality seeds are prioritized
-
-    Examples
-    --------
-    >>> from skimage import data
-    >>> import numpy as np
-    >>> from luxar.gsplats.seeds import find_seeds_multiscale_decomposition
-    >>>
-    >>> # Load example image
-    >>> image = data.cell().astype(np.float32)
-    >>>
-    >>> # Generate seeds (ignore finest scale to suppress noise)
-    >>> seeds = find_seeds_multiscale_decomposition(
-    ...     image,
-    ...     scales=[1, 2, 4, 8],
-    ...     ignore_finest_k=1,
-    ...     min_distance=3.0,
-    ...     verbose=True
-    ... )
-    >>> print(f"Generated {len(seeds)} seed locations")
-
-    See Also
-    --------
-    decompose_image : Multi-scale image decomposition
-    find_seeds_multiscale_gaussian : Alternative multiscale Gaussian seed generation
+    The sigma for each seed equals the decomposition scale_factor at which
+    it was detected. Features at scale=4 will have sigma=4 voxels.
     """
     # Lazy import to avoid circular dependency
     from luxar.gsplats.multiscale.decompose import decompose_image
@@ -144,8 +109,6 @@ def find_seeds_multiscale_decomposition(
 
     # Prepare decompose_image kwargs
     decompose_kwargs = decompose_kwargs or {}
-
-    # Set verbose in decompose_kwargs if not already set
     if "verbose" not in decompose_kwargs:
         decompose_kwargs["verbose"] = verbose
 
@@ -159,36 +122,27 @@ def find_seeds_multiscale_decomposition(
         aprint("[Decomposition Seeds] Running decompose_image...")
 
     scale_images, stats = decompose_image(V, scales=scales, **decompose_kwargs)
-
-    # Use the actual scales that were used (may be filtered by decompose_image)
     actual_scales = stats.get("scales", scales)
 
     if verbose:
         aprint(
             f"[Decomposition Seeds] Decomposition complete. "
-            f"Converged: {stats.get('converged', False)}, "
-            f"Iterations: {stats.get('actual_iters', 'N/A')}"
+            f"Converged: {stats.get('converged', False)}"
         )
-        if len(actual_scales) < len(scales):
-            aprint(
-                f"[Decomposition Seeds] Note: {len(scales) - len(actual_scales)} scale(s) were filtered out by decompose_image"
-            )
 
     # Step 2: Find local maxima in each scale (excluding finest k)
-    all_seeds = []
-    all_energies = []
+    all_seeds: List[np.ndarray] = []
+    all_scales_detected: List[np.ndarray] = []
+    all_energies: List[np.ndarray] = []
 
-    # Determine which scales to process (skip finest k)
-    # Use actual_scales length since some scales may have been filtered
     scales_to_process = list(range(ignore_finest_k, len(actual_scales)))
 
     if verbose:
         aprint(
-            f"[Decomposition Seeds] Processing {len(scales_to_process)} "
-            f"scale(s) for peak detection"
+            f"[Decomposition Seeds] Processing {len(scales_to_process)} scale(s)"
         )
 
-    # Process scales from coarse to fine (reverse order, excluding ignored finest)
+    # Process scales from coarse to fine
     for scale_idx in reversed(scales_to_process):
         scale_factor = actual_scales[scale_idx]
         scale_img = scale_images[scale_idx]
@@ -196,8 +150,7 @@ def find_seeds_multiscale_decomposition(
         if verbose:
             aprint(
                 f"[Decomposition Seeds]   Scale {scale_factor}: "
-                f"shape {scale_img.shape}, "
-                f"range [{scale_img.min():.3f}, {scale_img.max():.3f}]"
+                f"shape {scale_img.shape}"
             )
 
         # Compute threshold for this scale
@@ -210,7 +163,6 @@ def find_seeds_multiscale_decomposition(
         threshold = threshold_rel * max_intensity
 
         # Find local maxima in scale image
-        # Use radius = 1 for finest resolution in scale image (3x3x... neighborhood)
         radius = 1
         peaks = local_maxima(
             scale_img, radius=radius, thresh=threshold, top_k=peaks_per_scale
@@ -218,50 +170,101 @@ def find_seeds_multiscale_decomposition(
 
         if len(peaks) == 0:
             if verbose:
-                aprint(
-                    f"[Decomposition Seeds]     No peaks found "
-                    f"(threshold={threshold:.3f})"
-                )
+                aprint("[Decomposition Seeds]     No peaks found")
             continue
 
         if verbose:
-            aprint(
-                f"[Decomposition Seeds]     Found {len(peaks)} peak(s) "
-                f"(threshold={threshold:.3f})"
-            )
+            aprint(f"[Decomposition Seeds]     Found {len(peaks)} peak(s)")
 
         # Map peak coordinates to full resolution
-        # Peak at position (i, j, ...) in scale image corresponds to
-        # position (i*scale_factor + scale_factor/2, j*scale_factor + scale_factor/2, ...)
-        # in full resolution image
         seeds_full_res = peaks.astype(float) * scale_factor + scale_factor / 2.0
 
         # Get energy (intensity) at each peak location
         energies = scale_img[tuple(peaks.T)]
 
         all_seeds.append(seeds_full_res)
+        all_scales_detected.append(np.full(len(peaks), float(scale_factor)))
         all_energies.append(energies)
 
     # Step 3: Combine all seeds
     if len(all_seeds) == 0:
         if verbose:
             aprint("[Decomposition Seeds] No seeds found across all scales")
-        return np.zeros((0, ndim), dtype=float)
+        return GSplatData(
+            centers=np.zeros((0, ndim), dtype=np.float32),
+            amplitudes=np.zeros(0, dtype=np.float32),
+            cholesky_factors=np.zeros((0, ndim * (ndim + 1) // 2), dtype=np.float32),
+            sharpnesses=np.zeros(0, dtype=np.float32),
+        )
 
     seeds = np.vstack(all_seeds)
+    seed_scales = np.concatenate(all_scales_detected)
     energies = np.concatenate(all_energies)
 
     if verbose:
-        aprint(f"[Decomposition Seeds] Total seeds before deduplication: {len(seeds)}")
+        aprint(f"[Decomposition Seeds] Total seeds before dedup: {len(seeds)}")
 
     # Step 4: Deduplicate spatially close seeds
-    # Use farthest-first selection with energy priority
-    seeds_dedup = dedupe_farthest_first(
-        seeds, min_distance=min_distance, intensities=energies
+    seeds, seed_scales, energies = _dedupe_with_scales_and_energies(
+        seeds, seed_scales, energies, min_distance
     )
 
     if verbose:
-        aprint(f"[Decomposition Seeds] Seeds after deduplication: {len(seeds_dedup)}")
+        aprint(f"[Decomposition Seeds] Seeds after dedup: {len(seeds)}")
 
-    # Step 5: Return seeds (already sorted by energy from dedupe_farthest_first)
-    return seeds_dedup
+    # Get amplitudes from original image
+    seeds_int = np.clip(np.round(seeds).astype(int), 0, np.array(V.shape) - 1)
+    amplitudes = V[tuple(seeds_int.T)].astype(np.float32)
+
+    # Build Cholesky factors from scales (sigma = scale_factor)
+    cholesky_factors = sigmas_to_cholesky_isotropic(seed_scales.astype(np.float32), ndim)
+
+    # Standard Gaussian sharpness
+    sharpnesses = np.full(len(seeds), 2.0, dtype=np.float32)
+
+    return GSplatData(
+        centers=seeds.astype(np.float32),
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        sharpnesses=sharpnesses,
+    )
+
+
+def _dedupe_with_scales_and_energies(
+    coords: np.ndarray,
+    scales: np.ndarray,
+    energies: np.ndarray,
+    min_distance: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Deduplicate seeds while preserving scale and energy information.
+
+    Uses energy-based priority for selection.
+    """
+    if len(coords) == 0:
+        return coords, scales, energies
+
+    # Sort by energy (highest first)
+    sort_idx = np.argsort(energies)[::-1]
+    coords_sorted = coords[sort_idx]
+    scales_sorted = scales[sort_idx]
+    energies_sorted = energies[sort_idx]
+
+    # Greedy deduplication
+    kept_mask = np.ones(len(coords_sorted), dtype=bool)
+
+    for i in range(len(coords_sorted)):
+        if not kept_mask[i]:
+            continue
+
+        # Mark nearby seeds as rejected
+        diffs = coords_sorted[i + 1 :] - coords_sorted[i]
+        distances = np.sqrt(np.sum(diffs**2, axis=1))
+        nearby = distances < min_distance
+        kept_mask[i + 1 :][nearby] = False
+
+    return (
+        coords_sorted[kept_mask],
+        scales_sorted[kept_mask],
+        energies_sorted[kept_mask],
+    )

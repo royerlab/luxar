@@ -205,10 +205,10 @@ for vis in result.stats['per_scale_visualizations']:
 For specialized use cases requiring custom candidate generation:
 
 ```python
-from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
+from luxar.gsplats.seeds import seed_from_gaussian
 
 # Custom seed generation with specific parameters
-custom_seeds = find_seeds_multiscale_gaussian(
+custom_seeds = seed_from_gaussian(
     image,
     scales=(1.0, 2.0, 4.0),      # Custom scales
     peaks_per_scale=1000,        # Custom density
@@ -693,13 +693,14 @@ Main fitting function with automatic optimizations.
 - `params`: (N, d + d*(d+1)/2) array of [centers, packed_cholesky]
 - `amps`: (N,) array of amplitudes
 
-#### `find_seeds_multiscale_gaussian(V, **kwargs)`
-Generate initial splat positions using multiscale detection.
+#### `seed_from_gaussian(V, **kwargs)`
+Generate initial seed splats using multiscale Gaussian detection.
+Returns `GSplatData` with scale-informed Gaussian shapes (sigma = detection scale).
 
 **Key Parameters:**
-- `scales`: Gaussian filter scales (default: (0.7, 1.0, 1.4, 2.0, 2.8, 4.0))
-- `peaks_per_scale`: Maximum peaks per scale (default: 1000)
-- `percentile_thresh`: Intensity threshold percentile (default: 70.0)
+- `scales`: Gaussian filter scales (default: (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0))
+- `peaks_per_scale`: Maximum peaks per scale (default: None)
+- `percentile_thresh`: Intensity threshold percentile (default: 75.0)
 - `min_distance`: Minimum distance between candidates (default: 2.0)
 
 ## Device Support and Performance

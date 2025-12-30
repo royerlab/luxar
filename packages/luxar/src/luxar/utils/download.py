@@ -169,7 +169,7 @@ def robust_download(
 
                 # Verify download completed
                 final_size = output_path.stat().st_size
-                aprint(f"✓ Download complete!")
+                aprint("✓ Download complete!")
                 aprint(f"  Final size: {final_size / (1024**3):.2f} GB")
 
                 # Verify size if expected
@@ -249,7 +249,7 @@ def verify_file_checksum(file_path: Path, expected_md5: Optional[str] = None, ex
             if actual_md5 == expected_md5:
                 aprint(f"✓ MD5 verified: {actual_md5}")
             else:
-                aprint(f"❌ MD5 mismatch!")
+                aprint("❌ MD5 mismatch!")
                 aprint(f"   Expected: {expected_md5}")
                 aprint(f"   Actual:   {actual_md5}")
                 return False
@@ -265,7 +265,7 @@ def verify_file_checksum(file_path: Path, expected_md5: Optional[str] = None, ex
             if actual_sha256 == expected_sha256:
                 aprint(f"✓ SHA256 verified: {actual_sha256}")
             else:
-                aprint(f"❌ SHA256 mismatch!")
+                aprint("❌ SHA256 mismatch!")
                 aprint(f"   Expected: {expected_sha256}")
                 aprint(f"   Actual:   {actual_sha256}")
                 return False
@@ -315,8 +315,8 @@ def download_with_checksum(
             aprint("❌ Checksum verification failed - file may be corrupted")
             output_path.unlink()
             raise ValueError(
-                f"Downloaded file failed checksum verification. "
-                f"File has been deleted. Please try downloading again."
+                "Downloaded file failed checksum verification. "
+                "File has been deleted. Please try downloading again."
             )
 
     return output_path

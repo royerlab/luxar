@@ -172,7 +172,7 @@ def main():
             line_type="loop",
         )
 
-        aprint(f"Created scene with 4 lines objects:")
+        aprint("Created scene with 4 lines objects:")
         aprint(f"  - rainbow_spiral: {len(spiral_vertices)} vertices (polyline)")
         aprint(f"  - floor_grid: {len(grid_vertices)//2} segments")
         aprint(f"  - star_burst: {len(star_vertices)//2} segments")

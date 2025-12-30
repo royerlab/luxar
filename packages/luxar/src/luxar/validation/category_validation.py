@@ -6,8 +6,6 @@ It is intentionally separate to avoid circular imports between core and validati
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ..typing_utils.aliases import CategoryList
 from ..typing_utils.constants import MAX_CATEGORY_LABEL_LENGTH, MIN_CATEGORIES
 

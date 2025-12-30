@@ -9,9 +9,9 @@ when used properly (see test_writer_parent_parameter.py).
 This test suite guards against future regressions in node collection.
 """
 
-import numpy as np
-import pytest
 from pathlib import Path
+
+import numpy as np
 
 from luxar.core.dimensions import Dimensions
 from luxar.io.compiler import LuxarZarrCompiler
@@ -40,7 +40,7 @@ class TestReaderNodeCollection:
             compiler.write_points("GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32), parent="GroupA")
 
             # Create nested group under GroupA
-            group_b = group_a.add_group("GroupB")
+            _group_b = group_a.add_group("GroupB")
             compiler.write_points("GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="GroupA/GroupB")
 
         # Load and verify
@@ -113,7 +113,7 @@ class TestReaderNodeCollection:
             compiler.write_lines("RootLines", vertices, widths, line_type="segments")
 
             # Add group with nested content
-            group = scene_node.add_group("MyGroup")
+            _group = scene_node.add_group("MyGroup")
             compiler.write_points("GroupPoints", np.array([[2, 2, 2]], dtype=np.float32), parent="MyGroup")
 
         scene = LuxarScene.load(output_path)

@@ -48,8 +48,8 @@ DEVICE = None      # None -> auto; or "cuda"/"cpu"/"mps:0"
 ### Error Handling & Validation
 - Check for empty results and provide meaningful error messages:
 ```python
-if len(candidates) == 0:
-    raise RuntimeError("No candidates found; try lowering thresholds.")
+if len(seeds.centers) == 0:
+    raise RuntimeError("No seeds found; try lowering thresholds.")
 if len(amps) == 0:
     raise RuntimeError("No splats were fitted; try lowering thresholds or increasing iterations.")
 ```

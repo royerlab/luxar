@@ -276,6 +276,15 @@ export interface CacheMetrics {
     reads: number;
     writes: number;
   };
+  /** L0 decompressed chunk cache breakdown (optional, only when L0 cache connected) */
+  l0?: {
+    size: number;
+    count: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+    hitRate: number;
+  };
   /** Whether caching is enabled */
   enabled?: boolean;
   /** Network I/O stats (optional, only when CacheStatsProvider connected) */

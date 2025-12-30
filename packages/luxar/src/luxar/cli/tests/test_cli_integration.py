@@ -5,11 +5,9 @@ These tests actually start the server, make HTTP requests, and verify responses.
 Following the principle from TESTING_GUIDELINES.md: mock only external dependencies.
 """
 
-import json
 import socket
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -392,7 +390,7 @@ class TestServePerformance:
         # Create a larger scene
         store_path = tmp_path / "large_scene.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            _scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.random.rand(10000, 3).astype(np.float32)
             compiler.write_points("LargePoints", positions)
 

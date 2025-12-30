@@ -23,7 +23,7 @@ class FitConfig:
 
     # Input data (required)
     V: np.ndarray
-    seeds: Optional[np.ndarray | int | float]  # Array, int count, or proportion
+    seeds: Optional[np.ndarray | int | float | "GSplatData"]  # noqa: F821 - Array, int, proportion, or GSplatData
 
     # Normalization
     norm_percentile: float
@@ -75,6 +75,12 @@ class FitConfig:
     # Seed generation (with defaults - must come after required fields)
     seed_method: str = "both"  # "gaussian", "decomposition", "both", etc.
     seed_kwargs: Dict[str, Any] = None  # Additional parameters for seed generation
+
+    # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
+    # If set, these override the default initialization
+    init_L: Optional[np.ndarray] = None  # Shape (N, d, d) - Cholesky factors
+    init_amps: Optional[np.ndarray] = None  # Shape (N,) - amplitudes
+    init_sharpness: Optional[np.ndarray] = None  # Shape (N,) - sharpness values
 
 
 @dataclass

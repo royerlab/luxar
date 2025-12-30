@@ -12,8 +12,9 @@ Then view with:
     luxar serve test_gsplats_3d_example.zarr --viewer
 """
 
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler

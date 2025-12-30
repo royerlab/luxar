@@ -3,39 +3,39 @@
 Unified entry point for seed generation.
 
 This module provides the main `generate_seeds()` function that serves as a unified
-interface to all seed generation methods in the package.
+interface to all seed generation methods in the package. All methods now return
+GSplatData with scale-informed Gaussian shapes.
 """
 
 from typing import Any, Dict
 
 import numpy as np
 
-from luxar.gsplats.seeds.multiscale_decomposition import (
-    find_seeds_multiscale_decomposition,
-)
-from luxar.gsplats.seeds.multiscale_gaussian import find_seeds_multiscale_gaussian
-from luxar.gsplats.seeds.utils import combine_seeds
+from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
+from luxar.gsplats.seeds.multiscale_gaussian import seed_from_gaussian
 
 
 def generate_seeds(
     V: np.ndarray,
-    method: str = "both",
+    method: str = "decomposition",
     **kwargs,
-) -> np.ndarray:
+) -> GSplatData:
     """
-    Generate seed locations for Gaussian splat fitting using specified method(s).
+    Generate seed Gaussian splats using specified method(s).
 
-    This is the primary entry point for seed generation, providing a unified interface
-    to all available methods. It supports single methods or combinations thereof.
+    All seeding methods return GSplatData with scale-informed Gaussian shapes,
+    allowing the fitter to use full geometry (centers, sigmas, amplitudes).
 
     Parameters
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to analyze.
-    method : str, default="both"
+    method : str, default="decomposition"
         Seed generation method(s) to use. Options:
-        - "gaussian": Multiscale Gaussian-blurred peak detection only
-        - "decomposition": Multi-scale decomposition method only
+        - "gaussian": Multiscale Gaussian-blurred peak detection
+        - "decomposition": Multi-scale decomposition method (default, recommended)
+        - "moments": Moment-based with full covariance estimation
         - "both" or "decomposition,gaussian": Decomposition first, then Gaussian
         - "gaussian,decomposition": Gaussian first, then decomposition
     **kwargs
@@ -43,7 +43,7 @@ def generate_seeds(
         methods, while method-specific parameters are routed only to their respective
         methods.
 
-        **Common Parameters** (apply to both methods):
+        **Common Parameters** (apply to multiple methods):
 
         min_distance : float, default=2.0
             Minimum Euclidean distance (in voxels) between seed centers.
@@ -51,8 +51,6 @@ def generate_seeds(
 
         **Multiscale Gaussian Parameters** (method="gaussian"):
 
-        spacing : Sequence[float], optional
-            Physical spacing between voxels along each axis.
         scales : Sequence[float], default=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
             Standard deviations (in voxels) for Gaussian filtering.
         peaks_per_scale : int or None, optional
@@ -81,26 +79,47 @@ def generate_seeds(
         verbose : bool, default=False
             Print progress information.
 
+        **Moment Parameters** (method="moments"):
+
+        scales : Sequence[int], default=(1, 2, 4, 8)
+            Scale factors for decomposition.
+        nms_radius_vox : float, default=2.0
+            Non-maximum suppression radius.
+        peak_threshold_rel : float, default=0.1
+            Relative intensity threshold.
+        moment_radius_scale : float, default=1.5
+            Moment integration radius as multiple of scale.
+        min_eigenvalue : float, default=0.25
+            Minimum covariance eigenvalue.
+        max_eigenvalue : float, default=64.0
+            Maximum covariance eigenvalue.
+        verbose : bool, default=True
+            Print progress information.
+
     Returns
     -------
-    np.ndarray
-        Array of shape (N, ndim) containing seed center coordinates in voxel units.
-        Coordinates may be sub-voxel due to centroid refinement.
+    GSplatData
+        Gaussian splat seeds with:
+        - centers: Peak/centroid positions
+        - amplitudes: Peak intensities
+        - cholesky_factors: Scale-informed Cholesky factors
+        - sharpnesses: All set to 2.0 (standard Gaussian)
 
     Examples
     --------
-    **Basic usage with default settings (both methods):**
+    **Basic usage with default settings (decomposition):**
 
     >>> from luxar.gsplats.seeds import generate_seeds
-    >>> seeds = generate_seeds(image)
+    >>> seeds = generate_seeds(image)  # Returns GSplatData
+    >>> print(f"Generated {len(seeds.centers)} seed splats")
 
-    **Using only Gaussian method:**
+    **Using Gaussian method:**
 
     >>> seeds = generate_seeds(image, method="gaussian")
 
-    **Using only decomposition method:**
+    **Using moment-based method (full covariance):**
 
-    >>> seeds = generate_seeds(image, method="decomposition")
+    >>> seeds = generate_seeds(image, method="moments")
 
     **Custom parameters for Gaussian method:**
 
@@ -112,46 +131,21 @@ def generate_seeds(
     ...     min_distance=3.0,
     ... )
 
-    **Custom parameters for decomposition method:**
+    **Combining methods:**
 
-    >>> seeds = generate_seeds(
-    ...     image,
-    ...     method="decomposition",
-    ...     scales=[1, 2, 4, 8],
-    ...     ignore_finest_k=2,
-    ...     threshold_rel=0.2,
-    ...     min_distance=3.0,
-    ... )
+    >>> seeds = generate_seeds(image, method="both")
 
-    **Combining both methods with custom parameters:**
+    **Use with fit_gaussian_splats:**
 
-    >>> seeds = generate_seeds(
-    ...     image,
-    ...     method="both",
-    ...     scales=[2.0, 4.0, 8.0],  # Will be used by Gaussian (floats)
-    ...     ignore_finest_k=1,  # Will be used by decomposition
-    ...     min_distance=3.0,  # Used for combining results
-    ... )
-
-    **Specific method order:**
-
-    >>> # Gaussian first, then decomposition
-    >>> seeds = generate_seeds(image, method="gaussian,decomposition")
+    >>> from luxar.gsplats import fit_gaussian_splats
+    >>> seeds = generate_seeds(image, method="decomposition")
+    >>> result = fit_gaussian_splats(image, seeds=seeds)
 
     Notes
     -----
-    - Parameter routing is automatic based on method names
-    - When using "both", decomposition runs first, then Gaussian
-    - Results are combined using spatial deduplication (farthest-first)
-    - The `min_distance` parameter controls final deduplication
-    - For Gaussian method, `scales` should be floats (sigma values)
-    - For decomposition method, `scales` should be integers (downsample factors)
-    - Both methods can use `peaks_per_scale` to limit peaks per scale
-
-    See Also
-    --------
-    find_seeds_multiscale_gaussian : Direct Gaussian method access
-    find_seeds_multiscale_decomposition : Direct decomposition method access
+    - Default method is "decomposition" (most principled scale separation)
+    - For anisotropic features, use method="moments" for full covariance
+    - The fitter will refine all parameters during optimization
     """
     # Input validation
     V = np.asarray(V, dtype=float)
@@ -162,7 +156,7 @@ def generate_seeds(
 
     # Parse method string
     method = method.lower().strip()
-    valid_methods = {"gaussian", "decomposition", "both"}
+    valid_methods = {"gaussian", "decomposition", "moments", "both"}
 
     # Handle comma-separated methods
     if "," in method:
@@ -175,30 +169,30 @@ def generate_seeds(
         for m in methods:
             if m not in {"gaussian", "decomposition"}:
                 raise ValueError(
-                    f"Invalid method: '{m}'. Valid methods: 'gaussian', 'decomposition'"
+                    f"Invalid method: '{m}'. "
+                    "Combined methods must be 'gaussian' or 'decomposition'"
                 )
     elif method == "both":
-        methods = ["decomposition", "gaussian"]  # Default order
+        methods = ["decomposition", "gaussian"]
     elif method in valid_methods:
         methods = [method]
     else:
         raise ValueError(
             f"Invalid method: '{method}'. "
-            "Valid options: 'gaussian', 'decomposition', 'both', "
-            "'gaussian,decomposition', 'decomposition,gaussian'"
+            "Valid options: 'gaussian', 'decomposition', 'moments', 'both'"
         )
 
-    # Extract min_distance for combining (default: 2.0)
+    # Extract min_distance for combining
     min_distance = kwargs.pop("min_distance", 2.0)
 
     # Route parameters to appropriate methods
     gaussian_kwargs: Dict[str, Any] = {}
     decomposition_kwargs: Dict[str, Any] = {}
+    moment_kwargs: Dict[str, Any] = {}
 
     # Define parameter routing rules
     gaussian_params = {
-        "spacing",
-        "scales",  # Note: Gaussian uses float scales
+        "scales",
         "peaks_per_scale",
         "percentile_thresh",
         "apply_clahe",
@@ -208,7 +202,7 @@ def generate_seeds(
     }
 
     decomposition_params = {
-        "scales",  # Note: Decomposition uses int scales
+        "scales",
         "ignore_finest_k",
         "peaks_per_scale",
         "threshold_rel",
@@ -216,53 +210,123 @@ def generate_seeds(
         "verbose",
     }
 
-    # Parameters that may be passed from higher-level APIs but aren't used for seed generation
-    # (e.g., fitting parameters passed through from fit_gsplats)
-    passthrough_params = {
-        "use_metal",  # GPU acceleration for fitting, not seed generation
+    moment_params = {
+        "scales",
+        "decomp_n_iters",
+        "decomp_lr",
+        "decomp_energy_weight",
+        "nms_radius_vox",
+        "peak_threshold_rel",
+        "max_peaks_per_scale",
+        "skip_finest_scales",
+        "moment_radius_scale",
+        "min_eigenvalue",
+        "max_eigenvalue",
+        "device",
+        "verbose",
     }
 
-    # Route parameters based on which methods are being used
+    # Passthrough params from higher-level APIs
+    passthrough_params = {"use_metal"}
+
+    # Route parameters
     for key, value in kwargs.items():
-        # Check which method(s) use this parameter
         used_by_gaussian = key in gaussian_params
         used_by_decomposition = key in decomposition_params
+        used_by_moment = key in moment_params
 
-        # Route to appropriate method(s)
         if "gaussian" in methods and used_by_gaussian:
             gaussian_kwargs[key] = value
         if "decomposition" in methods and used_by_decomposition:
             decomposition_kwargs[key] = value
+        if "moments" in methods and used_by_moment:
+            moment_kwargs[key] = value
 
-        # Warn about unused parameters (not consumed by any selected method)
-        # Skip known passthrough params that come from higher-level APIs
-        if not (used_by_gaussian or used_by_decomposition or key in passthrough_params):
+        if not (used_by_gaussian or used_by_decomposition or used_by_moment or key in passthrough_params):
             import warnings
-
             warnings.warn(
                 f"Parameter '{key}' is not used by any selected method: {methods}",
                 UserWarning,
             )
 
+    # Add min_distance to individual method kwargs
+    gaussian_kwargs["min_distance"] = min_distance
+    decomposition_kwargs["min_distance"] = min_distance
+
     # Generate seeds using specified method(s)
-    seed_arrays = []
+    results = []
 
     for m in methods:
         if m == "gaussian":
-            seeds = find_seeds_multiscale_gaussian(V, **gaussian_kwargs)
-            seed_arrays.append(seeds)
+            result = seed_from_gaussian(V, **gaussian_kwargs)
+            results.append(result)
         elif m == "decomposition":
-            seeds = find_seeds_multiscale_decomposition(V, **decomposition_kwargs)
-            seed_arrays.append(seeds)
+            result = seed_from_decomposition(V, **decomposition_kwargs)
+            results.append(result)
+        elif m == "moments":
+            from luxar.gsplats.seeds.moment_seeding import seed_from_moments
+            result = seed_from_moments(V, **moment_kwargs)
+            results.append(result)
 
     # Combine results if multiple methods were used
-    if len(seed_arrays) == 0:
-        # Should never happen due to validation above, but handle gracefully
-        return np.zeros((0, V.ndim), dtype=float)
-    elif len(seed_arrays) == 1:
-        # Single method - return directly (no need to combine)
-        return seed_arrays[0]
+    if len(results) == 0:
+        return GSplatData(
+            centers=np.zeros((0, V.ndim), dtype=np.float32),
+            amplitudes=np.zeros(0, dtype=np.float32),
+            cholesky_factors=np.zeros((0, V.ndim * (V.ndim + 1) // 2), dtype=np.float32),
+            sharpnesses=np.zeros(0, dtype=np.float32),
+        )
+    elif len(results) == 1:
+        return results[0]
     else:
-        # Multiple methods - combine with deduplication
-        combined = combine_seeds(*seed_arrays, min_distance=min_distance)
-        return combined
+        # Combine GSplatData from multiple methods
+        return _combine_gsplatdata(results, min_distance)
+
+
+def _combine_gsplatdata(
+    results: list,
+    min_distance: float,
+) -> GSplatData:
+    """
+    Combine GSplatData from multiple seeding methods with deduplication.
+    """
+    # Concatenate all arrays
+    all_centers = np.vstack([r.centers for r in results if len(r.centers) > 0])
+    all_amplitudes = np.concatenate([r.amplitudes for r in results if len(r.amplitudes) > 0])
+    all_cholesky = np.vstack([r.cholesky_factors for r in results if len(r.cholesky_factors) > 0])
+    all_sharpnesses = np.concatenate([r.sharpnesses for r in results if len(r.sharpnesses) > 0])
+
+    if len(all_centers) == 0:
+        ndim = results[0].centers.shape[1] if results else 2
+        return GSplatData(
+            centers=np.zeros((0, ndim), dtype=np.float32),
+            amplitudes=np.zeros(0, dtype=np.float32),
+            cholesky_factors=np.zeros((0, ndim * (ndim + 1) // 2), dtype=np.float32),
+            sharpnesses=np.zeros(0, dtype=np.float32),
+        )
+
+    # Deduplicate using amplitude priority
+    sort_idx = np.argsort(all_amplitudes)[::-1]
+    centers_sorted = all_centers[sort_idx]
+    amplitudes_sorted = all_amplitudes[sort_idx]
+    cholesky_sorted = all_cholesky[sort_idx]
+    sharpnesses_sorted = all_sharpnesses[sort_idx]
+
+    # Greedy deduplication
+    kept_mask = np.ones(len(centers_sorted), dtype=bool)
+
+    for i in range(len(centers_sorted)):
+        if not kept_mask[i]:
+            continue
+
+        diffs = centers_sorted[i + 1 :] - centers_sorted[i]
+        distances = np.sqrt(np.sum(diffs**2, axis=1))
+        nearby = distances < min_distance
+        kept_mask[i + 1 :][nearby] = False
+
+    return GSplatData(
+        centers=centers_sorted[kept_mask],
+        amplitudes=amplitudes_sorted[kept_mask],
+        cholesky_factors=cholesky_sorted[kept_mask],
+        sharpnesses=sharpnesses_sorted[kept_mask],
+    )

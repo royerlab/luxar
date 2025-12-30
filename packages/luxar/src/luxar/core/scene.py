@@ -505,7 +505,7 @@ class Scene(Node):
     def add_gsplats_from_data(
         self,
         name: str,
-        result: "GSplatData",
+        result: "GSplatData",  # noqa: F821
         parent: Optional[Node] = None,
         **attrs: Any,
     ) -> GSplats:
@@ -556,7 +556,7 @@ class Scene(Node):
     def add_gsplats_from_file(
         self,
         name: str,
-        path: Union[str, "Path"],
+        path: Union[str, "Path"],  # noqa: F821
         parent: Optional[Node] = None,
         **attrs: Any,
     ) -> GSplats:

@@ -600,7 +600,8 @@ Workflow 3: Gaussian Splat Fitting
        n_iters=300,
        lr=0.01,
        loss_type="l1",
-       seed_method="clahe"  # Use CLAHE for smart seeding
+       seed_method="gaussian",  # Use Gaussian blob detection
+       seed_kwargs={"apply_clahe": True}  # With CLAHE enhancement
    )
 
    # Save for visualization

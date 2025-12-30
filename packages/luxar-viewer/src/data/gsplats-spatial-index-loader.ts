@@ -35,6 +35,7 @@ import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulato
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
+import { DecompressedChunkCache, wrapWithCache } from '../cache';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -56,6 +57,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // Data accumulator for object pooling (Phase 1 optimization)
   private _accumulator: GSplatsDataAccumulator | null = null;
 
+  // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
+  private l0Cache: DecompressedChunkCache | null = null;
+
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -69,12 +73,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler
+    profiler?: UpdateProfiler,
+    l0Cache?: DecompressedChunkCache
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    this.l0Cache = l0Cache || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
   }
@@ -111,18 +117,32 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Open required arrays
     try {
-      this.arrays.centers = await zarr.open(this.zarrLocation.resolve('centers'), {
+      let centersArray = await zarr.open(this.zarrLocation.resolve('centers'), {
         kind: 'array',
       });
-      this.arrays.amplitudes = await zarr.open(this.zarrLocation.resolve('amplitudes'), {
+      let amplitudesArray = await zarr.open(this.zarrLocation.resolve('amplitudes'), {
         kind: 'array',
       });
-      this.arrays.cholesky_factors = await zarr.open(
-        this.zarrLocation.resolve('cholesky_factors'),
-        {
-          kind: 'array',
-        }
-      );
+      let choleskyArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors'), {
+        kind: 'array',
+      });
+      // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
+      if (this.l0Cache) {
+        centersArray = wrapWithCache(centersArray, this.l0Cache, `${this.node.path}/centers`);
+        amplitudesArray = wrapWithCache(
+          amplitudesArray,
+          this.l0Cache,
+          `${this.node.path}/amplitudes`
+        );
+        choleskyArray = wrapWithCache(
+          choleskyArray,
+          this.l0Cache,
+          `${this.node.path}/cholesky_factors`
+        );
+      }
+      this.arrays.centers = centersArray;
+      this.arrays.amplitudes = amplitudesArray;
+      this.arrays.cholesky_factors = choleskyArray;
     } catch (e) {
       log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
       throw e;
@@ -130,15 +150,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Try to open optional arrays
     try {
-      this.arrays.colors = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      if (this.l0Cache) {
+        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+      }
+      this.arrays.colors = colorsArray;
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
     }
 
     try {
-      this.arrays.sharpness = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
         kind: 'array',
       });
+      if (this.l0Cache) {
+        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+      }
+      this.arrays.sharpness = sharpnessArray;
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default 2.0)');
     }

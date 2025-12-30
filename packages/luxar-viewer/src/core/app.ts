@@ -42,7 +42,8 @@ export class LuxarApp {
    *              - HTTP URL: 'https://example.com/data.zarr'
    *              - Directory path ending with '/': Shows dataset browser
    *              - Omitted: Uses config.defaultZarrPath
-   *              - Query params supported: '?no-cache', '?debug', '?no-prefetch'
+   *              - Query params supported: '?no-cache', '?cache-debug', '?clear-cache',
+   *                '?debug', '?no-prefetch'
    *
    * @returns Promise that resolves when initialization is complete and
    *          dataset loading has started (may still be loading in background).
@@ -436,10 +437,10 @@ export class LuxarApp {
           pointClouds,
           dimensions: dims
             ? {
-                ndim: dims.ndim,
-                displayed: dims.displayed,
-                currentStep: dims.currentStep,
-              }
+              ndim: dims.ndim,
+              displayed: dims.displayed,
+              currentStep: dims.currentStep,
+            }
             : null,
           camera: {
             position: {
@@ -473,14 +474,28 @@ export class LuxarApp {
 
       // Cache-specific helpers
       cache: {
-        // Get current cache statistics
+        // Get current cache statistics (L0, L1, L2)
         getStats: () => {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
-            return { error: 'No active cache found' };
+          if (!loader) {
+            return { error: 'No active loader found' };
           }
-          return (loader as any).cachingStore.getStats();
+
+          // Get L1/L2 stats from caching store
+          const l1l2Stats = (loader as any).cachingStore
+            ? (loader as any).cachingStore.getStats()
+            : { l1: null, l2: null };
+
+          // Get L0 stats from decompressed chunk cache
+          const l0Cache = (loader as any).l0Cache;
+          const l0Stats = l0Cache ? l0Cache.getStats() : null;
+
+          return {
+            l0: l0Stats,
+            l1: l1l2Stats.l1,
+            l2: l1l2Stats.l2,
+          };
         },
 
         // List all cached datasets
@@ -491,6 +506,19 @@ export class LuxarApp {
             return { error: 'No active cache found' };
           }
           return (loader as any).cachingStore.listDatasets();
+        },
+
+        // Clear L0 decompressed chunk cache only
+        clearL0: () => {
+          const manager = SceneLoaderManager.getInstance();
+          const loader = manager.getDefaultLoader();
+          const l0Cache = loader ? (loader as any).l0Cache : null;
+          if (!l0Cache) {
+            log.warning(Modules.CACHE, 'No L0 cache found');
+            return;
+          }
+          l0Cache.clear();
+          log.info(Modules.CACHE, 'L0 cache cleared');
         },
 
         // Clear L1 cache only
@@ -517,16 +545,27 @@ export class LuxarApp {
           log.info(Modules.CACHE, 'L2 cache cleared');
         },
 
-        // Clear all caches
+        // Clear all caches (L0, L1, L2)
         clearAll: async () => {
           const manager = SceneLoaderManager.getInstance();
           const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
-            log.warning(Modules.CACHE, 'No active cache found');
+          if (!loader) {
+            log.warning(Modules.CACHE, 'No active loader found');
             return;
           }
-          await (loader as any).cachingStore.clearAll();
-          log.info(Modules.CACHE, 'All caches cleared');
+
+          // Clear L0 decompressed chunk cache
+          const l0Cache = (loader as any).l0Cache;
+          if (l0Cache) {
+            l0Cache.clear();
+          }
+
+          // Clear L1/L2 caching store
+          if ((loader as any).cachingStore) {
+            await (loader as any).cachingStore.clearAll();
+          }
+
+          log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
         },
       },
 
@@ -541,10 +580,11 @@ export class LuxarApp {
     log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
     log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
     log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 cache');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 cache');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearAll() - Clear all caches');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics (L0, L1, L2)');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL0() - Clear L0 decompressed chunk cache');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 memory cache');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 OPFS cache');
+    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearAll() - Clear all caches (L0, L1, L2)');
   }
 
   /**

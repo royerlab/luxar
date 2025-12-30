@@ -578,6 +578,10 @@ export interface WebGLConfig {
 export interface CacheConfig {
   /** Enable OPFS caching (default: true) */
   enabled: boolean;
+  /** Enable L0 decompressed chunk cache (default: true) */
+  l0Enabled: boolean;
+  /** L0 decompressed chunk cache size in MB (default: 200) */
+  l0MaxSizeMB: number;
   /** L1 memory cache size in MB (default: 100) */
   l1MaxSizeMB: number;
   /** L2 OPFS cache size in MB (default: 2048) */

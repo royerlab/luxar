@@ -90,8 +90,6 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
-
-
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -190,7 +188,7 @@ def download_kaggle_dataset(
             if output_path.exists():
                 partial_size = output_path.stat().st_size
                 aprint(f"   Partial download saved: {partial_size / (1024**2):.1f} MB")
-                aprint(f"   Run again to resume from this point")
+                aprint("   Run again to resume from this point")
             raise
 
     return output_path
@@ -552,8 +550,8 @@ def generate_paper_landscape(
                     categories=np.array(categories),
                     years=np.array(years),
                 )
-                aprint(f"✓ UMAP cached successfully!")
-                aprint(f"  Next run with same sample size will be INSTANT!")
+                aprint("✓ UMAP cached successfully!")
+                aprint("  Next run with same sample size will be INSTANT!")
             else:
                 aprint("⚠️  Cache not enabled (--use-cache flag needed)")
 
@@ -623,7 +621,7 @@ def main() -> None:
     """Main demo entry point."""
     sample_size = DEFAULT_SAMPLE_SIZE
     category_filter = None
-    use_cache = True  # Caching is ALWAYS on by default!
+    _use_cache = True  # Caching is ALWAYS on by default (reserved for future use)
 
     for arg in sys.argv[1:]:
         if arg.startswith("--sample="):
