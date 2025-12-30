@@ -777,7 +777,20 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       return output;
     }
 
-    // For encoded arrays or array_ref, decode to Float32Array then restore original_dtype
+    // Special case: rgb_uint8/rgb_uint16 encoded colors with matching target buffer
+    // Skip decoding - load raw uint8/uint16 values directly. The lines processor
+    // will normalize them (Uint8 [0-255] → Float32 [0-1])
+    const encName = attrs.encoding?.name;
+    if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
+      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      return targetBuffer;
+    }
+    if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
+      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      return targetBuffer;
+    }
+
+    // For other encoded arrays or array_ref, decode to Float32Array then restore original_dtype
     const decodedFloat32 =
       targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
 
