@@ -1,11 +1,11 @@
 # luxar-viewer.cache - Technical Specification
 
-**Version**: 1.3.0
-**Last Updated**: 2025-12-09
+**Version**: 1.4.0
+**Last Updated**: 2025-12-29
 
 ## Purpose
 
-The cache package provides a two-level caching system with intelligent prefetching for zarr chunks, enabling offline viewing, instant reloads, reduced bandwidth, and proactive latency hiding through adjacent chunk prefetching.
+The cache package provides a three-level caching system with intelligent prefetching for zarr chunks, enabling offline viewing, instant reloads, reduced bandwidth, and proactive latency hiding through adjacent chunk prefetching.
 
 ---
 
@@ -14,27 +14,34 @@ The cache package provides a two-level caching system with intelligent prefetchi
 ### Data Pipeline Position
 
 ```
-HTTP Request → TwoLevelCachingStore → zarrita decompression → ArrayDecoder → RangeCache → Rendering
-                ↑                                                              ↑
-            Caches compressed chunks                              Caches decoded arrays
-            (no overlap - different pipeline stages)
+HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → RangeCache → Rendering
+                ↑                            ↑                    ↑
+            Caches compressed chunks    ~2ms overhead     Caches decompressed chunks
+            (L1/L2)                   (skipped on L0 hit)      (~1μs access)
 ```
 
-**Key Insight**: This cache operates on **raw compressed zarr chunks** (Uint8Array), complementing the existing RangeCache which operates on **decoded Float32Array data**. No memory competition.
+**Key Insight**: This cache operates at **two pipeline stages**:
 
-### Two-Level Architecture
+1. **L1/L2**: Raw compressed zarr chunks (Uint8Array) - before decompression
+2. **L0**: Decompressed TypedArrays - after decompression, eliminates ~2ms Blosc overhead
+
+### Three-Level Architecture
 
 ```
-Request → L1 (Memory) → L2 (OPFS) → Remote HTTP
-              ↓             ↓            ↓
-          ~1μs          ~1ms         ~100ms
+Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
+              ↓                   ↓             ↓            ↓
+           ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
+       (no decompress)    (decompress)   (decompress)   (decompress)
 ```
 
-| Level | Storage | Speed  | Size      | Persistence  | Eviction      |
-| ----- | ------- | ------ | --------- | ------------ | ------------- |
-| L1    | Memory  | ~1μs   | 100MB     | Session only | Segmented LRU |
-| L2    | OPFS    | ~1ms   | 2GB       | Permanent    | LRU           |
-| L3    | Remote  | ~100ms | Unlimited | N/A          | N/A           |
+| Level | Storage | Speed         | Size  | Persistence  | Eviction      | Content           |
+| ----- | ------- | ------------- | ----- | ------------ | ------------- | ----------------- |
+| L0    | Memory  | ~1μs          | 200MB | Session only | LRU           | Decompressed data |
+| L1    | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Segmented LRU | Compressed chunks |
+| L2    | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | LRU           | Compressed chunks |
+| L3    | Remote  | ~100ms        | ∞     | N/A          | N/A           | Compressed chunks |
+
+\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 ---
 
@@ -108,7 +115,55 @@ metadataSize = max(totalSize * 0.2, 10MB)
 chunksSize = totalSize - metadataSize
 ```
 
-### 3. OPFS Persistence Layer (L2) with Shallow Bucketing
+### 3. L0 Decompressed Chunk Cache (ES6 Proxy)
+
+**Purpose**: Eliminate ~2ms Blosc decompression overhead on cache hits by storing already-decoded TypedArrays.
+
+**Algorithm**: LRU cache with byte-size tracking, accessed via ES6 Proxy wrapper around zarr.Array
+
+**Key Properties**:
+
+- Stores decompressed chunks (Float32Array, Uint8Array, etc.)
+- Uses ES6 Proxy to transparently intercept `getChunk()` calls
+- No changes required to zarrita library
+- Preserves full TypeScript type compatibility
+
+**Cache Key Format**:
+
+```
+"${arrayPath}:${chunkCoords.join(',')}"
+Example: "/points/positions:0,1,2"
+```
+
+**Proxy Interception Flow**:
+
+```
+cachedArray.getChunk([0, 1, 2])
+    ↓
+Proxy intercepts 'getChunk' property access
+    ↓
+Generate key: "/points/positions:0,1,2"
+    ↓
+Check L0 cache
+    ↓
+HIT:  Return cached { data, shape, stride } (~1μs)
+MISS: Call original getChunk() → decompress → cache result → return
+```
+
+**Size Calculation**:
+
+```
+entrySize = data.byteLength + 64  // 64 bytes metadata overhead per chunk
+```
+
+**Performance Impact** (4 attributes: positions, colors, radii, sharpness):
+
+| Scenario    | Without L0  | With L0  | Speedup |
+| ----------- | ----------- | -------- | ------- |
+| View update | ~8ms decomp | ~0.004ms | ~2000x  |
+| Frame rate  | ~60 FPS     | ~120 FPS | 2x      |
+
+### 4. OPFS Persistence Layer (L2) with Shallow Bucketing
 
 **Storage**: Browser's Origin Private File System (OPFS)
 
@@ -220,7 +275,7 @@ Note: The index stores original keys (e.g., `points/positions/0.0.0`), not bucke
 - Prevents excessive OPFS writes during rapid access
 - Flushed on dispose() for clean shutdown
 
-### 4. Content-Hash Validation
+### 5. Content-Hash Validation
 
 **Algorithm**: Hierarchical xxhash64 hashing for cache invalidation
 
@@ -269,7 +324,7 @@ On cache init():
 - **Offline-friendly**: Hash read from cached `.zattrs`, no network needed
 - **Zarr-native**: Stored in standard zarr attributes
 
-### 5. Quota Management
+### 6. Quota Management
 
 **Strategy**: Check-before-write with 10% safety margin
 
@@ -284,7 +339,7 @@ async checkQuota(requiredBytes):
 
 **Fallback**: If quota exceeded, skip L2 write but continue with L1 and HTTP
 
-### 6. Intelligent Chunk Prefetching
+### 7. Intelligent Chunk Prefetching
 
 **Algorithm**: Proactive loading of adjacent chunks to hide network latency
 
@@ -566,9 +621,9 @@ if data.byteLength != expectedSize:
 
 **URL Parameters** (runtime overrides):
 
-- `?no-cache` - Disable all caching
-- `?cache-debug` - Enable verbose logging
-- `?clear-cache` - Clear cache before loading
+- `?no-cache` - Disable all caching (L0 + L1 + L2)
+- `?cache-debug` - Enable verbose logging for all cache layers
+- `?clear-cache` - Clear all caches before loading
 - `?no-prefetch` - Disable prefetching (cache still active)
 - `?prefetch-debug` - Enable verbose prefetch logging
 

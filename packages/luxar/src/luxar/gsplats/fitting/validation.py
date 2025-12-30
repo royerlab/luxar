@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.fitting.config import FitConfig
 
 if TYPE_CHECKING:
@@ -85,7 +86,14 @@ def prepare_fit_config(
 
     # Validate seeds if provided
     if seeds is not None:
-        if isinstance(seeds, int):
+        if isinstance(seeds, GSplatData):
+            # GSplatData object - will be handled in preprocessing
+            if seeds.centers is not None and len(seeds.centers) > 0:
+                if seeds.centers.shape[1] != V.ndim:
+                    raise ValueError(
+                        f"GSplatData centers must have {V.ndim} columns to match image dimensions"
+                    )
+        elif isinstance(seeds, int):
             # Integer exact count
             if seeds <= 0:
                 raise ValueError("seeds as int must be positive")

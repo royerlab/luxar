@@ -3,9 +3,10 @@
 Human mitosis seed generation comparison demo.
 
 This demo compares two seed generation methods on the scikit-image human mitosis dataset:
-1. Multiscale Gaussian method (standard): Multi-scale detection with spatial redundancy
-2. Decomposition method (new): Scale-hierarchical detection via image decomposition
+1. Gaussian method: Multi-scale Gaussian blob detection
+2. Decomposition method: Scale-hierarchical detection via image decomposition
 
+Both methods now return GSplatData with scale-informed Gaussian shapes.
 Displays seed locations side-by-side in napari for visual comparison.
 """
 
@@ -17,8 +18,8 @@ from skimage import color, data, img_as_float32
 
 from luxar.gsplats.seeds import (
     combine_seeds,
-    find_seeds_multiscale_decomposition,
-    find_seeds_multiscale_gaussian,
+    seed_from_decomposition,
+    seed_from_gaussian,
 )
 
 # Check for --no-napari flag
@@ -49,30 +50,34 @@ with asection("Seed Generation Methods Comparison"):
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
     # ======================================================================
-    # SEED GENERATION
+    # SEED GENERATION (all methods return GSplatData with scale-informed shapes)
     # ======================================================================
 
     with asection("Generating seeds"):
-        # Method 1: Multiscale Gaussian
-        with asection("Multiscale Gaussian method"):
-            seeds_multiscale = find_seeds_multiscale_gaussian(V)
-            aprint(f"Generated {len(seeds_multiscale)} seeds")
+        # Method 1: Gaussian blob detection
+        with asection("Gaussian method"):
+            result_gaussian = seed_from_gaussian(V)
+            seeds_gaussian = result_gaussian.centers
+            aprint(f"Generated {len(seeds_gaussian)} seeds")
+            aprint(f"  Scale info in cholesky_factors shape: {result_gaussian.cholesky_factors.shape}")
 
         # Method 2: Decomposition-based
         with asection("Decomposition method"):
-            seeds_decomp = find_seeds_multiscale_decomposition(V, verbose=True)
+            result_decomp = seed_from_decomposition(V, verbose=True)
+            seeds_decomp = result_decomp.centers
             aprint(f"Generated {len(seeds_decomp)} seeds")
+            aprint(f"  Scale info in cholesky_factors shape: {result_decomp.cholesky_factors.shape}")
 
         # Method 3: Combined (as used in fit_gaussian_splats)
         with asection("Combined method"):
             seeds_combined = combine_seeds(
                 seeds_decomp,  # Decomposition first (global structure)
-                seeds_multiscale,  # Then multiscale (local features)
+                seeds_gaussian,  # Then gaussian (local features)
             )
             aprint(f"Generated {len(seeds_combined)} seeds")
             aprint(
                 f"  ({len(seeds_decomp)} decomp + "
-                f"{len(seeds_multiscale)} multiscale → "
+                f"{len(seeds_gaussian)} gaussian → "
                 f"{len(seeds_combined)} after dedup)"
             )
 
@@ -87,10 +92,10 @@ with asection("Seed Generation Methods Comparison"):
             # Original image
             viewer.add_image(V, name="Original Mitosis Image", colormap="gray")
 
-            # Method 1: Multiscale Gaussian seeds
+            # Method 1: Gaussian seeds
             viewer.add_points(
-                seeds_multiscale,
-                name=f"Multiscale Gaussian ({len(seeds_multiscale)})",
+                seeds_gaussian,
+                name=f"Gaussian ({len(seeds_gaussian)})",
                 size=3,
                 face_color="magenta",
                 border_color="white",
@@ -125,10 +130,10 @@ with asection("Seed Generation Methods Comparison"):
             aprint("\n" + "=" * 70)
             aprint("SEED GENERATION SUMMARY")
             aprint("=" * 70)
-            aprint(f"Multiscale Gaussian: {len(seeds_multiscale):4d} seeds (magenta)")
-            aprint(f"Decomposition:       {len(seeds_decomp):4d} seeds (cyan)")
+            aprint(f"Gaussian:      {len(seeds_gaussian):4d} seeds (magenta)")
+            aprint(f"Decomposition: {len(seeds_decomp):4d} seeds (cyan)")
             aprint(
-                f"Combined:            {len(seeds_combined):4d} seeds (lime) ← Used in fitting"
+                f"Combined:      {len(seeds_combined):4d} seeds (lime) ← Used in fitting"
             )
             aprint("=" * 70)
             aprint("\n✅ Napari viewer launched!")

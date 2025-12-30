@@ -308,24 +308,25 @@ else:
 - **If seeds is float**: Auto-generate (proportion hint, not strictly enforced)
 - **If seeds is None**: Auto-generate using combined decomposition and multiscale approach:
   ```python
-  # Generate candidates using both methods for comprehensive coverage
+  # Generate seeds using both methods for comprehensive coverage
   from luxar.gsplats.seeds import (
       combine_seeds,
-      find_seeds_multiscale_decomposition,
-      find_seeds_multiscale_gaussian,
+      seed_from_decomposition,
+      seed_from_gaussian,
   )
-  
-  cand_decomp = find_seeds_multiscale_decomposition(V)
-  cand_multiscale = find_seeds_multiscale_gaussian(V)
-  
-  # Combine with decomposition candidates prioritized (coarse structure first)
+
+  # Both methods return GSplatData with scale-informed shapes
+  seeds_decomp = seed_from_decomposition(V)
+  seeds_gaussian = seed_from_gaussian(V)
+
+  # Combine positions with decomposition prioritized (coarse structure first)
   seed_centers = combine_seeds(
-      cand_decomp,  # Decomposition first (global structure priority)
-      cand_multiscale,  # Then multiscale (local features)
+      seeds_decomp.centers,   # Decomposition first (global structure priority)
+      seeds_gaussian.centers,  # Then gaussian (local features)
   )
   ```
-  
-  **Rationale**: Combined approach ensures both global structure (decomposition) and local features (multiscale) are captured.
+
+  **Rationale**: Combined approach ensures both global structure (decomposition) and local features (gaussian) are captured.
 
 **L1 Regularization Defaults**:
 ```python

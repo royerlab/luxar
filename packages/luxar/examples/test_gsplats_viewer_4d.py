@@ -14,8 +14,9 @@ Then view with:
     luxar serve test_gsplats_4d_example.zarr --viewer
 """
 
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -61,7 +62,7 @@ def create_4d_time_varying_blobs(shape=(8, 32, 32, 32), n_blobs=4):
             else:
                 # Move along y-axis over time
                 y_pos = y_base + int((height // 2) * (t / (t_steps - 1)))
-                x_pos = x_center
+                _x_pos = x_center  # Reserved for future use
 
             # Amplitude varies with time (Gaussian envelope in time)
             t_center = t_steps // 2

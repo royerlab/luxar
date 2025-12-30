@@ -75,7 +75,7 @@ for (const theme of THEMES) {
  */
 for (const theme of THEMES) {
   test(`dimension sliders - ${theme} theme`, async ({ page }) => {
-    // Use a 4D dataset to ensure dimension sliders appear (use local for speed)
+    // Use a 5D dataset to ensure dimension sliders appear (use local for speed)
     const testDataUrl =
       'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
@@ -91,10 +91,22 @@ for (const theme of THEMES) {
       { timeout: 45000 }
     );
 
-    // Press N to show dimension sliders
-    await page.keyboard.press('n');
-
+    // Wait for dimension sliders to be created (they're shown by default for nD datasets)
     const dimensionSliders = page.locator('.luxar-dimension-sliders');
+    await expect(dimensionSliders).toBeAttached({ timeout: 5000 });
+
+    // For nD datasets, sliders are shown by default - ensure they're visible
+    // (pressing 'n' would toggle them off)
+    const isVisible = await page.evaluate(() => {
+      const el = document.querySelector('.luxar-dimension-sliders') as HTMLElement;
+      return el && el.style.display !== 'none';
+    });
+
+    // If hidden (shouldn't happen for 5D), press 'n' to show
+    if (!isVisible) {
+      await page.keyboard.press('n');
+    }
+
     await expect(dimensionSliders).toBeVisible({ timeout: 2000 });
 
     // Take screenshot
@@ -122,17 +134,17 @@ for (const theme of THEMES) {
       { timeout: 45000 }
     );
 
-    // Press M to cycle to mini view
+    // Press M to cycle to mini/compact view (hidden → compact)
     await page.keyboard.press('m');
 
-    // Wait for mini monitor to appear
-    await page.waitForSelector('.luxar-data-monitor--mini', { timeout: 2000 });
+    // Wait for compact monitor to appear (class is --compact, not --mini)
+    await page.waitForSelector('.luxar-data-monitor--compact', { timeout: 2000 });
 
-    const dataMonitor = page.locator('.luxar-data-monitor--mini');
+    const dataMonitor = page.locator('.luxar-data-monitor--compact');
     await expect(dataMonitor).toBeVisible();
 
     // Take screenshot
-    await expect(dataMonitor).toHaveScreenshot(`data-monitor-mini-${theme}.png`);
+    await expect(dataMonitor).toHaveScreenshot(`data-monitor-compact-${theme}.png`);
   });
 }
 
@@ -182,10 +194,20 @@ for (const theme of THEMES) {
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
 
-    // Trigger debug console with Ctrl+L
+    // Wait for app to be initialized before keyboard input
+    await page.waitForFunction(
+      () => {
+        const debug = (window as any).__luxarDebug;
+        return debug && debug.getState && debug.getState().initialized;
+      },
+      null,
+      { timeout: 45000 }
+    );
+
+    // Trigger debug console with Ctrl+L (correct class is luxar-debug-console)
     await page.keyboard.press('Control+l');
 
-    const debugConsole = page.locator('.debug-console-panel');
+    const debugConsole = page.locator('.luxar-debug-console');
     await expect(debugConsole).toBeVisible({ timeout: 2000 });
 
     // Take screenshot
@@ -213,20 +235,12 @@ for (const theme of THEMES) {
 }
 
 /**
- * Test theme switching behavior
+ * Test theme switching behavior via URL parameter
+ * Note: ThemeManager is not exposed to window, so we test via URL params
  */
 test('theme switching updates all CSS variables', async ({ page }) => {
-  const testDataUrl =
-    'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
-  await page.goto(`/?src=${testDataUrl}&debug`);
-
-  // Check dark theme variables
-  await page.evaluate(() => {
-    // Access ThemeManager via window (it's imported in main.ts)
-    const themeManager =
-      (window as any).ThemeManager?.getInstance?.() || (window as any).__luxarDebug?.app;
-    if (themeManager) themeManager.setTheme?.('dark');
-  });
+  // Test dark theme
+  await page.goto('/?theme=dark&debug');
   await waitForTheme(page, 'dark');
 
   const darkBg = await page.evaluate(() =>
@@ -234,11 +248,8 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   );
   expect(darkBg.trim()).toBe('#111111');
 
-  // Switch to light theme
-  await page.evaluate(() => {
-    const themeManager = (window as any).ThemeManager?.getInstance?.();
-    if (themeManager) themeManager.setTheme('light');
-  });
+  // Test light theme
+  await page.goto('/?theme=light&debug');
   await waitForTheme(page, 'light');
 
   const lightBg = await page.evaluate(() =>
@@ -246,11 +257,8 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   );
   expect(lightBg.trim()).toBe('#ffffff');
 
-  // Switch to frosted-glass theme
-  await page.evaluate(() => {
-    const themeManager = (window as any).ThemeManager?.getInstance?.();
-    if (themeManager) themeManager.setTheme('frosted-glass');
-  });
+  // Test frosted-glass theme
+  await page.goto('/?theme=frosted-glass&debug');
   await waitForTheme(page, 'frosted-glass');
 
   const frostedBg = await page.evaluate(() =>
@@ -259,11 +267,8 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   // Frosted glass uses rgba(255, 255, 255, 0.15) for subtle glass tint
   expect(frostedBg.trim()).toBe('rgba(255, 255, 255, 0.15)');
 
-  // Switch to liquid-glass theme
-  await page.evaluate(() => {
-    const themeManager = (window as any).ThemeManager?.getInstance?.();
-    if (themeManager) themeManager.setTheme('liquid-glass');
-  });
+  // Test liquid-glass theme
+  await page.goto('/?theme=liquid-glass&debug');
   await waitForTheme(page, 'liquid-glass');
 
   const liquidBg = await page.evaluate(() =>
@@ -275,28 +280,30 @@ test('theme switching updates all CSS variables', async ({ page }) => {
 
 /**
  * Test theme persistence across page reloads
+ * Uses URL parameter to set theme, which persists to localStorage
  */
 test('theme persists across page reloads', async ({ page }) => {
-  // Set light theme (use dataset to avoid browser dialog)
-  const testDataUrl =
-    'http://localhost:9000/packages/luxar/examples/dimension_sliders_5d_example.zarr';
-  await page.goto(`/?src=${testDataUrl}&debug`);
-
-  await page.evaluate(() => {
-    const themeManager = (window as any).ThemeManager?.getInstance?.();
-    if (themeManager) themeManager.setTheme('light');
-  });
+  // Navigate with ?theme=light to set the theme (this persists to localStorage)
+  await page.goto('/?theme=light&debug');
   await waitForTheme(page, 'light');
 
-  // Reload page
-  await page.reload();
+  // Verify light theme is active
+  const themeBeforeReload = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-theme')
+  );
+  expect(themeBeforeReload).toBe('light');
+
+  // Reload page WITHOUT theme parameter - should restore from localStorage
+  await page.goto('/?debug');
 
   // Wait for theme to be restored after reload
   await waitForTheme(page, 'light');
 
   // Check that light theme is still active via data-theme attribute
-  const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  expect(theme).toBe('light');
+  const themeAfterReload = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-theme')
+  );
+  expect(themeAfterReload).toBe('light');
 });
 
 /**

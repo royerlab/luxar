@@ -99,8 +99,8 @@ export async function updateSceneForDimensions(
   loaderId?: string
 ): Promise<void> {
   const viewState: ViewState = {
-    displayDims: dims.displayed,
-    slicePosition: dims.currentStep,
+    displayDims: [...dims.displayed], // Copy to avoid reference mutation
+    slicePosition: [...dims.currentStep], // Copy to avoid reference mutation
     tolerance: new Array(dims.ndim).fill(config.dataLoading.spatial.defaultTolerance), // Default tolerance
     dimensions: dims,
   };

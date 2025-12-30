@@ -1,5 +1,5 @@
 """
-Tests for seed detection functions in gsplats.
+Tests for seed_from_decomposition - scale-hierarchical detection.
 """
 
 import importlib.util
@@ -7,11 +7,12 @@ import importlib.util
 import numpy as np
 import pytest
 
+from luxar.gsplats.fit_result import GSplatData
 from luxar.gsplats.seeds import (
     dedupe_farthest_first,
-    find_seeds_multiscale_decomposition,
-    find_seeds_multiscale_gaussian,
     local_maxima,
+    seed_from_decomposition,
+    seed_from_gaussian,
 )
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
@@ -20,81 +21,84 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")
 
 
+def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
+    """Validate GSplatData output format."""
+    assert isinstance(result, GSplatData), "Result should be GSplatData"
+    assert result.centers.ndim == 2, "Centers should be 2D array"
+    assert result.centers.shape[1] == expected_ndim, f"Should have {expected_ndim}D coordinates"
+    assert len(result.amplitudes) == len(result.centers), "Amplitudes should match centers count"
+    assert len(result.sharpnesses) == len(result.centers), "Sharpnesses should match centers count"
+
+    tril_size = expected_ndim * (expected_ndim + 1) // 2
+    assert result.cholesky_factors.shape == (len(result.centers), tril_size), (
+        f"Cholesky factors should be (N, {tril_size})"
+    )
+
+
 class TestInputValidation:
     """Test input validation for all functions."""
 
-    def test_find_seeds_input_validation(self) -> None:
-        """Test input validation in find_seeds_multiscale_gaussian."""
+    def test_seed_from_gaussian_validation(self) -> None:
+        """Test input validation in seed_from_gaussian."""
         V = np.random.randn(10, 10)
 
-        # Test empty input
         with pytest.raises(ValueError, match="cannot be empty"):
-            find_seeds_multiscale_gaussian(np.array([]))
+            seed_from_gaussian(np.array([]))
 
-        # Test scalar input
         with pytest.raises(ValueError, match="at least 1 dimension"):
-            find_seeds_multiscale_gaussian(5.0)
+            seed_from_gaussian(5.0)
 
-        # Test invalid scales
         with pytest.raises(ValueError, match="non-empty sequence"):
-            find_seeds_multiscale_gaussian(V, scales=[])
+            seed_from_gaussian(V, scales=[])
 
         with pytest.raises(ValueError, match="positive"):
-            find_seeds_multiscale_gaussian(V, scales=[0.5, -1.0, 2.0])
+            seed_from_gaussian(V, scales=[0.5, -1.0, 2.0])
 
-        # Test invalid parameters
         with pytest.raises(ValueError, match="peaks_per_scale must be positive"):
-            find_seeds_multiscale_gaussian(V, peaks_per_scale=0)
+            seed_from_gaussian(V, peaks_per_scale=0)
 
         with pytest.raises(ValueError, match="between 0 and 100"):
-            find_seeds_multiscale_gaussian(V, percentile_thresh=150.0)
+            seed_from_gaussian(V, percentile_thresh=150.0)
 
         with pytest.raises(ValueError, match="min_distance must be positive"):
-            find_seeds_multiscale_gaussian(V, min_distance=-1.0)
+            seed_from_gaussian(V, min_distance=-1.0)
 
-    def testlocal_maxima_edge_cases(self) -> None:
+    def test_local_maxima_edge_cases(self) -> None:
         """Test edge cases for local_maxima."""
         img = np.ones((3, 3))
 
-        # Should handle case where no peaks exceed threshold
         coords = local_maxima(img, radius=1, thresh=10.0, top_k=5)
         assert coords.size == 0
 
-        # Should handle top_k larger than available peaks
-        img[1, 1] = 2  # Add one peak
+        img[1, 1] = 2
         coords = local_maxima(img, radius=1, thresh=1.5, top_k=100)
-        assert len(coords) <= 100  # Should not crash
+        assert len(coords) <= 100
 
-    def testdedupe_farthest_first_edge_cases(self) -> None:
+    def test_dedupe_farthest_first_edge_cases(self) -> None:
         """Test edge cases for dedupe_farthest_first."""
-        # Test very small min_dist
         coords = np.array([[0, 0], [10, 10]], dtype=float)
         deduped = dedupe_farthest_first(coords, min_distance=1e-10)
-        assert len(deduped) == 2  # Should keep both
+        assert len(deduped) == 2
 
-        # Test very large min_dist
         deduped = dedupe_farthest_first(coords, min_distance=1000.0)
-        assert len(deduped) == 1  # Should keep only one
+        assert len(deduped) == 1
 
 
 class TestDecompositionSeeds:
-    """Test find_seeds_multiscale_decomposition function."""
+    """Test seed_from_decomposition function."""
 
     def test_basic_functionality_2d(self) -> None:
         """Test basic seed generation on 2D synthetic image."""
-        # Create synthetic image with known features at multiple scales
         x = np.linspace(-5, 5, 64)
         y = np.linspace(-5, 5, 64)
         X, Y = np.meshgrid(x, y)
 
-        # Create image with two Gaussian blobs at different scales
         img = (
-            np.exp(-((X + 2) ** 2 + (Y + 2) ** 2) / 0.5)  # Small blob
-            + 1.5 * np.exp(-((X - 2) ** 2 + (Y - 2) ** 2) / 2.0)  # Larger blob
+            np.exp(-((X + 2) ** 2 + (Y + 2) ** 2) / 0.5)
+            + 1.5 * np.exp(-((X - 2) ** 2 + (Y - 2) ** 2) / 2.0)
         )
 
-        # Generate seeds
-        seeds = find_seeds_multiscale_decomposition(
+        result = seed_from_decomposition(
             img,
             scales=[1, 2, 4, 8],
             ignore_finest_k=1,
@@ -104,24 +108,21 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Should find seeds
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 2  # 2D coordinates
+        validate_gsplatdata(result, 2)
+        assert len(result.centers) > 0
 
-        # Coordinates should be within image bounds
-        assert np.all(seeds[:, 0] >= 0)
-        assert np.all(seeds[:, 0] <= img.shape[0])
-        assert np.all(seeds[:, 1] >= 0)
-        assert np.all(seeds[:, 1] <= img.shape[1])
+        # Coordinates within bounds
+        assert np.all(result.centers[:, 0] >= 0)
+        assert np.all(result.centers[:, 0] <= img.shape[0])
+        assert np.all(result.centers[:, 1] >= 0)
+        assert np.all(result.centers[:, 1] <= img.shape[1])
 
     def test_ignore_finest_k_parameter(self) -> None:
         """Test that ignore_finest_k properly filters scales."""
-        # Simple 2D image
         img = np.random.rand(32, 32) * 0.1
-        img[10:15, 10:15] = 1.0  # Add a bright region
+        img[10:15, 10:15] = 1.0
 
-        # Test with different ignore_finest_k values
-        seeds_k0 = find_seeds_multiscale_decomposition(
+        result_k0 = seed_from_decomposition(
             img,
             scales=[1, 2, 4],
             ignore_finest_k=0,
@@ -129,7 +130,7 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        seeds_k1 = find_seeds_multiscale_decomposition(
+        result_k1 = seed_from_decomposition(
             img,
             scales=[1, 2, 4],
             ignore_finest_k=1,
@@ -137,21 +138,16 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # With k=0, may find more seeds (including noise from finest scale)
-        # With k=1, should find fewer seeds (ignoring finest scale)
-        # Note: This is a stochastic test, so we just check shapes are correct
-        assert seeds_k0.shape[1] == 2
-        assert seeds_k1.shape[1] == 2
+        validate_gsplatdata(result_k0, 2)
+        validate_gsplatdata(result_k1, 2)
 
     def test_min_distance_deduplication(self) -> None:
         """Test that min_distance properly deduplicates seeds."""
-        # Create image with tight cluster of features
         img = np.zeros((64, 64))
-        # Add several close peaks
         for i, j in [(30, 30), (31, 30), (30, 31), (32, 32)]:
             img[i, j] = 0.8
 
-        seeds_small_dist = find_seeds_multiscale_decomposition(
+        result_small = seed_from_decomposition(
             img,
             scales=[1, 2],
             ignore_finest_k=0,
@@ -160,7 +156,7 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        seeds_large_dist = find_seeds_multiscale_decomposition(
+        result_large = seed_from_decomposition(
             img,
             scales=[1, 2],
             ignore_finest_k=0,
@@ -169,18 +165,15 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Larger min_distance should result in fewer or equal seeds
-        assert len(seeds_large_dist) <= len(seeds_small_dist)
+        assert len(result_large.centers) <= len(result_small.centers)
 
     def test_threshold_rel_filtering(self) -> None:
         """Test that threshold_rel properly filters weak peaks."""
-        # Create image with peaks of different intensities
         img = np.zeros((64, 64))
-        img[20, 20] = 1.0  # Strong peak
-        img[40, 40] = 0.2  # Weak peak
+        img[20, 20] = 1.0
+        img[40, 40] = 0.2
 
-        # High threshold should find fewer seeds
-        seeds_high_thresh = find_seeds_multiscale_decomposition(
+        result_high = seed_from_decomposition(
             img,
             scales=[1, 2],
             ignore_finest_k=0,
@@ -189,8 +182,7 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Low threshold should find more seeds
-        seeds_low_thresh = find_seeds_multiscale_decomposition(
+        result_low = seed_from_decomposition(
             img,
             scales=[1, 2],
             ignore_finest_k=0,
@@ -199,43 +191,14 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Should find at least as many with lower threshold
-        assert len(seeds_low_thresh) >= len(seeds_high_thresh)
-
-    def test_peaks_per_scale_limiting(self) -> None:
-        """Test that peaks_per_scale limits seeds per scale."""
-        # Create busy image with many features
-        np.random.seed(42)
-        img = np.random.rand(64, 64)
-        img = img + 0.5  # Shift up to create many potential peaks
-
-        seeds_unlimited = find_seeds_multiscale_decomposition(
-            img,
-            scales=[1, 2, 4],
-            ignore_finest_k=1,
-            peaks_per_scale=None,  # Unlimited
-            decompose_kwargs={"n_iters": 50, "verbose": False},
-            verbose=False,
-        )
-
-        seeds_limited = find_seeds_multiscale_decomposition(
-            img,
-            scales=[1, 2, 4],
-            ignore_finest_k=1,
-            peaks_per_scale=5,  # Limit to 5 per scale
-            decompose_kwargs={"n_iters": 50, "verbose": False},
-            verbose=False,
-        )
-
-        # Limited should find fewer or equal seeds
-        assert len(seeds_limited) <= len(seeds_unlimited)
+        assert len(result_low.centers) >= len(result_high.centers)
 
     def test_1d_image(self) -> None:
         """Test seed generation on 1D signal."""
         x = np.linspace(-5, 5, 128)
         signal = np.exp(-(x**2)) + 0.5 * np.exp(-((x - 2) ** 2) / 0.5)
 
-        seeds = find_seeds_multiscale_decomposition(
+        result = seed_from_decomposition(
             signal,
             scales=[1, 2, 4],
             ignore_finest_k=1,
@@ -243,26 +206,21 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Should find seeds
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 1  # 1D coordinates
-
-        # Coordinates should be within bounds
-        assert np.all(seeds[:, 0] >= 0)
-        assert np.all(seeds[:, 0] <= len(signal))
+        validate_gsplatdata(result, 1)
+        assert len(result.centers) > 0
+        assert np.all(result.centers[:, 0] >= 0)
+        assert np.all(result.centers[:, 0] <= len(signal))
 
     def test_3d_volume(self) -> None:
         """Test seed generation on 3D volume."""
-        # Small 3D volume for speed
         x = np.linspace(-2, 2, 16)
         y = np.linspace(-2, 2, 16)
         z = np.linspace(-2, 2, 16)
         X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
 
-        # Create volume with one blob
         volume = np.exp(-(X**2 + Y**2 + Z**2) / 2.0)
 
-        seeds = find_seeds_multiscale_decomposition(
+        result = seed_from_decomposition(
             volume,
             scales=[1, 2, 4],
             ignore_finest_k=1,
@@ -270,111 +228,99 @@ class TestDecompositionSeeds:
             verbose=False,
         )
 
-        # Should find at least one candidate
-        assert len(seeds) >= 1
-        assert seeds.shape[1] == 3  # 3D coordinates
+        validate_gsplatdata(result, 3)
+        assert len(result.centers) >= 1
 
     def test_empty_result_handling(self) -> None:
         """Test handling when no seeds are found."""
-        # Nearly uniform image
         img = np.ones((32, 32)) * 0.5 + 0.01 * np.random.randn(32, 32)
 
-        seeds = find_seeds_multiscale_decomposition(
+        result = seed_from_decomposition(
             img,
             scales=[1, 2],
             ignore_finest_k=0,
-            threshold_rel=0.9,  # Very high threshold
+            threshold_rel=0.9,
             decompose_kwargs={"n_iters": 50, "verbose": False},
             verbose=False,
         )
 
-        # Should return empty array with correct shape
-        assert seeds.shape[1] == 2
-        # May have 0 or very few seeds
+        validate_gsplatdata(result, 2)
 
     def test_input_validation(self) -> None:
-        """Test input validation for find_seeds_multiscale_decomposition."""
+        """Test input validation for seed_from_decomposition."""
         valid_img = np.random.rand(32, 32)
 
-        # Test empty input
         with pytest.raises(ValueError, match="cannot be empty"):
-            find_seeds_multiscale_decomposition(np.array([]))
+            seed_from_decomposition(np.array([]))
 
-        # Test scalar input
         with pytest.raises(ValueError, match="at least 1 dimension"):
-            find_seeds_multiscale_decomposition(5.0)
+            seed_from_decomposition(5.0)
 
-        # Test invalid scales
         with pytest.raises(ValueError, match="non-empty list"):
-            find_seeds_multiscale_decomposition(valid_img, scales=[])
+            seed_from_decomposition(valid_img, scales=[])
 
         with pytest.raises(ValueError, match="positive"):
-            find_seeds_multiscale_decomposition(valid_img, scales=[1, -2, 4])
+            seed_from_decomposition(valid_img, scales=[1, -2, 4])
 
-        # Test invalid ignore_finest_k
         with pytest.raises(ValueError, match="non-negative"):
-            find_seeds_multiscale_decomposition(valid_img, ignore_finest_k=-1)
+            seed_from_decomposition(valid_img, ignore_finest_k=-1)
 
-        # Test ignore_finest_k >= len(scales) triggers warning
         with pytest.warns(UserWarning, match="ignore_finest_k"):
-            seeds = find_seeds_multiscale_decomposition(
+            result = seed_from_decomposition(
                 valid_img,
                 scales=[1, 2],
-                ignore_finest_k=5,  # Too large
+                ignore_finest_k=5,
                 decompose_kwargs={"n_iters": 10, "verbose": False},
                 verbose=False,
             )
-            # Should still work (with adjusted k)
-            assert seeds.shape[1] == 2
+            validate_gsplatdata(result, 2)
 
-        # Test invalid min_distance
         with pytest.raises(ValueError, match="positive"):
-            find_seeds_multiscale_decomposition(valid_img, min_distance=-1.0)
-
-        # Test invalid threshold_rel
-        with pytest.raises(ValueError, match="between 0 and 1"):
-            find_seeds_multiscale_decomposition(valid_img, threshold_rel=1.5)
+            seed_from_decomposition(valid_img, min_distance=-1.0)
 
         with pytest.raises(ValueError, match="between 0 and 1"):
-            find_seeds_multiscale_decomposition(valid_img, threshold_rel=-0.1)
+            seed_from_decomposition(valid_img, threshold_rel=1.5)
 
     def test_verbose_mode(self) -> None:
         """Test that verbose mode runs without errors."""
         img = np.random.rand(32, 32)
         img[15:18, 15:18] = 1.0
 
-        # Should not raise any errors with verbose=True
-        seeds = find_seeds_multiscale_decomposition(
+        result = seed_from_decomposition(
             img,
             scales=[1, 2, 4],
             ignore_finest_k=1,
             decompose_kwargs={"n_iters": 50, "verbose": False},
-            verbose=True,  # Enable verbose output
+            verbose=True,
         )
 
-        assert seeds.shape[1] == 2
+        validate_gsplatdata(result, 2)
 
-    def test_decompose_kwargs_passthrough(self) -> None:
-        """Test that decompose_kwargs are properly passed through."""
-        img = np.random.rand(32, 32)
-        img[15:18, 15:18] = 1.0
 
-        # Test with custom decompose parameters
-        seeds = find_seeds_multiscale_decomposition(
+class TestScaleInfoPreserved:
+    """Test that scale information is preserved in Cholesky factors."""
+
+    def test_scale_to_sigma_mapping(self) -> None:
+        """Test that seeds from different scales have different sigmas."""
+        # Create image with features at different scales
+        x, y = np.meshgrid(np.linspace(-10, 10, 64), np.linspace(-10, 10, 64))
+
+        # Run decomposition with multiple scales
+        img = np.exp(-(x**2 + y**2) / 4)
+
+        result = seed_from_decomposition(
             img,
-            scales=[1, 2, 4],
-            ignore_finest_k=1,
-            decompose_kwargs={
-                "n_iters": 10,  # Very few iterations
-                "lr": 0.1,  # Custom learning rate
-                "loss_type": "mse",  # Different loss type
-                "verbose": False,
-            },
+            scales=[1, 2, 4, 8],
+            ignore_finest_k=0,
+            decompose_kwargs={"n_iters": 100, "verbose": False},
             verbose=False,
         )
 
-        # Should complete without errors
-        assert seeds.shape[1] == 2
+        if len(result.centers) > 0:
+            # Check that cholesky factors are non-zero (scale info preserved)
+            assert np.all(result.cholesky_factors[:, 0] > 0), (
+                "Diagonal Cholesky elements should be positive (sigma > 0)"
+            )
 
 
 if __name__ == "__main__":

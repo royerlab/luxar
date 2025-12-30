@@ -8,11 +8,11 @@ incorrect API usage in test. The parent parameter works when using:
 This test suite guards against regressions in hierarchy creation.
 """
 
-import numpy as np
-import zarr
 from pathlib import Path
 
-from luxar import Scene
+import numpy as np
+import zarr
+
 from luxar.core.dimensions import Dimensions
 
 
@@ -33,7 +33,7 @@ def test_points_with_parent_creates_correct_hierarchy(tmp_path: Path) -> None:
         compiler.write_points("GroupA/GroupAPoints", np.array([[1, 1, 1]], dtype=np.float32))
 
         # Create nested group and add points
-        group_b = group_a.add_group("GroupB")
+        _group_b = group_a.add_group("GroupB")
         compiler.write_points("GroupA/GroupB/GroupBPoints", np.array([[2, 2, 2]], dtype=np.float32))
 
     # Verify zarr structure
@@ -79,7 +79,7 @@ def test_reader_reflects_correct_hierarchy(tmp_path: Path) -> None:
 
         compiler.write_points("Root1", np.array([[0, 0, 0]], dtype=np.float32))
 
-        group_a = scene_node.add_group("GroupA")
+        _group_a = scene_node.add_group("GroupA")
         compiler.write_points("GroupA/Points1", np.array([[1, 1, 1]], dtype=np.float32))
 
     # Read back

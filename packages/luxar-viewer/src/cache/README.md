@@ -1,16 +1,35 @@
 # Luxar Viewer Cache Package
 
-Two-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
+Three-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
 ## Overview
 
 This package implements a transparent caching and prefetching layer for zarr datasets:
 
+- **L0 (Decompressed)**: 200MB LRU cache for decoded TypedArrays (eliminates Blosc decompression)
 - **L1 (Memory)**: 100MB segmented LRU cache with metadata protection
 - **L2 (OPFS)**: 2GB persistent storage surviving browser restarts
 - **Intelligent Prefetching**: Proactive loading of adjacent chunks to hide network latency
 - **Content-hash validation**: Automatic cache invalidation when data changes
 - **Zero overhead**: Stores raw compressed chunks (no re-compression)
+
+## Cache Hierarchy
+
+```
+Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
+              ↓                   ↓             ↓            ↓
+           ~1μs               ~1μs+2ms       ~1ms+2ms     ~100ms+2ms
+       (no decompress)    (decompress)   (decompress)   (decompress)
+```
+
+| Level | Storage | Speed         | Size  | Persistence  | Content           |
+| ----- | ------- | ------------- | ----- | ------------ | ----------------- |
+| L0    | Memory  | ~1μs          | 200MB | Session only | Decompressed data |
+| L1    | Memory  | ~1μs + ~2ms\* | 100MB | Session only | Compressed chunks |
+| L2    | OPFS    | ~1ms + ~2ms\* | 2GB   | Permanent    | Compressed chunks |
+| L3    | Remote  | ~100ms        | ∞     | N/A          | Compressed chunks |
+
+\*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 ## Quick Start
 
@@ -33,9 +52,9 @@ await store.init();
 const zarrStore = await zarr.tryWithConsolidated(store);
 const root = await zarr.open(zarrStore);
 
-// First load: HTTP → L2 → L1 → zarrita
-// Second load: L1 → zarrita (~1μs!)
-// After reload: L2 → L1 → zarrita (~1ms)
+// First load: HTTP → L2 → L1 → decompress → L0 → render
+// Second load: L0 → render (~1μs, no decompression!)
+// After reload: L2 → L1 → decompress → L0 → render (~1ms)
 
 // Clean up when done
 await store.dispose();
@@ -45,16 +64,84 @@ await store.dispose();
 
 Override cache behavior via URL parameters:
 
-- `?no-cache` - Disable all caching for this session
-- `?cache-debug` - Enable verbose cache logging
-- `?clear-cache` - Clear OPFS cache before loading dataset
-- `?no-prefetch` - Disable prefetching (cache still active)
+- `?no-cache` - Disable all caching (L0 + L1 + L2) for this session
+- `?cache-debug` - Enable verbose cache logging for all layers
+- `?clear-cache` - Clear all caches (L0 + L1 + L2) before loading dataset
+- `?no-prefetch` - Disable prefetching (caches still active)
 - `?prefetch-debug` - Enable verbose prefetch logging
 
 Example:
 
 ```
 http://localhost:5173/?src=http://example.com/data.zarr&cache-debug&prefetch-debug
+```
+
+## L0 Decompressed Chunk Cache
+
+The L0 cache is the **fastest cache layer**, storing already-decoded TypedArrays (Float32Array, Uint8Array, etc.) to eliminate Blosc decompression overhead.
+
+### Why L0 Matters
+
+Without L0, even an L1 cache hit requires ~2ms for Blosc decompression. For a typical view update accessing 4 attributes (positions, colors, radii, sharpness):
+
+- **Without L0**: ~8ms decompression overhead per view update
+- **With L0**: ~0.004ms (essentially zero)
+
+This makes the difference between 120 FPS and 60 FPS during navigation.
+
+### Usage
+
+L0 caching is **enabled by default** and integrated into the scene loading pipeline:
+
+```typescript
+import { DecompressedChunkCache, wrapWithCache } from '../cache';
+
+// L0 is automatically enabled when loading scenes via SceneLoader
+// Manual usage (advanced):
+const l0Cache = new DecompressedChunkCache({
+  maxSize: 200 * 1024 * 1024, // 200MB (default)
+  debug: false,
+});
+
+// Wrap zarr arrays to enable L0 caching
+const cachedArray = wrapWithCache(zarrArray, l0Cache, '/points/positions');
+
+// First getChunk(): decompress + cache in L0
+const chunk1 = await cachedArray.getChunk([0, 1, 2]);
+
+// Second getChunk(): instant from L0 (~1μs, no decompression)
+const chunk2 = await cachedArray.getChunk([0, 1, 2]);
+```
+
+### API
+
+**DecompressedChunkCache**
+
+```typescript
+const cache = new DecompressedChunkCache({
+  maxSize?: number,  // Max size in bytes (default: 200MB)
+  debug?: boolean,   // Enable debug logging (default: false)
+});
+
+// Get cache statistics
+const stats = cache.getStats();
+// { size, count, hits, misses, evictions, hitRate }
+
+// Clear the cache
+cache.clear();
+```
+
+**wrapWithCache**
+
+```typescript
+// Wrap a zarr.Array with L0 caching
+const cached = wrapWithCache(array, cache, arrayPath);
+
+// Check if array is wrapped
+isCachedArray(cached); // true
+
+// Get original unwrapped array
+unwrapCachedArray(cached);
 ```
 
 ## Intelligent Prefetching
@@ -232,7 +319,11 @@ Get prefetch queue statistics:
 
 ### Modules
 
-**TwoLevelCachingStore** - Main orchestrator implementing AsyncReadable interface
+**DecompressedChunkCache** - L0 cache for decoded zarr chunks (eliminates Blosc decompression)
+
+**wrapWithCache** - ES6 Proxy wrapper to add L0 caching to zarr.Array
+
+**TwoLevelCachingStore** - Main orchestrator for L1/L2 caching, implements AsyncReadable interface
 
 **ChunkPrefetcher** - Intelligent adjacent chunk prefetcher (enabled by default)
 
@@ -292,25 +383,41 @@ User loads dataset
 └─→ HTTP fetches all chunks (~100ms each)
     └─→ Stores in L2 (OPFS, persists across sessions)
     └─→ Stores in L1 (memory, session only)
+    └─→ Blosc decompresses (~2ms)
+        └─→ Stores in L0 (decompressed TypedArray)
+        └─→ Renders
+```
+
+### Same Session (L0 Hit)
+
+```
+User navigates/zooms to previously viewed area
+└─→ L0 hit (~1μs) - instant, no decompression!
     └─→ Renders
 ```
 
-### Same Session
+### Same Session (L0 Miss, L1 Hit)
 
 ```
-User navigates/zooms
-└─→ L1 hit (~1μs) - instant!
-    └─→ Renders
+User navigates to new area
+└─→ L0 miss
+    └─→ L1 hit (~1μs)
+        └─→ Blosc decompresses (~2ms)
+            └─→ Stores in L0
+            └─→ Renders
 ```
 
 ### Browser Restart
 
 ```
 User returns later
-└─→ L1 miss (cleared on page load)
-    └─→ L2 hit (~1ms) - fast!
-        └─→ Promotes to L1
-        └─→ Renders
+└─→ L0 miss (cleared on page load)
+    └─→ L1 miss (cleared on page load)
+        └─→ L2 hit (~1ms) - fast!
+            └─→ Promotes to L1
+            └─→ Blosc decompresses (~2ms)
+                └─→ Stores in L0
+                └─→ Renders
 ```
 
 ### Dataset Updated
@@ -318,7 +425,7 @@ User returns later
 ```
 Dataset content changed (new content_hash)
 └─→ Cache validation detects mismatch
-    └─→ Clears L2 automatically
+    └─→ Clears L0, L1, L2 automatically
     └─→ Fetches fresh data
 ```
 
@@ -381,14 +488,14 @@ private async getRemoteContentHash(): Promise<string | null> {
 
 ### Memory Budget
 
-**100MB L1** compressed ≈ **300MB-1GB** decoded coverage (depends on compression ratio)
+**200MB L0** + **100MB L1** compressed ≈ **500MB-1.5GB** effective coverage
 
 **Typical session** (100K points, 4D):
 
-- RangeCache: ~150MB (decoded arrays)
+- L0 Cache: ~200MB (decompressed chunks)
 - L1 Cache: ~100MB (compressed chunks)
 - Three.js: ~50MB (geometries)
-- **Total**: ~300MB (well within browser limits)
+- **Total**: ~350MB (well within browser limits)
 
 ## Browser Support
 
@@ -413,13 +520,15 @@ await window.__luxarDebug.cache.getStats(); // Get L1 + L2 statistics
 await window.__luxarDebug.cache.listDatasets(); // List all cached datasets
 await window.__luxarDebug.cache.clearL1(); // Clear L1 memory cache only
 await window.__luxarDebug.cache.clearL2(); // Clear L2 OPFS cache only
-await window.__luxarDebug.cache.clearAll(); // Clear both L1 and L2
+await window.__luxarDebug.cache.clearAll(); // Clear L0 + L1 + L2
 ```
+
+L0 cache statistics are available in the Data Monitor panel (press `D` to toggle).
 
 Example usage:
 
 ```typescript
-// Check cache usage
+// Check cache usage (L1/L2)
 const stats = await window.__luxarDebug.cache.getStats();
 console.log('L1 Memory:', stats.l1.metadataCount, 'metadata,', stats.l1.chunksCount, 'chunks');
 console.log('L2 OPFS:', stats.l2.size, 'bytes,', stats.l2.count, 'files');
@@ -428,7 +537,7 @@ console.log('L2 OPFS:', stats.l2.size, 'bytes,', stats.l2.count, 'files');
 const datasets = await window.__luxarDebug.cache.listDatasets();
 console.log('Cached datasets:', datasets);
 
-// Clear caches during development
+// Clear all caches during development
 await window.__luxarDebug.cache.clearAll();
 ```
 

@@ -1,0 +1,301 @@
+/**
+ * Unit tests for cached-zarr-array proxy wrapper
+ *
+ * Tests the ES6 Proxy that intercepts zarr.Array.getChunk() calls
+ * to add L0 decompressed chunk caching.
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import { wrapWithCache, isCachedArray, unwrapCachedArray } from '../../../cache/cached-zarr-array';
+
+// Mock zarr types for testing
+type MockChunk = {
+  data: Float32Array;
+  shape: number[];
+  stride: number[];
+};
+
+// Create a mock zarr.Array-like object
+function createMockZarrArray(getChunkImpl?: () => Promise<MockChunk>) {
+  const defaultChunk: MockChunk = {
+    data: new Float32Array([1, 2, 3, 4, 5, 6]),
+    shape: [2, 3],
+    stride: [3, 1],
+  };
+
+  return {
+    dtype: 'float32',
+    shape: [100, 3],
+    chunks: [50, 3],
+    attrs: {},
+    getChunk: getChunkImpl || vi.fn().mockResolvedValue(defaultChunk),
+    // Simulate other zarr.Array properties
+    store: {},
+    path: '/test',
+  } as any;
+}
+
+describe('cached-zarr-array', () => {
+  let cache: DecompressedChunkCache;
+
+  beforeEach(() => {
+    cache = new DecompressedChunkCache({ maxSize: 1024 * 1024 });
+  });
+
+  describe('wrapWithCache', () => {
+    it('should return a proxy that intercepts getChunk calls', async () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // Call getChunk
+      const result = await wrapped.getChunk([0, 1, 2]);
+
+      // Should have called original getChunk
+      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2], undefined);
+
+      // Should return the chunk data
+      expect(result.data).toBeInstanceOf(Float32Array);
+      expect(result.shape).toEqual([2, 3]);
+    });
+
+    it('should cache chunks on first access', async () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // First call - cache miss
+      await wrapped.getChunk([0]);
+      expect(mockArray.getChunk).toHaveBeenCalledTimes(1);
+
+      // Second call - cache hit
+      await wrapped.getChunk([0]);
+      expect(mockArray.getChunk).toHaveBeenCalledTimes(1); // Still 1 - didn't call original
+
+      const stats = cache.getStats();
+      expect(stats.hits).toBe(1);
+      expect(stats.misses).toBe(1);
+    });
+
+    it('should pass through other properties unchanged', () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // These should pass through to the original array
+      expect(wrapped.dtype).toBe('float32');
+      expect(wrapped.shape).toEqual([100, 3]);
+      expect(wrapped.chunks).toEqual([50, 3]);
+    });
+
+    it('should handle different chunk coordinates as separate cache entries', async () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // Access different chunks
+      await wrapped.getChunk([0, 0]);
+      await wrapped.getChunk([0, 1]);
+      await wrapped.getChunk([1, 0]);
+
+      // All should be cache misses (original called 3 times)
+      expect(mockArray.getChunk).toHaveBeenCalledTimes(3);
+
+      // Now access same chunks again - all should be hits
+      await wrapped.getChunk([0, 0]);
+      await wrapped.getChunk([0, 1]);
+      await wrapped.getChunk([1, 0]);
+
+      // Should still be 3 (all hits)
+      expect(mockArray.getChunk).toHaveBeenCalledTimes(3);
+
+      const stats = cache.getStats();
+      expect(stats.hits).toBe(3);
+      expect(stats.misses).toBe(3);
+    });
+
+    it('should not double-wrap an already wrapped array', () => {
+      const mockArray = createMockZarrArray();
+      const wrapped1 = wrapWithCache(mockArray, cache, '/points/positions');
+      const wrapped2 = wrapWithCache(wrapped1, cache, '/points/positions');
+
+      // Should be the same proxy (not double-wrapped)
+      expect(wrapped1).toBe(wrapped2);
+    });
+  });
+
+  describe('isCachedArray', () => {
+    it('should return true for wrapped arrays', () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      expect(isCachedArray(wrapped)).toBe(true);
+    });
+
+    it('should return false for unwrapped arrays', () => {
+      const mockArray = createMockZarrArray();
+      expect(isCachedArray(mockArray)).toBe(false);
+    });
+
+    it('should return false for null/undefined', () => {
+      expect(isCachedArray(null)).toBe(false);
+      expect(isCachedArray(undefined)).toBe(false);
+    });
+
+    it('should return false for non-objects', () => {
+      expect(isCachedArray(42)).toBe(false);
+      expect(isCachedArray('string')).toBe(false);
+    });
+  });
+
+  describe('unwrapCachedArray', () => {
+    it('should return the original array from a wrapped proxy', () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+      const unwrapped = unwrapCachedArray(wrapped);
+
+      // Should be the same reference as the original
+      expect(unwrapped).toBe(mockArray);
+    });
+
+    it('should return the same array if not wrapped', () => {
+      const mockArray = createMockZarrArray();
+      const result = unwrapCachedArray(mockArray);
+
+      expect(result).toBe(mockArray);
+    });
+  });
+
+  describe('Cache Key Generation', () => {
+    it('should use correct path-based cache keys', async () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/scene/points/positions');
+
+      await wrapped.getChunk([1, 2, 3]);
+
+      // Check the cache directly for the expected key
+      const expectedKey = '/scene/points/positions:1,2,3';
+      expect(cache.has(expectedKey)).toBe(true);
+    });
+
+    it('should isolate different arrays in the same cache', async () => {
+      const mockArray1 = createMockZarrArray();
+      const mockArray2 = createMockZarrArray();
+
+      const wrapped1 = wrapWithCache(mockArray1, cache, '/points/positions');
+      const wrapped2 = wrapWithCache(mockArray2, cache, '/points/colors');
+
+      // Access same chunk coords but from different arrays
+      await wrapped1.getChunk([0]);
+      await wrapped2.getChunk([0]);
+
+      // Both should be cache misses (different keys)
+      expect(mockArray1.getChunk).toHaveBeenCalledTimes(1);
+      expect(mockArray2.getChunk).toHaveBeenCalledTimes(1);
+
+      const stats = cache.getStats();
+      expect(stats.misses).toBe(2);
+      expect(stats.count).toBe(2);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should propagate errors from original getChunk', async () => {
+      const error = new Error('Network error');
+      const mockArray = createMockZarrArray(() => Promise.reject(error));
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      await expect(wrapped.getChunk([0])).rejects.toThrow('Network error');
+
+      // Error case should not be cached
+      const stats = cache.getStats();
+      expect(stats.count).toBe(0);
+    });
+  });
+
+  describe('Chunk Data Integrity', () => {
+    it('should return identical data from cache as from original', async () => {
+      const originalData = new Float32Array([1.5, 2.5, 3.5, 4.5, 5.5, 6.5]);
+      const mockArray = createMockZarrArray(() =>
+        Promise.resolve({
+          data: originalData,
+          shape: [2, 3],
+          stride: [3, 1],
+        })
+      );
+
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // First call (cache miss)
+      const result1 = await wrapped.getChunk([0]);
+
+      // Second call (cache hit)
+      const result2 = await wrapped.getChunk([0]);
+
+      // Data should be identical
+      expect(result1.data).toEqual(originalData);
+      expect(result2.data).toEqual(originalData);
+      expect(result1.shape).toEqual(result2.shape);
+      expect(result1.stride).toEqual(result2.stride);
+    });
+  });
+
+  describe('Private Field Compatibility', () => {
+    it('should work with objects that have getters accessing internal state', () => {
+      // This tests the fix for: "Cannot read private member #e from an object whose class did not declare it"
+      // zarrita uses private fields (#e, #store, etc.) and getters that access them.
+      // The proxy must use `target` as receiver in Reflect.get, not `receiver` (the proxy).
+
+      // Create a mock that simulates zarrita's internal structure with a getter
+      // that relies on `this` being the original object
+      const internalState = { value: 42 };
+      const mockArray = {
+        dtype: 'float32',
+        shape: [100, 3],
+        chunks: [50, 3],
+        // Getter that relies on correct `this` binding
+        get attrs() {
+          // In real zarrita, this would access private fields like `this.#e`
+          // If `this` is the proxy instead of the original object, it would fail
+          return { internalValue: internalState.value };
+        },
+        getChunk: vi.fn().mockResolvedValue({
+          data: new Float32Array([1, 2, 3]),
+          shape: [3],
+          stride: [1],
+        }),
+        store: {},
+        path: '/test',
+      } as any;
+
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // This should NOT throw "Cannot read private member" error
+      // If the proxy used `receiver` instead of `target`, this would fail
+      expect(() => wrapped.attrs).not.toThrow();
+      expect(wrapped.attrs).toEqual({ internalValue: 42 });
+    });
+
+    it('should correctly proxy shape getter (simulates zarrita #e access)', () => {
+      // zarrita's shape getter accesses private field #e
+      const mockArray = {
+        dtype: 'float32',
+        _internalShape: [100, 3], // Simulates private state
+        get shape() {
+          return this._internalShape; // Relies on correct `this`
+        },
+        chunks: [50, 3],
+        attrs: {},
+        getChunk: vi.fn().mockResolvedValue({
+          data: new Float32Array([1, 2, 3]),
+          shape: [3],
+          stride: [1],
+        }),
+        store: {},
+        path: '/test',
+      } as any;
+
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+
+      // This tests that the getter works correctly through the proxy
+      expect(wrapped.shape).toEqual([100, 3]);
+    });
+  });
+});

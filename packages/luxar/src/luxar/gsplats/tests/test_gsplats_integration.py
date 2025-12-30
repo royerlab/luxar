@@ -14,7 +14,7 @@ from luxar.gsplats.models.gsplats import (
     render_gaussians,
     render_gaussians_numpy,
 )
-from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
+from luxar.gsplats.seeds import seed_from_gaussian
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -43,18 +43,19 @@ class TestGaussianSplatsIntegration:
         # Create test data
         image = self.create_test_image((64, 64), n_blobs=3)
 
-        # Find seeds
-        seeds = find_seeds_multiscale_gaussian(
+        # Find seeds (returns GSplatData with scale-informed shapes)
+        seeds = seed_from_gaussian(
             image,
             scales=(1.0, 2.0, 3.0),
             peaks_per_scale=50,
             percentile_thresh=80,
             min_distance=2.0,
         )
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 2
+        n_seeds = len(seeds.centers)
+        assert n_seeds > 0
+        assert seeds.centers.shape[1] == 2
 
-        # Fit splats
+        # Fit splats (accepts GSplatData directly, uses scale-informed initialization)
         result = fit_gaussian_splats(
             image,
             seeds=seeds,
@@ -66,12 +67,12 @@ class TestGaussianSplatsIntegration:
         )
 
         # Verify result structure
-        assert result.centers.shape[0] == len(seeds)
+        assert result.centers.shape[0] == n_seeds
         assert result.centers.shape[1] == 2  # 2D centers
-        assert result.cholesky_factors.shape[0] == len(seeds)
+        assert result.cholesky_factors.shape[0] == n_seeds
         assert result.cholesky_factors.shape[1] == tril_size(2)  # Packed L
-        assert result.sharpnesses.shape == (len(seeds),)
-        assert result.amplitudes.shape == (len(seeds),)
+        assert result.sharpnesses.shape == (n_seeds,)
+        assert result.amplitudes.shape == (n_seeds,)
         assert np.all(result.amplitudes >= 0)  # Amplitudes should be non-negative
 
         # Render reconstruction
@@ -89,18 +90,19 @@ class TestGaussianSplatsIntegration:
         # Create test data
         volume = self.create_test_image((32, 32, 32), n_blobs=3)
 
-        # Find seeds
-        seeds = find_seeds_multiscale_gaussian(
+        # Find seeds (returns GSplatData)
+        seeds = seed_from_gaussian(
             volume,
             scales=(1.0, 2.0),
             peaks_per_scale=30,
             percentile_thresh=85,
             min_distance=3.0,
         )
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 3
+        n_seeds = len(seeds.centers)
+        assert n_seeds > 0
+        assert seeds.centers.shape[1] == 3
 
-        # Fit splats
+        # Fit splats (accepts GSplatData directly)
         result = fit_gaussian_splats(
             volume,
             seeds=seeds,
@@ -112,12 +114,12 @@ class TestGaussianSplatsIntegration:
         )
 
         # Verify result structure
-        assert result.centers.shape[0] == len(seeds)
+        assert result.centers.shape[0] == n_seeds
         assert result.centers.shape[1] == 3  # 3D centers
-        assert result.cholesky_factors.shape[0] == len(seeds)
+        assert result.cholesky_factors.shape[0] == n_seeds
         assert result.cholesky_factors.shape[1] == tril_size(3)  # Packed L
-        assert result.sharpnesses.shape == (len(seeds),)
-        assert result.amplitudes.shape == (len(seeds),)
+        assert result.sharpnesses.shape == (n_seeds,)
+        assert result.amplitudes.shape == (n_seeds,)
 
         # Render reconstruction
         reconstruction = render_gaussians_numpy(volume.shape, result, truncate=3.0)
@@ -151,18 +153,19 @@ class TestGaussianSplatsIntegration:
 
         data = np.clip(data, 0, 1)
 
-        # Find seeds using fewer scales for 4D
-        seeds = find_seeds_multiscale_gaussian(
+        # Find seeds using fewer scales for 4D (returns GSplatData)
+        seeds = seed_from_gaussian(
             data,
             scales=(1.0, 2.0),  # Fewer scales for 4D
             peaks_per_scale=20,  # Fewer seeds
             percentile_thresh=75,
             min_distance=2.0,
         )
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 4  # 4D coordinates
+        n_seeds = len(seeds.centers)
+        assert n_seeds > 0
+        assert seeds.centers.shape[1] == 4  # 4D coordinates
 
-        # Fit splats with reduced iterations for 4D
+        # Fit splats with reduced iterations for 4D (accepts GSplatData)
         result = fit_gaussian_splats(
             data,
             seeds=seeds,
@@ -176,8 +179,8 @@ class TestGaussianSplatsIntegration:
         # Verify result structure
         assert result.centers.shape[1] == 4  # 4D centers
         assert result.cholesky_factors.shape[1] == tril_size(4)  # 4x4 Cholesky
-        assert result.sharpnesses.shape == (len(seeds),)
-        assert len(result.amplitudes) == len(seeds)
+        assert result.sharpnesses.shape == (n_seeds,)
+        assert len(result.amplitudes) == n_seeds
         assert all(result.amplitudes >= 0)  # Non-negative amplitudes
 
         # Render reconstruction (this tests our nD chunking path!)
@@ -201,8 +204,8 @@ class TestGaussianSplatsIntegration:
         y, x = np.meshgrid(np.arange(32), np.arange(32), indexing="ij")
         image = 0.8 * np.exp(-((y - 16) ** 2 + (x - 16) ** 2) / (2 * 4**2))
 
-        # Find seeds
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
+        # Find seeds (returns GSplatData)
+        seeds = seed_from_gaussian(image, peaks_per_scale=10)
 
         # Fit with early stopping (more iterations to allow convergence)
         fitter = GaussianSplatFitter(enable_dynamic_ops=False)
@@ -248,9 +251,9 @@ class TestGaussianSplatsIntegration:
             pytest.skip("Requires GPU for batched renderer test")
 
         image = self.create_test_image((64, 64), n_blobs=3)
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=30)
+        seeds = seed_from_gaussian(image, peaks_per_scale=30)
 
-        # Fit splats
+        # Fit splats (accepts GSplatData)
         result = fit_gaussian_splats(
             image,
             seeds=seeds,
@@ -285,7 +288,7 @@ class TestGaussianSplatsIntegration:
     def test_loss_functions(self) -> None:
         """Test both MSE and Poisson loss functions."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=20)
+        seeds = seed_from_gaussian(image, peaks_per_scale=20)
 
         # Test MSE loss
         result_mse = fit_gaussian_splats(
@@ -329,7 +332,7 @@ class TestGaussianSplatsIntegration:
     def test_regularization(self) -> None:
         """Test L1 regularization on amplitudes."""
         image = self.create_test_image((32, 32), n_blobs=5)
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=50)
+        seeds = seed_from_gaussian(image, peaks_per_scale=50)
 
         # Without regularization
         result_no_reg = fit_gaussian_splats(
@@ -361,7 +364,7 @@ class TestGaussianSplatsIntegration:
     def test_sigma_constraints(self) -> None:
         """Test that sigma constraints are respected."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
+        seeds = seed_from_gaussian(image, peaks_per_scale=10)
 
         # Fit with constraints
         sigma_min = [0.5, 0.5]
@@ -395,7 +398,7 @@ class TestGaussianSplatsIntegration:
     def test_device_compatibility(self) -> None:
         """Test that fitting works on different devices."""
         image = self.create_test_image((32, 32), n_blobs=2)
-        seeds = find_seeds_multiscale_gaussian(image, peaks_per_scale=10)
+        seeds = seed_from_gaussian(image, peaks_per_scale=10)
 
         # Test CPU
         result_cpu = fit_gaussian_splats(
@@ -475,7 +478,7 @@ class TestGaussianSplatsIntegration:
 
         # Uniform image
         uniform_image = np.ones((32, 32), dtype=np.float32) * 0.5
-        seeds = find_seeds_multiscale_gaussian(uniform_image, peaks_per_scale=10)
+        seeds = seed_from_gaussian(uniform_image, peaks_per_scale=10)
 
         result = fit_gaussian_splats(
             uniform_image,

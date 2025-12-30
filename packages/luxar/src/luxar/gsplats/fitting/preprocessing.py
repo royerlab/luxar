@@ -29,25 +29,36 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
     PreprocessedData
         Preprocessed data ready for optimization
     """
+    from luxar.gsplats.fit_result import GSplatData
+
     V = config.V.copy()  # Work with a copy
     seeds = config.seeds
     seed_kwargs = config.seed_kwargs or {}  # Default to empty dict if None
 
-    # Generate seed centers
-    if seeds is None:
+    # Handle GSplatData seeds specially
+    if isinstance(seeds, GSplatData):
+        seed_centers = seeds.centers
+        # Extract pre-initialized parameters from GSplatData
+        _extract_gsplatdata_init(config, seeds)
+        if config.verbose:
+            aprint(f"Using GSplatData seeds: {len(seed_centers)} splats with pre-initialized parameters")
+    elif seeds is None:
         # Auto-generate using specified method
         seed_centers = _generate_seeds(
-            V, None, None, config.seed_method, config.verbose, **seed_kwargs
+            V, None, None, config.seed_method, config.verbose,
+            config=config, **seed_kwargs
         )
     elif isinstance(seeds, int):
         # User-specified exact count (seed_method still applies)
         seed_centers = _generate_seeds(
-            V, None, seeds, config.seed_method, config.verbose, **seed_kwargs
+            V, None, seeds, config.seed_method, config.verbose,
+            config=config, **seed_kwargs
         )
     elif isinstance(seeds, float):
         # User-specified proportion (seed_method still applies)
         seed_centers = _generate_seeds(
-            V, seeds, None, config.seed_method, config.verbose, **seed_kwargs
+            V, seeds, None, config.seed_method, config.verbose,
+            config=config, **seed_kwargs
         )
     else:
         # User-provided array of seed centers
@@ -115,6 +126,7 @@ def _generate_seeds(
     target_count: int | None,
     seed_method: str,
     verbose: bool,
+    config: "FitConfig | None" = None,
     **seed_kwargs,
 ) -> np.ndarray:
     """
@@ -139,6 +151,8 @@ def _generate_seeds(
         "decomposition,gaussian", or "gaussian,decomposition"
     verbose : bool
         Whether to print progress
+    config : FitConfig | None
+        Optional config to populate with GSplatData initialization parameters
     **seed_kwargs
         Additional parameters routed to seed generation methods
 
@@ -147,10 +161,23 @@ def _generate_seeds(
     np.ndarray
         Generated seed centers (N, ndim)
     """
+    from luxar.gsplats.fit_result import GSplatData
     from luxar.gsplats.seeds import generate_seeds
 
-    # Generate seeds using specified method
-    seed_centers = generate_seeds(V, method=seed_method, **seed_kwargs)
+    # Generate seeds using specified method (returns GSplatData)
+    seeds_result = generate_seeds(V, method=seed_method, **seed_kwargs)
+
+    # Extract centers from GSplatData
+    if isinstance(seeds_result, GSplatData):
+        seed_centers = seeds_result.centers
+        # If config provided, extract pre-initialized parameters
+        if config is not None:
+            _extract_gsplatdata_init(config, seeds_result)
+            if verbose:
+                aprint("Using scale-informed initialization from seeding method")
+    else:
+        # Fallback for any legacy return type
+        seed_centers = seeds_result
 
     # Log initial generation
     if verbose:
@@ -356,7 +383,14 @@ def _ensure_minimum_seeds(
 
         kwargs_adjusted = seed_kwargs.copy()
         kwargs_adjusted["percentile_thresh"] = 10.0  # Very inclusive
-        gaussian_seeds = generate_seeds(V, method="gaussian", **kwargs_adjusted)
+        gaussian_result = generate_seeds(V, method="gaussian", **kwargs_adjusted)
+
+        # Extract centers from GSplatData
+        from luxar.gsplats.fit_result import GSplatData
+        if isinstance(gaussian_result, GSplatData):
+            gaussian_seeds = gaussian_result.centers
+        else:
+            gaussian_seeds = gaussian_result
 
         if verbose:
             aprint(f"Found {len(gaussian_seeds)} Gaussian seeds with low threshold")
@@ -577,3 +611,41 @@ def _set_convergence_threshold(max_abs_error: float | None, verbose: bool) -> fl
             aprint(f"Convergence threshold: {max_abs_error:.6f} (user-specified)")
 
     return max_abs_error
+
+
+def _extract_gsplatdata_init(config: FitConfig, gsplat_data: "GSplatData") -> None:  # noqa: F821
+    """
+    Extract pre-initialized parameters from GSplatData.
+
+    Populates config.init_L, config.init_amps, and config.init_sharpness
+    from a GSplatData object. This enables using moment pursuit results
+    or loaded splats as initialization for gradient descent refinement.
+
+    Parameters
+    ----------
+    config : FitConfig
+        Configuration to update with pre-initialized parameters.
+    gsplat_data : GSplatData
+        Source of initialization data.
+    """
+    from luxar.gsplats.utils.trils import unpack_tril
+
+    ndim = gsplat_data.centers.shape[1]
+
+    # Extract Cholesky factors (convert from packed to matrix form)
+    if gsplat_data.cholesky_factors is not None:
+        config.init_L = unpack_tril(gsplat_data.cholesky_factors, ndim)
+    else:
+        config.init_L = None
+
+    # Extract amplitudes
+    if gsplat_data.amplitudes is not None:
+        config.init_amps = gsplat_data.amplitudes
+    else:
+        config.init_amps = None
+
+    # Extract sharpness
+    if gsplat_data.sharpnesses is not None:
+        config.init_sharpness = gsplat_data.sharpnesses
+    else:
+        config.init_sharpness = None

@@ -13,7 +13,7 @@ from luxar.gsplats.fitting.dynamic_ops import (
     apply_dynamic_operations,
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
-from luxar.gsplats.seeds import find_seeds_multiscale_gaussian
+from luxar.gsplats.seeds import seed_from_gaussian
 
 
 class TestDynamicOpsConfig:
@@ -225,22 +225,22 @@ class TestDynamicOperationsIntegration:
         blob[12, 12] = 0.8
         V = blob.astype(np.float32)
 
-        # Find seeds
-        centers = find_seeds_multiscale_gaussian(
+        # Find seeds (returns GSplatData with scale-informed shapes)
+        seeds = seed_from_gaussian(
             V, scales=(1.0, 2.0), peaks_per_scale=10, percentile_thresh=50.0
         )
 
-        if len(centers) == 0:
+        if len(seeds.centers) == 0:
             pytest.skip("No seeds found for test data")
 
         # Configure dynamic operations
         cfg = DynamicOpsConfig()
         cfg.step_every = 5  # Run more frequently for testing
 
-        # Run fitting with dynamic operations
+        # Run fitting with dynamic operations (GSplatData passed directly)
         result = fit_gaussian_splats(
             V,
-            seeds=centers,
+            seeds=seeds,
             init_sigma_vox=1.5,
             n_iters=20,  # Short run for testing
             lr=0.1,
@@ -262,18 +262,18 @@ class TestDynamicOperationsIntegration:
         blob[16, 16] = 1.0
         V = blob.astype(np.float32)
 
-        # Find seeds
-        centers = find_seeds_multiscale_gaussian(
+        # Find seeds (returns GSplatData)
+        seeds = seed_from_gaussian(
             V, scales=(1.0,), peaks_per_scale=5, percentile_thresh=50.0
         )
 
-        if len(centers) == 0:
+        if len(seeds.centers) == 0:
             pytest.skip("No seeds found for test data")
 
         # Run fitting without dynamic operations
         result = fit_gaussian_splats(
             V,
-            seeds=centers,
+            seeds=seeds,
             init_sigma_vox=1.5,
             n_iters=10,
             lr=0.1,
@@ -296,7 +296,8 @@ class TestDynamicOperationsIntegration:
 
         # Create test model with varying importance splats
         V = np.random.random((32, 32)).astype(np.float32)
-        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=50)
+        seeds = seed_from_gaussian(V, peaks_per_scale=50)
+        centers = seeds.centers
 
         # Create model with many splats to trigger pruning
         L0 = np.eye(2)[None, :, :] * 1.0
@@ -331,12 +332,12 @@ class TestDynamicOperationsIntegration:
     def test_asymmetric_penalty_with_all_loss_types(self) -> None:
         """Test asymmetric penalty works with all loss functions."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=20)
+        seeds = seed_from_gaussian(V, peaks_per_scale=20)
 
         for loss_type in ["mse", "poisson", "l1"]:
             result = fit_gaussian_splats(
                 V,
-                centers,
+                seeds=seeds,
                 n_iters=10,
                 loss_type=loss_type,
                 asymmetric_penalty=5.0,  # Test with asymmetric penalty
@@ -409,12 +410,12 @@ class TestDynamicOperationsIntegration:
     def test_auto_convergence_threshold_behavior(self) -> None:
         """Test auto-convergence threshold integration with dynamic operations."""
         V = np.random.random((24, 24)).astype(np.float32)
-        centers = find_seeds_multiscale_gaussian(V, peaks_per_scale=30)
+        seeds = seed_from_gaussian(V, peaks_per_scale=30)
 
         # Test that auto-threshold works with dynamic operations
         result = fit_gaussian_splats(
             V,
-            centers,
+            seeds=seeds,
             n_iters=50,
             max_abs_error=None,  # Should auto-set to 0.01
             loss_type="l1",

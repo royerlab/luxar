@@ -27,7 +27,7 @@ import { ArrayRefRegistry } from './array-decoder';
 import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
-import { TwoLevelCachingStore, ChunkPrefetcher } from '../cache';
+import { TwoLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
 import type { PointsMetadata, PointsUserData } from '../types/points';
 import { isPointsUserData } from '../types/points';
 import type {
@@ -70,6 +70,8 @@ import { getWorkerPool } from '../workers/worker-pool';
 export class SceneLoader {
   private store: any | null = null;
   private cachingStore: TwoLevelCachingStore | null = null;
+  // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
+  private l0Cache: DecompressedChunkCache | null = null;
   private loaders = new Map<string, DataLoader>();
   private linesLoaders = new Map<string, LinesDataLoader>();
   private gsplatLoaders = new Map<string, GSplatsDataLoader>();
@@ -92,6 +94,12 @@ export class SceneLoader {
 
   // Update profiler for timing scene updates (optional, provided by SceneLoaderManager)
   private profiler: UpdateProfiler | null = null;
+
+  // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
+  // When a new update arrives while one is in progress, we store the latest and process it after
+  private _updateInProgress = false;
+  private _pendingViewState: Partial<ViewState> | null = null;
+  private _updateVersion = 0; // For logging/debugging
 
   constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
     this.profiler = profiler ?? null;
@@ -211,6 +219,39 @@ export class SceneLoader {
       this.dispose();
     }
 
+    // Initialize L0 decompressed chunk cache if enabled
+    // This caches decoded zarr chunks to avoid ~2ms Blosc decompression overhead on cache hits
+    // L0 respects same URL params as L1/L2: ?no-cache, ?cache-debug, ?clear-cache
+    const urlParams = new URLSearchParams(
+      typeof window !== 'undefined' ? window.location?.search : ''
+    );
+    const noCache = urlParams.has('no-cache');
+    const cacheDebug = urlParams.has('cache-debug');
+    const clearCache = urlParams.has('clear-cache');
+
+    if (appConfig.cache.l0Enabled && !noCache) {
+      this.l0Cache = new DecompressedChunkCache({
+        maxSize: appConfig.cache.l0MaxSizeMB * 1024 * 1024,
+        debug: cacheDebug || appConfig.cache.debug,
+      });
+
+      // Clear L0 if ?clear-cache is set (matches L1/L2 behavior)
+      if (clearCache) {
+        this.l0Cache.clear();
+        log.info(Modules.SCENE_LOADER, 'L0 cache cleared via ?clear-cache URL parameter');
+      }
+
+      log.info(
+        Modules.SCENE_LOADER,
+        `L0 decompressed chunk cache enabled (max size: ${appConfig.cache.l0MaxSizeMB}MB)`
+      );
+    } else {
+      this.l0Cache = null;
+      if (noCache) {
+        log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
+      }
+    }
+
     // Open zarr store with caching
     let rawStore: Readable;
     if (appConfig.cache.enabled) {
@@ -292,6 +333,14 @@ export class SceneLoader {
           monitor.setCacheStatsProvider(this.cachingStore);
         }
 
+        // Connect L0 decompressed chunk cache provider for Cache tab
+        if (this.l0Cache) {
+          monitor.setL0CacheProvider({
+            getStats: () => this.l0Cache!.getStats(),
+            clear: () => this.l0Cache!.clear(),
+          });
+        }
+
         // Connect GPU buffer pool provider for Memory tab
         if (this._gpuBufferPool) {
           monitor.setGPUBufferPoolProvider(this._gpuBufferPool);
@@ -329,13 +378,50 @@ export class SceneLoader {
   }
 
   /**
-   * Update all points and lines for a new view state
+   * Update all points and lines for a new view state.
+   *
+   * Uses serialized execution to prevent race conditions: only one update runs at a time.
+   * If a new update arrives while one is in progress, it's queued as "pending" and processed
+   * after the current update completes. Only the LATEST pending state is kept (older ones
+   * are discarded), ensuring eventual convergence without starvation.
    */
   async updateView(viewState: Partial<ViewState>): Promise<void> {
-    this.viewState = { ...this.viewState, ...viewState };
+    // SERIALIZATION: If an update is already in progress, queue this one and return
+    if (this._updateInProgress) {
+      // Store the latest pending state (supersedes any previous pending state)
+      this._pendingViewState = viewState;
+      log.info(
+        Modules.SCENE_LOADER,
+        `Update queued (v${this._updateVersion + 1}) - another update in progress`
+      );
+      return;
+    }
+
+    // Mark update as in progress
+    this._updateInProgress = true;
+    this._updateVersion++;
+    const currentVersion = this._updateVersion;
+
+    // CRITICAL: Deep copy arrays to prevent mutation during async operations
+    // The spread operator only does shallow copy - arrays must be explicitly copied
+    this.viewState = {
+      ...this.viewState,
+      ...viewState,
+      // Always copy arrays to prevent external mutation affecting in-flight updates
+      displayDims: viewState.displayDims
+        ? [...viewState.displayDims]
+        : [...this.viewState.displayDims],
+      slicePosition: viewState.slicePosition
+        ? [...viewState.slicePosition]
+        : [...this.viewState.slicePosition],
+      tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
+    };
 
     const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
-    log.update(Modules.SCENE_LOADER, `Updating view for ${totalLoaders} loaders`);
+    log.update(
+      Modules.SCENE_LOADER,
+      `Updating view v${currentVersion} for ${totalLoaders} loaders`
+    );
 
     // Start profiling update cycle
     this.profiler?.beginUpdate();
@@ -394,6 +480,10 @@ export class SceneLoader {
 
             const points = await loader.updateView(pointsViewState, session);
             if (points) {
+              log.info(
+                Modules.SCENE_LOADER,
+                `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
+              );
               this.updatePointsGeometry(path, points);
               // Set metadata with point count
               session.setMetadata({ points: points.metadata.loadedPoints });
@@ -470,6 +560,10 @@ export class SceneLoader {
 
             const data = await loader.updateView(linesViewState, session);
             if (data) {
+              log.info(
+                Modules.SCENE_LOADER,
+                `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
+              );
               await this.updateLinesGeometry(path, data, linesViewState, session);
               // Set metadata with segment count (each segment is 2 indices)
               session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
@@ -602,6 +696,32 @@ export class SceneLoader {
     } finally {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
+
+      // SERIALIZATION: Process pending update if one was queued
+      // CRITICAL: Keep _updateInProgress = true until the rAF callback fires!
+      // This prevents new slider events from starting updates during the yield.
+      if (this._pendingViewState !== null) {
+        const pendingState = this._pendingViewState;
+        this._pendingViewState = null;
+
+        // Yield to render loop: ensure at least one frame is painted before next update
+        // This prevents the "updates faster than renders" problem that causes black screen
+        if (typeof requestAnimationFrame !== 'undefined') {
+          requestAnimationFrame(() => {
+            // Release the lock right before starting the next update
+            // Any slider events during the yield were queued (because lock was held)
+            this._updateInProgress = false;
+            this.updateView(pendingState);
+          });
+        } else {
+          // Fallback for non-browser environments (e.g., tests)
+          this._updateInProgress = false;
+          this.updateView(pendingState);
+        }
+      } else {
+        // No pending update - release the lock now
+        this._updateInProgress = false;
+      }
     }
   }
 
@@ -703,6 +823,12 @@ export class SceneLoader {
         );
       }
     }
+
+    // Log visible segment count after projection
+    log.info(
+      Modules.SCENE_LOADER,
+      `[GEOM] lines ${path}: ${processed.segmentCount}/${data.segmentCount} visible after projection`
+    );
 
     // Phase 4: Use GPU buffer pool if enabled
     if (this._gpuBufferPool) {
@@ -1228,8 +1354,8 @@ export class SceneLoader {
       let tolerance = linesViewState.dimensions
         ? computeLinesTolerance(linesViewState.dimensions, linesViewState.displayDims)
         : new Array(attrs.ndim || 3)
-            .fill(0)
-            .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
+          .fill(0)
+          .map((_, i) => (linesViewState.displayDims.includes(i) ? 1e10 : 0));
 
       // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
       // This ensures segments aren't clipped when navigating through extended dimensions
@@ -1319,7 +1445,8 @@ export class SceneLoader {
       node,
       this.arrayRefRegistry,
       this.store!,
-      this.profiler ?? undefined
+      this.profiler ?? undefined,
+      this.l0Cache ?? undefined
     );
 
     return loader;
@@ -1451,7 +1578,8 @@ export class SceneLoader {
       node,
       this.arrayRefRegistry,
       this.store!,
-      this.profiler ?? undefined
+      this.profiler ?? undefined,
+      this.l0Cache ?? undefined
     );
 
     return loader;
@@ -1468,13 +1596,15 @@ export class SceneLoader {
     log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
     // Pass the store reference for array_ref resolution (needed by ArrayDecoder)
     // Also pass profiler for hierarchical timing instrumentation
+    // Pass L0 cache for decompressed chunk caching (avoids Blosc decompression overhead)
     const loader = new PointSpatialIndexLoader(
       nodeLoc,
       node,
       this.config,
       this.arrayRefRegistry,
       this.store!,
-      this.profiler ?? undefined
+      this.profiler ?? undefined,
+      this.l0Cache ?? undefined
     );
 
     // Connect to monitor if available
@@ -2287,6 +2417,18 @@ export class SceneLoader {
     if (this.cachingStore) {
       this.cachingStore.dispose().catch(() => {});
       this.cachingStore = null;
+    }
+
+    // Clear L0 decompressed chunk cache
+    if (this.l0Cache) {
+      const stats = this.l0Cache.getStats();
+      log.info(
+        Modules.SCENE_LOADER,
+        `L0 cache stats at dispose: ${stats.count} chunks, ${(stats.size / 1024 / 1024).toFixed(1)}MB, ` +
+          `hit rate: ${(stats.hitRate * 100).toFixed(1)}%`
+      );
+      this.l0Cache.clear();
+      this.l0Cache = null;
     }
 
     this.store = null;
