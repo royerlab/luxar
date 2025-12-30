@@ -85,6 +85,7 @@ Controls:
 
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
+
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 import subprocess

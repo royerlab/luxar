@@ -3,20 +3,24 @@
 Multiscale Gaussian seed generation for Gaussian splatting.
 
 This module provides multiscale Gaussian-blurred peak detection with optional
-CLAHE preprocessing for comprehensive feature coverage.
+CLAHE preprocessing. Returns GSplatData with scale-informed Gaussian shapes
+where sigma = blur_scale for each detected seed.
 """
 
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy import ndimage as ndi
 
-from luxar.gsplats.seeds.utils import dedupe_farthest_first, local_maxima
+from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.seeds.utils import (
+    local_maxima,
+    sigmas_to_cholesky_isotropic,
+)
 
 
-def find_seeds_multiscale_gaussian(
+def seed_from_gaussian(
     V: np.ndarray,
-    spacing: Optional[Sequence[float]] = None,
     scales: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0),
     peaks_per_scale: Optional[int] = None,
     percentile_thresh: float = 75.0,
@@ -25,60 +29,52 @@ def find_seeds_multiscale_gaussian(
     clahe_tile_size: int = 32,
     clahe_clip_limit: float = 16.0,
     clahe_nbins: int = 256,
-) -> np.ndarray:
+) -> GSplatData:
     """
-    Generate seed set of seed centers for Gaussian splat fitting.
+    Generate seed Gaussian splats using multiscale Gaussian blob detection.
 
     Uses multiscale Gaussian-blurred peak detection to detect blob-like structures
-    at various sizes with optional CLAHE preprocessing to enhances local contrast for balanced detection/
-
-
-    The resulting seed set is comprehensive across scales - the subsequent fitting
-    process will select and refine the most useful subset.
+    at various sizes. Each detected seed is initialized as an isotropic Gaussian
+    with sigma equal to the blur scale at which it was detected.
 
     Parameters
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to analyze.
-    spacing : Sequence[float], optional
-        Physical spacing between voxels along each axis. Currently unused but
-        reserved for future physical-space calculations. Default is unit spacing.
     scales : Sequence[float], default=(1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
         Standard deviations (in voxels) for multiscale Gaussian filtering.
-        Should cover the range of expected feature sizes.
+        Each seed's sigma is set to the scale at which it was detected.
     peaks_per_scale : int or None, optional
         Maximum number of peaks to detect at each scale. If None, extracts all
         peaks above threshold. Default: None (unlimited).
-    percentile_thresh : float, default=70.0
+    percentile_thresh : float, default=75.0
         Intensity percentile threshold (0-100) for peak detection. Higher values
         are more selective, lower values detect more seeds.
     min_distance : float, default=2.0
         Minimum Euclidean distance (in voxels) between seed centers.
         Used for deduplication to avoid overly dense seeds.
     apply_clahe : bool, default=True
-        Whether to apply CLAHE preprocessing before detection. When enabled,
-        all detection methods operate on CLAHE-enhanced image, allowing
-        discovery of dim structures in heterogeneous data.
+        Whether to apply CLAHE preprocessing before detection.
     clahe_tile_size : int, default=32
         Tile size for CLAHE preprocessing in voxels.
     clahe_clip_limit : float, default=16.0
-        Contrast limiting factor for CLAHE. Higher values provide more
-        aggressive enhancement (range: 1.0-40.0, typical: 2.0-16.0).
+        Contrast limiting factor for CLAHE.
     clahe_nbins : int, default=256
         Number of histogram bins for CLAHE equalization.
 
     Returns
     -------
-    np.ndarray
-        Array of shape (N, ndim) containing seed center coordinates in
-        voxel units (float). Coordinates may be sub-voxel due to centroid refinement.
+    GSplatData
+        Gaussian splat seeds with:
+        - centers: Sub-voxel refined peak positions
+        - amplitudes: Peak intensities from original image
+        - cholesky_factors: Isotropic Cholesky factors where sigma = scale
+        - sharpnesses: All set to 2.0 (standard Gaussian)
 
     Notes
     -----
-    - When CLAHE is enabled, all processing (detection and centroid refinement)
-      uses the CLAHE-enhanced image for consistency.
-    - This ensures that sub-voxel refinement matches the features actually detected.
-    - Candidates are processed from coarse to fine scales for better spatial distribution.
+    The sigma for each seed is determined by the scale at which it was detected.
+    Features detected at scale=4.0 will have sigma=4.0 voxels.
     """
     # Input validation
     V = np.asarray(V, dtype=float)
@@ -103,18 +99,12 @@ def find_seeds_multiscale_gaussian(
     if min_distance <= 0:
         raise ValueError("min_distance must be positive")
 
-    # Physical spacing (currently unused, but reserved for future features)
-    spacing = np.ones(d, float) if spacing is None else np.asarray(spacing, float)
-    if len(spacing) != d:
-        raise ValueError(f"spacing must have length {d} to match input dimensions")
-
     # CLAHE preprocessing (if enabled)
     if apply_clahe:
         import torch
 
         from luxar.gsplats.clahe import apply_clahe as apply_clahe_torch
 
-        # Convert to torch, apply CLAHE, convert back
         V_torch = torch.tensor(V, dtype=torch.float32)
         V_clahe_torch = apply_clahe_torch(
             V_torch,
@@ -126,80 +116,143 @@ def find_seeds_multiscale_gaussian(
     else:
         V_work = V
 
-    # Collect coordinates from all detection methods
+    # Collect coordinates and their scales from all detection
     all_coords: List[np.ndarray] = []
+    all_scales: List[np.ndarray] = []  # Track scale for each seed
 
-    # Pre-compute common statistics to avoid redundant calculations
-    V_percentile_thresh = np.percentile(
-        V_work, percentile_thresh
-    )  # Cache base image threshold
+    # Pre-compute common statistics
+    V_percentile_thresh = np.percentile(V_work, percentile_thresh)
 
     # Multiscale Gaussian-blurred peaks (coarsest to finest)
-    # Detect blob-like structures at multiple scales by finding peaks in Gaussian-filtered images
-    # Process coarsest scales first for farthest-first priority (large structures before details)
     for s in reversed(scales):
         # Apply Gaussian smoothing at current scale
         img = ndi.gaussian_filter(V_work, sigma=s, mode="nearest")
 
-        # Use adaptive threshold: prefer cached base threshold, fall back to scale-specific
-        # For heavily smoothed images, use their own percentile; for mild smoothing, reuse base
-        if s <= min(scales) * 2.0:  # For fine scales, use base image threshold
+        # Adaptive threshold
+        if s <= min(scales) * 2.0:
             thr = V_percentile_thresh
-        else:  # For coarse scales, compute specific threshold
+        else:
             thr = np.percentile(img, percentile_thresh)
 
-        # Neighborhood radius for peak detection scales with filter size
-        # Factor 1.5 ensures peaks are well-separated relative to blob size
+        # Neighborhood radius scales with filter size
         radius = int(max(1, round(1.5 * s)))
 
-        # Find local maxima in filtered image
+        # Find local maxima
         coords = local_maxima(img, radius=radius, thresh=thr, top_k=peaks_per_scale)
-        all_coords.append(coords)
+
+        if len(coords) > 0:
+            all_coords.append(coords)
+            # Track the scale for each seed detected at this scale
+            all_scales.append(np.full(len(coords), s, dtype=np.float32))
 
     # Handle case where no seeds were found
     if len(all_coords) == 0:
-        return np.zeros((0, d), float)
+        return GSplatData(
+            centers=np.zeros((0, d), dtype=np.float32),
+            amplitudes=np.zeros(0, dtype=np.float32),
+            cholesky_factors=np.zeros((0, d * (d + 1) // 2), dtype=np.float32),
+            sharpnesses=np.zeros(0, dtype=np.float32),
+        )
 
-    # Combine all seed coordinate arrays, filtering out empty arrays
-    non_empty_coords = [c for c in all_coords if c.size > 0]
-    if len(non_empty_coords) == 0:
-        return np.zeros((0, d), float)
+    # Combine all seeds
+    coords = np.vstack(all_coords)
+    seed_scales = np.concatenate(all_scales)
 
-    coords = np.vstack(non_empty_coords)
+    # Deduplicate seeds (keeping track of which scale each came from)
+    # Get intensities for deduplication priority
+    coords_int = np.clip(np.round(coords).astype(int), 0, np.array(V_work.shape) - 1)
+    intensities = V_work[tuple(coords_int.T)]
 
-    # Remove seeds that are too close to each other (spatial deduplication)
-    # This reduces redundancy between different detection methods
-    coords = dedupe_farthest_first(coords, min_distance=min_distance)
+    # Deduplicate with intensity priority
+    coords, seed_scales = _dedupe_with_scales(
+        coords, seed_scales, intensities, min_distance
+    )
 
-    # Refine seed positions to sub-voxel precision using intensity-weighted centroids
-    # This improves localization accuracy by considering local intensity distribution
-    # Use V_work (same image used for detection) for consistency
+    # Refine positions to sub-voxel precision
+    centers = _refine_positions(coords, V_work)
+
+    # Get amplitudes from original image at refined positions
+    centers_int = np.clip(
+        np.round(centers).astype(int), 0, np.array(V.shape) - 1
+    )
+    amplitudes = V[tuple(centers_int.T)].astype(np.float32)
+
+    # Build Cholesky factors from scales (sigma = scale)
+    cholesky_factors = sigmas_to_cholesky_isotropic(seed_scales, d)
+
+    # Standard Gaussian sharpness
+    sharpnesses = np.full(len(centers), 2.0, dtype=np.float32)
+
+    return GSplatData(
+        centers=centers.astype(np.float32),
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        sharpnesses=sharpnesses,
+    )
+
+
+def _dedupe_with_scales(
+    coords: np.ndarray,
+    scales: np.ndarray,
+    intensities: np.ndarray,
+    min_distance: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Deduplicate seeds while preserving scale information.
+
+    Uses intensity-based priority for selection.
+    """
+    if len(coords) == 0:
+        return coords, scales
+
+    # Sort by intensity (highest first)
+    sort_idx = np.argsort(intensities)[::-1]
+    coords_sorted = coords[sort_idx]
+    scales_sorted = scales[sort_idx]
+
+    # Greedy deduplication
+    kept_mask = np.ones(len(coords_sorted), dtype=bool)
+
+    for i in range(len(coords_sorted)):
+        if not kept_mask[i]:
+            continue
+
+        # Mark nearby seeds as rejected
+        diffs = coords_sorted[i + 1 :] - coords_sorted[i]
+        distances = np.sqrt(np.sum(diffs**2, axis=1))
+        nearby = distances < min_distance
+        kept_mask[i + 1 :][nearby] = False
+
+    return coords_sorted[kept_mask], scales_sorted[kept_mask]
+
+
+def _refine_positions(coords: np.ndarray, V_work: np.ndarray) -> np.ndarray:
+    """
+    Refine seed positions to sub-voxel precision using intensity-weighted centroids.
+    """
+    d = V_work.ndim
     centers = []
+
     for c in coords:
-        # Extract 3x3x...x3 neighborhood around each seed (clipped at image borders)
+        # Extract 3x3x...x3 neighborhood
         slices = []
         for ax in range(d):
-            # Create slice from c-1 to c+2 (exclusive), clamped to image bounds
             lo = max(0, int(c[ax] - 1))
             hi = min(V_work.shape[ax], int(c[ax] + 2))
             slices.append(slice(lo, hi))
-        # Extract intensity patch and create coordinate grids
+
         patch = V_work[tuple(slices)]
         grids = np.meshgrid(
             *[np.arange(s.start, s.stop) for s in slices], indexing="ij"
         )
 
-        # Compute intensity-weighted centroid
-        # Subtract minimum to make weights non-negative (relative intensities)
+        # Intensity-weighted centroid
         w = patch - patch.min()
-        W = w.sum() + 1e-12  # Add small epsilon to avoid division by zero
+        W = w.sum() + 1e-12
 
-        # Calculate weighted average coordinates across all axes
         mu = np.array(
             [float((w * grids[ax]).sum() / W) for ax in range(d)], dtype=float
         )
         centers.append(mu)
 
-    # Convert list to array and return refined seed positions
-    centers = np.array(centers, float)
-    return centers
+    return np.array(centers, dtype=float)

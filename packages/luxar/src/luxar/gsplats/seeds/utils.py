@@ -3,7 +3,8 @@
 Shared utility functions for seed generation.
 
 This module contains common utilities used by multiple seed generation methods,
-including peak detection and spatial deduplication algorithms.
+including peak detection, spatial deduplication algorithms, and Cholesky factor
+construction for Gaussian initialization.
 """
 
 from typing import Optional
@@ -11,6 +12,61 @@ from typing import Optional
 import numpy as np
 from scipy import ndimage as ndi
 from scipy.spatial import cKDTree
+
+
+def sigmas_to_cholesky_isotropic(
+    sigmas: np.ndarray,
+    ndim: int,
+) -> np.ndarray:
+    """
+    Convert per-seed isotropic sigmas to packed Cholesky factors.
+
+    For isotropic Gaussians, the covariance matrix is Σ = σ²I,
+    so the Cholesky factor is L = σI (diagonal matrix).
+
+    Parameters
+    ----------
+    sigmas : np.ndarray, shape (N,)
+        Isotropic sigma (standard deviation) per seed.
+    ndim : int
+        Number of spatial dimensions.
+
+    Returns
+    -------
+    cholesky_factors : np.ndarray, shape (N, ndim*(ndim+1)//2)
+        Packed lower-triangular Cholesky factors for isotropic Gaussians.
+        L = diag(sigma, sigma, ...) so L @ L.T = diag(sigma², ...)
+
+    Notes
+    -----
+    The packed Cholesky format stores the lower triangular elements
+    column by column: [L00, L10, L11, L20, L21, L22, ...].
+    For isotropic (diagonal) matrices, only diagonal positions are non-zero.
+
+    Diagonal indices in packed format: 0, 2, 5, 9, 14, ... = k*(k+3)//2
+
+    Examples
+    --------
+    >>> sigmas = np.array([1.0, 2.0, 3.0])  # 3 seeds
+    >>> L = sigmas_to_cholesky_isotropic(sigmas, ndim=3)
+    >>> L.shape
+    (3, 6)
+    >>> # For first seed (sigma=1.0): L = [[1,0,0],[0,1,0],[0,0,1]]
+    >>> # Packed: [1, 0, 1, 0, 0, 1] → diagonal at indices 0, 2, 5
+    """
+    sigmas = np.asarray(sigmas, dtype=np.float32)
+    N = len(sigmas)
+    tril_size = ndim * (ndim + 1) // 2
+    cholesky = np.zeros((N, tril_size), dtype=np.float32)
+
+    # For isotropic: diagonal elements are sigma, off-diagonal are 0
+    # Packed order: [L00, L10, L11, L20, L21, L22, ...]
+    # Diagonal indices for dimension k: k*(k+1)//2 + k = k*(k+3)//2
+    for k in range(ndim):
+        diag_idx = k * (k + 3) // 2
+        cholesky[:, diag_idx] = sigmas
+
+    return cholesky
 
 
 def local_maxima(
@@ -244,18 +300,18 @@ def combine_seeds(
     Examples
     --------
     >>> from luxar.gsplats.seeds import (
-    ...     find_seeds_multiscale_gaussian,
-    ...     find_seeds_multiscale_decomposition,
+    ...     seed_from_gaussian,
+    ...     seed_from_decomposition,
     ... )
     >>> from luxar.gsplats.seeds.utils import combine_seeds
     >>>
-    >>> # Generate seeds from both methods
-    >>> seeds1 = find_seeds_multiscale_gaussian(image)
-    >>> seeds2 = find_seeds_multiscale_decomposition(image, scales=[1, 2, 4, 8])
+    >>> # Generate seeds from both methods (returns GSplatData)
+    >>> result1 = seed_from_gaussian(image)
+    >>> result2 = seed_from_decomposition(image, scales=[1, 2, 4, 8])
     >>>
-    >>> # Combine with deduplication
-    >>> combined = combine_seeds(seeds1, seeds2, min_distance=3.0)
-    >>> print(f"Combined: {len(seeds1)} + {len(seeds2)} → {len(combined)} seeds")
+    >>> # Combine centers with deduplication
+    >>> combined = combine_seeds(result1.centers, result2.centers, min_distance=3.0)
+    >>> print(f"Combined: {len(result1.centers)} + {len(result2.centers)} → {len(combined)} seeds")
 
     Notes
     -----

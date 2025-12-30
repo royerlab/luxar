@@ -91,7 +91,7 @@ Key requirements:
 
 ## 1. Seed Generation Sub-Package (`seeds/)
 
-### Core Function: `find_seeds_multiscale_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
+### Core Function: `seed_from_gaussian(V, spacing=None, scales=(0.7,1.0,1.4,2.0,2.8,4.0), peaks_per_scale=1000, percentile_thresh=70.0, min_distance=2.0, add_intensity_grid=True, grid_step=None, grid_percentile=60.0)`
 
 
 **Note**: Seed generation is implemented in the `seeds/` sub-package (not a single file).

@@ -15,7 +15,6 @@ import type {
   GlobalStats,
   MonitorUIState,
   Recommendation,
-  MonitorEventType,
   LoaderType,
   CacheMetrics,
   CacheStatsProvider,
@@ -118,6 +117,9 @@ export class DataLoadingMonitor {
   // Cache stats provider for L1/L2 cache metrics
   private cacheStatsProvider: CacheStatsProvider | null = null;
 
+  // L0 decompressed chunk cache provider
+  private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
+
   // GPU buffer pool reference for dynamic stats retrieval
   private gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null = null;
 
@@ -130,10 +132,10 @@ export class DataLoadingMonitor {
     lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
     gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
   } = {
-    points: null,
-    lines: null,
-    gsplats: null,
-  };
+      points: null,
+      lines: null,
+      gsplats: null,
+    };
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -255,6 +257,19 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Set the L0 decompressed chunk cache provider for L0 cache monitoring.
+   * This enables the monitor to display L0 cache statistics in the Cache tab.
+   */
+  public setL0CacheProvider(
+    provider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null
+  ): void {
+    this.l0CacheProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'L0 cache provider connected');
+    }
+  }
+
+  /**
    * Set the GPU buffer pool provider for Memory tab stats.
    * The provider should have a getStats() method that returns PoolStats.
    */
@@ -294,6 +309,17 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Clear L0 decompressed chunk cache.
+   */
+  public clearL0Cache(): void {
+    if (this.l0CacheProvider) {
+      this.l0CacheProvider.clear();
+      log.info(Modules.DATA_MONITOR, 'L0 cache cleared');
+      this.updateUI();
+    }
+  }
+
+  /**
    * Clear L1 memory cache.
    */
   public clearL1Cache(): void {
@@ -316,14 +342,19 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Clear all caches (L1 + L2).
+   * Clear all caches (L0 + L1 + L2).
    */
   public async clearAllCaches(): Promise<void> {
+    // Clear L0 first (synchronous)
+    if (this.l0CacheProvider) {
+      this.l0CacheProvider.clear();
+    }
+    // Clear L1 + L2 (L2 is async)
     if (this.cacheStatsProvider) {
       await this.cacheStatsProvider.clearAll();
-      log.info(Modules.DATA_MONITOR, 'All caches cleared');
-      this.updateUI();
     }
+    log.info(Modules.DATA_MONITOR, 'All caches cleared (L0 + L1 + L2)');
+    this.updateUI();
   }
 
   /**
@@ -639,6 +670,9 @@ export class DataLoadingMonitor {
         this.setTimeRange(select.value);
         break;
       }
+      case 'clearL0':
+        this.clearL0Cache();
+        break;
       case 'clearL1':
         this.clearL1Cache();
         break;
@@ -984,12 +1018,6 @@ export class DataLoadingMonitor {
     return `
       <div class="luxar-performance-content">
         ${renderHierarchicalTimingPanel(timingData)}
-
-        <!-- Recent events (collapsed by default) -->
-        <details class="luxar-event-log">
-          <summary class="luxar-event-log__title">Recent Events</summary>
-          ${this.renderRecentEvents()}
-        </details>
       </div>
     `;
   }
@@ -1000,25 +1028,6 @@ export class DataLoadingMonitor {
   private renderInsightsTab(): string {
     const recommendations = this.advisor.getRecommendations();
     return renderInsightsContent(recommendations);
-  }
-
-  /**
-   * Render recent events
-   */
-  private renderRecentEvents(): string {
-    const recentEvents = this.events.slice(-10).reverse();
-
-    return recentEvents
-      .map(
-        (event) => `
-      <div class="luxar-event-item">
-        <span class="event-time">${new Date(event.timestamp).toLocaleTimeString()}</span>
-        <span class="event-type">${this.getEventIcon(event.type)}</span>
-        <span class="event-desc">${this.getEventDescription(event)}</span>
-      </div>
-    `
-      )
-      .join('');
   }
 
   /**
@@ -1093,11 +1102,17 @@ export class DataLoadingMonitor {
     let totalEntries = 0;
     let evictions = 0;
 
-    // Get L1/L2/network breakdown from cache stats provider if available
+    // Get L0/L1/L2/network breakdown from cache stats providers if available
+    let l0Stats: CacheMetrics['l0'] | undefined;
     let l1Stats: CacheMetrics['l1'] | undefined;
     let l2Stats: CacheMetrics['l2'] | undefined;
     let networkStats: CacheMetrics['network'] | undefined;
     let cacheEnabled = true;
+
+    // Get L0 stats from L0 cache provider
+    if (this.l0CacheProvider) {
+      l0Stats = this.l0CacheProvider.getStats();
+    }
 
     if (this.cacheStatsProvider) {
       const stats = this.cacheStatsProvider.getStats();
@@ -1127,9 +1142,13 @@ export class DataLoadingMonitor {
         bandwidth: stats.network.bandwidth,
       };
 
-      // Update totals from cache stats
-      totalCacheMemory = l1Stats.size + l2Stats.size;
-      totalEntries = l1Stats.count + l2Stats.count;
+      // Update totals from cache stats (L0 + L1 + L2)
+      totalCacheMemory = (l0Stats?.size ?? 0) + l1Stats.size + l2Stats.size;
+      totalEntries = (l0Stats?.count ?? 0) + l1Stats.count + l2Stats.count;
+    } else if (l0Stats) {
+      // Only L0 available
+      totalCacheMemory = l0Stats.size;
+      totalEntries = l0Stats.count;
     }
 
     // Also aggregate from loaders for memory limit and evictions
@@ -1175,7 +1194,8 @@ export class DataLoadingMonitor {
       queriesPerSec: this.cachedRates.queriesPerSec,
       loadsPerSec: this.cachedRates.loadsPerSec,
       bandwidth: this.cachedRates.bandwidth,
-      // L1/L2/Network breakdown
+      // L0/L1/L2/Network breakdown
+      l0: l0Stats,
       l1: l1Stats,
       l2: l2Stats,
       network: networkStats,
@@ -1415,49 +1435,6 @@ export class DataLoadingMonitor {
     if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + 'MB';
     if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + 'KB';
     return bytes.toFixed(0) + 'B';
-  }
-
-  private truncatePath(path: string): string {
-    if (path.length <= 30) return path;
-    const parts = path.split('/');
-    if (parts.length > 2) {
-      return `.../${parts.slice(-2).join('/')}`;
-    }
-    return '...' + path.slice(-27);
-  }
-
-  private getEventIcon(type: MonitorEventType): string {
-    const icons: Record<MonitorEventType, string> = {
-      query: '🔍',
-      load: '📥',
-      'cache-hit': '✅',
-      'cache-miss': '❌',
-      evict: '🗑️',
-      error: '⚠️',
-      prefetch: '🔮',
-    };
-    return icons[type] || '•';
-  }
-
-  private getEventDescription(event: MonitorEvent): string {
-    const path = event.data.path ? this.truncatePath(event.data.path) : 'unknown';
-
-    switch (event.type) {
-      case 'query':
-        return `Query ${path}: ${event.data.points || 0} points`;
-      case 'load':
-        return `Loaded ${path}: ${this.formatBytes(event.data.memory || 0)}`;
-      case 'cache-hit':
-        return `Cache hit: ${path}`;
-      case 'cache-miss':
-        return `Cache miss: ${path}`;
-      case 'evict':
-        return `Evicted: ${path}`;
-      case 'error':
-        return `Error: ${event.data.error || 'Unknown'}`;
-      default:
-        return event.type;
-    }
   }
 
   // All styling now handled by CSS classes in data-loading-monitor.css

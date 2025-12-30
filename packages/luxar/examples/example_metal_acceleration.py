@@ -64,7 +64,7 @@ def main():
                 verbose=True,
             )
 
-            aprint(f"✓ Fitting complete!")
+            aprint("✓ Fitting complete!")
             aprint(f"  Final splats: {result.centers.shape[0]}")
             aprint(f"  Optimization time: {result.stats['time_seconds']:.2f}s")
             aprint(f"  Iterations: {result.stats['iterations']}")

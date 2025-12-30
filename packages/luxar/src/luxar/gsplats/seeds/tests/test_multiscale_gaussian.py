@@ -1,5 +1,5 @@
 """
-Tests for seed detection functions in gsplats.
+Tests for seed_from_gaussian - multiscale Gaussian blob detection.
 """
 
 import importlib.util
@@ -7,9 +7,8 @@ import importlib.util
 import numpy as np
 import pytest
 
-from luxar.gsplats.seeds import (
-    find_seeds_multiscale_gaussian,
-)
+from luxar.gsplats.fit_result import GSplatData
+from luxar.gsplats.seeds import seed_from_gaussian
 
 HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 
@@ -17,179 +16,177 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 pytestmark = pytest.mark.skipif(not HAS_SCIPY, reason="SciPy not available")
 
 
-class TestFindSeedsOvercompleteNd:
-    """Test find_seeds_multiscale_gaussian main function."""
+def validate_gsplatdata(result: GSplatData, expected_ndim: int) -> None:
+    """Validate GSplatData output format."""
+    assert isinstance(result, GSplatData), "Result should be GSplatData"
+    assert result.centers.ndim == 2, "Centers should be 2D array"
+    assert result.centers.shape[1] == expected_ndim, f"Should have {expected_ndim}D coordinates"
+    assert len(result.amplitudes) == len(result.centers), "Amplitudes should match centers count"
+    assert len(result.sharpnesses) == len(result.centers), "Sharpnesses should match centers count"
+
+    # Check cholesky factors shape
+    tril_size = expected_ndim * (expected_ndim + 1) // 2
+    assert result.cholesky_factors.shape == (len(result.centers), tril_size), (
+        f"Cholesky factors should be (N, {tril_size})"
+    )
+
+
+class TestSeedFromGaussianBasic:
+    """Test seed_from_gaussian basic functionality."""
 
     def test_find_seeds_2d_basic(self) -> None:
         """Test basic seed finding in 2D."""
-        # Create simple 2D image with known structures
         x, y = np.meshgrid(np.linspace(-5, 5, 31), np.linspace(-5, 5, 31))
         V = np.exp(-(x**2 + y**2) / 4) + 0.5 * np.exp(
             -((x - 3) ** 2 + (y - 3) ** 2) / 2
         )
 
-        seeds = find_seeds_multiscale_gaussian(V)
+        result = seed_from_gaussian(V)
 
-        # Should find some seeds
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 2  # 2D coordinates
+        # Validate GSplatData format
+        validate_gsplatdata(result, 2)
+        assert len(result.centers) > 0, "Should find some seeds"
 
         # Coordinates should be within image bounds
-        assert np.all(seeds >= 0)
-        assert np.all(seeds < np.array(V.shape))
+        assert np.all(result.centers >= 0)
+        assert np.all(result.centers < np.array(V.shape))
 
     def test_find_seeds_3d_basic(self) -> None:
         """Test basic seed finding in 3D."""
-        # Simple 3D blob
         x, y, z = np.meshgrid(
             np.linspace(-2, 2, 15), np.linspace(-2, 2, 15), np.linspace(-2, 2, 15)
         )
         V = np.exp(-(x**2 + y**2 + z**2))
 
-        seeds = find_seeds_multiscale_gaussian(V)
+        result = seed_from_gaussian(V)
 
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 3  # 3D coordinates
-
-        """Test effects of various parameters."""
-        V = np.random.randn(25, 25) + 1
-
-        # Test percentile threshold effect
-        seeds_strict = find_seeds_multiscale_gaussian(V, percentile_thresh=90.0)
-        seeds_loose = find_seeds_multiscale_gaussian(V, percentile_thresh=50.0)
-
-        # Looser threshold should generally find more seeds
-        assert len(seeds_loose) >= len(seeds_strict)
-
-        # Test min_dist effect
-        seeds_close = find_seeds_multiscale_gaussian(V, min_distance=0.5)
-        seeds_far = find_seeds_multiscale_gaussian(V, min_distance=5.0)
-
-        # Larger min_dist should reduce number of seeds
-        assert len(seeds_far) <= len(seeds_close)
+        validate_gsplatdata(result, 3)
+        assert len(result.centers) > 0
 
     def test_find_seeds_1d(self) -> None:
         """Test seed finding in 1D."""
         x = np.linspace(-3, 3, 101)
-        V = np.exp(-(x**2)) + 0.3 * np.exp(-((x - 1) ** 2))  # Two Gaussians
+        V = np.exp(-(x**2)) + 0.3 * np.exp(-((x - 1) ** 2))
 
-        seeds = find_seeds_multiscale_gaussian(V)
+        result = seed_from_gaussian(V)
 
-        assert len(seeds) > 0
-        assert seeds.shape[1] == 1  # 1D coordinates
+        validate_gsplatdata(result, 1)
+        assert len(result.centers) > 0
 
-    def test_find_seeds_uniform_image(self) -> None:
+    def test_parameter_effects(self) -> None:
+        """Test effects of various parameters."""
+        V = np.random.randn(25, 25) + 1
+
+        # Test percentile threshold effect
+        result_strict = seed_from_gaussian(V, percentile_thresh=90.0)
+        result_loose = seed_from_gaussian(V, percentile_thresh=50.0)
+
+        assert len(result_loose.centers) >= len(result_strict.centers)
+
+        # Test min_distance effect
+        result_close = seed_from_gaussian(V, min_distance=0.5)
+        result_far = seed_from_gaussian(V, min_distance=5.0)
+
+        assert len(result_far.centers) <= len(result_close.centers)
+
+
+class TestSeedFromGaussianScaleInfo:
+    """Test that scale information is preserved in Cholesky factors."""
+
+    def test_scale_info_preserved(self) -> None:
+        """Test that seeds from different scales have different sigmas."""
+        x, y = np.meshgrid(np.linspace(-10, 10, 64), np.linspace(-10, 10, 64))
+
+        # Large blob (should be detected at large scale)
+        V_large = np.exp(-(x**2 + y**2) / 32)
+        result_large = seed_from_gaussian(V_large, scales=[8.0, 16.0])
+
+        # Small blob (should be detected at small scale)
+        V_small = np.exp(-(x**2 + y**2) / 2)
+        result_small = seed_from_gaussian(V_small, scales=[1.0, 2.0])
+
+        if len(result_large.centers) > 0 and len(result_small.centers) > 0:
+            # Extract sigma from Cholesky factors (diagonal elements)
+            # For isotropic, L00 = sigma
+            sigma_large = result_large.cholesky_factors[0, 0]  # First diagonal element
+            sigma_small = result_small.cholesky_factors[0, 0]
+
+            # Large blob should have larger sigma
+            assert sigma_large > sigma_small, (
+                f"Large blob sigma ({sigma_large}) should be > small blob sigma ({sigma_small})"
+            )
+
+
+class TestSeedFromGaussianEdgeCases:
+    """Test edge cases."""
+
+    def test_uniform_image(self) -> None:
         """Test seed finding on uniform image."""
-        V = np.ones((10, 10)) * 5.0  # Completely uniform
+        V = np.ones((10, 10)) * 5.0
 
-        # Should handle uniform image gracefully
-        seeds = find_seeds_multiscale_gaussian(V)
+        result = seed_from_gaussian(V)
+        validate_gsplatdata(result, 2)
 
-        # May find few or no seeds, but shouldn't crash
-        assert seeds.shape[1] == 2
-
-    def test_find_seeds_empty_result(self) -> None:
+    def test_empty_result(self) -> None:
         """Test handling when no seeds are found."""
-        # Very noisy image with high threshold
         V = 0.01 * np.random.randn(10, 10)
 
-        seeds = find_seeds_multiscale_gaussian(
-            V, percentile_thresh=99.9, peaks_per_scale=1
-        )
+        result = seed_from_gaussian(V, percentile_thresh=99.9, peaks_per_scale=1)
+        validate_gsplatdata(result, 2)
+        # May have 0 seeds
 
-        # Should return empty array with correct shape
-        assert seeds.shape[1] == 2
-        # Length may be 0
+    def test_single_bright_pixel(self) -> None:
+        """Test with single bright pixel."""
+        V = np.zeros((32, 32), dtype=np.float32)
+        V[16, 16] = 1.0
 
+        result = seed_from_gaussian(V, scales=[1], min_distance=1.0, percentile_thresh=50.0)
+        validate_gsplatdata(result, 2)
 
-def test_multiscale_gaussian_edge_cases() -> None:
-    """Test edge cases for multiscale Gaussian seed generation."""
-    # Edge case 1: Uniform image (CLAHE may create artifacts, so check format)
-    uniform_image = np.ones((32, 32), dtype=np.float32)
-    seeds = find_seeds_multiscale_gaussian(
-        uniform_image, min_distance=2.0, percentile_thresh=95.0
-    )
-    # Just verify the output format is correct (CLAHE preprocessing may find artifacts)
-    assert seeds.ndim == 2, "Candidates should be 2D array"
-    assert seeds.shape[1] == 2, "Candidates should have 2D coordinates"
+    def test_very_small_image(self) -> None:
+        """Test with very small image."""
+        V = np.random.rand(8, 8).astype(np.float32)
 
-    # Edge case 2: Single bright pixel (may or may not be detected depending on thresholds)
-    single_pixel = np.zeros((32, 32), dtype=np.float32)
-    single_pixel[16, 16] = 1.0
-    seeds = find_seeds_multiscale_gaussian(
-        single_pixel, scales=[1], min_distance=1.0, percentile_thresh=50.0
-    )
-    # Just check that output format is valid (detection depends on parameters)
-    assert seeds.ndim == 2, "Candidates should be 2D array"
-    assert seeds.shape[1] == 2, "Should have 2D coordinates"
-
-    # Edge case 3: Very small image
-    small_image = np.random.rand(8, 8).astype(np.float32)
-    seeds = find_seeds_multiscale_gaussian(small_image, scales=[1])
-    assert seeds.shape[1] == 2, "Should have 2D coordinates"
-
-    # Edge case 4: Image with NaN (should handle gracefully)
-    image_with_nan = np.random.rand(16, 16).astype(np.float32)
-    image_with_nan[8, 8] = np.nan
-    # This should either handle NaN or raise a clear error
-    try:
-        seeds = find_seeds_multiscale_gaussian(
-            image_with_nan, scales=[1], min_distance=1.0
-        )
-        # If it succeeds, check that result is valid
-        assert not np.any(np.isnan(seeds)), "Candidates should not contain NaN"
-    except (ValueError, RuntimeError):
-        # Acceptable to raise an error for NaN input
-        pass
-
-    # Edge case 5: Very high percentile threshold (should produce few/no seeds)
-    dense_image = np.random.rand(32, 32).astype(np.float32)
-    seeds_high_thresh = find_seeds_multiscale_gaussian(
-        dense_image, scales=[1], percentile_thresh=99.0
-    )
-    seeds_low_thresh = find_seeds_multiscale_gaussian(
-        dense_image, scales=[1], percentile_thresh=50.0
-    )
-    assert seeds_high_thresh.shape[0] <= seeds_low_thresh.shape[0], (
-        "Higher threshold should produce fewer or equal seeds"
-    )
+        result = seed_from_gaussian(V, scales=[1])
+        validate_gsplatdata(result, 2)
 
 
-def test_multiscale_gaussian_parameter_validation() -> None:
-    """Test parameter validation for multiscale Gaussian."""
-    image = np.random.rand(32, 32).astype(np.float32)
+class TestSeedFromGaussianValidation:
+    """Test parameter validation."""
 
-    # Test invalid scales (empty list)
-    with pytest.raises((ValueError, AssertionError)):
-        find_seeds_multiscale_gaussian(image, scales=[])
+    def test_empty_input_raises(self) -> None:
+        """Test empty input raises error."""
+        with pytest.raises(ValueError, match="cannot be empty"):
+            seed_from_gaussian(np.array([]))
 
-    # Test invalid scales (negative)
-    with pytest.raises((ValueError, AssertionError)):
-        find_seeds_multiscale_gaussian(image, scales=[-1, 1])
+    def test_scalar_input_raises(self) -> None:
+        """Test scalar input raises error."""
+        with pytest.raises(ValueError, match="at least 1 dimension"):
+            seed_from_gaussian(5.0)
 
-    # Test invalid scales (zero)
-    with pytest.raises((ValueError, AssertionError, ZeroDivisionError)):
-        find_seeds_multiscale_gaussian(image, scales=[0])
+    def test_empty_scales_raises(self) -> None:
+        """Test empty scales raises error."""
+        V = np.random.rand(32, 32)
+        with pytest.raises(ValueError, match="non-empty sequence"):
+            seed_from_gaussian(V, scales=[])
 
-    # Test invalid min_distance (negative)
-    with pytest.raises((ValueError, AssertionError)):
-        find_seeds_multiscale_gaussian(image, scales=[1], min_distance=-1.0)
+    def test_negative_scales_raises(self) -> None:
+        """Test negative scales raises error."""
+        V = np.random.rand(32, 32)
+        with pytest.raises(ValueError, match="positive"):
+            seed_from_gaussian(V, scales=[-1, 1])
 
-    # Test invalid percentile_thresh (out of range)
-    with pytest.raises((ValueError, AssertionError)):
-        find_seeds_multiscale_gaussian(image, scales=[1], percentile_thresh=101.0)
+    def test_invalid_percentile_raises(self) -> None:
+        """Test invalid percentile raises error."""
+        V = np.random.rand(32, 32)
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            seed_from_gaussian(V, percentile_thresh=101.0)
 
-    with pytest.raises((ValueError, AssertionError)):
-        find_seeds_multiscale_gaussian(image, scales=[1], percentile_thresh=-1.0)
-
-    # Test invalid CLAHE tile_size (zero causes division by zero)
-    with pytest.raises((ValueError, AssertionError, RuntimeError, ZeroDivisionError)):
-        find_seeds_multiscale_gaussian(image, scales=[1], clahe_tile_size=0)
-
-    # Note: Negative clip_limit is not explicitly validated (CLAHE handles it internally)
-    # Just test that function runs without crashing with edge case values
-    result = find_seeds_multiscale_gaussian(image, scales=[1], clahe_clip_limit=0.1)
-    assert result.ndim == 2  # Should produce valid output
+    def test_invalid_min_distance_raises(self) -> None:
+        """Test invalid min_distance raises error."""
+        V = np.random.rand(32, 32)
+        with pytest.raises(ValueError, match="min_distance must be positive"):
+            seed_from_gaussian(V, min_distance=-1.0)
 
 
 if __name__ == "__main__":

@@ -16,8 +16,10 @@ import numpy as np
 CategoryList = Optional[List[str]]
 
 # Import shared constants and validation (centralized to avoid duplication)
-from ..typing_utils.constants import CATEGORICAL_STEP
-from ..validation.category_validation import validate_categories as _validate_categories
+from ..typing_utils.constants import CATEGORICAL_STEP  # noqa: E402
+from ..validation.category_validation import (  # noqa: E402
+    validate_categories as _validate_categories,
+)
 
 
 @dataclass

@@ -68,9 +68,13 @@ test.describe('Performance Regression Tracking', () => {
     await waitForLuxarReady(page);
 
     // Wait for points to load
-    await page.waitForFunction(() => (window as any).__luxarDebug?.getState().totalPoints > 0, {
-      timeout: 15000,
-    });
+    await page.waitForFunction(
+      () => {
+        const state = (window as any).__luxarDebug?.getState?.();
+        return state && state.totalPoints > 0;
+      },
+      { timeout: 15000 }
+    );
 
     const loadTime = Date.now() - startTime;
 

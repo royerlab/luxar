@@ -136,7 +136,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ✅ **Dynamic seeding** (to clarify context)
 
 **Functions**:
-- `find_candidates_multiscale_gaussian()`: Initial seeding
+- `seed_from_gaussian()`, `seed_from_decomposition()`, `seed_from_moments()`: Initial seeding
 - `add_splats()` / `append_()`: Dynamic adding
 
 **Rationale**: "Seeding" emphasizes the initialization aspect, "adding" is more general.

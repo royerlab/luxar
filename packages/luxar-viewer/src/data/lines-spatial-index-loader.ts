@@ -41,6 +41,7 @@ import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';
 import type { WasmModule } from '../wasm/types';
+import { DecompressedChunkCache, wrapWithCache } from '../cache';
 
 // ============================================================================
 // WASM Module Caching for Hot Path Optimization
@@ -102,6 +103,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // Data accumulator for object pooling (Phase 1 optimization)
   private _accumulator: LinesDataAccumulator | null = null;
 
+  // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
+  private l0Cache: DecompressedChunkCache | null = null;
+
   private arrays: {
     vertices?: zarr.Array<zarr.DataType, zarr.Readable>;
     segments?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -115,12 +119,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     node: SceneNode,
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler
+    profiler?: UpdateProfiler,
+    l0Cache?: DecompressedChunkCache
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    this.l0Cache = l0Cache || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
   }
@@ -157,12 +163,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Open arrays for later access
     try {
-      this.arrays.vertices = await zarr.open(this.zarrLocation.resolve('vertices'), {
+      let verticesArray = await zarr.open(this.zarrLocation.resolve('vertices'), {
         kind: 'array',
       });
-      this.arrays.segments = await zarr.open(this.zarrLocation.resolve('segments'), {
+      let segmentsArray = await zarr.open(this.zarrLocation.resolve('segments'), {
         kind: 'array',
       });
+      // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
+      if (this.l0Cache) {
+        verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`);
+        segmentsArray = wrapWithCache(segmentsArray, this.l0Cache, `${this.node.path}/segments`);
+      }
+      this.arrays.vertices = verticesArray;
+      this.arrays.segments = segmentsArray;
     } catch (e) {
       log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open required Lines arrays:', e);
       throw e;
@@ -170,21 +183,33 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Try to open optional arrays
     try {
-      this.arrays.widths = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
+      let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
+      if (this.l0Cache) {
+        widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`);
+      }
+      this.arrays.widths = widthsArray;
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No widths array found (using default width)');
     }
 
     try {
-      this.arrays.colors = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      if (this.l0Cache) {
+        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+      }
+      this.arrays.colors = colorsArray;
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default color)');
     }
 
     try {
-      this.arrays.sharpness = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
         kind: 'array',
       });
+      if (this.l0Cache) {
+        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+      }
+      this.arrays.sharpness = sharpnessArray;
     } catch {
       log.info(Modules.SPATIAL_INDEX_LOADER, 'No sharpness array found (using default sharpness)');
     }
@@ -376,29 +401,35 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         ? (this._accumulator['sharpnessBuffer'] as Float32Array)
         : null;
 
-      // Load directly into accumulator buffers (ZERO intermediate allocations!)
-      await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer);
+      // Profile vertex loading (accumulator path)
+      const loadVertSession = session?.begin('Load Vertices');
+      try {
+        // Load directly into accumulator buffers (ZERO intermediate allocations!)
+        await this.loadVertexRanges('vertices', mergedVertexRanges, attrs.ndim, vertexBuffer);
 
-      if (this.arrays.widths) {
-        await this.loadVertexRanges('widths', mergedVertexRanges, 1, widthBuffer);
-      } else {
-        // Create default widths directly in buffer
-        widthBuffer.fill(1.0, 0, sortedIndices.length);
-      }
+        if (this.arrays.widths) {
+          await this.loadVertexRanges('widths', mergedVertexRanges, 1, widthBuffer);
+        } else {
+          // Create default widths directly in buffer
+          widthBuffer.fill(1.0, 0, sortedIndices.length);
+        }
 
-      // Load colors if present
-      // NOTE: For encoded arrays, loadColorRanges uses Float32 intermediate buffer
-      // then converts to original dtype - it may return a different buffer than targetBuffer.
-      // We load without target buffer and copy the result to ensure correctness.
-      if (colorBuffer) {
-        const loadedColors = await this.loadColorRanges(mergedVertexRanges);
-        // Copy loaded colors to accumulator's colorBuffer
-        // Note: TypedArray.set() handles type conversion automatically
-        colorBuffer.set(loadedColors as ArrayLike<number>);
-      }
+        // Load colors if present
+        // NOTE: For encoded arrays, loadColorRanges uses Float32 intermediate buffer
+        // then converts to original dtype - it may return a different buffer than targetBuffer.
+        // We load without target buffer and copy the result to ensure correctness.
+        if (colorBuffer) {
+          const loadedColors = await this.loadColorRanges(mergedVertexRanges);
+          // Copy loaded colors to accumulator's colorBuffer
+          // Note: TypedArray.set() handles type conversion automatically
+          colorBuffer.set(loadedColors as ArrayLike<number>);
+        }
 
-      if (sharpnessBuffer) {
-        await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
+        if (sharpnessBuffer) {
+          await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
+        }
+      } finally {
+        loadVertSession?.end();
       }
 
       // Build global → local index mapping

@@ -167,12 +167,18 @@
 
 /* Tab content containers */
 .overview-content,
-.cache-content,
 .performance-content,
 .insights-content {
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-8);
+}
+
+/* Cache tab has tighter spacing to fit more content */
+.cache-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-4);
 }
 
 .scene-or-loaders {
@@ -256,7 +262,7 @@
 }
 
 .luxar-metric-card--small {
-  padding: var(--luxar-spacing-4);
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
 }
 
 .luxar-metric-card--medium {
@@ -278,7 +284,7 @@
 }
 
 .luxar-metric-card__value--small {
-  font-size: var(--luxar-text-xl);
+  font-size: var(--luxar-text-lg);
 }
 
 .luxar-metric-card__value--medium {
@@ -410,16 +416,16 @@
 
 .luxar-cache-section {
   background: var(--luxar-bg-tertiary);
-  padding: var(--luxar-spacing-5);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-4);
   border-radius: var(--luxar-radius-sm);
-  margin-bottom: var(--luxar-spacing-6);
+  margin-bottom: var(--luxar-spacing-3);
 }
 
 .luxar-cache-section__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--luxar-spacing-5);
+  margin-bottom: var(--luxar-spacing-3);
 }
 
 .luxar-cache-section__title {
@@ -447,7 +453,7 @@
 
 .luxar-cache-section__metrics {
   display: grid;
-  gap: var(--luxar-spacing-5);
+  gap: var(--luxar-spacing-3);
 }
 
 .luxar-cache-section__metrics--cols-2 {
@@ -752,28 +758,6 @@
   color: var(--luxar-text-muted);
 }
 
-/* ========== Event Log ========== */
-
-.luxar-event-log {
-  margin-top: var(--luxar-spacing-6);
-  max-height: 150px;
-  overflow-y: auto;
-}
-
-.luxar-event-log__title {
-  margin: 0 0 var(--luxar-spacing-4) 0;
-  font-size: var(--luxar-text-sm);
-  opacity: 0.7;
-}
-
-.luxar-event-item {
-  display: flex;
-  gap: var(--luxar-spacing-4);
-  padding: var(--luxar-spacing-1) 0;
-  font-size: var(--luxar-text-xs);
-  opacity: 0.7;
-}
-
 /* ========== Cache Messages ========== */
 
 .luxar-cache-disabled {
@@ -808,7 +792,7 @@
 
 .luxar-cache-total {
   background: rgba(255, 255, 255, 0.03);
-  padding: var(--luxar-spacing-5);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-4);
   border-radius: var(--luxar-radius-md);
 }
 
@@ -816,7 +800,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--luxar-spacing-4);
+  margin-bottom: var(--luxar-spacing-2);
 }
 
 .luxar-cache-total__label {
@@ -829,7 +813,7 @@
   font-size: var(--luxar-text-md);
   font-weight: var(--luxar-font-bold);
   color: var(--luxar-text-primary);
-  margin-bottom: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-1);
 }
 
 /* ========== Grid Layouts ========== */

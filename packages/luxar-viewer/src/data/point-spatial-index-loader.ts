@@ -49,6 +49,7 @@ import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accum
 import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
+import { DecompressedChunkCache, wrapWithCache } from '../cache';
 
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
@@ -88,6 +89,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private lastQueryCells = 0;
   private zarrStore: zarr.Readable | null = null;
 
+  // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
+  private l0Cache: DecompressedChunkCache | null = null;
+
   /**
    * Get node attributes with proper PointsMetadata typing.
    * This provides type-safe access to point node attributes.
@@ -102,12 +106,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     _config: LoaderConfig = {},
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
-    profiler?: UpdateProfiler
+    profiler?: UpdateProfiler,
+    l0Cache?: DecompressedChunkCache
   ) {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     this.zarrStore = zarrStore || null;
+    this.l0Cache = l0Cache || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
 
@@ -237,9 +243,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Open arrays for later access
     try {
-      this.arrays.positions = await zarr.open(this.zarrLocation.resolve('positions'), {
+      let positionsArray = await zarr.open(this.zarrLocation.resolve('positions'), {
         kind: 'array',
       });
+      // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
+      if (this.l0Cache) {
+        positionsArray = wrapWithCache(positionsArray, this.l0Cache, `${this.node.path}/positions`);
+      }
+      this.arrays.positions = positionsArray;
     } catch (e) {
       log.error(Modules.SPATIAL_INDEX_LOADER, 'Failed to open positions array:', e);
       throw e;
@@ -247,7 +258,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     // Try to open optional arrays - these may not exist and that's OK
     try {
-      this.arrays.colors = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      // Wrap with L0 cache if enabled
+      if (this.l0Cache) {
+        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+      }
+      this.arrays.colors = colorsArray;
     } catch (e: any) {
       // Colors are optional - only log if it's not a 404
       if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
@@ -256,7 +272,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     try {
-      this.arrays.radii = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
+      let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
+      // Wrap with L0 cache if enabled
+      if (this.l0Cache) {
+        radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`);
+      }
+      this.arrays.radii = radiiArray;
     } catch (e: any) {
       // Radii are optional - only log if it's not a 404
       if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
@@ -265,9 +286,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
 
     try {
-      this.arrays.sharpness = await zarr.open(this.zarrLocation.resolve('sharpness'), {
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
         kind: 'array',
       });
+      // Wrap with L0 cache if enabled
+      if (this.l0Cache) {
+        sharpnessArray = wrapWithCache(sharpnessArray, this.l0Cache, `${this.node.path}/sharpness`);
+      }
+      this.arrays.sharpness = sharpnessArray;
     } catch (e: any) {
       // Sharpness is optional - only log if it's not a 404
       if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {

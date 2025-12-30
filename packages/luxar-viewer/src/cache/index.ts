@@ -10,7 +10,16 @@ export { OPFSStore } from './opfs-store';
 export { TwoLevelCachingStore } from './two-level-caching-store';
 export { ChunkPrefetcher } from './chunk-prefetcher';
 
+// L0 decompressed chunk cache (caches decoded zarr chunks to avoid Blosc decompression)
+export { DecompressedChunkCache } from './decompressed-chunk-cache';
+export { wrapWithCache, isCachedArray, unwrapCachedArray } from './cached-zarr-array';
+
 // Types
 export type { TwoLevelCachingStoreOptions } from './two-level-caching-store';
 export type { ChunkPrefetcherOptions } from './chunk-prefetcher';
 export type { CacheStats, ExtendedCacheStats, OPFSMetadata } from './types';
+export type {
+  DecompressedChunk,
+  DecompressedChunkCacheOptions,
+  DecompressedChunkCacheStats,
+} from './decompressed-chunk-cache';

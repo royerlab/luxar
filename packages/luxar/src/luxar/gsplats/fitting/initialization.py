@@ -42,18 +42,40 @@ def initialize_optimization(
             coordinator=None,
         )
 
-    # Initialize parameters
-    L0 = np.zeros((N, d, d), dtype=np.float32)
-    for i in range(d):
-        L0[:, i, i] = config.init_sigma_vox
+    # Initialize parameters - use pre-initialized values if provided
+    from arbol import aprint
 
-    # Extract amplitudes from image at seed locations
-    idx = np.clip(
-        np.round(preprocessed_data.seed_centers).astype(int),
-        0,
-        np.array(config.V.shape) - 1,
-    )
-    amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
+    if config.init_L is not None:
+        # Use pre-computed Cholesky factors (from GSplatData or moment pursuit)
+        L0 = config.init_L.astype(np.float32)
+        if config.verbose:
+            aprint(f"Using pre-initialized Cholesky factors: {L0.shape}")
+    else:
+        # Default: isotropic Gaussians with init_sigma_vox
+        L0 = np.zeros((N, d, d), dtype=np.float32)
+        for i in range(d):
+            L0[:, i, i] = config.init_sigma_vox
+
+    if config.init_amps is not None:
+        # Use pre-computed amplitudes
+        amps0 = config.init_amps.astype(np.float32)
+        if config.verbose:
+            aprint(f"Using pre-initialized amplitudes: range [{amps0.min():.4f}, {amps0.max():.4f}]")
+    else:
+        # Default: extract amplitudes from image at seed locations
+        idx = np.clip(
+            np.round(preprocessed_data.seed_centers).astype(int),
+            0,
+            np.array(config.V.shape) - 1,
+        )
+        amps0 = preprocessed_data.V_normalized[tuple(idx.T)]
+
+    # Sharpness initialization (used if model supports it)
+    sharpness0 = None
+    if config.init_sharpness is not None:
+        sharpness0 = config.init_sharpness.astype(np.float32)
+        if config.verbose:
+            aprint(f"Using pre-initialized sharpness: range [{sharpness0.min():.2f}, {sharpness0.max():.2f}]")
 
     # Build model - use Metal acceleration when available
     use_metal = (
