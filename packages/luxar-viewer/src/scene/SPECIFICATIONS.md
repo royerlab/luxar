@@ -541,6 +541,10 @@ Automatically adjust near and far clipping planes as the camera moves to maintai
 **Per-Frame Update**:
 
 ```typescript
+// Constants from scene-manager-utils.ts
+const CLIPPING_SAFETY_MARGIN = 0.5; // 50% margin for rotation/edge cases
+const MIN_NEAR_PLANE = 0.0001; // Minimum near plane
+
 class SceneManager {
   // Dynamic clipping state
   private dynamicClippingEnabled: boolean = true;
@@ -555,18 +559,24 @@ class SceneManager {
     const bounds = this.getSceneBoundsFromMetadata();
     if (!bounds) return;
 
-    // Calculate distances from camera to bounding box
-    const { nearDist, farDist, isInside } = this.calculateDistancesToBounds(bounds);
+    // Calculate distances to all 8 corners AND 6 face centers (14 points total)
+    // Face centers give more accurate near plane when camera faces a side
+    const { nearDist, farDist, isInside } = calculateDistancesToBoundingBox(cameraPos, bounds);
 
-    // Calculate optimal planes with margin of sqrt(3)-1+0.1 ≈ 0.832
-    // sqrt(3)-1 accounts for cube diagonal (corner distance is sqrt(3)× face distance)
-    // +0.1 adds extra 10% safety buffer
-    const margin = Math.sqrt(3) - 1 + 0.1; // ≈ 0.832
+    // Calculate optimal clipping planes using unified 50% margin
+    let optimalNear: number;
+    if (isInside) {
+      // When inside the bounding box, use minimum near plane
+      // This ensures we can see all geometry around us without clipping
+      optimalNear = MIN_NEAR_PLANE;
+    } else {
+      // When outside, use nearest point distance with 50% margin
+      // near = nearDist * 0.5
+      optimalNear = Math.max(MIN_NEAR_PLANE, nearDist * (1 - CLIPPING_SAFETY_MARGIN));
+    }
 
-    // When camera is inside the bounding box, use minimum near plane directly
-    // to avoid clipping nearby points. When outside, apply margin to corner distance.
-    const optimalNear = isInside ? 0.001 : Math.max(0.001, nearDist * (1 - margin));
-    const optimalFar = farDist * (1 + margin); // ~183.2% of distance
+    // Far plane: farthest point plus 50% margin (~150% of distance)
+    const optimalFar = farDist * (1 + CLIPPING_SAFETY_MARGIN);
 
     // Exponential smoothing: new = (1-α)*current + α*optimal
     const α = this.clippingAdaptSpeed;
@@ -574,7 +584,7 @@ class SceneManager {
     this.smoothedFar = (1 - α) * this.smoothedFar + α * optimalFar;
 
     // Apply safety clamps
-    this.smoothedNear = Math.max(0.001, this.smoothedNear);
+    this.smoothedNear = Math.max(MIN_NEAR_PLANE, this.smoothedNear);
 
     // Prevent excessive far/near ratio (Z-buffer precision)
     const maxRatio = 100000;
