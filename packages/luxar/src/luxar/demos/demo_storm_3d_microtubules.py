@@ -462,7 +462,7 @@ def create_storm_scene(
     Args:
         centers_um: Splat centers in micrometers (N, 3)
         amplitudes: Splat amplitudes (N,)
-        output_path: Optional path to save the scene (default: examples directory)
+        output_path: Optional path to save the scene (default: demos directory)
 
     Returns:
         Path to output scene
@@ -654,7 +654,7 @@ def main() -> None:
         # Extract centers and amplitudes (simple, no per-localization covariances)
         centers_um, amplitudes = extract_centers_and_amplitudes(localizations)
 
-        # If --no-serve, use persistent directory; otherwise use examples dir
+        # If --no-serve, generate and exit without launching viewer
         if "--no-serve" in sys.argv:
             output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
             scene_path = create_storm_scene(centers_um, amplitudes, output_path=output_path)
@@ -662,7 +662,7 @@ def main() -> None:
             aprint(f"Localizations: {len(centers_um):,}")
             return
 
-        # Create scene in examples directory for serving
+        # Create scene in demos directory for serving
         scene_path = create_storm_scene(centers_um, amplitudes)
 
         # Stats
