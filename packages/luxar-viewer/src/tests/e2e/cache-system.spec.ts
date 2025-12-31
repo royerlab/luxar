@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState, assertNoConsoleErrors } from './helpers';
 
 // Use 3D dataset - 4D datasets may have 0 points visible depending on slice position
-const DATASET = 'http://localhost:9000/packages/luxar/examples/radius_basic_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/radius_basic_example.zarr';
 
 test.describe('Three-Level Cache System (L0/L1/L2)', () => {
   test.beforeEach(async ({ page }) => {

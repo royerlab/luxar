@@ -152,7 +152,7 @@ pnpm agent:debug:visible  # Watch the browser
 import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, getLuxarState, waitForSpatialQuery } from './helpers';
 
-const DATASET = 'http://localhost:9000/packages/luxar/examples/my_dataset.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/my_dataset.zarr';
 
 test.describe('My Feature Tests', () => {
   test('should do something', async ({ page }) => {
@@ -194,7 +194,7 @@ test.describe('My Feature Tests', () => {
 **Solution**: Check that:
 - Vite dev server started (port 5173)
 - Python HTTP server started (port 9000)
-- Datasets exist in `packages/luxar/examples/`
+- Datasets exist in `datasets/examples/`
 
 ```bash
 make run-examples  # Generate datasets

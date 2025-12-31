@@ -84,8 +84,7 @@ Usage:
     python demo_storm_3d_microtubules.py [--max-localizations=N]
 
     Options:
-    --max-localizations=N   Limit number of localizations (default: 1M)
-    --no-cache              Force re-download and re-processing
+    --max-localizations=N   Limit number of localizations (default: 5M)
     --no-serve              Generate dataset without launching viewer
     --field=N               Select field of view (default: 4)
 
@@ -123,14 +122,16 @@ DEFAULT_FIELD = 4  # Field of view number
 DEFAULT_MAX_LOCALIZATIONS = 5_000_000  # Limit for demo performance
 
 # Visualization parameters
-WIDEFIELD_PSF_SIGMA = 150.0  # nm - conventional microscopy PSF width
+WIDEFIELD_PSF_SIGMA = 100.0  # nm - conventional microscopy PSF width
+SUPERRES_PSF_SIGMA = 20.0    # nm - super-resolution PSF width
 PIXEL_SIZE = 106.0  # nm - from dataset metadata
-# Scale factors for localization precision
-# XY precision is ~8nm, Z precision is ~575nm (from CRLB values)
-# Need large scale factors to make splats visible at 60μm scene scale
-# Target: similar or slightly smaller than widefield (0.15 σ in scene units)
-SUPER_RES_PRECISION_SCALE_XY = 100.0  # Make XY visible (~0.08μm σ)
-SUPER_RES_PRECISION_SCALE_Z = 3.0    # Make Z visible (~0.16μm σ)
+
+# Scale factor for visualization (physical PSF is too small to see in the viewer)
+# The scene spans ~60 μm, so 20 nm splats would be invisible. Scale up for visibility.
+# With VIS_SCALE=40: super-res=800nm≈0.8μm, widefield=4μm - matches original committed scale
+# (Original used SUPER_RES_PRECISION_SCALE_XY=100 with ~8nm precision → 0.8μm sigma)
+VIS_SCALE = 1.0  # Makes splats visible while maintaining relative widefield/superres ratio
+
 
 # Cache paths
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "storm_data"
@@ -400,72 +401,27 @@ def parse_storm_localizations(
     return result
 
 
-def create_gsplats_from_localizations(
+def extract_centers_and_amplitudes(
     localizations: dict,
-    cache_path: Path | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Create Gaussian splats from STORM localizations.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract centers and amplitudes from STORM localizations.
 
     Args:
-        localizations: Dictionary with x, y, z, precision, etc.
-        cache_path: Optional path to cache processed splats
+        localizations: Dictionary with x, y, z, photons, etc.
 
     Returns:
-        Tuple of (centers, covariances, amplitudes, sharpnesses)
+        Tuple of (centers_um, amplitudes) where centers are in micrometers
     """
-    # Check cache first
-    if cache_path and cache_path.exists():
-        with asection("Loading cached splat data"):
-            aprint(f"Cache: {cache_path}")
-            cached = np.load(cache_path)
-            centers = cached["centers"]
-            covariances = cached["covariances"]
-            amplitudes = cached["amplitudes"]
-            sharpnesses = cached["sharpnesses"]
-            aprint(f"✓ Loaded {len(centers):,} cached splats")
-            return centers, covariances, amplitudes, sharpnesses
-
-    with asection("Creating Gaussian splats from localizations"):
+    with asection("Extracting splat data from localizations"):
         n_loc = len(localizations['x'])
         aprint(f"Processing {n_loc:,} localizations...")
 
-        # Centers (convert to voxel coordinates if in nm)
-        centers = np.column_stack([
-            localizations['x'] / PIXEL_SIZE,
-            localizations['y'] / PIXEL_SIZE,
-            localizations['z'] / PIXEL_SIZE,
+        # Centers in micrometers (nm -> μm)
+        centers_um = np.column_stack([
+            localizations['x'] / 1000,
+            localizations['y'] / 1000,
+            localizations['z'] / 1000,
         ]).astype(np.float32)
-
-        # Covariance matrices from localization precision (VECTORIZED for speed)
-        # Each localization has uncertainty → diagonal covariance
-        # Clamp precision to reasonable bounds (some localizations have crazy values)
-        max_precision_xy_nm = 100.0  # 100 nm max uncertainty for XY
-        max_precision_z_nm = 150.0   # 150 nm max uncertainty for Z
-
-        # Get precision arrays with defaults, then clamp (all vectorized)
-        prec_x = np.clip(
-            localizations.get('precision_x', np.full(n_loc, 20.0, dtype=np.float32)),
-            0, max_precision_xy_nm
-        )
-        prec_y = np.clip(
-            localizations.get('precision_y', np.full(n_loc, 20.0, dtype=np.float32)),
-            0, max_precision_xy_nm
-        )
-        prec_z = np.clip(
-            localizations.get('precision_z', np.full(n_loc, 50.0, dtype=np.float32)),
-            0, max_precision_z_nm
-        )
-
-        # Convert to pixel units and scale for visibility (vectorized)
-        sigma_x = (prec_x / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_XY
-        sigma_y = (prec_y / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_XY
-        sigma_z = (prec_z / PIXEL_SIZE) * SUPER_RES_PRECISION_SCALE_Z
-
-        # Create diagonal covariance matrices (n_loc, 3, 3) - vectorized
-        covariances = np.zeros((n_loc, 3, 3), dtype=np.float32)
-        covariances[:, 0, 0] = sigma_x ** 2
-        covariances[:, 1, 1] = sigma_y ** 2
-        covariances[:, 2, 2] = sigma_z ** 2
 
         # Amplitudes from photon counts (or uniform if not available)
         if 'photons' in localizations:
@@ -480,83 +436,11 @@ def create_gsplats_from_localizations(
 
         amplitudes = np.clip(amplitudes, 0.01, 1.0)
 
-        # Sharpness (higher = sharper, represents good localization)
-        sharpnesses = np.full(n_loc, 3.0, dtype=np.float32)  # Sharp splats
+        aprint(f"✓ Extracted {n_loc:,} localizations")
+        aprint(f"  Centers: {centers_um.shape}")
+        aprint(f"  Spatial range: [{centers_um.min(axis=0)}] to [{centers_um.max(axis=0)}] μm")
 
-        aprint(f"✓ Created {n_loc:,} Gaussian splats")
-        aprint(f"  Centers: {centers.shape}")
-        aprint(f"  Covariances: {covariances.shape}")
-        aprint(f"  Spatial range: {centers.min(axis=0)} to {centers.max(axis=0)}")
-
-        # Cache for future runs
-        if cache_path:
-            np.savez(
-                cache_path,
-                centers=centers,
-                covariances=covariances,
-                amplitudes=amplitudes,
-                sharpnesses=sharpnesses,
-            )
-            aprint(f"✓ Cached splat data to {cache_path}")
-
-    return centers, covariances, amplitudes, sharpnesses
-
-
-def generate_synthetic_widefield(
-    localizations: dict,
-    volume_shape: tuple[int, int, int],
-) -> np.ndarray:
-    """Generate synthetic widefield image from localizations.
-
-    Simulates conventional (diffraction-limited) microscopy by blurring
-    localizations with a large PSF.
-
-    Args:
-        localizations: STORM localizations
-        volume_shape: Output volume shape
-
-    Returns:
-        3D widefield volume
-    """
-    with asection("Generating synthetic widefield comparison"):
-        aprint("Simulating conventional microscopy (diffraction-limited)...")
-        aprint(f"  PSF sigma: {WIDEFIELD_PSF_SIGMA} nm")
-
-        # Create volume
-        volume = np.zeros(volume_shape, dtype=np.float32)
-
-        # Convert to voxel coordinates
-        x_voxel = (localizations['x'] / PIXEL_SIZE).astype(int)
-        y_voxel = (localizations['y'] / PIXEL_SIZE).astype(int)
-        z_voxel = (localizations['z'] / PIXEL_SIZE).astype(int)
-
-        # Clip to volume bounds
-        valid = (
-            (x_voxel >= 0) & (x_voxel < volume_shape[0]) &
-            (y_voxel >= 0) & (y_voxel < volume_shape[1]) &
-            (z_voxel >= 0) & (z_voxel < volume_shape[2])
-        )
-
-        x_voxel = x_voxel[valid]
-        y_voxel = y_voxel[valid]
-        z_voxel = z_voxel[valid]
-
-        # Accumulate localizations (vectorized with np.add.at)
-        np.add.at(volume, (x_voxel, y_voxel, z_voxel), 1)
-
-        # Blur with large Gaussian (conventional microscopy PSF)
-        from scipy.ndimage import gaussian_filter
-        sigma_voxels = WIDEFIELD_PSF_SIGMA / PIXEL_SIZE
-        volume = gaussian_filter(volume, sigma=[sigma_voxels, sigma_voxels, sigma_voxels * 2])
-
-        # Normalize
-        if volume.max() > 0:
-            volume = volume / volume.max()
-
-        aprint(f"✓ Generated {volume_shape} widefield volume")
-        aprint(f"  Range: [{volume.min():.3f}, {volume.max():.3f}]")
-
-    return volume
+    return centers_um, amplitudes
 
 
 # =============================================================================
@@ -565,31 +449,27 @@ def generate_synthetic_widefield(
 
 
 def create_storm_scene(
-    centers: np.ndarray,
-    covariances: np.ndarray,
+    centers_um: np.ndarray,
     amplitudes: np.ndarray,
-    sharpnesses: np.ndarray,
-    widefield_volume: np.ndarray | None = None,
     output_path: Path | None = None,
 ) -> Path:
-    """Create Luxar scene with STORM data and optional widefield comparison.
+    """Create Luxar scene with STORM data comparing widefield vs super-resolution.
+
+    Uses simple isotropic PSF sigmas for both views:
+    - Widefield: WIDEFIELD_PSF_SIGMA (100 nm) - diffraction-limited
+    - Super-resolution: SUPERRES_PSF_SIGMA (20 nm) - STORM precision
 
     Args:
-        centers: Splat centers
-        covariances: Splat covariance matrices
-        amplitudes: Splat amplitudes
-        sharpnesses: Splat sharpnesses
-        widefield_volume: Optional synthetic widefield volume
+        centers_um: Splat centers in micrometers (N, 3)
+        amplitudes: Splat amplitudes (N,)
         output_path: Optional path to save the scene (default: examples directory)
 
     Returns:
         Path to output scene
     """
-    # Use provided path or save to examples directory (permanent location)
+    # Use provided path or save to demos directory
     if output_path is None:
-        examples_dir = Path(__file__).parent.parent.parent / "examples"
-        examples_dir.mkdir(parents=True, exist_ok=True)
-        output_path = examples_dir / "storm_3d_microtubules_example.zarr"
+        output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
 
     with asection("Creating Luxar scene"):
         # 4D scene: VIEW (categorical) + X, Y, Z (spatial)
@@ -616,9 +496,6 @@ def create_storm_scene(
             with asection("Adding both microscopy views as gsplats"):
                 from luxar.gsplats.fit_result import GSplatData
 
-                # Convert centers to μm
-                centers_um = centers * PIXEL_SIZE / 1000
-
                 # Center at center-of-mass (amplitude-weighted)
                 total_amplitude = amplitudes.sum()
                 if total_amplitude > 0:
@@ -626,73 +503,83 @@ def create_storm_scene(
                 else:
                     centroid = centers_um.mean(axis=0)
 
-                centers_um = centers_um - centroid
-                aprint(f"✓ Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)")
-                aprint(f"  New range: [{centers_um.min(axis=0)}, {centers_um.max(axis=0)}]")
+                centered = centers_um - centroid
+                aprint(f"Centered at COM (was at [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.1f}] μm)")
+                aprint(f"  New range: [{centered.min(axis=0)}] to [{centered.max(axis=0)}]")
 
-                # Create TWO sets of gsplats - same positions, different covariances!
-                n_splats = len(centers)
-
-                # Prepare storage for both views
-                all_centers = []
-                all_cholesky = []
-                all_amplitudes = []
-                all_sharpnesses = []
-                all_colors = []
-
+                n_splats = len(centers_um)
                 aprint(f"Creating {n_splats:,} splats × 2 views...")
+                aprint(f"  Physical PSF: widefield={WIDEFIELD_PSF_SIGMA} nm, super-res={SUPERRES_PSF_SIGMA} nm")
+                aprint(f"  Vis scale: {VIS_SCALE}x (effective: {WIDEFIELD_PSF_SIGMA * VIS_SCALE} nm / {SUPERRES_PSF_SIGMA * VIS_SCALE} nm)")
 
-                # VIEW 0: Widefield (large PSF ~150 nm)
-                widefield_psf_um = WIDEFIELD_PSF_SIGMA / 1000  # nm to μm
-                widefield_cov = np.diag([widefield_psf_um**2, widefield_psf_um**2, widefield_psf_um**2 * 4])
+                # Precompute covariance matrices (simple isotropic)
+                # Apply visualization scale to make splats visible
+                widefield_sigma_um = (WIDEFIELD_PSF_SIGMA * VIS_SCALE) / 1000  # nm -> μm
+                superres_sigma_um = (SUPERRES_PSF_SIGMA * VIS_SCALE) / 1000    # nm -> μm
 
-                for i in range(n_splats):
-                    # Add view dimension coordinate (0 = widefield)
-                    center_4d = np.array([0.0, centers_um[i, 0], centers_um[i, 1], centers_um[i, 2]], dtype=np.float32)
-                    all_centers.append(center_4d)
+                # Z has 2x worse resolution (typical for 3D STORM)
+                widefield_cov = np.diag([
+                    widefield_sigma_um**2,
+                    widefield_sigma_um**2,
+                    (widefield_sigma_um * 2)**2,
+                ])
+                superres_cov = np.diag([
+                    superres_sigma_um**2,
+                    superres_sigma_um**2,
+                    (superres_sigma_um * 2)**2,
+                ])
 
-                    # Large covariance for widefield
-                    # 4D: add zero variance in view dimension
-                    cov_4d = np.zeros((4, 4), dtype=np.float32)
-                    cov_4d[1:, 1:] = widefield_cov  # Spatial part
-                    cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
-
-                    L = np.linalg.cholesky(cov_4d)
-                    # Pack 4D Cholesky: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
-                    chol = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2], L[3,0], L[3,1], L[3,2], L[3,3]]
-                    all_cholesky.append(chol)
-
-                    all_amplitudes.append(amplitudes[i] * 0.5)  # Dim for widefield
-                    all_sharpnesses.append(1.0)  # Soft
-                    all_colors.append([0.5, 0.5, 0.5])  # Gray (SDR 0-1 range)
-
-                # VIEW 1: Super-resolution (small PSF ~20 nm from precision)
-                for i in range(n_splats):
-                    # Add view dimension coordinate (1 = super-res)
-                    center_4d = np.array([1.0, centers_um[i, 0], centers_um[i, 1], centers_um[i, 2]], dtype=np.float32)
-                    all_centers.append(center_4d)
-
-                    # Small covariance from localization precision
-                    cov_3d = covariances[i] * (PIXEL_SIZE / 1000)**2
+                # Precompute 4D covariances and their Cholesky factors
+                def make_4d_cholesky(cov_3d: np.ndarray) -> np.ndarray:
+                    """Create 4D Cholesky from 3D covariance."""
                     cov_4d = np.zeros((4, 4), dtype=np.float32)
                     cov_4d[1:, 1:] = cov_3d  # Spatial part
                     cov_4d[0, 0] = 1e-6  # Tiny variance in view dimension
+                    chol = np.linalg.cholesky(cov_4d)
+                    # Pack lower triangular: [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
+                    return np.array([
+                        chol[0,0], chol[1,0], chol[1,1], chol[2,0], chol[2,1], chol[2,2],
+                        chol[3,0], chol[3,1], chol[3,2], chol[3,3]
+                    ], dtype=np.float32)
 
-                    L = np.linalg.cholesky(cov_4d)
-                    chol = [L[0,0], L[1,0], L[1,1], L[2,0], L[2,1], L[2,2], L[3,0], L[3,1], L[3,2], L[3,3]]
-                    all_cholesky.append(chol)
+                widefield_chol = make_4d_cholesky(widefield_cov)
+                superres_chol = make_4d_cholesky(superres_cov)
 
-                    all_amplitudes.append(amplitudes[i])
-                    all_sharpnesses.append(3.0)  # Sharp
-                    all_colors.append([0.3, 0.9, 0.9])  # Cyan (SDR 0-1 range)
+                aprint(f"  Widefield sigma: {widefield_sigma_um:.3f} μm")
+                aprint(f"  Super-res sigma: {superres_sigma_um:.3f} μm")
+                aprint(f"  Widefield cholesky: {widefield_chol}")
+                aprint(f"  Super-res cholesky: {superres_chol}")
 
-                # Create combined GSplatData
+                # Build arrays for both views (vectorized where possible)
+                # VIEW 0: Widefield (gray, dimmer)
+                # VIEW 1: Super-resolution (cyan, brighter)
+                all_centers = np.zeros((n_splats * 2, 4), dtype=np.float32)
+                all_cholesky = np.zeros((n_splats * 2, 10), dtype=np.float32)
+                all_amplitudes = np.zeros(n_splats * 2, dtype=np.float32)
+                all_sharpnesses = np.full(n_splats * 2, 2.0, dtype=np.float32)
+                all_colors = np.zeros((n_splats * 2, 3), dtype=np.float32)
+
+                # Widefield view (indices 0 to n_splats-1)
+                all_centers[:n_splats, 0] = 0.0  # view = 0
+                all_centers[:n_splats, 1:] = centered
+                all_cholesky[:n_splats] = widefield_chol
+                all_amplitudes[:n_splats] = amplitudes * 0.3  # Dimmer for widefield
+                all_colors[:n_splats] = [0.7, 0.7, 0.7]  # Gray
+
+                # Super-resolution view (indices n_splats to 2*n_splats-1)
+                all_centers[n_splats:, 0] = 1.0  # view = 1
+                all_centers[n_splats:, 1:] = centered
+                all_cholesky[n_splats:] = superres_chol
+                all_amplitudes[n_splats:] = amplitudes  # Full brightness
+                all_colors[n_splats:] = [0.2, 1.0, 1.0]  # Cyan
+
+                # Create GSplatData
                 gsplat_data = GSplatData(
-                    centers=np.array(all_centers, dtype=np.float32),
-                    cholesky_factors=np.array(all_cholesky, dtype=np.float32),
-                    amplitudes=np.array(all_amplitudes, dtype=np.float32),
-                    sharpnesses=np.array(all_sharpnesses, dtype=np.float32),
-                    colors=np.array(all_colors, dtype=np.float32),  # Float32 for SDR
+                    centers=all_centers,
+                    cholesky_factors=all_cholesky,
+                    amplitudes=all_amplitudes,
+                    sharpnesses=all_sharpnesses,
+                    colors=all_colors,
                 )
 
                 scene.add_gsplats_from_data(
@@ -718,7 +605,6 @@ def main() -> None:
     """Main demo entry point."""
     field = DEFAULT_FIELD
     max_loc = DEFAULT_MAX_LOCALIZATIONS
-    no_cache = "--no-cache" in sys.argv
 
     for arg in sys.argv[1:]:
         if arg.startswith("--field="):
@@ -751,20 +637,12 @@ def main() -> None:
     # Check dependencies
     try:
         import pandas  # noqa: F401
-        from scipy.ndimage import gaussian_filter  # noqa: F401
     except ImportError as e:
-        aprint(f"❌ Missing dependency: {e}")
+        aprint(f"Missing dependency: {e}")
         aprint("")
         aprint("Install with:")
-        aprint("  pip install pandas scipy")
+        aprint("  pip install pandas")
         sys.exit(1)
-
-    # Setup caching
-    splats_cache = CACHE_DIR / f"FOV_{field}_splats_{max_loc}.npz"
-
-    if no_cache:
-        if splats_cache.exists():
-            splats_cache.unlink()
 
     try:
         # Download localizations
@@ -773,47 +651,27 @@ def main() -> None:
         # Parse localizations
         localizations = parse_storm_localizations(csv_file, max_localizations=max_loc)
 
-        # Create splats
-        centers, covariances, amplitudes, sharpnesses = create_gsplats_from_localizations(
-            localizations,
-            cache_path=splats_cache,
-        )
-
-        # Generate synthetic widefield for comparison
-        # Estimate volume bounds
-        x_max = int(np.ceil(centers[:, 0].max())) + 10
-        y_max = int(np.ceil(centers[:, 1].max())) + 10
-        z_max = int(np.ceil(centers[:, 2].max())) + 10
-        volume_shape = (x_max, y_max, z_max)
-
-        widefield = generate_synthetic_widefield(localizations, volume_shape)
+        # Extract centers and amplitudes (simple, no per-localization covariances)
+        centers_um, amplitudes = extract_centers_and_amplitudes(localizations)
 
         # If --no-serve, use persistent directory; otherwise use examples dir
         if "--no-serve" in sys.argv:
             output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
-            scene_path = create_storm_scene(
-                centers, covariances, amplitudes, sharpnesses,
-                widefield_volume=widefield,
-                output_path=output_path,
-            )
+            scene_path = create_storm_scene(centers_um, amplitudes, output_path=output_path)
             aprint(f"Dataset generated at {scene_path}")
-            aprint(f"Localizations: {len(centers):,}")
+            aprint(f"Localizations: {len(centers_um):,}")
             return
 
         # Create scene in examples directory for serving
-        scene_path = create_storm_scene(
-            centers, covariances, amplitudes, sharpnesses,
-            widefield_volume=widefield,
-        )
+        scene_path = create_storm_scene(centers_um, amplitudes)
 
         # Stats
         aprint("")
         aprint("=" * 70)
         aprint("STORM VISUALIZATION COMPLETE")
         aprint("=" * 70)
-        aprint(f"Localizations: {len(centers):,}")
-        aprint(f"Volume bounds: {volume_shape}")
-        aprint(f"Microtubule network visible in {len(centers):,} molecular detections!")
+        aprint(f"Localizations: {len(centers_um):,}")
+        aprint(f"Microtubule network visible in {len(centers_um):,} molecular detections!")
         aprint("")
         aprint("In the viewer:")
         aprint("  - Press '1' to select VIEW dimension")

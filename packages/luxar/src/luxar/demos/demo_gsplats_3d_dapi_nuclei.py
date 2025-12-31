@@ -117,9 +117,8 @@ TIME_POINT = 0  # First time point
 N_ITERS = 1500  # Good balance of quality vs speed
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
 
-# Output paths
-EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
-CACHE_DIR = EXAMPLES_DIR / ".cache"
+# Cache paths (use user cache directory for intermediate fit results)
+CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_dapi"
 CACHE_FILE = CACHE_DIR / "gsplats_dapi_fit.npz"
 
 # Parse command line flags

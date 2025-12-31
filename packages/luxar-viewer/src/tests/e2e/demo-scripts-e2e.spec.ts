@@ -22,8 +22,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { waitForLuxarReady, getLuxarState, getConsoleMessages } from './helpers';
 
-// Base URL for examples (served by HTTP server on port 9000)
-const EXAMPLES_BASE = 'http://localhost:9000/packages/luxar/examples';
+// Base URL for example zarr outputs (served by HTTP server on port 9000)
+const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
 // Project root (4 levels up from this file)
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');

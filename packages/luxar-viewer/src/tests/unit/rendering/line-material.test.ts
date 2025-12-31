@@ -80,29 +80,29 @@ describe('LineMaterial', () => {
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
-      // Check for instanced attributes
-      expect(material.vertexShader).toContain('attribute vec3 aStartPos');
-      expect(material.vertexShader).toContain('attribute vec3 aEndPos');
-      expect(material.vertexShader).toContain('attribute vec3 aStartColor');
-      expect(material.vertexShader).toContain('attribute vec3 aEndColor');
-      expect(material.vertexShader).toContain('attribute float aStartWidth');
-      expect(material.vertexShader).toContain('attribute float aEndWidth');
-      expect(material.vertexShader).toContain('attribute float aStartSharpness');
-      expect(material.vertexShader).toContain('attribute float aEndSharpness');
-      expect(material.vertexShader).toContain('attribute float aSegmentLength');
-      expect(material.vertexShader).toContain('attribute float aStartClipped');
-      expect(material.vertexShader).toContain('attribute float aEndClipped');
+      // Check for instanced attributes (GLSL ES 3.0 uses "in" instead of "attribute")
+      expect(material.vertexShader).toContain('in vec3 aStartPos');
+      expect(material.vertexShader).toContain('in vec3 aEndPos');
+      expect(material.vertexShader).toContain('in vec3 aStartColor');
+      expect(material.vertexShader).toContain('in vec3 aEndColor');
+      expect(material.vertexShader).toContain('in float aStartWidth');
+      expect(material.vertexShader).toContain('in float aEndWidth');
+      expect(material.vertexShader).toContain('in float aStartSharpness');
+      expect(material.vertexShader).toContain('in float aEndSharpness');
+      expect(material.vertexShader).toContain('in float aSegmentLength');
+      expect(material.vertexShader).toContain('in float aStartClipped');
+      expect(material.vertexShader).toContain('in float aEndClipped');
 
       // Check for uniforms
       expect(material.vertexShader).toContain('uniform float uFOV');
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
 
-      // Check for varyings
-      expect(material.vertexShader).toContain('varying vec3 vColor');
-      expect(material.vertexShader).toContain('varying float vSharpness');
-      expect(material.vertexShader).toContain('varying float vPerpNorm');
-      expect(material.vertexShader).toContain('varying float vCapFactor');
-      expect(material.vertexShader).toContain('varying float vPixelWidth');
+      // Check for varyings (GLSL ES 3.0 uses "out" instead of "varying")
+      expect(material.vertexShader).toContain('out vec3 vColor');
+      expect(material.vertexShader).toContain('out float vSharpness');
+      expect(material.vertexShader).toContain('out float vPerpNorm');
+      expect(material.vertexShader).toContain('out float vCapFactor');
+      expect(material.vertexShader).toContain('out float vPixelWidth');
 
       // Check for screen-space expansion with aspect ratio handling
       expect(material.vertexShader).toContain('perpendicular');

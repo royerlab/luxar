@@ -18,8 +18,8 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
 
 // Use pre-generated hierarchy example
-const HIERARCHY_DATASET = 'http://localhost:9000/packages/luxar/examples/hierarchy_example.zarr';
-const TRANSFORM_DATASET = 'http://localhost:9000/packages/luxar/examples/transform_example.zarr';
+const HIERARCHY_DATASET = 'http://localhost:9000/datasets/examples/hierarchy_example.zarr';
+const TRANSFORM_DATASET = 'http://localhost:9000/datasets/examples/transform_example.zarr';
 
 test.describe('Transform Hierarchy - Basic Composition', () => {
   test('should apply parent transform to child objects', async ({ page }) => {

@@ -398,7 +398,8 @@ Before PR/merge:
 ### Naming Conventions
 - Example files: `*_example.py` or `*_example.zarr`
 - Temp files: Put in `delme/` directory
-- Example outputs: Keep in `packages/luxar/examples/`
+- Example outputs: Generated to `datasets/examples/` (via `get_examples_output_dir()`)
+- Demo outputs: Generated to `datasets/demos/` (via `get_demos_output_dir()`)
 - Never commit `.zarr` directories (in .gitignore)
 
 ---
